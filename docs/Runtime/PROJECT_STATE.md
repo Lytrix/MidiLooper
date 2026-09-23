@@ -23,10 +23,21 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   `7f90d996`: 2,262 / 1 / 2,261); `teensy41-capture-serial` **SUCCESS**, RAM1 `variables 96,128 /
   code 392,344 / padding 872 / locals free 34,944`. Only a test file changed, so the firmware artifact is
   unaffected and `padding 872` is the recorded line.
+- **D0.2/D0.3 started (partial, same session):** the P1 harness controls that S2b's fixtures need are in
+  place — test-controlled transport state (the harness's hardcoded `isTransportRunning()` is now a
+  variable reset in `setUp`), reservation denial/recovery through **real pool-credit exhaustion**
+  (`LoopEventStore::ChunkReservation`), and a read-only ownership census on
+  `TrackCaptureStopAccess` (`canonicalReservedChunks`, `canonicalOutputAdmitted`, `liveRingEntrySlot`,
+  `transferHorizonAdmitted`, …). **B01 is now red as designed:** with four committed slots and one
+  active role, the three inactive slots hold **8 canonical-copy credits each (24 total)** where the law
+  requires zero. Outstanding and named rather than implied: the dispatch pause-and-step control, the
+  linked load / transport-retarget paths, and B07's allocation census — the last is **not measurable
+  natively** because the pool wrappers are `teensy41-capture-serial` link flags only. **No production
+  behavior has changed; only a test file.**
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
-  in this session**. Next: D0.2 (P1 harness controls), then S2b.1, which is expected to turn both S1.2 law
-  assertions green and to retire the `WORKING_SET_RED` gate.
+  in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the
+  three red cases green and to retire the `WORKING_SET_RED` gate.
 
 **2026-09-23 — chat reference readability.** Agent replies now pair every stage/task/gate/decision ID
 with a short descriptive name, including repeats and link labels. Canonical rule:

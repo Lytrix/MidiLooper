@@ -52,9 +52,20 @@ not another broad design revision. A listed fixture/command is not implemented o
 - [ ] D0.2 Before S2b behavior edits, extend the existing continuous-capture harness with P1's transport,
       reservation-denial/recovery, worker/dispatch and read-only ownership controls. Link production load/
       transport paths for assertions that require them; no copied lifecycle or success-returning domain stubs.
+      **PARTIAL 2026-09-23:** transport (test-controlled `isTransportRunning`), reservation denial/recovery
+      (real `ChunkReservation` pool-credit exhaustion) and the read-only ownership census are in place in
+      `test_continuous_capture`. Outstanding: the worker/dispatch pause-and-step control, the linked
+      production load and transport-stop-retarget paths, and an allocation census (B07 is not measurable
+      natively — the pool wrappers are `teensy41-capture-serial` link flags only). See
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1.
 - [ ] D0.3 Implement P1 fixtures B01–B07 with stepwise expected identities/content, demonstrate the pre-fix
       behavioral failure where runnable, and record any missing-API limitation separately from a red test.
       Minimal test/API seams belong in the same slice; they do not authorize the behavior before its oracle.
+      **PARTIAL 2026-09-23:** B01 implemented and RED — `Expected 0 Was 24` (three inactive committed
+      slots hold 8 canonical-copy credits each; the transfer-horizon clause is only reached once that is
+      green). B02–B07 recorded as missing-API limitations, not as red tests: B02/B03 need S4f.0/S4f.4,
+      B04 needs the load path linked, B05 needs the S2b.4 release API, B06 the dispatch control, B07 the
+      allocation census.
 - [ ] D0.4 For every subsequent packet P2–P8 and applicable safeguard, establish its listed oracle/controls
       before that behavior change and record results under that packet. Gated F/S6 work stays blocked on its
       own architecture contract. Do not check this umbrella item until all applicable packets are evidenced.
