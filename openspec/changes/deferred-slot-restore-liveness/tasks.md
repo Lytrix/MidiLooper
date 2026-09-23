@@ -185,18 +185,38 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       with an invented state vocabulary now. The "no per-turn line" constraint is respected: the probe is
       on-demand only.
 
-- [ ] A1.9 **Packet A review and mechanism ledger.** Record, for C1, C2, C4, C5, C6, one of: covered by a
+- [x] A1.9 **Packet A review and mechanism ledger.** Record, for C1, C2, C4, C5, C6, one of: covered by a
       red desired-behavior fixture `<case>`, or withdrawn with the observation that falsified it; record
       C3's withdrawal; record the TBD-1 conclusion and whether any mechanism is a *different* root cause
       than `design.md` states. **Verify:** the ledger is written into the change review, and every Packet
       B/C task below is either unblocked by a reproduced mechanism or explicitly re-scoped. Do not check
       A1.9 while any mechanism is unreviewed.
+      → **DONE 2026-09-23.** Ledger complete in [`REVIEW.md`](REVIEW.md) § Mechanism ledger: C1, C2, C4,
+      C6 each **covered by a red desired-behavior fixture**; C5 covered by **code citation plus closure
+      proof** with its oracle split by Revision 5 (native pure decisions, A3.7 device gate for the
+      integration claim); C3 **withdrawn before code** with the falsifying observation. **TBD-1
+      conclusion recorded:** the stall is dominated by the transport gate (C1/C2), with C4 and C6 as
+      independently reproduced contributors, and the between-boot `(track,slot)` census change is
+      explained by C6's session latch. **Two mechanisms differ from `design.md`:** C4's trigger (a
+      committed head is *skipped*, not blocking, so the stall needs a head that also fails the done-test)
+      and C1/C2's relationship (one gate seen from two sides). Every Packet B/C task is either unblocked
+      by a reproduced mechanism or explicitly re-scoped.
 
-- [ ] A1.10 **Packet A gate.** Full native suite green **with the named red-acceptance exclusion set in
+- [x] A1.10 **Packet A gate.** Full native suite green **with the named red-acceptance exclusion set in
       place** (count and exclusion list recorded); `teensy41-capture-serial` build SUCCESS with the
       post-link RAM1 line recorded; Packet A red/withdrawn status table complete. **Verify:** the exact
       commands and outputs are recorded; no behavior change is claimed by this packet; no red fixture was
       deleted, generalized, or had a threshold relaxed to make the suite green.
+      → **DONE 2026-09-23.** Commands and outputs recorded in [`REVIEW.md`](REVIEW.md) § Evidence record.
+      **Default gate:** `pio test -e native -f test_storage_manager_load` → 10 cases / 10 succeeded / 0
+      failures (the known-red set is absent, not run-and-failing). **Red set:** `RESTORE_LIVENESS_RED=1`
+      → 15 cases / **4 failed** / 10 succeeded, the four failures being exactly C1, C2, C4, C6.
+      **Full native:** **2,297 cases / 1 skipped / 2,296 succeeded / 0 failures**. **Build:**
+      `teensy41-capture-serial` SUCCESS, RAM1 `code 392,328 + padding 888` (48 B above the floor).
+      Packet A's red/withdrawn status table is the mechanism ledger above; A1.7 is amended (Revision 5)
+      rather than silently dropped, and no red fixture was deleted, generalized or threshold-relaxed.
+      **Behavior change claimed by this packet: the two observation-only probes plus A4.1's reconcile
+      outcome split; all other Packet A work is characterization.**
 
 - [x] A1.11 **Red-acceptance coexistence rule (review finding 3).** Define and wire the named exclusion set
       for the red desired-behavior fixtures (a dedicated env flag in the change's own suite, following the

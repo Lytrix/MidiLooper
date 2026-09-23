@@ -266,17 +266,27 @@ A1.7.
 ## Mechanism ledger (A1.9)
 
 Recorded per mechanism: covered by a red desired-behavior fixture, or withdrawn with the observation
-that falsified it. Filled in as Packet A proceeds; **do not check A1.9 while any mechanism is
-unreviewed.**
+that falsified it.
+
+**TBD-1 conclusion (proposal § Open decisions).** The observed stuck restore is **dominated by the
+transport gate** (C1/C2), with two independently reproduced contributors: C4's head-of-line stall needs
+the narrower trigger recorded above, and C6's session latch makes a transient failure permanent. The
+`(track,slot)` census changing between boots is explained by C6: a latched slot stays `EMPTY` for the
+power cycle and a later boot restores it. C3 was **withdrawn before code** — the boot scan already offers
+every payload-bearing `(track,slot)` and a blocked request stays queued, so no state exists in which a
+request is neither queued, active/parked nor terminal. Two mechanisms differ from `design.md`'s stated
+form: **C4**'s trigger (a committed head is skipped, not blocking) and **C1/C2**'s relationship (they are
+one gate seen from two sides — the selection path never begins under transport, and a job begun while idle
+is parked and never re-serviced).
 
 | Mechanism | `design.md` claim | Packet A disposition | Fixture |
 |---|---|---|---|
-| C1 | `canRunBackgroundLoadLoopNow()` false under transport; nothing begins | red fixture in place; mechanism reproduced (request left **unowned** for 64 production turns: pending, no active or parked job) | `test_c1_transport_gated_background_admission_desired` |
-| C2 | A parked non-focus job is never re-serviced under play | red fixture in place; mechanism reproduced (parked instance owns the request for all 64 turns, actively owned 0) | `test_c2_parked_job_is_serviced_or_named_after_transport_starts` |
+| C1 | `canRunBackgroundLoadLoopNow()` false under transport; nothing begins | **covered by red fixture**; mechanism reproduced (request left **unowned** for 64 production turns: pending, no active or parked job) | `test_c1_transport_gated_background_admission_desired` |
+| C2 | A parked non-focus job is never re-serviced under play | **covered by red fixture**; mechanism reproduced (parked instance owns the request for all 64 turns, actively owned 0) | `test_c2_parked_job_is_serviced_or_named_after_transport_starts` |
 | C3 | one-shot enqueue never re-offers | **withdrawn before code** (G2 review finding 5): the boot scan already offers every payload-bearing `(track,slot)` and a blocked request stays queued | none — no work produced |
-| C4 | priority head with a live owner stalls the queue behind it | red fixture in place; mechanism reproduced, with the trigger **corrected**: the head must also fail the pop's done-test (a committed head is skipped, not blocking) | `test_c4_blocked_priority_head_does_not_stall_a_startable_request` |
-| C5 | the blocking drain never services the load scheduler | **open** — defect read from code (`drainPersistenceWorkBlocking` loops on `processDeferredSaveState` + `yield()` and never invokes the load scheduler); the native reproducer needs the drain-link expansion recorded above, and depends on the `requestLoopSlotPersistAndSaveState` overload ambiguity being resolved | A1.7 (closure measured, fixture pending) |
-| C6 | `markLoopSlotRestoreAttempted` latches a transient failure for the power cycle | red fixture in place; mechanism reproduced (failure path reached, healed payload never retried) | `test_c6_transient_failure_is_retried_not_latched` |
+| C4 | priority head with a live owner stalls the queue behind it | **covered by red fixture**; mechanism reproduced, with the trigger **corrected**: the head must also fail the pop's done-test (a committed head is skipped, not blocking) | `test_c4_blocked_priority_head_does_not_stall_a_startable_request` |
+| C5 | the blocking drain never services the load scheduler | **covered by code citation + closure proof, oracle split by Revision 5.** `drainPersistenceWorkBlocking` (`SyncDrainSaveState.cpp`) loops on `processDeferredSaveState(state)` + `yield()` and never invokes `processDeferredLoopSlotRestore`, whose only production caller is the main loop's deferred-load frame — so while the drain owns the thread the restore cannot advance and `deferredSaveBlockedByActiveSlotLoadSd()` cannot clear. A native red fixture needs the display stack (not a test-only closure); the integration claim moves to the A3.7 device gate, the pure decisions to A3.2/A3.3/A3.4 | A1.7 (amended, closure proof green) |
+| C6 | `markLoopSlotRestoreAttempted` latches a transient failure for the power cycle | **covered by red fixture**; mechanism reproduced (failure path reached, healed payload never retried) | `test_c6_transient_failure_is_retried_not_latched` |
 
 ---
 
