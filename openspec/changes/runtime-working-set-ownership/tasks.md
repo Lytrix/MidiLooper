@@ -701,11 +701,14 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       reports `inventory_equal: false` with **2 unexplained missing rows in bar 0**,
       `[128,5,76,0]` and `[176,5,74,101]`. Neither matches a documented residual class, so per
       [`HITL_CONTENT_VERIFICATION.md`](../../docs/Guides/HITL_CONTENT_VERIFICATION.md) the run is recorded as
-      **not verified** rather than accepted. Both events are present in the raw output in quantity (note 76
-      Off ×157, note 74 On ×264) and the first row's tick lies outside the verifier's cycle window
-      (anchor tick 144), so the leading explanation is a capture-window edge — but the second row is **left
-      open**, not explained away. `capacity_path_exercised: false` (densest bar 84 refs vs the old 256
-      ceiling), so this is a parity run, not a capacity re-stress.
+      **not verified** rather than accepted. **The rows themselves are not lost:** locating each against both
+      anchor occurrences (48.001 s apart) finds **one matching occurrence per cycle for each** (`note76` Off
+      near `anchor − 80 ms` in both cycles; `note74` On near `anchor + 1 ms` and `+ 44 ms`), so playback
+      carries both and the verifier's cycle-local inventory does not bind them — exact tick attribution is
+      **not** established. A third 160 s capture went `INCONCLUSIVE_CAPTURE` (no recurring anchor) because the
+      restored set drifts between boots, so the formal bar is unmet and **confounded by the same catalog
+      defect**. `capacity_path_exercised: false` (densest bar 84 refs vs the old 256 ceiling): a parity run,
+      not a capacity re-stress.
 
 ## S3 — introduce the reusable lease pool (no release yet)
 

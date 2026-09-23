@@ -23,20 +23,26 @@ length=18432` — so a slot *can* come back byte-exact right after its own save+
 (`captures/rwso-growth/boot-n2/`) the recorded obstacle reproduces at **catalog** level:
 `could not reconcile MidiLooper/sets/index.bin`, `Queuing boot playback loop slot restore 6 pending; first 4/0`,
 `Track 6 loaded state: EMPTY` (and track 7), `DIAG,lcr,skip,restore`, and a census whose non-zero-slot set
-**changed between boots** (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`). Selecting track 5 then reads
-`3 bars (2304 ticks)` — not the dumped 24-bar loop — and track 6 emits no length feedback at all. **The obstacle
-is the SD catalog reconcile, not scratch-slot approval, and S1.3's slope sweep stays blocked.** Also recorded: a
-boot census needs a **forced** reboot (a serial open only sometimes resets), and repeated runs without a reboot
-accumulate residency — `live` 4,658 KB → **8,170 KB** with `heap_free` pinned at its 52 KB minimum.
+**changed between boots** (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`), and track 6 emits no length
+feedback at all. **The obstacle is the SD catalog reconcile, not scratch-slot approval, and S1.3's slope sweep
+stays blocked** — the restored *set* is unstable across boots. **One datapoint of mine is withdrawn:** the
+"track 5 reads 3 bars" reading was a **wrong-slot read** (I pressed only the track button); track 5 **and slot 1**
+reads `24 bars (18432 ticks)`, and a further dump again reports `length=18432`, so this slot does survive the
+hard reset. Also recorded: a boot census needs a **forced** reboot (a serial open only sometimes resets), and
+repeated runs without a reboot accumulate residency — `live` 4,658 KB → **8,170 KB** with `heap_free` pinned at
+its 52 KB minimum.
 
-**Leg 4 — content NOT verified, recorded as such.** `storage_matches_effective: true` with all 24 bars dense
-(`per_bar_effective` 70–84; `effective_rows_all = expected_note_cc_rows = 1,746`), but the verifier's single
-inter-anchor cycle reports `inventory_equal: false` with **2 unexplained missing rows in bar 0**
-(`[128,5,76,0]`, `[176,5,74,101]`). Neither is a documented residual class, so per the guide the run is **not** a
-PASS. Both events are present in the raw output in quantity (note 76 Off ×157, note 74 On ×264) and the first
-tick lies outside the cycle window (anchor 144), so a capture-window edge is the leading explanation — but the
-second row is left **open**. `capacity_path_exercised: false` (densest bar 84 refs vs the old 256 ceiling), so
-this is a parity run, not a capacity re-stress.
+**Leg 4 — content NOT a formal PASS, but the two "missing" rows are proven present.** `storage_matches_effective:
+true` with all 24 bars dense (`per_bar_effective` 70–84; `effective_rows_all = expected_note_cc_rows = 1,746`),
+but the verifier's single inter-anchor cycle reports `inventory_equal: false` with **2 unexplained missing rows in
+bar 0** (`[128,5,76,0]`, `[176,5,74,101]`). Neither is a documented residual class, so the guide's bar is **not
+met**. However, locating each row against the two anchor occurrences (48.001 s apart) finds **one matching
+occurrence per cycle for each** — `note76` Off near `anchor − 80 ms` in both cycles, `note74` On near
+`anchor + 1 ms` and `+ 44 ms` — so playback carries both; the verifier's cycle-local inventory just does not bind
+them (exact tick attribution not established). A third, longer capture (160 s) went
+`INCONCLUSIVE_CAPTURE: no unique effective event recurs` because the restored set — and hence the playback mix —
+drifts between boots, so **content verification of this slot is confounded by the same catalog defect**.
+`capacity_path_exercised: false` (densest bar 84 refs vs the old 256 ceiling): a parity run, not a re-stress.
 
 **Blocker: CLEAR cannot proceed while transport is active.** Two attempts died at
 `Persistence drain stuck after 33 iterations … Clear aborted`. `StorageManager::processDeferredSaveState`
