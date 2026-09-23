@@ -2708,10 +2708,15 @@ reproducing, and it is *track-specific and catalog-level* rather than general:
 - and the census's non-zero-slot set **changed between boots**: Leg 1 walked `{track=1,slot=2,
   track=4,slot=1}`, this boot walks `{track=1,slot=2}` only.
 
-Selecting track 5 afterwards reads `Sent loop length CC feedback: 3 bars (2304 ticks)` — not the 24-bar loop
-that Leg 3 dumped — and selecting track 6 emits **no** length feedback at all, matching its `EMPTY` state. So
-the restored set is **not stable or faithful across reboots**: the catalog does not reconcile, and which slots
-come back (and with what) varies. **Growing the library across boots is therefore not reliable on this
+**One datapoint of mine is withdrawn as a wrong-slot read.** I first reported "selecting track 5 reads
+`3 bars (2304 ticks)`, not the 24-bar loop" as evidence of an unfaithful restore. That was a **measurement
+error**: I pressed only the track button, which reports whatever slot that track had selected, not slot 1.
+Pressing track 5 **and then slot 1** (note 50) reads `Sent loop length CC feedback: 24 bars (18432 ticks)`, and
+the next `dump_and_capture` again reports `CAPTURE_CONTENT,begin,track=5,slot=0,length=18432`. So track 5
+slot 1's 24-bar loop **does** survive the hard reset, and the earlier "3 bars" reading is withdrawn. What
+remains solid is the **catalog** evidence above (the reconcile warning, `Track 6 loaded state: EMPTY`, the
+changed non-zero-slot set, `lcr,skip,restore`) — the restored **set** is unstable even though this slot
+survives. **Growing the library across boots is therefore not reliable on this
 firmware**, and S1.3's slope sweep stays **blocked** — with a sharp diagnosis (SD catalog reconcile + skipped
 track-6 restore) instead of the earlier broad claim. The scratch range track 6 slots 1–8 was never the
 obstacle; the catalog is.
@@ -2740,9 +2745,23 @@ observations bound it, without explaining it away:
 - **both events are present in the raw output in quantity** (note 76 Off ×157, note 74 On ×264 over the
   capture), so this is not loss of the notes themselves.
 
-The second row is left **open** rather than classified: it is inside the window, it is not a documented
-residual, and the raw-output count does not by itself show it in *that* cycle. A clean PASS needs a re-capture
-whose cycle windows are complete at both ends, which is the follow-up.
+**Both rows are now shown to be present in playback, per cycle — the verifier's verdict is a cycle-local
+matching artifact, not content loss.** Locating each row against the two anchor occurrences in that capture
+(the anchor is the effective row `[144, 5, 12, 98]`, recurring 48.001 s apart) finds **one matching occurrence
+per cycle for each row**: `note76` Off near `anchor − 80 ms` in *both* cycles, and `note74` On near
+`anchor + 1 ms` and `+ 44 ms`. So the played output carries both events once per cycle; the verifier's
+cycle-local inventory simply does not bind them. The exact tick attribution is **not** established — the
+observed offsets sit ~40 ms (≈15 ticks) off the nominal `16/384 s` and `32/384 s`, and a same-note multiple-Off
+match cannot be excluded — so this is stated as *presence per cycle*, not as a corrected tick mapping.
+
+**A third attempt with a longer window did not help, and its cause is the catalog instability.** Re-capturing
+over 160 s (`rwso-24cap-playback-3cyc`, `--capture-seconds 160`) returns
+`INCONCLUSIVE_CAPTURE: no unique effective event recurs in the playback window` — no anchor, no cycles — while
+its dump still reports `track=5,slot=0,length=18432` and the same 1,746 effective rows. The playback mix had
+**changed between resets** (channels 1–2 now dominate where channel 5 did before), because which slots the
+unstable catalog brings back differs per boot. So **content verification of this slot is confounded by the same
+persistence defect**, and the guide's formal bar (`inventory_equal: true` on every cycle) is **not met** —
+recorded as not verified, with the content itself shown present.
 
 `capacity_path_exercised: false` — the densest bar is 84 refs against the old 256 ceiling, so this is a
 **parity run, not a capacity re-stress**, exactly as the guide distinguishes.

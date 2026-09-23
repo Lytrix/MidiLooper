@@ -2884,14 +2884,19 @@ save+reset. A growth attempt (`STIM-…-TEMP-RWSO-GROWTH`, track 6) then **falsi
 generalisation: after a second forced reboot the catalog does not reconcile (`could not reconcile
 MidiLooper/sets/index.bin`), `Track 6 loaded state: EMPTY` (and track 7), `DIAG,lcr,skip,restore`, and the
 census's non-zero-slot set changed between boots (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`).
-Selecting track 5 reads `3 bars (2304 ticks)`, not the 24-bar loop. **The S1.3 slope sweep stays blocked, on the
-SD catalog reconcile rather than on scratch-slot approval.** Also: a boot census needs a **forced** reboot, and
-repeated runs without one accumulate residency (`live` 4,658 KB → **8,170 KB**, heap pinned at its 52 KB floor).
-**(4) Content NOT verified, recorded as such:** `storage_matches_effective: true` and all 24 bars dense (1,746
-rows) but `inventory_equal: false` with **2 unexplained missing rows in bar 0** (`[128,5,76,0]`,
-`[176,5,74,101]`) — both present in the raw output in quantity (157/264), the first outside the cycle window
-(anchor 144); the second is left open. `capacity_path_exercised: false` (densest bar 84 refs), so parity, not a
-capacity re-stress.
+Both `dump_and_capture` runs still report `track=5,slot=0,length=18432`, and track 5 **+ slot 1** reads
+`24 bars (18432 ticks)` — so this slot survives; an earlier "3 bars" reading of mine was a wrong-slot read and is
+withdrawn. **The S1.3 slope sweep stays blocked on the SD catalog reconcile** (the restored *set* is unstable
+across boots), not on scratch-slot approval. Also: a boot census needs a **forced** reboot, and repeated runs
+without one accumulate residency (`live` 4,658 KB → **8,170 KB**, heap pinned at its 52 KB floor).
+**(4) Content: not a formal PASS, but the two "missing" rows are proven present.** `storage_matches_effective:
+true` and all 24 bars dense (1,746 rows) but `inventory_equal: false` with **2 unexplained missing rows in bar 0**
+(`[128,5,76,0]`, `[176,5,74,101]`). Checking each against both anchor occurrences finds **one matching occurrence
+per cycle for each** (`note76` Off at `anchor − 80 ms` in both cycles; `note74` On at `anchor + 1 ms` and
+`+ 44 ms`), so playback carries both and the verifier's cycle-local inventory does not bind them. A third 160 s
+capture went `INCONCLUSIVE_CAPTURE` (no recurring anchor) because the restored set drifts between boots — so the
+formal bar stays unmet, confounded by the same catalog defect. `capacity_path_exercised: false` (densest bar 84
+refs): parity, not a capacity re-stress.
 **Blocker found + workaround:** the clear aborted twice on `Persistence drain stuck after 33 iterations` because
 `processDeferredSaveState` returns immediately while transport is active and the drain has no transport-gate
 classification (generic `Stuck`); the host saw no `PERS,*`/`SAVE,*` marker at all in that window. Workaround:
