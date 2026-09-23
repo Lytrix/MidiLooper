@@ -1946,3 +1946,319 @@ point be measured — or it is answered on device, where a loaded library is rea
 |---|---|
 | `test_continuous_capture` | **91/91** (fixture and helper reverted) |
 | full native | **2,281 cases / 1 skipped / 2,280 succeeded / 0 failures** |
+
+## Device session — the baseline is flashed, and boot/load residency is measured on device (2026-09-23)
+
+The owner's go-ahead ("flash and create + run dedicated HITLs for each measurement") opened the device
+session. This section records what was flashed, the first device measurement, and the three corrections that
+measurement forced. **Scope: the boot/load half of S1.5 and the baseline half of S2b.3.** Nothing else is
+claimed here.
+
+### What is on the board, and the build hazard that was fixed first
+
+`platformio.ini` sets `build_dir = ~/Library/Caches/pio-build-250513-215524-teensy41`, which is **not keyed by
+revision**. A baseline worktree of `83be2e19` therefore built into the *same* object directory as this branch.
+That is a live reproducibility hazard for exactly the two-revision comparison S1.3 exists to produce, so each
+revision was built into its own directory with `PLATFORMIO_BUILD_DIR`:
+
+| revision | build dir | RAM1 | FLASH code | `firmware.hex` sha256 |
+|---|---|---|---|---|
+| baseline `83be2e19` | `/tmp/rwso-base-build` | variables 96,128 / code **392,344** / padding **872** / locals 34,944 | **1,009,608** | `a4bc37e6…040920` |
+| HEAD `9a2e5b9b` | `/tmp/rwso-head-build` | variables 96,128 / code **392,120** / padding **1,096** / locals 34,944 | **1,011,072** | `ea5e6d03…5a2c4ff` |
+| the shared cache dir | `~/Library/Caches/…` | (unused) | — | `cfceda48…b554f4b1` |
+
+The baseline row **reproduces the pinned baseline exactly** (`392,344 / 872`, FLASH `1,009,608`), which is the
+point of pinning it. Two consequences are recorded rather than glossed:
+
+- **The shared cache directory holds a third artifact** whose hash matches *neither* revision. The HITL run
+  metadata picks its `firmware_hex` up from `platformio.ini`'s `build_dir`, so the `firmware_hex_sha256` it
+  wrote for this run is `cfceda48…` — **not the flashed baseline**. The run identity used here is the
+  `/tmp/rwso-base-build` hash above, and the metadata field must not be cited. Fix for later runs in this
+  session: export `PLATFORMIO_BUILD_DIR` to the matching per-revision directory when invoking the HITL.
+- FLASH code at HEAD is **1,011,072** today, where the earlier record in § P0 says **1,010,976**. The RAM1 line
+  is bit-identical (`392,120 / 1,096`), so the placement gate is unaffected; the 96 B FLASH discrepancy is
+  **flagged, not overwritten**, because two builds of the same firmware should not differ.
+
+`lib/SSD1322_OLED` is a gitlink with **no `.gitmodules` entry**, so `git submodule update --init` fails
+(`fatal: No url found for submodule path`). The library is only checked out in the main tree; the baseline
+worktree was given a copy of `include/ src/ lib/ library.json` and built from that. This is recorded so the next
+baseline worktree does not lose the same time.
+
+### The measurement, and its honest verdict
+
+Entry point: the authoritative preset, on the established scratch target (track 6 / slot 1 / channel 6 —
+`captures/tidyup-ab-base-track6-slot1/metadata.json`), with the documented flag set:
+
+```sh
+.venv/bin/python scripts/host_midi_hitl.py run --preset base \
+ --midi-out "Teensy" --midi-in "Teensy" \
+ --track-number 6 --loop-slot 1 --midi-channel 6 \
+ --record-bars 2 --overdub-bars 2 --no-fixed-grid-notes --start-transport \
+ --overdub-start-delay-bars 0 --overdub-start-delay-beats 1 \
+ --phase-wait-ms 500 --final-wait-ms 3000 --press-ms 120 --undo-redo-delay-ms 3000 \
+ --out-dir captures/rwso-BASE-s11-s14-census
+```
+
+Log `captures/rwso-BASE-s11-s14-census/session_20260923_191135.log`. **Fresh boot confirmed**:
+`#CAP,3005004,DIAG,boot_reset,crash=0` (line 1) and the `BOOT,scan,t0…t7` / `BOOT,load,ok` banner at lines
+22–34; no `RING,overflow`.
+
+The run is **`INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)`** and is **not** content evidence:
+`PHASE FAIL: track 5 record notes=4 (min 31)` and `PHASE BLOCKED: track 5 record clocks=24
+reason=clock_count_mismatch`. (`track 5` is 0-based — `_user_track_number(track_index) = track_index + 1`,
+`legacy_record_baseline.py:500-502` — so it is the intended track 6.) The state machine nevertheless executed
+the whole cycle (`ARMED->RECORDING` 3, `RECORDING->STOPPED_RECORDING` 2, `STOPPED_RECORDING->PLAYING` 2,
+`PLAYING->OVERDUBBING` 2, `OVERDUBBING->PLAYING` 2, undo 1, redo 1). The density failure is a **setup** defect
+to fix before any leg rests on content volume; it does not touch the boot lines below, which precede all
+content.
+
+### S1.5 / S2b.3 baseline half, measured on device
+
+The firmware already emits the census needed here — `#CAP,<us>,DIAG,capture_prewarm,…` with
+`free_chunks=`, `credits=`, and the resolved `slot=`. Two sequences bracket the boot:
+
+**A. The default enabled set (lines 2–20)** — `phase=before free_chunks=512` (`psram_free=7,242,204`,
+`psram_pool=8,379,288`, `heap_free=253,952`), then tracks 0…7 in order, each `slot=0,full=0,ready=1,credits=8`:
+
+```
+t0 500   t1 488   t2 476   t3 464   t4 452   t5 440   t6 428   t7 416
+```
+
+That is a flat **12 chunks per enabled track / 96 chunks for the 8-track set**, and `phase=after` closes at
+`free_chunks=416`, `psram_free=6,425,988`. This is *bounded by the enabled set, not by the library*, and it is
+the same constant the native leg recorded (40 chunks for its smaller enabled set).
+
+**B. The committed slots (lines 40–58)** — `phase=before free_chunks=416`, then only the tracks whose slot
+resolved to something other than 0 spend anything:
+
+| line | track | slot | free_chunks | delta |
+|---|---|---|---|---|
+| 42 | 0 | 0 | 416 | 0 |
+| 44 | 1 | **2** | 408 | **−8** |
+| 46 | 2 | 0 | 408 | 0 |
+| 48 | 3 | 0 | 408 | 0 |
+| 50 | 4 | **1** | 400 | **−8** |
+| 52–56 | 5,6,7 | 0 | 400 | 0 |
+| 58 | — | — | `phase=after` **400** | |
+
+**This is the slope the change exists to remove, observed on the pinned baseline firmware: exactly 8 chunks
+per committed slot** (= `PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS`), 2 committed slots resident from the SD
+library, and `free_chunks` 512 → 400 across the whole boot. On the current revision the same figure is asserted
+to be **zero** per committed slot by the native fixture (S2b.3). The device half of that comparison still has
+to be taken, on the HEAD image whose hash is pinned above.
+
+### S1.1 baseline half, measured on device (tags the tick carries)
+
+The 1 Hz tick carries `tagBytes[1..7]`. Over the 71 ticks of the same baseline run, the per-owner maxima are:
+
+| owner (tag) | max KB |
+|---|---|
+| CaptureStopJobs | 412 |
+| ViewPrewarm | 715 |
+| CaptureStaging | 148 |
+| CanonicalOutput | 320 |
+| TransferHorizon | 8 |
+| CompanionHistory | 0 |
+| PlaybackOrder | 58 |
+| **tagged total** | **1,661** |
+
+Peak `live` on the same ticks is **6,221 KB** (`blocks` max 765). So these seven owners account for
+**1,661 KB of a 6,221 KB peak**; the remainder is untagged or covered by the separate snapshot-slab census
+(`slab_live` max 78 slabs, `slab_used` max 2,453 KB, `slab_unused` max 49 KB, `snap` max 2,153 KB). The
+`live` series is `min 3,973 → max 6,221 KB` and `chunks_free` `383 → 362` over the run. These are **baseline
+figures on a run whose content gate failed** (`notes=4`), so they are a floor for the owners that scale with
+content, not a representative working set. `CompanionHistory=0` and `TransferHorizon=8` are consistent with a
+near-empty loop; a dense record is required before those two numbers mean anything.
+
+### S2b.3 device half — the per-committed-slot reservation is gone on HEAD
+
+The HEAD image (`ea5e6d03…5a2c4ff`, flashed from `/tmp/rwso-head-build`) was put through the *same* preset, the
+same scratch target and the same flags, into `captures/rwso-HEAD-boot-census-s2b3/`
+(log `session_20260923_191536.log`). This time the run's own verdict is **`Result: PASS`** — no `PHASE FAIL`,
+no `PHASE BLOCKED`. The boot census, taken identically:
+
+| figure | baseline `83be2e19` | HEAD `9a2e5b9b` |
+|---|---|---|
+| boot sequence A: cost per track (`slot=0`, enabled set) | **12 chunks** | **4 chunks** |
+| boot sequence A: total spend | **96** | **32** |
+| boot sequence A: `credits` / `ready` per track | **8 / 1** | **0 / 0** |
+| boot sequence B: cost per committed slot | **8 chunks** | **0 chunks** |
+| boot sequence B: `credits` / `ready` | **8 / 1** | **0 / 0** |
+| `free_chunks` after boot | **400** of 512 | **480** of 512 |
+
+The discriminating lines are explicit. Baseline sequence B (lines 44, 50 of its log) resolves `track=1,slot=2`
+and `track=4,slot=1` at `ready=1,credits=8` and drops 8 chunks each; HEAD sequence B (lines 118–132) resolves
+the **same two slots** at `ready=0,credits=0` and drops **nothing** — every `free_chunks=480`. Both revisions
+restored the same 2 committed slots, so this is a like-for-like comparison of the term the change removes:
+**8 chunks per committed slot → 0**, with boot's own enabled-set cost falling 12 → 4 per track at the same time.
+
+A second, controlled comparison falls out of the tick line. The two runs' first ticks sit at almost the same
+uptime, so the same-moment state can be read directly:
+
+| `[Memory] ext` tick | baseline @ 11.026 s | HEAD @ 11.124 s |
+|---|---|---|
+| `live` | 3,973 KB | 3,791 KB |
+| `chunks_free` | 383 | **458** |
+| `tags` (`1..7`) | `412/0/0/320/8/0/0` | `408/0/0/0/0/0/0` |
+| **`CanonicalOutput`** | **320 KB** | **0 KB** |
+| **`TransferHorizon`** | **8 KB** | **0 KB** |
+| `cls` (>128 KB class) | 1,986 KB | 1,344 KB |
+
+At the same point after boot, HEAD holds **no canonical output and no transfer horizon** where the baseline
+holds 320 KB and 8 KB. That is invariant 34 — a committed-but-inactive slot reserves no canonical-copy
+capacity — observed on device rather than asserted. Over the whole run the tag maxima agree on four owners
+(CaptureStopJobs 412/408, ViewPrewarm 715/715, CaptureStaging 148/148, PlaybackOrder 58/58 — capacity-sized, so
+equality is expected) and differ exactly where the change acts: **CanonicalOutput 320 → 0 KB**, TransferHorizon
+8 → 1 KB.
+
+### S1.1 device census — the owner gap is closed for tags 8..16
+
+The owner approved a session-gated per-owner line, so the census no longer depends on a pool refusal.
+`MemoryMonitor::logWorkingSetOwners()` emits `#MEM_OWNERS` on a **4 s** cadence from `main.cpp`
+(session-capture gated, O(1) bookkeeping, direct `Serial` so it survives PLAYING/OVERDUBBING). It reuses
+`ExternalPoolAccounting::formatTagVector` — which already covered tags 1..17 but had exactly one caller, the
+refusal path — and adds the snapshot-slab census. Cost, measured rather than assumed:
+
+| | before | after |
+|---|---|---|
+| RAM1 ITCM code / padding | 392,120 / **1,096** | 392,184 / **1,032** |
+| FLASH code | 1,011,072 | 1,011,376 |
+| native | — | **2,281 cases / 1 skipped / 2,280 succeeded / 0 failures** |
+| `firmware.hex` sha256 | `ea5e6d03…5a2c4ff` | `6490ee60…c91101b4a` |
+
+Padding spends **64 B** of the 224 B the change had recovered, leaving **192 B above the 840 floor** — inside
+the approved budget, so the floor is untouched. The instrumented image is what the run below used, and the
+boot census **reproduced identically on it** (sequence A `512 → 480`, 4 chunks/track; sequence B `480 → 480`,
+committed deltas `[0]`), which is a consistency check that adding a printf did not move the mechanism.
+
+Run: `captures/rwso-HEAD-owners-census/` (log `session_20260923_192254.log`), dense and **`Result: PASS`** —
+`VERIFY record on/off/open/out/seq: 32/32/0/0/0`, 32 notes against the `min 31` gate. Per-owner maxima over 19
+`#MEM_OWNERS` samples:
+
+| owner (tag) | max KB | | owner (tag) | max KB |
+|---|---|---|---|---|
+| CaptureStopJobs (1) | 412 | | CompanionPairLookup (10) | 10 |
+| ViewPrewarm (2) | 715 | | CompanionSpans (11) | 2 |
+| CaptureStaging (3) | 148 | | **CompanionReconstruction (12)** | **64** |
+| CanonicalOutput (4) | 0 | | **CompanionApply (13)** | **66** |
+| TransferHorizon (5) | 1 | | **CompanionBridgeMap (14)** | **68** |
+| CompanionHistory (6) | 0 | | **CompanionPasses (15)** | **96** |
+| PlaybackOrder (7) | 58 | | **CanonicalPassInputs (16)** | **144** |
+| ResetPassTimeline (8) | 0 | | **tagged total** | **1,776** |
+| PrepareFirstBar (9) | 0 | | peak `live` | 6,144 |
+
+`untracked_max = 0` and `unknown_frees_max = 0`, so `live` is trustworthy by the accounting's own rule. Every
+owner S1.1 names — views, capture staging, companion reconstruction/apply/bridge-map/passes, canonical pass
+inputs, transfer horizon, stop-job capacity — is now a **measured device number**, not an assertion.
+
+Two S1.1 fields remain open, and neither is a telemetry oversight:
+
+- **whole-loop `VisualCache` bytes** — `LoopVisualCache` exposes no byte/size accessor, so this needs a real
+  accessor, not a print. Not measured.
+- **lease holder count / owning slot / role** — **no playback-window lease exists yet.** Every `lease` in the
+  tree is a `release()` method; a `Lease` struct/class does not exist (S2.1 is what derives the playback window
+  lease). This clause therefore **cannot be measured before S2**; it should be re-scoped to S2 rather than
+  re-attempted here. Recording it as "0 holders" would be a fabricated number.
+
+### CORRECTION: the baseline FAIL / HEAD PASS asymmetry is a host-harness coin flip (2026-09-23)
+
+This section first read the verdict asymmetry as "the change, or differing library state — this evidence does not
+separate them". A diagnosis of the harness **supersedes that reading**, and it is recorded here rather than
+quietly rewritten.
+
+The asymmetry is **not** firmware. A real PASS run exists on an *older* build —
+`captures/tidyup-base-track6-slot1-r2` (`overall_ok=true`, **32 notes / 192 clocks**, `device_bar` start =
+latest = 3) — and a run on the **same** build as that PASS (`captures/tidyup-base-track6-slot1`,
+`session_20260918_221703.log`) reproduced the *identical* failure signature **4 notes / 24 clocks /
+start=1 / probe=4 / relative=3**. All three stored configs are byte-identical apart from output paths. So no
+omitted flag and no firmware change is necessary for the failure: **the same build gives both outcomes.**
+
+Root cause, host-side: the record phase is ended by the device-bar probe at
+`scripts/hitl/transport_clock.py:340-351`, tested only when `phase_clock_count % 24 == 0` — hence exactly 24.
+It fires on the *first* probe because two host defects disagree about which bar the phase started on:
+
+1. `_device_bar_index_at_record_start` (`scripts/hitl/legacy_record_baseline.py:1186-1203`) anchors on the
+   **first** `RECORDING` row in its window. `--loop-slot 1` forces the clear precondition
+   (`legacy_record_baseline.py:1878-1879`), and because transport is already running, the clear's Loop-1 press
+   starts an **incidental** recording that supplies a stale `device_bar_start=1`.
+2. `_device_bar_probe._from_log` (`legacy_record_baseline.py:1217-1227`) seeds `state["lines"] = 0`, so its
+   first call scans the **whole file** and returns the newest `BAR` row in the log (`4`) — from the *previous*
+   transport epoch. The device re-bases `BAR` per transport start, so the two numbers are incomparable:
+   `4 - 1 = 3 >= target_bars = 2`, and the phase is cut at 24 clocks. The record then holds only the notes at
+   clocks 1, 7, 13, 19 (4 notes), which is exactly the observed `record loop length 768/1536 (raw 433)`.
+
+The overdub phase survived only because it uses a different helper (`_latest_device_bar_index` over the last
+400 lines), which happened to return the same value; the condition is unreliable in **both** directions —
+inert when the two stale values agree (the PASS), truncating when they disagree. Two consequences for this
+change's evidence:
+
+- **No firmware claim may rest on this asymmetry**, and none does. The boot/load census above is exact and
+  independent of it (it is taken from the ring-buffered boot lines, and the identical per-slot figures
+  reproduce across revisions).
+- **A failed content gate must be retried, not reinterpreted.** The failure is a harness coin flip, so a
+  content leg that matters has to be re-run to a PASS rather than explained.
+
+**Also corrected:** `captures/tidyup-ab-base-track6-slot1` — the directory cited earlier in this file for the
+established scratch target — is **not** a passing run and must not be used as a content or PASS reference. It
+has no wrapper artifacts and **zero** `RECA` / `RECORDING` rows; its utility here was its `metadata.json`
+(track 6 / slot 1 / channel 6), which remains valid and is used only for that. The real PASS reference is
+`captures/tidyup-base-track6-slot1-r2`.
+
+### Two transports, and what that means for the timestamps
+
+The boot `#CAP,…,capture_prewarm` lines appear in the log at 3.0–3.5 s even though the capture process only
+opened well after that, because `#CAP` goes through the **ring buffer**, which replays. The `[Memory] ext` tick
+goes to **direct `Serial`** and is not ring-buffered, so the first tick in the log is at 11.0 s while the boot
+markers sit at 3.0 s. Two consequences that must not be conflated:
+
+- the **chunk** census at boot (sequence A/B above) is **exact** — it is the device's own record of the boot;
+- the tick's `live`/`tags` figures are only available **from the moment capture opens**, so `live=3,973 KB` at
+  11.0 s is *not* the boot value. Boot-time `live` is only in the `#CAP,BOOT,ram1,188416` marker and the
+  prewarm lines' `heap_free=`.
+
+### The repeatable recipe
+
+Because nothing on the host parsed these lines, the reduction is now a script:
+
+```sh
+.venv/bin/python scripts/parse_working_set_census.py <capture-dir-or-log>... [--json OUT] [--tick-table]
+```
+
+It emits the per-sequence `free_chunks` spend with the committed-slot deltas kept **separate** from the
+zero-slot rows (the first sequence walks the default enabled set and costs a flat amount *per track*; only the
+second resolves the library), the tick summary, and any `#MEM_EXT_REFUSED` with its full tag vector. Its output
+reproduces the table above exactly.
+
+### Corrections this measurement forced
+
+1. **`pin1`/`pin24` are not canonical-chunk pins.** The tick line names them `pin1=`/`pin24=`, but the arguments
+   are `slabCensus.slabsAtMostOneNode` and `slabCensus.slabsTwoToFourNodes` (`MemoryMonitor.cpp:374-375`), i.e.
+   snapshot-**slab** occupancy buckets. The earlier device-session plan in this file read them as canonical
+   pinning for 1-bar/24-bar intervals; they are not, and **S1.4's second clause (canonical chunks pinned via
+   `SlotPassReferences`) has no telemetry at all** — `SlotPassReferences` is referenced only in
+   `PassReclaim.*`/`Loop*.cpp` and is never serialized.
+2. **"No new telemetry is required" was wrong as stated.** The 1 Hz `[Memory] ext` tick prints only
+   `tagBytes[1..7]` (`MemoryMonitor.cpp:359-365`) — CaptureStopJobs, ViewPrewarm, CaptureStaging,
+   CanonicalOutput, TransferHorizon, CompanionHistory, PlaybackOrder. The owners S1.1 names —
+   companion reconstruction / apply / bridge-map / passes and canonical pass inputs (tags 12–16), plus
+   `VisualCache` bytes and the "lease holder count, owning slot, role" fields — are **not** on any tick line.
+   The full 18-slot vector exists only in `formatTagVector` (`ExternalPoolAccounting.cpp:71-86`), whose single
+   caller is the **pool-refusal** path (`#MEM_EXT_REFUSED`, `ExternalPoolAccounting.cpp:224-234`). So the full
+   per-owner census is obtainable today only at a refusal, which is precisely S1.3's failure point; a
+   healthy-path per-owner census needs a small session-gated instrumentation increment.
+3. **Nothing on the host parses this line.** No Python under `scripts/` reads `[Memory] ext`, `#MEM_EXT_REFUSED`,
+   `#MEM_DENIED` or `#MEM_ADMIT`; `scripts/parse_memory_capture.py` handles only the older `[Memory] heap` /
+   `psram` boot lines. Every number above was read out of the raw session log.
+
+### What this leaves open, precisely
+
+- **S1.5 device leg:** the per-committed-slot figure (8 chunks, baseline) and `free_chunks` after boot (400 of
+  512) are **recorded**; the "smallest N refusing a 24-bar overdub" clause is **open**, and the native attempt
+  did not reach an admission probe.
+- **S1.1:** partially answerable now (tags 1–7, size classes, slab census); tags 8–16 and `VisualCache`/lease
+  fields need the instrumentation increment named above. Fix the record-density setup first, or the census
+  understates a real working set (`notes=4` against a `min 31` gate).
+- **S1.3:** not started. It needs a *grown* library, which means committing more slots on device — that writes
+  loop content, so it needs the owner's word on which slots are scratch.
+- **S2b.3/S2b gates:** the HEAD image is built and hashed but **not yet flashed**; the device half of the
+  zero-reservation comparison is therefore not taken.

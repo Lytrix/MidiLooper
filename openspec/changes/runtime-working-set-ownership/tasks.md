@@ -182,6 +182,20 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       reconstruction/apply/bridge-map/passes, canonical pass inputs, transfer horizon, stop-job capacity,
       prepared pair), per-loop derived bytes (snapshot slabs, whole-loop `VisualCache`), lease holder
       count, owning slot, role.
+      **DEVICE CENSUS 2026-09-23 — tags 1..16 measured.** The 1 Hz tick carries only `tags[1..7]`, so a
+      session-gated `#MEM_OWNERS` line (`MemoryMonitor::logWorkingSetOwners`, 4 s cadence, reusing
+      `formatTagVector`) was added with the owner's approval; it costs 64 B of ITCM padding (1,096 → 1,032,
+      still 192 B above the 840 floor) and 304 B FLASH, with native 2,281/0 failures. On the dense PASS run
+      (`captures/rwso-HEAD-owners-census`, 32 notes): CaptureStopJobs 412, ViewPrewarm 715, CaptureStaging 148,
+      CanonicalOutput 0, TransferHorizon 1, CompanionHistory 0, PlaybackOrder 58, ResetPassTimeline 0,
+      PrepareFirstBar 0, CompanionPairLookup 10, CompanionSpans 2, CompanionReconstruction 64,
+      CompanionApply 66, CompanionBridgeMap 68, CompanionPasses 96, CanonicalPassInputs 144 KB —
+      **tagged total 1,776 KB of 6,144 KB peak live**, with `untracked=0`/`unknown=0` so `live` is trustworthy.
+      **Still open, and neither is a telemetry oversight:** whole-loop `VisualCache` bytes (no byte accessor
+      exists) and the **lease holder / owning slot / role** triple — no playback-window lease exists until
+      S2.1, so that clause cannot be measured before S2 and should be re-scoped there rather than reported as
+      zero. Reduction: `scripts/parse_working_set_census.py`. Details:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S1.1 device census.
 - [x] S1.2 **Red scaling fixture**: assert that growing recorded slots with a constant active set does
       *not* grow working-set residence. It must **fail** on today's architecture; that failure is the
       baseline this change exists to remove. Reuse the same fixture as the green acceptance test.
@@ -227,6 +241,14 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       prewarming); only then can the refusal point be measured -- or answer it on device, where a loaded library
       is read from SD rather than sealed. **Outstanding:** that construction, and the boot `live` figure against
       a 24-bar overdub's peak reservation (~191 chunks).
+      **DEVICE BASELINE HALF RECORDED 2026-09-23** on the pinned baseline `83be2e19` (hex `a4bc37e6…040920`,
+      isolated build): `#CAP,…,DIAG,capture_prewarm` shows the default enabled set costing a flat **12 chunks per
+      track / 96 for 8 tracks** (`free_chunks` 512 → 416), and then **exactly 8 chunks per committed slot** — the
+      2 slots the SD library restored (track1/slot2, track4/slot1) took 416 → 400, while every `slot=0` track took
+      zero. `free_chunks` after boot is **400 of 512**. That is the per-slot slope this change removes; the native
+      fixture asserts it is **zero** on HEAD. The HEAD device half is **not yet taken** (image built + hashed, not
+      flashed). Log, citations and the corrections this forced:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § Device session — the baseline is flashed.
 - [ ] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
       the slope and failure point in this file as numbers.
       **Recorded 2026-09-23 (native legs only): full native 2,263 cases / 1 skipped / 2,262 succeeded /
@@ -234,6 +256,14 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       padding 872 / locals free 34,944`; the red fixture failing and recorded (see S1.2).** The gate stays
       **open** for S1.3's device slope and failure point and S1.4's undo/canonical-pin baseline, which need
       hardware.
+      **Device session opened 2026-09-23.** Now measured on hardware: the boot/load residency slope on both
+      revisions (S1.5/S2b.3, 8 chunks → 0 per committed slot), the tags-1..16 per-owner census (S1.1), and the
+      baseline build line. Full native re-verified after the instrumentation increment: **2,281 cases /
+      1 skipped / 2,280 succeeded / 0 failures**; `teensy41-capture-serial` SUCCESS with RAM1 `code 392,184 /
+      padding 1,032` (192 B above the floor). Still **open**: S1.3's slope *to the failure point*, S1.5's
+      refusal-N, and S1.4's canonical-pin half (which has no telemetry — see S1.1). Also recorded: the HITL
+      content verdict is a **coin flip** on a host bar-probe defect, so a failed content gate is retried, never
+      reinterpreted — [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § CORRECTION.
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
@@ -399,6 +429,13 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       gate.
 - [ ] S2b.3 Boot budget evidence: with N committed slots, `LoopEventStore::freeChunkCount()` after boot is
       >= peak reservation + `CHUNK_RESERVE` (16); record the boot pool `live` figure against S1.5.
+      **Baseline half measured on device 2026-09-23** (baseline `83be2e19`): `free_chunks` after boot is **400 of
+      512**, whose spend is the 96-chunk default-enabled-set cost plus **8 chunks per committed slot** for the 2
+      restored slots. **HEAD half measured 2026-09-23** (`9a2e5b9b`, hex `ea5e6d03…5a2c4ff`, run `PASS`):
+      `free_chunks` after boot is **480 of 512**, the same 2 committed slots cost **0 chunks** each at
+      `ready=0,credits=0`, and the enabled-set cost fell **12 → 4 chunks per track**. A controlled same-uptime
+      tick comparison (~11.0 s vs ~11.1 s) shows `CanonicalOutput` **320 KB → 0 KB** and `TransferHorizon`
+      **8 KB → 0 KB**. See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.3 device half.
 - [ ] S2b.4 Release the per-slot canonical reservation when the slot's role leaves the active set, using the same
       `noLiveOwnerForSlot` predicate as S4.0. **No release path exists today** (the only
       `canonicalCaptureOutput.store.clear()` is the runtime destructor; `releaseGrain` runs only from the
