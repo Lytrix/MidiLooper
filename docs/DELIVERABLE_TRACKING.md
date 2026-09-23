@@ -10,8 +10,8 @@ Teensy's `SD.open(path, FILE_WRITE)` appends and `FILE_WRITE_BEGIN` does not tru
 failed write corrupted `sets/index.bin` and the boot catalog stopped reconciling. Fixed via
 `CurrentSetStorage::openForRewrite` at the 16 from-scratch write sites plus a self-healing
 `reconcileSetIndexOnSd`, with the native SD stub corrected and a red-proven regression test. Native
-2,289 / 1 skipped / 0 failures; device shows **0** `could not reconcile` warnings across three post-fix
-boots (against one on every pre-fix boot). Plan:
+2,289 / 1 skipped / 0 failures; device shows **0** `could not reconcile` warnings across the two
+post-fix boots that actually reset the board (against one on every pre-fix boot). Plan:
 [`Plans/sd_temp_write_truncation_refinement.md`](Plans/sd_temp_write_truncation_refinement.md).
 **Not shipped:** it is not on `dev`, and a separate managed-capture loss still blocks the content PASS
 and S1.3's slope sweep.
