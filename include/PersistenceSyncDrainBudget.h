@@ -24,7 +24,7 @@ enum class SyncDrainFailureReason : uint8_t {
   /// gate the caller could have waited out or reported differently: the 2026-09-23 device session
   /// could not tell a transport gate from a slot-load gate from a post-load holdoff from any log, and
   /// so could not choose a fix on evidence.
-  BlockedByTransport,
+  BlockedByCapture,
   BlockedBySlotLoad,
   BlockedByPostLoadHoldoff,
 };

@@ -1,6 +1,28 @@
 # Project state (execution context)
 
-**2026-09-23 owner asks: persist a take as it records, make CLEAR immediate, and run a content pass — the content pass PASSES, persist-as-you-record is device-verified, CLEAR is diagnosed.**
+**2026-09-23 DEC-081 LANDED: audible playback no longer gates persistence and never stops for it.**
+
+The owner ruled that the "all tracks silent" persistence gate is **superseded** by *never require stopping,
+always keep playing*: a slot may be stopped on the selected track as it is being emptied, but every other
+playing track keeps playing. Implemented: `isTransportActiveForPersistence()` →
+**`isCaptureRecordingForPersistence()`** (recording only; all four call sites updated), `BlockedByTransport` →
+**`BlockedByCapture`**, and — deliberately — **the bounded active slice budget is retained during playback**
+(`resolvePersistenceSliceBudgetUs` still gets "anything sounding or recording", keeping
+`maxPersistenceMicrosActive` **300 us** instead of the idle fallback **3,000 us**; without that, SD bursts
+during playback would be ten times longer). Build SUCCESS at `code 392,328 / padding 888`; full native
+**2,289 / 1 skipped / 0 failures**; harness suites OK.
+
+**Device, stated honestly:** the failure mode did not recur — across five runs there are **0**
+`Clear aborted` / `Persistence drain stuck` / `Persistence drain blocked`, and a content pass reports
+**`Result: PASS`** with `overflow_free=True`. **But none of those runs had a deferred save pending at clear
+time**, so they do **not** discriminate this change; the old `Clear aborted` state was not reproduced
+post-change, and an attempt to force it (fresh boot + early clear) accidentally stopped an already-running
+transport with its transport tap — clearing the gate for the old reason. A discriminating test needs a pending
+save *and* other tracks playing at the clear. Full entry: `DEC-081` in
+[`docs/DECISION_LOG.md`](../DECISION_LOG.md).
+
+**Earlier 2026-09-23 owner asks (persist-as-you-record, content pass): the content pass PASSES and
+persist-as-you-record is device-verified.**
 
 Full findings and the exact remaining gates:
 [`docs/Plans/persistence_immediacy_clear_latency_refinement.md`](../Plans/persistence_immediacy_clear_latency_refinement.md).

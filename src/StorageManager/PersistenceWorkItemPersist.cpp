@@ -159,7 +159,7 @@ STORAGE_PERSIST_MEM void resetActivePersistenceWorkItem(PersistenceWorkItemJob& 
 
 STORAGE_PERSIST_MEM bool deferFlushForTransport() {
   return PersistenceFailurePolicy::shouldDeferTransportFlush(
-      storageSession.currentWorkspaceSave.pending, isTransportActiveForPersistence(), millis(),
+      storageSession.currentWorkspaceSave.pending, isCaptureRecordingForPersistence(), millis(),
       storageSession.currentWorkspaceSave.deferDispatchUntilMs);
 }
 

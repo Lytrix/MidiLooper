@@ -72,8 +72,8 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
                 // Name the gate that stopped the drain, in the same order `processDeferredSaveState`
                 // checks them, so a blocking CLEAR reports *why* instead of the generic "stuck"
                 // (2026-09-23 device session: the gate could not be told apart from any log).
-                if (StorageManagerInternal::isTransportActiveForPersistence()) {
-                    failureReason = SyncDrainFailureReason::BlockedByTransport;
+                if (StorageManagerInternal::isCaptureRecordingForPersistence()) {
+                    failureReason = SyncDrainFailureReason::BlockedByCapture;
                 } else if (StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd()) {
                     failureReason = SyncDrainFailureReason::BlockedBySlotLoad;
                 } else if (StorageManagerInternal::deferredSaveBlockedByPostLoadCommitHoldoff()) {
@@ -107,10 +107,10 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
                                   admissionProgress.chunkQueueDepth, drainBudget.expectedSliceSteps,
                                   drainBudget.estimatedSdPayloadBytes);
 #endif
-        } else if (failureReason == SyncDrainFailureReason::BlockedByTransport ||
+        } else if (failureReason == SyncDrainFailureReason::BlockedByCapture ||
                    failureReason == SyncDrainFailureReason::BlockedBySlotLoad ||
                    failureReason == SyncDrainFailureReason::BlockedByPostLoadHoldoff) {
-            const char* gate = failureReason == SyncDrainFailureReason::BlockedByTransport
+            const char* gate = failureReason == SyncDrainFailureReason::BlockedByCapture
                                    ? "transport_active"
                                    : (failureReason == SyncDrainFailureReason::BlockedBySlotLoad
                                           ? "slot_load_active"

@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-081](#dec-081--audible-playback-never-gates-persistence-and-never-stops-for-it) | 2026-09-23 | Audible playback never gates persistence and never stops for it (supersedes the all-tracks-silent gate) | Accepted — implemented and built; device evidence partial (no discriminating run yet) |
 | [DEC-080](#dec-080--deterministic-execution-packets-for-implementation-slices) | 2026-09-23 | Per-slice transition oracles, production-path fixtures and evidence-backed completion | Accepted — workflow only; applies to future implementation steps |
 | [DEC-079](#dec-079--runtime-working-set-implementation-handoff-corrections) | 2026-09-23 | Executable boot slice, per-holder budget, retained regeneration job and interaction composition | Accepted — OpenSpec corrections only; runtime gates open |
 | [DEC-078](#dec-078--every-interaction-is-accepted-and-finalization-is-per-interval-amends-dec-067-and-dec-076-point-2) | 2026-09-19 | Every interaction is accepted, and finalization is **per interval** (amends DEC-067 and DEC-076 point 2) | **Accepted — design authority (user decision); implementation blocked at G2 pending contract revision.** Amends DEC-067's denial wording and DEC-076 point 2; governs `runtime-working-set-ownership` S4f |
@@ -92,7 +93,73 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-081 -->
+<!-- Append new entries below (newest first). Next ID: DEC-082 -->
+
+## DEC-081 — Audible playback never gates persistence, and never stops for it
+
+**Date:** 2026-09-23
+**Owner:** `StorageManager` deferred-save scheduler; CLEAR action in `MidiButtonActions`
+**Status:** Accepted — direct owner decision; implemented and built, device evidence partial (see below).
+**Supersedes:** the "every track silent" persistence gate that `isTransportActiveForPersistence()` encoded.
+
+### Context
+
+`StorageManager::processDeferredSaveState` opened with
+
+```cpp
+if (isTransportActiveForPersistence()) { return; }   // true if ANY track is audible OR recording
+```
+
+so no deferred save could advance while any track played. That gate is what made CLEAR slow and then
+impossible: the clear stops only the **selected** track before its blocking drain, so with other tracks
+sounding the gate stayed true, the drain spun its whole stuck budget and the firmware aborted with
+`Persistence drain stuck after 33 iterations` / `Clear aborted: could not complete deferred save first`
+(measured repeatedly on 2026-09-23, e.g. `captures/sd-fix-persist4`).
+
+The owner's ruling: *"the gate that all tracks should be silent should be removed. It is surpassed by never
+require stopping, always keep playing as a goal. So a slot can be stopped on a selected track as it being
+empty, but all other tracks should just keep on playing if in a playing state."*
+
+### Decision
+
+1. **Audible playback is not a persistence gate.** `PROJECT_INTENT` §1 — *"record MIDI the moment the idea
+   happens; the music never stops"* — supersedes it. A playing track is never stopped, and never held up,
+   so that persistence can run.
+2. **Recording still parks the full drain.** `isTransportActiveForPersistence()` is replaced by
+   `isCaptureRecordingForPersistence()`, which tests `track.isRecording()` only. The multi-frame bundle
+   writers stay off a live capture; the bounded one-chunk-per-turn mid-pass flush remains the deliberate
+   exception that keeps a take durable while it is recorded.
+3. **A selected track's slot may be stopped and emptied.** That is what CLEAR does; every other track keeps
+   playing, and `restorePlaybackAfterSlotClear` restarts the cleared track if another enabled slot has
+   content.
+4. **The bounded active slice budget is retained during playback.** The gate is removed; the *slice* is not.
+   `resolvePersistenceSliceBudgetUs` still receives "anything sounding or recording" as its
+   `transportBudgetActive` input, so playback keeps `Config::maxPersistenceMicrosActive` (**300 us**) rather
+   than falling back to the idle path (`UINT32_MAX` → `maxPersistenceMicrosPerLoop`, **3,000 us**). Removing
+   the gate without this would have made SD bursts **10x longer** during playback and reintroduced the
+   display stalls the active budget exists to cap.
+
+### Consequences
+
+- CLEAR no longer requires the device to fall silent; it can complete while other tracks play.
+- Persistence may now advance during playback, bounded to 300 us per loop.
+- The `BlockedByTransport` drain-gate reason becomes `BlockedByCapture`, which is what it now means.
+- **Verification status, stated honestly:** the change is built (`teensy41-capture-serial` SUCCESS,
+  `code 392,328 / padding 888`), full native is 2,289 / 1 skipped / 0 failures, and the harness suites pass.
+  On device the failure mode did **not** recur — a four-run sweep plus a content pass show **0**
+  `Clear aborted` / `Persistence drain stuck` / `Persistence drain blocked`, and the content pass reports
+  `Result: PASS` with `overflow_free=True`. **But none of those runs had a deferred save actually pending at
+  clear time**, so they do not discriminate this change: the `Clear aborted` state was not reproduced
+  post-change. A discriminating device test needs a pending save *and* other tracks playing at the clear,
+  which the canonical flow no longer produces.
+
+### Reference
+
+[`docs/Plans/persistence_immediacy_clear_latency_refinement.md`](Plans/persistence_immediacy_clear_latency_refinement.md);
+`src/StorageManager/Internal.cpp`, `src/StorageManager/DeferredSaveScheduler.cpp`,
+`src/MidiButtonActions.cpp`, `include/PersistenceSyncDrainBudget.h`.
+
+---
 
 ## DEC-080 — Deterministic execution packets for implementation slices
 
