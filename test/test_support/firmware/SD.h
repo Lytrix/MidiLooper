@@ -33,6 +33,12 @@
 #define O_AT_END 0100000
 #endif
 
+class SDClass;
+/// The card the directory handles enumerate. Declared before `File` so a directory handle can read it
+/// without `File` needing the full `SDClass` definition (which is what created a cycle in the first
+/// attempt at this change).
+extern SDClass SD;
+
 class File {
  public:
   std::vector<uint8_t>* bytes = nullptr;
@@ -74,6 +80,21 @@ class File {
   void close() { isOpen = false; }
 
   bool writable = false;
+
+  // --- Directory handles -----------------------------------------------------
+  // On the device a `File` doubles as a directory handle: `SD.open(dir)` then repeated
+  // `openNextFile()`. The saved-set persistence scan (`scanHighestSavedSetSequenceOnSd`) reads the sets
+  // archive that way, so the in-memory card models it. The card is a flat path map, so a path "is a
+  // directory" exactly when other paths live beneath it.
+  bool isDir = false;
+  /// Child paths of this directory, in the map's (sorted) order, and how far the cursor has advanced.
+  std::vector<std::string> dirEntries;
+  size_t dirCursor = 0;
+  /// The last entry returned by `openNextFile`, for `name()`.
+  std::string entryName;
+  bool isDirectory() const { return isDir; }
+  const char* name() const { return entryName.c_str(); }
+  File openNextFile();
 };
 
 class SDClass {
@@ -125,8 +146,64 @@ class SDClass {
     return true;
   }
 
+  /// True when other file paths live beneath this path, which is what makes it a directory here.
+  static bool pathIsDirectory(const std::map<std::string, std::vector<uint8_t>>& files,
+                              const char* path) {
+    std::string prefix(path);
+    while (!prefix.empty() && prefix.back() == '/') {
+      prefix.pop_back();
+    }
+    prefix += '/';
+    for (const auto& entry : files) {
+      if (entry.first.compare(0, prefix.size(), prefix) == 0) return true;
+    }
+    return false;
+  }
+
+  /// Directory-handle form: `SD.open(dir)` with no mode. Returns an open directory `File` when other
+  /// paths live beneath `path`, otherwise an invalid handle (the device returns false for a path that is
+  /// neither a file nor a directory).
+  File open(const char* path) {
+    if (!pathIsDirectory(files, path)) return File{};
+    File handle;
+    handle.isDir = true;
+    handle.isOpen = true;
+    std::string prefix(path);
+    while (!prefix.empty() && prefix.back() == '/') {
+      prefix.pop_back();
+    }
+    prefix += '/';
+    for (const auto& entry : files) {
+      if (entry.first.compare(0, prefix.size(), prefix) == 0) {
+        handle.dirEntries.push_back(entry.first);
+      }
+    }
+    return handle;
+  }
+
   /// Test helper: create or replace a file's bytes.
   void writeFile(const char* path, const std::vector<uint8_t>& body) { files[path] = body; }
 };
+
+/// One directory entry per call, mirroring the device: the returned handle is a normal open file (or a
+/// directory, when that entry itself has children) and the caller closes it.
+inline File File::openNextFile() {
+  if (!isDir || dirCursor >= dirEntries.size()) return File{};
+  const std::string child = dirEntries[dirCursor++];
+  entryName = child;
+  if (SDClass::pathIsDirectory(SD.files, child.c_str())) {
+    File nested;
+    nested.isDir = true;
+    nested.isOpen = true;
+    const std::string prefix = child + '/';
+    for (const auto& entry : SD.files) {
+      if (entry.first.compare(0, prefix.size(), prefix) == 0) {
+        nested.dirEntries.push_back(entry.first);
+      }
+    }
+    return nested;
+  }
+  return SD.open(child.c_str(), FILE_READ);
+}
 
 extern SDClass SD;
