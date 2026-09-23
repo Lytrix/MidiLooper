@@ -4,6 +4,7 @@
 #include <unity.h>
 #include <cstdio>
 #include <random>
+#include <vector>
 
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
@@ -78,12 +79,45 @@ EditManager editManager;
 LooperStateManager looperState;
 uint32_t ClockManager::getCurrentTick() const { return currentTick; }
 void ClockManager::assignCurrentTickSilently(uint32_t tick) { currentTick = tick; }
-bool ClockManager::isTransportRunning() const { return true; }
+// P1 control (DEC-080): the transport-running boundary is test-controlled instead of
+// hardcoded true, so a case can stop the transport and then drive the *production*
+// retarget/epoch entry rather than only moving the fake clock. Reset in setUp.
+bool nativeTransportRunning = true;
+bool ClockManager::isTransportRunning() const { return nativeTransportRunning; }
 bool ClockManager::shouldQuantizeRecordStart() const { return true; }
+
+namespace {
+
+/// P1 control (DEC-080): deny canonical-copy admission through **real pool-credit
+/// exhaustion** rather than by mocking `beginDeferredOverdubStop`, publication,
+/// liveness or the load guards. Leave `keepFree` credits so the denial is exact: a
+/// `ChunkReservation` cannot grow past the free count, and a failed request rolls
+/// back to its prior credits.
+struct PoolCreditControl {
+  LoopEventStore::ChunkReservation soak;
+  size_t held = 0;
+
+  bool denyAdmission(size_t keepFree = 0) {
+    const size_t free = LoopEventStore::freeChunkCount();
+    if (free <= keepFree) return false;
+    const size_t take = free - keepFree;
+    if (!soak.reserveChunks(take)) return false;
+    held += take;
+    return true;
+  }
+
+  void restore() {
+    soak.releaseGrain(LoopEventStoreConfig::POOL_CHUNK_COUNT);
+    held = 0;
+  }
+};
+
+}  // namespace
 
 // Production lifecycle/input/undo implementations are linked above. The clock
 // and physical outputs are native boundaries; off-path domain stubs fail closed.
 void setUp() {
+  nativeTransportRunning = true;
   trackManager.~TrackManager();
   LoopEventStore::resetPoolForTests();
   new (&trackManager) TrackManager();
@@ -129,6 +163,40 @@ struct TrackCaptureStopTestAccess {
     return rt->viewSetIfPrewarmed() != nullptr ||
            rt->liveCaptureStagingIfPrewarmed() != nullptr ||
            rt->canonicalCaptureOutputAdmitted();
+  }
+  // ---- P1 read-only ownership census (DEC-080) ---------------------------------
+  // Every accessor here reads existing production state; none adds a production
+  // owner, a counter or an allocation on any path.
+  static LoopPlaybackRuntime* runtimeIfAllocated(Track& track, uint8_t slot) {
+    return track.playbackRuntime.slotIfAllocated(slot);
+  }
+  /// Credits this slot's canonical-copy reservation currently holds.
+  static size_t canonicalReservedChunks(const Track& track, uint8_t slot) {
+    const LoopPlaybackRuntime* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr ? rt->canonicalCaptureChunks.availableChunks() : 0;
+  }
+  static bool canonicalOutputEmpty(const Track& track, uint8_t slot) {
+    const LoopPlaybackRuntime* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt == nullptr || rt->canonicalCaptureOutput.store.empty();
+  }
+  static bool canonicalOutputAdmitted(const Track& track, uint8_t slot) {
+    const LoopPlaybackRuntime* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr && rt->canonicalCaptureOutputAdmitted();
+  }
+  /// Slot named by the live ring window's `index`-th entry (0 == head), or -1 when
+  /// the entry is outside the live window.
+  static int liveRingEntrySlot(const Track& track, size_t index) {
+    if (track.captureStopJobs_ == nullptr || index >= track.captureStopJobs_->count) return -1;
+    const size_t at = (track.captureStopJobs_->head + index) % Track::CaptureStopJobs::kCapacity;
+    return static_cast<int>(track.captureStopJobs_->entries[at].slot);
+  }
+  static size_t liveRingEntryCount(const Track& track) {
+    return track.captureStopJobs_ != nullptr ? track.captureStopJobs_->count : 0;
+  }
+  static uint8_t slotOfActiveLoop(const Track& track) { return track.activeLoopIndex; }
+  /// B01: whether the slot's loop admitted an active-overdub transfer horizon.
+  static bool transferHorizonAdmitted(const Track& track, uint8_t slot) {
+    return track.loopForSlot(slot).hasActiveOverdubTransferAdmission();
   }
   static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
@@ -3585,6 +3653,10 @@ struct WorkingSetResidence {
   size_t residentWorkingSetSlots = 0;
   /// Slots that have a runtime bundle at all (allocated, working set or not).
   size_t allocatedRuntimeSlots = 0;
+  /// Per committed slot: canonical-copy credits held, and whether an active-overdub
+  /// transfer horizon was admitted (B01).
+  std::vector<size_t> canonicalReservedBySlot;
+  std::vector<bool> transferHorizonBySlot;
 
   /// The part of the measured residency that belongs to *inactive* slots: what
   /// admission added on top of the committed content, plus any working set held by a
@@ -3636,6 +3708,13 @@ WorkingSetResidence measureWorkingSetResidence(size_t recordedSlots) {
 
   result.canonicalAdmittedChunks =
       static_cast<uint16_t>(poolChunks - LoopEventStore::freeChunkCount());
+
+  for (uint8_t slot = 0; slot < static_cast<uint8_t>(recordedSlots); ++slot) {
+    result.canonicalReservedBySlot.push_back(
+        TrackCaptureStopTestAccess::canonicalReservedChunks(track, slot));
+    result.transferHorizonBySlot.push_back(
+        TrackCaptureStopTestAccess::transferHorizonAdmitted(track, slot));
+  }
 
   for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
     Track& candidate = trackManager.getTrack(t);
@@ -3711,6 +3790,45 @@ void test_inactive_committed_slot_retains_no_resident_working_set() {
            static_cast<unsigned>(four.allocatedRuntimeSlots));
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(one.residentWorkingSetSlots,
                                    four.residentWorkingSetSlots, message);
+}
+
+/// P1/B01 boot cold reservation. Red on today's architecture: run with
+/// `WORKING_SET_RED=1`. On today's code the unconditional canonical reservation is
+/// the discriminating failure (the transfer-horizon clause is only reached once it
+/// is green).
+void test_b01_inactive_committed_slots_reserve_no_canonical_copy_or_horizon() {
+  const WorkingSetResidence four = measureWorkingSetResidence(4);
+  TEST_ASSERT_EQUAL_UINT32(4, four.recordedSlots);
+  TEST_ASSERT_EQUAL_UINT32(4, static_cast<uint32_t>(four.canonicalReservedBySlot.size()));
+  TEST_ASSERT_EQUAL_UINT32(4, static_cast<uint32_t>(four.transferHorizonBySlot.size()));
+
+  // Slot 0 is the one active role; slots 1..3 are committed but inactive, so the
+  // canonical-copy reservation and the transfer horizon must not be established for
+  // them (S2b.1, invariant 34).
+  size_t reservedOnInactive = 0;
+  size_t horizonsOnInactive = 0;
+  for (size_t slot = 1; slot < four.canonicalReservedBySlot.size(); ++slot) {
+    reservedOnInactive += four.canonicalReservedBySlot[slot];
+    if (four.transferHorizonBySlot[slot]) ++horizonsOnInactive;
+  }
+
+  char message[224];
+  snprintf(message, sizeof(message),
+           "an inactive committed slot reserved canonical-copy credits: "
+           "total(inactive)=%u over %u slots, per-slot %u/%u/%u (active slot 0 = %u)",
+           static_cast<unsigned>(reservedOnInactive),
+           static_cast<unsigned>(four.canonicalReservedBySlot.size() - 1),
+           static_cast<unsigned>(four.canonicalReservedBySlot[1]),
+           static_cast<unsigned>(four.canonicalReservedBySlot[2]),
+           static_cast<unsigned>(four.canonicalReservedBySlot[3]),
+           static_cast<unsigned>(four.canonicalReservedBySlot[0]));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(reservedOnInactive), message);
+
+  snprintf(message, sizeof(message),
+           "an inactive committed slot admitted a transfer horizon: %u of %u inactive slots",
+           static_cast<unsigned>(horizonsOnInactive),
+           static_cast<unsigned>(four.transferHorizonBySlot.size() - 1));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(horizonsOnInactive), message);
 }
 
 int main() {
@@ -3806,6 +3924,7 @@ int main() {
   if (getenv("WORKING_SET_RED") != nullptr) {
     RUN_TEST(test_working_set_residence_does_not_grow_with_recorded_slots);
     RUN_TEST(test_inactive_committed_slot_retains_no_resident_working_set);
+    RUN_TEST(test_b01_inactive_committed_slots_reserve_no_canonical_copy_or_horizon);
   }
   return UNITY_END();
 }

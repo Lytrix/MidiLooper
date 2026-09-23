@@ -16,7 +16,17 @@ numbers are repeated in `tasks.md` S1.2 and in [PROJECT_STATE.md](PROJECT_STATE.
 - **Gates run:** full native **2,263 / 1 skipped / 2,262 succeeded / 0 failures**; `teensy41-capture-serial`
   build SUCCESS with RAM1 padding **872**. **No device run** — S1.1's per-owner census, S1.3's slope and
   S1.4's undo/canonical-pin baseline remain open, so the S1 gate is not closed.
-- **Next:** D0.2 (P1/S2b harness controls) → S2b.1, the first behavior change.
+- **Next:** the remaining D0.2 controls (dispatch pause-and-step; linked load and transport-retarget
+  paths; B07's allocation census, which is not measurable natively) → S2b.0/S2b.1, the first behavior
+  change, which is expected to turn all three red cases green.
+
+- **D0.2/D0.3 partial, same session (test file only).** P1's controls now exist: test-controlled
+  transport state, reservation denial/recovery by real pool-credit exhaustion, and a read-only ownership
+  census. **B01 is red as designed** — with 4 committed slots and one active role, the 3 inactive slots
+  hold **8 canonical-copy credits each (24 total)** where the law requires zero
+  (`WORKING_SET_RED=1 pio test -e native -f test_continuous_capture` → 3 failed, 78 succeeded). Still
+  outstanding and recorded rather than implied: the dispatch control, the linked load/transport-retarget
+  paths, and B07's allocation census. **No production behavior has changed.**
 
 **2026-09-23 — chat reference readability.** Agent replies now pair every stage/task/gate/decision ID
 with a short descriptive name, including repeats and link labels. Canonical rule:

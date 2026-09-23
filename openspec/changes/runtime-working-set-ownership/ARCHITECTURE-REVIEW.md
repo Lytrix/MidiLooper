@@ -394,3 +394,56 @@ decision is DEC-076 point 8 together with Revision 16 and `NAMING.md`. Recorded 
 can require a dedicated id if the vocabulary must be citable on its own; nothing in this change
 depends on one, because the contract is header-only vocabulary with no new owner.
 
+
+## P1 — S2b first boot/admission slice (2026-09-23, controls and B01 only)
+
+### Controls implemented (D0.2, partial) — test file only
+
+- **Controllable transport state.** The harness's always-true `ClockManager::isTransportRunning()`
+  boundary stub is now test-controlled (`nativeTransportRunning`), reset in `setUp`. A case can stop the
+  transport and then drive the production retarget/epoch entry instead of only moving the fake clock.
+- **Reservation denial/recovery by real pool-credit exhaustion.** `PoolCreditControl::denyAdmission(keepFree)`
+  holds real `LoopEventStore::ChunkReservation` credits, so a canonical reservation cannot grow (a failed
+  `reserveChunks` rolls back to its prior credits); `restore()` returns them. Nothing mocks
+  `beginDeferredOverdubStop`, publication, liveness or the load guards.
+- **Read-only ownership census.** `TrackCaptureStopTestAccess` gained `runtimeIfAllocated`,
+  `canonicalReservedChunks(track, slot)`, `canonicalOutputEmpty`, `canonicalOutputAdmitted`,
+  `liveRingEntrySlot(index)` / `liveRingEntryCount`, `slotOfActiveLoop`, `transferHorizonAdmitted`,
+  `runtimeAllocated` and `hasResidentWorkingSet`. All read existing production state; no new production
+  counter, owner or allocation.
+- **Not implemented, and not implied by the above:**
+  - the worker/dispatch pause-and-step control for B06;
+  - the linked production load path (B04) and transport-stop-retarget path (B03);
+  - the allocation census for B07. It is **not available natively**: the wrappers that feed
+    `ExternalPoolAccounting` are `-Wl,--wrap=extmem_malloc/extmem_free` on
+    `teensy41-capture-serial` only (`platformio.ini`), so B07's "no allocation on the action edge" needs
+    either a device run or a test-only allocator boundary that does not exist yet. Recorded as a
+    limitation, not as coverage.
+
+### Oracle fixed before behavior edits
+
+**B01 — boot cold reservation: implemented and RED.** With four committed slots on the selected track
+and one active role (slot 0), the three committed-but-inactive slots each hold **8** canonical-copy
+credits, totalling **24** over the inactive set, and a transfer horizon is admitted for them (today).
+The law is zero for both, which is what S2b.1 must deliver. Run
+`WORKING_SET_RED=1 pio test -e native -f test_continuous_capture`:
+`test_b01_inactive_committed_slots_reserve_no_canonical_copy_or_horizon` — **Expected 0 Was 24**
+(`total(inactive)=24 over 3 slots, per-slot 8/8/8 (active slot 0 = 8)`). The transfer-horizon clause is
+only reached once the reservation clause is green.
+
+**B02–B07 — specified, not implemented; recorded as missing-API limitations, not as red tests.**
+B02/B03 need the slot-parameterised stop admission and the transport epoch introduced by S4f.0/S4f.4;
+B04 needs the `StorageManager` load path linked into a native harness; B05 needs the S2b.4 release API;
+B06 needs the dispatch control; B07 needs the allocation census.
+
+### Verification
+
+| check | command | result |
+|---|---|---|
+| default gate | `pio test -e native -f test_continuous_capture` | **PASSED, 78/78** |
+| B01 + the two S1.2 law cases (red) | `WORKING_SET_RED=1 pio test -e native -f test_continuous_capture` | **3 failed, 78 succeeded** — `Expected 96 Was 120`; `Expected 8 Was 11`; `Expected 0 Was 24` |
+
+- **Task state:** D0.2 **partial** (transport, denial/recovery and census controls in place; dispatch,
+  load and allocation controls outstanding). D0.3 **partial** (B01 implemented and red; B02–B07 recorded
+  as missing-API limitations). **S2b.0–S2b.6 are untouched — no production behavior has changed**, and
+  the firmware artifact is unchanged because only a test file was edited.
