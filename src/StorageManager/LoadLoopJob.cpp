@@ -276,16 +276,6 @@ STORAGE_PERSIST_MEM bool backgroundJobMayBeServicedNow() {
     return canRunBackgroundLoadLoopNow();
 }
 
-/// S2b.5: a queued restore may only be begun when no live owner holds its slot.
-///
-/// The pop is a one-way door. `popFocusDeferredLoopSlotRestore` discards an entry whose slot it judges
-/// done, and `queueDeferredLoopSlotRestore` refuses to take it back, so a caller that pops before checking
-/// destroys the request with no signal at all. Liveness is per slot, from `Track::noLiveOwnerForSlot`: a
-/// finalizing predecessor on one slot must not block a load into another.
-static bool queuedRestoreMayBegin(uint8_t trackIndex, uint8_t slotIndex) {
-    return trackManager.getTrack(trackIndex).noLiveOwnerForSlot(slotIndex);
-}
-
 /// The head of the priority queue, without popping it -- the `popNext` sites have no track/slot filter, so
 /// the liveness check has to be made against the entry the pop would take.
 static bool backgroundHeadMayBegin() {
@@ -454,13 +444,15 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
                 return;
             }
             // Fall through to background only when policy still allows it and the head is startable.
-            if (canPrepareBackgroundLoadLoopNow() && backgroundHeadMayBegin() &&
-                popNextDeferredLoopSlotRestore(next)) {
+            // A2.3: take the first **startable** request, not merely the priority head, so a blocked
+            // head cannot stall the queue behind it.
+            if (canPrepareBackgroundLoadLoopNow() &&
+                popNextStartableDeferredLoopSlotRestore(next)) {
                 (void)beginLoadLoopJob(next.track, next.slot);
             }
             return;
         case LoadLoopSelectionPolicy::EmptyIdleAction::BeginBackgroundFromQueue:
-            if (backgroundHeadMayBegin() && popNextDeferredLoopSlotRestore(next)) {
+            if (popNextStartableDeferredLoopSlotRestore(next)) {
                 (void)beginLoadLoopJob(next.track, next.slot);
             }
             return;

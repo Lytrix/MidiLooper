@@ -318,7 +318,25 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       request commit-pending the other is in the named `waiting_job_capacity` wait and is served once the
       phase clears**; a case asserts the per-turn work stays within the declared budget.
 
-- [ ] A2.3 **Startability-aware queue service (D3).** Select the first startable request in priority
+- [x] A2.3 **Startability-aware queue service (D3).**
+      → **DONE 2026-09-23.** `popNextStartableDeferredLoopSlotRestore` walks the priority order and takes
+      the **first startable** request, leaving a blocked entry queued with its reason (the A2.1 record
+      already names that wait). Done entries are still removed as queue hygiene. `queuedRestoreMayBegin`
+      moved from `LoadLoopJob.cpp` to the queue TU so the selection path and the startable pop share one
+      liveness predicate, and both `BeginBackgroundFromQueue` sites now use the startable pop instead of
+      a head-only pre-check.
+      **C4 flipped red→green and was PROMOTED into the default gate in this commit** (A1.11). New cases:
+      `test_a23_startable_service_preserves_priority_order_and_releases_the_blocked_head` (three startable
+      entries return in priority order while the blocked head stays queued and is never taken) and
+      `test_a23_second_request_reports_job_capacity_wait_while_one_is_commit_pending` (the **non-claim made
+      observable**: with one request commit-pending the gate is global, so a second request stays tracked
+      and is not described as queue starvation). Suite 25/25 default; `RESTORE_LIVENESS_RED=1` → 27 cases /
+      **1 failed** — C6 alone, the last known-red fixture. RAM1 `code 392,328 / padding 888` (the first
+      build failed at `padding 808` until the new helpers were made FLASH-resident; the placement rule is
+      enforced by the gate).
+      **Not claimed:** that this resolves the `waiting_job_capacity` blockage — it is a scheduler-level
+      gate, not queue ordering (A2.2/A2.3's explicit non-claim, now covered by a case).
+ Select the first startable request in priority
       order, leaving a blocked entry queued with its reason; keep the S2b.5 `queuedRestoreMayBegin`
       semantics and the existing done-tests. **Verify:** A1.5 flips red→green; a case asserts priority
       order is preserved among startable requests and that a blocked entry is still served once its owner

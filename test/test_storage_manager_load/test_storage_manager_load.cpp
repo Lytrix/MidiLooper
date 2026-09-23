@@ -712,6 +712,92 @@ void test_restore_request_prepare_complete_waits_at_commit_gate() {
       "the commit gate must not have been bypassed under active transport");
 }
 
+/// **A2.3 — priority order is preserved among startable requests, and a blocked entry is served once
+/// its owner retires.** The startable pop walks the priority order and leaves the blocked entry queued,
+/// so serving a lower-priority request must not reorder the rest.
+void test_a23_startable_service_preserves_priority_order_and_releases_the_blocked_head() {
+  SD.reset();
+  RestoreHarness::resetAllTracksAndPool();
+  StorageManagerInternal::resetAllRestoreRequestState();
+  RestoreHarness::setRuntimeTransportIdle();
+
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  for (uint8_t slot = 0; slot < 4; ++slot) {
+    RestoreHarness::resetSlotToEmpty(0, slot);
+  }
+  // Slot 0 is blocked by a live owner; 1, 2 and 3 are startable, in that priority order.
+  TrackCaptureStopTestAccess::latchAcceptedStopForSlot(track, PendingStopDestination::Playing, 0);
+  for (uint8_t slot = 1; slot <= 3; ++slot) {
+    RestoreHarness::resetSlotToEmpty(0, slot);
+    TEST_ASSERT_TRUE(RestoreHarness::writePayloadWithOneNoteToSd(0, slot, static_cast<uint8_t>(70 + slot)));
+    // The payload's note chunks are owned by the builder until the slot's snapshot releases them; this
+    // fixture only needs the bytes on the card, so hand the pool back for the next slot.
+    RestoreHarness::resetSlotToEmpty(0, slot);
+  }
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 0, 0));
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 1, 1));
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 2, 2));
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 3, 3));
+  StorageManagerInternal::sortPendingLoopSlotRestoreQueue();
+
+  // The first service must take slot 1 (highest priority startable), not the blocked head.
+  StorageManagerInternal::DeferredLoopSlotRestore first{};
+  TEST_ASSERT_TRUE(StorageManagerInternal::popNextStartableDeferredLoopSlotRestore(first));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, first.slot,
+                                  "the first startable request in priority order must be selected");
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::isDeferredLoopSlotRestoreQueued(0, 0),
+                           "the blocked head must remain queued");
+  StorageManagerInternal::DeferredLoopSlotRestore second{};
+  TEST_ASSERT_TRUE(StorageManagerInternal::popNextStartableDeferredLoopSlotRestore(second));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, second.slot, "priority order must be preserved among startable");
+  StorageManagerInternal::DeferredLoopSlotRestore third{};
+  TEST_ASSERT_TRUE(StorageManagerInternal::popNextStartableDeferredLoopSlotRestore(third));
+  TEST_ASSERT_EQUAL_UINT8(3, third.slot);
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::popNextStartableDeferredLoopSlotRestore(first),
+                            "only the blocked head remains, so nothing is startable");
+  TEST_ASSERT_TRUE(StorageManagerInternal::isDeferredLoopSlotRestoreQueued(0, 0));
+}
+
+/// **A2.3 non-claim, made observable (A2.2's `waiting_job_capacity`).** While one restore is
+/// commit-pending, the commit gate is **global**: no other request's preparation advances either. That
+/// state must be reported as the named job-capacity wait, and it is *not* described as queue starvation
+/// — queue ordering cannot fix it.
+void test_a23_second_request_reports_job_capacity_wait_while_one_is_commit_pending() {
+  SD.reset();
+  RestoreHarness::resetAllTracksAndPool();
+  StorageManagerInternal::resetAllRestoreRequestState();
+  RestoreHarness::setTrackAudiblyPlaying(1);
+
+  // First request: drive under transport until its preparation completes and its commit is pending.
+  RestoreHarness::armBackgroundRestoreRequest(0, 2, 71);
+  bool commitPending = false;
+  for (int turn = 0; turn < 32; ++turn) {
+    RestoreHarness::runLoadServiceTurn();
+    if (StorageManager::hasLoadLoopJobCommitPending()) {
+      commitPending = true;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(commitPending, "the fixture needs one request commit-pending");
+
+  // Second request: a separate startable slot. With the gate global, its preparation cannot advance.
+  // The first request's parsed snapshot owns pool chunks, so hand the pool back before staging another.
+  RestoreHarness::resetSlotToEmpty(0, 3);
+  RestoreHarness::resetAllTracksAndPool();
+  RestoreHarness::setTrackAudiblyPlaying(1);
+  TEST_ASSERT_TRUE(RestoreHarness::writePayloadWithOneNoteToSd(0, 3, 72));
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 3, 1));
+  RestoreHarness::runSingleLoadServiceTurn();
+
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::isDeferredLoopSlotRestoreQueued(0, 3),
+                           "the second request must still be tracked, not dropped");
+  TEST_ASSERT_EQUAL_STRING(
+      "waiting_job_capacity",
+      StorageManagerInternal::restoreRequestWaitName(
+          StorageManagerInternal::RestoreRequestWait::JobCapacity));
+}
+
 /// A fresh request is **queued**, not terminal: "not yet served" and "finished" are different states,
 /// which is the separation D1 requires.
 void test_restore_request_starts_queued_and_is_not_a_terminal() {
@@ -915,8 +1001,11 @@ int main(int, char**) {
   RUN_TEST(test_c1_transport_gated_background_admission_desired);
   RUN_TEST(test_c2_parked_job_is_serviced_or_named_after_transport_starts);
   RUN_TEST(test_restore_request_prepare_complete_waits_at_commit_gate);
+  // A2.3 promoted C4 in the slice that turned it green (A1.11). C6 is the last known-red fixture.
+  RUN_TEST(test_c4_blocked_priority_head_does_not_stall_a_startable_request);
+  RUN_TEST(test_a23_startable_service_preserves_priority_order_and_releases_the_blocked_head);
+  RUN_TEST(test_a23_second_request_reports_job_capacity_wait_while_one_is_commit_pending);
   if (getenv("RESTORE_LIVENESS_RED") != nullptr) {
-    RUN_TEST(test_c4_blocked_priority_head_does_not_stall_a_startable_request);
     RUN_TEST(test_c6_transient_failure_is_retried_not_latched);
   }
   // A1.8 — observability is default-gate: it is observation-only and passes on the current tree.
