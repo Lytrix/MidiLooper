@@ -457,7 +457,15 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       history; edited deliberately, never auto-updated) enforced by `scripts/check_ram1_budget.py` as an
       `AddPostAction` on `$BUILD_DIR/${PROGNAME}.elf` from `[env:teensy41]`. Verified both ways: the normal
       build passes and prints the numbers, and temporarily raising the floor to 900 fails the build with an
-      actionable message. **Still owed for S3.0:** pins for the members the later stages introduce (the
+      actionable message. **TWO DEFECTS FOUND AND FIXED same day** by checking that the enforcement covered every firmware env rather
+      than assuming inheritance: (1) the absolute device pins are **configuration-specific** -- `teensy41`
+      and `teensy41-capture` failed to compile because `sizeof(Track)` depends on `SESSION_CAPTURE` /
+      `PERF_TELEMETRY` -- so they are now scoped to the measured configuration, with the post-link check as
+      the configuration-independent guard; (2) the baseline had to become **per environment** (teensy41:
+      variables 79,168 / padding **9,768** / locals 51,904 vs capture-serial: 96,128 / **840** / 34,944, both
+      at 12 ITCM banks), now keyed by `$PIOENV` with named references and a hard failure for an unbaselined
+      env. All four firmware envs build and pass; the exact-value check was proven to fail on a deliberate
+      mutation. **Still owed for S3.0:** pins for the members the later stages introduce (the
       S4f.4 transport epoch, the cold-undo/standby/visual stores, the envelope). See
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3.0.) Before adding any field: `static_assert` pins for the
       **existing** structs (`sizeof(LoopPlaybackRuntime)`, `sizeof(Loop)`, `sizeof(TrackPlaybackRuntime)`) **and

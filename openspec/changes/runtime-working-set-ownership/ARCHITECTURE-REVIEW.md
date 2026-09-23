@@ -945,3 +945,49 @@ coverage, so the harness is pinned instead:
   is worth building as one shared `test_storage_manager_load` suite rather than three one-off stubs.
 - `hasPendingDeferredReconstruction()` does not exist yet; its term joins the S2b.5 predicate when S5.2e
   introduces that owner, as the contract states.
+
+## S3.0 — two defects found in the enforcement itself (2026-09-23, same day)
+
+Checking that the new budget check covered **every** firmware env — instead of assuming inheritance
+worked — found two real defects in what had just been committed.
+
+### 1. The absolute size pins were configuration-specific
+
+`teensy41` and `teensy41-capture` **failed to compile**: `static_assert(sizeof(Track) == 384)` holds only
+where `SESSION_CAPTURE` / `PERF_TELEMETRY` are defined. `Track`'s layout depends on build flags, so an
+absolute size is not a device constant. The device pins are now scoped to the configuration they were
+measured in
+(`#if defined(__IMXRT1062__) && defined(SESSION_CAPTURE) && defined(PERF_TELEMETRY)`), with the
+configuration-independent guard named as the post-link budget check. The latch pins stay unscoped because
+the latch holds no pointers and no flag changes its layout.
+
+Measured, per configuration:
+
+| env | RAM1 variables | ITCM (code + padding) | locals |
+|---|---|---|---|
+| `teensy41-capture-serial` (and `-no-grain`) | 96,128 | 393,216 (392,376 + **840**) | 34,944 |
+| `teensy41` (and `-capture`) | 79,168 | 393,216 (383,448 + **9,768**) | 51,904 |
+
+Both hold ITCM at 12 banks; the capture-serial configuration is the tight one at 840 B, while the plain
+configuration has 9,768 B of slack. That difference is exactly why a global baseline was wrong.
+
+### 2. The budget baseline has to be per environment
+
+The check then failed correctly on both plain envs, because the single global baseline described only
+`teensy41-capture-serial`. `scripts/ram1_budget.json` is now keyed by `$PIOENV`, with a **named
+reference** for envs whose budget is identical (`teensy41-capture` → `teensy41`,
+`teensy41-capture-serial-no-grain` → `teensy41-capture-serial`), and an env with **no** entry fails with
+"no approved baseline for environment X; measure it and add an entry deliberately" rather than being
+silently skipped. The `padding_floor` stays shared at 840 as a configuration-independent early warning
+before the 13th bank.
+
+### Evidence
+
+| run | result |
+|---|---|
+| `teensy41`, `teensy41-capture`, `teensy41-capture-serial`, `teensy41-capture-serial-no-grain` | all **SUCCESS**, each printing its own resolved budget and reference |
+| `teensy41-capture-serial` with `ram1_variables` temporarily set to 96,120 | **FAILED as designed** on the exact-value check, then restored |
+| full native | **2,272 cases / 1 skipped / 2,271 succeeded / 0 failures** |
+
+**Lesson recorded:** the enforcement added to satisfy the architect's requirement was itself unverified
+until it was exercised on every env. Checking the check is part of shipping it.

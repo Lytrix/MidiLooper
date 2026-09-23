@@ -699,9 +699,15 @@ private:
                   "S3.0: the interval's slot is the latch identity; keep it early and stable");
     static_assert(offsetof(PendingInteractionLatch, interval) == 8,
                   "S3.0: the latch's interval identity offset is pinned with its slot");
-#if defined(__IMXRT1062__)
+    // Absolute sizes are CONFIGURATION-specific: `Track`'s layout depends on build flags
+    // (`SESSION_CAPTURE`, `PERF_TELEMETRY`), so a plain `teensy41` build failed this pin. Scope the
+    // measured values to the configuration they were measured in. The configuration-independent
+    // guard is the post-link RAM1 budget check (`scripts/check_ram1_budget.py`), which runs for every
+    // firmware env against a per-env baseline.
+#if defined(__IMXRT1062__) && defined(SESSION_CAPTURE) && defined(PERF_TELEMETRY)
     static_assert(sizeof(Track) == 384,
-                  "S3.0: Track is the eight-way DTCM array, so a by-value member costs 8x");
+                  "S3.0: Track is the eight-way DTCM array, so a by-value member costs 8x "
+                  "(measured for teensy41-capture-serial; re-measure for another configuration)");
     static_assert(sizeof(CaptureStopJobs) == 2736,
                   "S3.0: the externally allocated ring object also carries the latch; its size is a "
                   "RAM1-relevant decision, not incidental");

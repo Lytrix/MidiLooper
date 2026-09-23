@@ -2059,7 +2059,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // width differs natively. `Track`'s own pins (and the private latch/ring types) live
 // in `Track::placementPins()`, a member context.
 // ---------------------------------------------------------------------------
-#if defined(__IMXRT1062__)
+// Configuration-specific: see the note in `Track::placementPins()`. The measured values are for
+// `teensy41-capture-serial`; the configuration-independent guard is the post-link budget check.
+#if defined(__IMXRT1062__) && defined(SESSION_CAPTURE) && defined(PERF_TELEMETRY)
 static_assert(sizeof(LoopPlaybackRuntime) == 6344,
               "S3.0: LoopPlaybackRuntime is the per-slot working set (6,344 B extmem)");
 static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");

@@ -42,10 +42,37 @@ _RAM1_RE = re.compile(
 
 
 def _read_baseline(env):
+    """Resolve this environment's approved budget, following a named-environment reference.
+
+    RAM1 differs per configuration (`Track`'s layout depends on `SESSION_CAPTURE` /
+    `PERF_TELEMETRY`), so the budget is keyed by env. An env with no entry is a failure, not a
+    silent skip: an unapproved configuration must be measured and added deliberately.
+    """
     # SCons executes extra scripts without `__file__`, so resolve from the project dir.
     path = os.path.join(env.subst("$PROJECT_DIR"), "scripts", "ram1_budget.json")
     with open(path, "r", encoding="utf-8") as handle:
-        return json.load(handle)
+        document = json.load(handle)
+
+    environments = document["environments"]
+    name = env.subst("$PIOENV")
+    seen = []
+    while isinstance(environments.get(name), str):
+        seen.append(name)
+        name = environments[name]
+        if name in seen:
+            raise RuntimeError(f"RAM1 budget check: environment reference cycle in {seen + [name]}")
+
+    entry = environments.get(name)
+    if not isinstance(entry, dict):
+        raise RuntimeError(
+            f"RAM1 budget check: no approved baseline for environment '{env.subst('$PIOENV')}'. "
+            f"Measure it and add an entry to scripts/ram1_budget.json deliberately."
+        )
+    budget = dict(entry)
+    budget["resolved_env"] = name
+    budget["padding_floor"] = document["padding_floor"]
+    budget["itcm_banks"] = document["itcm_banks"]
+    return budget
 
 
 def _size_report(env):
@@ -123,10 +150,12 @@ def _run(target, source, env):
     baseline = _read_baseline(env)
     failures = _check(actual, baseline)
 
+    source = baseline["resolved_env"]
+    suffix = "" if source == env.subst("$PIOENV") else f" (baseline: {source})"
     print(
-        f"[RAM1 budget] variables {actual['variables']:,} / ITCM {actual['itcm']:,} "
-        f"(code {actual['code']:,} + padding {actual['padding']:,}) / locals "
-        f"{actual['locals_free']:,} | approved floor: padding >= {baseline['padding_floor']:,}"
+        f"[RAM1 budget] {env.subst('$PIOENV')}{suffix}: variables {actual['variables']:,} / "
+        f"ITCM {actual['itcm']:,} (code {actual['code']:,} + padding {actual['padding']:,}) / "
+        f"locals {actual['locals_free']:,} | approved floor: padding >= {baseline['padding_floor']:,}"
     )
 
     if failures:
@@ -139,7 +168,7 @@ def _run(target, source, env):
         )
         Exit(1)
 
-    if actual["padding"] > baseline["padding_floor"]:
+    if actual["padding"] > baseline["padding_floor"] and actual["padding"] != baseline.get("padding"):
         print(
             f"[RAM1 budget] {actual['padding'] - baseline['padding_floor']:,} B of headroom "
             f"above the floor (informational; the floor is only re-based deliberately)."
