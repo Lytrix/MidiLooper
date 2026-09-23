@@ -70,6 +70,22 @@ because neither gate has a classification. A boot log shows the restore queued t
 be named from existing telemetry — which is the actionable gap: **classify the gates** first, then choose the
 behavioural fix on evidence.
 
+**Round 6 found the root, and corrected two of my readings.** `SyncDrainFailureReason` now classifies the
+drain gate (`BlockedByTransport` / `BlockedBySlotLoad` / `BlockedByPostLoadHoldoff`) and prints
+`Persistence drain blocked by <gate>` instead of the generic `Stuck`; it is built and unexercised because
+that verification run's clear happened to pass (padding 952). Two corrections: the per-slot
+**CC-feedback probe is not a content instrument** — it reported `EMPTY` for slots holding content and
+disagreed with itself across a reboot, so rounds 4 and 6's probe-based fidelity claims are **withdrawn**;
+the authoritative read is `!CAPTURE_CONTENT`. And `DIAG,lcr,skip,restore` means **a restore is pending, so
+content resolution is deferred** — not "the restore was skipped" — so it is evidence *for* the slot-load
+gate. **Authoritative fidelity:** a pre-existing committed slot restores faithfully
+(`track=2,slot=2, length=13824`, 1,964 event rows), while a loop recorded this session does **not**
+(`track=5,slot=0, length=0`, 0 rows) although the harness reported `CurrentSet saved successfully`
+**twice**. **One coherent root:** a queued boot restore (`Queuing boot playback loop slot restore 6
+pending`) keeps `SlotLoadSession::isActive()` true, which is exactly the gate
+`deferredSaveBlockedByActiveSlotLoadSd()` tests — so it explains both the unrestored new content and the
+refused CLEAR drain. Next: why the queued boot restore stays pending.
+
 **Also still blocked, and it is a different defect:** the managed capture truncates mid-run (561 and 1,732
 lines against a good run's 45,909) with **0** ring-overflow rows, so the firmware's ring did not shed —
 the capture stopped. The harness is capture-driven, so it never reaches the overdub and reports

@@ -69,7 +69,18 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
         } else {
             ++stuckIterations;
             if (stuckIterations >= drainBudget.maxStuckIterations) {
-                failureReason = SyncDrainFailureReason::Stuck;
+                // Name the gate that stopped the drain, in the same order `processDeferredSaveState`
+                // checks them, so a blocking CLEAR reports *why* instead of the generic "stuck"
+                // (2026-09-23 device session: the gate could not be told apart from any log).
+                if (StorageManagerInternal::isTransportActiveForPersistence()) {
+                    failureReason = SyncDrainFailureReason::BlockedByTransport;
+                } else if (StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd()) {
+                    failureReason = SyncDrainFailureReason::BlockedBySlotLoad;
+                } else if (StorageManagerInternal::deferredSaveBlockedByPostLoadCommitHoldoff()) {
+                    failureReason = SyncDrainFailureReason::BlockedByPostLoadHoldoff;
+                } else {
+                    failureReason = SyncDrainFailureReason::Stuck;
+                }
                 break;
             }
         }
@@ -94,6 +105,26 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
 #if defined(SESSION_CAPTURE)
             SC_PERSIST_DRAIN_FAIL("admission_refused", steps, 0, admissionProgress.workQueueDepth,
                                   admissionProgress.chunkQueueDepth, drainBudget.expectedSliceSteps,
+                                  drainBudget.estimatedSdPayloadBytes);
+#endif
+        } else if (failureReason == SyncDrainFailureReason::BlockedByTransport ||
+                   failureReason == SyncDrainFailureReason::BlockedBySlotLoad ||
+                   failureReason == SyncDrainFailureReason::BlockedByPostLoadHoldoff) {
+            const char* gate = failureReason == SyncDrainFailureReason::BlockedByTransport
+                                   ? "transport_active"
+                                   : (failureReason == SyncDrainFailureReason::BlockedBySlotLoad
+                                          ? "slot_load_active"
+                                          : "post_load_holdoff");
+            Serial.printf(
+                "[StorageManager] ERROR: Persistence drain blocked by %s after %u iterations "
+                "(max %u, expected ~%u slice steps, ~%u SD bytes)\n",
+                gate, static_cast<unsigned>(stuckIterations),
+                static_cast<unsigned>(drainBudget.maxStuckIterations),
+                static_cast<unsigned>(drainBudget.expectedSliceSteps),
+                static_cast<unsigned>(drainBudget.estimatedSdPayloadBytes));
+#if defined(SESSION_CAPTURE)
+            SC_PERSIST_DRAIN_FAIL(gate, steps, stuckIterations, progress.workQueueDepth,
+                                  progress.chunkQueueDepth, drainBudget.expectedSliceSteps,
                                   drainBudget.estimatedSdPayloadBytes);
 #endif
         } else if (failureReason == SyncDrainFailureReason::Stuck) {

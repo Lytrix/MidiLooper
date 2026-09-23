@@ -217,14 +217,53 @@ pending; first 5/0`, `LoadLoopJob done 5/0`, `#CAP,…,DIAG,lcr,skip,restore` �
 covers only the clear window (73 lines, no boot), so **which** gate held cannot be named from the telemetry
 that exists. That absence *is* the actionable defect:
 
-1. **Firmware (diagnostics, small — the necessary next step):** classify the gates so the drain reports
-   `BlockedBySlotLoad` / `BlockedByPostLoadHoldoff` (and `BlockedByTransport` for completeness) instead of
-   the generic `Stuck`. Only then can the behavioural fix be chosen on evidence rather than inference.
+1. **Firmware (diagnostics) — LANDED.** `SyncDrainFailureReason` gains `BlockedByTransport`,
+   `BlockedBySlotLoad` and `BlockedByPostLoadHoldoff`, and the drain classifies the gate in the same order
+   `processDeferredSaveState` checks it, printing `Persistence drain blocked by <gate> after N iterations`
+   instead of the generic `Stuck` (`include/PersistenceSyncDrainBudget.h`,
+   `src/StorageManager/SyncDrainSaveState.cpp`). **It did not fire in the verification run** — that run's
+   clear happened to pass (the intermittency), so the classification is built and unexercised; it costs
+   nothing on the passing path and names the gate on the failing one. Firmware SUCCESS at `padding 952`.
 2. **Firmware (behaviour, needs a decision):** make the blocking CLEAR drain handle its real gates — either
    wait out a transient load gate, or declare that CLEAR does not require the workspace save when the only
    blocker is one of them. This changes CLEAR semantics and should not be invented here.
 
-**The host anchor fix that *is* landed.** `_prepare_deferred_save_before_clear` asked "is the transport
+### Round 6: authoritative fidelity — the slot-load/restore path is the root, and two of my readings were wrong
+
+**Method correction (important).** The per-slot **CC-feedback probe is not a content or durability
+instrument.** Read after read it reported `EMPTY` for slots that held content and disagreed with itself
+across a reboot (`track2 slot3` read 18 bars pre-reboot and 3 bars post-reboot). The authoritative read is
+the **`!CAPTURE_CONTENT` dump**. Every fidelity claim below uses the dump; the CC-probe claims in rounds 4
+and 6 are **withdrawn**.
+
+**Marker correction.** `#CAP,…,DIAG,lcr,skip,restore` does **not** mean "the restore was skipped". It is
+emitted when `LoopContentResolution::deviceGateContentDeferReason(pendingRestore, …)` returns `"restore"`,
+i.e. **a restore is pending, so content resolution is deferred**. Read correctly, it is *evidence for* the
+slot-load gate hypothesis rather than against it.
+
+**What the dump establishes (post-reboot, `captures/sd-fix-dump-postreboot/`, `captures/sd-fix-dump-t5s1/`):**
+
+| slot | authoritative post-reboot dump |
+|---|---|
+| `track=2,slot=2` — pre-existing committed content | `length=13824` (18 bars), **1,964 event rows** — faithful |
+| `track=5,slot=0` — recorded this session as a 5-bar loop | `length=0`, **0 rows** — **lost** |
+
+The 5-bar loop was `length=3840` before the reboot, and the harness reported `CurrentSet saved
+successfully (v6 deferred slices)` **twice** in that run. So: **pre-existing content restores; newly
+recorded content does not**, and the save reports success while the content does not come back.
+
+**The coherent root, and it is one defect in the load/restore owner.** At boot a slot restore is queued
+(`Queuing boot playback loop slot restore 6 pending; first 5/0`); content resolution keeps deferring on it
+(`lcr,skip,restore`); `SlotLoadSession::isActive()` therefore stays true; and that is exactly the gate
+`deferredSaveBlockedByActiveSlotLoadSd()` tests. So one pending boot restore explains **both** symptoms:
+the newly saved slot never loads, and the blocking CLEAR drain cannot advance so every content run that
+needs a clear is refused at its precondition.
+
+**Next target: why the queued boot restore stays pending.** That is where the behavioural fix belongs.
+`LoadLoopJob done 5/0` in the same boot shows at least one job completing, so the question is what the
+*next* queued entry is waiting for — and the classifier above will name the gate on the next failure.
+
+### The host anchor fix that *is* landed. `_prepare_deferred_save_before_clear` asked "is the transport
 running?" only from its own baseline anchor, so a start that preceded the anchor read as "stopped"; the
 base preset starts the transport itself, so that is reachable. It now checks the whole log first, matching
 the existing precedent in `_ensure_transport_stopped_before_record_arm`
