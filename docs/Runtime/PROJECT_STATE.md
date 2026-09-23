@@ -58,7 +58,17 @@ uncommitted, mis-driven session state. What *is* established is restore **determ
 attributed reads both gave track 5 slot 1 = 3 bars, track 2 slot 3 = 18 bars); write→restore fidelity stays
 **untested** because nothing has recorded since. Next, in owners other than the SD fix: (1) firmware —
 classify the transport gate instead of `Stuck`; (2) host — make the pre-clear step actually stop the
-transport, which is the effective unblock.
+transport, which is the effective unblock. **That host fix is now landed** (whole-log-first transport check,
+matching the precedent in `_ensure_transport_stopped_before_record_arm`; host tests 48/48, 19/19, 30/30) —
+but it did **not** resolve the clear failure, and the failing run's log has **no transport start at all**, so
+the transport was never the gate. The drain is blocked by one of the two **load-owner** gates
+(`deferredSaveBlockedByActiveSlotLoadSd` = `SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile()`, or
+`deferredSaveBlockedByPostLoadCommitHoldoff`), with a real 512-byte payload owed, and it reports only `Stuck`
+because neither gate has a classification. A boot log shows the restore queued then skipped
+(`Queuing boot playback loop slot restore 6 pending; first 5/0`, `LoadLoopJob done 5/0`,
+`DIAG,lcr,skip,restore`), but the failing run's log covers only the clear window, so the specific gate cannot
+be named from existing telemetry — which is the actionable gap: **classify the gates** first, then choose the
+behavioural fix on evidence.
 
 **Also still blocked, and it is a different defect:** the managed capture truncates mid-run (561 and 1,732
 lines against a good run's 45,909) with **0** ring-overflow rows, so the firmware's ring did not shed —
