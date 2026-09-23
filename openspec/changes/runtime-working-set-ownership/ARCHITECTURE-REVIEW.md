@@ -758,3 +758,42 @@ nothing is in flight.
 - **The positive switch case is not assertable here**: a successful move calls
   `StorageManager::prioritizeLoopSlotRestoreForFocus`, which is a fail-closed off-path stub in
   `test_continuous_capture`.
+
+## P1 — S3.0 placement and size pins (2026-09-23)
+
+The pulled-forward S3.0 prerequisite for the fields this slice introduced. Two locations, because the
+private nested types need a member context:
+
+- **`Track::placementPins()`** (`include/Track.h`) — a never-called member function, so the private
+  nested types are nameable and `Track` itself is complete. Pins the platform-independent latch layout
+  (`sizeof == 40`, trivially copyable, `slot` at offset 2, `interval` at offset 8) and, device-only,
+  `sizeof(Track) == 384` and `sizeof(Track::CaptureStopJobs) == 2736`.
+- **`src/Track/TrackPlaybackRuntime.cpp`** — device-only pins for `sizeof(LoopPlaybackRuntime) == 6344`,
+  `sizeof(Loop) == 984` and `sizeof(TrackPlaybackRuntime) == 32`.
+
+**Measured device sizes** (harvested with `template <size_t N> struct Probe; Probe<sizeof(X)> p;`, the
+recipe recorded in the pin comments):
+
+| type | device size |
+|---|---|
+| `LoopPlaybackRuntime` | 6,344 |
+| `Loop` | 984 |
+| `TrackPlaybackRuntime` | 32 |
+| `Track` | 384 |
+| `Track::CaptureStopJobs` | 2,736 |
+| `Track::PendingInteractionLatch` | 40 |
+
+**The pins are effective, verified rather than assumed:** temporarily breaking the latch pin to `41`
+failed the device build in **all 8 translation units** that include `Track.h`, so an unreferenced inline
+member body is not silently skipped.
+
+**`padding` is unchanged at 840 / `code` at 392,376** — the pins emit no code, which is the point.
+
+### Recorded limitation
+
+**S3.0's own gate is not met.** Its evidence clause requires `padding >= 872`; the measured line is
+**840** (32 B below), from this change's ITCM additions. `code + padding` is constant at 393,216, no
+FlexRAM bank crossed, and `locals free` is unchanged at 34,944. The pins now make any *further* drift a
+build error, so the number cannot move silently again — but the decision to re-base the 872 line (or to
+move the ITCM-resident manager entries to FLASH) is the architect's, and is the one open item blocking
+a clean S3.0.
