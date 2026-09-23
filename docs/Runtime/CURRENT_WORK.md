@@ -2864,6 +2864,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Execution workflow:** use [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) packets and tasks D0 for every upcoming slice (DEC-080); acceptance fixtures precede production behavior changes.
 
+**Scope added 2026-09-23 (owner direction): persistence immediacy and CLEAR latency.**
+Owner asked that *a recording persist as soon as possible* (so a hang or power loss right after preserves
+part of the take) and that *CLEAR be immediate*. Findings and status:
+[`docs/Plans/persistence_immediacy_clear_latency_refinement.md`](../Plans/persistence_immediacy_clear_latency_refinement.md).
+The incremental mechanism already exists (`LoopEventStore::sealChunk` → `admitSealedChunk` →
+`MidPassChunkPersist`, emitting `PERS,mid_pass`) but sat behind the transport gate; a one-chunk-per-turn
+FLASH-resident flush is **landed** in `DeferredSaveScheduler.cpp` and its timing risk is device-verified
+(`overflow_free=True` on a 24-bar take), but it is **not yet effective** because `main.cpp`'s
+`runDeferredSaveState` requires a pending deferred save, so add a queued-capture-chunk invocation reason
+next. CLEAR's slowness is diagnosed: it silences only the **selected** track while
+`isTransportActiveForPersistence()` requires **all** tracks silent, so the drain can never finish when other
+tracks sound; the fix is per-slot supersession of the pending save rather than a global wait.
+
 **Scope added 2026-09-23 (owner direction): SD temp-write truncation fix.** The device session was
 blocked by `could not reconcile MidiLooper/sets/index.bin`; the cause is that Teensy's
 `SD.open(path, FILE_WRITE)` **appends** (`O_RDWR|O_CREAT|O_AT_END`) and `FILE_WRITE_BEGIN` does not

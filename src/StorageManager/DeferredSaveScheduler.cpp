@@ -18,6 +18,29 @@
 
 using namespace StorageManagerInternal;
 
+namespace {
+
+/// Flush at most one already-sealed capture chunk while the transport is live.
+///
+/// FLASH-resident: this is a cold SD grain, and with the block inlined the change cost 64 B of ITCM
+/// against a 48 B margin (`scripts/ram1_budget.json`, floor 840).
+STORAGE_PERSIST_MEM void flushOneQueuedCaptureChunkDuringTransport() {
+    if (PersistenceQueue::queueDepth() == 0) {
+        return;
+    }
+    if (storageSession.midPassChunkPersist.sdIoActive) {
+        return;
+    }
+    if (deferredSaveBlockedByActiveSlotLoadSd()) {
+        return;
+    }
+    storageSession.midPassChunkPersist.sdIoActive = true;
+    (void)stepMidPassChunkPersist();
+    storageSession.midPassChunkPersist.sdIoActive = false;
+}
+
+}  // namespace
+
 void StorageManager::processDeferredSaveState(const LooperState& state) {
 #if BYPASS_STOP_UNDO_SAVE
     (void)state;
@@ -33,7 +56,17 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     // bundle writes run in these windows (session_20260912_213530), producing
     // 90–598 ms display gaps. Keeping the work item parked is safe: its queue
     // ownership and state remain intact until transport is idle again.
+    //
+    // **One deliberate exception: mid-pass capture-chunk persistence.** Every sealed capture chunk
+    // is already admitted to `PersistenceQueue` as it seals (`LoopEventStore::admitSealedChunk`),
+    // and flushing one chunk per turn is what lets a take survive a hang or a power loss *during*
+    // recording instead of existing only in RAM until the stop. The exclusion above is about the
+    // multi-frame workspace/bundle writers, and those stay parked here. Two guards are kept: a slot
+    // load owns the SD session while it is active (`LoadLoopJob` parse overlapped with a write hung
+    // once, 235129), and a workspace save that is itself parked must not starve the flush -- that is
+    // exactly the state that made a take unrecoverable.
     if (isTransportActiveForPersistence()) {
+        flushOneQueuedCaptureChunkDuringTransport();
         return;
     }
     // LoadLoopJob owns the SD session through Parsing/Committing (file may be closed
