@@ -349,6 +349,37 @@ A1.7.
 - **Evidence:** suite **25/25** default; `RESTORE_LIVENESS_RED=1` → **27 cases / 1 failed** (C6);
   firmware SUCCESS with RAM1 `code 392,328 / padding 888`.
 
+### A2.4 — bounded retry then named outcome (native verified; C6 promoted; hostile set emptied)
+
+- **Change:** `kMaxLoopSlotRestoreAttempts = 3` and `scheduleLoopSlotRestoreRetry`. A retryable failure
+  resets the slot as the restore path's **own** cleanup — keeping the request identity and recording a
+  `waiting_retry` wait, which is the A2.1/G2 tightening that a blind generation advance would violate —
+  then re-queues the request while under the bound. At the bound it records the `refused` terminal and
+  latches. Retryable: token/epoch/header/size/seek/open in `beginLoadLoopJob`, and reopen/seek/read/token/
+  parse/body-probe mid-job. An **absent** file stays `unnecessary` with no retry.
+- **A2.1 retirement completed:** `loopSlotRestoreAttempted_` is **subsumed** by the request record —
+  `isLoopSlotRestoreAttempted` now means "the request reached a terminal". That removes the second
+  64-byte array, leaves one source of truth for exactly-once, and is the A2.1 requirement literally.
+- **Promotion (A1.11):** C6 **flipped red→green** and moved into the default gate; the known-red set is
+  now **empty**, so **`RESTORE_LIVENESS_RED` is deleted**. Every Packet A acceptance fixture runs in the
+  default gate, and none was deleted, generalized or threshold-relaxed to get there.
+- **The C6 fixture's oracle was corrected, and this is worth recording.** Phase 1 had asserted
+  `isLoopSlotRestoreAttempted == true` as its marker that the injected failure was *reached*. Under the
+  fix that is no longer true (a transient failure re-queues instead of latching), so the assertion would
+  have **re-encoded the defect as the oracle**. It now asserts the request is still **owed** (queued or
+  in a named wait) and not committed — which is the behavior the change exists to deliver.
+- **New case:** `test_a24_persistent_failure_reaches_the_bounded_refusal` — a payload that stays broken
+  reaches the terminal after the bound rather than retrying forever.
+- **RAM1 re-based deliberately, in the same commit, with the reason recorded:** this build needs
+  64 more bytes of RAM1 state than the approved line, because the request record stores a full
+  identity + state + terminal per `(track, slot)` where the retired flag stored one bit.
+  `ram1_budget.json` for `teensy41-capture-serial` moves to `variables 96,192 / locals_free 34,880 /
+  padding 872` (still above the 840 floor, 12 ITCM banks unchanged), with `approved_by_change` set to this
+  change. `src/StorageManager/LoopSlotRestoreQueue.cpp`'s changed accessors were made `FLASHMEM` first,
+  which kept ITCM at 392,344 and the bank count at 12.
+- **Evidence:** suite **26/26** default (and identical with the now-inert flag set); firmware SUCCESS at
+  `variables 96,192 / ITCM code 392,344 + padding 872 / locals 34,880`.
+
 ---
 
 ## Mechanism ledger (A1.9)
