@@ -24,24 +24,33 @@ gate) and for the content-verified PASS. `docs/Runtime/PROJECT_STATE.md` already
   `canRunBackgroundLoadLoopNow()` returns false while the transport runs or any track is recording or
   audibly playing, so a queued background restore simply never begins; a later transport start does not
   re-arm it.
-- **The promise is scoped to what is bounded today.** Preparation (open, read, parse) SHALL advance under
-  active transport within its declared budget. **Commit and cleanup are not claimed as active-transport
-  operations by this change:** `runDeferredLoadAndDisplayFrame` gates them behind
-  `MidiServiceDrain::admitLoadJobChild(timingCriticalTrackActive, activeCommitPending)`, whose own
-  comment says the publish "has no content-independent active-transport bound yet", and whose resolution
-  is the open clause of **`resumable-midi-boundary-playback-maintenance` task 3.3** (split Commit
-  preparation/cleanup into continuations, measure the Commit body, bound it). That task is therefore a
-  named external prerequisite, and a restore awaiting apply enters a named `waiting_commit_gate` state.
+- **The promise is scoped to what is bounded today, and it is conditional.** Preparation (open, read,
+  parse) SHALL advance under active transport within its declared budget **while no restore job is
+  commit-pending**. Two gates bound it: `runDeferredLoadAndDisplayFrame` gates commit and cleanup behind
+  `MidiServiceDrain::admitLoadJobChild(timingCriticalTrackActive, activeCommitPending)` (whose comment
+  says the publish "has no content-independent active-transport bound yet"), and
+  `hasLoadLoopJobCommitPending()` is true when **either** the active or the parked instance is in
+  commit/cleanup, so the denial is **global, not per job** — once one request reaches commit, no other
+  request's preparation advances either. Both are named waits (`waiting_commit_gate`,
+  `waiting_job_capacity`), never terminals and never unexplained stalls. Bounding them is the open clause
+  of **`resumable-midi-boundary-playback-maintenance` task 3.3**, which this change names as an external
+  prerequisite rather than absorbing; narrowing the gate per phase is a separate reviewed change (design O5).
+  **Consequently this change delivers diagnosable preparation and named waits plus drain advancement where
+  the gate admits — it does not by itself unblock CLEAR while another track keeps playing.**
 - **The queue SHALL NOT head-of-line block.** `popNextDeferredLoopSlotRestore` takes the priority
   head, and the two `popNext` call sites cannot skip an entry whose slot is owned by a live owner;
-  one blocked entry stalls every entry behind it.
+  one blocked entry stalls every entry behind it. **This is a queue-ordering fix only** and does not
+  address the scheduler-level `waiting_job_capacity` blockage above.
 - **The blocking drain SHALL advance the restore it waits on, not merely observe it.**
   `drainPersistenceWorkBlocking` loops on `processDeferredSaveState` + `yield()` and never invokes the
-  load scheduler (whose only production caller is the main loop's deferred-load frame — unavailable
-  while the drain owns the thread), so the restore cannot progress and
+  load scheduler, and a **parked** job keeps its `SlotLoadSession`, so the restore cannot progress and
   `deferredSaveBlockedByActiveSlotLoadSd()` cannot clear. The drain SHALL service the active **and**
-  parked job instances through the existing selection/admission, within a declared budget, and CLEAR
-  SHALL NOT abort on a restore it could have finished.
+  parked job instances through the existing selection/admission, deriving its admission from the **same
+  all-tracks runtime eligibility** the normal path uses — **not** from an assumption that CLEAR leaves the
+  runtime stopped, because `handleClearTrack` stops only the selected track. Where that eligibility denies,
+  the drain preserves the request and reports the named wait. Restore work SHALL also be charged in the
+  drain's step budget and progress detection, so a large restore cannot exhaust the budget or be
+  misreported as stuck, and the drain SHALL NOT become an unbounded background fill.
 - **Restore and catalog state SHALL be observable enough to diagnose without a bisect:** the request's
   state (terminal or named wait, with its reason) per restore request, the queue's blocked-vs-startable
   state, and the boot reconcile outcome (`BootRecovery` currently only prints
@@ -75,7 +84,11 @@ gate) and for the content-verified PASS. `docs/Runtime/PROJECT_STATE.md` already
   state record.
 - `src/StorageManager/LoopSlotRestoreQueue.cpp` — the priority queue and its pop/peek helpers.
 - `src/StorageManager/SyncDrainSaveState.cpp` — the drain must gain a restore-service step for the
-  active **and** parked job instances, and its `BlockedBySlotLoad` verdict becomes a named wait reason.
+  active **and** parked job instances, derive its admission from the same all-tracks runtime eligibility
+  as the normal path, and report a named wait reason instead of the generic `BlockedBySlotLoad` verdict.
+- `include/PersistenceSyncDrainBudget.h`, `src/PersistenceSyncDrainBudget.cpp` — `SyncDrainBudgetInput`
+  and `SyncDrainProgressSnapshot` / `madeSyncDrainProgress` gain restore terms, so restore work is charged
+  in the drain's step budget and restore motion counts as progress.
 - `src/StorageManager/DeferredSaveScheduler.cpp` — the drain gate and the mid-pass flush are unchanged;
   the restore service is a sibling step, not a change to the save gate.
 - `src/StorageManager/BootRecovery.cpp`, `src/StorageManager/SavedSetIo.cpp` — the reconcile outcome.

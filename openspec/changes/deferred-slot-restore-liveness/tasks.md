@@ -134,30 +134,42 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
 
 ## 2. Packet B — background restore liveness (D2, D3, D5)
 
-- [ ] A2.1 **Request identity and state separation (D1).** Introduce the request identity
-      `(track, slot, requestGeneration, setEpoch)` and the separate **wait** states
-      (`waiting_slot_owned`, `waiting_capture`, `waiting_commit_gate`, `waiting_retry`) versus the four
-      **terminals** (`committed`, `unnecessary`, `refused`, `superseded`); key the record by the full
-      identity, advance `requestGeneration` on clear/reset/commit-by-another-owner, and invalidate
-      outstanding requests on a set change as `superseded`. Stored beside the existing restore arrays
-      outside ITCM; the existing `loopSlotRestoreAttempted_` latch is retired or subsumed. **Verify:** native
-      cases assert exactly one terminal per identity; that a wait never converts to a terminal from elapsed
-      turns alone; that recording deferral is a wait; that a reused `(track, slot)` is a different request;
-      and that a set change yields `superseded` (not `refused`); full native suite green; RAM1 line recorded.
+- [ ] A2.1 **Request identity and state separation (D1), with validated generational advance.** Introduce
+      the request identity `(track, slot, requestGeneration, setEpoch)` and the separate **wait** states
+      (`waiting_slot_owned`, `waiting_capture`, `waiting_commit_gate`, `waiting_job_capacity`,
+      `waiting_retry`) versus the four **terminals** (`committed`, `unnecessary`, `refused`, `superseded`);
+      key the record by the full identity, invalidate outstanding requests on a set change as `superseded`,
+      and retire or subsume `loopSlotRestoreAttempted_`. **Generation advance SHALL be validated, not blind
+      (G2 tightening):** load-failure paths call `resetLoopSlotToEmpty()` internally, so advance the
+      generation **only for an external** reset (user CLEAR, set change, a different owner committing that
+      `(track, slot)`) and keep the identity for the restore path's **own** failure cleanup (which becomes
+      `waiting_retry`). Validate the identity for a **queued**, an **active** and a **parked** job, and
+      again **immediately before publication**. Stored beside the existing restore arrays outside ITCM.
+      **Verify:** native cases assert exactly one terminal per identity; a wait never converts to a terminal
+      from elapsed turns alone; recording deferral is a wait; a reused `(track, slot)` is a different
+      request; a set change yields `superseded`; **the restore path's own failed attempt resets the slot but
+      yields `waiting_retry`, not `superseded`**; and a job whose slot owner changed before publication is
+      superseded **publishing nothing**; full native suite green; RAM1 line recorded.
 
-- [ ] A2.2 **Background-restore preparation admission (D2).** Add a bounded background-restore service
-      slice so a queued background request's **preparation** advances while playback continues, serviced
-      after MIDI service with its own declared budget; keep recording deferred, keep the focus/High path
-      unchanged, and **do not touch the commit stop-gate** (`MidiServiceDrain::admitLoadJobChild`) — a
-      prepare-complete request waits in `waiting_commit_gate`. **Verify:** A1.2 and A1.3 flip from red to
-      green; a case asserts a prepare-complete request under active transport enters `waiting_commit_gate`
-      and applies when the gate admits; a case asserts the per-turn work stays within the declared budget.
+- [ ] A2.2 **Background-restore preparation admission (D2), scoped to the global gate.** Add a bounded
+      background-restore service slice so a queued background request's **preparation** advances while
+      playback continues, serviced after MIDI service with its own declared budget; keep recording
+      deferred, keep the focus/High path unchanged, and **do not touch the commit stop-gate**
+      (`MidiServiceDrain::admitLoadJobChild`). A prepare-complete request waits in `waiting_commit_gate`;
+      **because the gate is global (G2 finding 2), a request whose sibling job is commit-pending waits in
+      `waiting_job_capacity`** — this change SHALL NOT claim that queue-head skipping solves that
+      scheduler-level blockage. **Verify:** A1.2 and A1.3 flip from red to green **for the
+      no-commit-pending case**; a case asserts a prepare-complete request under active transport enters
+      `waiting_commit_gate` and applies when the gate admits; **a two-request case asserts that with one
+      request commit-pending the other is in the named `waiting_job_capacity` wait and is served once the
+      phase clears**; a case asserts the per-turn work stays within the declared budget.
 
 - [ ] A2.3 **Startability-aware queue service (D3).** Select the first startable request in priority
       order, leaving a blocked entry queued with its reason; keep the S2b.5 `queuedRestoreMayBegin`
       semantics and the existing done-tests. **Verify:** A1.5 flips red→green; a case asserts priority
       order is preserved among startable requests and that a blocked entry is still served once its owner
-      retires.
+      retires. **Not claimed:** that this resolves the `waiting_job_capacity` blockage, which is a
+      scheduler-level gate, not queue ordering.
 
 - [ ] A2.4 **Bounded retry then named outcome (D5).** Replace the permanent attempt latch with a declared
       bounded attempt count per power cycle; a transient failure retries (up to the bound) and a persistent
@@ -187,38 +199,77 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       grep shows this change's acceptance criteria do not claim applying a restore under timing-critical
       transport; no `src/main.cpp` commit-gate change exists in this change's diff.
       *(Referenced elsewhere as **runtime-maintenance 3.3**, to avoid confusion with this change's own
-      A3.3 task.)*
+      Packet C tasks.)*
+
+**Revision 3 (2026-09-23) — the re-review returned BLOCKED on three further gaps; all three are corrected
+here, in `proposal.md`, `specs/`, and `design.md`:**
+
+1. **CLEAR does not make the whole runtime stopped.** Withdrawn assumption: D4 originally claimed the drain
+   is the "STOPPED-policy path because CLEAR stops the selected track".
+   `MidiButtonActions::handleClearTrack` stops only the **selected** track, while `timingCriticalTrackActive`
+   is computed over **all** tracks (`isRecording() || isAudiblePlaybackActive()`), so another track playing
+   leaves the runtime timing-critical. The drain now derives admission from the **same actual eligibility**
+   and, where the gate denies, preserves the request and reports the named wait (A3.1, A3.5 shape b).
+2. **One waiting commit blocks every other request's preparation.** The gate is **global**:
+   `hasLoadLoopJobCommitPending()` is true when either instance is `Committing`/`Cleanup`, and `main.cpp`
+   then denies the **whole** load child. The preparation promise is now explicitly conditional and gains the
+   `waiting_job_capacity` wait; a two-request fixture covers it, and this change no longer implies that
+   queue-head skipping solves it (A2.2, A2.3).
+3. **Restore work was absent from the drain's budget and progress accounting.** `SyncDrainBudgetInput` and
+   `SyncDrainProgressSnapshot` carry persistence fields only, so a large restore could exhaust
+   `maxSliceSteps` or look stalled while progressing. Restore terms are added to both, with a bounded
+   fresh-queue admission and named holdoff reporting (A3.3).
+
+**Scope consequence, stated once and binding:** this change delivers **diagnosable preparation and named
+waits**, plus drain advancement where the gate admits. It does **not** by itself unblock CLEAR during
+another track's playback — that requires **runtime-maintenance task 3.3** (bounded commit/cleanup). O5
+(narrowing the gate per phase) is a separate, reviewed change.
 
 ## 3. Packet C — the blocking drain advances the restore (D4)
 
-- [ ] A3.1 **Drain-side restore service (D4).** Give the blocking drain a restore-service step that uses
-      the existing selection/admission (`selectSubmittedLoadJobs` + `stepSubmittedLoadJobs`) plus one
-      bounded advance of an admitted job, servicing the **active and parked** instances, within a declared
-      per-iteration budget; no second loader, queue, or admission policy. **Verify:** A1.7 flips
+- [ ] A3.1 **Drain-side restore service on the real eligibility (D4, G2 finding 1).** Give the blocking
+      drain a restore-service step that uses the existing selection/admission
+      (`selectSubmittedLoadJobs` + `stepSubmittedLoadJobs`) plus one bounded advance of an admitted job,
+      servicing the **active and parked** instances. The step SHALL derive its admission from the **same
+      all-tracks runtime eligibility** the normal frame uses (fed into `admitLoadJobChild`), **not** from
+      an assumption that CLEAR left the runtime non-timing-critical — `MidiButtonActions::handleClearTrack`
+      stops only the **selected** track, and other tracks may still play or record. **Verify:** A1.7 flips
       red→green; a case calls the **real blocking drain** with no external advancement between assertions
-      and asserts the save completes; a case with a **parked** job holding the session asserts the wait
-      clears; a case asserts a wait the drain must not break is reported as its named reason.
+      and asserts the save completes **where the gate admits**; a case with a **parked** job holding the
+      session asserts the wait clears; and **a case with CLEAR on one track, another track playing, and a
+      restore commit pending asserts the drain preserves the request and reports the named commit-gate
+      wait instead of admitting an unbounded commit**.
 
 - [ ] A3.2 **Named drain verdict (D4).** Replace the generic `BlockedBySlotLoad` verdict with
       `BlockedByRestore(<request wait reason>)` so the drain reports *why* it could not advance, and keep
-      the existing `BlockedByCapture` / `BlockedByPostLoadHoldoff` distinctions. **Verify:** cases assert
-      the named reason for capture-active, commit-gate and retry waits; no case asserts a generic `Stuck`
-      where a named reason is available.
+      the existing `BlockedByCapture` / `BlockedByPostLoadHoldoff` distinctions (the holdoff is reported by
+      name, not spun). **Verify:** cases assert the named reason for capture-active, commit-gate,
+      job-capacity and retry waits; no case asserts a generic `Stuck` where a named reason is available.
 
-- [ ] A3.3 **Preserve the DEC-081 and capture behavior.** Assert in cases that audible playback is still
+- [ ] A3.3 **Restore work in the drain budget and progress accounting (D4, G2 finding 3).** Extend
+      `SyncDrainBudgetInput` and `SyncDrainProgressSnapshot` / `madeSyncDrainProgress` so that (a) the
+      drain's step budget covers active and parked restore work, (b) restore progress counts as progress
+      and cannot trip the stuck detector or `maxSliceSteps`, and (c) the drain admits **at most the bounded
+      fresh queue work it needs** — a drain must not become an unbounded background fill. **Verify:** a case
+      runs a **small pending save behind a multi-slice restore** through the real drain and asserts it
+      completes without a stuck report or budget exhaustion; a case asserts restore motion alone registers
+      as progress; a case asserts a drain does not drain the whole restore queue; RAM1 line recorded.
+
+- [ ] A3.4 **Preserve the DEC-081 and capture behavior.** Assert in cases that audible playback is still
       not a persistence gate, that a recording track still parks the multi-frame writers, and that the
       mid-pass one-chunk flush still runs during a take. **Verify:** the named regression cases pass; no
-      change to `isCaptureRecordingForPersistence` semantics; the drain's slice budget stays derived from
-      queued SD work.
+      change to `isCaptureRecordingForPersistence` semantics.
 
-- [ ] A3.4 **Packet C device gate.** With a deferred save owed and a restore in flight, press CLEAR on
-      the device. **Verify:** CLEAR completes; **0** `Clear aborted` / `Persistence drain stuck`; either
-      the drain completed after the restore terminal or the log names the blocked-by-restore reason.
-      Record the capture path. If cancellation turns out to be necessary, STOP and return to design for
+- [ ] A3.5 **Packet C device gate.** With a deferred save owed and a restore in flight, press CLEAR on the
+      device — in both shapes: (a) nothing else sounding, and (b) **another track audibly playing**.
+      **Verify:** shape (a) completes; shape (b) either completes or is recorded as the named commit-gate
+      wait **with `runtime-maintenance 3.3` still open** — a refusal with the named reason is a valid
+      outcome here, an *unexplained* abort is not. **0** `Clear aborted` / `Persistence drain stuck`.
+      Record the capture paths. If cancellation turns out to be necessary, STOP and return to design for
       the `DEC` (proposal TBD-3) rather than implementing it here.
 
-- [ ] A3.5 **Packet C gate.** Full native suite green; A3.1–A3.3 cases green; RAM1 line recorded;
-      A3.4 evidence recorded.
+- [ ] A3.6 **Packet C gate.** Full native suite green; A3.1–A3.4 cases green; RAM1 line recorded;
+      A3.5 evidence recorded for both shapes.
 
 ## 4. Packet D — boot catalog reconcile outcome (D6)
 
