@@ -173,6 +173,100 @@ void test_restore_only_drain_budget_is_bounded_not_zero() {
   TEST_ASSERT_GREATER_THAN(0u, budget.estimatedSdPayloadBytes);
 }
 
+// ---------------------------------------------------------------------------
+// Packet C / A3.2 — the named drain verdict.
+//
+// The drain collapsed "a restore holds the save gate" into one generic `BlockedBySlotLoad`, so a blocking
+// CLEAR could not report *why*. The classification is a pure decision over the gate predicates plus the
+// restore request's named wait, so it is testable natively even though the real drain cannot link
+// (REVIEW.md A1.7). The verdict carries the name as well as the reason, so the ITCM drain's report site
+// needs no branching.
+// ---------------------------------------------------------------------------
+
+using PersistenceSyncDrainBudget::SyncDrainVerdict;
+
+/// Capture is its own reason and wins over the slot-load gate, matching the drain's own check order (a
+/// recording track defers the load itself).
+void test_drain_verdict_names_capture_before_slot_load() {
+  const SyncDrainVerdict v = PersistenceSyncDrainBudget::classifySyncDrainVerdict(
+      /*captureRecording=*/true, /*slotLoadActive=*/true, /*postLoadHoldoff=*/false,
+      SyncDrainWait::kNone);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(SyncDrainFailureReason::BlockedByCapture),
+                        static_cast<int>(v.reason));
+  TEST_ASSERT_EQUAL_STRING("transport_active", v.gate);
+}
+
+/// A restore holding the save gate reports the request's **named wait**, and the verdict carries that
+/// name so the drain reports *why*.
+void test_drain_verdict_names_the_restore_wait_reason() {
+  struct Case {
+    uint8_t wait;
+    const char* expected;
+  };
+  const Case cases[] = {
+      {SyncDrainWait::kSlotOwned, "waiting_slot_owned"},
+      {SyncDrainWait::kCapture, "waiting_capture"},
+      {SyncDrainWait::kCommitGate, "waiting_commit_gate"},
+      {SyncDrainWait::kJobCapacity, "waiting_job_capacity"},
+      {SyncDrainWait::kRetry, "waiting_retry"},
+  };
+  for (const Case& c : cases) {
+    const SyncDrainVerdict v = PersistenceSyncDrainBudget::classifySyncDrainVerdict(
+        /*captureRecording=*/false, /*slotLoadActive=*/true, /*postLoadHoldoff=*/false, c.wait);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(SyncDrainFailureReason::BlockedByRestore),
+                                  static_cast<int>(v.reason), c.expected);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(c.expected, v.gate, c.expected);
+  }
+}
+
+/// A slot load that is active but names **no** wait keeps the historical `BlockedBySlotLoad`, so no
+/// existing report regresses to a less specific label.
+void test_drain_verdict_keeps_slot_load_when_no_wait_is_named() {
+  const SyncDrainVerdict v = PersistenceSyncDrainBudget::classifySyncDrainVerdict(
+      false, true, false, SyncDrainWait::kNone);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(SyncDrainFailureReason::BlockedBySlotLoad),
+                        static_cast<int>(v.reason));
+  TEST_ASSERT_EQUAL_STRING("slot_load_active", v.gate);
+}
+
+/// The post-load holdoff is named, and is checked only after the slot-load gate.
+void test_drain_verdict_names_the_post_load_holdoff() {
+  const SyncDrainVerdict holdoff = PersistenceSyncDrainBudget::classifySyncDrainVerdict(
+      false, false, true, SyncDrainWait::kNone);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(SyncDrainFailureReason::BlockedByPostLoadHoldoff),
+                        static_cast<int>(holdoff.reason));
+  TEST_ASSERT_EQUAL_STRING("post_load_holdoff", holdoff.gate);
+
+  const SyncDrainVerdict slotLoadWins = PersistenceSyncDrainBudget::classifySyncDrainVerdict(
+      false, true, true, SyncDrainWait::kNone);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(SyncDrainFailureReason::BlockedBySlotLoad),
+                                static_cast<int>(slotLoadWins.reason),
+                                "an active slot load outranks the holdoff, as the drain checks it");
+}
+
+/// `Stuck` is reserved for the case where **no** gate explains the lack of progress; nothing here may
+/// collapse a named gate into it.
+void test_drain_verdict_reserves_stuck_for_an_unexplained_gate() {
+  const SyncDrainVerdict unexplained = PersistenceSyncDrainBudget::classifySyncDrainVerdict(
+      false, false, false, SyncDrainWait::kNone);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(SyncDrainFailureReason::Stuck),
+                        static_cast<int>(unexplained.reason));
+  TEST_ASSERT_EQUAL_STRING("unexplained", unexplained.gate);
+
+  const SyncDrainVerdict named[] = {
+      PersistenceSyncDrainBudget::classifySyncDrainVerdict(true, false, false, SyncDrainWait::kNone),
+      PersistenceSyncDrainBudget::classifySyncDrainVerdict(false, true, false, SyncDrainWait::kNone),
+      PersistenceSyncDrainBudget::classifySyncDrainVerdict(false, false, true, SyncDrainWait::kNone),
+      PersistenceSyncDrainBudget::classifySyncDrainVerdict(false, true, false, SyncDrainWait::kRetry),
+  };
+  for (const SyncDrainVerdict& v : named) {
+    TEST_ASSERT_TRUE_MESSAGE(v.reason != SyncDrainFailureReason::Stuck,
+                             "a named gate must never be reported as generic Stuck");
+    TEST_ASSERT_TRUE_MESSAGE(v.gate != nullptr && v.gate[0] != '\0',
+                             "every verdict must carry a reportable name");
+  }
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_loop_persist_slice_steps_scales_with_chunks);
@@ -183,5 +277,11 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_drain_budget_includes_restore_work);
   RUN_TEST(test_made_sync_drain_progress_counts_restore_motion);
   RUN_TEST(test_restore_only_drain_budget_is_bounded_not_zero);
+  // A3.2 — the named drain verdict.
+  RUN_TEST(test_drain_verdict_names_capture_before_slot_load);
+  RUN_TEST(test_drain_verdict_names_the_restore_wait_reason);
+  RUN_TEST(test_drain_verdict_keeps_slot_load_when_no_wait_is_named);
+  RUN_TEST(test_drain_verdict_names_the_post_load_holdoff);
+  RUN_TEST(test_drain_verdict_reserves_stuck_for_an_unexplained_gate);
   return UNITY_END();
 }

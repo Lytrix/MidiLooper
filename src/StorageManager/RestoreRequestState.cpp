@@ -119,6 +119,13 @@ STORAGE_PERSIST_MEM bool restoreRequestRecordIsCurrent(uint8_t trackIndex, uint8
            record.setEpoch == restoreSetEpoch_;
 }
 
+STORAGE_PERSIST_MEM RestoreRequestWait restoreRequestWaitFor(uint8_t trackIndex, uint8_t slotIndex) {
+    if (!coordinatesValid(trackIndex, slotIndex)) {
+        return RestoreRequestWait::None;
+    }
+    return restoreRequestRecords_[trackIndex][slotIndex].wait;
+}
+
 STORAGE_PERSIST_MEM void markRestoreRequestRunning(uint8_t trackIndex, uint8_t slotIndex) {
     if (!coordinatesValid(trackIndex, slotIndex)) {
         return;

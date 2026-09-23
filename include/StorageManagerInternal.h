@@ -258,6 +258,14 @@ enum class RestoreRequestTerminal : uint8_t {
 /// different request and a stale record can never be reported as the current outcome.
 void beginRestoreRequest(uint8_t trackIndex, uint8_t slotIndex);
 RestoreRequestState restoreRequestState(uint8_t trackIndex, uint8_t slotIndex);
+/// The request's named wait reason (A3.2), so the drain can report *why* a restore holds the save gate.
+RestoreRequestWait restoreRequestWaitFor(uint8_t trackIndex, uint8_t slotIndex);
+/// A3.2: the wait reason of the request currently holding the save gate, or `None`. Consults the live job
+/// instances first (they hold the SD session), then any request in a named wait.
+RestoreRequestWait restoreWaitReasonBlockingSave();
+/// A3.2: the same answer as a `SyncDrainWait` code, so the pure drain verdict takes a small integer and
+/// the drain TU needs no vocabulary of its own.
+uint8_t restoreWaitCodeBlockingSave();
 bool restoreRequestRecordIsCurrent(uint8_t trackIndex, uint8_t slotIndex);
 void markRestoreRequestRunning(uint8_t trackIndex, uint8_t slotIndex);
 void markRestoreRequestWaiting(uint8_t trackIndex, uint8_t slotIndex, RestoreRequestWait wait);

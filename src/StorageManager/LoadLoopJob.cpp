@@ -844,6 +844,55 @@ STORAGE_PERSIST_MEM uint8_t restoreWorkPhase() {
     return 255;
 }
 
+/// A3.2: the wait reason of the request that currently holds the save gate. The live job instances hold
+/// the SD session, so they are consulted first; when neither is active, the first request in a named wait
+/// is what the drain is waiting on.
+STORAGE_PERSIST_MEM RestoreRequestWait restoreWaitReasonBlockingSave() {
+    using namespace StorageManagerInternal;
+    if (loadLoopJob_.active) {
+        const RestoreRequestWait wait = restoreRequestWaitFor(loadLoopJob_.track, loadLoopJob_.slot);
+        if (wait != RestoreRequestWait::None) {
+            return wait;
+        }
+    }
+    if (parkedLoadLoopJob_.active) {
+        const RestoreRequestWait wait =
+            restoreRequestWaitFor(parkedLoadLoopJob_.track, parkedLoadLoopJob_.slot);
+        if (wait != RestoreRequestWait::None) {
+            return wait;
+        }
+    }
+    for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+        for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+            const RestoreRequestWait wait = restoreRequestWaitFor(trackIndex, slotIndex);
+            if (wait != RestoreRequestWait::None) {
+                return wait;
+            }
+        }
+    }
+    return RestoreRequestWait::None;
+}
+
+/// A3.2: the same answer as a `SyncDrainWait` code, for the pure verdict classifier.
+STORAGE_PERSIST_MEM uint8_t restoreWaitCodeBlockingSave() {
+    using namespace StorageManagerInternal;
+    switch (restoreWaitReasonBlockingSave()) {
+        case RestoreRequestWait::SlotOwned:
+            return SyncDrainWait::kSlotOwned;
+        case RestoreRequestWait::Capture:
+            return SyncDrainWait::kCapture;
+        case RestoreRequestWait::CommitGate:
+            return SyncDrainWait::kCommitGate;
+        case RestoreRequestWait::JobCapacity:
+            return SyncDrainWait::kJobCapacity;
+        case RestoreRequestWait::Retry:
+            return SyncDrainWait::kRetry;
+        case RestoreRequestWait::None:
+        default:
+            return SyncDrainWait::kNone;
+    }
+}
+
 bool isActiveLoadLoopJobRunning() {
     return loadLoopJob_.active;
 }
