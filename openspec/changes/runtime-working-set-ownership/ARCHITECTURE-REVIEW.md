@@ -2349,12 +2349,37 @@ Two defects in that first cut were found and fixed before it was withdrawn, and 
   floor, so the budget check correctly FAILED**. The pin census was therefore reverted; padding is back to
   **1,032 (192 B of headroom)** and the tree is green.
 
-So clause 2's value is a **provisional observation, not landed evidence** — it is reproducible only from a
-temporary instrumentation that is not in the tree. The cheap route to land it, for whoever owns the budget
-decision: fold the three pin fields into the **existing** `SC_PASS_RECLAIM` line
-(`DebugSessionCapture::passReclaim`) rather than adding a second `printf` — one format string and one call
-instead of two. Below the 840 B floor is an explained-budget-change decision, and this change records the cost
-rather than re-basing the floor to meet it.
+**LANDED 2026-09-23 as the `SC_PASS_RECLAIM` fold, and measured on device.** The three pin fields now ride the
+**existing** reclaim line (`DebugSessionCapture::passReclaim`) instead of a second `printf`, with
+change-detection in the guard so it stays quiet. On the dense PASS run
+`captures/rwso-HEAD-pins-landed/` (hex `cba22f1d…`), the line carries the pinned side of the ledger for the
+first time:
+
+| t | `capture_pins` | `edit_pins` | `slots_with_pins` | `reclaimed` / `released` |
+|---|---|---|---|---|
+| 9.23 s | 0 | 0 | 0 | 0 / 0 |
+| 10.68 s | 5 | 0 | 1 | 0 / 0 |
+| 15.70 s | **8** | 0 | **2** | 0 / 0 |
+| 34.08 s | 3 | 0 | 1 | 0 / 0 |
+| 70.26 s | 7 | 0 | 2 | 0 / 0 |
+
+So the undo roots pin **0 → 8 capture passes across 0 → 2 slots**, with **`edit_pins` = 0 throughout** in this
+scenario — the B10 baseline. Note every row has `reclaimed=0` and `released=0`: the lines appear purely because
+the pin triple *changed*, which is exactly what the change-detection is for. Five lines, against the ~2,000 the
+naive "pins exist" gate wrote.
+
+**A correction to my own reasoning about the cost.** I predicted the fold would be cheaper than a trimmed
+standalone line because it avoids a second `printf`. Measured, it is **not**: the fold lands at padding **904**
+(64 B above the floor) — the same 904 the trimmed standalone line reached. What actually saved bytes was
+**trimming the format arguments**, not avoiding the second call; the floor-bound cost here is the accumulation
+work (three counters and the per-slot loop body), which both shapes pay. The change remains net positive against
+the original 872 baseline (+32 B), but the margin is now thin and a further diagnostic here should be expected to
+need its own budget decision.
+
+**Still not the *chunk* figure.** `SlotPassReferences` pins **pass ids**, so what is measured is pinned passes and
+the slots holding them — not the byte/chunk footprint those passes reference. Converting passes to chunks needs
+each pinned pass's chunk list, which this instrumentation does not reach; with ITCM headroom down to 64 B that
+conversion is deliberately left to whoever next owns the budget rather than smuggled in here.
 
 ### CORRECTION: the baseline FAIL / HEAD PASS asymmetry is a host-harness coin flip (2026-09-23)
 

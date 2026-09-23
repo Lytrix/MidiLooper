@@ -596,11 +596,17 @@ SC_MEM_ATTR void captureAppendDeny(const char* reason, uint16_t freeChunks, uint
 
 SC_MEM_ATTR void passReclaim(uint16_t chunksFreeBefore, uint16_t chunksFreeAfter,
                              uint16_t passesReclaimed, uint16_t chunksReleased,
-                             uint32_t durationUs, const char* pressure, uint8_t transport) {
-  emitCapPrintf("#CAP,%lu,DIAG,reclaim,%u,%u,%u,%u,%lu,%s,%u\r\n", (unsigned long)micros(),
+                             uint32_t durationUs, const char* pressure, uint8_t transport,
+                             uint16_t capturePins, uint16_t editPins, uint16_t slotsWithPins) {
+  // S1.4's pinned-side fields ride this line rather than a second `printf`: a dedicated census line
+  // cost 192 B of ITCM padding (1,032 -> 840, the floor) and `noinline`+FLASHMEM pushed it to 824,
+  // below the floor, where the RAM1 budget check failed. Extending an existing emitter's argument
+  // list is the cheap route the change recorded.
+  emitCapPrintf("#CAP,%lu,DIAG,reclaim,%u,%u,%u,%u,%lu,%s,%u,%u,%u,%u\r\n", (unsigned long)micros(),
                 (unsigned)chunksFreeBefore, (unsigned)chunksFreeAfter, (unsigned)passesReclaimed,
                 (unsigned)chunksReleased, (unsigned long)durationUs, pressure,
-                (unsigned)transport);
+                (unsigned)transport, (unsigned)capturePins, (unsigned)editPins,
+                (unsigned)slotsWithPins);
 }
 
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount) {
