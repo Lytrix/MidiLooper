@@ -156,34 +156,41 @@ background restore, which is exactly the defect under test.
   attempted=1, pending=0, active=0, parked=0)` — the latch holds the slot for the power cycle.
 - **Harness additions:** `snapshotSlotPayloadBytes`, `replaceSlotPayloadBytes`, `truncateSlotPayload`.
 
-### A1.7 — C5 the blocking drain cannot advance the restore (closure measured; fixture not yet landed)
+### A1.7 — C5 the blocking drain cannot advance the restore (closure fully measured; fixture not yet landed)
 
-A1.7 requires the **real** `drainPersistenceWorkBlocking`, and this path has zero native coverage
-today. This round measured its link closure rather than modelling it with a test-only stand-in (which
-the G2 packet rules forbid as acceptance evidence) or silently expanding the slice.
+A1.7 requires the **real** `drainPersistenceWorkBlocking`, and this path has zero native coverage. This
+round completed the closure measurement rather than modelling the drain with a test-only stand-in (which
+the G2 packet rules forbid as acceptance evidence) or silently absorbing an unbounded slice.
 
-- **New suite:** `test/test_storage_drain_restore`, registered in `scripts/native_test_link.py`'s
-  `_FIRMWARE_BOUNDARY_SUITES`. It links the drain TU and the measured import set and currently runs one
-  **behaviour-free** case that only proves the boundary stubs and the import set compile and link
-  together. A1.7 and Packet C replace that case with the real drain call.
-- **Boundary stubs added** (shared with every native suite, all device-faithful and additive):
-  `PSTR`, `NativeSerial::printf_P`, `NativeSerial::print(value, base)`, the `DEC/HEX/OCT/BIN`
-  selectors, `File::flush`, and `O_CREAT`/`O_RDWR`/`O_AT_END`.
-- **Import set that links** (beyond the load suite): `SyncDrainSaveState`, `SyncDrainBudget`,
+**Landed and kept** (`test/test_storage_drain_restore`, registered in `scripts/native_test_link.py`):
+
+- Boundary stubs, all device-faithful and additive: `PSTR`, `NativeSerial::printf_P`,
+  `NativeSerial::print(value, base)` with `DEC/HEX/OCT/BIN`, `File::flush`, and
+  `O_CREAT`/`O_RDWR`/`O_AT_END`.
+- The suite links the drain TU plus a 19-TU import set (the load suite's set plus `SyncDrainBudget`,
   `PersistenceSyncDrainBudget`, `PersistenceWorkQueue`, `DeferredSaveScheduler`, `PersistenceBudget`,
   `RevisionLoadPolicy`, `Internal`, `PersistenceAdmit`, `PersistenceFailurePolicy`, `RevisionLoad`,
-  `RevisionCommit`, `MidPassChunkPersist`, `WallClockSdSync`, `PersistenceWorkItemPersist`.
-- **Remaining undefined symbols** (the tail, in link order): `PersistenceSchema::crc32*`,
-  `RevisionPackedBlob::*` (7 functions), `SetRevisionCatalog::allocateNextSetId`,
-  `LooperStateManager::exitLoadSaveMode`, plus whatever those pull in.
-- **Why this is parked rather than absorbed.** Completing the tail means importing the revision/catalog
-  pack and the workspace-save job stages — `RevisionPackedBlob`, `SetRevisionCatalog`, `WorkspaceSave`,
-  `DeferredSaveJobStages`, `BootRecovery` — which is a real expansion of Packet A's slice and of this
-  suite's surface, not a fixture mechanic. The honest options are (a) complete the import set as a
-  deliberate, recorded slice, or (b) decide that the drain's C5 behaviour is device-verified only and
-  narrow A1.7/A3.x accordingly. That choice changes what Packet C can claim, so it is recorded here for
-  the owner rather than taken silently. `design.md`/`tasks.md` currently require native drain fixtures
-  (A3.1/A3.3/A3.4), so (a) is the path the contract assumes.
+  `RevisionCommit`, `MidPassChunkPersist`, `WallClockSdSync`, `PersistenceWorkItemPersist`,
+  `PersistenceSchema`, `RevisionPackedBlob`, `SetRevisionCatalog`, `DeferredSaveJobStages`,
+  `WorkspaceSave`, `RuntimeBundleFooter`, `CurrentSetBootLoad`, `LegacyMonolithLoad`, `SavedSetIo`) and
+  runs one behaviour-free case proving that set compiles and links.
+
+**The remaining closure, measured and now fully enumerated** (adding these TUs produced exactly this
+list and no new class of dependency):
+
+| Missing capability | Owner | Why it is not linkable as-is |
+|---|---|---|
+| directory enumeration (`open(dir)`, `openNextFile`, `isDirectory`, `name`) | `test/test_support/firmware/SD.h` | the in-memory card is a flat path map; it models file bytes and write modes but not the `File`-as-directory handle that `scanHighestSavedSetSequenceOnSd` uses |
+| `RtcTime::getUnixTime` / `raiseWallClockToAtLeast` | `src/RtcTime.cpp` | includes `core_pins.h`/imxrt registers — the TU does not compile for `native` at all |
+| `LooperStateManager::exitLoadSaveMode` | `src/LooperState.cpp` | the TU also defines the `looperState` global the shared harness owns, so including it is a duplicate definition; the method only closes the set-browser overlay, unreachable from a drain fixture |
+
+**Assessment.** The remaining work is three **boundary** items, not further discovery: a directory view
+for the in-memory card, a native wall clock, and a public flag setter for the overlay. The persistence
+side is otherwise fully linked. A first attempt at the directory view was made this round and **reverted
+in full** because it corrupted the shared `SD.h` mid-edit (`File`'s closing brace lost, a stray
+`static` member, duplicate `SD`), which broke the load suite; the shared stub is critical-path for every
+native suite, so the next attempt must be made as its own reviewed edit with the load suite run
+immediately after. No fixture, no red evidence, and no diagnostic count is claimed for A1.7 yet.
 
 ---
 
