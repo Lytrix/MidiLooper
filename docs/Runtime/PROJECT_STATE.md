@@ -1,5 +1,43 @@
 # Project state (execution context)
 
+**2026-09-23 `runtime-working-set-ownership` S1.5 clause 3 answered natively on `feature/runtime-working-set-ownership`: the dense-24-bar seal is diagnosed, and the refusal point is outside the supported envelope — test-only, no firmware change.**
+
+S1.5's third clause ("the smallest N at which a 24-bar overdub is refused") had been blocked for three rounds
+by an upstream puzzle: a dense 24-bar construction did not seal at all, and two findings about why were
+withdrawn. **The branch is now identified.** `Loop::sealCapture` runs
+`CaptureIncrementalSanity::removePairsShorterThanNoteMinLength` **before** its empty check, so note pairs
+closer together than `Config::DEFAULT_NOTE_MIN_LENGTH_TICKS` (**8**) are all removed, the live store empties,
+and the seal returns `FailedValidation` from the **`capture.store.empty()` branch** — not from the transfer
+precondition that both withdrawn findings had inferred from reading the code after seeing a failure their own
+construction produced. The signature is exact and asserted: the events really are in the store before the seal,
+`beginCapture` holds one tail chunk (free 511), and the failed seal **releases** it (free **512**, nothing
+retained), while the positive control at exactly 8 ticks seals `Ok` and keeps its chunk. The withdrawable
+"staging-order" rule is also withdrawn: all three append/prewarm orders seal with pairs >= 8 ticks apart.
+
+**The answer.** With a valid construction — 864 pairs = 1,728 events = **7 chunks** per dense 24-bar loop at
+the task's recorded ~72 events/bar, committed across the 8 x 8 matrix — boot costs **32 chunks**, and at
+**N = 63** the probe's free chunks are **39 before and 31 after**: the 24-bar reserve admission is
+**ADMITTED at every N up to 63**, so **the smallest refusing N lies outside the supported envelope**. The
+library at N = 63 holds 108,864 events (83 % of the 131,072-event ceiling) and still keeps 31 chunks free, 7
+above `CHUNK_RESERVE + ACTIVE_OVERDUB_TRANSFER_CHUNKS` (24).
+
+**Red-proven.** With the pre-S2b.1 per-slot reservation restored, the same construction refuses at **N = 30**
+(free = 6 chunks, below the 8-chunk reserve) and the fixture fails on its admission assertion at `free before
+probe=0`. So the HEAD answer is a **capacity result of the S2b.1 removal**, not a property of the pool. The
+mutation was reverted; `src/` is byte-identical.
+
+**What this does not establish.** The device's refusal point is **byte**-limited (PSRAM), not id-limited — that
+is S1.3's device leg — and the ~191-chunk figure the task cites for a 24-bar overdub's peak reservation is
+**not reproducible natively**, because those byte terms (views, companion rows, snapshot inputs) are
+heap-backed off-device. No device capacity number is claimed.
+
+**Gates.** `test_continuous_capture` **97/97** (+2 cases); full native **2,287 / 1 skipped / 2,286 succeeded /
+0 failures** (was 2,285/1/2,284); `teensy41-capture-serial` **SUCCESS** with the post-link RAM1 budget at
+`code 392,312 / padding 904 / locals 34,944` — unchanged, as expected with no `src/` change. Full packet and
+evidence: [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ P1 — S1.5 clause 3. **Still open:** the device legs (S1.3's slope, S1.5's device refusal point, S1.4's
+pass->chunk conversion) and phases B–F.
+
 **2026-09-23 `runtime-working-set-ownership` S1.3 clause 2 landed on `feature/runtime-working-set-ownership`: the synthetic 60-descriptor characterization is green and red-proven — test-only, no firmware change.**
 
 S1.3's **device** slope stays blocked (the restored scratch slot does not survive a reboot — `Track 6 loaded
