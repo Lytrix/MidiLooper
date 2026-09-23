@@ -15,21 +15,41 @@ gate) and for the content-verified PASS. `docs/Runtime/PROJECT_STATE.md` already
 
 ## What Changes
 
-- **A queued slot restore becomes a liveness obligation.** Every queued restore SHALL reach exactly
-  one terminal state — committed, unnecessary, or a named refusal — rather than remaining queued
-  across transport activity, session changes and clears. Today `canRunBackgroundLoadLoopNow()`
-  returns false while the transport runs or any track is recording or audibly playing, so a queued
-  background restore simply never begins; a later transport start does not re-arm it.
+- **A queued slot restore becomes a liveness obligation with an explicit identity and outcome.** Every
+  restore request SHALL reach exactly one terminal outcome — committed, unnecessary, a named refusal, or
+  superseded — or wait in a **named** wait state, rather than remaining queued and unexplained across
+  transport activity, session changes and clears. A request is identified by
+  `(track, slot, requestGeneration, setEpoch)`, so a later session reusing the same coordinates is a
+  different request, and recording deferral stays a **wait**, never a terminal refusal. Today
+  `canRunBackgroundLoadLoopNow()` returns false while the transport runs or any track is recording or
+  audibly playing, so a queued background restore simply never begins; a later transport start does not
+  re-arm it.
+- **The promise is scoped to what is bounded today.** Preparation (open, read, parse) SHALL advance under
+  active transport within its declared budget. **Commit and cleanup are not claimed as active-transport
+  operations by this change:** `runDeferredLoadAndDisplayFrame` gates them behind
+  `MidiServiceDrain::admitLoadJobChild(timingCriticalTrackActive, activeCommitPending)`, whose own
+  comment says the publish "has no content-independent active-transport bound yet", and whose resolution
+  is the open clause of **`resumable-midi-boundary-playback-maintenance` task 3.3** (split Commit
+  preparation/cleanup into continuations, measure the Commit body, bound it). That task is therefore a
+  named external prerequisite, and a restore awaiting apply enters a named `waiting_commit_gate` state.
 - **The queue SHALL NOT head-of-line block.** `popNextDeferredLoopSlotRestore` takes the priority
   head, and the two `popNext` call sites cannot skip an entry whose slot is owned by a live owner;
   one blocked entry stalls every entry behind it.
-- **A pending restore SHALL NOT block the deferred-save drain indefinitely.** The drain reports
-  `BlockedBySlotLoad` for `SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile()`; because the
-  gated restore cannot advance in that state, CLEAR's blocking drain spins its whole stuck budget and
-  the clear aborts. The gate and the liveness obligation SHALL be reconciled in one owner.
-- **Restore and catalog state SHALL be observable enough to diagnose without a bisect:** the named
-  terminal per restore request, the queue's blocked-vs-startable state, and the boot reconcile
-  outcome (`BootRecovery` currently only prints `WARN: could not reconcile … index.bin`).
+- **The blocking drain SHALL advance the restore it waits on, not merely observe it.**
+  `drainPersistenceWorkBlocking` loops on `processDeferredSaveState` + `yield()` and never invokes the
+  load scheduler (whose only production caller is the main loop's deferred-load frame — unavailable
+  while the drain owns the thread), so the restore cannot progress and
+  `deferredSaveBlockedByActiveSlotLoadSd()` cannot clear. The drain SHALL service the active **and**
+  parked job instances through the existing selection/admission, within a declared budget, and CLEAR
+  SHALL NOT abort on a restore it could have finished.
+- **Restore and catalog state SHALL be observable enough to diagnose without a bisect:** the request's
+  state (terminal or named wait, with its reason) per restore request, the queue's blocked-vs-startable
+  state, and the boot reconcile outcome (`BootRecovery` currently only prints
+  `WARN: could not reconcile … index.bin`).
+- **Acceptance fixtures SHALL assert the desired behavior, not the present failure.** A fixture that
+  passes on the broken build is not a red test; old-state observations are kept as separate diagnostic
+  assertions. The known-red acceptance set is excluded from the initial green-suite gate behind a named
+  flag and promoted in the commit that makes it green.
 - **The existing normative texts that permit this stall are amended, not bypassed:**
   `lazy-slot-hydration`'s "background Low `LoadLoopJob` work SHALL be skipped while any track is
   PLAYING" and its recording-defer scenario.
@@ -43,26 +63,36 @@ gate) and for the content-verified PASS. `docs/Runtime/PROJECT_STATE.md` already
 
 ### Modified Capabilities
 - `lazy-slot-hydration`: the deferred-slot-restore admission rule changes from "background work MAY
-  be skipped while playing / SHALL defer until capture is idle" to a bounded liveness obligation,
-  plus queue-progress, persistence-drain reconciliation, and restore-observability requirements.
-  The boot-playback-first and hydration-lifecycle requirements keep their existing behavior.
+  be skipped while playing / SHALL defer until capture is idle" to a bounded liveness obligation scoped
+  to preparation, plus request-identity/state-separation, queue-progress, drain-**advancement**, and
+  restore-observability requirements. The boot-playback-first and hydration-lifecycle requirements keep
+  their existing behavior.
 
 ## Impact
 
 - `src/StorageManager/LoadLoopJob.cpp` — `canRunBackgroundLoadLoopNow`, `ensureActiveLoadLoopJobSelected`,
   `stepSubmittedLoadJobsImpl`, `deferredSaveBlockedByActiveSlotLoadSd`; the restore admission and its
-  named terminal.
+  state record.
 - `src/StorageManager/LoopSlotRestoreQueue.cpp` — the priority queue and its pop/peek helpers.
-- `src/StorageManager/SyncDrainSaveState.cpp`, `src/StorageManager/DeferredSaveScheduler.cpp` — the
-  drain gate and its failure classification.
+- `src/StorageManager/SyncDrainSaveState.cpp` — the drain must gain a restore-service step for the
+  active **and** parked job instances, and its `BlockedBySlotLoad` verdict becomes a named wait reason.
+- `src/StorageManager/DeferredSaveScheduler.cpp` — the drain gate and the mid-pass flush are unchanged;
+  the restore service is a sibling step, not a change to the save gate.
 - `src/StorageManager/BootRecovery.cpp`, `src/StorageManager/SavedSetIo.cpp` — the reconcile outcome.
-- `src/main.cpp` — the boot drain-turn wiring around `bootInteractiveReady()`.
-- Tests: `test/test_storage_manager_load` (the only suite that links the load path) and a new
-  discriminating fixture set; `test/test_continuous_capture` only where a production seam is shared.
+- `src/main.cpp` — the boot drain-turn wiring around `bootInteractiveReady()`, and the
+  `runDeferredLoadAndDisplayFrame` admission seam reused by the Packet A fixtures. **The commit stop-gate
+  in that seam is not modified by this change.**
+- Tests: `test/test_storage_manager_load` (the only suite that links the load path) plus the fixtures for
+  the production admission seam and the real blocking drain; `test/test_continuous_capture` only where a
+  production seam is shared.
 - No new module, no ownership move: `StorageManager` retains the load/restore owner and the deferred
   save scheduler retains persistence. Load-bearing constraint from `docs/Authority/ARCHITECTURE_RULES.md`:
   no allocation on the action edge, no SD write on the stop hot path, session-capture-gated
   instrumentation, and the `scripts/ram1_budget.json` post-link RAM1 floor must be respected.
+- **External prerequisite (named, not absorbed):** the bounded Commit clause of
+  `openspec/changes/resumable-midi-boundary-playback-maintenance/tasks.md` task 3.3. Any behavior or
+  acceptance criterion that requires a restore to apply under active transport is blocked on it. This
+  change does not implement, relax, or duplicate that bound.
 - Blocked by this change: the device gates of `runtime-working-set-ownership` and its content-verified
   PASS. Not blocked by it: `docs/Plans/sd_temp_write_truncation_refinement.md`'s reconcile-warning
   repair, which is landed and independent.
@@ -79,6 +109,10 @@ gate) and for the content-verified PASS. `docs/Runtime/PROJECT_STATE.md` already
   changing its accepted-stop/canonical-reservation contract.
 - Changing CLEAR's user-visible behavior beyond removing the stall it currently hits. DEC-081 already
   ruled that audible playback never gates persistence.
+- **Bounding Commit or cleanup under active transport.** That is the open clause of
+  `resumable-midi-boundary-playback-maintenance` task 3.3 and is named as an external prerequisite, not
+  absorbed here. Relaxing `MidiServiceDrain::admitLoadJobChild` in this change is explicitly out of
+  scope.
 
 ## Open decisions (TBD — do not assume)
 
@@ -87,15 +121,22 @@ gate) and for the content-verified PASS. `docs/Runtime/PROJECT_STATE.md` already
   `isLoopSlotRestoreAttempted` flag, or the boot reconcile leaving `pendingRestoreQueue` stale) also
   contributes. The discriminating fixtures below are designed to separate these; the fix is chosen on
   that evidence, not on the reading above.
-- **TBD-2 (product).** Whether a background restore may consume a bounded slice of the MIDI service
-  budget while a track is *recording*, or must wait for capture to end. `lazy-slot-hydration` says SD
-  restore SHALL NOT run while capture is active; the correctness fix for the *playing* case does not
-  require changing the recording case, and this change keeps recording deferred unless evidence shows
+- **TBD-2 (product).** Whether a background restore's **preparation** may consume a bounded slice of the
+  MIDI service budget while a track is *recording*, or must wait for capture to end. `lazy-slot-hydration`
+  says SD restore SHALL NOT run while capture is active; the correctness fix for the *playing* case does
+  not require changing the recording case, and this change keeps recording deferred unless evidence shows
   the same wedge there.
-- **TBD-3 (architect).** If bounding the drain's slot-load wait requires the drain to *cancel* or
-  *supersede* an in-flight restore, that is a persistence-ownership change and needs its own `DEC`
-  entry before implementation. The preferred path is to make the restore progress instead, so the
-  drain never has to supersede it.
+- **TBD-3 (architect).** If bounding the drain's wait requires the drain to *cancel* or *supersede* an
+  in-flight restore, that is a persistence-ownership change and needs its own `DEC` entry before
+  implementation. The preferred path is for the drain to **service** the restore to completion (design D4),
+  so it never has to supersede it.
+- **TBD-4 (resolved by review — recorded here so it is not re-opened silently).** Whether this change
+  promises that a restore **commits** while a track is timing-critical. **No.** The commit path is gated
+  by `MidiServiceDrain::admitLoadJobChild(timingCriticalTrackActive, activeCommitPending)` and has no
+  content-independent bound; bounding it is the open clause of
+  `resumable-midi-boundary-playback-maintenance` task 3.3, which this change names as an external
+  prerequisite rather than absorbing. The promise here is: never lost, never starved, never silently
+  terminated, preparation advances under transport, and apply happens at the first admitted turn.
 
 ## Known behavior, evidence-backed assumptions, and UNKNOWNs
 
@@ -103,15 +144,28 @@ gate) and for the content-verified PASS. `docs/Runtime/PROJECT_STATE.md` already
 
 - `StorageManager::bootInteractiveReady()` (boot navigation) is
   `pendingLoopSlotRestoreCount() == 0 && !SlotLoadSession::isActive() && !anyLoadLoopJobActive()`.
-- `SlotLoadSession` is constructed only by `beginLoadLoopJob` (one session per active job), so
-  `SlotLoadSession::isActive()` is true exactly while a `LoadLoopJob` exists.
-- `deferredSaveBlockedByActiveSlotLoadSd()` is `SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile()`.
+- `SlotLoadSession` is constructed only by `beginLoadLoopJob` (one session per job instance), so
+  `SlotLoadSession::isActive()` is true while **either** the active or the parked job holds one;
+  `parkActiveLoadLoopJob` → `swapLoadLoopJobs` moves the `session` pointer, so a **parked** job keeps its
+  session alive.
+- `deferredSaveBlockedByActiveSlotLoadSd()` is `SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile()`,
+  and `loadLoopJobHasOpenSdFile()` checks **both** instances.
+- `drainPersistenceWorkBlocking` loops on `StorageManager::processDeferredSaveState(state)` + `yield()`
+  and never calls the load scheduler; `StorageManager::processDeferredLoopSlotRestore`'s only production
+  caller is the main loop's deferred-load frame.
 - `canRunBackgroundLoadLoopNow()` returns false when `bootTitleLoadDrain_` is false and either
   `sequencerRunning` is true or any track `isRecording()` / `isAudiblePlaybackActive()`.
+- `runDeferredLoadAndDisplayFrame` denies the load-job child while
+  `timingCriticalTrackActive && hasLoadLoopJobCommitPending()` (`MidiServiceDrain::admitLoadJobChild`),
+  and its comment states the publish has no content-independent active-transport bound yet.
 - `ensureActiveLoadLoopJobSelected` skips a queued entry whose slot is not free
   (`queuedRestoreMayBegin`, the S2b.5 guard) and leaves it queued.
 - `isLoopSlotRestoreAttempted` short-circuits both pop helpers, which is how an entry leaves the queue
   without a successful commit.
+- The boot scan offers **every** `(track, slot)` with a verified payload, and a request that is blocked
+  later remains in `pendingLoopSlotRestores_`; there is no state in which a request exists but is neither
+  queued, active/parked, nor terminal. (This is why the earlier "one-shot enqueue" mechanism C3 was
+  withdrawn.)
 
 **Evidence-backed assumptions.**
 
@@ -123,7 +177,7 @@ gate) and for the content-verified PASS. `docs/Runtime/PROJECT_STATE.md` already
   is self-healing since the SD temp-write fix, yet the `Track EMPTY`/slope-sweep failures persisted
   after that fix landed.
 
-**UNKNOWNs (to be resolved by task D0, before behavior edits).**
+**UNKNOWNs (to be resolved by Packet A, before behavior edits).**
 
 - Whether a device whose transport is started immediately at boot (as the canonical base stimulus
   does) can ever drain the boot background-fill queue. No log in hand shows the queue draining under a

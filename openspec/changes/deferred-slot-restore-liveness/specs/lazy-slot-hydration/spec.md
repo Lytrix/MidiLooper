@@ -27,7 +27,7 @@ While any track is recording or overdubbing, the system MAY queue an explicit sl
 
 After interactive ready, deferred restores SHALL proceed as deferred job steps (`LoadLoopJob`) executed through `DeferredJobScheduler::runFrame`: SD payload bytes MAY be read in chunks across multiple main-loop iterations, then parsed under a time budget, then Committed by `StorageManager`. Parse SHALL be time-sliced; finalize / commit-id headroom SHALL NOT walk the PSRAM pool via `sm_malloc_stats_pool`. Loop length SHALL NOT gate whether a slot may restore while PLAYING.
 
-Focus High `LoadLoopJob` work (focused / explicitly requested slot) SHALL advance while a track is PLAYING. Background Low `LoadLoopJob` work SHALL be admitted a bounded service slice while any track is PLAYING, audibly sounding, or otherwise transport-active, so that a queued restore cannot be starved for the lifetime of a transport session. Background work that is not admissable in the current turn SHALL leave active/parked/queue progress intact; it SHALL NOT be treated as complete, attempted, or refused.
+Focus High `LoadLoopJob` work (focused / explicitly requested slot) SHALL advance its **preparation** while a track is PLAYING. Background Low `LoadLoopJob` work SHALL be admitted a bounded service slice while any track is PLAYING, audibly sounding, or otherwise transport-active, so that a queued restore cannot be starved for the lifetime of a transport session. Background work that is not admissable in the current turn SHALL leave active/parked/queue progress intact; it SHALL NOT be treated as complete, attempted, or refused. **Commit and cleanup remain bounded only by the runtime's existing commit admission:** a prepare-complete request under active transport waits in a named state for that gate, and this requirement does not claim that it applies while a track is timing-critical.
 
 #### Scenario: Select unloaded during PLAYING hydrates via deferred job steps
 
@@ -47,32 +47,81 @@ Focus High `LoadLoopJob` work (focused / explicitly requested slot) SHALL advanc
 - **WHEN** a slot with committed SD content is queued for background restore
 - **AND** the transport is running with one or more tracks audibly playing
 - **THEN** the restore request SHALL receive bounded service slices rather than being skipped indefinitely
-- **AND** the slot SHALL eventually reach COMMITTED, or reach a named terminal state reported for it
+- **AND** its preparation SHALL advance or it SHALL be in a named wait state reported for it
 - **AND** playback SHALL continue without requiring the transport to stop
+
+#### Scenario: Applying a prepared restore under active transport is checked at the commit boundary
+
+- **WHEN** a restore's preparation is complete and the transport is timing-critical
+- **AND** the runtime has no content-independent bound for the commit operation
+- **THEN** the request SHALL wait in a named state for the commit gate rather than being refused, retried unboundedly, or reported as complete
+- **AND** the request SHALL be applied at the first turn the gate admits it
 
 ## ADDED Requirements
 
-### Requirement: Every queued slot restore reaches exactly one terminal state
+### Requirement: Restore requests have identity, named waits, and one terminal outcome
 
-The system SHALL model each queued slot restore as a request with exactly one terminal outcome, chosen from: **committed** (the payload was restored), **unnecessary** (the slot already has committed content, or the SD payload is gone or invalid), or **refused** (a named reason why the restore cannot proceed, reported for that request). A request SHALL NOT remain queued across unrelated transport activity, session changes, or clears, and SHALL NOT leave the queue by being silently marked attempted.
+The system SHALL model each queued slot restore as a request identified by
+`(track, slot, requestGeneration, setEpoch)`, where `requestGeneration` advances whenever that
+coordinates pair is cleared, reset, or committed by a different owner, and `setEpoch` identifies the
+loaded current set. A later session reusing the same `(track, slot)` SHALL be a **different** request.
 
-The named refusal reason SHALL be observable and SHALL distinguish at least: no SD payload, unverifiable payload, slot owned by a live owner, and payload present but not yet processed.
+A request SHALL be in exactly one **wait** state or exactly one **terminal** state at a time.
+
+Wait states SHALL carry a named reason and SHALL NOT be terminals: a slot owned by a live owner, capture
+active on that slot, the commit gate not admitting (no content-independent bound), and a bounded retry
+after a transient failure. A wait SHALL NOT convert to a terminal merely because it persisted for a
+number of turns or iterations.
+
+Terminal outcomes SHALL be exactly: **committed** (the payload was restored), **unnecessary** (the slot
+already has committed content, or the SD payload is absent or invalid), **refused** (a named,
+non-retryable reason), and **superseded** (the set changed, the slot was cleared, or a newer request for
+the same coordinates replaced it). Recording deferral SHALL remain a wait, never a terminal refusal.
+
+A request SHALL NOT remain queued unexplained across unrelated transport activity, SHALL NOT leave the
+queue by being silently marked attempted, and SHALL NOT record a terminal under coordinates a later
+session reuses.
 
 #### Scenario: A queued request leaves the queue exactly once
 
 - **WHEN** a slot restore request is queued and the system processes it to completion
-- **THEN** exactly one terminal outcome is recorded for that `(track, slot)`
+- **THEN** exactly one terminal outcome is recorded for that request's identity
 - **AND** the request is not re-enqueued afterwards
 
-#### Scenario: A blocked request is reported, not silently attempted
+#### Scenario: A blocked request waits with a named reason
 
 - **WHEN** a queued restore cannot begin because its slot is owned by a live owner
-- **THEN** the request stays queued rather than being marked attempted
-- **AND** the reason is observable while it waits
+- **THEN** the request stays queued in a named wait state rather than being marked attempted or refused
+- **AND** the wait reason is observable while it waits
+
+#### Scenario: A long wait is not silently converted into a refusal
+
+- **WHEN** a restore request has been in a wait state across many service turns
+- **THEN** it remains a wait with its reason
+- **AND** it does not acquire a terminal outcome from elapsed time or iteration count alone
+
+#### Scenario: Recording deferral is a wait, not a refusal
+
+- **WHEN** a restore request cannot proceed because a track on that slot is recording
+- **THEN** the request is waiting with that named reason
+- **AND** it is applied when capture ends
+
+#### Scenario: A reused coordinate pair is a new request
+
+- **WHEN** a request reaches a terminal, the slot is then cleared or committed by a different owner, and a
+  restore is requested again for the same `(track, slot)`
+- **THEN** the new request has a different identity
+- **AND** the earlier terminal does not describe it
+
+#### Scenario: A set change supersedes outstanding requests
+
+- **WHEN** the loaded current set changes while restore requests are queued
+- **THEN** those requests reach `superseded` rather than `refused` or `committed`
+- **AND** the reason is observable
 
 #### Scenario: An unprocessable request reaches a terminal refusal
 
-- **WHEN** a queued restore cannot proceed for a reason other than a live owner
+- **WHEN** a queued restore cannot proceed for a non-retryable reason other than a live owner
 - **THEN** the request reaches a terminal refusal in bounded time
 - **AND** the refusal names the reason
 
@@ -92,22 +141,42 @@ The restore queue SHALL make progress on every startable request, regardless of 
 - **WHEN** every queued request is startable
 - **THEN** they are begun in priority order
 
-### Requirement: A pending slot restore does not block persistence indefinitely
+### Requirement: The blocking persistence drain advances the restore it waits on
 
-A pending or in-flight slot restore SHALL NOT cause the deferred-save drain to wait without bound. While a restore is in flight, the system SHALL either continue the restore to a terminal state within a bounded service budget, or report the drain as blocked by the restore with that named reason. The blocking drain SHALL NOT spin its full stuck budget and abort while the restore it waits on is itself making no progress.
+The blocking deferred-save drain SHALL advance a restore it is waiting on, rather than only observing it. The drain SHALL service both the active and the parked restore job instances through the existing
+selection and admission, within a declared per-iteration budget, and SHALL NOT introduce a second loader,
+a second queue, or a parallel admission policy. The drain SHALL NOT cancel, supersede, or discard the
+restore in order to complete.
 
-#### Scenario: A blocking drain completes once the restore progresses
+While the drain owns the thread, the normal deferred-load service path is unavailable; the requirement is
+therefore that the drain itself makes the restore progress. If the restore reaches a state the drain must
+not break — for example capture active on that slot — the drain SHALL report that named reason instead of
+spinning its stuck budget and aborting.
 
-- **WHEN** a deferred save is owed and a slot restore is in flight
-- **AND** the restore is able to progress
-- **THEN** the drain completes once the restore reaches a terminal state
+#### Scenario: A blocking drain completes by advancing the restore
+
+- **WHEN** a deferred save is owed and a slot restore is in flight, with no external advancement of the
+  restore
+- **THEN** the drain advances the restore to a terminal state within its budget
+- **AND** the drain then completes
 - **AND** the restore was not cancelled to achieve that
 
-#### Scenario: A stalled restore is reported as the cause
+#### Scenario: A parked job is serviced, not only an active one
 
-- **WHEN** a deferred save is owed and the restore it waits on cannot make progress
-- **THEN** the drain reports the restore as the blocking cause, distinct from a capture block
-- **AND** it does not report a generic stuck state
+- **WHEN** the restore that holds the save gate is a **parked** job instance rather than the active one
+- **THEN** the drain services the parked instance and the wait clears
+
+#### Scenario: A wait the drain must not break is named
+
+- **WHEN** the restore cannot progress because a track on that slot is recording
+- **THEN** the drain reports the request's named wait reason
+- **AND** it does not report a generic stuck state and does not spin its full stuck budget
+
+#### Scenario: The drain does not cancel the restore
+
+- **WHEN** the drain completes with a restore outstanding
+- **THEN** the restore request is still tracked with its identity and state
+- **AND** it was not discarded to unblock the save
 
 ### Requirement: Restore and boot-catalog state is observable
 
@@ -116,7 +185,7 @@ The system SHALL expose, without a bisect, enough state to distinguish a restore
 #### Scenario: A waiting restore is distinguishable from a progressing one
 
 - **WHEN** a restore request is queued or in flight
-- **THEN** the observable state names the request's `(track, slot)`, its wait reason when waiting, and its progress when progressing
+- **THEN** the observable state names the request's `(track, slot)`, whether it is waiting or terminal, its named reason when waiting, and its progress when progressing
 
 #### Scenario: The boot catalog reconcile outcome is reported
 

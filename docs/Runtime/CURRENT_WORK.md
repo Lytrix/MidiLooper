@@ -11,11 +11,19 @@ Two facts define what may be implemented right now:
    post-restore baseline, S2b.5's device gate, the content PASS, D0.2's B07 allocation census (not
    measurable natively), and phases B–E. The restored set is unstable across boots, so no deterministic
    single-slot capture can be produced until the defect is fixed.
-2. **New OpenSpec change `deferred-slot-restore-liveness` — PROPOSED 2026-09-23, planning artifacts
-   complete, `openspec validate` clean, no implementation started.** It exists to unblock (1). Read its
+2. **New OpenSpec change `deferred-slot-restore-liveness` — PROPOSED 2026-09-23, planning complete,
+   `openspec validate` clean, G2 adversarial contract review's six findings corrected
+   (`tasks.md` Revision 2), no implementation started.** It exists to unblock (1). Read its
    [`proposal.md`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md) and
-   [`design.md`](../../openspec/changes/deferred-slot-restore-liveness/design.md) before coding it; its
-   `tasks.md` Packet A is fixture-first and may withdraw any of the six recorded mechanisms (C1–C6).
+   [`design.md`](../../openspec/changes/deferred-slot-restore-liveness/design.md) before coding it. Three
+   corrections bind any future work on it: (a) its promise is scoped to **preparation** — bounded Commit
+   is the open clause of `resumable-midi-boundary-playback-maintenance` **task 3.3** and is a named
+   external prerequisite, so no acceptance criterion may claim a restore *applies* under timing-critical
+   transport, and `MidiServiceDrain::admitLoadJobChild` must not be relaxed here; (b) its acceptance
+   fixtures assert the **desired** behavior (red now, green after the fix) and the red set is excluded
+   from the initial green gate behind a named flag; (c) the blocking drain must **advance** the restore
+   (active and parked instances), because the normal deferred-load frame cannot run while the drain owns
+   the thread. C3 (one-shot enqueue) is withdrawn.
    **Do not implement it without the owner starting the apply workflow.**
 
 **Scope note — landed work that is NOT tracked by an OpenSpec change.** The persistence-immediacy and SD
@@ -2896,9 +2904,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **Execution workflow:** use [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) packets and tasks D0 for every upcoming slice (DEC-080); acceptance fixtures precede production behavior changes.
-**Next OpenSpec change (proposed, not started):** [`deferred-slot-restore-liveness`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md)
-— read its `design.md` § G2 execution packets; its Packet A is fixture-first and its six recorded mechanisms
-(C1–C6) are hypotheses to confirm or withdraw, not established conclusions.
+**Next OpenSpec change (proposed + G2-reviewed, not started):** [`deferred-slot-restore-liveness`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md)
+— read its `design.md` § G2 execution packets; its Packet A's acceptance fixtures assert the **desired**
+behavior and its five live mechanisms (C1/C2/C4/C5/C6; C3 withdrawn) are hypotheses to confirm or
+withdraw. Its apply-under-transport scope is bounded by **`resumable-midi-boundary-playback-maintenance`
+task 3.3** (bounded Commit), which is a named prerequisite and must not be relaxed here.
 
 **DEC-081 landed 2026-09-23 (owner direction): audible playback never gates persistence.**
 **DEVICE-VERIFIED on the discriminating case** (recorded in

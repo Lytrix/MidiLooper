@@ -7,6 +7,29 @@ fixture **before** the behavior edit, then record actual native/build/device evi
 (DEC-080). A listed fixture or command is not evidence until it has run and its output is recorded here
 or in the change's review file.
 
+**Revision 2 (2026-09-23) — G2 adversarial contract review returned BLOCKED on six findings; all six are
+corrected in this file, `proposal.md`, `specs/`, and `design.md`:**
+
+1. **Background admission did not unblock commit.** Fixed: the promise is scoped to **preparation**;
+   bounded Commit is named as an external prerequisite
+   (`resumable-midi-boundary-playback-maintenance` **task 3.3**, below: *runtime-maintenance 3.3*), a prepare-complete request waits in
+   `waiting_commit_gate`, and the acceptance fixtures run through the production admission seam
+   (A2.2, A2.7).
+2. **The blocking drain had no way to advance a restore.** Fixed: the drain must **service** the active
+   and parked job instances (A3.1/A3.2), and the fixture calls the real blocking drain with no external
+   advancement (A1.7).
+3. **The "red" fixtures asserted the existing bug.** Fixed: every acceptance fixture now asserts the
+   **desired** behavior; old-state observations are separate diagnostics; the red set is excluded from
+   the initial green gate behind a named flag and promoted per fixture (A1.2–A1.7, A1.10, A1.11).
+4. **Request identity and terminal semantics conflicted.** Fixed: identity is
+   `(track, slot, requestGeneration, setEpoch)`, **wait** states are separate from **terminal** outcomes,
+   a wait never becomes a terminal by elapsed turns, recording deferral stays a wait, and set changes
+   yield `superseded` (A2.1, spec delta).
+5. **C3 (one-shot enqueue) was not proven defective.** Withdrawn with the code citation (A1.4); its
+   implementation task is deleted, not deferred.
+6. **Archive readiness permitted unfinished required verification.** Fixed: A5.5 requires every mandatory
+   gate taken and green, with exactly one optional gate named (A5.5, A5.6).
+
 **Before any firmware edit:** run [`docs/Templates/DECISION_REVIEW.md`](../../../docs/Templates/DECISION_REVIEW.md),
 the preflight, and the transfer protocol in [`docs/Authority/ARCHITECTURE_RULES.md`](../../../docs/Authority/ARCHITECTURE_RULES.md);
 search [`docs/DECISION_LOG.md`](../../../docs/DECISION_LOG.md) for DEC-021, DEC-025, DEC-081 and the
@@ -36,122 +59,166 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       **Verify:** the suite builds and stays green, and one smoke case drives a queued request to a
       committed slot through production calls only. Record the case count and the linked production TUs.
 
-- [ ] A1.2 **[C1 — transport-gated background admission] fixture, red.** Drive a queued background
-      restore with the transport running and one track audibly playing; assert the request does not
-      reach `committed` (the wrong current behavior) while the queue is non-empty and no job is
-      parked/active for it. **Verify:** the case is red on current `src/`, with the failure message
-      naming the gate; record the exact assertion output. No `src/` change in this task.
+- [ ] A1.2 **[C1 — transport-gated background admission] desired-behavior fixture, red.** Drive a queued
+      background restore with the transport running and one track audibly playing, through the production
+      admission path (the extracted `hasRealtimeDeferredIdleWork` predicate plus the load-job child
+      admission — **not** `stepSubmittedLoadJobs()` directly). Assert the **desired** outcome: the request
+      is served — its preparation advances and it reaches a terminal or a named wait (including
+      `waiting_commit_gate`) within a bounded number of turns. **Verify:** the case is **red on current
+      `src/`** because the request is neither served nor in a named wait, and it is registered in the
+      change's named exclusion set (A1.11) so the default gate stays green. Record the assertion output
+      and the exclusion flag. No `src/` change in this task.
 
-- [ ] A1.3 **[C2 — parked job never re-serviced] fixture, red.** Begin a non-focus background job
-      while idle, then set the playing condition and drive turns; assert the job is parked and makes no
-      further progress. **Verify:** the case is red and the parked job's identity is unchanged across
-      turns; record the probe output.
+- [ ] A1.3 **[C2 — parked job never re-serviced] desired-behavior fixture, red.** Begin a non-focus
+      background job while idle, then set the playing condition and drive turns; assert the **desired**
+      behavior: the job receives further service or is reported in a named wait, and it is not parked
+      indefinitely without a reason. **Verify:** the case is red on current `src/`; the parked job's
+      identity is asserted across turns; record the probe output.
 
-- [ ] A1.4 **[C3 — background-fill admission is one-shot] fixture, red.** Run boot fill admission to
-      completion, drain or block part of the queue, and assert that
-      `enqueueRemainingLoopSlotRestoresFromSd` no longer offers the unprocessed payload. **Verify:** the
-      case is red and names `bootBackgroundFillAdmissionComplete_` as the stop; record it.
+- [ ] A1.4 **[C3 — one-shot background-fill admission] WITHDRAWN (review finding 5).** Do not implement a
+      fixture or a behavior change for C3. The boot scan already offers every `(track, slot)` with a
+      verified payload, and a blocked request remains in `pendingLoopSlotRestores_`, so no state exists in
+      which a request is neither queued, active/parked, nor terminal. Re-arming would duplicate the retry
+      policy without addressing starvation. **Verify:** the withdrawal is recorded in the mechanism ledger
+      (A1.9) with the code citation; the corresponding implementation task is deleted, not deferred.
 
-- [ ] A1.5 **[C4 — head-of-line blockage] fixture, red.** Queue a priority-head request whose slot is
-      held by a live owner plus a lower-priority startable request; assert that no restore begins and
-      the startable request stays queued. **Verify:** the case is red; the assertion distinguishes
-      "head blocked" from "queue empty"; record it.
+- [ ] A1.5 **[C4 — head-of-line blockage] desired-behavior fixture, red.** Queue a priority-head request
+      whose slot is held by a live owner plus a lower-priority startable request; assert the **desired**
+      behavior: the startable request begins and the blocked head stays queued with its reason. **Verify:**
+      the case is red on current `src/` (today nothing begins); the assertion distinguishes "head blocked"
+      from "queue empty"; record it.
 
-- [ ] A1.6 **[C6 — attempt latch] fixture, red.** Inject an SD read/open failure for one payload, drive
-      the restore to its failure path, then make the payload healthy and assert the `(track, slot)`
-      never restores again in the same session. **Verify:** the case is red and names
-      `loopSlotRestoreAttempted_` as the latch; record the injected failure and the observed terminal.
+- [ ] A1.6 **[C6 — attempt latch] desired-behavior fixture, red.** Inject a transient SD read/open failure
+      for one payload, drive the restore to its failure path, then make the payload healthy; assert the
+      **desired** behavior: the request is retried and reaches `committed` (a persistent failure instead
+      reaches `refused` after the bounded attempt count). **Verify:** the case is red on current `src/`
+      because the slot is latched for the session; record the injected failure and the observed state.
 
-- [ ] A1.7 **[C5 — drain blocked by slot load] fixture, red.** Owe a deferred save, hold a `LoadLoopJob`
-      in flight that cannot progress, and run the blocking drain; assert it aborts with the
-      blocked-by-slot-load verdict after the full stuck budget and that CLEAR would be refused.
-      **Verify:** the case is red and reproduces the device verdict wording; record the iteration count.
+- [ ] A1.7 **[C5 — drain cannot advance the restore] desired-behavior fixture, red.** Owe a deferred save,
+      hold a `LoadLoopJob` in flight, and call the **real blocking drain** — with **no external
+      advancement of the restore between assertions**. Assert the **desired** behavior: the drain
+      terminates the restore and completes the save; and that a wait the drain must not break is reported
+      as that named reason rather than a generic stuck verdict. **Verify:** the case is red on current
+      `src/` (the drain never services the load scheduler); record the iteration count as a **diagnostic**,
+      not as the oracle.
 
 - [ ] A1.8 **Observability, event-shaped (per `design.md` D6).** Add capture-tier lines: one per restore
-      terminal with `(track, slot)` and reason, and an on-demand queue/state probe reusing the existing
-      `probeActiveLoadLoopJob` shape; add the boot reconcile named outcome (`ok` / `repaired` /
-      `failed`) alongside the existing warning. **Verify:** native cases assert the probe's fields for a
-      queued, a blocked, an in-flight and a committed request, and assert the reconcile outcome mapping;
-      full native suite green; capture-serial build SUCCESS with the RAM1 line recorded. **Do not**
-      emit a per-turn state line (capture-ring overflow precedent).
+      **state transition** (terminal or named wait) with the request identity and reason, and an on-demand
+      queue/state probe reusing the existing `probeActiveLoadLoopJob` shape; add the boot reconcile named
+      outcome (`ok` / `repaired` / `failed`) alongside the existing warning. **Verify:** native cases assert
+      the probe's fields for a queued, a blocked, an in-flight, a prepare-complete-waiting and a terminal
+      request, and assert the reconcile outcome mapping; full native suite green; capture-serial build
+      SUCCESS with the RAM1 line recorded. **Do not** emit a per-turn state line (capture-ring overflow
+      precedent).
 
-- [ ] A1.9 **Packet A review and mechanism ledger.** Record, for C1–C6, one of: reproduced by fixture
-      `<case>`, or withdrawn with the observation that falsified it; record the TBD-1 conclusion and
-      whether any mechanism is a *different* root cause than `design.md` states. **Verify:** the
-      ledger is written into the change review, and every Packet B/C task below is either unblocked by
-      a reproduced mechanism or explicitly re-scoped. Do not check A1.9 while any C-fixture is
-      unreviewed.
+- [ ] A1.9 **Packet A review and mechanism ledger.** Record, for C1, C2, C4, C5, C6, one of: covered by a
+      red desired-behavior fixture `<case>`, or withdrawn with the observation that falsified it; record
+      C3's withdrawal; record the TBD-1 conclusion and whether any mechanism is a *different* root cause
+      than `design.md` states. **Verify:** the ledger is written into the change review, and every Packet
+      B/C task below is either unblocked by a reproduced mechanism or explicitly re-scoped. Do not check
+      A1.9 while any mechanism is unreviewed.
 
-- [ ] A1.10 **Packet A gate.** Full native suite green (count recorded); `teensy41-capture-serial`
-      build SUCCESS with the post-link RAM1 line recorded; Packet A red/green status table complete.
-      **Verify:** the exact commands and outputs are recorded; no behavior change is claimed by this
-      packet.
+- [ ] A1.10 **Packet A gate.** Full native suite green **with the named red-acceptance exclusion set in
+      place** (count and exclusion list recorded); `teensy41-capture-serial` build SUCCESS with the
+      post-link RAM1 line recorded; Packet A red/withdrawn status table complete. **Verify:** the exact
+      commands and outputs are recorded; no behavior change is claimed by this packet; no red fixture was
+      deleted, generalized, or had a threshold relaxed to make the suite green.
+
+- [ ] A1.11 **Red-acceptance coexistence rule (review finding 3).** Define and wire the named exclusion set
+      for the red desired-behavior fixtures (a dedicated env flag in the change's own suite, following the
+      `WORKING_SET_RED` / `ONLY_COMPANION` / `REENTRY_RED` precedent). Each fixture is promoted into the
+      **default gate in the same commit that turns it green**; the flag is deleted when the set is empty.
+      **Verify:** the default `pio test -e native` run is green with the flag unset; a run with the flag set
+      shows exactly the listed fixtures red; the promotion is checked off per fixture in the slice that
+      fixes it.
 
 ## 2. Packet B — background restore liveness (D2, D3, D5)
 
-- [ ] A2.1 **Terminal record for a restore request (D1).** Introduce the per-`(track, slot)` terminal
-      (`committed` / `unnecessary` / `refused` + reason), updated at every path that currently pops or
-      marks attempted, stored beside the existing restore arrays outside ITCM. **Verify:** native cases
-      assert exactly one terminal per request and that a request never re-enters the queue after a
-      terminal; full native suite green; RAM1 line recorded and unchanged except as recorded.
+- [ ] A2.1 **Request identity and state separation (D1).** Introduce the request identity
+      `(track, slot, requestGeneration, setEpoch)` and the separate **wait** states
+      (`waiting_slot_owned`, `waiting_capture`, `waiting_commit_gate`, `waiting_retry`) versus the four
+      **terminals** (`committed`, `unnecessary`, `refused`, `superseded`); key the record by the full
+      identity, advance `requestGeneration` on clear/reset/commit-by-another-owner, and invalidate
+      outstanding requests on a set change as `superseded`. Stored beside the existing restore arrays
+      outside ITCM; the existing `loopSlotRestoreAttempted_` latch is retired or subsumed. **Verify:** native
+      cases assert exactly one terminal per identity; that a wait never converts to a terminal from elapsed
+      turns alone; that recording deferral is a wait; that a reused `(track, slot)` is a different request;
+      and that a set change yields `superseded` (not `refused`); full native suite green; RAM1 line recorded.
 
-- [ ] A2.2 **Background-restore admission reason (D2).** Add the bounded background-restore service
-      slice so a queued background request advances while playback continues, serviced after MIDI
-      service with its own declared budget; keep recording deferred and keep the focus/High path
-      unchanged. **Verify:** A1.2 and A1.3 flip from red to green; a new case asserts the per-turn work
-      stays within the declared budget; the capture-serial build's `overflow_free` standing gate is
-      re-checked on device in task A2.6.
+- [ ] A2.2 **Background-restore preparation admission (D2).** Add a bounded background-restore service
+      slice so a queued background request's **preparation** advances while playback continues, serviced
+      after MIDI service with its own declared budget; keep recording deferred, keep the focus/High path
+      unchanged, and **do not touch the commit stop-gate** (`MidiServiceDrain::admitLoadJobChild`) — a
+      prepare-complete request waits in `waiting_commit_gate`. **Verify:** A1.2 and A1.3 flip from red to
+      green; a case asserts a prepare-complete request under active transport enters `waiting_commit_gate`
+      and applies when the gate admits; a case asserts the per-turn work stays within the declared budget.
 
-- [ ] A2.3 **Re-arm the background fill (C3).** Make the remaining-payload offer idempotent so an
-      unprocessed payload is re-offered after the one-shot admission completes, without re-probing the
-      whole SD set per turn. **Verify:** A1.4 flips red→green; a case asserts the offer does not repeat
-      unboundedly (bounded per turn) and does not re-offer a terminal request.
-
-- [ ] A2.4 **Startability-aware queue service (D3).** Select the first startable request in priority
+- [ ] A2.3 **Startability-aware queue service (D3).** Select the first startable request in priority
       order, leaving a blocked entry queued with its reason; keep the S2b.5 `queuedRestoreMayBegin`
       semantics and the existing done-tests. **Verify:** A1.5 flips red→green; a case asserts priority
-      order is preserved among startable requests and that a blocked entry is still served once its
-      owner retires.
+      order is preserved among startable requests and that a blocked entry is still served once its owner
+      retires.
 
-- [ ] A2.5 **Bounded retry then named refusal (D5).** Replace the permanent attempt latch with a
-      declared bounded attempt count per power cycle, ending in a `refused` terminal that names the
-      reason; keep `unnecessary` for absent/invalid payloads. **Verify:** A1.6 flips red→green; cases
-      assert retry-then-refuse for a persistent failure and retry-then-commit for a transient one; no
-      retry storm (attempts bounded per turn and per power cycle).
+- [ ] A2.4 **Bounded retry then named outcome (D5).** Replace the permanent attempt latch with a declared
+      bounded attempt count per power cycle; a transient failure retries (up to the bound) and a persistent
+      one ends in `refused` naming the reason, while absent/invalid payloads stay `unnecessary`.
+      **Verify:** A1.6 flips red→green; cases assert retry-then-commit for a transient failure,
+      retry-then-refuse for a persistent one, and no retry storm (attempts bounded per turn and per power
+      cycle).
 
-- [ ] A2.6 **Packet B device gate.** Build and flash `teensy41-capture-serial` (ask the owner first —
-      never flash unprompted) and run the canonical base stimulus on the authorized scratch slot, then
-      a reboot. **Verify:** the restore terminal lines appear for the boot payloads; no payload is left
-      without a terminal; `overflow_free=True`; MIDI gap within the standing bound; the slot that was
-      `EMPTY` before now restores. Record the capture path and the exact lines. If the device is not
-      available, this task stays open and Packet B is not closed.
+- [ ] A2.5 **Packet B device gate.** Build and flash `teensy41-capture-serial` (ask the owner first — never
+      flash unprompted), run the canonical base stimulus on the authorized scratch slot, and reboot.
+      **Verify:** every boot payload has a **state** (terminal or named wait) reported; no payload is left
+      with neither; `overflow_free=True`; MIDI gap within the standing bound; and either the previously
+      `EMPTY` slot restores, or the log shows it in a named wait with the reason — the latter is a valid
+      outcome only if the reason names the commit gate and **runtime-maintenance 3.3** is still open. Record the capture path and
+      the exact lines. If the device is not available, this task stays open and Packet B is not closed.
 
-- [ ] A2.7 **Packet B gate.** Full native suite green; the A1.2–A1.6 fixtures green in the default
-      gate (not behind an env flag, unless the flag is justified and recorded); capture-serial RAM1
-      line recorded; A2.6 evidence recorded. **Verify:** no oracle was weakened; the slice's commit
-      boundary is one buildable commit.
+- [ ] A2.6 **Packet B gate.** Full native suite green; A1.2/A1.3/A1.5/A1.6 green **in the default gate**
+      (promoted per A1.11, not left behind the flag); capture-serial RAM1 line recorded; A2.5 evidence
+      recorded. **Verify:** no oracle was weakened; the slice's commit boundary is one buildable commit.
 
-## 3. Packet C — drain reconciliation (D4)
+- [ ] A2.7 **Commit-bound prerequisite (review finding 1) — record, do not implement.**
+      `resumable-midi-boundary-playback-maintenance` **task 3.3** (bounded Commit preparation/cleanup) is
+      a named external prerequisite for any acceptance criterion that requires a restore to **apply**
+      under active transport. Record the dependency in the change review, keep the affected acceptance
+      criteria scoped to terminal-or-named-wait, and do not relax `MidiServiceDrain::admitLoadJobChild`
+      here. **Verify:** the prerequisite is named in the change review and in the S1/S2b handoff notes; a
+      grep shows this change's acceptance criteria do not claim applying a restore under timing-critical
+      transport; no `src/main.cpp` commit-gate change exists in this change's diff.
+      *(Referenced elsewhere as **runtime-maintenance 3.3**, to avoid confusion with this change's own
+      A3.3 task.)*
 
-- [ ] A3.1 **Drain progress awareness (D4).** Teach the blocking drain to distinguish "waiting on a
-      restore that is progressing" from "waiting on a restore that cannot progress", and to terminate
-      as soon as the restore reaches a terminal. **Verify:** A1.7 flips red→green; a case asserts the
-      drain completes once the restore terminates, without cancelling it; a case asserts the
-      cannot-progress wait reports the named blocked-by-restore reason rather than `Stuck`.
+## 3. Packet C — the blocking drain advances the restore (D4)
 
-- [ ] A3.2 **Preserve the DEC-081 and capture behavior.** Assert in cases that audible playback is
-      still not a persistence gate, that a recording track still parks the multi-frame writers, and
-      that the mid-pass one-chunk flush still runs during a take. **Verify:** the named regression cases
-      pass; no change to `isCaptureRecordingForPersistence` semantics.
+- [ ] A3.1 **Drain-side restore service (D4).** Give the blocking drain a restore-service step that uses
+      the existing selection/admission (`selectSubmittedLoadJobs` + `stepSubmittedLoadJobs`) plus one
+      bounded advance of an admitted job, servicing the **active and parked** instances, within a declared
+      per-iteration budget; no second loader, queue, or admission policy. **Verify:** A1.7 flips
+      red→green; a case calls the **real blocking drain** with no external advancement between assertions
+      and asserts the save completes; a case with a **parked** job holding the session asserts the wait
+      clears; a case asserts a wait the drain must not break is reported as its named reason.
 
-- [ ] A3.3 **Packet C device gate.** With a deferred save owed and a restore in flight, press CLEAR on
-      the device. **Verify:** CLEAR completes; **0** `Clear aborted` / `Persistence drain stuck`;
-      either the drain completed after the restore terminal or the log names the blocked-by-restore
-      reason. Record the capture path. If cancellation turns out to be necessary, STOP and return to
-      design for the `DEC` (proposal TBD-3) rather than implementing it here.
+- [ ] A3.2 **Named drain verdict (D4).** Replace the generic `BlockedBySlotLoad` verdict with
+      `BlockedByRestore(<request wait reason>)` so the drain reports *why* it could not advance, and keep
+      the existing `BlockedByCapture` / `BlockedByPostLoadHoldoff` distinctions. **Verify:** cases assert
+      the named reason for capture-active, commit-gate and retry waits; no case asserts a generic `Stuck`
+      where a named reason is available.
 
-- [ ] A3.4 **Packet C gate.** Full native suite green; A3.1/A3.2 cases green; RAM1 line recorded;
-      A3.3 evidence recorded.
+- [ ] A3.3 **Preserve the DEC-081 and capture behavior.** Assert in cases that audible playback is still
+      not a persistence gate, that a recording track still parks the multi-frame writers, and that the
+      mid-pass one-chunk flush still runs during a take. **Verify:** the named regression cases pass; no
+      change to `isCaptureRecordingForPersistence` semantics; the drain's slice budget stays derived from
+      queued SD work.
+
+- [ ] A3.4 **Packet C device gate.** With a deferred save owed and a restore in flight, press CLEAR on
+      the device. **Verify:** CLEAR completes; **0** `Clear aborted` / `Persistence drain stuck`; either
+      the drain completed after the restore terminal or the log names the blocked-by-restore reason.
+      Record the capture path. If cancellation turns out to be necessary, STOP and return to design for
+      the `DEC` (proposal TBD-3) rather than implementing it here.
+
+- [ ] A3.5 **Packet C gate.** Full native suite green; A3.1–A3.3 cases green; RAM1 line recorded;
+      A3.4 evidence recorded.
 
 ## 4. Packet D — boot catalog reconcile outcome (D6)
 
@@ -194,10 +261,21 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       ([`DOCUMENTATION_CLOSEOUT.md`](../../../docs/Authority/DOCUMENTATION_CLOSEOUT.md)).
 
 - [ ] A5.4 **Decision log.** Append a `DEC-###` entry for the restore-liveness ruling (the request is
-      the unit, background restore is admitted while playing, the drain reconciles rather than
-      cancels) with its device evidence, and record O1/O2 if they were resolved by measurement.
+      the unit with identity and named waits, background **preparation** is admitted while playing and
+      apply waits on the commit gate, the drain **advances** rather than cancels) with its device
+      evidence, and record O1/O2 if they were resolved by measurement.
       **Verify:** the index row, the Next-ID bump, and the entry body are present and consistent.
 
-- [ ] A5.5 **Archive readiness.** All gates above are taken or explicitly recorded as unrun with the
-      reason; then archive per `openspec-archive-change`. **Verify:** `openspec validate` passes and the
-      main spec reflects the shipped behavior.
+- [ ] A5.5 **Required-gate completeness (review finding 6).** Every **mandatory** gate in Packets A–D and
+      in the `runtime-working-set-ownership` handoff (A5.1) SHALL be **taken and green** before archive.
+      **The only optional gate is A4.2's malformed-index device half** (it needs destructive-SD permission):
+      it may be recorded unrun with that reason. Everything else is mandatory — including A5.2's content
+      PASS, because this change's whole point is that it is reachable once the restored set is stable;
+      "recorded as unrun" is not an acceptable archive state for it. If a mandatory gate cannot be taken,
+      the change is **not** archive-ready and stays open with the blocking reason recorded. **Verify:** the
+      closeout table lists each gate as taken+green, optional+unrun-with-reason, or open; archive proceeds
+      only when nothing is in the third state.
+
+- [ ] A5.6 **Archive.** After A5.5 shows no open mandatory gate, archive per `openspec-archive-change`.
+      **Verify:** `openspec validate` passes and the main `lazy-slot-hydration` spec reflects the shipped
+      behavior.
