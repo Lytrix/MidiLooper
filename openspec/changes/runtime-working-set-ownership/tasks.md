@@ -708,7 +708,14 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       **not** established. A third 160 s capture went `INCONCLUSIVE_CAPTURE` (no recurring anchor) because the
       restored set drifts between boots, so the formal bar is unmet and **confounded by the same catalog
       defect**. `capacity_path_exercised: false` (densest bar 84 refs vs the old 256 ceiling): a parity run,
-      not a capacity re-stress.
+      not a capacity re-stress. **The mute lever for a single-slot capture was tried and does not work
+      (2026-09-23, later):** muting the other seven tracks (double press on the track button) silences
+      *everything* — the 160 s capture carries only LED feedback and clocks — because the **set of tracks that
+      actually play changes across resets**: all-unmuted output is on 1-based channels 1, 2, 3, 4, 6, and
+      track 5 contributes no notes now, though its content is dumped as present (`track=5,slot=0,length=18432`,
+      all 24 bars dense) and channel 5 *did* play in the earlier 2-cycle capture. So a formal PASS needs the
+      persistence/catalog defect fixed first; it is not reachable by capture configuration. Mute state was
+      restored. See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § Device session — RWSO-24CAP, Leg 5.
 
 ## S3 — introduce the reusable lease pool (no release yet)
 

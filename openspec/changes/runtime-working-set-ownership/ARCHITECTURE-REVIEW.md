@@ -2766,12 +2766,37 @@ recorded as not verified, with the content itself shown present.
 `capacity_path_exercised: false` — the densest bar is 84 refs against the old 256 ceiling, so this is a
 **parity run, not a capacity re-stress**, exactly as the guide distinguishes.
 
-**The next step for a formal PASS, and why it is not taken here.** The verifier cannot anchor because the
-playback window carries *every* track's output, and which tracks have content changes per boot. The one
-non-destructive lever left is to **silence the other tracks** (MIDI mute), which does not touch their content on
-SD; clearing them would be destructive and is **not** permitted. Muting was not attempted in this session: it
-alters persisted track state on a device whose catalog is already failing to reconcile, and the honest
-prerequisite is the catalog fix, after which a single-slot capture should anchor normally.
+### The mute lever was tried, and it does not work — the playing set itself changes (2026-09-23, later)
+
+The non-destructive lever for a formal PASS is to silence the other tracks (MIDI mute leaves their SD content
+alone; clearing them would be destructive and is not permitted). Track mute is a **double press** on the track
+button (`MidiButtonConfig.cpp`: `onDoublePress(ActionType::MUTE_TRACK)`, ch16 note `60+i`); seven tracks were
+muted and `Track 1..4, 6, 7, 8 mute toggled` was confirmed on serial. It does **not** produce a verifiable
+capture, and the reason is a finding rather than a nuisance:
+
+- With the other seven muted, a 160 s capture yields **no musical notes at all** — only LED feedback on
+  channel 15 and transport clocks — and the verifier returns `INCONCLUSIVE_CAPTURE` again. Muted tracks still
+  run playback (six `Playback started` rows), so the silence is suppression, not a stopped transport, and the
+  capture script does start transport (`port.send(mido.Message("start"))`).
+- Measuring the played channels directly: **all unmuted** gives note-ons on 1-based channels 1, 2, 3, 4, 6
+  (+ LED 15/16); **with the others muted** it gives none. So the slot under test — track 5 slot 1 — contributes
+  **no** playback notes even though the dump reports its content as present
+  (`track=5,slot=0,length=18432`, 1,746 effective rows, `per_bar_effective` 70–84 on **every** bar, so a 15 s
+  window cannot be an empty region).
+- This is **state drift, not a property of the slot**: in the earlier 2-cycle capture on channel 5 the anchor
+  `[144,5,12,98]` *was* present (two occurrences), so track 5 did play then and does not now.
+
+So the set of tracks that actually **play** changes across resets, in the same way the restored set does, and
+the mute lever removes the very track that needs verifying. **A formal content PASS therefore needs the
+persistence/catalog defect fixed first**; it is not reachable by capture configuration. The mute state was
+**restored** (all seven unmuted) and the transport stopped, so the device's audible state is as it was.
+
+**Why a formal PASS is not claimed.** The guide's bar is `inventory_equal: true` on every cycle
+([HITL_CONTENT_VERIFICATION.md](../../../docs/Guides/HITL_CONTENT_VERIFICATION.md)). The substantive claims that
+*are* established: the committed inventory matches the effective inventory (`storage_matches_effective: true`,
+1,746 rows, all 24 bars dense), and both rows the verifier called missing are present in playback once per cycle.
+What is **not** established is a cycle-clean PASS, because the device cannot currently hold a stable playing
+set long enough to capture one.
 
 ### Blocker found and worked around: CLEAR cannot proceed while transport is active
 
