@@ -14,6 +14,10 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-080](#dec-080--deterministic-execution-packets-for-implementation-slices) | 2026-09-23 | Per-slice transition oracles, production-path fixtures and evidence-backed completion | Accepted — workflow only; applies to future implementation steps |
+| [DEC-079](#dec-079--runtime-working-set-implementation-handoff-corrections) | 2026-09-23 | Executable boot slice, per-holder budget, retained regeneration job and interaction composition | Accepted — OpenSpec corrections only; runtime gates open |
+| [DEC-078](#dec-078--every-interaction-is-accepted-and-finalization-is-per-interval-amends-dec-067-and-dec-076-point-2) | 2026-09-19 | Every interaction is accepted, and finalization is **per interval** (amends DEC-067 and DEC-076 point 2) | **Accepted — design authority (user decision); implementation blocked at G2 pending contract revision.** Amends DEC-067's denial wording and DEC-076 point 2; governs `runtime-working-set-ownership` S4f |
+| [DEC-077](#dec-077--implementation-readiness-is-a-precondition-on-the-existing-reassessment-trigger-not-a-second-stop-gate) | 2026-09-19 | Implementation readiness (G0–G2) is a precondition on the existing reassessment trigger, not a second stop gate | **Accepted — documentation/workflow only; no firmware change.** Governs `docs/Authority/IMPLEMENTATION_READINESS.md` + the G0–G2 agent roles |
 | [DEC-076](#dec-076--runtime-working-sets-are-role-owned-and-memory-scales-with-active-roles) | 2026-09-18 | Runtime working sets are role-owned and memory scales with active roles (**Playhead-scheduled MVCC**) | **Accepted — design authority recorded; implementation staged (S0-S7), nothing built yet.** Governs `runtime-working-set-ownership` |
 | [DEC-075](#dec-075--the-snapshot-publication-boundary-admits-memory-per-construction-turn-and-parks-on-allocation-failure) | 2026-09-18 | The snapshot publication boundary admits memory per construction turn and parks on allocation failure | Accepted — implemented; native 2249 / 1 skipped / 0 failures, RAM1 unchanged; device gate owed |
 | [DEC-074](#dec-074--the-lsv1-body-admits-only-a-settled-root-the-format-is-pinned-once-and-the-fallback-is-the-passes-authoritative-legacy-body) | 2026-09-18 | The LSV1 body admits only a settled root; the per-loop format is pinned once and the fallback is the passes-authoritative legacy body | Accepted — implemented and device-verified (settled LSV1 save path, `q=0` publishes, post-reboot `storage_matches_effective`); native reproducer red→green; RAM1 allowance restored |
@@ -88,7 +92,276 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-077 -->
+<!-- Append new entries below (newest first). Next ID: DEC-081 -->
+
+## DEC-080 — Deterministic execution packets for implementation slices
+
+**Date:** 2026-09-23
+**Owner:** implementation architect, builder and reviewer workflow
+**Status:** Accepted — user requested a persistent rule/workflow for all future steps and an update to the current plan; workflow/documentation only.
+**Extends:** DEC-077 implementation readiness; applies to future steps of existing changes, including DEC-079's handoff.
+
+### Problem
+Detailed prose still leaves agents to infer intermediate outcomes, test seams and completion criteria. Tests
+can pass against copied logic or success-returning stubs while production loses accepted requests or owners.
+Planned/native/device evidence is easily conflated during task checkoff.
+
+### Decision
+Extend G2/G3 in `docs/Authority/IMPLEMENTATION_READINESS.md` with one proportional execution packet per
+reviewable slice. Pin dependency closure, stepwise transition/outcome oracle, controllable production-path
+fixtures, independent invariants and exact verification recipe before production behavior edits. Establish
+meaningful fixtures first; minimal link/API seams are allowed but missing-symbol errors are not behavioral
+red evidence. Record actual case/suite/count/build/device evidence before checkoff; missing gates stay open.
+Use the common template or equivalent existing review sections. AGENTS.md, the always-applied Cursor rule,
+OpenSpec config and architect/builder/reviewer roles point to that one authority. This is an extension of
+existing readiness and verification, not a new reassessment gate or a repeated permission request.
+
+### Rationale
+Deterministic logical interleavings and independently expected state make correctness inspectable and
+repeatable. Source-level counters and native mocks cannot establish device timing; preserve hardware gates.
+Risk-proportional scope avoids requiring new tests for simple documentation or mechanical changes.
+
+### Alternatives considered
+- More architecture prose alone: rejected because it does not define a discriminating executable outcome.
+- A new mandatory agent/service: rejected because existing roles already own specification, implementation and review.
+- Mandatory red tests for every edit: rejected because existing passing coverage and low-impact edits do not need artificial failures.
+- A universal runtime outcome framework: rejected because boundary semantics can be specified using existing owners/APIs.
+
+### Affected modules
+Agent guidance, implementation readiness, delivery rules, OpenSpec generation and current change review artifacts.
+No production C++ or runtime state changed.
+
+### Constraints created
+No silent assertion/budget weakening to pass; no model-only fixture offered as production-path proof;
+no skipped/errored suite called green; required device evidence remains distinct. Routine fixture details
+within the approved contract proceed autonomously; G3 still governs architecture-changing discoveries.
+
+### Related OpenSpec
+`runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` defines P0–P8 and the S2b B01–B07 acceptance cases;
+`tasks.md` adds D0 preparation/evidence work. They are specified, not implemented or verified fixtures.
+
+### Migration notes
+Apply on the next slice of each active change, without retroactively relabeling completed historical work.
+The current plan reuses `test_continuous_capture` and `test_playback_prewarm`; native clock/transport and
+load-dispatch coverage must be made controllable before the corresponding acceptance cases can prove behavior.
+
+
+
+## DEC-079 — Runtime working-set implementation handoff corrections
+
+**Date:** 2026-09-23
+**Owner:** Track job lifetime and stop obligation; TrackManager pending start/switch continuations
+**Status:** Accepted for the targeted OpenSpec correction requested by the user; documentation only,
+firmware and device gates remain open.
+**Clarifies:** DEC-078 items 2, 6, 9 and 10; preserves unconditional acceptance and explicit supersession.
+
+### Problem
+The implementation review found circular early-stage prerequisites, singleton memory arithmetic after
+per-track cardinality changes, an ownerless sealed-range retry path, duplicated extracted playback work,
+and ambiguous composition of stop/switch/start requests.
+
+### Decision
+Use `openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md` as the current contract
+for these five points. Boot removal and its Stop-only retry/liveness prerequisites ship in one slice.
+Price per-holder costs at source-derived simultaneous counts, including current roots and overlap.
+On runtime loss/OOM, the existing live CaptureStopJob retains the sealed range and receipts and retries
+bounded regeneration; it is not retired for re-admission. A completed commit receipt cannot replay.
+The interval latch owns Stop; existing manager pending-switch/start state retains continuations,
+including a start-mode discriminator held externally. Execution precedence does not discard distinct
+actions. A later Stop supersedes an unexecuted Start; a replaced switch target supersedes a start bound
+to the replaced target; transport Stop supersedes unexecuted starts. Each supersession is reported.
+No unbounded request queue or queue of stopped intervals is added. S4c defines contract only;
+playback decoupling waits on the planned, uncreated sibling and its own architecture gate.
+
+### Rationale
+These changes make ownership survive waits and make intermediate commits executable without inventing
+architecture during Apply. Retaining the existing job avoids transferring sealed content into an
+unnamed owner. Separate existing request carriers prevent a successful Stop from erasing its continuation.
+
+### Alternatives considered
+- Retire and retain rawRange elsewhere: rejected because it requires a new lifetime owner and retry queue.
+- Let latch priority discard other requests: rejected because distinct accepted actions would disappear.
+- Block boot correction on the full memory law: rejected because S6/F are not needed to remove boot reservations.
+- Implement extracted publication work under S4c: rejected because its sibling contract/DEC does not yet exist.
+
+### Affected modules
+Track deferred stop/admission and playback prewarm; TrackManager transport/start/switch; StorageManager
+load admission; the OpenSpec budget and stage gates. No module implementation changes in this session.
+
+### Constraints created
+Retained regeneration jobs count as live for release/load; each request is executed, explicitly
+superseded or destroyed with the session. Budget maxima cannot be silently reduced to fit. Added state
+uses external placement and declared bounded grains. A general multi-finalizer admission expansion is
+not authorized by a descriptor-capacity calculation.
+
+### Related OpenSpec
+[Runtime working-set ownership handoff](../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md).
+
+### Migration notes
+S2b pulls forward only the placement/Stop/liveness prerequisites listed in handoff §1. Later S3/S4/S4f
+extend the same implementation, without temporary duplicate owners. S5 prepares the current playback
+root on reactivation until F replaces those consumers and passes parity gates. S7/archive requires S6/F.
+
+
+
+## DEC-078 — Every interaction is accepted, and finalization is per interval (amends DEC-067 and DEC-076 point 2)
+
+**Date:** 2026-09-19
+**Status:** **Accepted — design authority (user decision 2026-09-19); implementation blocked at G2 pending
+contract revision.** This entry fixes the acceptance rule and the finalization cardinality. It does not claim
+shipped code; the S4f contract that implements it was returned as BLOCKED by the G2 red-team pass and is being
+revised.
+**Owner:** `Track` stop/start acceptance and the per-interval interaction latch; `TrackManager` slot-switch,
+record and overdub admission; `TrackPlaybackRuntime` finalization occupancy; `GlobalUndoStack` only where the
+latch changes in-flight predicates.
+**Amends:** [DEC-067](#dec-067--finalization-resource-admission-is-stop-directed) and
+[DEC-076](#dec-076--runtime-working-sets-are-role-owned-and-memory-scales-with-active-roles) **point 2**.
+Per the append-only rule the amended text is not rewritten; the specific superseded sentences are named below.
+**Follows:** DEC-076 point 9 (the acceptance rule), DEC-070 (transport-stop retarget), DEC-069 (interval
+boundary), DEC-068 (session-exit receipt per interval), DEC-065 (staging is admitted, not boot-reserved).
+
+**Why.** The user requirement is one press: *"I never want a denied stop or a user to need to press twice."*
+DEC-076 point 9 already stated this for the stop, record/overdub start, slot/track switching and undo/redo, but
+DEC-067's device acceptance and DEC-076 **point 2** still describe a stop that is *denied non-destructively* and
+*re-issued by the stop edge*. Read literally, point 2 preserves the defect point 9 removes. The red-team G2 pass
+(`runtime-working-set-ownership`) also showed that the "one finalization lease" reading was under-specified: the
+finalization resources are **per track+slot** (`captureStopOwner`, the transfer admission, the canonical capture
+output, the session-exit handoff are all per `LoopPlaybackRuntime`/`Loop`), so a device-wide singleton would
+*reduce* today's capability — the same defect class as FALSIFICATION F1.
+
+**Decision.**
+
+1. **Acceptance is unconditional; execution is scheduled.** A stop, a record/overdub start, a slot or track
+   switch, and an undo/redo are accepted the moment they are made. Acceptance never depends on whether the
+   resources are free. Execution timing is the playhead-scheduled MVCC pipeline's decision, resolved at the
+   earliest valid interval boundary once the owner frees. The user never re-issues.
+2. **The interaction is latched, not stored as an interval.** The accepted-but-not-yet-executed request is one
+   small per-interval record: `{kind, destination, slot, interval, phaseTick, transportEpoch}`. It is not a
+   descriptor, takes no ring capacity, and is cleared at the interval boundary (DEC-069 precedent) and on any
+   successful admission for the same `(interval, slot)`. It never holds a stopped interval's sealed raw range,
+   staged pass, session receipt or canonical transfer state.
+3. **Admission is slot-parameterised.** A latched stop executes against the **interval's** slot, not whatever
+   `activeLoopIndex` happens to be at drive time. The drive re-runs the full guard chain, re-derives the
+   destination from the live transport state, and re-derives the boundary from the loop phase (an absolute tick
+   is diagnostic only — MIDI Start, seek and load reset the tick domain).
+4. **Switching is accepted too.** A slot or track switch while an interval is live is accepted; the previous
+   refusal ("slot selection cannot preempt that ownership") is removed. `activeLoopIndex` may not move while an
+   interval is live unless the stop was admitted and bound to that interval's slot. The interval's own slot is
+   the interval's identity, exactly as `CaptureStopJob::slot` is today.
+5. **Finalization is per interval, not a device-wide singleton.** `DeferredFinalizationLease` is identified by
+   `(track, slot, interval generation)`, is acquired at STOP and released at job retirement, and **survives** an
+   `activeLoopIndex` movement and a switch to another track or slot. Its bound is that track+slot's
+   single-instance finalization resources, not a shared global object. Concurrent finalization on a **different**
+   track+slot is admissible today and remains so, subject to memory.
+6. **Cardinality scope.** `LiveCaptureLease` is **1 per track** (today's capability; `pendingRecord[]`/`pendingStop[]`
+   are per track). `InteractiveLease` is **1 per selected/active track+slot**. `PlaybackWindowLease` is **N
+   derived** (1 per track today). `TransferOverlap` is measured and per switching track.
+7. **The ring is still a ring.** `CaptureStopJobs` stays descriptor depth whose tail must be free; pending stop
+   *intervals* are never stacked, and `queue_full` remains exceptional descriptor exhaustion, not ordinary wait.
+   A second finalization lease is still not provisioned preemptively.
+8. **Liveness is per slot where the resource is per slot.** Releasing an inactive slot's working set, admitting a
+   load into a slot, and gating persistence all use a predicate that names the slot, not a track-level "capture
+   active" flag. Boot and load are **admission boundaries**: a committed-but-inactive slot does not reserve
+   canonical-copy capacity (the DEC-065 pattern, extended from staging to the canonical copy).
+9. **A missing runtime regenerates; it never stalls.** If a deferred job's slot runtime is absent, the owner
+   re-admits it through the cold path (or parks non-destructively and reports). A `noteStallOnce` + hold that
+   keeps `captureStopOwner` forever is the defect this rule forbids.
+10. **The wait is observable as scheduling.** `accepted_stop_finalizer_wait` counts waits — attributed to the
+    holding owner — and is a **retry/scheduling counter**, not a user-visible denial. (Renamed 2026-09-19 from the
+    DEC-076-era `finalization_lease_stop_denied`: the old name described the removed denial and would mislead a
+    future trace into reading a DEC-078 violation.) The pre-fix counterfactual is `successor_stop_denied_capacity`
+    + `reentryDecision("deny", …)`. A park that reaches its diagnostic terminal
+    (`accepted_stop_park_terminal`) is a **fault/escalation state of the execution mechanism, not cancellation**:
+    the accepted interaction stays authoritative until executed, explicitly superseded by a later interaction
+    under the defined supersession rules, or the session is destroyed/reset.
+
+**Superseded text (named, not rewritten).**
+
+- DEC-067's **required device sequence** sentence *"B STOP denied non-destructively while A owns finalization
+  capacity (B stays live; …); A releases; B STOP admitted"* is superseded as an acceptance criterion. The shape
+  is retained — A finalizes, B records, A releases, B stops — but B's stop is **accepted at the edge** and
+  executes once after A releases, from one user request. DEC-067's capacity model (START admits on the live
+  role; the deferred resources are checked at STOP) is unchanged.
+- DEC-076 **point 2**: *"a role whose second concurrent stop is **denied non-destructively**"* and *"A denied
+  stop is not queued or auto-serviced — it is re-issued by the stop edge and **may** then be admitted"* are
+  superseded by point 1 above and by this entry's items 2-5.
+- DEC-076 **Consequences**: the bullet *"finalization is a queue"* (`docs/DECISION_LOG.md`, DEC-076 §
+  Consequences) is **withdrawn**; it contradicted DEC-076 point 2 and Revision 13 of the design, and no queue of
+  stopped intervals is authorized.
+
+**Not decided here.** The window/interval publication unit (extracted to the sibling change
+`windowed-playback-generation`, which needs its own DEC); the transfer-overlap depth measurement; the cold-undo
+descriptor field set; the canonical-residency policy; whether a second finalization lease is ever warranted
+(evidence path remains the counter).
+
+---
+
+## DEC-077 — Implementation readiness is a precondition on the existing reassessment trigger, not a second stop gate
+
+**Date:** 2026-09-19
+**Status:** **Accepted — documentation and workflow only; no firmware change.** The gate is normative from
+this entry; the first change to run through it will exercise it.
+**Owner:** Agent workflow and documentation. [`docs/Authority/IMPLEMENTATION_READINESS.md`](Authority/IMPLEMENTATION_READINESS.md)
+owns the gates; [`openspec/config.yaml`](../openspec/config.yaml) `rules.design` / `rules.tasks` enforce
+them at proposal time; [`docs/Agents/implementation-investigator.md`](Agents/implementation-investigator.md),
+[`docs/Agents/implementation-architect.md`](Agents/implementation-architect.md) and
+[`docs/Agents/implementation-red-team.md`](Agents/implementation-red-team.md) are the roles.
+**Follows:** DEC-011 (bias toward progress — amended in scope, not reversed), DEC-008 (authority conflict
+resolution), DEC-010 (ownership evolution protocol), DEC-006 (agent context harness). This entry adds no
+ownership rule; it adds the **evidence obligation** that the decision ladder's "Implement" step previously left
+implicit.
+
+**Problem.** The `design` and `tasks` rules constrained how a *chosen* design is implemented. They did not force
+the agent to establish that it had found all affected paths before that design became implementation work. The
+observed failure mode is a Stage 1 that becomes "Stage 1 + three newly discovered prerequisites + a
+compatibility fix + a new resource model": ownership and lifetime discovery deferred into implementation, where
+it is most expensive and least reviewable.
+
+**Decision.**
+
+1. **G0–G2 are a precondition, not a stop.** G0 establishes current implementation (entry paths, owners,
+   transitions, deferred continuations, handoffs, bound class, memory consequences), G1 resolves the
+   architecture (owner/lifetime/preconditions/postconditions/invariants/failure/envelope), G2 fixes a per-stage
+   contract (owner, files, preconditions, mutation, postconditions, must-preserve, non-goals, validation, commit
+   boundary). The [formal trigger list](../ARCHITECTURE_REASSESSMENT.md#formal-triggers) remains the **only** thing
+   that decides whether a reassessment is required, and the session limit (max one) is unchanged. This entry
+   does **not** create a second gate on the [decision ladder](Authority/ARCHITECTURE_RULES.md#progress-bias-and-decision-ladder).
+2. **Architecture-changing UNKNOWNs block G1.** Any new owner, lease, queue, persistent state, runtime state
+   transition, snapshot lifetime, synchronous runtime operation, or persistence representation is an explicit
+   architecture decision. UNKNOWNs that do not change an owner, lifetime, or invariant do **not** block
+   implementation — the ladder still says implement.
+3. **Tasks must be implementation work, not discovery.** "Investigate how…", "determine whether…", "decide
+   which…", "figure out lifetime…" and "explore whether…" are not admissible tasks; they belong in G0/G1.
+4. **The Apply agent is not an architect.** During implementation, STOP and return to design when evidence
+   requires an ownership change, lifetime-model change, new persistent state, new lease/resource, new
+   queue/deferred mechanism, new runtime state transition, changed persistence format, synchronous work on a
+   timing-sensitive path, an envelope change, a violation of an existing `DEC-###`, or a materially different
+   call path from the approved design. Local discoveries that do **not** require this — helper naming, local
+   refactoring inside approved ownership, fixture mechanics, diagnostic placement, an equivalent implementation
+   detail with an unchanged contract — proceed without a stop. The distinction is the mechanism: stopping
+   because a helper is needed is noise; stopping because a supposed single finalisation lease turns out to need
+   a second lifetime owner is the gate working.
+5. **Static architectural state leaves `config.yaml`.** The config's milestone narrative had already gone stale
+   ("Active work: persistence / overlay"). Volatile facts now point at `PROJECT_STATE.md` /
+   `CURRENT_WORK.md`. Structural constants stay: `NUM_TRACKS = 8` and `MAX_LOOPS_PER_TRACK = 8`
+   (`include/Globals.h`) are current, and a planning agent that lacks them guesses.
+6. **Envelope claims cite real sources.** The `design` rule names the `ClockManager` tempo clamp,
+   `Config::NUM_TRACKS` / `MAX_LOOPS_PER_TRACK`, window-sized working sets, and `activeLoopIndex` as the sole
+   activation authority. The product capacity target (the sounding-lease envelope in `CURRENT_WORK.md`) is a
+   **target**, not shipped behavior, and `CURRENT_WORK.md` is not normative spec.
+
+**Rejected.** Replacing the reassessment trigger with G0–G2 (would make an advisory evidence discipline a second
+stop and collide with DEC-011's progress bias); a new parallel `docs/Agents/` role tree (the canonical role
+files are `architect.md` / `builder.md` / `reviewer.md`; the new roles extend that set and the gate is
+summarized in its README); encoding a tempo envelope or track count from chat rather than from
+`ClockManager` and `include/Globals.h`.
+
+**Discovered while writing this (not fixed here).** `ClockManager::setBpm(uint16_t)` assigns `bpm` and reprograms
+the tick timer with **no clamp at all**, while `setBpmFloat` clamps to 20–300 and the boot-load and legacy
+validation paths also require 20–300. Two entry paths to the same owner state with different invariants — a
+G0/G1-shaped gap and a candidate for its own change.
+
+---
 
 ## DEC-076 — Runtime working sets are role-owned and memory scales with active roles
 
@@ -198,12 +471,9 @@ Its `proposal.md` § Name and scope states this, so the id is not re-derived whe
 **Not decided here.** The 16-track / bank-switching scope; the transfer-overlap depth; the exact cold-undo
 descriptor field set (the policy itself is decided above; only the `TrackUndo` audit remains); the canonical
 residency policy; the default window size; whether a
-second finalization lease is ever warranted (evidence path: a `finalization_lease_stop_denied` counter); and
+second finalization lease is ever warranted (evidence path: a `accepted_stop_finalizer_wait` counter); and
 which existing owners are retrofitted to the uniform work-item contract (opportunistic, its own change —
 a big-bang retrofit of nine timing-path owners is explicitly rejected).
-
----
-
 
 ## DEC-075 — The snapshot publication boundary admits memory per construction turn and parks on allocation failure
 

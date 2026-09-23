@@ -1,0 +1,22 @@
+---
+description: Evidence-backed implementation slices with deterministic native transition and ownership oracles
+alwaysApply: true
+---
+
+# Implementation execution contract
+
+For each future implementation slice, including steps of existing changes, follow
+[IMPLEMENTATION_READINESS.md](../../docs/Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice).
+Use [EXECUTION_PACKET.md](../../docs/Templates/EXECUTION_PACKET.md) or equivalent sections in the active review.
+
+- Fix the transition/outcome oracle before production behavior edits.
+- Use controllable production-path fixtures for deferred work, ownership and resource failure/recovery.
+- Run the packet's recipe and record actual evidence before task/stage checkoff.
+- Keep missing device/dependency gates open; do not silently relax the oracle to obtain green tests.
+- Scale checks to risk; documentation/mechanical edits do not require new firmware tests.
+
+Example: pause the stop worker, issue one stop, deny capacity, step, restore capacity, drain within a
+bounded grain count; assert retained request/owner and exactly one publication. Sleeping and checking
+that the program did not crash is not the equivalent test.
+
+This is a pointer to G2/G3, not a second approval gate or a new scheduling framework.

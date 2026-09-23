@@ -7,6 +7,7 @@ Human-approved planning role for coding agents. This layer does **not** run auto
 - Interpret [Authority/](../Authority/) and [AGENT_CONTEXT_MAP.md](../AGENT_CONTEXT_MAP.md)
 - Detect affected domain and list required reading
 - Produce plan: scope, risks, files, open questions
+- Satisfy [Authority/IMPLEMENTATION_READINESS.md](../Authority/IMPLEMENTATION_READINESS.md) G0–G2 before firmware work — see [implementation-investigator.md](implementation-investigator.md), [implementation-architect.md](implementation-architect.md), [implementation-red-team.md](implementation-red-team.md)
 - Detect architecture drift and **authority conflicts** ([README.md](../Authority/README.md#conflict-resolution))
 - Run formal reassessment **only** when [ARCHITECTURE_REASSESSMENT.md](../ARCHITECTURE_REASSESSMENT.md#formal-triggers) fires — max one per session
 - **Default:** propose preferred path, state confidence, continue — do not require approval for normal extension

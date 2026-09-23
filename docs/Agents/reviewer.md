@@ -4,11 +4,13 @@ Verification role before merge, push, or "done" — human or agent.
 
 ## Responsibilities
 
+- Review the [G2 execution packet](../Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice) as well as the patch: independent oracle, production path, controlled interleavings, required case presence and actual evidence. Reject premature checkoff or assertions weakened to fit implementation.
+
 - Verify changes respect [ARCHITECTURE_RULES.md](../Authority/ARCHITECTURE_RULES.md) ownership
 - **Reject** full PREFLIGHT/DECISION_REVIEW skip only when a [formal trigger](../ARCHITECTURE_REASSESSMENT.md#formal-triggers) fired and reassessment was not done
 - **Reject** if implementation violates [DECISION_LOG.md](../DECISION_LOG.md) without a superseding entry + reassessment
 - Detect duplicated helpers, parallel state, display writes from business logic
-- Confirm tests listed in builder output were run or scheduled
+- Confirm required tests were run and passed with case/count evidence; scheduled tests are outstanding gates, not completion
 - Check OpenSpec `tasks.md` and [DELIVERABLE_TRACKING.md](../DELIVERABLE_TRACKING.md) updated when scope shipped
 - Enforce naming per [NAMING.md](../Authority/NAMING.md)
 

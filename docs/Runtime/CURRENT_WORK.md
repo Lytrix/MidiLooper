@@ -1,5 +1,32 @@
 # Current work (implementation scope)
 
+**2026-09-23 — chat reference readability.** Agent replies now pair every stage/task/gate/decision ID
+with a short descriptive name, including repeats and link labels. Canonical rule:
+[NAMING — short names beside IDs](../Authority/NAMING.md#short-names-beside-ids-in-chat), linked from
+AGENTS.md and the always-applied naming rule. Presentation only; no runtime or task-status change.
+
+
+**2026-09-23 — deterministic implementation workflow strengthened (DEC-080).**
+[Implementation readiness](../Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice)
+now requires a proportional execution packet for every future slice, including steps of existing changes:
+fixed transition oracle, controlled production-path fixture, repeatable recipe and actual evidence before
+checkoff. AGENTS.md, Cursor rule, OpenSpec config and agent roles share that authority.
+The current plan's [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+adds P0–P8 and S2b cases B01–B07; D0 tasks prepare controls/fixtures before behavior changes. Fixtures are
+**specified only**, not implemented or run. No firmware or hardware action; no implementation task checked off.
+
+
+**2026-09-23 — runtime-working-set-ownership implementation handoff corrected (DEC-079).**
+The five targeted review findings are resolved in the active OpenSpec's
+[IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md)
+and task/spec text: self-contained S2b with pulled-forward Stop/liveness prerequisites, per-holder
+cardinality budget, job-retaining regeneration, S4c contract-only with phase F explicitly uncreated,
+and stop/switch/start composition with explicit supersession. S0/S1 → S2b remains the first slice;
+its gate uses current resident content and a synthetic descriptor fixture, not a 60-long-slot library.
+Current whole-loop playback roots stay accounted until F. No firmware, build, upload or device run;
+all implementation checkboxes remain open. This supersedes earlier handoff wording, not device evidence.
+
+
 > **From now on, prove audible content with the `hitl-content-verification` pipeline, not the
 > base-run verifier.** `host_midi_hitl.py run --preset base` is still the content-creator, but its
 > own playback verdict is not the check: the managed harness aborted four consecutive runs on
@@ -16,6 +43,51 @@
 > [§ Now implementing](#now-implementing). Everything above that section is a
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
+
+**2026-09-19 `runtime-working-set-ownership`: the first change through G0 → G1 → G2 — and the G2 red team
+returned BLOCKED, so the design input landed instead of firmware.** G0 (six read-only traces) verified the law
+violation with citations: `runtimeBySlot_` is per slot, lazily allocated and **never released on slot
+deactivation**; a sounding slot hard-requires a resident whole-loop root
+(`tryGatherPublishedSnapshotEventsInWindow` returns false without one); a stop meeting a busy owner is **dropped**
+and must be pressed again (`successor_stop_denied_capacity`, `reentryDecision("deny", …)`); undo entries pin
+snapshot residency with no demotion path; and no test anywhere measures residency against recorded-slot count.
+G0 also found the open decisions already recorded as DEC-076 and a stale scope envelope (fixed below).
+
+G1 turned that into an architecture (14 decisions: occupancy leases keeping the O(1) hot-path index,
+generation-qualified identity, per-interval finalization, provision-at-cold-boundary/bind-at-MIDI-boundary,
+window-derived sizing, the acceptance latch, standby/visual/cold-undo/persistence tiers, header-only work-item
+vocabulary). The G2 red team then **falsified eleven paths** — most importantly that `finalizeCaptureAndSelectSlot`
+calls the void `stopOverdubbing()`, ignores a denial and moves `activeLoopIndex` anyway (B1); that the latch would
+execute a PLAYING stop after transport stopped (B2); that `beginDeferredOverdubStop` is active-slot-keyed (B3);
+that undo/redo is a second active-slot authority (B4); that the clock-path commit allocates via `trySlot` (B5);
+that release/liveness is track-scoped while resources are slot-scoped and a missing runtime stalls forever (B6);
+that **boot reserves 8 pool chunks (41,056 B) per committed slot** — 480/512 at the 60-slot target, reintroducing
+the RC-MEM-5 state (B7); that a load can wedge a pinned finalization (B8); that the persistence guards and mid-pass
+resolver do not know an accepted stop (B9); that cold-undo descriptors keep canonical chunks pinned and ClearSlot
+has no snapshot-free reconstruction (B10); and that the contract's own fields add ~1.4 KB of DTCM against 872 B of
+usable padding (B11).
+
+Landed as design input, **no firmware change**: **DEC-078** (accepted — every interaction accepted, finalization
+**per interval**, amending DEC-067 and DEC-076 point 2 and withdrawing DEC-076's "finalization is a queue"
+bullet); `design.md` **Revision 18** (the eleven findings, the latch, cardinality/liveness table, invariants
+32–36, placement rules, cold-undo pinning, caps); `tasks.md` restructured (S2.9 **extracted** to the sibling
+change `windowed-playback-generation`, new **S2b** boot/load stage, per-slot liveness S4.0, slot-parameterised
+acceptance S4f, R1–R11 corrections); and the stale 32-lease envelope corrected here.
+
+**2026-09-19 — APPROVED by the owner (review of revision (4)), with two corrections that are now landed.** The
+corrections: (1) rename `finalization_lease_stop_denied` → **`accepted_stop_finalizer_wait`**, because "denied"
+described the removed architecture and would mislead a future trace into reading a DEC-078 violation; (2) define
+**`accepted_stop_park_terminal`** as a fault/escalation state of the execution mechanism that **never cancels** the
+accepted interaction — the stop stays authoritative until executed, explicitly superseded, or the session is
+destroyed/reset (spec scenario + S4f.10(g)). Also landed from the review: **transaction-aware cold-undo eviction**
+(remove the oldest prefix that leaves the oldest retained descriptor independently reconstructable, not merely the
+oldest entry); the **execution order S0/S1 → S2b → S3/S4 → S4f → S5 → decoupling**, so the 32/64 envelope does not
+block fixing today's residency defect; and the **mandatory continuous device session** (S7.6: load ~60 slots →
+play → record A → STOP → switch B → START → STOP B once while A finalizes → B stops once → switch C), requiring
+0 denied interactions, 0 second presses, 0 lost capture, 0 wrong-slot publication, 0 stale-generation release,
+0 playback interruption, bounded MIDI gap, and steady-state RAM independent of cold recorded slots. Design
+revisions stop here unless implementation contradicts the contract; the next actions are the ownership-transfer
+signature, `DECISION_REVIEW` + `PREFLIGHT`, then S0/S1 followed by S2b.
 
 **2026-09-17 OpenSpec 5.12 / D8 LANDED and device-verified: a staged capture pass is owned by its
 interval (DEC-072), and the `CompanionHistory` checkpoint that had been red for two days is green.**
@@ -2741,6 +2813,10 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**Execution workflow:** use [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) packets and tasks D0 for every upcoming slice (DEC-080); acceptance fixtures precede production behavior changes.
+
+**Current handoff:** follow [IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) (2026-09-23, DEC-079) for the first slice and its prerequisites; phase F is planned but uncreated.
+
 **Related, designed not implemented: `capture-tier-a-budget-profiles`** — the instrumentation change that keeps a
 15–20 minute session inside the 1 MiB capture ring (per-family byte budgets, edge/sample/stream classes, critical
 reserve, per-family coverage, and a host rule that degraded evidence cannot pass unconditionally). It is the
@@ -2789,15 +2865,18 @@ The change: derived runtime views and capture companion storage become **owned b
 inactive slots retaining only canonical/persistence state and bounded metadata; working sets are acquired on
 activation, reused across slots, and released when no live playback/capture/deferred owner remains. Acceptance is
 a **measured scaling curve** -- load 60+ long slots, activate A, activate B, deactivate A, activate C -- required
-to be flat in recorded slots and stepped in active slots, with C reusing A's capacity. **Envelope (confirmed 2026-09-18): 2 sounding slots per track across 16 tracks = up to 32 sounding leases,
-regardless of each slot's loop length; exactly 1 slot holds the complex role** (record / overdub / passes /
-undo/redo / display, resumable small-packet logic inside MIDI boundaries), transferable to another slot or track
-quickly; and **the looper must never stop playing** -- switching, record/overdub and undo/redo all happen while
-playing with no MIDI timing degradation. At today's per-slot cost the envelope is 32 x 845 KB ~= 27 MB, or
-32 x 1.47 MB ~= 47 MB, against ~8 MB, so window-derived lease sizing (RC-MEM-2's outstanding item) is
-**promoted from safeguard to prerequisite S2**: ~100-125 KB per lease, or the simultaneous-playback capability
-is stated as a bound (`k` slots per track, `k < 2`). Note `NUM_TRACKS` is 8 today, so the 16-track envelope is
-itself an open item (S0.5). Three quantities are now separated:
+to be flat in recorded slots and stepped in active slots, with C reusing A's capacity. **Envelope (corrected
+2026-09-19, DEC-078): today it is 8 tracks x 1 sounding slot = N derived, not 2-per-track x 16 = 32** — the
+"slots as virtual tracks" capability does not exist and the memory law must not *preclude* 16/32/48/64, but no
+task here implements it and no acceptance claims it (`NUM_TRACKS = 8`,
+`openspec/changes/runtime-working-set-ownership/tasks.md` S0.5). Finalization is **per interval**, not one
+device-wide role; live capture is 1 per track; switching is an accepted interaction (DEC-078). **The looper must
+never stop playing** -- switching, record/overdub and undo/redo all happen while playing with no MIDI timing
+degradation. Window-derived lease sizing (RC-MEM-2's outstanding item) is **promoted from safeguard to
+prerequisite S2**, and the whole-root decoupling is extracted to the sibling change
+`windowed-playback-generation` (phase F), so **N is provisional** until that lands. **Boot/load is an admission
+boundary** (S2b): today boot prewarms every committed slot and reserves 8 pool chunks each (41,056 B), which at
+~60 slots consumes 480/512 chunks before any activation. Three quantities are now separated:
 library residency (~60 slots), logical active slots (the product envelope), and resident working-set leases
 (must fit PSRAM). Role tiers replace one "active": COLD / SELECTED / PREPARED-ACTIVE / CAPTURE-ACTIVE / DEFERRED,
 with **selection staying cheap** so browsing 60 slots causes no lease churn. Leases are

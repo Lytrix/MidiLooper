@@ -1,5 +1,11 @@
 ## ADDED Requirements
 
+Implementation staging: the final requirements below are umbrella acceptance, not every early slice's
+exit gate. Boot admission uses `IMPLEMENTATION_CONTRACT.md` §1. Immutable window publication and
+playback-root decoupling depend on the planned, uncreated `windowed-playback-generation` sibling;
+canonical eviction depends on S6. Until those gates land, report retained roots/canonical bodies and
+make no whole-law or 60-long-slot claim. Final archive requires both dependencies.
+
 ### Requirement: Inactive recorded slots retain only canonical descriptors and bounded metadata
 A recorded slot that is not in an active role SHALL retain only canonical pass identities/descriptors
 sufficient to locate or rehydrate its persisted content, loop and pass summary, persistence identity and
@@ -32,15 +38,24 @@ and never merely because a slot is selected.
 - **THEN** a bounded working-set lease is acquired before it is used
 - **AND** the acquisition happens where allocation is permitted, not on a timing-critical edge
 
-### Requirement: Working sets are window-sized so the two-slots-per-track envelope fits PSRAM
+### Requirement: Working sets are window-sized so the derived sounding-slot envelope fits PSRAM
 Working-set capacities SHALL be derived from the resolved window rather than a whole-loop event ceiling, so
 a slot's resident cost is independent of its loop length, and the number of simultaneously resident leases
 SHALL be an execution bound computed from PSRAM arithmetic, not a policy guess. The envelope to be served is **N sounding slots**, where the change **derives** the largest N the budget
 supports and states it as a capability. Today N is 8 (8 tracks x 1 sounding slot); the design must not
 preclude 16, 32, 48 or 64, because the target is that slots behave as virtual tracks and can sound together
-whenever set active. Also budgeted: one live-capture lease, one deferred-finalization role whose second concurrent stop is denied
-non-destructively, one interactive lease where present, and the measured transfer overlap. The budget is per
-lease class: only the playback term is multiplied by N, so only it must be small and length-independent.
+whenever set active. Also budgeted: one live-capture lease **per track**, one deferred-finalization role
+**per interval** (a second concurrent stop on the same track and slot is **accepted and scheduled**, never
+denied — DEC-078), one interactive lease where present, and the measured transfer overlap. The budget is per
+lease class: each per-holder cost SHALL be multiplied by its maximum simultaneous holder count.
+Live capture and finalization SHALL NOT be budgeted as device-wide singletons. Transfer overlap,
+retained roots and deferred undo SHALL remain charged until their last owner releases them.
+
+#### Scenario: Concurrent owners are counted independently
+- **WHEN** multiple tracks capture or finalize while slot preparations overlap
+- **THEN** the budget includes every resident holder and incremental inbound occupancy
+- **AND** shared backing is counted once and current whole-loop roots are reported until decoupled
+- **AND** an envelope that exceeds capacity is reported as unproved rather than silently priced as one holder
 
 #### Scenario: The lease budget closes
 - **WHEN** fixed overhead, canonical allowance, transient and deferred headroom, and the worst-case lease
@@ -222,6 +237,39 @@ interaction executes SHALL be decided by the playhead-scheduled MVCC pipeline, b
 deadline and the earliest valid interval boundary. A busy owner SHALL delay execution; it SHALL NOT refuse the
 interaction, and the user SHALL NOT be required to re-issue it.
 
+Accepted requests SHALL persist until execution, explicit supersession as defined below, or session
+reset. Stop-before-switch-before-start is execution order; it SHALL NOT discard distinct continuations.
+The interval stop obligation remains Track-owned; switch/start destinations remain in their existing
+manager-owned pending state, including the gap where no interval is live.
+
+#### Scenario: Stop switch and start compose
+- **WHEN** Stop(A), Switch(B), Start(B) are accepted before the worker can execute them
+- **THEN** Stop binds to A before B becomes active, then Start executes on provisioned B once
+- **AND** consuming Stop does not consume the switch or start request
+
+#### Scenario: A later stop supersedes an unexecuted start
+- **WHEN** Stop(A) and a following Start are pending and another Stop arrives before Start commits
+- **THEN** the unexecuted Start is explicitly superseded and reported, and the original stop remains accepted
+- **AND** no empty interval is manufactured; if Start already committed, Stop instead targets that new interval
+
+#### Scenario: A replacement switch cannot misdirect a start
+- **WHEN** Switch(C) replaces pending Switch(B) while a Start explicitly targets B
+- **THEN** C replaces the selection request, B's unpublished preparation retires, and Start(B) is explicitly
+  superseded and reported rather than silently retargeted to C
+- **AND** a subsequent Start(C) is accepted independently
+
+#### Scenario: Transport stop supersedes unexecuted starts
+- **WHEN** transport stops while stop/switch/start continuations are pending
+- **THEN** the live stop is retargeted to Stopped and unexecuted starts are explicitly superseded
+- **AND** pending selection uses the stopped-selection path and a later epoch cannot resurrect canceled starts
+
+#### Scenario: Runtime regeneration retains the capture owner
+- **WHEN** a live deferred job loses its runtime and allocation remains unavailable
+- **THEN** that same live ring entry retains its sealed extent, identity and ownership receipts while retrying
+- **AND** load/release cannot destroy its owner; a diagnostic terminal never dequeues the job or discards content
+- **AND** when capacity returns, bounded regeneration resumes without re-admission or replaying a completed
+  commit, and normal retirement occurs after exactly-once publication and resource release
+
 #### Scenario: Acceptance is unconditional
 - **WHEN** an interaction is made while the owner it needs is busy
 - **THEN** the interaction is accepted immediately
@@ -239,9 +287,24 @@ interaction, and the user SHALL NOT be required to re-issue it.
 - **THEN** these are **scheduling states**, not user-visible denials
 - **AND** the interaction executes when the owner frees, with no second attempt by the user
 
+#### Scenario: A park terminal never cancels an accepted interaction
+- **WHEN** the accepted stop's park reaches its diagnostic terminal (`accepted_stop_park_terminal`) before the
+  finalizer frees
+- **THEN** the accepted interaction remains authoritative and executes exactly once when the owner frees
+- **AND** the park is a fault/escalation state of the execution mechanism, never an abandonment of the stop, and
+  the interval is not left recording in place of the accepted stop
+- **AND** the user is never asked to press again
+
+#### Scenario: A switch is accepted without moving the sounding slot
+- **WHEN** a slot or track switch is requested while a capture interval is live
+- **THEN** the switch is accepted and its target is carried until it executes
+- **AND** the active sounding slot does not move until that interval's stop has been admitted and bound to the
+  interval's own slot (no second request, no dropped target)
+
 #### Scenario: A scheduled interaction needs no stored interval
 - **WHEN** an accepted interaction waits for its boundary
-- **THEN** it holds only its own identity (destination, requested tick, interval generation)
+- **THEN** it holds only its own identity (destination, slot, switch target where applicable, interval
+  generation, transport epoch)
 - **AND** it does not retain a stopped interval's sealed raw range, staged pass, session receipt or canonical
   transfer state, so no new capacity is required
 
@@ -270,8 +333,9 @@ interaction, and the user SHALL NOT be required to re-issue it.
   is accepted
 
 ### Requirement: Finalization preserves the single-active-finalizer capacity contract
-The change SHALL preserve DEC-067's capacity model -- one **active** finalizer, with the single-instance
-finalization resources bounding ordinary concurrency -- while removing the user-visible refusal that model used to
+The change SHALL preserve DEC-067's capacity model -- one **active** finalizer **per interval**, with that track
+and slot's single-instance finalization resources bounding ordinary concurrency -- while removing the
+user-visible refusal that model used to
 produce. A stop meeting a busy owner SHALL be accepted and scheduled, and SHALL execute when the owner frees
 without the user re-issuing it. The descriptor ring SHALL be treated as descriptor depth whose tail must be free,
 so pending stop *intervals* are never stacked.
@@ -307,18 +371,26 @@ monolithic per-slot lease. A slot MAY hold several classes simultaneously.
 - **AND** the successor-re-entry capability is preserved rather than serialized
 
 #### Scenario: The finalization lease rotates between captures
-- **WHEN** slot A stops and acquires the single finalization lease, slot B starts and records, then A finishes
-- **THEN** B may acquire that same finalization lease when it stops
-- **AND** the supported concurrency is one finalizing predecessor plus one live successor, not two
-  simultaneously finalizing captures
+- **WHEN** A and B share a track's existing single-instance finalization resources, A stops, B starts,
+  and then A finishes
+- **THEN** B may acquire those released resources when it stops
+- **AND** this shared-resource rotation is not a device-wide singleton: other tracks' finalizers remain
+  independent and their simultaneous residency is included in the budget
 
 #### Scenario: A stop meeting a busy finalizer is accepted, non-destructive and deferred
-- **WHEN** a stop is requested while a predecessor is still finalizing
+- **WHEN** a stop is requested while a predecessor still owns resources needed by that stop
 - **THEN** the stop is **accepted** with no partial stop and no descriptor taken, and the requesting slot remains
   recording or overdubbing
 - **AND** the busy-owner state is reported as a stage (`finalizer_busy`, or `transfer_denied` /
   `canonical_output_busy` / session-exit handoff for the other single-instance resources)
 - **AND** the accepted stop executes once the resource frees, without the user re-issuing it
+
+#### Scenario: A finalizer on another track does not block a session on this track
+- **WHEN** a predecessor capture on one track is still finalizing and a capture session starts on another track
+- **THEN** the second track's session and its stop execute independently, without waiting on the first track's
+  finalization
+- **AND** the first track's finalization completes exactly once with its content exact, and neither track's
+  stages release the other's storage
 
 #### Scenario: The descriptor ring does not imply concurrent finalization
 - **WHEN** finalization capacity is reasoned about
@@ -422,14 +494,26 @@ every undo/redo root belonging only to that slot SHALL be released.
 
 ### Requirement: Cold undo is globally bounded and redo survives demotion
 Cold undo SHALL be bounded by a per-slot depth and a device-wide byte budget, with the oldest cold entries
-evicted first. Redo history SHALL be preserved compactly across demotion and invalidated only by a new
-committed edit or capture.
+evicted first; the budget SHALL charge both descriptor bytes and any canonical bytes a descriptor pins. ClearSlot
+roots, which are excluded from the cold tier, SHALL be bounded by their own explicit cap. Redo history SHALL be
+preserved compactly across demotion and invalidated only by a new committed edit or capture, apart from the
+declared ClearSlot cap eviction, which is reported.
 
 #### Scenario: The oldest cold undo is the pressure victim
 - **WHEN** cold-undo residency exceeds the device-wide budget
-- **THEN** the oldest cold undo entries are evicted first
+- **THEN** the oldest **prefix** is evicted — the oldest prefix that can be removed while leaving the oldest
+  retained descriptor independently reconstructable from canonical state (transaction-aware, not merely
+  oldest-entry-first)
 - **AND** the current musical state, dirty canonical content and active hot undo are never evicted by undo
   pressure
+
+#### Scenario: ClearSlot hot roots are capped
+- **WHEN** clear-slot undo entries are retained outside the cold tier
+- **THEN** they are bounded by an explicit count/byte cap with a declared eviction point, independent of memory
+  pressure
+- **AND** eviction drops the whole **entry** (cursor repaired, protected reserve preserved, `nextEntryId` reset
+  when the stack empties, loss reported) — never the before-root alone, which would silently wipe the slot on a
+  later undo
 
 #### Scenario: Demotion does not change editing semantics
 - **WHEN** a slot is demoted and later re-activated

@@ -1,5 +1,69 @@
 # Project state (execution context)
 
+**2026-09-23 — chat reference readability.** Agent replies now pair every stage/task/gate/decision ID
+with a short descriptive name, including repeats and link labels. Canonical rule:
+[NAMING — short names beside IDs](../Authority/NAMING.md#short-names-beside-ids-in-chat), linked from
+AGENTS.md and the always-applied naming rule. Presentation only; no runtime or task-status change.
+
+
+**2026-09-23 — deterministic implementation workflow strengthened (DEC-080).**
+[Implementation readiness](../Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice)
+now requires a proportional execution packet for every future slice, including steps of existing changes:
+fixed transition oracle, controlled production-path fixture, repeatable recipe and actual evidence before
+checkoff. AGENTS.md, Cursor rule, OpenSpec config and agent roles share that authority.
+The current plan's [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+adds P0–P8 and S2b cases B01–B07; D0 tasks prepare controls/fixtures before behavior changes. Fixtures are
+**specified only**, not implemented or run. No firmware or hardware action; no implementation task checked off.
+
+
+**2026-09-23 — runtime-working-set-ownership implementation handoff corrected (DEC-079).**
+The five targeted review findings are resolved in the active OpenSpec's
+[IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md)
+and task/spec text: self-contained S2b with pulled-forward Stop/liveness prerequisites, per-holder
+cardinality budget, job-retaining regeneration, S4c contract-only with phase F explicitly uncreated,
+and stop/switch/start composition with explicit supersession. S0/S1 → S2b remains the first slice;
+its gate uses current resident content and a synthetic descriptor fixture, not a 60-long-slot library.
+Current whole-loop playback roots stay accounted until F. No firmware, build, upload or device run;
+all implementation checkboxes remain open. This supersedes earlier handoff wording, not device evidence.
+
+
+**2026-09-19 implementation readiness is now a gate, and the OpenSpec config no longer restates volatile state
+(DEC-077).** Workflow/documentation only — **no firmware change**. New:
+[`docs/Authority/IMPLEMENTATION_READINESS.md`](../Authority/IMPLEMENTATION_READINESS.md) (G0 evidence → G1
+architecture → G2 contract → G3 apply, with the STOP conditions for Apply), three roles in
+[`docs/Agents/`](../Agents/README.md) (`implementation-investigator`, `implementation-architect`,
+`implementation-red-team`), and matching loadable skills in `.agents/skills/`. `openspec/config.yaml`
+`rules.design` / `rules.tasks` now require G0–G2 and forbid architecture-discovery tasks; its dated
+milestone narrative is replaced by a pointer here and to
+[`CURRENT_WORK.md`](CURRENT_WORK.md).
+
+Two things this explicitly is **not**: it is not a second stop gate (the
+[formal trigger list](../ARCHITECTURE_REASSESSMENT.md#formal-triggers) still decides reassessment, and the
+one-per-session limit is unchanged — see DEC-077 § 1), and it does not change ownership or bounds. The
+structural constants stay in the config because they are current: `NUM_TRACKS = 8`,
+`MAX_LOOPS_PER_TRACK = 8` (`include/Globals.h`); what was stale was the milestone narrative, not the counts.
+
+Filed while writing it: `ClockManager::setBpm(uint16_t)` (`src/ClockManager.cpp`) assigns `bpm` and reprograms
+the tick timer with **no clamp**, while `setBpmFloat` clamps 20–300 and both the boot-load and legacy-validation
+paths require 20–300. Two entry paths to one owner state with different invariants; not fixed here.
+
+**2026-09-19 `runtime-working-set-ownership` ran G0 → G1 → G2, and the G2 red team returned BLOCKED — design
+input landed, no firmware changed.** G0 (six read-only traces) verified the law violation (per-slot
+`runtimeBySlot_` never released; a sounding slot requires a resident whole-loop root; a busy-owner stop is
+**dropped** and must be re-pressed; undo pins snapshot residency with no demotion; no residency-vs-library test
+exists). G1 produced the architecture; the red team then falsified **eleven reachable paths** — the worst being
+that `finalizeCaptureAndSelectSlot` ignores a stop denial and moves `activeLoopIndex` anyway, that boot reserves
+8 pool chunks (41,056 B) **per committed slot** (480/512 at the 60-slot target, reintroducing the RC-MEM-5
+state), and that the contract's own fields add ~1.4 KB of DTCM against **872 B** of usable padding.
+
+Landed as design input: **DEC-078** (accepted — every interaction accepted; finalization is **per interval**;
+amends DEC-067 and DEC-076 point 2, withdrawing DEC-076's "finalization is a queue" bullet);
+`openspec/changes/runtime-working-set-ownership/design.md` **Revision 18** (findings, latch, cardinality and
+liveness, invariants 32–36, placement, cold-undo pinning, caps); `tasks.md` restructured (**S2.9 extracted** to
+the sibling change `windowed-playback-generation`, new **S2b** boot/load stage, per-slot liveness, slot-
+parameterised acceptance); and `CURRENT_WORK.md` § Now implementing's stale 32-lease envelope corrected. The
+change stays **Design (S0 pending)**; the revised contract must be re-attacked before any task is executed.
+
 **2026-09-18 the overdub live-capture one-frame paint flicker is CLOSED WITHOUT A FIX and folded into the
 memory-pressure work (user decision).** No firmware change was made and no GitHub Bug was opened. Two
 measurements from the reference capture
@@ -1894,7 +1958,7 @@ change. The maintained-LCR changes below are retained as historical base context
 and are not implementation scope here.
 
 | Change | Focus |
-| **`runtime-working-set-ownership`** | **Design (S0 pending)** — the scaling-law change: runtime working sets become active-role owned, window-sized and generation-leased, so working RAM scales with active roles rather than recorded slots. Envelope: 8 tracks x 1 sounding slot today, 2-per-track / 16-channel banks as the target, **N derived from measurement**. Governed by **Playhead-scheduled MVCC** ([NAMING.md](../Authority/NAMING.md)); 31 binding invariants in `design.md` (incl. **every user interaction is accepted; when it executes is the pipeline's decision**); falsification review in `FALSIFICATION.md`; stages S0–S7 including windowed readiness (S4c), standby (S4d), the visual tier (S4e) and unconditional acceptance with pipeline-scheduled execution (S4f) |
+| **`runtime-working-set-ownership`** | **APPROVED by the owner 2026-09-19 (revision (4), with two corrections — both landed) — ready for implementation; no firmware change yet.** The scaling-law change: runtime working sets become active-role owned, window-sized and generation-leased, so RAM scales with active roles rather than recorded slots. Envelope: 8 tracks x 1 sounding slot today (N derived, **provisional** until the sibling change lands); 16-channel banks and multi-slot-per-track are targets the law must not preclude. Governed by **Playhead-scheduled MVCC** ([NAMING.md](../Authority/NAMING.md)); invariants 1–31 plus **32–36**; `design.md` **Revisions 18–23** (G0/G1 evidence, red-team B1–B11 corrections, the two named operations, sign-off fixes, owner corrections); **DEC-078** (every interaction accepted; finalization **per interval**; amends DEC-067/DEC-076 point 2; counter renamed **`accepted_stop_finalizer_wait`**); stages S0–S7 + **S2b** (boot/load admission), windowed playback **extracted** to `windowed-playback-generation`. **Execution order: S0/S1 → S2b → S3/S4 → S4f → S5 → decoupling**; design revisions stop unless implementation contradicts the contract |
 | **`capture-tier-a-budget-profiles`** | **Design (B1 pending)** — profile-selected, per-family **byte-budgeted** Tier-A capture with bounded bursts and edge/sample/stream semantics, so a 15–20 minute session fits the 1 MiB ring intact (measured Tier-A ~30–35 KB/s covers ~30 s). Critical reserve, per-family coverage, and a host verdict that cannot report an unconditional PASS over degraded evidence. Builds on the landed RC-MEM-7 degradation |
 |--------|--------|
 | **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–**4.6** closed; **5.1**–**5.7** SHIPPED; **6.1**–**6.4** SHIPPED (**6.4** device [`164947`](../captures/session_20260912_164947.log) 2026-09-12); next open: **4b.3**, **6.5**; §**6.6** post-closeout polish non-blocking; [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write); boot sync load still legacy; snapshot nodes pack into 32 KB slabs (`DEC-048`) |

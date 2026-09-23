@@ -8,6 +8,22 @@ Architectural vocabulary for MidiLooper — a **ubiquitous language** that docum
 
 ---
 
+## Short names beside IDs in chat
+
+In every user-facing commentary and final reply, pair each stage, task, packet, gate or decision ID
+with a short descriptive name: `S2b — boot/load admission`, `P1 — boot/admission slice`,
+`G2 — implementation contract`, `DEC-046 — round-robin playback admission`.
+Apply this on every mention, including repeats, headings, bullets and link labels; never assume the user
+remembers an ID from an earlier message. Names should usually be two to six words, drawn from the current
+stage/task heading or decision title. Keep the canonical ID intact and use the same short name consistently.
+For grouped IDs, label each one or give a shared description only when it accurately covers the whole range.
+If the title is not known, look it up (search DECISION_LOG rather than reading the whole file); do not invent it.
+
+This is a chat presentation rule, not an identifier rename. Preserve exact commands, paths, code, diagnostic
+output and literal quotations; explain their IDs with short names in the adjacent prose when discussing them.
+
+---
+
 ## Naming philosophy
 
 1. **Naming is architecture** — vocabulary communicates responsibilities, not implementation mechanics.

@@ -2,16 +2,54 @@
 
 Scope: `docs/Runtime/CURRENT_WORK.md` § Now implementing.
 
+**Current handoff (2026-09-23):** [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md)
+is binding for stage dependencies, cardinality accounting, regeneration ownership, playback extraction
+and interaction supersession (DEC-079). Earlier revision notes are historical where they conflict.
+No implementation checkbox is completed by this documentation correction.
+
 **Ownership change.** Before any firmware edit: run
 [`docs/Templates/DECISION_REVIEW.md`](../../../docs/Templates/DECISION_REVIEW.md), the preflight, and the
 transfer protocol in [`docs/Authority/ARCHITECTURE_RULES.md`](../../../docs/Authority/ARCHITECTURE_RULES.md);
 search [`docs/DECISION_LOG.md`](../../../docs/DECISION_LOG.md) (RC-MEM-2/RC-MEM-5, RC-MEM-3 and §5.13 are
-direct predecessors). The `DEC-###` for the ownership rule lands at S0; S6 needs its own amendment.
+direct predecessors). The ownership rule and the role classes are already recorded as **DEC-076** (accepted
+2026-09-18); the acceptance rule and the per-interval finalization cardinality are **DEC-078** (accepted
+2026-09-19, amending DEC-067 and DEC-076 point 2). S6 needs its own amendment.
 
-Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870 B of padding before
-`code + padding` crosses a FlexRAM bank); and hold the invariants in
-[`design.md`](design.md) § Invariants — a task that violates one is not complete, and an invariant with no
-enforcement point is a gap to record rather than a note to skip.
+Every task: no allocation on a timing-critical edge; re-read the RAM1 line (usable new-ITCM/DTCM budget **872 B**
+before `code + padding` crosses a FlexRAM bank, which costs 32,768 B and drops the stack into the documented
+silent boot hang); and hold the invariants in [`design.md`](design.md) § Invariants **plus 32-36 in Revision 18**
+— a task that violates one is not complete, and an invariant with no enforcement point is a gap to record rather
+than a note to skip.
+
+**Red-team G2 input (2026-09-19, [`design.md`](design.md) Revision 18).** The revised contract was re-attacked
+and returned **BLOCKED** on eleven reachable paths (B1-B11). Those are design input carried into the stages
+below — slot-parameterised acceptance and the switch rule, the latch destination/epoch, per-slot liveness and
+load admission, the new **S2b** boot/load stage, occupancy-aware binding, latch-aware predicates, cold-undo
+pinning, and external/FLASH placement under 872 B. **No task may be executed against the pre-Revision-18
+contract.**
+
+## Deterministic execution workflow (all remaining steps)
+
+Every future slice follows the [G2 execution-packet workflow](../../../docs/Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice)
+and its packet in [ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md). P0–P8 map the stages, controls,
+oracles, prerequisites and repeatable recipes. Establish discriminating production-path fixtures before
+behavior edits, then implement and record actual native/build/device evidence. These are completion rules,
+not another broad design revision. A listed fixture/command is not implemented or passing evidence.
+
+- [ ] D0.1 For S0/S1, execute P0's attribution/measurement recipe and record baseline revision, inputs,
+      suite presence and separate canonical/reservation/root/derived costs; keep expected red evidence explicit.
+- [ ] D0.2 Before S2b behavior edits, extend the existing continuous-capture harness with P1's transport,
+      reservation-denial/recovery, worker/dispatch and read-only ownership controls. Link production load/
+      transport paths for assertions that require them; no copied lifecycle or success-returning domain stubs.
+- [ ] D0.3 Implement P1 fixtures B01–B07 with stepwise expected identities/content, demonstrate the pre-fix
+      behavioral failure where runnable, and record any missing-API limitation separately from a red test.
+      Minimal test/API seams belong in the same slice; they do not authorize the behavior before its oracle.
+- [ ] D0.4 For every subsequent packet P2–P8 and applicable safeguard, establish its listed oracle/controls
+      before that behavior change and record results under that packet. Gated F/S6 work stays blocked on its
+      own architecture contract. Do not check this umbrella item until all applicable packets are evidenced.
+- [ ] D0.5 Before each task/stage checkoff, complete the packet's implementation review: required case IDs
+      ran, no missing/errored suite is treated as green, outcomes were not weakened, and required device
+      evidence exists. Record specified/fixture/native/device status separately; unmet gates stay unchecked.
 
 ## Execution boundary (phases)
 
@@ -20,14 +58,26 @@ the next begins:
 
 | Phase | Stages | Gate |
 |---|---|---|
-| **A** | S0-S2 | the runtime memory law is *proved*: whole-root residency removed from active playback (S2.9), P/C/D/I measured, N derived |
-| **B** | S3-S5 | lease ownership, recycling, stale-generation protection, inactive derived-state demotion |
-| **C** | S4d, S4e, S2.6 quantisation | bounded caches and fine switching behave as the library grows |
+| **A** | S0/S1 → S2b including its pulled-forward prerequisites | boot canonical reservation slope removed; loaded-slot stop retries safely; no whole-law or 60-long-slot claim |
+| **B** | remaining S3/S4, S4b/S4f, S5; S2 accounting | lease ownership, recycling, accepted interactions, inactive derived-state demotion; current playback root retained when required |
+| **C** | S4d, S4e, S2.6 quantisation | playback standby/fine-window work depends on F; display work has its own cap gate |
 | **D** | S6 | persistence-backed canonical residency + dirty-generation pinning (own DEC amendment) |
 | **E** | S7 | large-library scaling and continuity acceptance |
+| **F** | planned, uncreated sibling **`windowed-playback-generation`** | own artifacts + DEC/reassessment before Apply; final S7/archive depends on F and S6 |
 
 **Standby is optional.** The base 60-slot requirement must be satisfied by the law alone; standby excerpts and
 visual detail windows are bounded optimisations on top, never a precondition for usability.
+
+**Execution order (owner, Rev 23.4).** Execute in this order; the 32/64 envelope must not block fixing today's
+residency defect: **S0/S1** (measurement + the red proof) → **S2b** (boot/load admission — it fixes the present
+arm/record regression directly) → **S3/S4** (ownership identity + generation-qualified release) → **S4f**
+(DEC-078 accepted-interaction latch, including STOP→START→STOP) → **S5** (cold undo) → then the
+playback-window/root decoupling (phase F) that raises N. **Design revisions stop here** unless implementation
+uncovers evidence that contradicts the contract; such findings return to the architect as targeted corrections.
+
+S2b includes the explicitly pulled-forward stop/liveness prerequisites in the handoff contract §1;
+its gate does not inherit S2. Later stages extend the same helpers. S2 accounting runs before pool
+sizing; playback behavior tasks wait for F. This dependency order overrides numeric task order.
 
 ## S0 — pin the memory law (decisions before code)
 
@@ -38,16 +88,25 @@ visual detail windows are bounded optimisations on top, never a precondition for
 > **accepted and scheduled, not refused** (DEC-067 capacity + invariant 31), and the descriptor-ring depth is not
 > evidence of multi-finalizer storage. F4 -- 8 tracks today with **bank switching to 16 MIDI channels** as the target. F5 -- tiers
 > fold into `activeLoopIndex`/`CapturePhase`/`TrackState`. F6 -- resolved by S2 + G.2.
+>
+> **Revised 2026-09-19 (DEC-078, `design.md` Revision 18):** F3's finalization cardinality is **per interval**
+> `(track, slot, interval generation)` -- not a device-wide singleton and **not** a queue of stopped intervals;
+> `LiveCaptureLease` is **1 per track**; switching is an **accepted** interaction; and the windowed-playback
+> decoupling (S2.9) is **extracted** to the sibling change `windowed-playback-generation`.
 
-- [ ] S0.1 `DEC-###`: role tiers `COLD` / `SELECTED` / `PREPARED-ACTIVE` / `CAPTURE-ACTIVE` / `DEFERRED`,
-      with selection explicitly cheap and "about to sound"/arm/preload as the only cold admission boundary.
-- [ ] S0.1a `DEC`: **role classes and cardinalities** -- `PlaybackWindowLease` **N, derived from the budget**
-      (8 today; must not preclude 16/32/48/64 sounding slots), `LiveCaptureLease` 1,
-      `DeferredFinalizationLease` **1** (rotating: one finalizing predecessor + one live successor, preserving
-      DEC-067 successor re-entry; **not** two simultaneous finalizations), `InteractiveLease` 1 -- composable,
-      each owning only the resources its operation needs.
+- [ ] S0.1 **RECORDED as DEC-076 point 1** (verify, do not re-decide): role tiers `COLD` / `SELECTED` /
+      `PREPARED-ACTIVE` / `CAPTURE-ACTIVE` / `DEFERRED`, with selection explicitly cheap and
+      "about to sound"/arm/preload as the only cold admission boundary. The tiers are a view of
+      `activeLoopIndex`/`CapturePhase`/`TrackState`, not a second authority (F5).
+- [ ] S0.1a **RECORDED as DEC-076 point 2 + DEC-078** (verify, do not re-decide): role classes and cardinalities
+      -- `PlaybackWindowLease` **N, derived** (8 today; must not preclude 16/32/48/64), `LiveCaptureLease`
+      **1 per track**, `DeferredFinalizationLease` **1 per interval** identified by
+      `(track, slot, interval generation)` and pinned across `activeLoopIndex` movement and track/slot switching,
+      bounded by that track+slot's own single-instance resources, `InteractiveLease` 1 per selected/active
+      track+slot -- composable, each owning only the resources its operation needs. **No queue of stopped
+      intervals** (DEC-078 item 7).
 - [ ] S0.1b Record that a second finalization lease is **not** provisioned preemptively, and that the evidence
-      path is the `finalization_lease_stop_denied` counter; note the constrained shapes (very short captures,
+      path is the `accepted_stop_finalizer_wait` counter; note the constrained shapes (very short captures,
       rapid punch-stop/start/stop).
 - [ ] S0.2 `DEC` invariant: lease identity is `slot + generation + role`; leases transfer and release by
       identity; a generation-mismatched release is a rejected, reported no-op.
@@ -57,6 +116,9 @@ visual detail windows are bounded optimisations on top, never a precondition for
       reactivation rebuilds only the current state; a cold undo reconstructs off-clock and commits only after
       successful preparation (`undo_resource_denied` records the wait otherwise, descriptor intact); redo survives demotion and
       is invalidated only by a new committed edit/capture. Runtime undo history is not persisted.
+      **Revised by Revision 18 § 7:** a cold descriptor that pins canonical pass ids charges the **pinned canonical
+      bytes** to the budget; **ClearSlot is excluded** from the cold tier (its before-state is a whole-slot
+      snapshot no pass-id descriptor reproduces); and a missing canonical body **defers**, never erases.
 - [ ] S0.3a Record the eviction priority: current musical state and dirty canonical content are never evicted by
       undo pressure; active hot undo is preferred; recent cold undo is retained within budget; oldest cold undo
       is the first victim. This is the input `overUndoMemoryPressure` (RC-MEM-3) should manage.
@@ -70,7 +132,11 @@ visual detail windows are bounded optimisations on top, never a precondition for
 - [ ] S0.5 **Pin the topology** (do not leave it open): **8 tracks are implemented by this change**; 16-channel
       bank switching and multi-slot-per-track playback are **future capabilities this memory law must not
       preclude**. No task here implements them, and no acceptance test claims them. Record the
-      **transfer-overlap depth** the pool must cover.
+      **transfer-overlap depth** the pool must cover, and record that **boot/load is an admission boundary**
+      (S2b): a committed-but-inactive slot reserves no canonical-copy capacity.
+- [ ] S0.7 **Acceptance and per-interval finalization are RECORDED as DEC-078** (accepted 2026-09-19, amending
+      DEC-067 and DEC-076 point 2; the "finalization is a queue" bullet is withdrawn). Verify the amendment
+      pointers and sweep the change's own text for any remaining assertion of a denied or re-pressed stop.
 - [ ] S0 gates: decisions recorded; no code change.
 
 ## S1 — characterize the current scaling (measurement only)
@@ -86,25 +152,32 @@ visual detail windows are bounded optimisations on top, never a precondition for
       store holds only ~28 sixty-four-bar loops today): grow the library until residency or canonical
       capacity fails and record the slope, the failure point and the error. Add a synthetic
       metadata-only 60-slot characterisation for the law itself.
-- [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots.
+- [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
+      many canonical chunks those roots pin** via `SlotPassReferences` (the B10 baseline).
+- [ ] S1.5 **Boot/load residency baseline (B7):** with N committed slots, record the pool chunks and bytes that
+      `TrackManager::prewarmPlaybackRuntime` reserves before any activation (today 8 chunks / 41,056 B per
+      committed slot), the free-chunk count, and the smallest N at which a 24-bar overdub is refused.
 - [ ] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
       the slope and failure point in this file as numbers.
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
-- [ ] S2.1 Derive the **playback window lease** capacities from the resolved window instead of the
+- [ ] S2.1 **Depends on phase F contract before behavior edits.** Derive the **playback window lease** capacities from the resolved window instead of the
       2048-event ceiling (playback views and their ordering/provenance only). This is the promotion of
-      RC-MEM-2's outstanding item, and it is the term multiplied 32 times.
+      RC-MEM-2's outstanding item, and it is the term multiplied by the derived N.
 - [ ] S2.2 Measure each class separately: `P` playback window lease, `C` live-capture extension, `D`
       deferred-finalization extension, `I` interactive extension. Do **not** size the specialized classes by
       the playback target.
-- [ ] S2.3 Prove the class budget `fixed + N x P + C + D + I + transfer overlap + canonical allowance +
-      reserve <= PSRAM budget`, with the numbers recorded, and **derive and state the maximum N** the
-      budget supports. Only `P` is multiplied by N. Report N at today's capability (8 x 1 slot) and the
-      headroom toward 16/32/48/64.
+- [ ] S2.3 Prove the class budget in `IMPLEMENTATION_CONTRACT.md` §2:
+      `fixed + N*P + Cmax*C + Dmax*D + Imax*I + Omax*O + canonical + roots + undo + visual + standby + reserve`.
+      Pin source-derived holder maxima and charge overlapping owners until retirement; C/D are per-holder
+      costs, not singleton device totals. Record the numbers and derive N only for an envelope that fits.
+      Report N at today's capability (8 x 1 slot) and the
+      headroom toward 16/32/48/64. **N is provisional:** the `N x P` claim is not the memory law until phase F
+      (`windowed-playback-generation`) lands — record it as "provisional, bounded by phase F".
 - [ ] S2.4 Show what N the budget supports and record it as a capability, with the arithmetic; note the shapes
       that need a smaller P to reach 32 or 64 sounding slots.
-- [ ] S2.5 Prove length-independence **at today's supported topology**: sounding slots of very different loop
+- [ ] S2.5 **Depends on phase F implementation.** Prove length-independence **at today's supported topology**: sounding slots of very different loop
       lengths (across tracks, since today is one sounding slot per track) have comparable resident working sets,
       and playback crosses window boundaries with no timing discontinuity. Multi-slot-per-track playback is a
       future capability; test the budget projection toward it, do not claim it.
@@ -115,7 +188,7 @@ visual detail windows are bounded optimisations on top, never a precondition for
       the representable ceiling (4,096 refs/bar), across 1/4-bar, 1-bar and 2-bar windows, and derive the
       standby byte cap and its eviction policy (LRU or candidate set). Record the arithmetic; an all-slots
       standby is a policy outcome the cap permits, never an assumption.
-- [ ] S2.6 **Window-size sweep**: make the readiness window configurable (pixels of size: resident bytes,
+- [ ] S2.6 **Depends on phase F implementation — window-size sweep**: make the readiness window configurable (pixels of size: resident bytes,
       switch granularity, publication load) and sweep from bar-based (1,536-tick merged window today) down
       toward **1/32 beat = 6 ticks** (1/16 beat = 12 ticks at 192 PPQN). Record the smallest window that still
       meets the readiness deadline under load; that number bounds the achievable queued-switch quantisation
@@ -123,45 +196,216 @@ visual detail windows are bounded optimisations on top, never a precondition for
 - [ ] S2 gates: S1 gates plus the lease-size measurement and the cap derivation recorded; existing
       playback-prewarm fixtures still green.
 
-- [ ] S2.9 **GATE -- decouple active playback from whole-loop snapshot residency.** Until this passes, `N x P`
-      is not the real memory law, because an unaccounted whole-loop root would still sit behind every sounding
-      slot:
-      - define the immutable **PlaybackWindowGeneration** authority, and let playback consume only that bounded
-        immutable generation;
-      - keep `publishedSnapshot` as the **checkpoint authority** for undo/save where required;
-      - no whole-loop snapshot root may be required *merely because a slot sounds*;
-      - on a preparation miss the **previous immutable window stays valid** for that pass (the pinned
-        one-pass-late rule, S4c.3);
-      - prove the chain mutation -> deadline -> publication -> playhead consumption;
-      - measure snapshot-root bytes **separately from P** and demonstrate that adding sounding slots adds no
-        whole-loop roots.
-      S2.3's N arithmetic is **not accepted** until this gate passes. It is the prerequisite half of S4c, which
-      continues into the reuse inventory and the broader readiness machinery.
+- [ ] S2.9 **EXTRACTED (2026-09-19, Revision 18 § 3) — not a task of this change.** The decoupling of active
+      playback from whole-loop snapshot residency moves to the sibling change
+      **`windowed-playback-generation`**, which carries its own DEC and reassessment for the interval publication
+      unit, per-window currency, the five gather call sites, LSV1 root authority and undo root pinning. Its
+      requirements are retained here as a dependency contract (the immutable `PlaybackWindowGeneration` authority; `publishedSnapshot` narrowed to the
+      checkpoint authority for undo/save; no whole-loop root merely because a slot sounds; the one-pass-late rule
+      via S4c.3; separate measurement of snapshot-root bytes). The sibling is **not yet created**; do not apply its implementation here. **S2.3's N stays
+      provisional until it lands**.
+
+> **Contract corrections binding on the stages below (`design.md` Revisions 18–22).** Each line names the task
+> that must carry it; none is optional.
+> - **Latch shape (Rev 21.1):** split the record — `slot` is the **interval's** slot and stays immutable;
+>   `switchTarget` is a separate field used only by `kind = Switch`. Precedence is three-way
+>   (**stop > switch > start**, execution order; continuations survive per handoff §5) with a `(kind, slot, switchTarget, interval)` no-op guard. → S4f.1, S4f.3.
+> - **Admission parameterisation (Rev 21.2):** `beginDeferredOverdubStopForSlot` must use `getLoop(slot)` for the
+>   `Loop`-derived guards and bindings (`hasActiveOverdubTransferAdmission`, `canHandoffSessionExitSnapshot`,
+>   staging, `job.owner`, `job.loopId`). The `:1469/:1473/:1495` sites are the **live edge** and keep
+>   `activeLoopIndex`. → S4f.0.
+> - **Write authority (Rev 21.3):** keep a non-re-entrant commit-point write in
+>   `finalizeCaptureAndSelectSlot` (or split `applyActiveLoopIndex`); add `hasAcceptedUnexecutedInteraction()` to
+>   the manager guard (`TrackManagerSlotMatrix.cpp:23`); one named cancel helper (three calls). → S4b.5.
+> - **Transport epoch (Rev 21.4):** the latch's epoch is a **new TrackManager-level counter** bumped by transport
+>   stop, `resetToLoopStart`/`setCurrentTick`, load and MIDI Start — **not** `transportCommandEpoch` (per-admission
+>   0→1). Declared under invariant 36 and pinned by S3.0. → S4f.4, S3.0.
+> - **Erasure surface (Rev 21.5):** add `Track::sendAllNotesOff()`'s unguarded `clearAllLedgers()` and
+>   `finalizeCommitSideEffects`' `getActiveLoopIndex()` reads (`:84,:123,:191,:206`, undo-entry pushes) to the
+>   conversion list; thread `slot` through `commitCaptureForStop`/`finalizeCommitSideEffects`; `DeferredValidatePolicy`
+>   is a pure bool function, so its **caller** passes the predicate; `MidPassChunkPersist` must consult
+>   `captureStopJobHead()` before the active-slot answer. → S4.1, S4f.5.
+> - **`(slot, generation)` state (Rev 21.6):** add `slot` to `PendingStopAdmission` / the cleanup signature and
+>   introduce the per-slot runtime generation. → S4.2, S3.0.
+> - **Park scope and terminal (Rev 20, 22.4):** the park states what it waits for (`chunk_credit | store_drain |
+>   pool_lifetime`), acts only on chunk credit, relies on the retire-path invariant "a retired job leaves the
+>   store empty", has a bounded age + **named terminal**, and reports once per episode. START is **not** gated on
+>   the canonical output; where a start cannot be admitted the manager-owned start carrier retains it (handoff §5) and the caller reports
+>   the acceptance (never a silent "ok"). → S2b.2, S2b.6, S4f.6.
+> - **Provisioning owner (Rev 20.3, 21.7):** `MidiServiceDrain::DeferredIdleOwner` gains a **`SlotProvision`**
+>   turn kind; a pending switch makes its track eligible; the long-loop pending hold is satisfied by that turn and
+>   carries an age/bound. → S4b.6, S4b.7.
+> - **Cold descriptor type (Rev 22.1):** a cold descriptor is a **`ColdPassDescriptor` = whole row set +
+>   edit-pass ids**, stored externally — **not** an id+metadata pair, and not `PassIdList`/`EditPassIdList`
+>   vectors (internal-heap/RAM1). → S5.2a.
+> - **ClearSlot eviction (Rev 22.2):** drop the whole **entry** with cursor repair, protected reserve preserved,
+>   `nextEntryId` reset when empty, loss reported as entry loss; the spec's redo sentence admits the cap as a
+>   declared invalidator (or the cap is per slot). → S5.2g.
+> - **Deferred reconstruction (Rev 22.3):** name the owner turn and extend reachability to
+>   "has pending deferred reconstruction"; add `hasPendingDeferredReconstruction()` to the in-flight predicate,
+>   `pushUndoEntry`/trim/`dropRedoBranch`/`eraseUndoEntriesForSlot`/reposition, `noLiveOwnerForSlot` (release and
+>   load admission); resolve by entry id (or index + generation).
+>   → S5.2e, S4.0, S2b.5.
+> - **Load deferral (Rev 22.5):** peek/pre-check before the pop (`peekFirstPendingLoopSlotRestore`) or a forced
+>   enqueue bypassing `needsSlotLoad`/the done-test; predicate over `job.owner` **and** `job.slot`. → S2b.5.
+> - **Pass-4 residuals (`design.md` Rev 20 §7, Rev 21, Rev 22 §6).**
+>   - **S2b.6:** cite the **seal** path (`TrackOverdubLifecycle.cpp:941-947`), not the retire path, and add a new
+>     `LoopPlaybackRuntime::clearCanonicalCaptureOutput()` for the busy-owner + non-empty-store case (only the
+>     destructor clears today); report the **new named terminal `accepted_stop_park_terminal`** in the
+>     `include/Utils/DebugSessionCapture.h` family; scope the ring check, the
+>     `canonicalCaptureOutputAdmitted()` check and the native assert to `job.slot`.
+>   - **S4b.7:** `SlotProvision` must also run `ensurePlaybackMergedEventsForSlot(targetSlot)`; exempt it from the
+>     all-stopped guard (`main.cpp:463-469`); add the enum member, bump `kDeferredIdleOwnerCount` to 6, update
+>     `selectDeferredIdleOwner` cursor expectations and `test/test_midi_service_drain` (exhaustive switch +
+>     5-owner cycle arrays).
+>   - **S4b.6:** the long-loop hold is satisfied by S4b.7's merged-events build (or the hold relaxes to the
+>     occupancy predicate).
+>   - **S4.1/S4f.5 additional sites:** `clearAllLedgers()` in `handleNoteEditFold`
+>     (`TrackOverdubLifecycle.cpp:1247`, predicate-free, reached from `stopOverdubbing:1449` /
+>     `stopOverdubbingToStopped:1646`); `resetAll(preserveLedger)` in `invalidatePlaybackMergedMidiEvents`
+>     (`TrackPlaybackWindowBuild.cpp:484`, guarded only by `hasPendingDeferredOverdubStop`); `getActiveLoopIndex()`
+>     in `DeferredSaveJobStages.cpp:321` (footer save queued by the stop commit).
+>   - **S4f.5:** the header is `include/Utils/DeferredValidatePolicy.h`; `finalizeCommitSideEffects`' reads are
+>     `:123,:139,:191,:206,:263` (`:84` is the `getActiveLoop()` that needs the slot).
+>   - **S3.0:** name `PendingStopAdmission::slot` and the per-slot runtime generation explicitly in the pin list.
+>   - **S5.2e:** add the lookup-by-id helper (none exists — `TrackUndo.cpp:126-132` exposes only the tip) with its
+>     owner, plus the enforcement point for "head deferred ⇒ older entries unreachable"; fixture that a second
+>     undo while the head is deferred is a no-op, not a skip.
+>   - **S4f.6:** add a named acceptance report (counter/diagnostic read from the latch) so the unconditional label
+>     at `TrackManagerCaptureQueue.cpp:221-222,236-237` is never emitted for a start that was not admitted.
+>   - **S2b.5:** cite `peekFirstPendingLoopSlotRestore` at `LoopSlotRestoreQueue.cpp:312-318`.
+
+## S2b — boot/load is an admission boundary (new stage, prerequisite for the law)
+
+> Red-team finding B7: `TrackManager::prewarmPlaybackRuntime` prewarms every committed slot and
+> `prewarmPlaybackForSlot(s,false)` reserves 8 pool chunks per slot (**40,976 B**: 8 × 256 events × 20 B
+> `MidiEvent` + 8 × 2 B directory), so ~60 committed slots reserve 480/512 chunks at boot and leave 16
+> allocatable against the ~191 a 24-bar overdub needs — the RC-MEM-5 state, reintroduced. Invariant 34.
+> **Rerun blocker:** the only live admission of that capacity today is `Track::prewarmPlaybackForSlot`
+> (record arm); `Track::startOverdubbing` admits staging and companion rows only
+> (`TrackOverdubLifecycle.cpp:1294-1337`), so removing the boot reservation without adding an overdub-start
+> admission makes every stop on a loaded slot wait forever.
+
+- [ ] S2b.0 **First-slice prerequisites (same commit boundary).** Implement the S3.0 placement pins,
+      Stop-only S4f.0–S4f.2/S4f.4/S4f.5 path and existing-owner S4.0 liveness specified by
+      `IMPLEMENTATION_CONTRACT.md` §1 before removing reservations. Later stages extend these helpers;
+      S5 reconstruction joins the predicate only when introduced. Validate stop retry/transport retargeting
+      together with boot removal; do not ship a reservation-removal-only intermediate commit.
+- [ ] S2b.1 **Remove the per-slot canonical reservation from boot/load.** `TrackManager::prewarmPlaybackRuntime`
+      and `Track::prewarmPlaybackForSlot(s,false)` establish the runtime index and descriptors only: no
+      `prewarmCanonicalCaptureOutput()`, no transfer horizon for a committed-but-inactive slot.
+- [ ] S2b.2 Make canonical-copy capacity **lazy and name its admission points without re-gating START**: the
+      **record arm** keeps its existing admission in `prewarmPlaybackForSlot`, and the **accepted stop's park
+      (S2b.6)** acquires the reservation in a deferred turn (legal there, as `replenishCanonicalCaptureChunk`
+      already shows). `Track::startOverdubbing` is explicitly **not** gated on
+      `canonicalCaptureOutputAdmitted()` — that would re-create the DEC-067 START denial and need a start-side
+      park; the succession case (new interval on a slot whose output store is still held by a pinned
+      predecessor) is a stop-side `canonical_output_busy` wait handled by the park. Fixture: load a slot (never
+      record-armed this power cycle) → overdub start → stop → the park reserves and the stop completes, one
+      request, `canonicalCaptureOutputAdmitted()` true at execution.
+- [ ] S2b.3 Boot budget evidence: with N committed slots, `LoopEventStore::freeChunkCount()` after boot is
+      >= peak reservation + `CHUNK_RESERVE` (16); record the boot pool `live` figure against S1.5.
+- [ ] S2b.4 Release the per-slot canonical reservation when the slot's role leaves the active set, using the same
+      `noLiveOwnerForSlot` predicate as S4.0. **No release path exists today** (the only
+      `canonicalCaptureOutput.store.clear()` is the runtime destructor; `releaseGrain` runs only from the
+      reservation destructor / `CaptureRange`), so this is new surface: release fires only after the last owning
+      deferred job retires **and** `store.empty()` (a mid-copy `take()` legitimately drops credits, and releasing
+      then strands the copy → `Denied` grain), and reserve/release must be idempotent (re-reserving re-retains
+      ids). Fixture: stop accepted → mid-copy release attempt → no `Denied` grain, plus a refcount census.
+      **Rerun correction:** every `canonicalCaptureOutputAdmitted()` consumer resolves the **active** slot
+      (`TrackOverdubLifecycle.cpp:264,284,295,1469,1473,1495`; `TrackDeferredMaintenance.cpp:915,917,933-938`), so
+      the release/reentry edge must be parameterised by the interval's slot (S4f.0), and S2b.4 must **never**
+      release while a ring entry with that `job.slot` exists.
+- [ ] S2b.5 **Load admission (B8):** `beginLoadLoopJob` must not destroy a live owner. Its callers **pop the
+      restore entry before calling it** (`LoadLoopJob.cpp:339,367,372,377`) and re-queueing is **inert**:
+      `queueDeferredLoopSlotRestore` early-returns unless `needsSlotLoad`, which is false once
+      `isLoopSlotRestoreAttempted` is set or the slot `hasCommittedPasses()` (`StorageManager.cpp:258-268`) —
+      exactly the finalizing-predecessor case. Use **peek/pre-check before the pop**
+      (`peekFirstPendingLoopSlotRestore`) or a dedicated forced enqueue, and define the predicate against the ring
+      entry's `job.owner` **and** `job.slot`. **The peek helper has no done-test and no track/slot filter**
+      (`LoopSlotRestoreQueue.cpp:312-318`, unlike `popFocusDeferredLoopSlotRestore`), so the stale-head skip and
+      the predicate are added at the call site; the predicate must also consult
+      `hasPendingDeferredReconstruction()` (Rev 22.3). Fixture: A finalizing + load queued and begun for the same
+      slot → no `resetLoopSlotToEmpty`, the entry is **still queued**, finalization retires, restore then happens.
+- [ ] S2b.6 **`Track::parkAcceptedStopForCanonicalOutput()` (Revision 19).** The stop-side half of B7: when the
+      accepted stop's drive finds `canonicalCaptureOutputAdmitted()` false for the interval's slot, park the
+      accepted request (declared grains) and (a) re-run the slot's canonical reservation, (b) re-evaluate the full
+      guard chain against the interval's slot, (c) execute the accepted stop exactly once when admitted; otherwise
+      report `canonical_output_busy` as a **wait** and retry next deferred turn. No freeze / no
+      `exchangeCaptureStagingRoles` / no re-seal; the user never re-presses (invariant 31). **Implement the
+      retire-path invariant it relies on:** the retire block (`TrackOverdubLifecycle.cpp:1188-1210`) currently
+      clears `pendingPass`/`owner`/`loopId` and advances the ring but **never touches
+      `canonicalCaptureOutput.store`**, so a skipped or failed route can leave it populated with no ring entry —
+      exactly the park's unfixable case. The retire path must drain the store on the committing route and clear it
+      on a skipped route, reporting a named terminal if it can do neither. Fixture: loaded slot → overdub start →
+      stop under pool pressure → the stop completes after capacity returns, one request.
+- [ ] S2b gates: the first-slice native/build/device checks in `IMPLEMENTATION_CONTRACT.md` §1,
+      using the S1 resident-library baseline plus a synthetic 60-descriptor fixture. Prove canonical
+      reservation bytes flat in inactive-slot count; report canonical payload and derived bytes separately.
+      The genuine 60-long-slot and total-residency gates stay in S6/S7, not this prerequisite slice.
 
 ## S3 — introduce the reusable lease pool (no release yet)
 
+- [ ] S3.0 **Placement and size pins (B11, invariant 36).** Before adding any field: `static_assert` pins for the
+      **existing** structs (`sizeof(LoopPlaybackRuntime)`, `sizeof(Loop)`, `sizeof(TrackPlaybackRuntime)`) **and
+      for every new member added by this change** (the latch `PendingInteractionRequest`, **`PendingStopAdmission::slot`**,
+      **the per-slot runtime generation**, the new TrackManager transport epoch, the envelope, the standby/cold-undo
+      stores); all new per-slot state in the external
+      `LoopPlaybackRuntime` (6,344 B extmem) or the `LoopPool` `Loop`; **per-track state — including the latch —
+      externally held (`std::unique_ptr`) or with out-of-line `TRACK_COLD_MEM` ctors/dtors**, because `.bss`
+      routes to DTCM and a by-value scalar latch would land there. Re-measure the padding baseline at S3.0 (the
+      cursor rule still cites 1,256; the recorded line is 872). Evidence: the RAM1 line stays `padding >= 872`,
+      12 banks, `locals free` unchanged (a bank cross costs 32,768 B and the documented silent boot hang).
 - [ ] S3.1 `WorkingSetLease` with owner = slot + generation + role, and a pool provisioned for the
       measured active envelope. Route today's prewarm through it so behaviour is unchanged but ownership
       is expressible.
 - [ ] S3.2 Explicit liveness predicates per owner kind: capture stop job, deferred stop commit, undo/redo
       root, prepared playback handover. Native fixture per kind.
 - [ ] S3.3 Selection acquires nothing: assert the SELECTED tier and browsing cause no lease churn.
-- [ ] S3 gates: S2 gates plus `test_runtime_working_set_ownership`; `test_playback_prewarm` unchanged.
+- [ ] S3 gates: S2b gates plus S2.2/S2.3 current-root budget (no phase-F behavior prerequisite), plus `test_runtime_working_set_ownership`; `test_playback_prewarm` unchanged.
 
 ## S4 — release, recycle and stale-owner protection
 
+- [ ] S4.0 **Per-slot liveness predicate (B6, invariant 33).** `noLiveOwnerForSlot(track, slot)`: **scan the live
+      ring window only** — for `i` in `[head, head + count)` mod `kCapacity`, `entries[i].slot == slot` → owner,
+      including a non-pending entry — plus no deferred stop commit, no prepared handover, no latch targeting the
+      slot, no job-owned undo root. **A full-array scan is wrong:** retirement clears `owner`/`loopId` but not
+      `slot` (`TrackOverdubLifecycle.cpp:1195-1206`, `slot` defaults to 0), so it produces a stale positive that
+      blocks release and load admission forever. The track-scoped guard it replaces
+      (`Track::tryReleasePlaybackMergedMidiEventsMemory`, `TrackPlaybackWindowBuild.cpp:786-800`) loops every
+      slot, so the per-slot test belongs **inside** that loop. The stop grain's
+      `noteStallOnce("frozen capture staging generation lost")` + hold is replaced by S5.2f (invariant 35).
+      **Also include pending deferred reconstruction (Rev 22.3):** a slot whose cold descriptor is waiting to be
+      reconstructed is a live owner of its pinned canonical body, so `noLiveOwnerForSlot` must consult
+      `hasPendingDeferredReconstruction()` alongside the ring, the latch and the prepared handover.
 - [ ] S4.1 Release when the slot leaves the active set and the guard reports no live owner; release is
-      total.
+      total. **The existing release APIs must be converted, not supplemented (rerun blocker):**
+      `resetAll`, `clearAllLedgers`, `Track::releasePlaybackMergedMidiEventsMemory` and
+      `TrackManager::releaseBackgroundPlaybackMergedMidiEventsMemory` are track-global, predicate-free, and
+      discard `reset()`'s refusal — a successor stop on the same slot while a predecessor is pinned reaches
+      `clearAllLedgers()` (`TrackOverdubLifecycle.cpp:1543`) and erases the predecessor's ledger. Retire or
+      convert them to the `(slot, generation)` release evaluated through `noLiveOwnerForSlot`, and stop discarding
+      the refusal. **Additional predicate-free sites to convert (pass 4B):** `clearAllLedgers()` in
+      `handleNoteEditFold` (`TrackOverdubLifecycle.cpp:1247`, reached from `stopOverdubbing:1449` /
+      `stopOverdubbingToStopped:1646`), `resetAll(preserveLedger)` in `invalidatePlaybackMergedMidiEvents`
+      (`TrackPlaybackWindowBuild.cpp:484`, guarded only by `hasPendingDeferredOverdubStop`), and the
+      `getActiveLoopIndex()` read in `DeferredSaveJobStages.cpp:321` (footer save queued by the stop commit).
+      Fixture: B-stop while A finalizes on the same track+slot → A's ledger and canonical inputs
+      survive.
 - [ ] S4.2 Generation-mismatched release rejected and reported (native fixture reproducing the
-      A-releases / C-reuses / late-A-cleanup sequence).
+      A-releases / C-reuses / late-A-cleanup sequence). **`captureStopOwner` needs a generation:** it is a raw
+      `PendingStopAdmission*` cleared by address identity (`TrackPreparedStopCommit.cpp:205`) while ring entries
+      are reused at stable addresses, so a late cleanup on the reused runtime object can null a successor's
+      marker. Carry `(slot, runtime generation)` and check it at set **and** clear; bump the slot runtime
+      generation on every release.
 - [ ] S4.3 Reuse: activating C after A releases uses A's capacity with no net pool growth.
 - [ ] S4.4 Declared cap policy when activation is requested beyond the envelope (refuse vs queue),
       reported rather than resolved by allocating.
-- [ ] S4.5 **Busy-owner finalization states (verification only -- no mechanism change)**: preserve the existing capacity contract; native fixture for A-stops-and-finalizes / B-records /
+- [ ] S4.5 **P3 acceptance (depends on remaining S4f; not a P2 release gate). Per-interval finalization states (DEC-078 acceptance contract)**: preserve the DEC-067 capacity model; native fixture for A-stops-and-finalizes / B-records /
       A-releases / B-stops-and-takes-the-lease, and for a stop arriving while A still finalizes — accepted with no
       partial stop, B still recording/overdubbing, and the accepted stop executing once the role
       frees (the other single-instance resources are re-checked then too). Emit
-      `finalization_lease_stop_denied`. Assert the **busy-owner state names** as the evidence (`finalizer_busy`,
+      `accepted_stop_finalizer_wait`. Assert the **busy-owner state names** as the evidence (`finalizer_busy`,
       `transfer_denied`, `canonical_output_busy`, session-exit handoff as the ordinary states, and `queue_full` as
       the **exceptional descriptor-exhaustion** case, kept categorically separate
       so an ordinary finalization wait is never blamed on it) so the mechanism is observable rather than
@@ -170,7 +414,7 @@ visual detail windows are bounded optimisations on top, never a precondition for
       build a queue of stopped intervals: the ring's tail must be free before
       admission, so it cannot stack pending stops, and concurrent finalization needs its own capacity/ownership
       decision first.
-- [ ] S4 gates: S3 gates plus the reuse and stale-owner fixtures; a device run showing holder count
+- [ ] S4 gates (P2): S3 gates plus the reuse and stale-owner fixtures; S4.5 acceptance closes with P3/S4f, not before it. A device run showing holder count
       rising and falling with activation/deactivation.
 
 ## S4b — role transfer (the never-stop requirement)
@@ -183,30 +427,66 @@ visual detail windows are bounded optimisations on top, never a precondition for
 - [ ] S4b.3 Land the switch on a MIDI boundary; the switch is a cold admission boundary by construction.
 - [ ] S4b.4 Native fixture: switch roles across tracks/slots while playing and assert the inbound holder
       serves record/overdub/passes/undo/redo/display with no stop and no allocation at the switch.
+- [ ] S4b.5 **One active-slot write authority (B4).** Route undo/redo-driven active-slot changes
+      (`TrackUndo.cpp:558/582`) through the occupancy/pending-switch path and convert the **three** direct
+      `Track::setActiveLoopIndex` writes (`TrackManagerSlotMatrix.cpp:240`, `TrackManagerCaptureQueue.cpp:281,335`)
+      to the manager entry point. **Cancelling a queued switch is three calls, not one** — `clearPendingSlotSwitch`
+      + `setPendingEnabledSetReplacement(false)` + `cancelSlotSelectionHold` (`MidiButtonActions.cpp:47-49`) — and
+      `TrackManager::setActiveLoopIndex` must cancel/re-queue rather than move. Fixture: queue a replace-enabled-set
+      switch, press Undo, then trigger an unrelated switch → exactly one transfer, one release, no stale
+      enabled-set replacement, no `TransferOverlap` overshoot.
+- [ ] S4b.6 **Occupancy-aware, allocation-free binding (B5).** `ensurePlaybackMergedEventsForSlot` uses
+      `slotIfAllocated` (never `trySlot`); the commit branch keeps the switch pending when the inbound occupancy
+      is absent; provisioning happens only at cold boundaries. **Rerun blocker — the named boundaries do not
+      provision:** `requestSlotSwitch`, `setSelectedSlotIndex` and `loadTransportSlotIndices` only queue/refresh;
+      the sole provisioner is `Track::prewarmPlaybackForSlot` (boot + capture admission). Required: (a) an explicit
+      occupancy term in the commit branch (e.g. `slotIfAllocated(targetSlot) != nullptr` or occupancy-inclusive
+      readiness) **and** (b) real provisioning at a named off-clock point — extend provisioning into the S4f.3
+      switch path. `slotIfAllocated` alone yields silence or a permanently pending switch; note
+      `ensureLoopsAllocated()` can spin `while(1) delay(1)` if the pool is uninitialised. Native no-allocation
+      assertion on the commit path for a demoted short slot **and** a demoted long loop.
+- [ ] S4b.7 **`TrackManager::provisionSlotForSwitch(trackIndex, slotIndex)` (Revision 19).** The off-clock
+      allocation point S4b.6 needs. **Both `requestSlotSwitch` call sites are MIDI-input/action edges**
+      (`MidiButtonActions.cpp:62,287`), so inline allocation is illegal: `requestSlotSwitch` marks the pending
+      switch as "needs provisioning" and the **deferred provisioning owner** (the existing deferred idle lane, or
+      a child of it) calls `provisionSlotForSwitch`, which performs `prewarmPlaybackForSlot`-style provisioning of
+      the inbound occupancy and reports `#MEM_DENIED` with a switch operation on refusal. **A pending switch that
+      needs provisioning must make its track eligible for a deferred turn** (`hasRealtimeIdleWork`/
+      `sBackgroundSnapshotTrackCursor` eligibility are state-based today and would skip it); the commit path keeps
+      the switch pending when `slotIfAllocated(targetSlot)` is null and never leaves a silent dead switch; no new
+      `trySlot` on the clock path. Fixture: demoted short slot **and** demoted long loop each switch with no
+      `trySlot` on the commit path and no dead switch.
+- [ ] S4b.8 **HITL — slot switch while a predecessor finalizes, transport playing (the switch leg alone).**
+      Managed run: record A → stop A → switch to B **while A is still finalizing** → assert the switch is accepted
+      and completes, `activeLoopIndex` does not move before A's stop is admitted and bound to A's slot, the
+      pre-switch slot finalizes exactly once, the successor slot's content is untouched, and pool holders rise and
+      fall with the switch. The harness already has the switch action
+      (`scripts/hitl/legacy_record_baseline.py` `_send_loop_slot_select_press`, `LOOP_SELECT_NOTE_BASE`) and the
+      stop-interruption wrapper; reuse them rather than adding a runner. Evidence: session log + holder census.
+- [ ] S4b.9 **HITL — cross-track switch while a predecessor finalizes.** Managed run: record/overdub A on track 4
+      → stop A → switch the active track to track 5 **while A still finalizes** → assert the track switch is
+      accepted and MIDI-continuous, A's occupancy stays pinned on track 4 (no release), track 5's inbound
+      occupancy is provisioned at a cold boundary (S4b.7) with no `trySlot` on the clock path, and the
+      display/selection transfers without presenting a stale frame (S4e.6). Reuse the baseline's existing
+      successor-reentry leg (`legacy_record_baseline.py:4457-4564`) and the track-select press
+      (`TRACK_SELECT_NOTE_BASE`). Evidence: session log + MIDI-boundary timing verifier.
 - [ ] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
       active-interval overflow) across repeated switches.
 
-## S4c — immutable readiness at re-entry (prerequisite for the envelope, from F2)
+## S4c — readiness contract only (implementation extracted to phase F)
 
-- [ ] S4c.0 Conform the readiness owner to the S0.6 contract (identity, cost, admission kind, accounting tag,
-      deadline, shared terminal vocabulary) before writing it.
-- [ ] S4c.1 Change the **publication unit** from whole-loop to interval/window with a **readiness deadline**:
-      an update covering tick T must be immutable before the playhead returns to T.
-- [ ] S4c.2 **Reuse inventory, then reuse**: enumerate what the existing resumable deferred publication path
-      already provides -- snapshot construction / journal, `stepPendingSnapshotPublish`, the wrap journal, the
-      deferred idle-owner scheduling (`MidiServiceDrain`), the sliced capture-stop jobs -- and record what, if
-      anything, must be added. Adding a second incremental-publication system is a failure mode, not a plan.
-- [ ] S4c.3 **DECIDED: rule (a)** -- the previous immutable generation stays authoritative for that pass and
-      the new one takes effect on the next pass; never torn, never held, never timing-deferred. The
-      user-visible consequence (an edit just behind the playhead is heard one pass later) is recorded.
-- [ ] S4c.4 Narrow the published root to the **checkpoint authority for undo and save**, removing the
-      playback dependency on a resident whole-loop root.
-- [ ] S4c.5 Native fixtures: an update is immutable before the playhead returns; playback never consumes an
-      in-progress representation; the resident immutable set is interval-bounded, not whole-loop; a missed
-      deadline follows the recorded rule; undo/save still obtain a checkpoint.
-- [ ] S4c gates: the budget shows no `N x whole-root` term; existing playback content parity preserved.
+- [ ] S4c.0 Record the existing publication/consumer inventory and shared work contract as input to F.
+- [ ] S4c.1 Specify interval/window readiness and immutable currency acceptance for the sibling;
+      **do not change the publication unit in this change**.
+- [ ] S4c.2 Record the existing resumable publication machinery the sibling must reuse.
+- [ ] S4c.3 Preserve the decided one-pass-late rule as the sibling's missed-deadline requirement.
+- [ ] S4c.4 Specify undo/save checkpoint parity for F; **do not remove playback root dependencies here**.
+- [ ] S4c.5 Record required immutable-window/content-parity fixtures for F. Their implementation and
+      length-independent root-residency gate belong to the sibling once its contract is approved.
+- [ ] S4c gate: dependency contract documented; no claim of shipped windowed publication. Phase F's
+      artifacts/DEC/reassessment must exist before its implementation; S7/archive waits for its gates.
 
-## S4d — standby tier (bounded, scheduled, immutable)
+## S4d — standby tier (bounded, scheduled, immutable; playback integration depends on phase F)
 
 - [ ] S4d.1 Build a per-slot standby excerpt as resumable deferred work, scheduled against the **known next
       arrival** of the ticks it covers (loop start tick is known after a stop).
@@ -222,64 +502,225 @@ visual detail windows are bounded optimisations on top, never a precondition for
 
 ## S4e — visual tier (envelope for all slots, capped window)
 
-- [ ] S4e.1 Per-bar **visual envelope** for every slot (extend what `overviewCaptureBandMask_` already does
-      beyond capture preview), sized so the whole library fits.
+- [ ] S4e.1 Per-bar **visual envelope** for every slot as bounded metadata: a per-bar activity/density mask
+      owned by `Loop` as a field (written through a `Loop` API, read by `DisplayManager` via a getter), sized so
+      the whole library fits. **Not** `overviewCaptureBandMask_` (a DisplayManager, capture-only, single-instance
+      scratch mask), and **not** a new renderer.
 - [ ] S4e.2 **Rendered detail window** within the S2.8 cap, produced through the existing idle-sliced renderer
       (`rebuildVisualCacheIdleSlice`) and validated by the existing `builtFromSnapshotIdentity` /
       `builtFromRevision`.
 - [ ] S4e.3 Invalidate on any mutation covering the envelope's bars; fall back to the windowed gather.
-- [ ] S4e.4 Revive `TrackManager::prewarmSelectedDisplayVisualCache` as the visual scheduler entry point
-      (it currently has no caller); confirm which mechanism a dev-branch visual preload uses, and record the
-      two caller-less display paths (`resolveDisplayNotesCommitted`, `resolveDisplayNotesLiveCapture`) as
-      either reused or deleted rather than leaving a third variant.
+- [ ] S4e.4 **Rewrite** `TrackManager::prewarmSelectedDisplayVisualCache` (it is caller-less, and its body is a
+      synchronous whole-loop rebuild — forbidden on the consumer path) as bar-sliced scheduling driven from the
+      S4b cold provisioning point; confirm which mechanism a dev-branch visual preload uses; record the two
+      caller-less display paths (`resolveDisplayNotesCommitted`, `resolveDisplayNotesLiveCapture`) as either
+      reused or deleted rather than leaving a third variant.
+- [ ] S4e.6 **Cache-released state (T1).** Add an explicit "released" state distinct from "clean":
+      `rebuildVisualCacheIdleSlice` returns immediately when `!visualCacheDirty` (`LoopVisualCache.cpp:294`) and
+      `:307-314` clears staleness in the empty-`dirtyBars` branch without rebuilding. Release sets `dirtyBars`
+      consistently, and the display falls back to the envelope/gather whenever notes are empty with
+      `visualCacheDirty == false`.
+- [ ] S4e.7 **Cap and eviction owner (T9, S2.8).** Declare the envelope and window byte caps, their eviction
+      point, and fixed external capacities; no existing cap constant exists to reuse.
 - [ ] S4e.5 Native fixtures: switch shows the new slot immediately from the envelope; detail resolves through
       the existing renderer; mutation invalidates; cap and eviction hold under library growth.
 - [ ] S4e gates: envelope and window appear as budget terms; no new renderer or validity counter introduced.
 
 ## S4f — accept every interaction; the pipeline decides when it executes (the reason this change exists)
 
-- [ ] S4f.0 Extend the **existing** pending-stop re-drive path rather than adding a mechanism: the two redirect
-      points (`stopOverdubbingToStopped`, `invalidatePlaybackMergedMidiEvents`) already re-issue
-      `requestDeferredOverdubStopToStopped()` for an admitted job, and neither covers a denial because a denial
-      stores nothing. Latch the request where the denial is produced and drive it from that same service point.
-- [ ] S4f.1 **Accept the interaction unconditionally** and record what it is (destination, requested tick,
-      interval generation); it executes when the owner frees, at the earliest valid interval boundary, with no
-      second press.
-- [ ] S4f.2 Apply the same rule to record/overdub start, slot/track switching and undo/redo.
-- [ ] S4f.3 Make the waits observable as **scheduling**, not refusal: `finalization_lease_stop_denied` counts waits
-      and names the holding owner; the pre-fix counterfactual is `successor_stop_denied_capacity` +
+> **DEC-078 is the authority** (accepted 2026-09-19, amending DEC-067 and DEC-076 point 2); the contract is
+> `design.md` Revision 18 § 1-2. The pre-Revision-18 task text was falsified by the red team (B1-B4, B9) and is
+> replaced below.
+
+- [ ] S4f.0 **Slot-parameterised admission (B3).** Add
+      `beginDeferredOverdubStopForSlot(destination, tick, slot, interval)`; `beginDeferredOverdubStop` becomes the
+      live-edge wrapper passing `activeLoopIndex`. The job binds `slot`/`owner` from the parameter, never from
+      `activeLoopIndex` at drive time (`TrackOverdubLifecycle.cpp:263-264`, `:452` today). **The parameter must
+      reach the DEC-067 guard chain inside the deferred admission** — the `Loop`/runtime-derived checks at
+      `:264` (runtime), `:284`, `:295` and the `Loop`-derived `:290`/`:300`/`:316-323`/`:426`/`:451` resolve
+      `activeLoopIndex` today, and under DEC-078 the finalization occupancy survives an active-slot change, so they
+      must evaluate the interval's slot or they test the wrong slot's canonical output (rerun finding).
+      **The `:1469`/`:1473`/`:1495` sites are the live edge** (inside `Track::stopOverdubbing`) and **keep**
+      `activeLoopIndex` — see Revision 21.2; they are not part of this parameterisation.
+- [ ] S4f.1 **The latch.** `PendingInteractionRequest {kind, destination, slot, switchTarget, interval,
+      phaseTick, transportEpoch}` held externally beside `captureStopJobs_`; **`slot` is the interval's slot and
+      `switchTarget` is set only by `kind = Switch`** (never overwrite `slot`); one per live interval; no
+      descriptor; no ring capacity. **Execution order** is stop > switch > start; distinct accepted requests
+      survive in the existing manager pending-switch/start carriers as specified by `IMPLEMENTATION_CONTRACT.md`
+      §5. Include the external start-mode discriminator in S3.0 pins. A
+      `(kind, slot, switchTarget, interval)` match makes a repeat a no-op.
+      Clear only the matching admitted stop obligation; never clear pending switch/start continuations with
+      it. The start reset runs only after the predecessor stop binds. Transport Stop retargets the live stop
+      and explicitly supersedes unexecuted starts; see the complete transition contract §5.
+- [ ] S4f.2 **Drive placement and reachability (B3, B6).** A latch-dispatch branch immediately after the
+      stop-grain block in `Track::processDeferredIdleMaintenance`, before the owner-specific branches (the
+      `VisualCache` branch is focus-track-only); `processDeferredCanonicalPrefix` gated on the latch; skip the
+      drive while the ring is non-empty; one declared grain and a new `ExecutionBounds.md` row (the owner is
+      already Unbounded in aggregate).
+- [ ] S4f.3 **The switch is an accepted interaction (B1, invariant 32).** `TrackManager::finalizeCaptureAndSelectSlot`
+      accepts the switch, latches the stop against the interval's slot, and does **not** move `activeLoopIndex`
+      while an interval is live unless the stop was admitted and bound to that slot; remove the refusal at
+      `TrackManagerCaptureQueue.cpp:329-332`. The interactive/display role may transfer immediately.
+      **The target needs a carrier and a commit point:** the existing SlotStateMachine pending switch is
+      authoritative (handoff §5); a Switch latch identifies its prerequisite stop, not a second target owner.
+      Dispatch the switch after the interval's stop binds. Replace the unconditional pending-switch clear in
+      `TrackManagerTransportTick` with consumption at successful switch commit. Fixture: queued
+      switch + undo + stop admission in one window → the target is never lost.
+- [ ] S4f.4 **Transport/clock epoch (B2, T2).** Record the destination and a monotonic transport epoch;
+      transport stop retargets/invalidates the latch beside `suppressMidiOutputForTransportStop()`; the drive
+      re-derives the destination from live transport state and the boundary from the loop phase — never from a
+      stored absolute tick (MIDI Start/seek/load reset the tick domain, `ClockManager.cpp:273,315-336,362`).
+- [ ] S4f.5 **One in-flight predicate (B9, T3).** Add `hasAcceptedUnexecutedInteraction()`; **every** consumer of
+      `hasPendingDeferredOverdubStop()` that means "a stop is in flight" consults it (start admission, wrap,
+      hot-path emission, persistence, `include/Utils/DeferredValidatePolicy.h` — the caller passes the predicate,
+      since it is a pure bool function). **Named seed sites the rerun found still
+      keyed to the active slot:** `MidPassChunkPersist.cpp:34,54` (primary resolver),
+      `TrackCaptureStopCommit.cpp:139,263`, `TrackStopTelemetryColdHelpers.cpp:161,166`; the three persistence
+      sites use `hasLiveCaptureInterval() || hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction()`;
+      `resolveCaptureTrackSlotForMidPass` resolves from the interval with **no** selected/active fallback.
+      Audit the remaining `getActiveLoopIndex()`-derived paths for the latch window and record the set.
+- [ ] S4f.6 **Start side too.** Implement all transition/consumption rules in
+      `IMPLEMENTATION_CONTRACT.md` §5, including manager-owned requests with no live interval, deferred
+      eligibility and the combined in-flight query. Add paused-worker fixtures for every listed sequence.
+      A second Stop supersedes an unexecuted Start explicitly; after Start commits it stops the new interval. `TrackManagerCaptureQueue.cpp:24-29` accepts the record/overdub start and
+      schedules it rather than dropping it; `pendingRecord`/`pendingRecordSlot` must not clear their state when
+      the start was refused. **Named acceptance report (pass 4C):** add a counter/diagnostic read from the manager-owned accepted-start carrier so
+      the unconditional label at `TrackManagerCaptureQueue.cpp:221-222,236-237` is never emitted for a start that
+      was not admitted.
+- [ ] S4f.7 **Single write authority (B4).** Covered by S4b.5; record the source gate that
+      `Track::setActiveLoopIndex` is reachable only through `TrackManager::setActiveLoopIndex`.
+- [ ] S4f.8 Make the waits observable as **scheduling**, not refusal: `accepted_stop_finalizer_wait` counts
+      waits and names the holding owner; the pre-fix counterfactual is `successor_stop_denied_capacity` +
       `reentryDecision("deny", ...)`.
-- [ ] S4f.4 Prove no new capacity is implied: the latch is one small state per live interval, not a stored
+- [ ] S4f.9 Prove no new capacity is implied: the latch is one small state per live interval, not a stored
       stopped interval, so the descriptor-ring finding is unchanged.
-- [ ] S4f.5 Native fixture: stop requested while the predecessor finalizes -> accepted -> predecessor retires ->
-      stop completes, with exactly one request issued and the waits counted as scheduling.
-- [ ] S4f.6 Measure acceptance -> execution latency **per interaction class** on device against the declared
+- [ ] S4f.10 Native fixtures: (a) stop while the predecessor finalizes -> accepted -> exactly one request ->
+      completes after retirement; (b) the same with a slot switch before the drive, asserting `job.slot`/
+      `job.owner` are the interval's; (c) transport stop before the drive -> no `TRACK_PLAYING`; (d) stop +
+      record-start in the same tick; (e) stop + undo; (f) MIDI Start/seek between latch and drive;
+      **(g) park terminal does not cancel (Rev 23.2):** drive the park past its diagnostic bound with the finalizer
+      still occupied, then free capacity → the accepted stop executes exactly once, the interval is **not** left
+      recording, and no second press is required.
+- [ ] S4f.11 Measure acceptance -> execution latency **per interaction class** on device against the declared
       budgets (design Revision 17) and record the numbers: stop overdub, record/overdub start, slot/track switch,
       cold undo/redo, load loop. Exceeding a budget is a reported event, not a silent wait.
-- [ ] S4f.7 **DEFERRED -- progress presentation.** Show that an accepted interaction is being executed when it
-      cannot meet its budget, instead of leaving the user to infer failure. **Gate: S4f.6 measured AND a
+- [ ] S4f.12 **DEFERRED -- progress presentation.** Show that an accepted interaction is being executed when it
+      cannot meet its budget, instead of leaving the user to infer failure. **Gate: S4f.11 measured AND a
       mitigation review shows the budget cannot be met by scheduling, prewarm or windowing.** Rules when taken: it
       presents an *accepted* action (never a denial, never a cue to press again) and never justifies a widened
       budget. Do not start before the gate.
+- [ ] S4f.13 **HITL — record/overdub stop → slot switch → record/overdub stop (the accepted-sequence reproducer).**
+      Two legs, each a managed run (`scripts/host_midi_hitl.py run --preset base`, or the
+      `scripts/hitl_stop_interruption.py` wrapper for the interruption variant — **never** a captured
+      `command.json`; bounded by `HITL_MANAGED_RUN_TIMEOUT_S`):
+      - **(a) record leg:** record A → stop A (one press) → immediately slot-switch to B → record B → stop B;
+      - **(b) overdub leg:** overdub A → stop A (one press) → immediately slot-switch to B → overdub B →
+        **stop B once while A still finalizes** (the DEC-078 shape) → continue transport.
+      Build each as a **TEMP variant** of the closest canonical stimulus (`STIM-BASE-2-ONE-OD-01`;
+      `--stimulus-temp-parent` / `--stimulus-temp-suffix`), because AGENTS.md forbids editing a canonical stimulus
+      and **no registered stimulus covers this shape today** (the 10 registered ids are content/note-edit only;
+      the stop shapes exist only as unregistered TEMP variants under `captures/`). Promote to a new canonical id
+      only when the user accepts it as the reproducer.
+      Assert per leg: exactly one request per stop; **no** `successor_stop_denied_capacity` /
+      `reentryDecision("deny", …)` rows; **no second press**; A finalizes while B records; B's stop executes
+      exactly once after A releases, with `accepted_stop_finalizer_wait` counted as scheduling; both intervals'
+      content exact (the `hitl-content-verification` inventory parity pipeline); no lost capture; no wrong-slot
+      publication; `overflow_free` / `call_site_gate_ok` / no active-interval overflow; display `transport_ok`.
+      Evidence: the two session logs recorded in this file and `CURRENT_WORK.md`.
+- [ ] S4f.14 **HITL — cross-track: session on track 4, stop, continue directly on track 5 (track-switch variant of
+      S4f.13).** Managed run: overdub session on **track 4** → stop track 4 (one press) → immediately switch the
+      active/selected track to **track 5** (harness track-select: `TRACK_SELECT_NOTE_BASE = 60`,
+      `scripts/hitl/control_constants.py:5`, sent at `legacy_record_baseline.py:5364`) → start a record/overdub
+      session on track 5 → stop track 5. Then the discriminator:
+      - track 4's finalization is a **track+slot**-scoped owner (Rev 18 §2; DEC-078 item 5), so track 5's stop
+        must **not** wait on it: assert track 5's stop executes with **no** `accepted_stop_finalizer_wait` episode
+        attributable to track 4's job, while track 4 finalizes concurrently;
+      - track 4's job retires exactly once with its content exact, and track 5's interval is untouched by it;
+      - `noLiveOwnerForSlot(track 4, slot)` stays **false while its job is live** (no cross-track stale release);
+      - per-track holder counters rise and fall independently; no lost capture; no wrong-track publication;
+        `overflow_free` / `call_site_gate_ok`; transport never stops.
+      This is the case that distinguishes "one device-wide finalizer" from "one finalizer per **track+slot**" — a
+      device-wide singleton would fail it. Evidence: session log + per-track holder census.
 - [ ] S4f gates: the latency from acceptance to execution is bounded and reported; no capacity-driven
-      user-visible denial remains in the diagnostic vocabulary.
+      user-visible denial remains in the diagnostic vocabulary; a registered HITL stimulus exists for the
+      single-press shape (see Closeout).
 
 ## S5 — demote inactive slots' derived state
 
 - [ ] S5.1 Drop the published snapshot root and whole-loop `VisualCache` for a slot leaving the active
       set. Reactivation derives **only the bounded runtime representation the active consumer needs**; a
-      full published root only where an authority requires one (open decision 5).
+      full published root where the current playback/undo/save authority requires one. Until phase F,
+      reactivation prepares that root off-clock and charges it explicitly; root-free playback is not claimed.
 - [ ] S5.2a **Audit `TrackUndo`** and pin the exact field set of a reconstructible cold descriptor (committed
       pass identity/set, pass ordering or selection revision, note-edit commit identity, capture/session
-      generation for validation). The descriptor must describe **authority**, never a cached root.
+      generation for validation). The descriptor must describe **authority**, never a cached root. **Rerun
+      corrections (B10, Revision 18 § 7 + § 9):** the "does not pin" branch is **unimplementable** —
+      `PassReferenceSet` is a veto, not a refcount, so any descriptor read by `collectReferencedPasses` *is* the
+      pin; **always pin and charge the pinned canonical bytes**, and the demoter must keep a `LoopPasses`-shaped id
+      set that `pinPassesFromLoopPasses` can read. The descriptor itself is a **`ColdPassDescriptor` = the whole
+      row set** (`id`, `committedChunkIds`, `state`, `sealedAtTick`, `mergeSequence`, `overdubSessionIndex`, order)
+      **plus `editPassIds`**, as a **new externally allocated `ColdPassDescriptor`** — *not* an id+metadata pair
+      and **not** a reused `LoopSnapshotRef` (that is the ClearSlot carrier the cold tier exists to avoid; its deep
+      clone keeps internal-heap `EditPassVec`/`MidiEventVec`, and the spec forbids a `LoopSnapshot` reference or
+      slab in a cold descriptor). Row fields live at `LoopPasses.h:57-71` (`RecordPass` `:57-62`, `OverdubPass`
+      `:64-71`; container `:106-110`); `TrackUndo.cpp:331,354` resolve through `disableCapturePass`, while
+      `:362,385` resolve through `setEditPassState` (`:266-292`) — both against the **live** row set, so an
+      id+metadata descriptor fails once the row is erased. `UndoEntry` already carries `passIds`/`editPassIds`, so
+      the new struct adds only the row set. Nested vectors must be external or flattened; charge the descriptor's
+      **full** footprint (including nested vectors) as descriptor bytes, and the pinned canonical bytes separately. **ClearSlot is excluded from the cold tier** — its before-state
+      is a whole-slot snapshot (`TrackUndo.cpp:1197`, `LoopEditPasses.cpp:68`) that no pass-id descriptor
+      reproduces — and its retained hot roots are capped by S5.2g.
 - [ ] S5.2b **Implement two-tier compaction**: demote hot entries to cold descriptors, release undo/redo roots
       belonging only to that slot, and never release a root a live deferred owner still holds.
 - [ ] S5.2c **Implement off-clock reconstruction**: undo/redo on a cold-derived entry reconstructs or selects the
       historical state, publishes a fresh runtime representation with a truthful `coveredPassRevision`, and
       commits only after preparation succeeds; while it waits report `undo_resource_denied` and leave the descriptor
       unconsumed.
-- [ ] S5.2d **Bound cold undo**: per-slot depth plus a device-wide byte budget with oldest-cold-first eviction,
-      and prove the priority order (current state and dirty canonical never evicted).
+- [ ] S5.2d **Bound cold undo**: per-slot depth plus a device-wide byte budget, and prove the priority order
+      (current state and dirty canonical never evicted). The budget charges **descriptor bytes + pinned canonical
+      bytes** and gets its own `ExternalPoolAccounting` tag (`kTagCount` is 18 with 17 named tags today; there is
+      no undo attribution). **Eviction is transaction-aware (Rev 23.3):** remove the **oldest prefix that leaves the
+      oldest retained descriptor independently reconstructable** from canonical state (a descriptor names a
+      reconstructable logical state, not a delta against a runtime root) — never merely the oldest entry, which can
+      orphan a retained descriptor's predecessor state.
+- [ ] S5.2e **Deferred reconstruction has its own owner (B10c, rerun blocker).** `undoForLoop`
+      (`TrackUndo.cpp:922-995`) applies `entries[cursor - 1]` and **erases** on failure (`:988-991`), and `cursor`
+      means "entries below are done" — so "keep the descriptor and retry" is not an edit, it is a new
+      `TrackUndo::stepDeferredReconstruction()` holding `{track, slot, entry id, phase}` with declared grains and
+      the `undo_resource_denied` diagnostic, driven beside `Track::processDeferredIdleMaintenance`. `undoForLoop`
+      returns **accepted/deferred** instead of falling through to the erase, may not reach older entries while the
+      head descriptor is deferred, and the deferred descriptor is read-only for display (never consumed). The
+      stale-skip count stays zero. **Reachability and intactness (Rev 22.3):** `hasRealtimeIdleWork`
+      (`main.cpp:40-42`) is false for a stopped, non-audible track while another plays — exactly the demoted
+      cold-undo case — so the deferred owner must have a turn kind (or extend the existing lane) and
+      `hasPendingDeferredReconstruction()` must join the eligibility and the in-flight predicate; deferral must
+      also be reflected in `pushUndoEntry` (which sets `cursor = entries.size()`, marking the unexecuted head
+      done), `dropRedoBranch`, trim/erase/reposition, `noLiveOwnerForSlot` (release **and** load admission), and
+      the wait must resolve by entry id (or index + generation). **Add the lookup-by-id helper (pass 4C):** none
+      exists (`TrackUndo.cpp:126-132` exposes only the tip), so name its owner (`TrackUndo`/`GlobalUndoStack`) and
+      the enforcement point for "head deferred ⇒ older entries unreachable" under `pushUndoEntry`, trim,
+      `dropRedoBranch` and `repositionGlobalUndoStackTipForSlot`. **All-stopped admission (sign-off 22):** a pending
+      reconstruction must not be swallowed by the all-stopped guard (`main.cpp:463-468`, which today returns unless
+      the owner is `VisualCacheWrapAppend`, or `Snapshot` with stopped-clock work) — exempt the reconstruction turn
+      there or route it through the focus-track lane (`:470-504`), exactly as S4b.7 exempts `SlotProvision`. Fixture: undo on a stopped track while another
+      plays, with load/capture/trim admitted during the wait → descriptor unchanged, undo executes exactly once;
+      a second undo while the head is deferred is a no-op, not a skip.
+- [ ] S5.2f **Zero-runtime regeneration is a named operation, not a re-entry (B6, invariant 35; rerun blocker).**
+      Implement `Track::regenerateFrozenCaptureStaging(CaptureStopJob&)`: (a) `playbackRuntime.trySlot(job.slot)` +
+      `prewarmCaptureStaging()`; (b) refill the **frozen** role from the job's own sealed extent `job.rawRange`
+      via `CaptureRange::read(...)` (the authoritative copy); (c) restore `captureGeneration`/`frozenGeneration`/
+      reservation count in bounded resumable refill grains **without** `freeze()` or `exchangeCaptureStagingRoles()` — re-entering
+      `beginDeferredOverdubStop` after a runtime loss would re-freeze an empty generation and publish an empty
+      pass; (d) rebind `RuntimeCanonicalPassInputs` and `RuntimeCompanionPasses`; (e) on no capacity retain
+      the same live ring entry and all inputs, mark regeneration pending and retry through the existing stop
+      worker. Follow `IMPLEMENTATION_CONTRACT.md` §3: no dequeue/re-admission, no replay of committed receipts,
+      bounded refill cursor, diagnostic fault without cancellation. Test refusal then recovery before
+      preparation and after commit; publication/undo occur exactly once.
+- [ ] S5.2g **ClearSlot hot-root cap (B10b).** A pressure-independent per-slot count/byte cap with its eviction
+      point, added to the spec's cold-undo-bounded requirement; "stays hot" is otherwise bounded only by
+      `ABSOLUTE_MAX_UNDO_ENTRIES = 512` and a reactive trimmer. Fixture: clear N > cap slots and assert the oldest
+      ClearSlot **entry** is dropped — cursor repaired, protected reserve preserved, `nextEntryId` reset when the
+      stack empties, loss reported as **entry loss** — and that a later undo does **not** silently wipe the slot.
 - [ ] S5.3 Native fixture: demote then re-activate, assert identical playback content and that
       re-derivation is not on a timing-critical edge.
 - [ ] S5.4 Device: snapshot slab bytes track the active set, not the recorded library.
@@ -310,9 +751,13 @@ visual detail windows are bounded optimisations on top, never a precondition for
 
 ## S7 — scaling acceptance
 
+- [ ] S7.0 **Boot admission acceptance (B7, invariant 34):** boot a ~60-slot library and require it to arm and
+      record a 24-bar overdub with `freeChunkCount() >= peak reservation + 16`, 0 `#MEM_DENIED` /
+      `#MEM_EXT_REFUSED`, and pool `live` flat in recorded slots at steady state.
 - [ ] S7.1 The scaling curve on a genuine 60+ slot, up-to-64-bar library: boot and steady state flat in
       recorded slots; one step per activation; deactivate A returns its lease; activate C reuses it with
       no net growth. Record pool `live`, per-owner bytes, holder count, per-loop derived bytes per step.
+      Record N as **provisional until phase F** lands.
 - [ ] S7.2 **Adversarial owner acceptance** (top-level case, not only a fixture): A active -> A creates a
       deferred job -> A's UI/playback notion deactivates -> attempt C activation -> A's lease stays pinned
       -> A's deferred job retires -> lease released -> C acquires the recycled capacity -> a late cleanup
@@ -320,7 +765,7 @@ visual detail windows are bounded optimisations on top, never a precondition for
 - [ ] S7.3 Re-run the reported reproducer on the large library: arm a track, external clock + MIDI notes,
       and require it to reach `RECORDING`; also arm-and-play internally.
 - [ ] S7.4 Require no `FATAL`, no `#MEM_EXT_REFUSED`, live device throughout.
-- [ ] S7.4a Review `finalization_lease_stop_denied` across S7 runs: if waits are frequent in normal use,
+- [ ] S7.4a Review `accepted_stop_finalizer_wait` across S7 runs: if waits are frequent in normal use,
       evaluate a second finalization lease from that evidence; if rare or absent, record 1 as sufficient. The
       acceptance-to-execution latency must stay bounded either way (invariant 31).
 - [ ] S7.4f **Single-press acceptance (the product reason)**: in the reentry shape, issue the stop **once** while
@@ -345,11 +790,25 @@ visual detail windows are bounded optimisations on top, never a precondition for
       switch at 1/16 beat and at 1/32 beat; require the inbound slot's immutable state to be ready at the
       boundary, no torn or held output, and the MIDI-boundary timing evidence clean. Record the quantisation
       that is actually achievable under load.
+- [ ] S7.4g **Switch-under-finalization acceptance (B1, invariant 32):** with an interval live and a predecessor
+      finalizing, switch slot; require the switch to be accepted, the stop to bind to the interval's slot, and no
+      `activeLoopIndex` move before admission; assert the pre-switch slot finalizes exactly once and the successor
+      slot is untouched.
 - [ ] S7.5 **Continuity acceptance**: with transport playing, switch track and slot repeatedly while up to
       today's supported topology (8 tracks x one sounding slot) sound, start record/overdub, and run undo/redo --
       the transport never stops and
       the MIDI-boundary timing verifier reports no degradation on any switch.
-- [ ] S7 gates: all prior gates plus S7.1-S7.4 recorded with numbers.
+- [ ] S7.6 **Mandatory continuous device session (owner, Rev 23.6).** One session, in order: load ~60 recorded
+      slots → PLAY several existing slots → ARM empty slot A → record long A → STOP A → immediately switch to B →
+      START overdub B → STOP B **once** while A still finalizes → continue transport → B stops exactly once →
+      switch to C → record/overdub C. Require: **0 user-facing denied interactions, 0 second presses, 0 lost
+      capture, 0 wrong-slot publication, 0 stale-generation release, 0 playback interruption, bounded MIDI gap,
+      pool residency returning after owners retire, and steady-state RAM independent of the number of cold
+      recorded slots.** Also run the **cross-track leg** in the same session: overdub on track 4 → stop → switch
+      directly to track 5 → record/overdub on track 5 (S4f.14). This single session is the acceptance evidence for
+      the whole change; the staged per-leg reproducers are S4f.13 (stop → slot switch → stop), S4f.14 (stop → track
+      switch → stop), S4b.8 (slot switch under finalization) and S4b.9 (track switch under finalization).
+- [ ] S7 gates: S6 and phase F implemented/validated, then all prior applicable gates plus S7.1-S7.4 recorded with numbers, and S7.6's session recorded as evidence.
 
 ## Safeguards (valuable, not the strategy)
 
@@ -364,9 +823,24 @@ visual detail windows are bounded optimisations on top, never a precondition for
 
 ## Closeout
 
-- [ ] `DEC-###` appended to [`docs/DECISION_LOG.md`](../../../docs/DECISION_LOG.md) (ownership rule,
-      role tiers, generation-qualified leases, cold undo policy) plus the S6 amendment; ownership transfer
-      recorded in `ARCHITECTURE_RULES.md` if a documented owner moves.
+- [ ] `DEC-###` status: the ownership rule and role tiers are **DEC-076**; the acceptance rule and per-interval
+      finalization are **DEC-078** (landed 2026-09-19, amending DEC-067 and DEC-076 point 2). The **S6 canonical
+      residency amendment** is still owed; ownership transfer is recorded in `ARCHITECTURE_RULES.md` where a
+      documented owner moves.
+- [ ] `docs/Authority/Architecture/ExecutionBounds.md`: add or update a row for every new or extended interval-path
+      owner in the same commit as the firmware — the **latch drive** (S4f.2), the **windowed playback
+      generation** (phase F), **standby** (S4d), the **visual envelope/window** (S4e), and re-classify
+      `rebuildVisualCacheIdleSlice`'s Unbounded members (rows 8-10) before S4e claims reuse.
+- [ ] Promote the HITL reproducers from TEMP variants to **registered stimuli** once the user accepts them, and
+      record the ids here and in `scripts/hitl/stimuli/registry.py`: (a) **stop → slot switch → stop**, record and
+      overdub legs (S4f.13); (b) **switch while a predecessor finalizes** (S4b.8); (c) **single-press stop/start
+      under a busy owner** (S7.4f); (d) **stop on track 4 → continue on track 5** cross-track (S4f.14/S4b.9).
+      Never edit an existing canonical stimulus to chase the new condition.
+- [ ] Correct the stale envelope text: `docs/Runtime/CURRENT_WORK.md` § Now implementing priced
+      "2 sounding slots per track x 16 tracks = 32 leases" — **corrected 2026-09-19** to the N-derived / 8-today
+      statement that `PROJECT_STATE.md` and DEC-076 use; the window-sized requirement title in
+      `specs/runtime-working-set-ownership/spec.md` ("two-slots-per-track") was retitled in the same landing.
+      Verify both on the next closeout pass.
 - [ ] `docs/Runtime/PROJECT_STATE.md`, `docs/Runtime/CURRENT_WORK.md`,
       `docs/DELIVERABLE_TRACKING.md` updated.
 - [ ] Architecture and guide docs describing slot-resident working sets or the prewarm contract updated

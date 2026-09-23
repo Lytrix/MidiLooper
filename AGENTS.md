@@ -34,6 +34,12 @@ here; read the relevant file on demand using the map at the bottom of this file.
    follow the logged `DEC-###` → run a reassessment only on a
    [formal trigger](docs/ARCHITECTURE_REASSESSMENT.md) → otherwise **implement**.
 
+7. Before each implementation slice, follow the
+   [G2 execution packet](docs/Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice):
+   pin scope and transition oracle, establish controllable production-path fixtures where required,
+   and record verification evidence before checkoff. Use [EXECUTION_PACKET.md](docs/Templates/EXECUTION_PACKET.md).
+   This applies to future steps of existing changes; scale checks to risk, with no extra approval gate.
+
 **Default: continue implementation.** Stop only on a formal reassessment
 trigger or an authority conflict (OpenSpec vs architecture). State the preferred
 path and confidence when alternatives exist; do not block on vagueness.
@@ -69,7 +75,10 @@ path and confidence when alternatives exist; do not block on vagueness.
   — reuse `pass`, `Capture`, `editPass`, `NoteEditSession`, slot, overdub, jam,
   `JamAction`, HITL baseline. Action + scope naming.
 - **Prose:** refer to functions by name; line numbers are for navigation and
-  citations only.
+  citations only. In every chat mention, pair stage/task/gate/decision IDs with a
+  short name, including repeats and link labels: **S2b — boot/load admission**,
+  **DEC-046 — round-robin playback admission**. Follow
+  [short names beside IDs](docs/Authority/NAMING.md#short-names-beside-ids-in-chat).
 - **Git:** small hygiene/doc change → direct commit on `dev`, no PR. Reviewable
   firmware → short-lived `feature/` or `refactor/` branch off `dev`, PR into
   `dev`. No auto-PR; a large-work direct commit on `dev` needs an explicit
@@ -109,6 +118,7 @@ Optional roles: [`docs/Agents/architect.md`](docs/Agents/architect.md),
 | Overlap-resolve and ledger owners | `Overdub-Overlap-And-Ledger-Evaluations.mdc` |
 | Multi-stage bugfix | `Multi-Stage-Bugfix-Workflow.mdc` |
 | Authoring or reviewing a plan | `Plan-Authoring.mdc`, `Plan-Pre-Implementation-Review.mdc` |
+| Deterministic implementation and completion evidence | `Implementation-Execution-Contract.mdc` |
 | OpenSpec phase gates and workflow | `OpenSpec-Phase-Gate.mdc`, `OpenSpec-Workflow.mdc` |
 | Git / PR decisions | `Git-Commit-And-PR-Workflow.mdc` |
 | Vocabulary and naming | `Naming-Vocabulary-Teensy-Looper.mdc` |

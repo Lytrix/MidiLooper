@@ -7,6 +7,8 @@ PROJECT_INTENT.md          ← product identity, scope, philosophy
     ↓
 ARCHITECTURE_RULES.md      ← ownership, execution bounds, structure
     ↓
+IMPLEMENTATION_READINESS.md ← evidence + contract required before firmware work
+    ↓
 NAMING.md                  ← architectural vocabulary (ubiquitous language)
     ↓
 OpenSpec                   ← desired behavior, accepted requirements
@@ -30,6 +32,7 @@ Code                       ← implementation; cannot silently redefine architec
 |-------|---------|------------|
 | **PROJECT_INTENT** | Product identity, scope, litmus tests, key decisions | Overridden by lower layers without deliberate intent update |
 | **ARCHITECTURE_RULES** | Ownership, execution bounds, forbidden patterns, extension rules | Bypassed by OpenSpec, plans, or code |
+| **IMPLEMENTATION_READINESS** | Evidence (G0), architecture (G1), and contract (G2) required before firmware work; STOP conditions for Apply | Used to add a second stop gate — it is a precondition on the existing [reassessment trigger](../ARCHITECTURE_REASSESSMENT.md#formal-triggers), not a new one |
 | **NAMING** | Architectural vocabulary, concept boundaries, verb conventions, migration policy | Bypassed by plans or code without deliberate update |
 | **OpenSpec** | Desired behavior, SHALL/MUST requirements, task scope | Used to redefine architecture directly (new Manager, ownership move) without reassessment |
 | **Guides** | How shipped behavior works today | Authority over OpenSpec specs or architecture |
@@ -93,6 +96,7 @@ If OpenSpec fits existing ownership and forbidden patterns:
 
 ```text
 Proceed
+→ G0–G2 evidence + contract (IMPLEMENTATION_READINESS.md)
 → DECISION_REVIEW + PREFLIGHT
 → Implement against tasks.md
 ```
@@ -145,6 +149,7 @@ Do not resolve conflicts by:
 |------|------|
 | [PROJECT_INTENT.md](PROJECT_INTENT.md) | Canonical project goal and decision log |
 | [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) | Ownership, execution bounds, forbidden patterns, new-abstraction checklist |
+| [IMPLEMENTATION_READINESS.md](IMPLEMENTATION_READINESS.md) | G0–G3 evidence and contract gate that must be satisfied before firmware implementation |
 | [NAMING.md](NAMING.md) | Architectural vocabulary, concept boundaries, verb conventions, migration policy |
 | [Architecture/RuntimeArchitecture.md](Architecture/RuntimeArchitecture.md) | Runtime data flow: storage → derived representations → interval projection → consumers |
 | [Architecture/ExecutionBounds.md](Architecture/ExecutionBounds.md) | Interval-path bound classes and owner inventory (DEC-043) |
@@ -160,14 +165,15 @@ Do not resolve conflicts by:
 
 1. [docs/Runtime/PROJECT_STATE.md](../Runtime/PROJECT_STATE.md) — execution context (load first)
 2. [docs/Runtime/CURRENT_WORK.md](../Runtime/CURRENT_WORK.md) — implementation scope (**required** before coding)
-3. [WORKFLOW_LIFECYCLE.md](WORKFLOW_LIFECYCLE.md) — how discovery becomes tracked work (coordination only)
-4. [docs/Runtime/ROADMAP.md](../Runtime/ROADMAP.md) — future sequencing (optional; not implementation authority)
-5. [docs/DECISION_LOG.md](../DECISION_LOG.md) — historical decisions (search + append at closeout)
-6. [docs/Templates/DECISION_REVIEW.md](../Templates/DECISION_REVIEW.md) — mandatory before firmware implementation
-7. [docs/AGENT_CONTEXT_MAP.md](../AGENT_CONTEXT_MAP.md) — domain → required docs
-8. [docs/Templates/PREFLIGHT.md](../Templates/PREFLIGHT.md) — planning template (§ Similar Historical Decisions mandatory)
-9. [docs/Templates/OWNERSHIP_TRANSFER.md](../Templates/OWNERSHIP_TRANSFER.md) — when mutable scope moves between modules
-10. [docs/ARCHITECTURE_REASSESSMENT.md](../ARCHITECTURE_REASSESSMENT.md) — when to pause for design review **or authority conflict**
-11. [docs/Templates/SESSION_CLOSEOUT.md](../Templates/SESSION_CLOSEOUT.md) — before closing design chats
+3. [IMPLEMENTATION_READINESS.md](IMPLEMENTATION_READINESS.md) — G0–G3 evidence and contract gate (**required** before firmware work)
+4. [WORKFLOW_LIFECYCLE.md](WORKFLOW_LIFECYCLE.md) — how discovery becomes tracked work (coordination only)
+5. [docs/Runtime/ROADMAP.md](../Runtime/ROADMAP.md) — future sequencing (optional; not implementation authority)
+6. [docs/DECISION_LOG.md](../DECISION_LOG.md) — historical decisions (search + append at closeout)
+7. [docs/Templates/DECISION_REVIEW.md](../Templates/DECISION_REVIEW.md) — mandatory before firmware implementation
+8. [docs/AGENT_CONTEXT_MAP.md](../AGENT_CONTEXT_MAP.md) — domain → required docs
+9. [docs/Templates/PREFLIGHT.md](../Templates/PREFLIGHT.md) — planning template (§ Similar Historical Decisions mandatory)
+10. [docs/Templates/OWNERSHIP_TRANSFER.md](../Templates/OWNERSHIP_TRANSFER.md) — when mutable scope moves between modules
+11. [docs/ARCHITECTURE_REASSESSMENT.md](../ARCHITECTURE_REASSESSMENT.md) — when to pause for design review **or authority conflict**
+12. [docs/Templates/SESSION_CLOSEOUT.md](../Templates/SESSION_CLOSEOUT.md) — before closing design chats
 
 Cursor rule: `.cursor/rules/Agent-Context-Workflow.mdc`
