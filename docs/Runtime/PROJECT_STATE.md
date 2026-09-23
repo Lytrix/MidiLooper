@@ -1,5 +1,28 @@
 # Project state (execution context)
 
+**2026-09-23 round 11 — A2.3 landed: the queue serves the first startable request, not the priority head.**
+
+`deferred-slot-restore-liveness` is **11/36 checked** (A2.3 added). `popNextStartableDeferredLoopSlotRestore`
+walks the priority order and takes the first **startable** request, leaving a blocked entry queued with its
+reason; done entries are still removed as queue hygiene. `queuedRestoreMayBegin` moved into the queue TU so
+the selection path and the startable pop share one liveness predicate. Both `BeginBackgroundFromQueue` sites
+use it instead of a head-only pre-check.
+
+**C4 turned green and was promoted into the default gate in this same slice** (A1.11). **C6 is now the only
+known-red fixture**, and its slice is A2.4 (bounded retry).
+
+Two new cases: priority order preserved among startable entries while the blocked head stays queued and is
+never taken; and the A2.2/A2.3 **non-claim made observable** — with one request commit-pending the gate is
+global, so a second request is tracked as `waiting_job_capacity` rather than served, and queue ordering
+cannot fix it.
+
+**RAM1 enforced twice now:** the first build failed at `padding 808` (below the 840 floor) until the new
+helpers were marked `STORAGE_PERSIST_MEM`; the line is back to `code 392,328 / padding 888`. The
+`tasks.md` placement rule is a gate, not a note.
+
+Evidence: suite **25/25** default; `RESTORE_LIVENESS_RED=1` → 27 cases / 1 failed (C6 alone); full native
+**2,312 / 1 skipped / 2,311 succeeded / 0 failures**; `teensy41-capture-serial` SUCCESS.
+
 **2026-09-23 round 10 — A2.2 landed: bounded background restore preparation under transport.**
 
 `deferred-slot-restore-liveness` is **10/36 checked** (A2.2 added). `canPrepareBackgroundLoadLoopNow()` +
