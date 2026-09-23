@@ -286,7 +286,26 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       yields `waiting_retry`, not `superseded`**; and a job whose slot owner changed before publication is
       superseded **publishing nothing**; full native suite green; RAM1 line recorded.
 
-- [ ] A2.2 **Background-restore preparation admission (D2), scoped to the global gate.** Add a bounded
+- [x] A2.2 **Background-restore preparation admission (D2), scoped to the global gate.**
+      → **DONE 2026-09-23.** `canPrepareBackgroundLoadLoopNow()` + `backgroundJobMayBeServicedNow()` in
+      `LoadLoopJob.cpp`: a bounded background **preparation** slice is now admissible under active
+      transport, so a queued request's open/read/parse advances while playback continues. Commit and
+      cleanup are **not** admitted by it — `canRunBackgroundLoadLoopNow()` still governs those, so the
+      commit stop-gate is untouched and an unbounded commit under transport is never entered. Recording
+      keeps its existing deferral (the SD-session exclusion returns false for capture, per proposal
+      TBD-2/O1). Selection now admits preparation through the same predicate at all four sites, and a
+      non-focus job with preparation left is serviced rather than parked.
+      **A prepare-complete request waits by name:** `markRestoreRequestWaiting(..., CommitGate)` fires at
+      the moment the phase changes to commit/cleanup under a denying (non-idle) runtime, so
+      `waiting_commit_gate` is observable on the same turn — not left `queued` and not a terminal.
+      **C1 and C2 flipped red→green and were PROMOTED into the default gate in this commit** (A1.11).
+      New case `test_restore_request_prepare_complete_waits_at_commit_gate`. Suite 22/22 default;
+      `RESTORE_LIVENESS_RED=1` → 25 cases / **2 failed** (C4, C6 only — the remaining known-red pair);
+      full native **2,309 / 1 skipped / 0 failures**; RAM1 `code 392,328 / padding 888`.
+      **Not claimed:** a restore *applying* under active transport (runtime-maintenance 3.3), and that
+      queue-head skipping solves the global `waiting_job_capacity` blockage (it does not; that is A2.3's
+      explicit non-claim).
+ Add a bounded
       background-restore service slice so a queued background request's **preparation** advances while
       playback continues, serviced after MIDI service with its own declared budget; keep recording
       deferred, keep the focus/High path unchanged, and **do not touch the commit stop-gate**
