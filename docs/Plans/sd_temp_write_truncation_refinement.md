@@ -112,5 +112,41 @@ coin flip … a failed content gate is retried, never reinterpreted"*, and the d
 retry (optionally with `teensy41-capture-serial-no-grain`, which was used for one of the two attempts
 and did not change the outcome).
 
-**Next step:** retry the content run to a clean capture — the fix's own claim does not depend on it, but
-the content PASS and the slope sweep do.
+## Round 4 follow-up: the warning is gone, but the catalog is NOT yet faithful
+
+The objective also asked whether the catalog is **stable**, and it is not — recorded here so the fix is
+not credited with more than it does.
+
+**What works.** A save now completes on device — `[StorageManager] CurrentSet saved successfully (v6
+deferred slices).` appears after a record/stop cycle, where the pre-fix failure mode was
+`persistence handoff: first_missing=request` with no `PERS,request`/`SAVE,*` markers at all. And the
+post-fix boot still carries **0** `could not reconcile` warnings.
+
+**What does not.** One slot's restored content does not match its pre-reboot state:
+
+| probe (attributed read: track select, then slot, then the CC feedback in that window) | pre-reboot | post-reboot |
+|---|---|---|
+| track 5 slot 1 | **24 bars (18432 ticks)** | **3 bars (2304 ticks)** |
+| track 2 slot 3 (the census's committed `track=1,slot=2`) | 18 bars (13824 ticks) | 18 bars (13824 ticks) |
+
+So `sets/index.bin` reconciliation and the save path are repaired, but **the catalog is not yet faithful
+across a reboot**, which is the S1.3 prerequisite ("grow the library across boots"). The slope sweep
+therefore stays blocked.
+
+**A read-method correction, and a warning about the direct-MIDI route.** My earlier "track 5 reads 3
+bars" datapoint — which I had withdrawn as a wrong-slot read, then reinstated as a *stability* symptom in
+the rwso device session — is **neither**: the correct method is an **attributed** read (tap the track,
+tap the slot, then take the CC-feedback line that arrives inside that window). A naive read that keeps a
+serial reader running across taps mis-attributes feedback and reported `EMPTY` for a slot that in fact
+held 24 bars. The attributed scan is what the table above uses.
+
+Also recorded: **do not drive record/overdub by raw MIDI.** A direct attempt (transport → track → slot →
+short `Note36` → notes → short `Note36`) mis-drove the device — the second short press started an
+**overdub** (`Overdubbing started`) rather than stopping the record, and the run had to be halted with a
+further stop press. The managed harness is the authoritative content creator; this was the risk that
+caution existed for. The attempt wrote into the approved scratch slot (track 5 slot 1), which is the
+likely origin of the 3-bar loop above; nothing outside the scratch slot was touched.
+
+**Next step:** the catalog's restored-content fidelity is now its own defect — diagnose it before the
+content PASS or the slope sweep can be credited. The capture-loss problem in the section above remains
+open too.

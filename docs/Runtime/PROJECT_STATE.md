@@ -30,7 +30,19 @@ boot, with the census unchanged (enabled set 32 chunks, restore walk
 480 → 480 at `credits=0`, payload to 441). Plan:
 [`docs/Plans/sd_temp_write_truncation_refinement.md`](../Plans/sd_temp_write_truncation_refinement.md).
 
-**Still blocked, and it is a different defect:** the managed capture truncates mid-run (561 and 1,732
+**The catalog is NOT yet faithful — the fix's stability clause is unmet.** A save now completes
+(`CurrentSet saved successfully (v6 deferred slices)`, where the pre-fix failure was
+`first_missing=request` with no save markers), and the post-fix boot still shows 0 reconcile warnings.
+But an **attributed slot read** (tap track, tap slot, take the CC feedback in that window) gives track 5
+slot 1 = **24 bars before the reboot and 3 bars after it**, while track 2 slot 3 stays 18 bars both
+times. So reconcile and the save path are repaired, but the restored set is not yet faithful across a
+reboot — which is exactly S1.3's prerequisite. Two method corrections are recorded with it: my earlier
+"track 5 reads 3 bars" datapoint was a **read-attribution** artifact (a naive reader spanning taps
+reports `EMPTY` for a slot holding 24 bars), and **raw-MIDI record driving must not be used** — a direct
+attempt started an *overdub* instead of stopping the record and had to be halted (it wrote only into the
+approved scratch slot).
+
+**Also still blocked, and it is a different defect:** the managed capture truncates mid-run (561 and 1,732
 lines against a good run's 45,909) with **0** ring-overflow rows, so the firmware's ring did not shed —
 the capture stopped. The harness is capture-driven, so it never reaches the overdub and reports
 `INCONCLUSIVE_CAPTURE (SPARSE_CAPTURE)` with a measured `record loop length None`. Documented remedy: a
