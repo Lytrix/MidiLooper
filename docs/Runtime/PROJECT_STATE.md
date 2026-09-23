@@ -1,5 +1,53 @@
 # Project state (execution context)
 
+**2026-09-23 `runtime-working-set-ownership` DEVICE SESSION on `feature/runtime-working-set-ownership` (HEAD `26e96539`, `teensy41-capture-serial`, hex `673e20ca…`): the S2b/S1.5 hardware gate is taken, the restored library survives a reboot, and a clear-drain blocker was diagnosed and worked around.**
+
+Flashed HEAD and ran the new temporary stimulus **`STIM-BASE-2-2-01-TEMP-RWSO-24CAP`** (canonical base
+recipe with `--record-bars 24 --overdub-bars 24`) on the authorized scratch slot track 5 / slot 1.
+
+**Leg 1 — the per-committed-slot reservation is gone at boot (device).** `free_chunks` pre-restore is **480 of
+512** on HEAD against the baseline's **400**; the default enabled set costs **32 chunks** against **96** (12 per
+track); and the library restore walk goes `phase=before 480 → phase=after 480` across all eight `(track,slot)`
+rows with `full=0,ready=0,credits=0` on every one — **0 chunks per committed slot**, including the two committed
+library slots the walk visits. That is the S2b.3/S1.5/S2b-gate claim on hardware.
+
+**Leg 2 — a 24-bar overdub is admitted.** `record loop length 18432/18432` (24 bars exactly),
+**`Overdubbing started` twice**, **`op=overdub_start` denials 0**, 0 `#MEM_DENIED` / `#MEM_EXT_REFUSED` /
+`FATAL`, SEVT `bars=24/24 count_ok/span_ok/bars_ok`, display `overdub_ok`/`transport_ok` true. The pre-change
+RC-MEM-5 leg recorded zero starts against 4 denials, so the capacity path this change must not regress does not.
+
+**Leg 3 — CORRECTION: the restored library DOES survive a reboot.** The recorded S1.3 blocker ("the restored
+scratch slot does not survive a reboot, `Track 6 loaded state: EMPTY`, `index.bin` does not reconcile") is **not
+reproducible**. `dump_and_capture.py` resets the board on serial open, so its dump is post-reboot and post-restore:
+`CAPTURE_CONTENT,begin,track=5,slot=0,length=18432` — the 24-bar slot restored with its exact length. **The
+library can grow**, so S1.3's slope-to-failure sweep is constructible; it is not yet run.
+
+**Leg 4 — content NOT verified, recorded as such.** `storage_matches_effective: true` with all 24 bars dense
+(`per_bar_effective` 70–84; `effective_rows_all = expected_note_cc_rows = 1,746`), but the verifier's single
+inter-anchor cycle reports `inventory_equal: false` with **2 unexplained missing rows in bar 0**
+(`[128,5,76,0]`, `[176,5,74,101]`). Neither is a documented residual class, so per the guide the run is **not** a
+PASS. Both events are present in the raw output in quantity (note 76 Off ×157, note 74 On ×264) and the first
+tick lies outside the cycle window (anchor 144), so a capture-window edge is the leading explanation — but the
+second row is left **open**. `capacity_path_exercised: false` (densest bar 84 refs vs the old 256 ceiling), so
+this is a parity run, not a capacity re-stress.
+
+**Blocker: CLEAR cannot proceed while transport is active.** Two attempts died at
+`Persistence drain stuck after 33 iterations … Clear aborted`. `StorageManager::processDeferredSaveState`
+returns immediately while `isTransportActiveForPersistence()`, so the blocking clear-drain can never advance; and
+the drain has **no transport-gate classification** — `maybeAdmitFinalizeWorkspaceAfterDrain()` returns `true` for
+merely-queued work, so it never takes the `AdmissionRefused` fast path and reports the generic `Stuck`. The host
+did not step in because the failed log carries **zero** `PERS,*`/`SAVE,*` rows (only `DIAG,persist_save`/
+`hostdrain` timing telemetry, which is not a pending marker), and its transport-running check cannot see a
+transport start preceding its anchor. **Workaround (device prep): stop the global transport and idle until the
+owed workspace save drains, then run.** This defect pair is pre-existing and outside this change; it blocks any
+content run on a device that boots with a pending workspace save.
+
+**Still open:** S1.3's slope sweep and failure point, the content-verified PASS, S1.4's pass→chunk conversion,
+S1.5's device refusal point, and phases B–F. Full evidence and the exact citations:
+[ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) § Device
+session — RWSO-24CAP. **Note:** the pre-change baseline revision remains `83be2e19`; no baseline firmware was
+flashed in this session (its census is already on record).
+
 **2026-09-23 `runtime-working-set-ownership` S1.5 clause 3 answered natively on `feature/runtime-working-set-ownership`: the dense-24-bar seal is diagnosed, and the refusal point is outside the supported envelope — test-only, no firmware change.**
 
 S1.5's third clause ("the smallest N at which a 24-bar overdub is refused") had been blocked for three rounds

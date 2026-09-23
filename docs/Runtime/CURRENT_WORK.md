@@ -2866,6 +2866,33 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Current handoff:** follow [IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) (2026-09-23, DEC-079) for the first slice and its prerequisites; phase F is planned but uncreated.
 
+**Progress (2026-09-23, DEVICE SESSION — RWSO-24CAP): the S2b/S1.5 hardware gate is taken, the restored library
+survives a reboot, and a clear-drain blocker was worked around.** Flashed HEAD `26e96539`
+(`teensy41-capture-serial`, hex `673e20ca…`) and ran a new temporary stimulus
+`STIM-BASE-2-2-01-TEMP-RWSO-24CAP` — the canonical base recipe with `--record-bars 24 --overdub-bars 24` — on the
+authorized scratch slot track 5 / slot 1.
+
+**(1) Zero per-committed-slot reservation at boot, on hardware.** `free_chunks` pre-restore **480 of 512** (was
+400), default enabled set **32** chunks (was 96), and the library restore walk `480 → 480` with
+`credits=0,ready=0,full=0` on all eight `(track,slot)` rows — the S2b.3/S1.5 device claim.
+**(2) A 24-bar overdub is admitted.** `record loop length 18432/18432`, `Overdubbing started` ×2,
+`op=overdub_start` denials **0**, 0 `#MEM_DENIED`/`#MEM_EXT_REFUSED`/`FATAL`, SEVT `bars=24/24`, display
+`overdub_ok`/`transport_ok` true — against the pre-change RC-MEM-5 leg's zero starts and 4 denials.
+**(3) CORRECTION — the restored library DOES survive a reboot:** after a serial-open reset the dump reports
+`CAPTURE_CONTENT,begin,track=5,slot=0,length=18432`, so the recorded S1.3 blocker is withdrawn and the
+slope-to-failure sweep is now constructible (not yet run).
+**(4) Content NOT verified, recorded as such:** `storage_matches_effective: true` and all 24 bars dense (1,746
+rows) but `inventory_equal: false` with **2 unexplained missing rows in bar 0** (`[128,5,76,0]`,
+`[176,5,74,101]`) — both present in the raw output in quantity (157/264), the first outside the cycle window
+(anchor 144); the second is left open. `capacity_path_exercised: false` (densest bar 84 refs), so parity, not a
+capacity re-stress.
+**Blocker found + workaround:** the clear aborted twice on `Persistence drain stuck after 33 iterations` because
+`processDeferredSaveState` returns immediately while transport is active and the drain has no transport-gate
+classification (generic `Stuck`); the host saw no `PERS,*`/`SAVE,*` marker at all in that window. Workaround:
+stop the global transport and idle until the owed save drains, then run. Pre-existing, outside this change.
+Evidence: [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ Device session — RWSO-24CAP.
+
 **Progress (2026-09-23, S1.5 clause 3 — native): the dense-24-bar refusal point is answered, and the seal
 puzzle is diagnosed.** Test-only; no `src/` change. The three-round blocker was upstream: a dense 24-bar
 construction did not seal, and two explanations were withdrawn. **The branch is identified** —
