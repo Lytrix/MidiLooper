@@ -1,11 +1,28 @@
 # Project state (execution context)
 
-**2026-09-23 owner asks: persist a take as it records, and make CLEAR immediate — part 1 landed (not yet effective), part 2 diagnosed, and a content pass run (inconclusive, setup class).**
+**2026-09-23 owner asks: persist a take as it records, make CLEAR immediate, and run a content pass — the content pass PASSES, persist-as-you-record is device-verified, CLEAR is diagnosed.**
 
 Full findings and the exact remaining gates:
 [`docs/Plans/persistence_immediacy_clear_latency_refinement.md`](../Plans/persistence_immediacy_clear_latency_refinement.md).
 
-**Persist-as-you-record.** The incremental mechanism already exists — `LoopEventStore::sealChunk` admits each
+**Content pass: PASS.** `captures/cp02-playback/content-review.json` → `result: PASS`,
+`storage_matches_effective: true`, 3 cycles each `inventory_equal: true` / `exact_order: true` with 0
+missing and 0 extra (260 rows = 188 record + 48 + 24 overdub). **The owner's read was right:** the base run's
+`stored overdub span count=0/15 … count_ok=False` is a **telemetry false negative**, not a storage failure —
+its `stored_overdub_span` carries `sevt_missing: true`, and the harness itself documents the SEVT dump as
+temporarily unarmed (`sevt_gate_required = False`, "a missing SEVT dump must not by itself turn an otherwise
+valid run into INCONCLUSIVE_CAPTURE"), with a matching temporary note in `TrackDeferredMaintenance.cpp`. That
+run's actual issues were `record_stored_revt_missing` and
+`persistence_active_snapshot_unavailable_during_save` — also telemetry/observation classes.
+
+**Persist-as-you-record: VERIFIED on device.** With the full shape (`captures/content-pass-02/`) there are
+**13 `PERS,mid_pass` rows**, including inside live `OVERDUBBING` (584,590,680 · 584,617,581 us) and `PLAYING`
+(598,393,317 · 598,402,101 us) windows, each `ok:t4:s0:cNN:n256` for the slot under test, with
+`overflow_free=True`. The earlier "0 mid_pass" was a `--record-only` fixture artifact — that mode never
+commits a pass, so its chunks are released and never admitted. No further diagnostic is needed:
+`PERS,backlog`'s 3rd field is the chunk queue depth.
+
+**Persist-as-you-record (mechanism).** The incremental mechanism already exists — `LoopEventStore::sealChunk` admits each
 sealed capture chunk via `PersistenceQueue::admitSealedChunk`, and `stepMidPassChunkPersist` writes one and
 emits `PERS,mid_pass` — but it sat behind `processDeferredSaveState`'s transport gate, so a take lived only
 in RAM until the stop. **Landed:** a deliberate one-chunk-per-turn exception in
