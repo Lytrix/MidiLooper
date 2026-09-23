@@ -191,13 +191,43 @@ established is that the restore is **deterministic** — two consecutive post-re
 gave track 5 slot 1 = 3 bars and track 2 slot 3 = 18 bars. Write→restore fidelity is therefore
 **untested**, because no recent run has recorded, and it cannot be tested until the clear unblocks.
 
-**Next step, and it is a two-part fix in owners other than this one:**
+### The transport is NOT the gate; the load path is — and the drain cannot name it
 
-1. **Firmware (diagnostics, small):** give the blocking drain a `BlockedByTransport` classification so the
-   reason is named instead of reported as `Stuck`. It does not unblock by itself.
-2. **Host (the effective unblock):** make `_prepare_deferred_save_before_clear` actually stop the
-   transport — its detector must see a transport start that precedes its anchor, and/or treat "an owed
-   save with an active transport" as save-active. Only then can the clear's drain complete.
+The host anchor fix below **is landed** (it repairs a real blind spot, see the next section) but it did
+**not** resolve this clear failure, and that is itself the finding: the failing run had **no transport
+start at all** in its log — so the transport was never running, the pre-clear step correctly did nothing,
+and the drain was blocked by something else while reporting only `Stuck`:
 
-Both are outside the SD temp-write fix, and the host one is the shortest path to the content PASS and the
-S1.3 slope sweep.
+```
+[StorageManager] ERROR: Persistence drain stuck after 33 iterations (max 33, expected ~1 slice steps, ~512 SD bytes)
+[ERROR] Clear aborted: could not complete deferred save first
+```
+
+`expected ~1 slice steps` with a **real 512-byte payload** means work is owed and none can be stepped. The
+remaining gates, both in the **load owner**, are exactly two (`LoadLoopJob.cpp`):
+
+```cpp
+bool deferredSaveBlockedByActiveSlotLoadSd()  { return SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile(); }
+bool deferredSaveBlockedByPostLoadCommitHoldoff()  { ... postLoadLoopCommitSaveHoldoffUntilMs_ ... }
+```
+
+`processDeferredSaveState` returns early on either, so the blocking clear-drain spins to its stuck budget.
+The boot log shows a restore was queued and then skipped — `Queuing boot playback loop slot restore 6
+pending; first 5/0`, `LoadLoopJob done 5/0`, `#CAP,…,DIAG,lcr,skip,restore` — but the failing run's own log
+covers only the clear window (73 lines, no boot), so **which** gate held cannot be named from the telemetry
+that exists. That absence *is* the actionable defect:
+
+1. **Firmware (diagnostics, small — the necessary next step):** classify the gates so the drain reports
+   `BlockedBySlotLoad` / `BlockedByPostLoadHoldoff` (and `BlockedByTransport` for completeness) instead of
+   the generic `Stuck`. Only then can the behavioural fix be chosen on evidence rather than inference.
+2. **Firmware (behaviour, needs a decision):** make the blocking CLEAR drain handle its real gates — either
+   wait out a transient load gate, or declare that CLEAR does not require the workspace save when the only
+   blocker is one of them. This changes CLEAR semantics and should not be invented here.
+
+**The host anchor fix that *is* landed.** `_prepare_deferred_save_before_clear` asked "is the transport
+running?" only from its own baseline anchor, so a start that preceded the anchor read as "stopped"; the
+base preset starts the transport itself, so that is reachable. It now checks the whole log first, matching
+the existing precedent in `_ensure_transport_stopped_before_record_arm`
+(`scripts/hitl/legacy_record_baseline.py`). Host tests: `test_capture_transitions` 48/48,
+`test_deferred_save_idle` 19/19, `test_hitl_serial_timing` 30/30. This is a genuine repair, but it is **not**
+the unblock for the failure above — recorded that way so it is not credited with more than it does.

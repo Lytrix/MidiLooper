@@ -874,7 +874,16 @@ def _prepare_deferred_save_before_clear(
         )
         return False
 
-    if (serial_global_transport_running(lines, after_index=after_index)
+    # Is the transport running *now*? Answer it from the latest start/stop pair, not only from
+    # `after_index`: this fixture starts the transport itself (the base preset passes
+    # `--start-transport`) and can then take the clear baseline *after* that press, so an anchored
+    # check sees no start and concludes "stopped" while the transport is in fact running. The clear's
+    # blocking drain cannot advance while the transport is active, so the long press then fails in
+    # firmware with `Clear aborted: could not complete deferred save first` and the whole run dies at
+    # its precondition (`captures/sd-fix-persist4`, 2026-09-23). `_ensure_transport_stopped_before_record_arm`
+    # already uses this whole-log-first shape for the same reason.
+    if (serial_global_transport_running(lines, after_index=0)
+            or serial_global_transport_running(lines, after_index=after_index)
             or _serial_sequencer_running(serial_collector, max_silence_s=2.0,
                                           after_index=after_index)):
         print("[info] transport stop before clear long press")
