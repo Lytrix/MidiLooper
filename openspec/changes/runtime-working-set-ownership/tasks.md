@@ -68,9 +68,12 @@ not another broad design revision. A listed fixture/command is not implemented o
       allocation census.
       **B03 IMPLEMENTED 2026-09-23 (partial):** `test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it`
       drives the production transport-stop entry and asserts the stop survives, is retargeted to `Stopped`,
-      and keeps its descriptor/slot/interval identity. **Not assertable here, recorded not assumed:** the
-      `Stopped`-destination *drain* (its retire block calls `Track::silenceTrackMidiOutput()`, a fail-closed
-      off-path stub) and the latched transport-stop leg (synchronous fallback stubs). **B06 needs a
+      and keeps its descriptor/slot/interval identity. **B03 is now COMPLETE for the admitted-stop leg:** the
+      `Stopped`-destination *drain* is covered too -- `Track::silenceTrackMidiOutput()` was converted from a
+      fail-closed stub to an observable counting boundary (it is reachable from both stop destinations, so the
+      stub was over-broad and left that retire path with no native coverage at all), and the fixture now asserts
+      the retargeted stop resolves to `STOPPED` (never `PLAYING`), silences exactly once, clears the obligation
+      and commits one pass. **Still not assertable:** the *latched* transport-stop leg (synchronous fallback stubs). **B06 needs a
       production extraction of `src/main.cpp`'s eligibility decision or a device run** -- the sketch is not
       native-linkable -- and it is why retargeting at transport stop was not taken in this slice.
 - [ ] D0.4 For every subsequent packet P2–P8 and applicable safeguard, establish its listed oracle/controls
