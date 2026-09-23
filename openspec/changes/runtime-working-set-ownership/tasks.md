@@ -66,6 +66,13 @@ not another broad design revision. A listed fixture/command is not implemented o
       green). B02–B07 recorded as missing-API limitations, not as red tests: B02/B03 need S4f.0/S4f.4,
       B04 needs the load path linked, B05 needs the S2b.4 release API, B06 the dispatch control, B07 the
       allocation census.
+      **B03 IMPLEMENTED 2026-09-23 (partial):** `test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it`
+      drives the production transport-stop entry and asserts the stop survives, is retargeted to `Stopped`,
+      and keeps its descriptor/slot/interval identity. **Not assertable here, recorded not assumed:** the
+      `Stopped`-destination *drain* (its retire block calls `Track::silenceTrackMidiOutput()`, a fail-closed
+      off-path stub) and the latched transport-stop leg (synchronous fallback stubs). **B06 needs a
+      production extraction of `src/main.cpp`'s eligibility decision or a device run** -- the sketch is not
+      native-linkable -- and it is why retargeting at transport stop was not taken in this slice.
 - [ ] D0.4 For every subsequent packet P2–P8 and applicable safeguard, establish its listed oracle/controls
       before that behavior change and record results under that packet. Gated F/S6 work stays blocked on its
       own architecture contract. Do not check this umbrella item until all applicable packets are evidenced.
