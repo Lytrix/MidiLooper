@@ -404,6 +404,44 @@ A1.7.
 - **Not claimed:** that the drain *advances* the restore. That integration claim is A3.7's device gate per
   Revision 5; this task delivers the accounting the drain reads.
 
+### A2.5 — Packet B device gate (PARTIAL: liveness demonstrated; gate NOT closed)
+
+- **Firmware flashed** `teensy41-capture-serial` (upload SUCCESS; the upload is also the required reboot,
+  and a 1200-baud touch was sent before the run so the harness attaches during boot).
+- **Entry point:** the authoritative managed path, `host_midi_hitl.py run --preset base` with
+  `--track-number 5 --loop-slot 1 --midi-channel 5` (canonical `STIM-BASE-2-2-01@v1`).
+- **Prerequisite discovered and implemented first.** The gate requires every boot payload's restore
+  state to be *reported*, and the source emitted no such line — this is exactly the A1.8 transition line
+  deferred to Packet B because the state vocabulary did not exist yet. `SC_RESTORE_REQUEST` now emits one
+  event-shaped `#CAP,...,RRQ` line per request transition with the full identity and named
+  state/wait/terminal, at every transition site, through one emitter that reads the record so the line
+  cannot disagree with a probe. It had to be `FLASHMEM`: inlined into the ITCM-resident transitions it
+  cost 144 B (`padding 872 → 728`, below the 840 floor) and the post-link gate rejected the build.
+- **Measured** — `captures/host_midi_automation_serial_20260924_012548.log`:
+
+  | Transition | Count |
+  |---|---|
+  | `queued/none/none` | 29 |
+  | `running/none/none` | 29 |
+  | `terminal/none/committed` | 29 |
+
+  The first boot request went `queued → running → terminal/committed` in **33 ms**
+  (`#CAP,8954665,RRQ,4,0,0,0,running` → `#CAP,8988640,RRQ,4,0,0,0,terminal,none,committed`). The log ends
+  with every request terminal and **none** left queued or running. `overflow_free=True`, zero
+  `RING,overflow` rows. **The boot restore queue is serviced after a fresh boot** — the liveness claim
+  Packet B exists to make.
+- **Not closed, and why** (so the task stays open rather than being claimed):
+  1. The serial harness attaches mid-restore, so the log does not contain the complete boot drain; "zero
+     payloads without a state" cannot be claimed from it.
+  2. The managed run's own verdict is `INCONCLUSIVE_CAPTURE` / `overall_ok=False`, aborting on
+     `record stop did not reach PLAYING`. That is a **documented harness setup-state race**
+     (`CURRENT_WORK.md`: `successor-wrap-48/49/50`), not a functional failure — but it leaves the
+     MIDI-gap clause without a valid oracle in this evidence.
+  3. The previously-`EMPTY`-slot clause was not exercised (the stimulus targeted track 5 / slot 1; the
+     telemetry shows the drained queue, not a before/after slot census).
+- **Next:** a clean managed run with boot capture attached before boot, plus a slot census before/after
+  the reboot.
+
 ---
 
 ## Mechanism ledger (A1.9)

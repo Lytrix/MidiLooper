@@ -375,18 +375,33 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       cycle).
 
 - [ ] A2.5 **Packet B device gate.**
-      → **OPEN — hardware gate, not started. This task needs the board, so it stays open by design
-      rather than being claimed.** It requires a `teensy41-capture-serial` flash (owner permission),
-      the canonical base stimulus on the authorized scratch slot, a reboot, and a capture proving every
-      boot payload has a terminal or a named wait, `overflow_free=True`, and a MIDI gap within the
-      standing bound. Everything upstream of it is green natively (suite 26/26, full native 2,313 / 1
-      skipped / 0 failures, RAM1 recorded), so this is the only thing blocking A2.6. Build and flash `teensy41-capture-serial` (ask the owner first — never
-      flash unprompted), run the canonical base stimulus on the authorized scratch slot, and reboot.
-      **Verify:** every boot payload has a **state** (terminal or named wait) reported; no payload is left
-      with neither; `overflow_free=True`; MIDI gap within the standing bound; and either the previously
-      `EMPTY` slot restores, or the log shows it in a named wait with the reason — the latter is a valid
-      outcome only if the reason names the commit gate and **runtime-maintenance 3.3** is still open. Record the capture path and
-      the exact lines. If the device is not available, this task stays open and Packet B is not closed.
+      → **PARTIAL 2026-09-24 — device run taken, liveness demonstrated, gate NOT closed.**
+      Firmware flashed (`teensy41-capture-serial`, upload SUCCESS, which is also the required reboot) and
+      the canonical base stimulus run through the managed entry point
+      (`host_midi_hitl.py run --preset base`, track 5 / slot 1 / channel 5). **The restore-request
+      telemetry had to be implemented first** — this gate requires each payload's state to be *reported*
+      and the source emitted nothing, which is exactly the A1.8 line deferred to Packet B; it is now
+      landed, verified on device, and FLASH-resident after the post-link gate rejected an ITCM version.
+      **Measured (fresh boot, `captures/host_midi_automation_serial_20260924_012548.log`):** 87 `RRQ`
+      lines; **29 requests reached `queued`, 29 `running`, 29 `terminal/committed`**; the first boot
+      request went `queued → running → terminal/committed` in **33 ms** (`#CAP,8954665,RRQ,4,0,0,0,running`
+      → `#CAP,8988640,...,terminal,none,committed`); the log ends with every request terminal and none
+      left queued or running. `overflow_free=True` and zero `RING,overflow` rows on this build — the
+      boot restore queue **is serviced after a fresh boot**, which is the liveness claim Packet B exists
+      to make.
+      **Three clauses are explicitly NOT closed, so the task stays open:**
+      1. **Zero payloads without a state** cannot be claimed from this evidence: the serial harness
+         attaches mid-restore, so the log does not contain the whole boot drain. What is proven is that
+         every request it does show reached a terminal, and that the queue drains.
+      2. The managed run's own verdict is **`INCONCLUSIVE_CAPTURE` / `overall_ok=False`**, aborting on
+         `record stop did not reach PLAYING` — a setup-state race that `CURRENT_WORK.md` documents as a
+         **known harness weakness** (`successor-wrap-48/49/50`), not a functional failure. Until a run
+         passes end to end, the MIDI-gap clause has no valid oracle in this evidence.
+      3. The previously-`EMPTY`-slot clause was not exercised: this run's stimulus targeted track 5 /
+         slot 1 and the boot telemetry shows the drained queue, not a before/after slot census.
+      **Next step for this gate:** a clean managed run (or the content-verification pipeline) with boot
+      capture attached before the device boots, then a slot census before/after the reboot.
+
 
 - [ ] A2.6 **Packet B gate.**
       → **OPEN, blocked on A2.5.** Its native clauses are already green — full native 2,313 / 1 skipped /
