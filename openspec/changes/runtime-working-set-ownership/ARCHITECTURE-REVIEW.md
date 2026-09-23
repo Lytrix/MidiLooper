@@ -1182,3 +1182,44 @@ observable without any SD at all.
 The next increment is therefore: extract `needsSlotLoad`, link `CurrentSetStorage.cpp`, re-add the B04
 fixture (red), and only then make the S2b.5 call-site fix. The in-memory SD card and the full Track harness
 are already in place, so the remaining work is mechanical rather than exploratory.
+
+## P1 — load harness increment 3: the predicate is extracted and the SD card is complete (2026-09-23)
+
+Three verified steps landed, and the B04 fixture is now exactly **one linkage step** from being writable.
+
+### Landed
+
+1. **`StorageManager::needsSlotLoad` moved to its own TU** (`src/StorageManager/SlotLoadAdmission.cpp`),
+   out of the `StorageManager.cpp` monolith, so the load *decision* is linkable without the whole
+   persistence layer. It is a pure predicate over slot/capture state — no I/O, no allocation, no mutation —
+   and it stays **FLASHMEM** so it consumes no ITCM: the firmware's RAM1 line is byte-identical
+   (`code 392,376 / padding 840 / locals 34,944`), which the post-link budget check confirms.
+2. **`CurrentSetStorage.cpp` is linked by the load suite** and `SlotLoadAdmission.cpp` with it, so
+   `formatLoopSlotPath` and `verifySaveFileTokenAtPath` are the real production definitions rather than
+   stubs.
+3. **The in-memory SD card is complete for the write path**: `SDClass` gained `rename`, the stub gained
+   `FILE_WRITE`, and `File` gained `write` plus a `writable` flag and create-or-truncate `open`. Only the
+   physical card is replaced; the read path is unchanged and `test_continuous_capture` still passes 87/87.
+
+### The B04 fixture is one triple of symbols away
+
+Re-adding the fixture now fails to **link** on exactly the dependencies `needsSlotLoad` itself has:
+
+| symbol | defined in |
+|---|---|
+| `SlotLoadSession::isActiveFor` | `src/StorageManager/SlotLoadSession.cpp` |
+| `StorageManagerInternal::isActiveLoadLoopJobFor` | `src/StorageManager/LoadLoopJob.cpp` |
+| `StorageManagerInternal::isParkedLoadLoopJobFor` | `src/StorageManager/LoadLoopJob.cpp` |
+
+So the next increment is: link `SlotLoadSession.cpp` and `LoadLoopJob.cpp`, re-add the B04 fixture (which is
+already written and validated as far as the linker), watch it go **red**, then make the S2b.5 call-site fix
+against it. Nothing was committed from the fixture; it was reverted again so the suite stays green at 3/3.
+
+### Verification
+
+| check | result |
+|---|---|
+| load suite | **3/3** |
+| full native | **2,275 cases / 1 skipped / 2,274 succeeded / 0 failures** |
+| firmware + budget | SUCCESS, RAM1 unchanged |
+| `test_continuous_capture` | 87/87 (the shared SD stub change is additive) |

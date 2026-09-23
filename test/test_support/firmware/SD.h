@@ -14,6 +14,9 @@
 #ifndef FILE_READ
 #define FILE_READ 0
 #endif
+#ifndef FILE_WRITE
+#define FILE_WRITE 1
+#endif
 
 class File {
  public:
@@ -40,7 +43,17 @@ class File {
     if (bytes == nullptr) return 0;
     return static_cast<int>(bytes->size() - pos);
   }
+  size_t write(const uint8_t* src, size_t count) {
+    if (bytes == nullptr || !isOpen || !writable) return 0;
+    if (pos + count > bytes->size()) bytes->resize(pos + count);
+    std::memcpy(bytes->data() + pos, src, count);
+    pos += count;
+    return count;
+  }
+  size_t write(uint8_t value) { return write(&value, 1); }
   void close() { isOpen = false; }
+
+  bool writable = false;
 };
 
 class SDClass {
@@ -52,14 +65,32 @@ class SDClass {
   bool mkdir(const char*) { return true; }
   bool remove(const char* path) { return files.erase(path) != 0; }
 
-  File open(const char* path, int /*mode*/) {
+  File open(const char* path, int mode) {
     auto found = files.find(path);
+    if (mode == FILE_WRITE) {
+      // Create-or-truncate, as the write path expects.
+      found = files.insert_or_assign(path, std::vector<uint8_t>{}).first;
+      File handle;
+      handle.bytes = &found->second;
+      handle.pos = 0;
+      handle.isOpen = true;
+      handle.writable = true;
+      return handle;
+    }
     if (found == files.end()) return File{};
     File handle;
     handle.bytes = &found->second;
     handle.pos = 0;
     handle.isOpen = true;
     return handle;
+  }
+
+  bool rename(const char* from, const char* to) {
+    auto found = files.find(from);
+    if (found == files.end()) return false;
+    files[to] = std::move(found->second);
+    files.erase(found);
+    return true;
   }
 
   /// Test helper: create or replace a file's bytes.

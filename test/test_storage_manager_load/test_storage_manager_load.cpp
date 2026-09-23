@@ -27,6 +27,8 @@ SDClass SD;
 
 // TrackManager's constructor references the global MIDI handler; the load path pulls it in.
 #include "../../src/MidiHandler.cpp"
+#include "../../src/StorageManager/CurrentSetStorage.cpp"
+#include "../../src/StorageManager/SlotLoadAdmission.cpp"
 #include "../../src/StorageManager/LoopSlotRestoreQueue.cpp"
 
 void setUp() {

@@ -240,34 +240,6 @@ bool STORAGE_PERSIST_MEM StorageManager::isBootTitleLoadDrain() {
     return StorageManagerInternal::getBootTitleLoadDrain();
 }
 
-bool StorageManager::needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex) {
-    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
-        return false;
-    }
-    if (StorageManagerInternal::isLoopSlotRestoreAttempted(trackIndex, slotIndex)) {
-        return false;
-    }
-    if (SlotLoadSession::isActiveFor(trackIndex, slotIndex)) {
-        return false;
-    }
-    if (StorageManagerInternal::isActiveLoadLoopJobFor(trackIndex, slotIndex)) {
-        return false;
-    }
-    if (StorageManagerInternal::isParkedLoadLoopJobFor(trackIndex, slotIndex)) {
-        return false;
-    }
-    if (trackIndex < trackManager.getTrackCount()) {
-        Track& track = trackManager.getTrack(trackIndex);
-        if (track.loopsAllocated() && track.getLoop(slotIndex).hasCommittedPasses()) {
-            return false;
-        }
-    }
-    if (StorageManagerInternal::isDeferredLoopSlotRestoreQueued(trackIndex, slotIndex)) {
-        return false;
-    }
-    return true;
-}
-
 bool StorageManager::bootInteractiveReady() {
     // Playback-only boot: title + USB wait until the boot playback restore queue is empty
     // and any in-flight LoadLoopJob has committed.
