@@ -41,6 +41,17 @@ A first directory-view attempt corrupted the shared `SD.h` mid-edit and was **re
 stub is critical-path for every native suite, so it needs its own reviewed edit with the load suite run
 immediately after. **No fixture, red evidence or diagnostic count is claimed for A1.7 yet.**
 
+**Round 4 addition.** The in-memory SD card now models **directory handles** (`open(dir)` +
+`openNextFile()` + `isDirectory()` + `name()`), which the saved-set scan needs; the load suite, the
+critical path for every native suite, stayed 8/8 green immediately after. Retaining the **real** drain
+call then corrected the closure estimate: it is not three boundary items but most of the persistence
+stack plus cold display/edit/track-manager owners, and it exposes a genuine ambiguity in
+`TrackManagerCaptureQueue.cpp`'s `requestLoopSlotPersistAndSaveState` call (an anonymous-namespace
+`(const Track&, uint8_t, uint8_t)` overload competing with `TrackStopTelemetryColdHelpers.cpp`'s
+`(Track&, uint8_t, uint32_t)`), which prevents that TU from compiling natively at all. `REVIEW.md` § A1.7
+records the options; the recommendation is a deliberate "drain native-link expansion" slice, since
+A3.3's budget accounting and A3.4a's re-entry guard are logic a device-only gate cannot falsify cheaply.
+
 
 **2026-09-23 — restore-liveness plan correction (documentation only).**
 The final review's callback re-entry finding is addressed in

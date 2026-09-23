@@ -46,6 +46,10 @@ void requestStateTransition(LooperState newState, bool quantize = false); // Que
     void enterLoadSaveMode();               // Enter load/save set browser overlay
     void exitLoadSaveMode();                // Exit load/save set browser overlay
     bool isLoadSaveModeActive() const { return loadSaveOverlayActive; }
+    /// Native boundary hook. `exitLoadSaveMode`'s definition lives in `src/LooperState.cpp`, which also
+    /// defines the `looperState` global the shared test harness owns, so a suite that needs the method
+    /// cannot include that TU. This setter lets such a suite supply it without reaching a private field.
+    void setLoadSaveModeForTest(bool active) { loadSaveOverlayActive = active; }
     void setEditContext(EditContext ctx);   // Change edit context
     EditContext getEditContext();
     // ---

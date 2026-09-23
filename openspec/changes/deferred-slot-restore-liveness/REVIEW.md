@@ -156,41 +156,54 @@ background restore, which is exactly the defect under test.
   attempted=1, pending=0, active=0, parked=0)` — the latch holds the slot for the power cycle.
 - **Harness additions:** `snapshotSlotPayloadBytes`, `replaceSlotPayloadBytes`, `truncateSlotPayload`.
 
-### A1.7 — C5 the blocking drain cannot advance the restore (closure fully measured; fixture not yet landed)
+### A1.7 — C5 the blocking drain cannot advance the restore (closure measured; fixture not yet landed)
 
-A1.7 requires the **real** `drainPersistenceWorkBlocking`, and this path has zero native coverage. This
-round completed the closure measurement rather than modelling the drain with a test-only stand-in (which
-the G2 packet rules forbid as acceptance evidence) or silently absorbing an unbounded slice.
+A1.7 requires the **real** `drainPersistenceWorkBlocking`, and this path has zero native coverage. Two
+rounds have been spent measuring what retaining that call actually costs, rather than modelling the drain
+with a test-only stand-in (which the G2 packet rules forbid as acceptance evidence).
 
-**Landed and kept** (`test/test_storage_drain_restore`, registered in `scripts/native_test_link.py`):
+**Landed and kept** (`test/test_storage_drain_restore`, in `scripts/native_test_link.py`'s
+`_FIRMWARE_BOUNDARY_SUITES`):
 
-- Boundary stubs, all device-faithful and additive: `PSTR`, `NativeSerial::printf_P`,
-  `NativeSerial::print(value, base)` with `DEC/HEX/OCT/BIN`, `File::flush`, and
-  `O_CREAT`/`O_RDWR`/`O_AT_END`.
-- The suite links the drain TU plus a 19-TU import set (the load suite's set plus `SyncDrainBudget`,
-  `PersistenceSyncDrainBudget`, `PersistenceWorkQueue`, `DeferredSaveScheduler`, `PersistenceBudget`,
-  `RevisionLoadPolicy`, `Internal`, `PersistenceAdmit`, `PersistenceFailurePolicy`, `RevisionLoad`,
-  `RevisionCommit`, `MidPassChunkPersist`, `WallClockSdSync`, `PersistenceWorkItemPersist`,
-  `PersistenceSchema`, `RevisionPackedBlob`, `SetRevisionCatalog`, `DeferredSaveJobStages`,
-  `WorkspaceSave`, `RuntimeBundleFooter`, `CurrentSetBootLoad`, `LegacyMonolithLoad`, `SavedSetIo`) and
-  runs one behaviour-free case proving that set compiles and links.
+- Boundary stubs, device-faithful and additive: `PSTR`, `NativeSerial::printf_P`,
+  `NativeSerial::print(value, base)` with `DEC/HEX/OCT/BIN`, `File::flush`, `O_CREAT`/`O_RDWR`/`O_AT_END`.
+- **Directory handles in the in-memory card.** The saved-set scan reads the sets archive with
+  `open(dir)` + `openNextFile()` + `isDirectory()` + `name()`, which the flat path map did not model.
+  Added as the directory form of `SDClass::open` plus the three `File` methods, with the card global
+  forward-declared before `File` (a first attempt that stored an `SDClass*` on the handle created a
+  declaration cycle). The load suite — critical path for every native suite — was run immediately after
+  and stayed **8/8 green**.
+- **Overlay boundary:** `LooperStateManager::setLoadSaveModeForTest`, because `exitLoadSaveMode`'s
+  definition sits in `src/LooperState.cpp`, which also defines the harness-owned `looperState` global.
+  `RtcTime` (whose TU includes `core_pins.h`) is supplied by `drain_harness_stubs.h`.
+- The suite links a 15-TU import set and runs one behaviour-free case proving that set compiles and links.
 
-**The remaining closure, measured and now fully enumerated** (adding these TUs produced exactly this
-list and no new class of dependency):
+**Corrected finding — the tail is not three boundary items.** Retaining the actual drain call revealed a
+second, larger class that the earlier enumeration missed:
 
-| Missing capability | Owner | Why it is not linkable as-is |
+| Remaining need | Owner | Note |
 |---|---|---|
-| directory enumeration (`open(dir)`, `openNextFile`, `isDirectory`, `name`) | `test/test_support/firmware/SD.h` | the in-memory card is a flat path map; it models file bytes and write modes but not the `File`-as-directory handle that `scanHighestSavedSetSequenceOnSd` uses |
-| `RtcTime::getUnixTime` / `raiseWallClockToAtLeast` | `src/RtcTime.cpp` | includes `core_pins.h`/imxrt registers — the TU does not compile for `native` at all |
-| `LooperStateManager::exitLoadSaveMode` | `src/LooperState.cpp` | the TU also defines the `looperState` global the shared harness owns, so including it is a duplicate definition; the method only closes the set-browser overlay, unreachable from a drain fixture |
+| `DisplayManager::invalidateForSlotChange`, `EditManager::emitEditEvent`/`flushDeferredNoteEditDisplayRefresh`/`persistActiveNoteEditSession`/`reopenNoteEditSession`, `LoopEditManager::commitLoopEditOnDepart`/`reopenLoopEditSession` | display + edit managers | cold UI routes, unreachable from a drain fixture but referenced through the workspace-save path |
+| `TrackManager::getMasterLoopLength`/`setMasterLoopLength`/`forceMidiLedUpdate`/`hasQueuedRecordingTrack`/`reclaimUnreferencedDisabledPasses`, `Track::silenceSlotMidiOutput` | `TrackManager*`/`Track` owners | `Track::silenceSlotMidiOutput` lives in `TrackPlaybackHotPath.cpp`, which also **redefines** the harness's `silenceTrackMidiOutput` boundary |
+| `SavedSetCatalog::parseSavedSetFolderName`/`readSavedSetMetadataTrailer`, `PersistenceSchema::crc32*`, `RevisionPackedBlob::*`, `SetRevisionCatalog::*` | catalog + revision pack | the revision/catalog import set |
+| `StorageManagerInternal::applyLoadedTrackStateAfterLoopSlots` | `CurrentSetBootLoad.cpp` (already included) | still unresolved after inclusion, so it has a second owner |
 
-**Assessment.** The remaining work is three **boundary** items, not further discovery: a directory view
-for the in-memory card, a native wall clock, and a public flag setter for the overlay. The persistence
-side is otherwise fully linked. A first attempt at the directory view was made this round and **reverted
-in full** because it corrupted the shared `SD.h` mid-edit (`File`'s closing brace lost, a stray
-`static` member, duplicate `SD`), which broke the load suite; the shared stub is critical-path for every
-native suite, so the next attempt must be made as its own reviewed edit with the load suite run
-immediately after. No fixture, no red evidence, and no diagnostic count is claimed for A1.7 yet.
+**A pre-existing production defect blocks the capture-queue TU from compiling natively.**
+`TrackManagerCaptureQueue.cpp`'s call to `requestLoopSlotPersistAndSaveState` is **ambiguous**: the
+capture-queue TU defines a `(const Track&, uint8_t, uint8_t)` overload in an anonymous namespace while
+`TrackStopTelemetryColdHelpers.cpp` defines a `(Track&, uint8_t, uint32_t)` one, and the call's arguments
+convert to both. Including the capture-queue TU therefore fails to compile, which also blocks
+`hasQueuedRecordingTrack` and the capture-side `TrackManager` members. This is a real code finding, not a
+harness limitation.
+
+**Assessment.** The drain's C5 behavior is not natively reachable by a bounded closure; it needs most of
+the persistence stack plus cold display/edit/track-manager owners, and it exposes a genuine overload
+ambiguity in production code. Packet C's tasks A3.1/A3.3/A3.4 assume native drain fixtures, so the
+options are (a) declare a deliberate "drain native-link expansion" slice that absorbs that set and
+resolves the ambiguity, or (b) amend Packet C to verify the drain's C5 behavior on device only, with
+native coverage limited to the parts that link. **Recommended: (a)**, because A3.3's budget/progress
+accounting and A3.4a's re-entry guard are logic that a device-only gate cannot falsify cheaply. This is
+recorded for the owner; no fixture, red evidence or diagnostic count is claimed for A1.7 yet.
 
 ---
 
@@ -206,7 +219,7 @@ unreviewed.**
 | C2 | A parked non-focus job is never re-serviced under play | red fixture in place; mechanism reproduced (parked instance owns the request for all 64 turns, actively owned 0) | `test_c2_parked_job_is_serviced_or_named_after_transport_starts` |
 | C3 | one-shot enqueue never re-offers | **withdrawn before code** (G2 review finding 5): the boot scan already offers every payload-bearing `(track,slot)` and a blocked request stays queued | none — no work produced |
 | C4 | priority head with a live owner stalls the queue behind it | red fixture in place; mechanism reproduced, with the trigger **corrected**: the head must also fail the pop's done-test (a committed head is skipped, not blocking) | `test_c4_blocked_priority_head_does_not_stall_a_startable_request` |
-| C5 | the blocking drain never services the load scheduler | **open** — the defect is read from code (`drainPersistenceWorkBlocking` loops on `processDeferredSaveState` + `yield()` and never invokes the load scheduler), but the native reproducer needs the drain link closure measured above | A1.7 (closure landed, fixture pending) |
+| C5 | the blocking drain never services the load scheduler | **open** — defect read from code (`drainPersistenceWorkBlocking` loops on `processDeferredSaveState` + `yield()` and never invokes the load scheduler); the native reproducer needs the drain-link expansion recorded above, and depends on the `requestLoopSlotPersistAndSaveState` overload ambiguity being resolved | A1.7 (closure measured, fixture pending) |
 | C6 | `markLoopSlotRestoreAttempted` latches a transient failure for the power cycle | red fixture in place; mechanism reproduced (failure path reached, healed payload never retried) | `test_c6_transient_failure_is_retried_not_latched` |
 
 ---
