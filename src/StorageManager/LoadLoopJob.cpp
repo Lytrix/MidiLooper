@@ -59,6 +59,34 @@ DMAMEM LoadLoopJob parkedLoadLoopJob_{};
 LoadLoopJob loadLoopJob_{};
 LoadLoopJob parkedLoadLoopJob_{};
 #endif
+/// A2.4 (D5): bounded restore attempts per `(track, slot)` per power cycle. A **transient** SD failure
+/// must be retryable within the session; `loopSlotRestoreAttempted_` is a hard latch, so a single
+/// transient read failure used to make that slot `EMPTY` for the rest of the power cycle and made boots
+/// disagree. A **persistent** failure still ends in a named refusal, after this bound.
+constexpr uint8_t kMaxLoopSlotRestoreAttempts = 3;
+uint8_t loopSlotRestoreAttempts_[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK]{};
+volatile uint32_t g_loopSlotRestoreRefusalCount = 0;
+
+/// Handle a failure that is **retryable**: reset the slot as the restore path's own cleanup (which must
+/// keep the request identity, per A2.1), then either re-queue the request for another attempt or record
+/// the `refused` terminal once the bound is exhausted. Returns true when the request was re-queued.
+STORAGE_PERSIST_MEM bool scheduleLoopSlotRestoreRetry(uint8_t trackIndex, uint8_t slotIndex,
+                                                      RestoreRequestTerminal exhaustedTerminal) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return false;
+    }
+    if (loopSlotRestoreAttempts_[trackIndex][slotIndex] >= kMaxLoopSlotRestoreAttempts) {
+        // Bounded: the request reaches a named, non-retryable outcome instead of retrying forever.
+        (void)markRestoreRequestTerminal(trackIndex, slotIndex, exhaustedTerminal);
+        ++g_loopSlotRestoreRefusalCount;
+        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        return false;
+    }
+    // The restore path's **own** cleanup keeps the identity and names a retry wait (A2.1/G2).
+    markRestoreRequestWaiting(trackIndex, slotIndex, RestoreRequestWait::Retry);
+    return appendBootLoopSlotRestore(trackIndex, slotIndex, 0);
+}
+
 /// After boot playback ready, delay background fill so first transport press is not starved.
 uint32_t backgroundRestoreHoldoffUntilMs_ = 0;
 /// After LoadLoopJob Commit, block deferred save briefly so SD work cannot race the
@@ -66,6 +94,9 @@ uint32_t backgroundRestoreHoldoffUntilMs_ = 0;
 uint32_t postLoadLoopCommitSaveHoldoffUntilMs_ = 0;
 /// While true (boot title playback drain), do not park/demote — parked jobs block bootInteractiveReady.
 bool bootTitleLoadDrain_ = false;
+
+/// Definition lives in `LoopSlotRestoreQueue.cpp`; the retry path re-queues through it.
+bool appendBootLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex, uint16_t restorePriority);
 
 STORAGE_PERSIST_MEM void clearLoadLoopJobInstance(LoadLoopJob& job) {
     if (job.session != nullptr) {
@@ -299,13 +330,15 @@ STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex)
     }
     if (!CurrentSetStorage::verifySaveFileTokenAtPath(loopPath)) {
         resetLoopSlotToEmpty(loop, slotIndex);
-        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        // A2.4: a bad token can be a torn/partial write, so it is retryable up to the bound rather than
+        // latching the slot for the power cycle.
+        (void)scheduleLoopSlotRestoreRetry(trackIndex, slotIndex, RestoreRequestTerminal::Refused);
         return false;
     }
     File loopFile = SD.open(loopPath, FILE_READ);
     if (!loopFile) {
         resetLoopSlotToEmpty(loop, slotIndex);
-        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        (void)scheduleLoopSlotRestoreRetry(trackIndex, slotIndex, RestoreRequestTerminal::Refused);
         return false;
     }
 
@@ -316,7 +349,8 @@ STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex)
         if (!CurrentWorkspaceStorage::readEpochFileHeader(epochIo, epochHeader)) {
             loopFile.close();
             resetLoopSlotToEmpty(loop, slotIndex);
-            markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+            (void)scheduleLoopSlotRestoreRetry(trackIndex, slotIndex,
+                                               RestoreRequestTerminal::Refused);
             return false;
         }
         payloadOffset = CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
@@ -325,14 +359,14 @@ STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex)
     if (fileSize < payloadOffset + sizeof(CurrentSetStorage::kSaveFileToken)) {
         loopFile.close();
         resetLoopSlotToEmpty(loop, slotIndex);
-        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        (void)scheduleLoopSlotRestoreRetry(trackIndex, slotIndex, RestoreRequestTerminal::Refused);
         return false;
     }
     const size_t payloadSize = fileSize - payloadOffset - sizeof(CurrentSetStorage::kSaveFileToken);
     if (!loopFile.seek(payloadOffset)) {
         loopFile.close();
         resetLoopSlotToEmpty(loop, slotIndex);
-        markLoopSlotRestoreAttempted(trackIndex, slotIndex);
+        (void)scheduleLoopSlotRestoreRetry(trackIndex, slotIndex, RestoreRequestTerminal::Refused);
         return false;
     }
 
@@ -470,8 +504,11 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
     if (!loadLoopJob_.saveTokenVerified) {
         Serial.println("[StorageManager] WARN: LoadLoopJob token mismatch");
         resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
-        markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+        const uint8_t retryTrack = loadLoopJob_.track;
+        const uint8_t retrySlot = loadLoopJob_.slot;
         clearLoadLoopJobInstance(loadLoopJob_);
+        (void)scheduleLoopSlotRestoreRetry(retryTrack, retrySlot,
+                                           RestoreRequestTerminal::Refused);
         return SlotLoadAdvanceResult::Failed;
     }
 
@@ -560,8 +597,11 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJobParse(uint32_t deadline
             Serial.println("[StorageManager] WARN: LoadLoopJob LSV1 parse failed");
             Loop& loop = trackManager.getTrack(loadLoopJob_.track).getLoop(loadLoopJob_.slot);
             resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
-            markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+            const uint8_t retryTrack = loadLoopJob_.track;
+            const uint8_t retrySlot = loadLoopJob_.slot;
             clearLoadLoopJobInstance(loadLoopJob_);
+            (void)scheduleLoopSlotRestoreRetry(retryTrack, retrySlot,
+                                               RestoreRequestTerminal::Refused);
             return SlotLoadAdvanceResult::Failed;
         }
         if (lsv1Result == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
@@ -581,8 +621,11 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJobParse(uint32_t deadline
             Serial.println("[StorageManager] WARN: LoadLoopJob parse failed");
             Loop& loop = trackManager.getTrack(loadLoopJob_.track).getLoop(loadLoopJob_.slot);
             resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
-            markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+            const uint8_t retryTrack = loadLoopJob_.track;
+            const uint8_t retrySlot = loadLoopJob_.slot;
             clearLoadLoopJobInstance(loadLoopJob_);
+            (void)scheduleLoopSlotRestoreRetry(retryTrack, retrySlot,
+                                               RestoreRequestTerminal::Refused);
             return SlotLoadAdvanceResult::Failed;
         }
         if (result == PersistedLoopParseStepResult::MoreWork) {
@@ -636,8 +679,11 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
             }
             Serial.println("[StorageManager] WARN: LoadLoopJob reopen/seek failed");
             resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
-            markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+            const uint8_t retryTrack = loadLoopJob_.track;
+            const uint8_t retrySlot = loadLoopJob_.slot;
             clearLoadLoopJobInstance(loadLoopJob_);
+            (void)scheduleLoopSlotRestoreRetry(retryTrack, retrySlot,
+                                               RestoreRequestTerminal::Refused);
             return SlotLoadAdvanceResult::Failed;
         }
         loadLoopJob_.file = loopFile;
@@ -659,8 +705,11 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
         if (n != static_cast<int>(chunk)) {
             Serial.println("[StorageManager] WARN: LoadLoopJob read failed");
             resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
-            markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+            const uint8_t retryTrack = loadLoopJob_.track;
+            const uint8_t retrySlot = loadLoopJob_.slot;
             clearLoadLoopJobInstance(loadLoopJob_);
+            (void)scheduleLoopSlotRestoreRetry(retryTrack, retrySlot,
+                                               RestoreRequestTerminal::Refused);
             return SlotLoadAdvanceResult::Failed;
         }
         loadLoopJob_.bytesRead += chunk;
@@ -678,8 +727,11 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
         magic != CurrentSetStorage::kSaveFileToken) {
         Serial.println("[StorageManager] WARN: LoadLoopJob token mismatch");
         resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
-        markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+        const uint8_t retryTrack = loadLoopJob_.track;
+        const uint8_t retrySlot = loadLoopJob_.slot;
         clearLoadLoopJobInstance(loadLoopJob_);
+        (void)scheduleLoopSlotRestoreRetry(retryTrack, retrySlot,
+                                           RestoreRequestTerminal::Refused);
         return SlotLoadAdvanceResult::Failed;
     }
     loadLoopJob_.saveTokenVerified = true;
@@ -696,8 +748,11 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
         (bodyProbe == LoopSnapshotBodyFormatProbeResult::Truncated && looksLikeLsv1Prefix)) {
         Serial.println("[StorageManager] WARN: LoadLoopJob LSV1 probe failed");
         resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
-        markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+        const uint8_t retryTrack = loadLoopJob_.track;
+        const uint8_t retrySlot = loadLoopJob_.slot;
         clearLoadLoopJobInstance(loadLoopJob_);
+        (void)scheduleLoopSlotRestoreRetry(retryTrack, retrySlot,
+                                           RestoreRequestTerminal::Refused);
         return SlotLoadAdvanceResult::Failed;
     }
     loadLoopJob_.usesLoopSnapshotBodyFormatV1 =

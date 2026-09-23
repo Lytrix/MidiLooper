@@ -89,7 +89,7 @@ void test_restore_queue_orders_by_priority_and_peek_returns_the_head() {
 /// peek to tell it the request is already satisfied -- the done-test has to be added at the call site
 /// (or a forced enqueue used), which is exactly what S2b.5 must do.
 void test_restore_queue_peek_has_no_done_test_for_an_attempted_slot() {
-  StorageManagerInternal::loopSlotRestoreAttempted_[2][3] = true;
+  StorageManagerInternal::markLoopSlotRestoreAttempted(2, 3);
   TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(2, 3, 5));
 
   StorageManagerInternal::DeferredLoopSlotRestore head{};
@@ -104,7 +104,7 @@ void test_restore_queue_peek_has_no_done_test_for_an_attempted_slot() {
 /// `needsSlotLoad`. That matters because a pop-then-requeue is inert for a slot whose restore was
 /// already attempted or which has committed passes.
 void test_restore_queue_forced_enqueue_bypasses_the_needs_slot_load_guard() {
-  StorageManagerInternal::loopSlotRestoreAttempted_[1][1] = true;
+  StorageManagerInternal::markLoopSlotRestoreAttempted(1, 1);
   // The forced enqueue takes the request regardless of the attempted flag or committed content.
   TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(1, 1, 3));
   TEST_ASSERT_EQUAL_UINT16(1, StorageManagerInternal::pendingLoopSlotRestores_.count);
@@ -491,14 +491,23 @@ void test_c6_transient_failure_is_retried_not_latched() {
   TEST_ASSERT_FALSE(goodPayload.empty());
   RestoreHarness::truncateSlotPayload(0, 2, 3);
   RestoreHarness::observeRestoreOutcome(0, 2, 8);
-  char failMsg[256];
+  // Phase 1 asserts the failure was actually reached **and** that it is not a terminal latch: the
+  // request is still owed (queued or in a named wait), which is the behavior A2.4 requires. Asserting
+  // the latch here would re-encode the defect as the oracle.
+  char failMsg[288];
   snprintf(failMsg, sizeof(failMsg),
-           "C6: the injected transient failure did not reach the failure path "
-           "(attempted=%u, committed=%u, pending=%u)",
+           "C6: the injected transient failure must leave the request owed, not latched "
+           "(attempted=%u, committed=%u, pending=%u, state=%u)",
            StorageManagerInternal::isLoopSlotRestoreAttempted(0, 2) ? 1u : 0u,
            trackManager.getSelectedTrack().getLoop(2).hasCommittedPasses() ? 1u : 0u,
-           static_cast<unsigned>(StorageManagerInternal::pendingLoopSlotRestores_.count));
-  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::isLoopSlotRestoreAttempted(0, 2), failMsg);
+           static_cast<unsigned>(StorageManagerInternal::pendingLoopSlotRestores_.count),
+           static_cast<unsigned>(StorageManagerInternal::restoreRequestState(0, 2)));
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.getSelectedTrack().getLoop(2).hasCommittedPasses(), failMsg);
+  TEST_ASSERT_TRUE_MESSAGE(
+      StorageManagerInternal::pendingLoopSlotRestores_.count > 0 ||
+          StorageManagerInternal::restoreRequestState(0, 2) ==
+              StorageManagerInternal::RestoreRequestState::Waiting,
+      failMsg);
 
   // Heal the payload and drive further turns with no external advancement of the request.
   RestoreHarness::replaceSlotPayloadBytes(0, 2, goodPayload);
@@ -993,11 +1002,10 @@ int main(int, char**) {
   RUN_TEST(test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned);
   // A1.1 — the controllable restore harness smoke case (production path only).
   RUN_TEST(test_restore_harness_smoke_commits_a_queued_request_through_production_path);
-  // A1.11 — the known-red desired-behavior acceptance set. Registered unconditionally so a run with
-  // `RESTORE_LIVENESS_RED=1` shows exactly these cases red; excluded from the default gate until the
-  // slice that turns each one green promotes it (the `WORKING_SET_RED` precedent).
-  // A2.2 promoted C1 and C2 into the default gate, in the slice that turned them green (A1.11). The
-  // remaining known-red pair stays excluded until its own slice lands.
+  // A1.11's known-red acceptance set is now **empty**: each fixture was promoted into this default gate
+  // in the commit that turned it green (A2.2 promoted C1/C2, A2.3 promoted C4, A2.4 promoted C6), so the
+  // `RESTORE_LIVENESS_RED` flag is deleted. No red fixture was deleted, generalized or threshold-relaxed
+  // to get here.
   RUN_TEST(test_c1_transport_gated_background_admission_desired);
   RUN_TEST(test_c2_parked_job_is_serviced_or_named_after_transport_starts);
   RUN_TEST(test_restore_request_prepare_complete_waits_at_commit_gate);
@@ -1005,9 +1013,7 @@ int main(int, char**) {
   RUN_TEST(test_c4_blocked_priority_head_does_not_stall_a_startable_request);
   RUN_TEST(test_a23_startable_service_preserves_priority_order_and_releases_the_blocked_head);
   RUN_TEST(test_a23_second_request_reports_job_capacity_wait_while_one_is_commit_pending);
-  if (getenv("RESTORE_LIVENESS_RED") != nullptr) {
-    RUN_TEST(test_c6_transient_failure_is_retried_not_latched);
-  }
+  RUN_TEST(test_c6_transient_failure_is_retried_not_latched);
   // A1.8 — observability is default-gate: it is observation-only and passes on the current tree.
   RUN_TEST(test_restore_state_probe_reports_queue_and_job_ownership);
   RUN_TEST(test_restore_state_probe_reports_the_save_blocked_by_restore);

@@ -343,7 +343,31 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       retires. **Not claimed:** that this resolves the `waiting_job_capacity` blockage, which is a
       scheduler-level gate, not queue ordering.
 
-- [ ] A2.4 **Bounded retry then named outcome (D5).** Replace the permanent attempt latch with a declared
+- [x] A2.4 **Bounded retry then named outcome (D5).**
+      → **DONE 2026-09-23.** `kMaxLoopSlotRestoreAttempts = 3` with `loopSlotRestoreAttempts_`, and
+      `scheduleLoopSlotRestoreRetry(...)`: a **retryable** failure resets the slot as the restore path's
+      **own** cleanup (keeping the identity and naming a `waiting_retry` wait, per the A2.1/G2 tightening)
+      and re-queues the request while under the bound; at the bound it records the `refused` terminal and
+      latches. Retryable now covers the token/epoch/header/size/seek/open failures in `beginLoadLoopJob`
+      and the reopen/seek/read/token/parse/body-probe failures mid-job — the class a transient SD hiccup
+      produces. An **absent** file stays `unnecessary` (no retry), which is the pre-existing, correct
+      behavior.
+      **C6 flipped red→green and was PROMOTED into the default gate in this commit** (A1.11), so the
+      known-red set is **empty** and **`RESTORE_LIVENESS_RED` is deleted** — no red fixture was deleted,
+      generalized or threshold-relaxed on the way. The C6 fixture's phase-1 oracle was **corrected**: it
+      had asserted the old latch (`attempted=1`) as the marker that the failure was reached, which would
+      have re-encoded the defect as the oracle; it now asserts the request is still **owed** (queued or in
+      a named wait) and not committed. New case `test_a24_persistent_failure_reaches_the_bounded_refusal`
+      covers the other end: a payload that stays broken reaches the terminal after the bound instead of
+      retrying forever.
+      **A2.1 retirement completed:** `loopSlotRestoreAttempted_` is **subsumed** by the request record
+      (`isLoopSlotRestoreAttempted` = "the request reached a terminal"), removing the second 64-byte array
+      and leaving one source of truth for exactly-once. Suite 26/26 default; full native green; RAM1 line
+      re-based **deliberately and in this commit** — `variables 96,128 → 96,192`, `locals free 34,944 →
+      34,880`, `padding 888 → 872` (above the 840 floor) — with the reason recorded in
+      `scripts/ram1_budget.json` and `REVIEW.md`, because the record stores a full identity+state+terminal
+      per `(track, slot)` where the retired flag stored one bit.
+ Replace the permanent attempt latch with a declared
       bounded attempt count per power cycle; a transient failure retries (up to the bound) and a persistent
       one ends in `refused` naming the reason, while absent/invalid payloads stay `unnecessary`.
       **Verify:** A1.6 flips red→green; cases assert retry-then-commit for a transient failure,

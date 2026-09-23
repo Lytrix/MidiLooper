@@ -29,9 +29,11 @@ struct PendingLoopSlotRestoreQueue {
 
 STORAGE_PERSIST_DATA PendingLoopSlotRestoreQueue pendingLoopSlotRestores_{};
 
-/// After a completed restore attempt (success or empty/fail), do not re-enqueue.
-STORAGE_PERSIST_DATA bool loopSlotRestoreAttempted_[Config::NUM_TRACKS]
-                                                    [Config::MAX_LOOPS_PER_TRACK]{};
+// A2.1 retirement: `loopSlotRestoreAttempted_` is **subsumed** by the restore request record. Its
+// meaning was "this slot's restore was attempted and must not be re-enqueued" -- which is exactly "the
+// request reached a terminal outcome". Backing the accessors with the record removes a second 64-byte
+// array (this tree is on the RAM1 FlexRAM boundary: the A2.4 attempt counter pushed RAM1 variables
+// 96,128 -> 96,192 and tripped the post-link budget) and leaves one source of truth for exactly-once.
 
 STORAGE_PERSIST_DATA std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
     loopSlotPayloadOnSdInRam_{};
@@ -179,16 +181,20 @@ void refreshLoopSlotPayloadOnSdInRamEntry(uint8_t trackIndex, uint8_t slotIndex)
 }
 
 STORAGE_PERSIST_MEM void markLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex) {
-    if (trackIndex < Config::NUM_TRACKS && slotIndex < Config::MAX_LOOPS_PER_TRACK) {
-        loopSlotRestoreAttempted_[trackIndex][slotIndex] = true;
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
     }
+    // A caller marking "attempted" is recording that this restore is finished with. If the request
+    // already reached a terminal, that outcome is kept (exactly-once); otherwise record `unnecessary`,
+    // which is the terminal the absent/invalid-payload paths mean.
+    (void)markRestoreRequestTerminal(trackIndex, slotIndex, RestoreRequestTerminal::Unnecessary);
 }
 
-bool isLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex) {
+STORAGE_PERSIST_MEM bool isLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex) {
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return false;
     }
-    return loopSlotRestoreAttempted_[trackIndex][slotIndex];
+    return restoreRequestState(trackIndex, slotIndex) == RestoreRequestState::Terminal;
 }
 
 uint16_t pendingLoopSlotRestoreCount() {
@@ -211,7 +217,7 @@ bool isFocusDeferredLoopSlotRestorePending(uint8_t focusTrack, uint8_t focusSlot
         if (entry.track != focusTrack || entry.slot != focusSlot) {
             continue;
         }
-        if (loopSlotRestoreAttempted_[entry.track][entry.slot]) {
+        if (isLoopSlotRestoreAttempted(entry.track, entry.slot)) {
             return false;
         }
         if (entry.track < trackManager.getTrackCount() &&
@@ -247,7 +253,7 @@ STORAGE_PERSIST_MEM bool popNextStartableDeferredLoopSlotRestore(DeferredLoopSlo
     while (index < pendingLoopSlotRestores_.count) {
         const DeferredLoopSlotRestore& entry = pendingLoopSlotRestores_.entries[index];
         const bool done =
-            loopSlotRestoreAttempted_[entry.track][entry.slot] ||
+            isLoopSlotRestoreAttempted(entry.track, entry.slot) ||
             trackManager.getTrack(entry.track).getLoop(entry.slot).hasCommittedPasses();
         if (done) {
             // Satisfied requests leave the queue, as before: this is queue hygiene, not service.
@@ -276,7 +282,7 @@ STORAGE_PERSIST_MEM bool popNextDeferredLoopSlotRestore(DeferredLoopSlotRestore&
     while (pendingLoopSlotRestores_.count > 0) {
         const DeferredLoopSlotRestore& head = pendingLoopSlotRestores_.entries[0];
         const bool done =
-            loopSlotRestoreAttempted_[head.track][head.slot] ||
+            isLoopSlotRestoreAttempted(head.track, head.slot) ||
             trackManager.getTrack(head.track).getLoop(head.slot).hasCommittedPasses();
         if (!done) {
             out = head;
@@ -302,7 +308,7 @@ STORAGE_PERSIST_MEM bool popFocusDeferredLoopSlotRestore(uint8_t focusTrack, uin
             continue;
         }
         const bool done =
-            loopSlotRestoreAttempted_[entry.track][entry.slot] ||
+            isLoopSlotRestoreAttempted(entry.track, entry.slot) ||
             trackManager.getTrack(entry.track).getLoop(entry.slot).hasCommittedPasses();
         if (done) {
             for (uint16_t j = i + 1; j < pendingLoopSlotRestores_.count; ++j) {
@@ -340,13 +346,7 @@ void clearPendingLoopSlotRestoresAtBoot() {
     bootBackgroundFillSlotCursor_ = 0;
 }
 
-void resetAllLoopSlotRestoreAttempted() {
-    for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
-        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-            loopSlotRestoreAttempted_[t][s] = false;
-        }
-    }
-}
+STORAGE_PERSIST_MEM void resetAllLoopSlotRestoreAttempted() { resetAllRestoreRequestState(); }
 
 bool appendBootLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex, uint16_t restorePriority) {
     if (pendingLoopSlotRestores_.count >= PendingLoopSlotRestoreQueue::kCapacity) {

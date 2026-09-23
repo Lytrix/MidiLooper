@@ -1,7 +1,7 @@
 {
   "_comment": "Approved per-environment RAM1 budgets for the Teensy 4.1 firmware. Edit deliberately, in the same commit as the change that needs it, and record the reason in the owning change's review artifact. Never auto-update from a build. A string value means 'this environment's budget is identical to the named one'.",
   "approved_utc": "2026-09-23",
-  "approved_by_change": "runtime-working-set-ownership",
+  "approved_by_change": "deferred-slot-restore-liveness",
   "ram1_total_bytes": 524288,
   "itcm_banks": 12,
   "padding_floor": 840,
@@ -20,10 +20,10 @@
   "environments": {
     "teensy41-capture-serial": {
       "itcm_bytes": 393216,
-      "ram1_variables": 96128,
-      "locals_free": 34944,
-      "padding": 1096,
-      "note": "Default capture/acceptance env. Padding recovered from 840 to 1,096 by the S2b.5 and S4f.2/B06 extractions to FLASH; the floor stays 840."
+      "ram1_variables": 96192,
+      "locals_free": 34880,
+      "padding": 872,
+      "note": "Default capture/acceptance env. Padding 1,096 -> 872 and variables 96,128 -> 96,192 by the restore-liveness A2.1/A2.4 request record: the record stores the full identity + state + terminal per (track, slot), which retires the 64-byte `loopSlotRestoreAttempted_` latch in the same change, and the bounded attempt counter adds 24 B. Padding stays above the 840 floor. Recorded in openspec/changes/deferred-slot-restore-liveness/REVIEW.md."
     },
     "teensy41-capture-serial-no-grain": "teensy41-capture-serial",
     "teensy41-capture-serial-investigation-diag": "teensy41-capture-serial",
