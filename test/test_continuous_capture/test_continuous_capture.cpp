@@ -4196,6 +4196,13 @@ void test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_i
   // behind would keep `hasStopInFlight()` true forever and block every later start and switch.
   TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
 
+  // S4f.4 transition 4 -- repeated retries. Driving the accepted interaction again while the retargeted
+  // job is still pending must not stack a second descriptor or a second obligation.
+  for (size_t turn = 0; turn < 4; ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)),
+                                   "repeated retries must not stack a second stop job");
   // The job keeps its identity across the retarget: still one descriptor, bound to the interval's
   // slot, with its admission still pending. Nothing was silently dropped or re-created.
   TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
@@ -4215,6 +4222,21 @@ void test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_i
                                    "the STOPPED retire path silences the track exactly once");
   TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
   TEST_ASSERT_TRUE(track.getActiveLoop().hasCommittedPasses());
+
+  // S4f.4 transition 1 -- Transport Stop -> Start. Live state alone cannot distinguish "running
+  // continuously" from "stopped and restarted", so the earlier stop must not be able to regain a
+  // PLAYING destination or produce a second job when the transport runs again. History is covered by
+  // consumption plus identity validation, not by a stored epoch.
+  nativeTransportRunning = true;
+  clockManager.assignCurrentTickSilently(192);
+  for (size_t turn = 0; turn < 8; ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                            "a consumed stop must not be re-created when the transport restarts");
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_TRUE_MESSAGE(track.isStopped(), "the retargeted stop stays STOPPED after a restart");
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
 }
 
 int main() {

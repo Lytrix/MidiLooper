@@ -141,6 +141,23 @@ compatibility ends when F replaces the consumers and its parity gates pass.
 S6 retains its independent canonical-residency gate. Final S7 scaling/continuity and archive require
 both S6 and the sibling playback gate; early slices have their own narrower gates.
 
+## 4a. Transport timing validity (architect decision 2026-09-23, `design.md` Revision 24)
+
+The `transportEpoch` field is **removed** and the stored-epoch requirement is withdrawn. Timing validity
+is **live re-derivation + identity validation + consumption**, not a compared counter:
+
+- the destination is re-derived from live transport state, and the boundary tick from the live clock —
+  never from a stored absolute tick;
+- the drive validates `(kind, slot, interval)` before acting, so a superseded request does not bind later
+  content;
+- history is covered by **consumption**: an accepted stop is consumed by the admission that binds it, by
+  the transport-stop entry that retargets or completes it, or by a synchronous completion.
+
+S4f.4 — transport timing validity closes only when four paused-worker transition tests pass: Transport
+Stop → Start; seek/reset/MIDI Start; load/replacement; repeated retries (exactly one commit). If a test
+reveals missing history detection, add a **consumed generation check for that specific gap** — not a
+general epoch.
+
 ## 5. Interaction composition and supersession
 
 `PendingInteractionRequest` owns the live interval's stop obligation. Its interval/slot identity

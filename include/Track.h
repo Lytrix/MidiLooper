@@ -631,7 +631,13 @@ private:
     uint8_t switchTarget = 0;
     uint64_t interval = 0;
     uint32_t phaseTick = 0;
-    uint64_t transportEpoch = 0;
+    /// NO transport epoch (architect decision 2026-09-23). The drive re-derives the destination from
+    /// live transport state, re-derives the boundary tick from the live clock, and validates
+    /// `(kind, slot, interval)` before acting, so a stored counter would never be compared and would
+    /// add no protection. Transport *history* is covered by **consumption plus identity validation**,
+    /// not by an epoch: an accepted stop is consumed by the admission that binds it, by the
+    /// transport-stop entry that retargets or completes it, or by a synchronous completion -- so a stop
+    /// accepted before a transport stop can never later be driven with a PLAYING destination.
     /// S4f.8: the accepted stop's waits are counted as scheduling, never as refusals.
     uint32_t waitCount = 0;
     /// S4f.2/S2b.6: report the wait once per episode rather than once per deferred turn.
@@ -691,8 +697,9 @@ private:
   /// Re-measure with `template <size_t N> struct Probe; Probe<sizeof(X)> p;` before changing a number.
   static void placementPins() {
     // Platform-independent: the latch holds no pointers, so a drift is a contract change.
-    static_assert(sizeof(PendingInteractionLatch) == 40,
-                  "S3.0: the accepted-interaction latch is one small record per live interval");
+    static_assert(sizeof(PendingInteractionLatch) == 32,
+                  "S3.0: the accepted-interaction latch is one small record per live interval "
+                  "(no transport epoch: history is covered by consumption + identity validation)");
     static_assert(std::is_trivially_copyable<PendingInteractionLatch>::value,
                   "S3.0: the latch must stay a POD -- the drive copies it and no edge may allocate");
     static_assert(offsetof(PendingInteractionLatch, slot) == 2,
@@ -708,7 +715,7 @@ private:
     static_assert(sizeof(Track) == 384,
                   "S3.0: Track is the eight-way DTCM array, so a by-value member costs 8x "
                   "(measured for teensy41-capture-serial; re-measure for another configuration)");
-    static_assert(sizeof(CaptureStopJobs) == 2736,
+    static_assert(sizeof(CaptureStopJobs) == 2728,
                   "S3.0: the externally allocated ring object also carries the latch; its size is a "
                   "RAM1-relevant decision, not incidental");
 #endif
