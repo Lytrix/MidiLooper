@@ -1608,3 +1608,51 @@ The latch drive is now a declared owner with a stated bound, as the Closeout sec
 | full native | **2,278 cases / 1 skipped / 2,277 succeeded / 0 failures** |
 | load suite | 5/5 |
 | firmware + budget | SUCCESS, capture-serial padding **1,096** (unchanged) |
+
+## P1 — S4f.4 transition 3: a stale request is superseded, not parked (2026-09-23)
+
+Writing the load/replacement transition found a **defect in the drive**, so this is a fix, not only a fixture.
+
+### The defect
+
+`driveAcceptedInteraction` re-derived the destination and the boundary tick from live state — correct — but on
+any refusal it went straight to `parkAcceptedStopForCanonicalOutput`. For a request whose **interval is gone**
+(a load or a replacement left the same slot number occupied by different content) the admission refuses with
+`stale_interval`, and the park then waits for a canonical reservation that has nothing to do with the failure.
+The obligation would be retained forever, and a slot belonging to a different interval could never be started
+or switched past, because `hasStopInFlight()` stays true.
+
+### The fix
+
+The drive now recognises the case explicitly, before any admission attempt:
+
+> a request whose `slot` is out of range or whose `interval != captureInterval_` is **superseded** — it is
+> reported (`"Accepted stop superseded: its interval is no longer live"`), the obligation is consumed exactly
+> once, and nothing is admitted.
+
+That is the contract's own rule for a replaced interval; the difference from the pre-fix behaviour is that it
+is *decided* rather than left to a park that cannot succeed. A load/replacement can therefore never bind an
+old request to replacement content, and it can never wedge the track either.
+
+### The fixture, and it is discriminating
+
+`test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound`: latch an accepted stop for slot 0, capture
+its interval identity, advance the interval (the same slot number now belongs to replacement content), drive
+once, and assert the obligation is **retired**, no job is admitted, the slot's content is untouched, and a
+second drive has nothing to do. Pre-fix this assertion fails at the first step: the drive parks and the latch
+remains set.
+
+### Verification
+
+| check | result |
+|---|---|
+| `test_continuous_capture` | **89/89** (+1) |
+| load suite | 5/5 |
+| full native | **2,279 cases / 1 skipped / 2,278 succeeded / 0 failures** |
+| firmware + budget | SUCCESS, capture-serial padding **1,096** (unchanged) |
+
+### S4f.4 status
+
+Transitions **1, 3 and 4** are now green natively. Transition **2** (seek/reset/MIDI Start) has no native
+entry — the `ClockManager` seek/reset/MIDI-Start entries are harness stubs — so the task stays open on that one
+plus the device gate.

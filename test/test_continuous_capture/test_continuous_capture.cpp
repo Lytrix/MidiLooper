@@ -4182,6 +4182,30 @@ void test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_
       "an accepted interaction must make its track eligible even when the track is idle");
 }
 
+/// S4f.4 transition 3 (load/replacement): a request whose interval is gone must not bind to whatever now
+/// occupies the same slot number. It is superseded -- reported and retired once -- rather than parked, since
+/// parking would wait forever for an interval that can never return.
+void test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound() {
+  Track& track = preparePlayingTrack();
+  const size_t rowsBefore = track.getActiveLoop().capture.store.size();
+  TrackCaptureStopTestAccess::latchAcceptedStop(track, 0);
+  const uint64_t staleInterval = TrackCaptureStopTestAccess::acceptedLatchInterval(track);
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+
+  // A replacement interval takes the same slot number; the old request's identity is now stale.
+  TrackCaptureStopTestAccess::advanceInterval(track);
+  TEST_ASSERT_NOT_EQUAL(staleInterval, TrackCaptureStopTestAccess::interval(track));
+
+  (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  TEST_ASSERT_FALSE_MESSAGE(track.hasAcceptedUnexecutedInteraction(),
+                            "a stale request is superseded and retired, not retained");
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                            "a stale request must not bind to the replacement content");
+  TEST_ASSERT_EQUAL(rowsBefore, track.getActiveLoop().capture.store.size());
+  // A second drive has nothing left to do: exactly one supersession.
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::serviceAcceptedInteraction(track));
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4280,6 +4304,7 @@ int main() {
   RUN_TEST(test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve);
   RUN_TEST(test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes);
   RUN_TEST(test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track);
+  RUN_TEST(test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound);
   RUN_TEST(test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it);
   // S2b.1 landed on 2026-09-23, so the residence law and B01 are green and the former
   // `WORKING_SET_RED` gate is gone: they are part of the default gate now (RECIPE R, "remove a known
