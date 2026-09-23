@@ -51,6 +51,13 @@ stack plus cold display/edit/track-manager owners, and it exposes a genuine ambi
 `(Track&, uint8_t, uint32_t)`), which prevents that TU from compiling natively at all. `REVIEW.md` § A1.7
 records the options; the recommendation is a deliberate "drain native-link expansion" slice, since
 A3.3's budget accounting and A3.4a's re-entry guard are logic a device-only gate cannot falsify cheaply.
+That ambiguity is now **fixed** (`TrackManagerCaptureQueue.cpp`, one-line explicit qualification with a
+comment): the firmware never saw it because it compiles TUs separately, but an include-based harness that
+joins them could not compile that TU at all. The fix unblocked the capture-queue TU natively and both the
+firmware build and the native suites were re-run after it. The remaining closure is now a precise list of
+cold UI/manager symbols (`DisplayManager`, `EditManager`, `TrackManager` LED/memory-pressure,
+`Track::silenceSlotMidiOutput`, the content-undo builder), whose TUs additionally need the OLED library's
+include paths in the native env.
 
 
 **2026-09-23 — restore-liveness plan correction (documentation only).**
