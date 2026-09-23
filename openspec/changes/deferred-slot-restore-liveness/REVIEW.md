@@ -76,8 +76,8 @@ background restore, which is exactly the defect under test.
 - **Verification:**
   - `pio test -e native -f test_storage_manager_load` → **8 cases / 8 succeeded / 0 failures** (flag
     unset; the red fixture is absent, not run-and-failing).
-  - `RESTORE_LIVENESS_RED=1 pio test -e native -f test_storage_manager_load` → **12 cases / 3 failed /
-    8 succeeded**, the three failures being exactly the listed red fixtures (C1, C2, C4).
+  - `RESTORE_LIVENESS_RED=1 pio test -e native -f test_storage_manager_load` → **13 cases / 4 failed /
+    8 succeeded**, the four failures being exactly the listed red fixtures (C1, C2, C4, C6).
 - **Promotion log:** none yet — A1.2/A1.3 are promoted in the A2.2/A2.3 slices, A1.5 in A2.3.
 
 ### A1.2 — C1 transport-gated background admission (desired behavior, red)
@@ -142,6 +142,20 @@ background restore, which is exactly the defect under test.
   "owned" while its own request was still queued). `StorageManagerInternal::clearLoadLoopJob()` now runs
   in `setUp`.
 
+### A1.6 — C6 attempt latch (desired behavior, red)
+
+- **Shape:** a payload-backed restore whose first read attempt fails transiently, then the payload is
+  healed and further turns are driven with no external advancement of the request.
+- **Injection:** the slot file is truncated by 3 bytes. The save token is at the **end** of the slot
+  file, so the failure lands in the **read** stage (short read) rather than a parse stage — a genuine
+  transient failure of the class C6 latches.
+- **Two-phase oracle:** phase 1 asserts the production failure path was actually reached
+  (`attempted=1`, not committed); phase 2 asserts the healed payload is retried to a commit. Without
+  phase 1 a green phase 2 could simply mean the injected failure never happened.
+- **Red evidence:** `C6: a healed payload was never retried after a transient failure (committed=0,
+  attempted=1, pending=0, active=0, parked=0)` — the latch holds the slot for the power cycle.
+- **Harness additions:** `snapshotSlotPayloadBytes`, `replaceSlotPayloadBytes`, `truncateSlotPayload`.
+
 ---
 
 ## Mechanism ledger (A1.9)
@@ -157,7 +171,7 @@ unreviewed.**
 | C3 | one-shot enqueue never re-offers | **withdrawn before code** (G2 review finding 5): the boot scan already offers every payload-bearing `(track,slot)` and a blocked request stays queued | none — no work produced |
 | C4 | priority head with a live owner stalls the queue behind it | red fixture in place; mechanism reproduced, with the trigger **corrected**: the head must also fail the pop's done-test (a committed head is skipped, not blocking) | `test_c4_blocked_priority_head_does_not_stall_a_startable_request` |
 | C5 | the blocking drain never services the load scheduler | open | A1.7 (planned) |
-| C6 | `markLoopSlotRestoreAttempted` latches a transient failure for the power cycle | open | A1.6 (planned) |
+| C6 | `markLoopSlotRestoreAttempted` latches a transient failure for the power cycle | red fixture in place; mechanism reproduced (failure path reached, healed payload never retried) | `test_c6_transient_failure_is_retried_not_latched` |
 
 ---
 
@@ -171,3 +185,4 @@ unreviewed.**
 | 2026-09-23 | A1.2 | as above | red as required: *left unowned after 64 turns (served=0, ownedTurns=0, pending=1)* |
 | 2026-09-23 | A1.3 | as above | red as required: *never serviced after 64 turns (parkedEnd=1, parkedPhase=1, ownedTurns=64, activelyOwnedTurns=0)* |
 | 2026-09-23 | A1.5 | as above | red as required: *never served or owned after 32 turns (served=0, unowned=1, pending=2, headStillQueued=1)* |
+| 2026-09-23 | A1.6 | as above | red as required: *healed payload never retried (committed=0, attempted=1, pending=0)* |
