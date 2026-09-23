@@ -374,7 +374,13 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       retry-then-refuse for a persistent one, and no retry storm (attempts bounded per turn and per power
       cycle).
 
-- [ ] A2.5 **Packet B device gate.** Build and flash `teensy41-capture-serial` (ask the owner first — never
+- [ ] A2.5 **Packet B device gate.**
+      → **OPEN — hardware gate, not started. This task needs the board, so it stays open by design
+      rather than being claimed.** It requires a `teensy41-capture-serial` flash (owner permission),
+      the canonical base stimulus on the authorized scratch slot, a reboot, and a capture proving every
+      boot payload has a terminal or a named wait, `overflow_free=True`, and a MIDI gap within the
+      standing bound. Everything upstream of it is green natively (suite 26/26, full native 2,313 / 1
+      skipped / 0 failures, RAM1 recorded), so this is the only thing blocking A2.6. Build and flash `teensy41-capture-serial` (ask the owner first — never
       flash unprompted), run the canonical base stimulus on the authorized scratch slot, and reboot.
       **Verify:** every boot payload has a **state** (terminal or named wait) reported; no payload is left
       with neither; `overflow_free=True`; MIDI gap within the standing bound; and either the previously
@@ -382,11 +388,22 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       outcome only if the reason names the commit gate and **runtime-maintenance 3.3** is still open. Record the capture path and
       the exact lines. If the device is not available, this task stays open and Packet B is not closed.
 
-- [ ] A2.6 **Packet B gate.** Full native suite green; A1.2/A1.3/A1.5/A1.6 green **in the default gate**
+- [ ] A2.6 **Packet B gate.**
+      → **OPEN, blocked on A2.5.** Its native clauses are already green — full native 2,313 / 1 skipped /
+      0 failures; C1, C2, C4 and C6 green **in the default gate** (promoted per A1.11, not left behind a
+      flag); RAM1 line recorded (`variables 96,192 / code 392,344 + padding 872 / locals 34,880`). What is
+      missing is A2.5's device evidence, so this stays open. Full native suite green; A1.2/A1.3/A1.5/A1.6 green **in the default gate**
       (promoted per A1.11, not left behind the flag); capture-serial RAM1 line recorded; A2.5 evidence
       recorded. **Verify:** no oracle was weakened; the slice's commit boundary is one buildable commit.
 
 - [ ] A2.7 **Commit-bound prerequisite (review finding 1) — record, do not implement.**
+      → **OPEN (recording task).** To be recorded in the change review and the S1/S2b handoff notes:
+      `resumable-midi-boundary-playback-maintenance` **task 3.3** (bounded Commit preparation/cleanup) is
+      the named external prerequisite for any criterion that requires a restore to **apply** under active
+      transport. This change keeps every such criterion scoped to terminal-or-named-wait: A2.2's
+      `waiting_commit_gate` case asserts the commit is **not** applied under transport, and no
+      `main.cpp` commit-gate change exists in this change's diff (`MidiServiceDrain::admitLoadJobChild`
+      untouched).
       `resumable-midi-boundary-playback-maintenance` **task 3.3** (bounded Commit preparation/cleanup) is
       a named external prerequisite for any acceptance criterion that requires a restore to **apply**
       under active transport. Record the dependency in the change review, keep the affected acceptance
