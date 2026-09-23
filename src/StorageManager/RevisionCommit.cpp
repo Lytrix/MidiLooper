@@ -425,7 +425,7 @@ STORAGE_PERSIST_MEM bool stepRevisionCommitWrite() {
             return false;
 
         case RevisionWriteStage::OpenTempFile:
-            storageSession.revisionCommit.file = SD.open(storageSession.revisionCommit.tempPath, FILE_WRITE);
+            storageSession.revisionCommit.file = CurrentSetStorage::openForRewrite(storageSession.revisionCommit.tempPath);
             if (!storageSession.revisionCommit.file) {
                 Serial.println("[StorageManager] ERROR: Could not open revision temp file");
                 return false;
@@ -740,7 +740,7 @@ STORAGE_PERSIST_MEM bool stepRevisionCommitValidate() {
     header.chunkCount = storageSession.revisionCommit.chunkCount;
     header.payloadSize = static_cast<uint32_t>(payloadSize);
     header.headerCrc32 = RevisionPackedBlob::computeRevisionHeaderChecksum(header);
-    storageSession.revisionCommit.file = SD.open(storageSession.revisionCommit.tempPath, FILE_WRITE);
+    storageSession.revisionCommit.file = CurrentSetStorage::openForRewrite(storageSession.revisionCommit.tempPath);
     if (!storageSession.revisionCommit.file) {
         return false;
     }
@@ -779,7 +779,7 @@ STORAGE_PERSIST_MEM bool stepRevisionCommitCatalogUpdate() {
         return false;
     }
 
-    File setMetaTemp = SD.open(setMetaTempPath, FILE_WRITE);
+    File setMetaTemp = CurrentSetStorage::openForRewrite(setMetaTempPath);
     if (!setMetaTemp) {
         return false;
     }
@@ -795,7 +795,7 @@ STORAGE_PERSIST_MEM bool stepRevisionCommitCatalogUpdate() {
 
     storageSession.revisionCommit.catalogIndex.catalogChecksum =
         SetRevisionCatalog::computeSetCatalogIndexChecksum(storageSession.revisionCommit.catalogIndex);
-    File indexTemp = SD.open(SetRevisionCatalog::kSetIndexTempPath, FILE_WRITE);
+    File indexTemp = CurrentSetStorage::openForRewrite(SetRevisionCatalog::kSetIndexTempPath);
     if (!indexTemp) {
         return false;
     }
@@ -815,7 +815,7 @@ STORAGE_PERSIST_MEM bool stepRevisionCommitCatalogUpdate() {
 }
 
 STORAGE_PERSIST_MEM bool writeSetCatalogIndexFile(const SetRevisionCatalog::SetCatalogIndex& index) {
-    File indexTemp = SD.open(SetRevisionCatalog::kSetIndexTempPath, FILE_WRITE);
+    File indexTemp = CurrentSetStorage::openForRewrite(SetRevisionCatalog::kSetIndexTempPath);
     if (!indexTemp) {
         return false;
     }
@@ -840,7 +840,7 @@ STORAGE_PERSIST_MEM bool writeSetMetaRecordFile(uint16_t setId, const SetRevisio
     if (tempWritten <= 0 || static_cast<size_t>(tempWritten) >= sizeof(setMetaTempPath)) {
         return false;
     }
-    File setMetaTemp = SD.open(setMetaTempPath, FILE_WRITE);
+    File setMetaTemp = CurrentSetStorage::openForRewrite(setMetaTempPath);
     if (!setMetaTemp) {
         return false;
     }

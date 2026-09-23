@@ -87,6 +87,18 @@ bool shouldAutoSaveBeforeLoadIntoCurrent(const AnchorFields& anchor);
 void applyLoadedSetAnchorFields(uint32_t sourceSequence, AnchorFields& anchor);
 
 #if defined(ARDUINO)
+/// Open `path` for a **from-scratch** write: any existing file is removed first.
+///
+/// `SD.open(path, FILE_WRITE)` is `O_RDWR | O_CREAT | O_AT_END` on this platform -- it *appends* --
+/// and `FILE_WRITE_BEGIN` is `O_RDWR | O_CREAT`, which only starts at offset 0 because `O_TRUNC` is
+/// never set. **Neither mode truncates**, so a leftover file corrupts the next write: the new body
+/// lands after the stale prefix, or a stale tail survives past it. For a temp file that is then
+/// renamed over a real one, that turns one failed write into a permanently malformed file -- which
+/// is how `sets/index.bin` stopped reconciling (the trailing SAVE token is read from the end).
+///
+/// Use this for every file that is written from its beginning: temps, and copy destinations.
+/// Do **not** use it to patch a file in place or to append (a seal journal, a crash log).
+File openForRewrite(const char* path);
 bool ensureDirectory(const char* path);
 bool atomicRenameTempFile(const char* tempPath, const char* finalPath);
 bool verifySaveFileTokenAtPath(const char* path);

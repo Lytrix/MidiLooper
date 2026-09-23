@@ -2864,6 +2864,17 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Execution workflow:** use [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) packets and tasks D0 for every upcoming slice (DEC-080); acceptance fixtures precede production behavior changes.
 
+**Scope added 2026-09-23 (owner direction): SD temp-write truncation fix.** The device session was
+blocked by `could not reconcile MidiLooper/sets/index.bin`; the cause is that Teensy's
+`SD.open(path, FILE_WRITE)` **appends** (`O_RDWR|O_CREAT|O_AT_END`) and `FILE_WRITE_BEGIN` does not
+truncate (`O_TRUNC` is never set), so a temp left by a failed write corrupts every later one — and the
+native SD stub modelled create-or-truncate, which hid the whole class. Fixed via
+`CurrentSetStorage::openForRewrite` at the 16 from-scratch sites plus a self-healing
+`reconcileSetIndexOnSd`, with the stub corrected and a red-proven regression test. Plan and evidence:
+[`docs/Plans/sd_temp_write_truncation_refinement.md`](../Plans/sd_temp_write_truncation_refinement.md).
+**Still blocking the content PASS and S1.3's slope sweep:** a separate managed-capture loss (see that
+plan's final section).
+
 **Current handoff:** follow [IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) (2026-09-23, DEC-079) for the first slice and its prerequisites; phase F is planned but uncreated.
 
 **Progress (2026-09-23, DEVICE SESSION — RWSO-24CAP): the S2b/S1.5 hardware gate is taken, the restored library

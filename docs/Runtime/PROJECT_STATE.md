@@ -1,5 +1,40 @@
 # Project state (execution context)
 
+**2026-09-23 SD temp-write truncation FIXED (a pre-existing defect found by the rwso device session) — the boot catalog reconcile is repaired; a separate capture-loss problem still blocks the content PASS and S1.3's slope sweep.**
+
+Root cause, confirmed in the vendor headers: Teensy's `SD.open(path, FILE_WRITE)` is
+`O_RDWR|O_CREAT|O_AT_END` — it **appends** — and `FILE_WRITE_BEGIN` is `O_RDWR|O_CREAT` with **no
+`O_TRUNC`**, so it only starts at offset 0. Every "write from scratch" in the persistence layer used
+`FILE_WRITE`, and `sets/index.bin.tmp` was never cleaned, so one failed write left a partial temp that
+every later write appended to. `index.bin` is `[nextSequence:u32][token:u32]` with the token verified
+**from the end**, so a 5-byte leftover plus one 8-byte record puts the token at the wrong offset and
+`readSetIndexFromSd` fails — and because the write path only runs after a successful read, the state was
+permanent. This is the same class DEC-022 fixed locally at one site.
+
+**Fix.** `CurrentSetStorage::openForRewrite` (remove, then open; FLASH-resident) applied to the **16**
+from-scratch sites (temps + the binary-copy destination) across `CurrentWorkspaceStorage.cpp`,
+`SavedSetIo.cpp`, `RevisionLoad.cpp`, `WorkspaceSave.cpp`, `RevisionCommit.cpp`; **kept** on the
+in-place patches (`patchLastActiveUnix`, `patchAnchorFields`, `writeEpochFileHeaderCrc`), the mid-pass
+seal journal and the crash log, with a test pinning that. `reconcileSetIndexOnSd` is now
+**self-healing** — an unreadable index is recoverable metadata (`nextSequence` is re-derived from the
+folder scan), which is what repairs an already-malformed card. **The native SD stub was wrong** —
+create-or-truncate "as the write path expects" rather than as the device behaves — so it now models
+append/offset-0 and the class is visible natively.
+
+**Evidence.** New `test_storage_manager_load` cases, **red-proven**: with the remove disabled the
+stale-temp test fails `Expected 8 Was 13`. Full native **2,289 / 1 skipped / 2,288 succeeded /
+0 failures**; `teensy41-capture-serial` SUCCESS at `code 392,200 / padding 1,016` — **112 B better** than
+the pre-fix `392,312 / 904`. Device (`52d5a805…`): **three post-fix boots, 0 `could not reconcile`**,
+against a warning on every pre-fix boot, with the census unchanged (enabled set 32 chunks, restore walk
+480 → 480 at `credits=0`, payload to 441). Plan:
+[`docs/Plans/sd_temp_write_truncation_refinement.md`](../Plans/sd_temp_write_truncation_refinement.md).
+
+**Still blocked, and it is a different defect:** the managed capture truncates mid-run (561 and 1,732
+lines against a good run's 45,909) with **0** ring-overflow rows, so the firmware's ring did not shed —
+the capture stopped. The harness is capture-driven, so it never reaches the overdub and reports
+`INCONCLUSIVE_CAPTURE (SPARSE_CAPTURE)` with a measured `record loop length None`. Documented remedy: a
+retry. **The content PASS and S1.3's slope sweep stay open until that capture is clean.**
+
 **2026-09-23 `runtime-working-set-ownership` DEVICE SESSION on `feature/runtime-working-set-ownership` (HEAD `26e96539`, `teensy41-capture-serial`, hex `673e20ca…`): the S2b/S1.5 hardware gate is taken, the restored library survives a reboot, and a clear-drain blocker was diagnosed and worked around.**
 
 Flashed HEAD and ran the new temporary stimulus **`STIM-BASE-2-2-01-TEMP-RWSO-24CAP`** (canonical base

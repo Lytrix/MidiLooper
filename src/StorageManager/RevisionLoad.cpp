@@ -502,7 +502,7 @@ STORAGE_PERSIST_MEM bool openRevisionLoadLoopSlotTemp(uint8_t trackIndex, uint8_
                                                    slotIndex)) {
         return false;
     }
-    storageSession.revisionLoad.destFile = SD.open(tempPath, FILE_WRITE);
+    storageSession.revisionLoad.destFile = CurrentSetStorage::openForRewrite(tempPath);
     if (!storageSession.revisionLoad.destFile) {
         return false;
     }
@@ -560,7 +560,7 @@ STORAGE_PERSIST_MEM bool stepRevisionLoadWrite() {
             return true;
 
         case RevisionLoadWriteStage::OpenMetaTemp:
-            storageSession.revisionLoad.destFile = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
+            storageSession.revisionLoad.destFile = CurrentSetStorage::openForRewrite(CurrentSetStorage::kCurrentMetaTempPath);
             if (!storageSession.revisionLoad.destFile) {
                 return false;
             }
