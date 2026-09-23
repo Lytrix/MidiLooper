@@ -378,6 +378,13 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       (`TrackOverdubLifecycle.cpp:264,284,295,1469,1473,1495`; `TrackDeferredMaintenance.cpp:915,917,933-938`), so
       the release/reentry edge must be parameterised by the interval's slot (S4f.0), and S2b.4 must **never**
       release while a ring entry with that `job.slot` exists.
+      **CORE DONE 2026-09-23, task still open.** `Track::tryReleaseCanonicalCaptureReservation(slot)`
+      enforces `noLiveOwnerForSlot(slot)` itself and releases the credits; it refuses while
+      `canonicalCaptureOutput.store` is non-empty and is idempotent (re-reserving re-retains the ids). It
+      runs inside `tryReleasePlaybackMergedMidiEventsMemory`'s per-slot loop, before the merged-window
+      checks, so a slot with no window still releases. Fixture
+      `test_s4_0_release_respects_the_live_ring_window_and_is_idempotent` is green. **Outstanding:** the
+      listed mid-copy fixture (a populated store refusing release) is not driven yet.
 - [ ] S2b.5 **Load admission (B8):** `beginLoadLoopJob` must not destroy a live owner. Its callers **pop the
       restore entry before calling it** (`LoadLoopJob.cpp:339,367,372,377`) and re-queueing is **inert**:
       `queueDeferredLoopSlotRestore` early-returns unless `needsSlotLoad`, which is false once
@@ -438,7 +445,12 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
 
 ## S4 — release, recycle and stale-owner protection
 
-- [ ] S4.0 **Per-slot liveness predicate (B6, invariant 33).** `noLiveOwnerForSlot(track, slot)`: **scan the live
+- [ ] S4.0 **Per-slot liveness predicate (B6, invariant 33).** (**PARTIAL 2026-09-23:** the live-window
+      ring scan, the slot's `captureStopOwner`, an in-flight prepared handover (`preparedPairRequestPending`)
+      and the S4f.1 latch term are implemented and fixture-covered; the job-owned-undo-root term has no
+      per-slot identity until S5.2a and the deferred-reconstruction term arrives with S5.2e, so the predicate
+      is not yet the full contract. The published `preparedPair` is deliberately **not** a term -- it stays
+      valid while the slot sounds.) `noLiveOwnerForSlot(track, slot)`: **scan the live `noLiveOwnerForSlot(track, slot)`: **scan the live
       ring window only** — for `i` in `[head, head + count)` mod `kCapacity`, `entries[i].slot == slot` → owner,
       including a non-pending entry — plus no deferred stop commit, no prepared handover, no latch targeting the
       slot, no job-owned undo root. **A full-array scan is wrong:** retirement clears `owner`/`loopId` but not

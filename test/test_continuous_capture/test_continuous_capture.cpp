@@ -256,6 +256,21 @@ struct TrackCaptureStopTestAccess {
   static bool stopStoppingTransitionValid(Track& track) {
     return track.isValidStateTransition(TRACK_OVERDUB_STOPPING);
   }
+  /// S4.0/S2b.4 access: the per-slot liveness predicate, the reservation release and re-reserve, and a
+  /// raw ring entry's slot by storage index (including entries outside the live window).
+  static bool noLiveOwner(Track& track, uint8_t slot) { return track.noLiveOwnerForSlot(slot); }
+  /// The production release entry point, which enforces the liveness predicate itself.
+  static bool releaseCanonicalReservation(Track& track, uint8_t slot) {
+    return track.tryReleaseCanonicalCaptureReservation(slot);
+  }
+  static bool prewarmCanonicalReservation(Track& track, uint8_t slot) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr && rt->prewarmCanonicalCaptureOutput();
+  }
+  static int rawRingEntrySlot(const Track& track, size_t index) {
+    if (track.captureStopJobs_ == nullptr || index >= Track::CaptureStopJobs::kCapacity) return -1;
+    return static_cast<int>(track.captureStopJobs_->entries[index].slot);
+  }
   /// The real S4f.2 dispatch decision (the same entry `processDeferredIdleMaintenance` calls).
   static bool serviceAcceptedInteraction(Track& track) {
     return track.serviceAcceptedInteractionTurn();
@@ -4016,6 +4031,51 @@ void test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target() 
                            "a retiring job must not leave the canonical copy store populated");
 }
 
+/// S4.0 + S2b.4 (invariant 33/34): the per-slot liveness predicate governs the reservation release,
+/// the ring scan is over the live window only, and release is idempotent while re-reserving re-retains.
+void test_s4_0_release_respects_the_live_ring_window_and_is_idempotent() {
+  Track& track = preparePlayingTrack();
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
+                           static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::noLiveOwner(track, 0),
+                           "an idle slot with no job, latch or owner has no live owner");
+
+  // A live stop job on slot 0 is an owner: the release must be refused, not merely skipped.
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_INT(0, TrackCaptureStopTestAccess::liveRingEntrySlot(track, 0));
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::noLiveOwner(track, 0),
+                            "an admitted job for the slot is a live owner");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::releaseCanonicalReservation(track, 0));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
+                           static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)));
+
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i) {
+    TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  // The retired descriptor is out of the live window but still carries `slot == 0`; a whole-array
+  // scan would report it as an owner forever (the B6 stale positive).
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::liveRingEntryCount(track)));
+  TEST_ASSERT_EQUAL_INT(0, TrackCaptureStopTestAccess::rawRingEntrySlot(track, 0));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::noLiveOwner(track, 0),
+                           "a retired entry outside the live window is not a live owner");
+
+  // Release, idempotently, then re-reserve and confirm the ids are retained again.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::releaseCanonicalReservation(track, 0));
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::releaseCanonicalReservation(track, 0),
+                           "a second release must be a no-op success");
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::prewarmCanonicalReservation(track, 0));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
+                           static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)));
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4110,6 +4170,7 @@ int main() {
   // in the default gate (unlike the residence characterizations).
   RUN_TEST(test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once);
   RUN_TEST(test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target);
+  RUN_TEST(test_s4_0_release_respects_the_live_ring_window_and_is_idempotent);
   // S2b.1 landed on 2026-09-23, so the residence law and B01 are green and the former
   // `WORKING_SET_RED` gate is gone: they are part of the default gate now (RECIPE R, "remove a known
   // baseline exception once the implementing slice lands").

@@ -77,6 +77,17 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   16 B of linker alignment, `code + padding` constant at 393,216, **no bank cross**, `locals free`
   unchanged at 34,944. It needs the architect's call (re-base the line with that arithmetic, or find the
   16 B elsewhere) before S3.0's static_assert work. Full native **2,268 / 1 skipped / 0 failures**.
+- **S4.0/S2b.4 core landed: the per-slot liveness predicate and the canonical-reservation release.**
+  `Track::noLiveOwnerForSlot(slot)` scans the **live ring window only** (a retired entry still carries
+  `slot == 0`, so a whole-array scan would block release forever — the B6 stale positive), plus the slot's
+  `captureStopOwner`, an in-flight prepared handover, and the S4f.1 latch. The published pair is
+  deliberately not a term (it stays valid while the slot sounds). `Track::tryReleaseCanonicalCaptureReservation`
+  enforces the predicate itself so no caller can bypass it, refuses a non-empty store, and is idempotent.
+  Fixture `test_s4_0_release_respects_the_live_ring_window_and_is_idempotent` is green; full native
+  **2,269 / 1 skipped / 0 failures**; RAM1 unchanged at `padding 856` (every new function is FLASH-resident,
+  so the reported deviation did not grow). S4.0 and S2b.4 stay **open** with their remaining terms recorded:
+  the job-owned-undo-root term (needs S5.2a's per-slot descriptor), the deferred-reconstruction term (S5.2e),
+  and the mid-copy release fixture.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the

@@ -321,6 +321,11 @@ struct LoopPlaybackRuntime {
   bool prewarmCanonicalCaptureOutput();
   bool canonicalCaptureOutputAdmitted() const;
   bool replenishCanonicalCaptureChunk();
+  /// S2b.4 (invariant 34): return the slot's canonical-copy credits to the pool. Idempotent -- a
+  /// second call holding nothing is a no-op success, and re-reserving re-retains the ids. Refuses
+  /// while the store is non-empty: the store is capture scratch whose chunks must be released with
+  /// it, and `prewarmCanonicalCaptureOutput` requires an empty store anyway.
+  bool releaseCanonicalCaptureReservation();
   RuntimePlaybackBridgeStream bridgeStream;
   RuntimePlaybackBridgeStream bridgeWindowSource;
   RuntimePlaybackViewBuild bridgeWindowBuild;

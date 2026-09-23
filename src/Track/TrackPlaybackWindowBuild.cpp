@@ -797,6 +797,45 @@ TRACK_COLD_MEM void Track::releasePlaybackMergedMidiEventsMemory() {
   playbackRuntime.resetAll(false);
 }
 
+TRACK_COLD_MEM bool Track::noLiveOwnerForSlot(uint8_t slot) const {
+  // (1) The live ring window only. An entry inside `[head, head + count)` names an admitted or
+  // in-flight stop job for this slot, including a non-pending one; a retired entry outside the
+  // window keeps its stale `slot` and must not count (B6).
+  if (captureStopJobs_ != nullptr) {
+    for (size_t index = 0; index < captureStopJobs_->count; ++index) {
+      const size_t at = (captureStopJobs_->head + index) % CaptureStopJobs::kCapacity;
+      if (captureStopJobs_->entries[at].slot == slot) return false;
+    }
+  }
+  // (2) The slot's finalization owner, defensively: it can be set without a ring entry (the
+  // unfixable case the park reports), and releasing underneath it would strand a live job.
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  if (runtime != nullptr) {
+    if (runtime->captureStopOwner != nullptr) return false;
+    // (3) A prepared handover still being *built* is an owner of this slot's scratch. The published
+    // pair is deliberately not a term here: it is the slot's playback authority and stays valid
+    // while the slot sounds, so counting it would make release unreachable for every sounding slot.
+    // The S4b.2 switch handover adds its own term when it exists.
+    if (runtime->preparedPairRequestPending) return false;
+  }
+  // (4) An accepted interaction targeting this slot (S4f.1). Its interval identity is the slot, so
+  // a stop latched for it must block release until it is admitted or superseded.
+  const PendingInteractionLatch* latch = interactionLatch();
+  if (latch != nullptr && latch->isSet() && latch->slot == slot) return false;
+  // Not a term yet, and recorded rather than assumed: a job-owned undo root that outlives its ring
+  // entry. The ring scan covers the job-owned roots while the entry lives; the protected undo
+  // publication is track-level today and has no per-slot identity to test. S5.2a gives cold undo its
+  // per-slot descriptor, which is where this term becomes expressible.
+  return true;
+}
+
+TRACK_COLD_MEM bool Track::tryReleaseCanonicalCaptureReservation(uint8_t slot) {
+  if (!noLiveOwnerForSlot(slot)) return false;
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  if (runtime == nullptr) return false;
+  return runtime->releaseCanonicalCaptureReservation();
+}
+
 TRACK_COLD_MEM bool Track::tryReleasePlaybackMergedMidiEventsMemory() {
   if (isRecording() || isOverdubbing() || hasPendingDeferredOverdubStop() || getState() == TRACK_ARMED) {
     return false;
@@ -818,7 +857,20 @@ TRACK_COLD_MEM bool Track::tryReleasePlaybackMergedMidiEventsMemory() {
     // fail and slot() null-derefs (session_20260719_000205: silence after parse_leave before
     // apply_enter on the next frame's reclaim).
     LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
-    if (runtime == nullptr || runtime->mergedMidiEvents.empty()) {
+    if (runtime == nullptr) {
+      continue;
+    }
+
+    // S2b.4 (invariant 34): give this slot's canonical-copy reservation back once no live owner
+    // remains. Placed before the window checks so a slot with no merged window still releases, and
+    // guarded per slot -- a track-level "capture active" flag would release underneath a live job on
+    // another slot. `releaseCanonicalCaptureReservation` refuses while the store is populated, so a
+    // mid-copy slot keeps its credits.
+    if (tryReleaseCanonicalCaptureReservation(slot)) {
+      reclaimed = true;
+    }
+
+    if (runtime->mergedMidiEvents.empty()) {
       continue;
     }
 
