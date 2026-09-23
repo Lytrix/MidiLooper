@@ -288,28 +288,69 @@ void test_c1_transport_gated_background_admission_desired() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   RestoreHarness::setTrackAudiblyPlaying(1);  // another track is sounding; focus track is stopped
-
-  Track& focusTrack = trackManager.getSelectedTrack();
-  focusTrack.ensureLoopsAllocated();
-  // The preceding smoke case commits into this slot; the fixture needs the pre-restore state that
-  // makes the slot "needs load" (empty, no committed content), reached through the production reset.
-  StorageManagerInternal::resetLoopSlotToEmpty(focusTrack.getLoop(2), 2);
-  TEST_ASSERT_TRUE(RestoreHarness::writePayloadWithOneNoteToSd(0, 2, 61));
-
-  RestoreHarness::armRestoreRequestThroughProductionQueue(0, 2);
+  RestoreHarness::armBackgroundRestoreRequest(0, 2, 61);
   TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, StorageManagerInternal::pendingLoopSlotRestores_.count,
                                    "the request must enter the real restore queue");
 
   const RestoreHarness::RestoreOutcomeObservation observation =
       RestoreHarness::observeRestoreOutcome(0, 2, 64);
-  char message[224];
+  char message[256];
   snprintf(message, sizeof(message),
-           "C1: the queued background restore was neither served nor progressing after %u turns "
-           "(pending=%u, phase=%u, jobActive=%u)",
-           static_cast<unsigned>(observation.turnsRun),
-           static_cast<unsigned>(observation.pendingAtEnd),
-           static_cast<unsigned>(observation.phaseAtEnd), observation.jobActiveAtEnd ? 1u : 0u);
-  TEST_ASSERT_FALSE_MESSAGE(observation.stalled, message);
+           "C1: the queued background restore was left unowned after %u turns "
+           "(served=%u, ownedTurns=%u, pending=%u, active=%u, parked=%u, attempted=%u, committed=%u)",
+           static_cast<unsigned>(observation.turnsRun), observation.served ? 1u : 0u,
+           static_cast<unsigned>(observation.turnsOwned),
+           static_cast<unsigned>(observation.pendingAtEnd), observation.jobActiveAtEnd ? 1u : 0u,
+           observation.parkedAtEnd ? 1u : 0u, observation.attemptedAtEnd ? 1u : 0u,
+           observation.committedAtEnd ? 1u : 0u);
+  TEST_ASSERT_FALSE_MESSAGE(observation.unowned, message);
+}
+
+/// **A1.3 [C2 — parked job never re-serviced], desired behavior, red on current `src/`.**
+///
+/// Shape: the runtime is idle, a non-focus background job is begun and given one production service
+/// turn, and only then does the transport start sounding. The job is therefore already *parked* when
+/// playback begins — the state `stepSubmittedLoadJobsImpl` produces for a non-focus job under
+/// transport (`parkActiveLoadLoopJob()`), and the state that keeps
+/// `deferredSaveBlockedByActiveSlotLoadSd()` true for the rest of the playing session.
+///
+/// Desired behavior: the parked job receives further service, or the request is in a named wait.
+/// "Parked, unchanged, with no service" across many turns is the defect — and it is what leaves the
+/// blocking drain with nothing it can advance (C5).
+///
+/// Red today: the job cycles between the two instances (`ParkedIdleAction::PromoteParkedLow` in
+/// selection re-promotes it, `!backgroundAllowed` re-parks it in the step) without reading a byte.
+void test_c2_parked_job_is_serviced_or_named_after_transport_starts() {
+  SD.reset();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  RestoreHarness::setRuntimeTransportIdle();
+  RestoreHarness::armBackgroundRestoreRequest(0, 2, 62);
+
+  // Begin the job while idle: one production turn selects it and services it. The payload is small
+  // enough to be read in that turn, so the job then sits in Parsing — the state transport parks.
+  RestoreHarness::runSingleLoadServiceTurn();
+
+  // Transport starts on another track while the job holds its slot-load session.
+  RestoreHarness::setTrackAudiblyPlaying(1);
+  const RestoreHarness::RestoreOutcomeObservation observation =
+      RestoreHarness::observeRestoreOutcome(0, 2, 64);
+  // C2's discriminator is stronger than C1's: a *parked* instance can legitimately own the request,
+  // so "owned" alone is not enough. The desired behavior is that the request was **serviced** (the
+  // active instance held it for at least one turn), or reached a terminal, or is in a named wait —
+  // a named wait does not exist until Packet B, so Packet A's oracle is `served || activeOwned`.
+  char message[352];
+  snprintf(message, sizeof(message),
+           "C2: the parked background job was never serviced after %u turns "
+           "(parkedEnd=%u, parkedPhase=%u, ownedTurns=%u, activelyOwnedTurns=%u, "
+           "pending=%u, attempted=%u, committed=%u)",
+           static_cast<unsigned>(observation.turnsRun), observation.parkedAtEnd ? 1u : 0u,
+           static_cast<unsigned>(observation.parkedPhaseAtEnd),
+           static_cast<unsigned>(observation.turnsOwned),
+           static_cast<unsigned>(observation.turnsActivelyOwned),
+           static_cast<unsigned>(observation.pendingAtEnd), observation.attemptedAtEnd ? 1u : 0u,
+           observation.committedAtEnd ? 1u : 0u);
+  TEST_ASSERT_TRUE_MESSAGE(observation.served || observation.activeOwned, message);
 }
 
 // ---------------------------------------------------------------------------
@@ -403,6 +444,7 @@ int main(int, char**) {
   // slice that turns each one green promotes it (the `WORKING_SET_RED` precedent).
   if (getenv("RESTORE_LIVENESS_RED") != nullptr) {
     RUN_TEST(test_c1_transport_gated_background_admission_desired);
+    RUN_TEST(test_c2_parked_job_is_serviced_or_named_after_transport_starts);
   }
   // SD write-mode semantics: the stale-temp corruption fix, and the in-place patch contract.
   RUN_TEST(test_sd_rewrite_does_not_inherit_a_stale_temp_body);

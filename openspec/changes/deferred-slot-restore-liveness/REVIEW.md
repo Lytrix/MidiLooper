@@ -76,32 +76,44 @@ background restore, which is exactly the defect under test.
 - **Verification:**
   - `pio test -e native -f test_storage_manager_load` → **8 cases / 8 succeeded / 0 failures** (flag
     unset; the red fixture is absent, not run-and-failing).
-  - `RESTORE_LIVENESS_RED=1 pio test -e native -f test_storage_manager_load` → **10 cases / 1 failed /
-    8 succeeded**, the one failure being exactly the listed red fixture.
-- **Promotion log:** none yet — A1.2 is promoted in the A2.2 slice.
+  - `RESTORE_LIVENESS_RED=1 pio test -e native -f test_storage_manager_load` → **11 cases / 2 failed /
+    8 succeeded**, the two failures being exactly the listed red fixtures (C1, C2).
+- **Promotion log:** none yet — A1.2/A1.3 are promoted in the A2.2/A2.3 slices.
 
 ### A1.2 — C1 transport-gated background admission (desired behavior, red)
 
 - **Shape:** transport-active runtime (`track 1` audibly playing, focus track stopped), a
   payload-bearing empty slot queued through the production queue, driven for a bounded number of turns
   through the production selection/child-admission calls.
-- **Oracle (Packet A):** either the request is served, or its **preparation measurably advances**
-  (a phase change, or positive `bytesRead` on either job instance). "Neither" is the unexplained stall
-  this change exists to remove. Packet A cannot use the named-wait oracle because the named waits do
-  not exist yet; A2.2 replaces "progressing" with `waiting_commit_gate` / `waiting_job_capacity`.
+- **Oracle (Packet A) — request ownership.** The request must be **served** (the slot committed, or the
+  slot was reset and the request retired) or **owned** by a production mechanism: an active or parked
+  job instance holding *this* `(track, slot)`. A queued request that no mechanism owns is the
+  unexplained stall the change removes. Named waits do not exist until Packet B, so A2.2 replaces
+  "owned" with `waiting_commit_gate` / `waiting_job_capacity`.
 - **Red evidence (current `src/`, `RESTORE_LIVENESS_RED=1`):**
-  `C1: the queued background restore was neither served nor progressing after 64 turns (pending=1,
-  phase=255, jobActive=0)`.
-- **Mechanism finding (why the oracle is right, and a gap in the existing probe):** the job is selected
-  and then **parked** by `stepSubmittedLoadJobsImpl` (`!jobIsFocus && !backgroundAllowed` ⇒
-  `parkActiveLoadLoopJob()`), while the selection path re-promotes it on the next turn
-  (`resolveParkedIdleAction` ⇒ `PromoteParkedLow`) without any read occurring: the request cycles
-  between the two job instances and consumes turns without progress.
-  `StorageManager::probeActiveLoadLoopJob` reports only the **active** instance, so a **parked** job is
-  invisible to it — the probe reports `phase=255` (none) while a parked instance still holds the
-  `SlotLoadSession` that keeps `deferredSaveBlockedByActiveSlotLoadSd()` true. The A1.1 progress probe
-  therefore sums **both** instances. A1.8's probe shape should name the parked instance explicitly.
-- **No `src/` behavior change** in this slice.
+  `C1: the queued background restore was left unowned after 64 turns (served=0, ownedTurns=0,
+  pending=1, active=0, parked=0, attempted=0, committed=0)`.
+- **Mechanism finding (probe gap, now closed):** `StorageManager::probeActiveLoadLoopJob` reports only
+  the **active** instance, so a parked job is invisible to it — yet a parked instance keeps its
+  `SlotLoadSession`, which is exactly what `deferredSaveBlockedByActiveSlotLoadSd()` reports. Packet A
+  therefore adds `StorageManager::probeParkedLoadLoopJob` (observation-only, no behavior change).
+- **Rejected oracle (recorded so it is not reintroduced):** "did the bytes advance?" via
+  `probeLoadLoopJobProgress`. Neither instance's `bytesRead`/`payloadSize` is cleared on every teardown
+  path, so a leftover count from an earlier request or fixture reads as progress — it made C1 look
+  green on the untouched tree. The probe is kept for failure messages only; the oracle is structural.
+- **No `src/` behavior change** in this slice (the two probe additions are observation-only).
+
+### A1.3 — C2 parked job never re-serviced (desired behavior, red)
+
+- **Shape:** the runtime is idle, the background job is begun and given one production turn (which
+  reads its small payload), **then** the transport starts on another track. The job is therefore parked
+  in `Parsing` while holding the slot-load session.
+- **Oracle:** `served || activelyOwned` — the request reached a terminal, or the **active** instance
+  held it for at least one turn. A parked instance legitimately owning the request is not success,
+  because a parked job is never stepped; Packet B replaces this with the named-wait oracle.
+- **Red evidence:** `C2: the parked background job was never serviced after 64 turns (parkedEnd=1,
+  parkedPhase=1, ownedTurns=64, activelyOwnedTurns=0, pending=0, attempted=0, committed=0)` — the
+  parked instance holds the request for every turn and the active instance never gets it.
 
 ---
 
@@ -113,8 +125,8 @@ unreviewed.**
 
 | Mechanism | `design.md` claim | Packet A disposition | Fixture |
 |---|---|---|---|
-| C1 | `canRunBackgroundLoadLoopNow()` false under transport; nothing begins | red fixture in place; mechanism reproduced (queued request neither served nor progressing over 64 production turns) | `test_c1_transport_gated_background_admission_desired` |
-| C2 | A parked non-focus job is never re-serviced under play | open — the park/re-promote cycle was observed while diagnosing C1 | A1.3 (planned) |
+| C1 | `canRunBackgroundLoadLoopNow()` false under transport; nothing begins | red fixture in place; mechanism reproduced (request left **unowned** for 64 production turns: pending, no active or parked job) | `test_c1_transport_gated_background_admission_desired` |
+| C2 | A parked non-focus job is never re-serviced under play | red fixture in place; mechanism reproduced (parked instance owns the request for all 64 turns, actively owned 0) | `test_c2_parked_job_is_serviced_or_named_after_transport_starts` |
 | C3 | one-shot enqueue never re-offers | **withdrawn before code** (G2 review finding 5): the boot scan already offers every payload-bearing `(track,slot)` and a blocked request stays queued | none — no work produced |
 | C4 | priority head with a live owner stalls the queue behind it | open | A1.5 (planned) |
 | C5 | the blocking drain never services the load scheduler | open | A1.7 (planned) |
@@ -129,4 +141,5 @@ unreviewed.**
 | 2026-09-23 | A1.1 | `pio test -e native -f test_storage_manager_load` | **PASSED** — 8 cases, 8 succeeded, 0 failures; smoke case drives a queued request to a committed slot through production calls only |
 | 2026-09-23 | A1.11 | `pio test -e native -f test_storage_manager_load` (flag unset) | **PASSED** — 8 cases, 8 succeeded, 0 failures |
 | 2026-09-23 | A1.11 | `RESTORE_LIVENESS_RED=1 pio test -e native -f test_storage_manager_load` | 10 cases, **1 failed / 8 succeeded** — exactly the listed red fixture |
-| 2026-09-23 | A1.2 | as above | red as required: *neither served nor progressing after 64 turns (pending=1, phase=255, jobActive=0)* |
+| 2026-09-23 | A1.2 | as above | red as required: *left unowned after 64 turns (served=0, ownedTurns=0, pending=1)* |
+| 2026-09-23 | A1.3 | as above | red as required: *never serviced after 64 turns (parkedEnd=1, parkedPhase=1, ownedTurns=64, activelyOwnedTurns=0)* |

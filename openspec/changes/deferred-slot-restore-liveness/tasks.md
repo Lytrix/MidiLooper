@@ -83,11 +83,19 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       replaces it with the named-wait oracle. Shape note: focus is on the **stopped** track while another
       track plays, so the denial is the transport gate, not the focus path. Evidence: [`REVIEW.md`](REVIEW.md).
 
-- [ ] A1.3 **[C2 — parked job never re-serviced] desired-behavior fixture, red.** Begin a non-focus
+- [x] A1.3 **[C2 — parked job never re-serviced] desired-behavior fixture, red.** Begin a non-focus
       background job while idle, then set the playing condition and drive turns; assert the **desired**
       behavior: the job receives further service or is reported in a named wait, and it is not parked
       indefinitely without a reason. **Verify:** the case is red on current `src/`; the parked job's
       identity is asserted across turns; record the probe output.
+      → **DONE 2026-09-23:** `test_c2_parked_job_is_serviced_or_named_after_transport_starts`, promoted
+      with A1.2 under `RESTORE_LIVENESS_RED`; **red**: *"never serviced after 64 turns (parkedEnd=1,
+      parkedPhase=1, ownedTurns=64, activelyOwnedTurns=0, pending=0, attempted=0, committed=0)"* — the
+      job holds the request for all 64 turns while the active instance never holds it, i.e. the parked
+      instance is never advanced. `StorageManager::probeParkedLoadLoopJob` (new, observation-only) makes
+      the parked instance measurable: `probeActiveLoadLoopJob` cannot see it, yet it is what keeps
+      `deferredSaveBlockedByActiveSlotLoadSd()` true. Packet A's oracle is `served || activelyOwned`;
+      Packet B replaces it with the named-wait oracle.
 
 - [ ] A1.4 **[C3 — one-shot background-fill admission] WITHDRAWN (review finding 5).** Do not implement a
       fixture or a behavior change for C3. The boot scan already offers every `(track, slot)` with a

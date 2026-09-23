@@ -212,6 +212,10 @@ public:
     /// Observation-only: read/parse progress of the jobs that hold a slot-load session, summed over
     /// the active and parked instances. Zero/zero means no admitted preparation has happened yet.
     static void probeLoadLoopJobProgress(size_t& bytesRead, size_t& payloadSize);
+    /// Observation-only: the **parked** LoadLoopJob instance. It is invisible to
+    /// `probeActiveLoadLoopJob`, yet it keeps its `SlotLoadSession` alive, which is what
+    /// `deferredSaveBlockedByActiveSlotLoadSd()` reports. All outputs are 0/false when none is parked.
+    static void probeParkedLoadLoopJob(bool& active, uint8_t& track, uint8_t& slot, uint8_t& phase);
 
 private:
     static bool loadCurrentSetFromSd(LooperState& state);
