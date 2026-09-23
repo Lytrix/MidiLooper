@@ -5,8 +5,23 @@
 
 #pragma once
 
+#include "PersistenceQueue.h"
 #include "StorageManagerInternal.h"
 #include <cstdio>
+
+/// Sealed capture chunks waiting for the incremental SD flush.
+///
+/// Deliberately separate from `hasDeferredSaveWork()`: that answers "is a *workspace* save owed", this
+/// answers "is there capture content that should reach SD now". The main loop needs the second as its
+/// own reason to invoke the scheduler, because during a live take the workspace save is parked and
+/// `hasDeferredSaveWork()` is false -- which is how a take used to live only in RAM until the stop.
+inline bool StorageManager::hasQueuedCaptureChunksToPersist() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    return PersistenceQueue::queueDepth() > 0 || PersistenceQueue::writingChunkCount() > 0;
+#endif
+}
 
 inline bool StorageManager::isDeferredSaveActive() {
 #if BYPASS_STOP_UNDO_SAVE

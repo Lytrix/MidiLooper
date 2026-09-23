@@ -75,6 +75,36 @@ So the flush needs its **own invocation reason** during a capture, with its own 
    ~16 events/bar seals one at ~16 bars): `PERS,mid_pass` must appear **between** `EMPTY->RECORDING` and
    `RECORDING->STOPPED_RECORDING`, with `overflow_free` still true.
 
+### Invocation reason also landed — and the flush still does not fire
+
+`hasDeferredSaveWork()` is `hasPersistenceWorkPending()`, i.e. the **workspace** save, so with only capture
+chunks queued the scheduler was never entered. Added:
+
+- `StorageManager::hasQueuedCaptureChunksToPersist()` (`include/StorageManagerStatusQueries.inl`,
+  declared in `StorageManager.h`) — `PersistenceQueue::queueDepth() > 0 || writingChunkCount() > 0`,
+  deliberately separate from the workspace predicate.
+- `src/main.cpp`: `runDeferredSaveState` now also enters on that predicate. This is bounded by
+  construction — with the transport active `processDeferredSaveState` flushes at most one chunk and
+  returns, so no bundle work can run in a take window. Build clean at the **same** `padding 888`.
+
+**Device: still 0 `PERS,mid_pass`.** A 24-bar take sent 384 notes + 384 CCs (768 events, ≥3 chunks) and
+reports `overflow_free=True`, but no flush row appears inside the take window. What is established:
+
+- `LoopEventStore` **does** seal chunks mid-append (`chunk(tailId).used >= CHUNK_CAPACITY` → `sealChunk`,
+  and the post-append check), so sealing is not the blocker.
+- The only branch that skips admission is `isEphemeralSeal()`, and `enterEphemeralSeal()` is used **only**
+  by `Loop::rematerializeEditView` (`LoopMaterialization.cpp`) — not by the live capture. So a record
+  pass's chunks should reach `PersistenceQueue::admitSealedChunk`.
+- `stepMidPassChunkPersist()` returns early only when the queue is empty, otherwise it writes and emits
+  `PERS,mid_pass`.
+
+So the remaining question is narrow and testable, and it is the one to answer next: **does
+`admitSealedChunk` actually accept a record pass's chunks, or does the flush guard
+(`deferredSaveBlockedByActiveSlotLoadSd()`) return early every turn?** The second is the more likely and it
+is the *same gate* that blocks CLEAR — a lingering/active `SlotLoadSession` would explain both symptoms at
+once. The next diagnostic is to make the admission outcome observable (a counter on
+`admitSealedChunk`'s result, or a `PERS` marker when the flush guard declines) rather than guess further.
+
 **Coverage limit:** no native suite links `DeferredSaveScheduler.cpp` (`grep -rl DeferredSaveScheduler test/`
 → 0), so this path is device-verified only. A native fixture would need the scheduler plus the queue.
 
