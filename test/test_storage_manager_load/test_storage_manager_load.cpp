@@ -157,6 +157,13 @@ struct TrackCaptureStopTestAccess {
     return track.beginDeferredOverdubStop(destination, tick);
   }
   static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
+  /// S4f.1's accepted-interaction latch, targeting one slot. `Track` declares this struct a friend,
+  /// and `noLiveOwnerForSlot` counts the latch as a live owner, so a fixture can hold a slot through
+  /// production state without admitting a capture interval (and its pool budget).
+  static void latchAcceptedStopForSlot(Track& track, PendingStopDestination destination,
+                                       uint8_t slot) {
+    track.latchAcceptedStop(destination, slot, 0);
+  }
 };
 
 /// B04 (S2b.5), the real case: a **live finalization owner** on the slot whose restore is queued. The pop is
