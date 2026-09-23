@@ -447,3 +447,85 @@ B06 needs the dispatch control; B07 needs the allocation census.
   load and allocation controls outstanding). D0.3 **partial** (B01 implemented and red; B02–B07 recorded
   as missing-API limitations). **S2b.0–S2b.6 are untouched — no production behavior has changed**, and
   the firmware artifact is unchanged because only a test file was edited.
+
+## P1 — accepted-stop latch, drive and park implemented (2026-09-23)
+
+The first production behavior of the change: **an accepted stop is retained and executes once when
+the canonical-copy target returns**, instead of being dropped and needing a second press (DEC-078
+items 1–3, invariant 31). This is the S2b.0 prerequisite set for the Stop path only; **the boot/load
+reservation removal (S2b.1) is deliberately not in this step**, so phase A is not complete.
+
+### What changed
+
+| task | implementation |
+|---|---|
+| **S4f.0** slot-parameterised admission | `Track::beginDeferredOverdubStopForSlot(destination, tick, slot, interval)`; `beginDeferredOverdubStop(destination, tick)` is the live-edge wrapper passing `activeLoopIndex`/`captureInterval_`. Inside the body every `Loop`/runtime-derived guard and binding (`getLoop`, `slotIfAllocated`, the DEC-067 finalization chain, staging, canonical output, `job.slot`, the successor-window telemetry) resolves the **interval's** slot. A drive whose `interval != captureInterval_` or whose slot is out of range is a superseded request, reported as `stale_interval`, not a refusal of a user interaction. |
+| **S4f.1** the latch (Stop variant) | `Track::PendingInteractionLatch {kind, destination, slot, switchTarget, interval, phaseTick, transportEpoch, waitCount, waitReported}` — one record per live interval, no descriptor, no ring capacity. A same-`(kind, slot, switchTarget, interval)` repeat is a no-op. `consumeAcceptedStopObligation()` clears **only** the matching stop obligation. |
+| **S4f.2** dispatch | The branch sits in `processDeferredIdleMaintenance` immediately after the admitted stop's grain and before the owner-specific branches, factored into the named production entry `Track::serviceAcceptedInteractionTurn()` (driven only when the ring is empty, so an accepted request can never stack a second job). |
+| **S2b.6** the park | `Track::parkAcceptedStopForCanonicalOutput(slot)` re-runs that slot's canonical reservation on a deferred turn (legal there, as `replenishCanonicalCaptureChunk` already shows), reports `accepted_stop_finalizer_wait` **once per episode**, counts every wait in `waitCount`, and never cancels the request. |
+| **S4f.4** transport stop (partial) | `stopOverdubbingToStopped()` consumes the accepted obligation, because that path admits the stop itself or completes it synchronously; the deferred drive re-derives `Playing` vs `Stopped` from `clockManager.isTransportRunning()` rather than trusting the stored destination. |
+| **S3.0** placement | Measured, not asserted — see below. |
+
+### S3.0 placement evidence (the pin earned its keep)
+
+The first implementation held the latch as `std::unique_ptr<PendingInteractionLatch>` beside
+`captureStopJobs_`. That is only 8 B per track, but `Track` is an 8-element DTCM array, so it cost
+**64 B of RAM1 variables and 16 B of the 872 B padding**: `variables 96,192 / code 392,360 /
+padding 856 / locals free 34,880` — **below the documented floor**. The latch is now a value member
+of the already-externally-allocated `CaptureStopJobs` object (`captureStopJobs_->interaction`), which
+is one instance, not a ring descriptor, and consumes no `entries`/`count` capacity. Re-measured:
+`variables 96,128 / code 392,344 / padding 872 / locals free 34,944` — identical to the pre-change
+line. This is the S3.0 measurement the stage requires, and it is the reason the rule exists.
+
+### Oracle and result
+
+**B02 — accepted stop waits for canonical credit then executes once** (default gate). Load/prepare
+committed content, start overdub, append a known pair, deny the slot's canonical-copy target through
+the harness's existing `drainCanonicalChunks` seam, press Stop **once**:
+
+- accepted and retained: same live interval, `hasAcceptedUnexecutedInteraction()` true, no job, no
+  descriptor, unchanged committed rows and interval identity;
+- the latch carries the interval's own `slot` and `interval`;
+- stepping the real dispatch entry makes the park re-run the reservation and then the drive bind
+  **exactly one** job to that slot; the accepted obligation is consumed (not re-armed);
+- draining retires the job: the stop completes once and the content is committed.
+
+Pre-fix run is **not possible** and is recorded as such (`IMPLEMENTATION_READINESS.md`: a new API
+prevents it): before this change the denial path stored nothing, so `hasAcceptedUnexecutedInteraction()`
+did not exist. The pre-fix behavioral evidence remains the still-green
+`test_successor_stop_is_denied_when_the_canonical_copy_target_is_busy` and
+`test_button_a_successor_stop_denied_until_deferred_role_available`, which assert exactly the drop
+that B02 replaces. The discriminating assertion is B02's `hasAcceptedUnexecutedInteraction()` +
+exactly-one-job + exactly-once-completion sequence.
+
+### Verification
+
+| check | command | result |
+|---|---|---|
+| focused | `pio test -e native -f test_continuous_capture` | **PASSED, 79/79** (+B02) |
+| full native | `pio test -e native` | **2,264 cases / 1 skipped / 2,263 succeeded / 0 failures** |
+| firmware | `pio run -e teensy41-capture-serial` | **SUCCESS**; RAM1 `variables 96,128 / code 392,344 / padding 872 / locals free 34,944` (unchanged) |
+| residence red gate | `WORKING_SET_RED=1 pio test -e native -f test_continuous_capture` | **3 failed, 79 succeeded** — the S1.2/B01 characterizations are still red, as intended |
+| OpenSpec | `openspec validate ... --strict` | valid |
+
+### Recorded limitations — NOT coverage
+
+- **Scheduler reachability (B06) is not proven.** B02 drives the real dispatch *decision*
+  (`serviceAcceptedInteractionTurn`, the same entry `processDeferredIdleMaintenance` calls) but not
+  `processDeferredIdleMaintenance` itself: no fixture in this suite has ever called it, and doing so
+  newly requires the StorageManager leaves (`bootInteractiveReady`, `isBootTitleLoadDrain`,
+  `SlotLoadSession::isActive`, `PersistenceWorkQueue::queueDepth/writingWorkItemCount`,
+  `StorageManagerInternal::storageSession/undoSnapshotsPending_`). Linking or fail-closed-stubbing
+  those is a harness decision for the B06 case, not something to fake here.
+- **S4f.5 is not done.** The 49 `hasPendingDeferredOverdubStop()` consumers are unchanged. While the
+  latch is set the predicate is false, so every consumer behaves as it does today for a dropped stop
+  — no regression, but the stop is not yet visible to start admission, wrap, hot-path emission or
+  persistence as in-flight work.
+- **S4f.4 is partial**: no TrackManager-level transport epoch counter yet (the drive re-derives from
+  `isTransportRunning()`), and the `switchTarget`/start supersession rules are untouched.
+- **S2b.6 is partial**: the retire-path invariant (drain `canonicalCaptureOutput.store` on the
+  committing route, clear it on a skipped route) and the named `accepted_stop_park_terminal` are not
+  implemented.
+- Still untouched: **S2b.1/S2b.2/S2b.3** (boot/load reservation removal and its evidence),
+  **S2b.4** (release + `noLiveOwnerForSlot`), **S2b.5** (load admission), **S4.0**, **S4f.3**,
+  **S3.0**'s static_asserts for the remaining new members, and fixtures **B03–B07**.

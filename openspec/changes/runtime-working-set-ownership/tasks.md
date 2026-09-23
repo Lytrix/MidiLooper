@@ -370,7 +370,13 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       the predicate are added at the call site; the predicate must also consult
       `hasPendingDeferredReconstruction()` (Rev 22.3). Fixture: A finalizing + load queued and begun for the same
       slot → no `resetLoopSlotToEmpty`, the entry is **still queued**, finalization retires, restore then happens.
-- [ ] S2b.6 **`Track::parkAcceptedStopForCanonicalOutput()` (Revision 19).** The stop-side half of B7: when the
+- [ ] S2b.6 **`Track::parkAcceptedStopForCanonicalOutput()` (Revision 19).**
+      **PARTIAL 2026-09-23.** `parkAcceptedStopForCanonicalOutput(slot)` re-runs that slot's
+      canonical reservation on a deferred turn, reports `accepted_stop_finalizer_wait` once per
+      episode, counts every wait, and never cancels the request. **Outstanding:** the retire-path
+      invariant (drain `canonicalCaptureOutput.store` on the committing route, clear it on a skipped
+      route) and the named `accepted_stop_park_terminal`.
+ The stop-side half of B7: when the
       accepted stop's drive finds `canonicalCaptureOutputAdmitted()` false for the interval's slot, park the
       accepted request (declared grains) and (a) re-run the slot's canonical reservation, (b) re-evaluate the full
       guard chain against the interval's slot, (c) execute the accepted stop exactly once when admitted; otherwise
@@ -575,7 +581,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
 > `design.md` Revision 18 § 1-2. The pre-Revision-18 task text was falsified by the red team (B1-B4, B9) and is
 > replaced below.
 
-- [ ] S4f.0 **Slot-parameterised admission (B3).** Add
+- [x] S4f.0 **Slot-parameterised admission (B3).** Add
       `beginDeferredOverdubStopForSlot(destination, tick, slot, interval)`; `beginDeferredOverdubStop` becomes the
       live-edge wrapper passing `activeLoopIndex`. The job binds `slot`/`owner` from the parameter, never from
       `activeLoopIndex` at drive time (`TrackOverdubLifecycle.cpp:263-264`, `:452` today). **The parameter must
@@ -585,7 +591,25 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       must evaluate the interval's slot or they test the wrong slot's canonical output (rerun finding).
       **The `:1469`/`:1473`/`:1495` sites are the live edge** (inside `Track::stopOverdubbing`) and **keep**
       `activeLoopIndex` — see Revision 21.2; they are not part of this parameterisation.
-- [ ] S4f.1 **The latch.** `PendingInteractionRequest {kind, destination, slot, switchTarget, interval,
+      **DONE 2026-09-23.** `beginDeferredOverdubStopForSlot(destination, tick, slot, interval)`
+      exists; `beginDeferredOverdubStop` is the live-edge wrapper passing `activeLoopIndex` and
+      `captureInterval_`; inside the body every `Loop`/runtime-derived guard and binding resolves the
+      **interval's** slot, and the live-edge sites keep `activeLoopIndex`. A drive whose interval is
+      no longer live is reported as `stale_interval` rather than binding a later interval. Full
+      native 2,264 / 1 skipped / 0 failures with the RAM1 line unchanged; see
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1. The stronger fixture that moves
+      `activeLoopIndex` away from an unadmitted stop belongs to S4f.3/S4b.5 by the contract's own
+      instruction not to move the active slot in this intermediate slice.
+- [ ] S4f.1 **The latch.**
+      **PARTIAL 2026-09-23 (Stop variant only).** The latch exists as
+      `Track::PendingInteractionLatch`, stored as a value member of the already externally allocated
+      `CaptureStopJobs` object (S3.0: the `unique_ptr` form measured 64 B of RAM1 and took padding
+      872 -> 856, below the floor). It carries `kind/destination/slot/switchTarget/interval/phaseTick/
+      transportEpoch`, takes no ring capacity, makes a same-identity repeat a no-op, and
+      `consumeAcceptedStopObligation()` clears only the matching stop obligation. **Outstanding:** the
+      start/switch carriers and the supersession rules (`switchTarget`, "a second Stop supersedes an
+      unexecuted Start") -- those are S4f.3/S4f.6.
+ `PendingInteractionRequest {kind, destination, slot, switchTarget, interval,
       phaseTick, transportEpoch}` held externally beside `captureStopJobs_`; **`slot` is the interval's slot and
       `switchTarget` is set only by `kind = Switch`** (never overwrite `slot`); one per live interval; no
       descriptor; no ring capacity. **Execution order** is stop > switch > start; distinct accepted requests
@@ -595,7 +619,15 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       Clear only the matching admitted stop obligation; never clear pending switch/start continuations with
       it. The start reset runs only after the predecessor stop binds. Transport Stop retargets the live stop
       and explicitly supersedes unexecuted starts; see the complete transition contract §5.
-- [ ] S4f.2 **Drive placement and reachability (B3, B6).** A latch-dispatch branch immediately after the
+- [ ] S4f.2 **Drive placement and reachability (B3, B6).**
+      **PARTIAL 2026-09-23.** The dispatch branch sits in `processDeferredIdleMaintenance`
+      immediately after the admitted stop's grain and before the owner-specific branches, factored
+      into the named production entry `Track::serviceAcceptedInteractionTurn()`; the drive is skipped
+      while the ring is non-empty, so an accepted request cannot stack a second job. **Outstanding:**
+      gating `processDeferredCanonicalPrefix` on the latch, the `ExecutionBounds.md` row, and the
+      scheduler-reachability case (B06) -- B02 drives the real dispatch entry but not
+      `processDeferredIdleMaintenance` itself, which newly needs StorageManager leaves linked.
+ A latch-dispatch branch immediately after the
       stop-grain block in `Track::processDeferredIdleMaintenance`, before the owner-specific branches (the
       `VisualCache` branch is focus-track-only); `processDeferredCanonicalPrefix` gated on the latch; skip the
       drive while the ring is non-empty; one declared grain and a new `ExecutionBounds.md` row (the owner is

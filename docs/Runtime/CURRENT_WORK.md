@@ -16,6 +16,17 @@ numbers are repeated in `tasks.md` S1.2 and in [PROJECT_STATE.md](PROJECT_STATE.
 - **Gates run:** full native **2,263 / 1 skipped / 2,262 succeeded / 0 failures**; `teensy41-capture-serial`
   build SUCCESS with RAM1 padding **872**. **No device run** — S1.1's per-owner census, S1.3's slope and
   S1.4's undo/canonical-pin baseline remain open, so the S1 gate is not closed.
+- **First production behavior landed: the accepted-stop latch (S4f.0/S4f.1-Stop/S4f.2/S2b.6-partial).**
+  DEC-078's product rule now holds for the stop: one press under a denied canonical-copy target is
+  **accepted and retained**, then executes exactly once when the target returns — no second press. New
+  default-gate fixture **B02** proves the sequence (retained → exactly one job bound to the interval's
+  slot → exactly one completion). **S3.0 measured a real regression before it shipped:** the
+  `unique_ptr` form of the latch cost 64 B of RAM1 and took padding 872 → **856**, below the documented
+  floor; moving it into the already-externally-allocated ring object restored
+  `padding 872 / locals free 34,944`. Full native **2,264 / 1 skipped / 0 failures**. **Boot/load
+  reservation removal (S2b.1) is deliberately NOT in this step**; S4f.1/S4f.2/S2b.6 are partial and
+  S4f.5, S4f.3, S4f.4's epoch, S4.0 and S2b.2–S2b.5 remain open.
+
 - **Next:** the remaining D0.2 controls (dispatch pause-and-step; linked load and transport-retarget
   paths; B07's allocation census, which is not measurable natively) → S2b.0/S2b.1, the first behavior
   change, which is expected to turn all three red cases green.

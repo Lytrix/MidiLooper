@@ -907,6 +907,11 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
 #endif
     return;
   }
+  // S4f.2 (DEC-078): an accepted-but-not-yet-executed interaction gets the deferred drive. It
+  // sits immediately after the admitted stop's grain -- which owns the turn whenever a job
+  // exists -- and before the owner-specific branches, so the latch is reachable on every
+  // deferred owner lane (the VisualCache branch below is focus-track-only).
+  if (serviceAcceptedInteractionTurn()) return;
   // DEC-067 acceptance edge: once a retired deferred stop's finalization resources
   // are admitted again (canonical copy target empty and the transfer chunks back),
   // the successor's own stop may be admitted. Report it once per job so the HITL

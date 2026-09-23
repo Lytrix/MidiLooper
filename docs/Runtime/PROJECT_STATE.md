@@ -34,6 +34,23 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   linked load / transport-retarget paths, and B07's allocation census — the last is **not measurable
   natively** because the pool wrappers are `teensy41-capture-serial` link flags only. **No production
   behavior has changed; only a test file.**
+- **First production behavior landed (same session): the accepted-stop latch.** DEC-078's core — an
+  accepted stop is retained and executes once when the canonical-copy target returns, instead of being
+  dropped and needing a second press — is implemented and native-verified. `beginDeferredOverdubStopForSlot`
+  (S4f.0) parameterises admission by the interval's slot; `Track::PendingInteractionLatch` (S4f.1, Stop
+  variant) holds `{kind, destination, slot, switchTarget, interval, phaseTick, transportEpoch}` with no
+  ring capacity; the dispatch branch sits in `processDeferredIdleMaintenance` before the owner-specific
+  branches (S4f.2, via the named entry `serviceAcceptedInteractionTurn`); and
+  `parkAcceptedStopForCanonicalOutput` re-runs the slot's reservation and reports
+  `accepted_stop_finalizer_wait` as a wait (S2b.6, partial). New fixture **B02** is green in the default
+  gate: one press under a denied canonical target → retained → exactly one job → exactly one completion.
+  **The S3.0 placement pin earned its keep:** the `unique_ptr` form of the latch cost 64 B of RAM1 and
+  took padding **872 → 856, below the documented floor**; storing it in the already-external ring object
+  restored the line to `variables 96,128 / code 392,344 / padding 872 / locals free 34,944`, identical to
+  the pre-change build. Full native **2,264 / 1 skipped / 0 failures**. **S2b.1 (boot/load reservation
+  removal) is deliberately not in this step**, so phase A is not complete; S4f.1/S4f.2/S2b.6 are recorded
+  as partial and S4f.5 (the 49 in-flight consumers), S4f.3, S4f.4's epoch counter, S4.0, S2b.2-S2b.5 and
+  B03-B07 remain open.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the

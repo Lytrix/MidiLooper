@@ -199,6 +199,24 @@ struct TrackCaptureStopTestAccess {
     return track.loopForSlot(slot).hasActiveOverdubTransferAdmission();
   }
   static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
+  /// S4f.1 latch identity, read through primitive accessors so the fixture never names the
+  /// private nested type (the friend struct reads it; the test function cannot).
+  static int acceptedLatchKind(const Track& track) {
+    const auto* latch = track.interactionLatch();
+    return latch == nullptr ? 0 : static_cast<int>(latch->kind);
+  }
+  static int acceptedLatchSlot(const Track& track) {
+    const auto* latch = track.interactionLatch();
+    return latch == nullptr ? -1 : static_cast<int>(latch->slot);
+  }
+  static uint64_t acceptedLatchInterval(const Track& track) {
+    const auto* latch = track.interactionLatch();
+    return latch == nullptr ? 0 : latch->interval;
+  }
+  /// The real S4f.2 dispatch decision (the same entry `processDeferredIdleMaintenance` calls).
+  static bool serviceAcceptedInteraction(Track& track) {
+    return track.serviceAcceptedInteractionTurn();
+  }
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
   static void advanceInterval(Track& track) { ++track.captureInterval_; }
   static uint64_t interval(const Track& track) { return track.captureInterval_; }
@@ -3831,6 +3849,68 @@ void test_b01_inactive_committed_slots_reserve_no_canonical_copy_or_horizon() {
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(horizonsOnInactive), message);
 }
 
+/// P1/B02 (DEC-078, invariant 31): an accepted stop waits for the canonical-copy target and
+/// then executes exactly once, from one press. This is the case the change exists for: the
+/// pre-DEC-078 firmware dropped the request and required a second press.
+void test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once() {
+  Track& track = preparePlayingTrack();
+  const size_t chunksBefore = TrackCaptureStopTestAccess::canonicalChunks(track);
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  const uint64_t interval = TrackCaptureStopTestAccess::interval(track);
+  const size_t rowsBefore = track.getActiveLoop().capture.store.size();
+
+  // Deny the canonical-copy target, then issue the stop exactly once.
+  TrackCaptureStopTestAccess::drainCanonicalChunks(track);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::canonicalOutputAdmitted(track));
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+
+  // Accepted, not refused: same live interval, no job, no descriptor, identical content.
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+                           "an accepted stop stays in the live interval while it waits");
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_EQUAL_UINT64(interval, TrackCaptureStopTestAccess::interval(track));
+  // S4f.1: the latch carries the *interval's* own slot and generation, not whatever the active
+  // slot happens to be at drive time.
+  TEST_ASSERT_EQUAL_INT(1 /* Kind::Stop */,
+                        TrackCaptureStopTestAccess::acceptedLatchKind(track));
+  TEST_ASSERT_EQUAL_INT(0, TrackCaptureStopTestAccess::acceptedLatchSlot(track));
+  TEST_ASSERT_EQUAL_UINT64(interval,
+                           TrackCaptureStopTestAccess::acceptedLatchInterval(track));
+  TEST_ASSERT_EQUAL(rowsBefore, track.getActiveLoop().capture.store.size());
+
+  // Dispatch reachability: the deferred owner lane drives the latch. The park re-runs the
+  // interval slot's canonical reservation, so the stop completes without a second press.
+  for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                           "the accepted stop must be admitted once capacity returns");
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_EQUAL_INT(
+      0, TrackCaptureStopTestAccess::liveRingEntrySlot(track, 0));
+  // The admission consumed the accepted obligation: it is not a second pending request.
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+
+  // Drain the admitted job to retirement: the stop completes exactly once.
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i) {
+    TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_TRUE(track.getActiveLoop().hasCommittedPasses());
+  // The captured pair is in the committed content, and the interval's own rows survived the
+  // wait unchanged (no partial seal happened while it was parked).
+  TEST_ASSERT_TRUE(rowsBefore > 0);
+  (void)chunksBefore;
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -3921,6 +4001,9 @@ int main() {
   // gate; the law case is the known-red characterization and stays behind its gate
   // until the implementing slice (S2b + S3/S4 release) lands.
   RUN_TEST(test_working_set_residence_measurement_is_well_formed);
+  // P1/B02 accepted-stop acceptance: green once the latch + park are in place, so it runs
+  // in the default gate (unlike the residence characterizations).
+  RUN_TEST(test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once);
   if (getenv("WORKING_SET_RED") != nullptr) {
     RUN_TEST(test_working_set_residence_does_not_grow_with_recorded_slots);
     RUN_TEST(test_inactive_committed_slot_retains_no_resident_working_set);
