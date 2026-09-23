@@ -234,6 +234,48 @@ STORAGE_PERSIST_MEM bool canRunBackgroundLoadLoopNow() {
     return true;
 }
 
+/// A2.2 (D2): background **preparation** admission, which is deliberately narrower than
+/// `canRunBackgroundLoadLoopNow()`.
+///
+/// `design.md` D2 makes a bounded background-restore service slice admissible under active transport so
+/// that a queued request's preparation (open, read, parse) advances while playback continues, while
+/// **commit and cleanup remain gated** by the commit stop-gate (`admitLoadJobChild`) until
+/// `resumable-midi-boundary-playback-maintenance` task 3.3 lands bounded Commit. This predicate decides
+/// only whether a job may hold/advance a *preparation* phase; it never admits commit or cleanup, and it
+/// never touches that gate.
+///
+/// Recording still defers the load (the SD-session exclusion): the existing `canRunBackgroundLoadLoopNow`
+/// answer is kept for capture, so this returns false whenever a track is recording.
+STORAGE_PERSIST_MEM bool canPrepareBackgroundLoadLoopNow() {
+    if (canRunBackgroundLoadLoopNow()) {
+        return true;  // nothing is sounding; the full path is available anyway
+    }
+    if (bootTitleLoadDrain_) {
+        return true;
+    }
+    // The SD-session exclusion is unchanged: capture keeps its existing deferral (proposal TBD-2 / O1).
+    for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+        if (trackManager.getTrack(i).isRecording()) {
+            return false;
+        }
+    }
+    // Preparation under transport is admissible only while no restore job is commit-pending. The gate
+    // is **global**: `hasLoadLoopJobCommitPending()` is true when *either* instance is in
+    // commit/cleanup, and `main.cpp` then denies the whole load child for the turn.
+    return !StorageManager::hasLoadLoopJobCommitPending();
+}
+
+/// True when this job instance may be *stepped* for background work right now: a runnable preparation
+/// phase under the A2.2 preparation admission, or the pre-existing full admission. Commit and cleanup
+/// are never admitted by the preparation path.
+STORAGE_PERSIST_MEM bool backgroundJobMayBeServicedNow() {
+    if (loadLoopJob_.phase != LoadLoopJobPhase::Committing &&
+        loadLoopJob_.phase != LoadLoopJobPhase::Cleanup) {
+        return canPrepareBackgroundLoadLoopNow();
+    }
+    return canRunBackgroundLoadLoopNow();
+}
+
 /// S2b.5: a queued restore may only be begun when no live owner holds its slot.
 ///
 /// The pop is a one-way door. `popFocusDeferredLoopSlotRestore` discards an entry whose slot it judges
@@ -347,7 +389,7 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
         bool focusQueued = false;
         focusQueued = isDeferredLoopSlotRestoreQueued(focusTrack, focusSlot);
         const auto action = LoadLoopSelectionPolicy::resolveParkedIdleAction(
-            parkedIsFocus, focusQueued, canRunBackgroundLoadLoopNow());
+            parkedIsFocus, focusQueued, canPrepareBackgroundLoadLoopNow());
         switch (action) {
             case LoadLoopSelectionPolicy::ParkedIdleAction::ResumeParkedFocus:
                 swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
@@ -367,7 +409,7 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
                     return;
                 }
                 // Queue drained between peek and pop — same fallthrough as pre-policy path.
-                if (canRunBackgroundLoadLoopNow()) {
+                if (canPrepareBackgroundLoadLoopNow()) {
                     swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
                 }
                 return;
@@ -386,7 +428,7 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
     const bool focusQueued = isDeferredLoopSlotRestoreQueued(focusTrack, focusSlot);
     const bool backgroundQueued = pendingLoopSlotRestoreCount() > 0;
     const auto action = LoadLoopSelectionPolicy::resolveEmptyIdleAction(
-        focusQueued, backgroundQueued, canRunBackgroundLoadLoopNow());
+        focusQueued, backgroundQueued, canPrepareBackgroundLoadLoopNow());
     // A2.1: name the wait on the priority head when the only thing stopping it is a live owner. Without
     // this the request stays "queued" forever with no reason, which is exactly the C4 stall the
     // observable state exists to make diagnosable.
@@ -412,7 +454,7 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
                 return;
             }
             // Fall through to background only when policy still allows it and the head is startable.
-            if (canRunBackgroundLoadLoopNow() && backgroundHeadMayBegin() &&
+            if (canPrepareBackgroundLoadLoopNow() && backgroundHeadMayBegin() &&
                 popNextDeferredLoopSlotRestore(next)) {
                 (void)beginLoadLoopJob(next.track, next.slot);
             }
@@ -754,13 +796,27 @@ void STORAGE_PERSIST_MEM stepSubmittedLoadJobsImpl(uint32_t budgetUs, bool activ
     }
     const bool jobIsFocus = loadLoopJobIsFocusSlot();
     const bool backgroundAllowed = canRunBackgroundLoadLoopNow();
-    if (!jobIsFocus && !backgroundAllowed) {
+    // A2.2: preparation is admissible under transport, so a non-focus job is serviced rather than parked
+    // while it has preparation work left. Commit/cleanup still require the full (idle) admission, so they
+    // remain parked and reachable only through the commit gate.
+    const bool preparationAllowed = backgroundJobMayBeServicedNow();
+    // A2.2: a request whose preparation is complete and whose commit the gate denies is in a **named**
+    // wait, not still queued. The gate is global (`hasLoadLoopJobCommitPending`), and bounding it is
+    // runtime-maintenance task 3.3 -- this change names the wait rather than relaxing the gate.
+    const bool commitPendingNow =
+        loadLoopJob_.phase == LoadLoopJobPhase::Committing ||
+        loadLoopJob_.phase == LoadLoopJobPhase::Cleanup;
+    if (!jobIsFocus && !backgroundAllowed && commitPendingNow) {
+        markRestoreRequestWaiting(loadLoopJob_.track, loadLoopJob_.slot,
+                                  RestoreRequestWait::CommitGate);
+    }
+    if (!jobIsFocus && !preparationAllowed) {
         if (!bootTitleLoadDrain_) {
             parkActiveLoadLoopJob();
         }
         return;
     }
-    if (!LoadLoopSelectionPolicy::shouldStepLoadLoopJob(jobIsFocus, backgroundAllowed)) {
+    if (!LoadLoopSelectionPolicy::shouldStepLoadLoopJob(jobIsFocus, preparationAllowed)) {
         return;
     }
     if (loadLoopJob_.phase == LoadLoopJobPhase::Committing ||
@@ -787,6 +843,16 @@ void STORAGE_PERSIST_MEM stepSubmittedLoadJobsImpl(uint32_t budgetUs, bool activ
         }
         const LoadLoopJobPhase phaseBefore = loadLoopJob_.phase;
         const SlotLoadAdvanceResult result = stepLoadLoopJob(deadlineUs);
+        // A2.2: the moment preparation completes, a request whose commit the gate denies is in its
+        // **named** commit-gate wait. Recording it here (not only at the next frame's entry check) means
+        // the state is observable on the same turn the phase changes, which is what a fixture and an
+        // operator both read.
+        if (loadLoopJob_.active && !jobIsFocus && !backgroundAllowed &&
+            (loadLoopJob_.phase == LoadLoopJobPhase::Committing ||
+             loadLoopJob_.phase == LoadLoopJobPhase::Cleanup)) {
+            markRestoreRequestWaiting(loadLoopJob_.track, loadLoopJob_.slot,
+                                      RestoreRequestWait::CommitGate);
+        }
         if (result != SlotLoadAdvanceResult::MoreWork) {
             break;
         }

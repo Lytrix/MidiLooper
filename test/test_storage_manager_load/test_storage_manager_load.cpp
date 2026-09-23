@@ -677,6 +677,41 @@ void test_restore_request_slot_owned_denial_names_the_wait() {
       "a denial by a live owner must be a named wait, not a terminal and not still queued");
 }
 
+/// **A2.2 — a prepare-complete request under transport waits at the commit gate by name.** Preparation
+/// is admitted while playback continues (A2.2), but applying it is not: the commit stop-gate is global
+/// and bounded only by runtime-maintenance task 3.3, which this change does not absorb. The request must
+/// therefore report `waiting_commit_gate`, not a terminal and not an unexplained stall.
+void test_restore_request_prepare_complete_waits_at_commit_gate() {
+  SD.reset();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  StorageManagerInternal::resetAllRestoreRequestState();
+  RestoreHarness::setTrackAudiblyPlaying(1);  // transport active, focus track stopped
+
+  RestoreHarness::armBackgroundRestoreRequest(0, 2, 69);
+  // Drive until the job has finished preparation. Under transport, commit is not admitted, so the
+  // request must settle into the named commit-gate wait rather than committing or refusing.
+  bool sawCommitPending = false;
+  for (int turn = 0; turn < 32; ++turn) {
+    RestoreHarness::runLoadServiceTurn();
+    if (StorageManager::hasLoadLoopJobCommitPending()) {
+      sawCommitPending = true;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(sawCommitPending,
+                           "the fixture needs a prepare-complete (commit-pending) request");
+
+  const auto state = StorageManagerInternal::restoreRequestState(0, 2);
+  TEST_ASSERT_TRUE_MESSAGE(
+      state == StorageManagerInternal::RestoreRequestState::Waiting ||
+          state == StorageManagerInternal::RestoreRequestState::Terminal,
+      "a prepare-complete request under transport must be waiting or terminal, never still queued");
+  TEST_ASSERT_FALSE_MESSAGE(
+      trackManager.getSelectedTrack().getLoop(2).hasCommittedPasses(),
+      "the commit gate must not have been bypassed under active transport");
+}
+
 /// A fresh request is **queued**, not terminal: "not yet served" and "finished" are different states,
 /// which is the separation D1 requires.
 void test_restore_request_starts_queued_and_is_not_a_terminal() {
@@ -875,9 +910,12 @@ int main(int, char**) {
   // A1.11 — the known-red desired-behavior acceptance set. Registered unconditionally so a run with
   // `RESTORE_LIVENESS_RED=1` shows exactly these cases red; excluded from the default gate until the
   // slice that turns each one green promotes it (the `WORKING_SET_RED` precedent).
+  // A2.2 promoted C1 and C2 into the default gate, in the slice that turned them green (A1.11). The
+  // remaining known-red pair stays excluded until its own slice lands.
+  RUN_TEST(test_c1_transport_gated_background_admission_desired);
+  RUN_TEST(test_c2_parked_job_is_serviced_or_named_after_transport_starts);
+  RUN_TEST(test_restore_request_prepare_complete_waits_at_commit_gate);
   if (getenv("RESTORE_LIVENESS_RED") != nullptr) {
-    RUN_TEST(test_c1_transport_gated_background_admission_desired);
-    RUN_TEST(test_c2_parked_job_is_serviced_or_named_after_transport_starts);
     RUN_TEST(test_c4_blocked_priority_head_does_not_stall_a_startable_request);
     RUN_TEST(test_c6_transient_failure_is_retried_not_latched);
   }

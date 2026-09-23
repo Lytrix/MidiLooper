@@ -302,6 +302,29 @@ A1.7.
   those tasks introduce); pre-publication identity validation and `loopSlotRestoreAttempted_` retirement
   remain in A2.1/A2.4.
 
+### A2.2 — background-restore preparation admission (native verified; C1/C2 promoted)
+
+- **Change:** `canPrepareBackgroundLoadLoopNow()` admits a bounded background **preparation** slice under
+  active transport; `backgroundJobMayBeServicedNow()` keeps commit/cleanup on the pre-existing full
+  admission, so `canRunBackgroundLoadLoopNow()` still governs applying and the commit stop-gate
+  (`admitLoadJobChild` in `main.cpp`) is **untouched**. Capture keeps its existing deferral — the
+  preparation predicate returns false whenever a track is recording, which is the SD-session exclusion
+  (proposal TBD-2 / design O1), so no recording behavior changed.
+- **Named wait:** `markRestoreRequestWaiting(..., CommitGate)` fires when the phase becomes
+  commit/cleanup under a denying runtime, so a prepare-complete request reports `waiting_commit_gate` on
+  the same turn. This is the wait `design.md` D2 requires and the one the global commit gate implies.
+- **Promotion (A1.11):** `test_c1_transport_gated_background_admission_desired` and
+  `test_c2_parked_job_is_serviced_or_named_after_transport_starts` **flipped red→green** and moved into
+  the default gate in this same slice, as A1.11 requires. The known-red set is now C4 (A2.3) and C6
+  (A2.4) only.
+- **New case:** `test_restore_request_prepare_complete_waits_at_commit_gate` asserts that preparation
+  completes, the commit is **not** applied (`hasCommittedPasses()` false), and the request is waiting or
+  terminal — never still queued.
+- **Evidence:** suite **22/22** default; `RESTORE_LIVENESS_RED=1` → **25 cases / 2 failed** (C4, C6
+  exactly); full native green; RAM1 `code 392,328 / padding 888`; firmware SUCCESS.
+- **Not claimed:** that a restore applies under active transport (runtime-maintenance 3.3), or that
+  queue-head skipping resolves the global `waiting_job_capacity` blockage.
+
 ---
 
 ## Mechanism ledger (A1.9)
