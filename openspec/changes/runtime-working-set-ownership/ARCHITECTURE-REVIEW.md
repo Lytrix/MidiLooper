@@ -2182,6 +2182,54 @@ Two S1.1 fields remain open, and neither is a telemetry oversight:
   lease). This clause therefore **cannot be measured before S2**; it should be re-scoped to S2 rather than
   re-attempted here. Recording it as "0 holders" would be a fabricated number.
 
+### S1.4 undo-residency baseline — clause 1 measured, clause 2 measured but not landable
+
+**Clause 1 (snapshot residency cold slots retain through undo roots), measured** from
+`captures/rwso-HEAD-owners-census/session_20260923_192254.log` — the dense PASS run, no new telemetry:
+
+| tick series | start | end | note |
+|---|---|---|---|
+| `snap` (cumulative allocator) | 0 KB | 2,470 KB | monotonic — **not** a retention signal |
+| `slab_live` | 0 | 85 | live slabs |
+| `slab_used` | 0 KB | 2,668 KB | retained payload |
+| `slab_unused` | 0 KB | 20–51 KB | oscillation only |
+| `pin1` (`slabsAtMostOneNode`) | 0 | **0** | no stranded mostly-empty slab |
+| `pin24` (`slabsTwoToFourNodes`) | 0 | 1 | |
+| `chunks_free` | 480 | 427 | 53 chunks consumed over the run |
+
+The undo/redo cycle is the measurement. Across the undo (ticks at 66.08 s → 67.08 s) `slab_live` moved
+84 → 83, `slab_used` 2,652 → 2,635 KB and `slab_unused` 35 → 20 KB; across the redo (to 70.08 s) they return
+to 84 / 2,659 KB. So the baseline answer is: **the undo root retains essentially the whole snapshot arena —
+≈2,635–2,659 KB over 83–84 slabs — releasing only ~17 KB and re-taking it on redo**, and it does so *densely*
+(`slab_unused` ≤ 51 KB, `pin1 = 0` throughout), so this is retention, not a stranded mostly-empty slab. That is
+the baseline S1.4 exists to record.
+
+**Clause 2 (canonical chunks the roots pin via `SlotPassReferences`) — measured at 8 / 0 / 2, but the emission
+does not fit the RAM1 budget, so it is *not landed*.** Nothing emitted the pinned side of the ledger:
+`SC_PASS_RECLAIM` reports only what was *reclaimed*, and only when something was. A temporary `#MEM_PINS` line
+that accumulated from the `refs` already built in `reclaimUnreferencedDisabledPasses` (deliberately no extra
+walk, and no `InternalHeapFirstAllocator` construction on the transport thread) observed, constant over the run:
+
+> `capture_pins = 8`, `edit_pins = 0`, `slots_with_pins = 2`
+
+Two defects in that first cut were found and fixed before it was withdrawn, and both are worth keeping:
+
+- **It flooded.** Gated on "pins exist" it wrote ~2,000 lines into one session log, because the reclaim path
+  runs far more often than its nine call sites suggest. Change-detection (emit on transition) is the right
+  gate, not a non-zero test — a lesson about any future per-tick instrumentation here.
+- **It does not fit.** As a second `printf_P` it cost **192 B** of ITCM padding (1,032 → 840, landing exactly on
+  the floor with zero headroom); wrapping it in `FLASHMEM` changed nothing (the `printf_P` is *already*
+  flash-resident — only the argument setup is ITCM), and adding `noinline` made it worse at **824, below the
+  floor, so the budget check correctly FAILED**. The pin census was therefore reverted; padding is back to
+  **1,032 (192 B of headroom)** and the tree is green.
+
+So clause 2's value is a **provisional observation, not landed evidence** — it is reproducible only from a
+temporary instrumentation that is not in the tree. The cheap route to land it, for whoever owns the budget
+decision: fold the three pin fields into the **existing** `SC_PASS_RECLAIM` line
+(`DebugSessionCapture::passReclaim`) rather than adding a second `printf` — one format string and one call
+instead of two. Below the 840 B floor is an explained-budget-change decision, and this change records the cost
+rather than re-basing the floor to meet it.
+
 ### CORRECTION: the baseline FAIL / HEAD PASS asymmetry is a host-harness coin flip (2026-09-23)
 
 This section first read the verdict asymmetry as "the change, or differing library state — this evidence does not
@@ -2274,6 +2322,10 @@ reproduces the table above exactly.
 
 ### What this leaves open, precisely
 
+- **S1.4 — undo residency baseline:** clause 1 **measured** (the undo root retains ≈2,635–2,659 KB over 83–84
+  slabs, releasing ~17 KB); clause 2 **measured at 8/0/2 but not landed** — the line costs 192 B of ITCM padding
+  and 824 B padding with `noinline`, i.e. below the floor, so it was reverted. Landing it needs either the
+  cheaper `SC_PASS_RECLAIM` fold or an explained budget change. See § S1.4 undo-residency baseline.
 - **S1.5 device leg:** the per-committed-slot figure (**8 chunks → 0**) and `free_chunks` after boot
   (**pre-restore** 400 → 480; **post-restore HEAD 440**) are **recorded**. The "smallest N refusing a 24-bar
   overdub" clause is **open** — the native attempt never reached an admission probe, and the device route needs

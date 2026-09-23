@@ -216,6 +216,17 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       metadata-only 60-slot characterisation for the law itself.
 - [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
       many canonical chunks those roots pin** via `SlotPassReferences` (the B10 baseline).
+      **Clause 1 MEASURED 2026-09-23** (dense PASS run, no new telemetry): the undo root retains essentially the
+      whole snapshot arena — **≈2,635–2,659 KB over 83–84 live slabs**, releasing only ~17 KB on undo and
+      re-taking it on redo (`slab_live` 84→83→84, `slab_used` 2,652→2,635→2,659 KB) — and it retains *densely*
+      (`slab_unused` ≤ 51 KB, `pin1 = 0` throughout), so this is retention, not a stranded slab. `snap` is
+      monotonic and is **not** a retention signal. **Clause 2 measured at `capture_pins=8 / edit_pins=0 /
+      slots_with_pins=2` (constant over the run) but NOT LANDED:** the emitting line costs 192 B of ITCM padding
+      (1,032 → 840, exactly the floor), and `FLASHMEM`+`noinline` pushed it to **824 — below the floor, budget
+      check FAILED** — so it was reverted and clause 2 is a **provisional observation, not landed evidence**.
+      Cheapest route to land it: fold the three fields into the existing `SC_PASS_RECLAIM` line instead of adding
+      a second `printf`. Below-floor is an explained-budget-change decision for the owner.
+      See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S1.4 undo-residency baseline.
 - [ ] S1.5 **Boot/load residency baseline (B7):** with N committed slots, record the pool chunks and bytes that
       `TrackManager::prewarmPlaybackRuntime` reserves before any activation (today 8 chunks / 41,056 B per
       committed slot), the free-chunk count, and the smallest N at which a 24-bar overdub is refused.
