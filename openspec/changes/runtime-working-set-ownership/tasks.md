@@ -414,8 +414,14 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `StorageManager.cpp` monolith into small FLASH TU s (`SlotLoadAdmission.cpp`, `SlotReset.cpp`) -- the
       latter recovered 192 B of ITCM headroom (`teensy41-capture-serial` padding 840 -> 1,032, `teensy41`
       9,768 -> 9,960) -- plus an in-memory SD card and the shared `test/test_support/track_harness.inc`.
-      Load suite **5/5**, full native **2,277 / 1 skipped / 0 failures**. **Still owed:** the "after
-      retirement, restoration happens exactly once" half of the fixture, and the device gate. Previous status:
+      Load suite **5/5**, full native **2,277 / 1 skipped / 0 failures**. **BOTH HALVES ARE NOW GREEN
+      (2026-09-23).** The retirement half is covered and it corrected the oracle: the interval must be built
+      through the production `Track::startOverdubbing` (a hand-built interval admits a job that can never
+      finalize), and once that job retires, the content it committed **satisfies** the queued restore, so the
+      request is resolved as *unnecessary* -- no load begun, no attempt marked, nothing reset -- with a second
+      selection consuming nothing. The harness gained the note-edit fold stubs and the `silenceTrackMidiOutput`
+      counting boundary. **Still owed: the device gate only**, which the S1 resident-library baseline owns.
+      Previous status:
       The predicate is `Track::noLiveOwnerForSlot(slot)` (S4.0) and its per-slot scope is now asserted in the
       S4.0 fixture: with a live job on slot 0, `noLiveOwnerForSlot(1)` is **true**, so a finalizing
       predecessor blocks a load into its own slot and not another slot of the same track. The remaining
