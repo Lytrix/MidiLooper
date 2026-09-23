@@ -402,7 +402,20 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       checks, so a slot with no window still releases. Fixture
       `test_s4_0_release_respects_the_live_ring_window_and_is_idempotent` is green. **Outstanding:** the
       listed mid-copy fixture (a populated store refusing release) is not driven yet.
-- [ ] S2b.5 **Load admission (B8):** **STATUS 2026-09-23 -- predicate half DONE, call-site half blocked on a missing harness.**
+- [ ] S2b.5 **Load admission (B8):** **DONE 2026-09-23 (native).** The load harness was built, the fixture went red through the production
+      entry, and the fix makes it green. `LoadLoopJob.cpp`'s four pop sites
+      (`ensureActiveLoadLoopJobSelected`'s parked and empty `BeginFocusFromQueue` branches, its
+      `popNextDeferredLoopSlotRestore` fallback, and `EmptyAction::BeginBackgroundFromQueue`) are guarded
+      **before** the pop by `queuedRestoreMayBegin(track, slot)` = `Track::noLiveOwnerForSlot(slot)`, so
+      liveness is per slot; the two `popNext` sites peek the head first (`backgroundHeadMayBegin`) because the
+      pop has no filter. A blocked slot keeps its request **queued** instead of having it silently discarded,
+      and no reset runs. Fixture `test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned` is
+      green in the default gate. Supporting work: `needsSlotLoad` and `resetLoopSlotToEmpty` split out of the
+      `StorageManager.cpp` monolith into small FLASH TU s (`SlotLoadAdmission.cpp`, `SlotReset.cpp`) -- the
+      latter recovered 192 B of ITCM headroom (`teensy41-capture-serial` padding 840 -> 1,032, `teensy41`
+      9,768 -> 9,960) -- plus an in-memory SD card and the shared `test/test_support/track_harness.inc`.
+      Load suite **5/5**, full native **2,277 / 1 skipped / 0 failures**. **Still owed:** the "after
+      retirement, restoration happens exactly once" half of the fixture, and the device gate. Previous status:
       The predicate is `Track::noLiveOwnerForSlot(slot)` (S4.0) and its per-slot scope is now asserted in the
       S4.0 fixture: with a live job on slot 0, `noLiveOwnerForSlot(1)` is **true**, so a finalizing
       predecessor blocks a load into its own slot and not another slot of the same track. The remaining

@@ -234,6 +234,24 @@ STORAGE_PERSIST_MEM bool canRunBackgroundLoadLoopNow() {
     return true;
 }
 
+/// S2b.5: a queued restore may only be begun when no live owner holds its slot.
+///
+/// The pop is a one-way door. `popFocusDeferredLoopSlotRestore` discards an entry whose slot it judges
+/// done, and `queueDeferredLoopSlotRestore` refuses to take it back, so a caller that pops before checking
+/// destroys the request with no signal at all. Liveness is per slot, from `Track::noLiveOwnerForSlot`: a
+/// finalizing predecessor on one slot must not block a load into another.
+static bool queuedRestoreMayBegin(uint8_t trackIndex, uint8_t slotIndex) {
+    return trackManager.getTrack(trackIndex).noLiveOwnerForSlot(slotIndex);
+}
+
+/// The head of the priority queue, without popping it -- the `popNext` sites have no track/slot filter, so
+/// the liveness check has to be made against the entry the pop would take.
+static bool backgroundHeadMayBegin() {
+    DeferredLoopSlotRestore head{};
+    if (!peekFirstPendingLoopSlotRestore(head)) return false;
+    return queuedRestoreMayBegin(head.track, head.slot);
+}
+
 STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex) {
     clearLoadLoopJobInstance(loadLoopJob_);
     char loopPath[64];
@@ -335,6 +353,8 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
                 // Focus High must still begin while a Low job is parked under PLAYING
                 // (session_20260719_001237).
                 DeferredLoopSlotRestore focusNext{};
+                // S2b.5: never pop a request for a slot a live owner still holds -- the pop would discard it.
+                if (!queuedRestoreMayBegin(focusTrack, focusSlot)) return;
                 if (popFocusDeferredLoopSlotRestore(focusTrack, focusSlot, focusNext)) {
                     (void)beginLoadLoopJob(focusNext.track, focusNext.slot);
                     return;
@@ -363,17 +383,21 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
     DeferredLoopSlotRestore next{};
     switch (action) {
         case LoadLoopSelectionPolicy::EmptyIdleAction::BeginFocusFromQueue:
-            if (popFocusDeferredLoopSlotRestore(focusTrack, focusSlot, next)) {
+            // S2b.5: leave the request queued while a live owner holds the focus slot; the pop would
+            // discard it (see `queuedRestoreMayBegin`).
+            if (queuedRestoreMayBegin(focusTrack, focusSlot) &&
+                popFocusDeferredLoopSlotRestore(focusTrack, focusSlot, next)) {
                 (void)beginLoadLoopJob(next.track, next.slot);
                 return;
             }
-            // Fall through to background only when policy still allows it.
-            if (canRunBackgroundLoadLoopNow() && popNextDeferredLoopSlotRestore(next)) {
+            // Fall through to background only when policy still allows it and the head is startable.
+            if (canRunBackgroundLoadLoopNow() && backgroundHeadMayBegin() &&
+                popNextDeferredLoopSlotRestore(next)) {
                 (void)beginLoadLoopJob(next.track, next.slot);
             }
             return;
         case LoadLoopSelectionPolicy::EmptyIdleAction::BeginBackgroundFromQueue:
-            if (popNextDeferredLoopSlotRestore(next)) {
+            if (backgroundHeadMayBegin() && popNextDeferredLoopSlotRestore(next)) {
                 (void)beginLoadLoopJob(next.track, next.slot);
             }
             return;
