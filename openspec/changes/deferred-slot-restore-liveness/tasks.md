@@ -398,10 +398,21 @@ callers; corrected here, in `proposal.md`, `specs/`, and `design.md`:**
 
 ## 4. Packet D — boot catalog reconcile outcome (D6)
 
-- [ ] A4.1 **Named reconcile outcome.** Report `ok` / `repaired` / `failed` for the boot reconcile,
+- [x] A4.1 **Named reconcile outcome.** Report `ok` / `repaired` / `failed` for the boot reconcile,
       keeping the self-healing repair intact. **Verify:** native cases assert each outcome; a
       malformed-index case asserts the repair outcome and that a later read succeeds; the existing
       SD temp-write regression tests stay green.
+      → **DONE 2026-09-23.** `SetIndexReconcileOutcome { Ok, Repaired, Failed }` +
+      `reconcileSetIndexOnSdWithOutcome` (with `setIndexReconcileOutcomeName` for the log), and
+      `reconcileSetIndexOnSd` kept as the `Ok || Repaired` compatibility wrapper so no caller changes
+      semantics. New suite `test/test_storage_reconcile_index` (in `native_test_link.py`'s
+      hardware-boundary set): **4 cases / 4 succeeded** — consistent index ⇒ `Ok` (asserted both
+      directly and through the wrapper), missing index ⇒ `Repaired` with the index written back and a
+      second reconcile of `Ok`, malformed index ⇒ `Repaired` then `Ok`, so the repair is durable and
+      not repeated. The boot site now logs the named outcome instead of only warning on failure (the
+      old line could not distinguish "nothing to do" from "rebuilt it"). Existing SD temp-write
+      regression cases stay green. RAM1 unchanged at `code 392,328 / padding 888`; firmware build
+      SUCCESS.
 
 - [ ] A4.2 **Packet D device gate.** One device boot with a known-healthy index and one with a
       deliberately malformed index (only with explicit permission for the SD change; quarantine rules

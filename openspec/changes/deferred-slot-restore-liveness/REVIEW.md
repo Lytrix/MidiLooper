@@ -222,6 +222,23 @@ packets whose logic is separable. Amending `tasks.md` A1.7/A3.1 to that scope is
 recorded here rather than taken silently. No fixture, red evidence or diagnostic count is claimed for
 A1.7.
 
+### A4.1 — boot catalog reconcile outcome (native verified)
+
+- **Change:** `SetIndexReconcileOutcome { Ok, Repaired, Failed }` and
+  `reconcileSetIndexOnSdWithOutcome` in `SavedSetIo.cpp`; `reconcileSetIndexOnSd` remains the
+  `Ok || Repaired` compatibility wrapper, so no caller gains new semantics. The boot site
+  (`BootRecovery.cpp`) now logs the named outcome with `printf_P`/`PSTR` (RAM1-boundary literals) and
+  keeps the existing warning for `Failed` only.
+- **New suite:** `test/test_storage_reconcile_index`, registered in `native_test_link.py`. It links
+  `SavedSetIo` + `SavedSetCatalog` + `PersistenceSchema` + `CurrentSetStorage` + `FileIo` against the
+  in-memory card, with a test wall clock in place of `RtcTime`.
+- **Evidence:** **4 cases / 4 succeeded** —
+  consistent index ⇒ `Ok`; missing index ⇒ `Repaired`, index written back, second reconcile `Ok`;
+  malformed index ⇒ `Repaired`, reread ⇒ `Ok` (the repair is durable and not repeated); the bool
+  wrapper matches the outcome. RAM1 `code 392,328 / padding 888` unchanged; firmware build SUCCESS.
+- **Why it matters:** the device's `could not reconcile MidiLooper/sets/index.bin` line could not be
+  separated from a normal boot, which is the ambiguity the proposal lists under observability.
+
 ---
 
 ## Mechanism ledger (A1.9)

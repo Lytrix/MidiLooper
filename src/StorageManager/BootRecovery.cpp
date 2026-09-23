@@ -319,8 +319,17 @@ bool StorageManager::loadState(LooperState& state) {
     if (hasCurrentWorkspace) {
         if (loadCurrentWorkspaceAtBoot(state)) {
             SavedSetCatalog::SetIndex index{};
-            if (!StorageManagerInternal::reconcileSetIndexOnSd(index)) {
-                Serial.println("[StorageManager] WARN: could not reconcile MidiLooper/sets/index.bin");
+            // Named outcome (A4.1): "nothing to do", "rebuilt it" and "could not write it" are three
+            // different states, and only the third is a problem. The old line reported only the third,
+            // which is why the device's `could not reconcile` state was hard to separate from a normal
+            // boot. PROGMEM keeps these literals out of RAM1 (this tree sits on the FlexRAM boundary).
+            const StorageManagerInternal::SetIndexReconcileOutcome reconcileOutcome =
+                StorageManagerInternal::reconcileSetIndexOnSdWithOutcome(index);
+            Serial.printf_P(PSTR("[StorageManager] INFO: sets/index.bin reconcile %s\n"),
+                            StorageManagerInternal::setIndexReconcileOutcomeName(reconcileOutcome));
+            if (reconcileOutcome == StorageManagerInternal::SetIndexReconcileOutcome::Failed) {
+                Serial.println(
+                    "[StorageManager] WARN: could not reconcile MidiLooper/sets/index.bin");
             }
             StorageManagerInternal::forceCurrentSetFullLoopWrite = false;
             StorageManagerInternal::syncCurrentSetDirtyTrackingFromLoadedState();

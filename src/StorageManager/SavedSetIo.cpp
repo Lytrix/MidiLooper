@@ -255,7 +255,19 @@ bool resolveSavedSetFolderNameBySequence(uint32_t sequence, char* out, size_t ou
     return found;
 }
 
-bool reconcileSetIndexOnSd(SavedSetCatalog::SetIndex& index) {
+const char* setIndexReconcileOutcomeName(SetIndexReconcileOutcome outcome) {
+    switch (outcome) {
+        case SetIndexReconcileOutcome::Ok:
+            return "ok";
+        case SetIndexReconcileOutcome::Repaired:
+            return "repaired";
+        case SetIndexReconcileOutcome::Failed:
+            return "failed";
+    }
+    return "unknown";
+}
+
+SetIndexReconcileOutcome reconcileSetIndexOnSdWithOutcome(SavedSetCatalog::SetIndex& index) {
     // `sets/index.bin` holds one field, `nextSequence`, and `reconcileNextSequence()` derives that
     // from the saved-set folder scan anyway -- so an unreadable index is *recoverable metadata*, not
     // a failure. Treating it as one (returning false here) left every later save and the boot
@@ -268,14 +280,21 @@ bool reconcileSetIndexOnSd(SavedSetCatalog::SetIndex& index) {
     const uint32_t reconciled =
         SavedSetCatalog::reconcileNextSequence(index.nextSequence,
                                                scanHighestSavedSetSequenceOnSd());
-    if (!indexReadable || reconciled != index.nextSequence ||
-        !SD.exists(CurrentSetStorage::kSetIndexPath)) {
+    const bool needsRepair = !indexReadable || reconciled != index.nextSequence ||
+                             !SD.exists(CurrentSetStorage::kSetIndexPath);
+    if (needsRepair) {
         index.nextSequence = reconciled;
         if (!writeSetIndexToSd(index)) {
-            return false;
+            return SetIndexReconcileOutcome::Failed;
         }
+        return SetIndexReconcileOutcome::Repaired;
     }
-    return true;
+    return SetIndexReconcileOutcome::Ok;
+}
+
+bool reconcileSetIndexOnSd(SavedSetCatalog::SetIndex& index) {
+    const SetIndexReconcileOutcome outcome = reconcileSetIndexOnSdWithOutcome(index);
+    return outcome != SetIndexReconcileOutcome::Failed;
 }
 
 bool buildSavedSetMetadata(uint32_t sequence, SavedSetCatalog::FolderNamingMode namingMode,

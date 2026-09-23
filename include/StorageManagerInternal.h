@@ -79,6 +79,23 @@ constexpr size_t kSavedSetPathCapacity = 64;
 bool parseSavedSetSequence(const char* folderName, uint32_t& sequence);
 bool formatSavedSetDirectoryPath(const char* folderName, char* out, size_t outSize);
 bool resolveSavedSetFolderNameBySequence(uint32_t sequence, char* out, size_t outSize);
+/// Packet D (A4.1) of `deferred-slot-restore-liveness`: the boot catalog reconcile's **named outcome**.
+/// `reconcileSetIndexOnSd` is self-healing (an unreadable `index.bin` is recoverable metadata), but it
+/// reported only success/failure, so the boot log could not distinguish "nothing to do" from "rebuilt
+/// it" -- the ambiguity that made the device's `could not reconcile` state hard to read.
+enum class SetIndexReconcileOutcome : uint8_t {
+    /// The index read back and already matched the card; nothing was written.
+    Ok = 0,
+    /// The index was missing, unreadable, or stale, and was rebuilt/rewritten successfully.
+    Repaired = 1,
+    /// The repair was needed but could not be written.
+    Failed = 2,
+};
+
+const char* setIndexReconcileOutcomeName(SetIndexReconcileOutcome outcome);
+/// The named-outcome entry point. `reconcileSetIndexOnSd` remains the compatibility wrapper, returning
+/// `Ok || Repaired`.
+SetIndexReconcileOutcome reconcileSetIndexOnSdWithOutcome(SavedSetCatalog::SetIndex& index);
 bool reconcileSetIndexOnSd(SavedSetCatalog::SetIndex& index);
 bool buildSavedSetMetadata(uint32_t sequence, SavedSetCatalog::FolderNamingMode namingMode,
                            uint32_t createdAtUnix, SavedSetCatalog::SavedSetMetadata& metadata);
