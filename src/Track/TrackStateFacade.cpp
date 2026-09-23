@@ -135,6 +135,11 @@ bool Track::hasPendingDeferredOverdubStop() const {
   return captureStopJobs_ && captureStopJobs_->count != 0;
 }
 
+bool Track::hasRealtimeDeferredIdleWork() const {
+  return isRecording() || isAudiblePlaybackActive() || isStoppedRecording() ||
+         hasAcceptedUnexecutedInteraction();
+}
+
 bool Track::isPlaying() const {
   return trackState == TRACK_PLAYING;
 }

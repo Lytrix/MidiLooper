@@ -146,6 +146,10 @@ struct TrackCaptureStopTestAccess {
     return track.loopForSlot(slot).hasActiveOverdubTransferAdmission();
   }
   static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
+  /// Latch an accepted interaction without admitting it, for eligibility assertions.
+  static void latchAcceptedStop(Track& track, uint8_t slot) {
+    track.latchAcceptedStop(PendingStopDestination::Playing, slot, track.captureInterval_);
+  }
   /// S4f.1 latch identity, read through primitive accessors so the fixture never names the
   /// private nested type (the friend struct reads it; the test function cannot).
   static int acceptedLatchKind(const Track& track) {
@@ -4161,6 +4165,23 @@ void test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_i
   TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
 }
 
+/// S4f.2/B06: a track holding an **accepted, not-yet-executed interaction** must be eligible for a deferred
+/// turn even when it is otherwise idle. This is the stopped-track reachability gap at the eligibility
+/// predicate -- the scheduler's own use of it lives in `src/main.cpp`, which is not native-linkable.
+void test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track() {
+  Track& track = preparePlayingTrack();
+  track.forceSetState(TRACK_STOPPED);
+  TEST_ASSERT_FALSE_MESSAGE(track.hasRealtimeDeferredIdleWork(),
+                            "an idle track with no obligation has no realtime deferred work");
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+
+  TrackCaptureStopTestAccess::latchAcceptedStop(track, 0);
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_TRUE_MESSAGE(
+      track.hasRealtimeDeferredIdleWork(),
+      "an accepted interaction must make its track eligible even when the track is idle");
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4258,6 +4279,7 @@ int main() {
   RUN_TEST(test_s4_0_release_respects_the_live_ring_window_and_is_idempotent);
   RUN_TEST(test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve);
   RUN_TEST(test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes);
+  RUN_TEST(test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track);
   RUN_TEST(test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it);
   // S2b.1 landed on 2026-09-23, so the residence law and B01 are green and the former
   // `WORKING_SET_RED` gate is gone: they are part of the default gate now (RECIPE R, "remove a known
