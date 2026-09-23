@@ -220,12 +220,16 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       whole snapshot arena — **≈2,635–2,659 KB over 83–84 live slabs**, releasing only ~17 KB on undo and
       re-taking it on redo (`slab_live` 84→83→84, `slab_used` 2,652→2,635→2,659 KB) — and it retains *densely*
       (`slab_unused` ≤ 51 KB, `pin1 = 0` throughout), so this is retention, not a stranded slab. `snap` is
-      monotonic and is **not** a retention signal. **Clause 2 measured at `capture_pins=8 / edit_pins=0 /
-      slots_with_pins=2` (constant over the run) but NOT LANDED:** the emitting line costs 192 B of ITCM padding
-      (1,032 → 840, exactly the floor), and `FLASHMEM`+`noinline` pushed it to **824 — below the floor, budget
-      check FAILED** — so it was reverted and clause 2 is a **provisional observation, not landed evidence**.
-      Cheapest route to land it: fold the three fields into the existing `SC_PASS_RECLAIM` line instead of adding
-      a second `printf`. Below-floor is an explained-budget-change decision for the owner.
+      monotonic and is **not** a retention signal. **Clause 2 LANDED 2026-09-23**, as the `SC_PASS_RECLAIM` fold
+      rather than a second `printf`, with change-detection in the guard. Measured on the dense PASS run
+      `captures/rwso-HEAD-pins-landed/` (hex `cba22f1d…`): the undo roots pin
+      **0 → 5 → 8 → 3 → 7 capture passes across 0 → 2 slots**, with **`edit_pins` = 0 throughout** — the B10
+      baseline. Every row has `reclaimed=0`/`released=0`, so those lines appear purely on a pin change: five
+      lines, against the ~2,000 the naive gate wrote. Cost: padding **904** (64 B above the floor), and the fold
+      is **not** cheaper than the trimmed standalone line (also 904) — correcting my earlier reasoning, the
+      saving was trimming format arguments, not avoiding the second call. **Residual:** this is the pinned
+      **pass/slot** count, which is what `SlotPassReferences` holds; the *chunk* footprint of those passes needs
+      each pass's chunk list, deliberately not smuggled in at 64 B of headroom.
       See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S1.4 undo-residency baseline.
 - [ ] S1.5 **Boot/load residency baseline (B7):** with N committed slots, record the pool chunks and bytes that
       `TrackManager::prewarmPlaybackRuntime` reserves before any activation (today 8 chunks / 41,056 B per

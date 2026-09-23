@@ -167,7 +167,8 @@ SC_MEM_ATTR void captureAppendDeny(const char* reason, uint16_t freeChunks, uint
                                    uint8_t pendingPass);
 SC_MEM_ATTR void passReclaim(uint16_t chunksFreeBefore, uint16_t chunksFreeAfter,
                              uint16_t passesReclaimed, uint16_t chunksReleased,
-                             uint32_t durationUs, const char* pressure, uint8_t transport);
+                             uint32_t durationUs, const char* pressure, uint8_t transport,
+                             uint16_t capturePins, uint16_t editPins, uint16_t slotsWithPins);
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount);
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
 /** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save|late_on|late_off|late_clk|extclk_arrival|extclk_dispatch|clk_batch|service_period|track_rebuild|track_order|track_send|track_slot|track_resid},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. late_* overCount is late_event_count. extclk_arrival is USB-device clock-batch arrival vs expected instant (not late_clk). clk_batch overCount is clock-bearing batch count. service_period overCount is 0. Stage 4a track_* spans are one `updateAllTracks` iteration; residual is track_update minus attributed spans. */
@@ -436,9 +437,10 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
   DebugSessionCapture::captureAppendDeny(reason, freeChunks, usedChunks, pressure, ch, note, tick, \
                                          pendingPass)
 #define SC_PASS_RECLAIM(chunksFreeBefore, chunksFreeAfter, passesReclaimed, chunksReleased, \
-                        durationUs, pressure, transport) \
+                        durationUs, pressure, transport, capturePins, editPins, slotsWithPins) \
   DebugSessionCapture::passReclaim(chunksFreeBefore, chunksFreeAfter, passesReclaimed, \
-                                 chunksReleased, durationUs, pressure, transport)
+                                 chunksReleased, durationUs, pressure, transport, capturePins, \
+                                 editPins, slotsWithPins)
 
 #else  // !SESSION_CAPTURE — all capture macros compile to nothing
 
@@ -517,7 +519,7 @@ inline void restartCaptureBootGrace() {}
 #define SC_CAPTURE_APPEND_DENY(reason, freeChunks, usedChunks, pressure, ch, note, tick, pendingPass) \
   ((void)0)
 #define SC_PASS_RECLAIM(chunksFreeBefore, chunksFreeAfter, passesReclaimed, chunksReleased, \
-                        durationUs, pressure, transport) \
+                        durationUs, pressure, transport, capturePins, editPins, slotsWithPins) \
   ((void)0)
 
 #endif  // SESSION_CAPTURE
