@@ -3760,6 +3760,117 @@ WorkingSetResidence measureWorkingSetResidence(size_t recordedSlots) {
   return result;
 }
 
+/// S1.3 clause 2: the **synthetic 60-descriptor** characterization. `measureWorkingSetResidence()`
+/// above commits every descriptor into one track's eight slots, so it cannot express N > 8; sixty
+/// descriptors must span the 8 x 8 = 64-slot matrix (`S2b gates`, IMPLEMENTATION_CONTRACT.md §1).
+///
+/// "Metadata-only" means each descriptor is the smallest committable pass (one note on/off), so the
+/// canonical payload stays far inside the 512-chunk pool and the characterization measures
+/// *admission*, not content capacity. `freeChunksAtEnd` records that headroom, so a flat law result
+/// cannot be a pool-exhaustion artifact.
+struct WorkingSetResidenceAcrossTracks {
+  size_t recordedSlots = 0;
+  size_t committedSlots = 0;
+  /// Tracks that received at least one descriptor.
+  size_t tracksTouched = 0;
+  /// Chunks the committed descriptor content itself holds, before any admission runs.
+  uint16_t canonicalPayloadChunks = 0;
+  /// Chunks held once boot/load admission has run for every committed slot.
+  uint16_t canonicalAdmittedChunks = 0;
+  /// Free chunks left at the end, i.e. the headroom the law was measured against.
+  uint16_t freeChunksAtEnd = 0;
+  /// Committed-but-inactive descriptors censused, and what they hold.
+  size_t inactiveSlotsCensused = 0;
+  size_t reservedChunksOnInactiveSlots = 0;
+  size_t horizonsOnInactiveSlots = 0;
+  /// The one active role.
+  uint16_t activeSlotReservedChunks = 0;
+  bool activeSlotHorizonAdmitted = false;
+  /// Derived/runtime residence, reported separately from canonical reservation.
+  size_t residentWorkingSetSlots = 0;
+  size_t allocatedRuntimeSlots = 0;
+
+  /// The part of the measured residency that belongs to inactive slots: what admission added on
+  /// top of the committed content. Pool chunks, not bytes: native `sizeof(EventChunk)` is larger
+  /// than the device's (a 64-bit pointer inside `MidiEvent`), so a native byte figure would not be
+  /// the device number. The device conversion is `sizeof(EventChunk)` = 5,132 B (41,056 B per 8).
+  int32_t reservedChunks() const {
+    return static_cast<int32_t>(canonicalAdmittedChunks) -
+           static_cast<int32_t>(canonicalPayloadChunks);
+  }
+};
+
+WorkingSetResidenceAcrossTracks measureWorkingSetResidenceAcrossTracks(size_t recordedSlots) {
+  constexpr size_t kSlotsAvailable =
+      static_cast<size_t>(Config::NUM_TRACKS) * Config::MAX_LOOPS_PER_TRACK;
+  TEST_ASSERT_TRUE_MESSAGE(recordedSlots <= kSlotsAvailable,
+                           "the cross-track characterization cannot exceed the slot matrix");
+
+  trackManager.~TrackManager();
+  LoopEventStore::resetPoolForTests();
+  new (&trackManager) TrackManager();
+  LoopEventStore::initPool();
+
+  const uint16_t poolChunks = LoopEventStoreConfig::POOL_CHUNK_COUNT;
+  WorkingSetResidenceAcrossTracks result;
+  result.recordedSlots = recordedSlots;
+
+  for (size_t index = 0; index < recordedSlots; ++index) {
+    const uint8_t trackIndex = static_cast<uint8_t>(index / Config::MAX_LOOPS_PER_TRACK);
+    const uint8_t slot = static_cast<uint8_t>(index % Config::MAX_LOOPS_PER_TRACK);
+    Track& track = trackManager.getTrack(trackIndex);
+    track.ensureLoopsAllocated();
+    commitRecordPassIntoTrackSlot(track, slot);
+    ++result.committedSlots;
+    if (slot == 0) ++result.tracksTouched;
+  }
+  result.canonicalPayloadChunks =
+      static_cast<uint16_t>(poolChunks - LoopEventStore::freeChunkCount());
+
+  // Production boot/load admission for every committed-but-inactive descriptor.
+  trackManager.prewarmPlaybackRuntime();
+  // Production admission of the one active role, exactly as the single-track helper.
+  const uint8_t activeTrackIndex = trackManager.getSelectedTrackIndex();
+  const uint8_t activeSlot = 0;
+  Track& activeTrack = trackManager.getTrack(activeTrackIndex);
+  TEST_ASSERT_TRUE(activeTrack.prewarmPlaybackForSlot(activeSlot, true));
+  TrackCaptureStopTestAccess::selectSlot(activeTrack, activeSlot);
+
+  result.canonicalAdmittedChunks =
+      static_cast<uint16_t>(poolChunks - LoopEventStore::freeChunkCount());
+  result.freeChunksAtEnd = LoopEventStore::freeChunkCount();
+
+  for (size_t index = 0; index < recordedSlots; ++index) {
+    const uint8_t trackIndex = static_cast<uint8_t>(index / Config::MAX_LOOPS_PER_TRACK);
+    const uint8_t slot = static_cast<uint8_t>(index % Config::MAX_LOOPS_PER_TRACK);
+    Track& track = trackManager.getTrack(trackIndex);
+    const size_t reserved = TrackCaptureStopTestAccess::canonicalReservedChunks(track, slot);
+    const bool horizon = TrackCaptureStopTestAccess::transferHorizonAdmitted(track, slot);
+    if (trackIndex == activeTrackIndex && slot == activeSlot) {
+      result.activeSlotReservedChunks = static_cast<uint16_t>(reserved);
+      result.activeSlotHorizonAdmitted = horizon;
+      continue;
+    }
+    ++result.inactiveSlotsCensused;
+    result.reservedChunksOnInactiveSlots += reserved;
+    if (horizon) ++result.horizonsOnInactiveSlots;
+  }
+
+  for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+    Track& candidate = trackManager.getTrack(t);
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+      if (TrackCaptureStopTestAccess::runtimeAllocated(candidate, s)) {
+        ++result.allocatedRuntimeSlots;
+      }
+      if (TrackCaptureStopTestAccess::hasResidentWorkingSet(candidate, s)) {
+        ++result.residentWorkingSetSlots;
+      }
+    }
+  }
+
+  return result;
+}
+
 }  // namespace
 
 /// Default-suite case: the measurement itself is well formed, so the gated law case
@@ -3853,6 +3964,89 @@ void test_b01_inactive_committed_slots_reserve_no_canonical_copy_or_horizon() {
            static_cast<unsigned>(horizonsOnInactive),
            static_cast<unsigned>(four.transferHorizonBySlot.size() - 1));
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(horizonsOnInactive), message);
+}
+
+/// S1.3 clause 2, default-gate well-formedness: the synthetic fixture really did commit sixty
+/// descriptors across the matrix, and the pool kept its reserve, so the law case below cannot
+/// pass by accident or by capacity exhaustion.
+void test_s1_3_sixty_descriptor_characterization_is_well_formed() {
+  const WorkingSetResidenceAcrossTracks sixty = measureWorkingSetResidenceAcrossTracks(60);
+
+  TEST_ASSERT_EQUAL_UINT32(60, static_cast<uint32_t>(sixty.committedSlots));
+  TEST_ASSERT_EQUAL_UINT32(60, static_cast<uint32_t>(sixty.recordedSlots));
+  // Sixty descriptors cannot fit on one track (MAX_LOOPS_PER_TRACK = 8): they must span all eight.
+  TEST_ASSERT_EQUAL_UINT32(Config::NUM_TRACKS, static_cast<uint32_t>(sixty.tracksTouched));
+  TEST_ASSERT_EQUAL_UINT32(59, static_cast<uint32_t>(sixty.inactiveSlotsCensused));
+
+  TEST_ASSERT_GREATER_THAN(0, sixty.canonicalPayloadChunks);
+  TEST_ASSERT_TRUE(sixty.canonicalAdmittedChunks >= sixty.canonicalPayloadChunks);
+  // Admission observed the committed content rather than starting from empty: the one active role
+  // holds exactly the record-arm canonical-copy reserve (S1.2's 8 chunks) and its horizon.
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
+                           sixty.activeSlotReservedChunks);
+  TEST_ASSERT_TRUE(sixty.activeSlotHorizonAdmitted);
+  // The one active role is resident; the rest is the descriptor directory, not a working set.
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1, static_cast<uint32_t>(sixty.residentWorkingSetSlots));
+
+  char message[288];
+  snprintf(message, sizeof(message),
+           "the 60-descriptor fixture consumed the pool rather than measuring the law: "
+           "payload=%u chunks, admitted=%u chunks, free=%u (pool=%u, reserve=%u)",
+           static_cast<unsigned>(sixty.canonicalPayloadChunks),
+           static_cast<unsigned>(sixty.canonicalAdmittedChunks),
+           static_cast<unsigned>(sixty.freeChunksAtEnd),
+           static_cast<unsigned>(LoopEventStoreConfig::POOL_CHUNK_COUNT),
+           static_cast<unsigned>(PassConfig::CHUNK_RESERVE));
+  TEST_ASSERT_TRUE_MESSAGE(sixty.freeChunksAtEnd >= PassConfig::CHUNK_RESERVE, message);
+}
+
+/// S1.3 clause 2 law case (invariant 1/25/34 at the contract's 60-descriptor envelope). The active
+/// set is one role in both variants, so any growth between N = 8 and N = 60 is growth caused by the
+/// recorded-slot count. Payload and the runtime directory are reported separately, not asserted flat.
+void test_s1_3_residence_is_flat_across_sixty_descriptors() {
+  const WorkingSetResidenceAcrossTracks eight = measureWorkingSetResidenceAcrossTracks(8);
+  const WorkingSetResidenceAcrossTracks sixty = measureWorkingSetResidenceAcrossTracks(60);
+
+  TEST_ASSERT_EQUAL_UINT32(8, static_cast<uint32_t>(eight.committedSlots));
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(eight.tracksTouched));
+  TEST_ASSERT_EQUAL_UINT32(60, static_cast<uint32_t>(sixty.committedSlots));
+  TEST_ASSERT_EQUAL_UINT32(Config::NUM_TRACKS, static_cast<uint32_t>(sixty.tracksTouched));
+
+  char message[320];
+  snprintf(message, sizeof(message),
+           "boot/load admission reserves per recorded descriptor: reserved(8)=%d, reserved(60)=%d "
+           "(payload %u/%u chunks, admitted %u/%u chunks, runtime directory %u/%u slots)",
+           eight.reservedChunks(), sixty.reservedChunks(),
+           static_cast<unsigned>(eight.canonicalPayloadChunks),
+           static_cast<unsigned>(sixty.canonicalPayloadChunks),
+           static_cast<unsigned>(eight.canonicalAdmittedChunks),
+           static_cast<unsigned>(sixty.canonicalAdmittedChunks),
+           static_cast<unsigned>(eight.allocatedRuntimeSlots),
+           static_cast<unsigned>(sixty.allocatedRuntimeSlots));
+  TEST_ASSERT_EQUAL_INT32_MESSAGE(eight.reservedChunks(), sixty.reservedChunks(), message);
+
+  snprintf(message, sizeof(message),
+           "an inactive descriptor keeps a resident working set: resident(8)=%u, resident(60)=%u "
+           "across %u/%u inactive slots",
+           static_cast<unsigned>(eight.residentWorkingSetSlots),
+           static_cast<unsigned>(sixty.residentWorkingSetSlots),
+           static_cast<unsigned>(eight.inactiveSlotsCensused),
+           static_cast<unsigned>(sixty.inactiveSlotsCensused));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(eight.residentWorkingSetSlots,
+                                   sixty.residentWorkingSetSlots, message);
+
+  snprintf(message, sizeof(message),
+           "inactive descriptors hold canonical ownership: reserved=%u over %u slots, "
+           "horizons=%u (active slot holds %u credits, horizon=%s)",
+           static_cast<unsigned>(sixty.reservedChunksOnInactiveSlots),
+           static_cast<unsigned>(sixty.inactiveSlotsCensused),
+           static_cast<unsigned>(sixty.horizonsOnInactiveSlots),
+           static_cast<unsigned>(sixty.activeSlotReservedChunks),
+           sixty.activeSlotHorizonAdmitted ? "true" : "false");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(sixty.reservedChunksOnInactiveSlots),
+                                   message);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(sixty.horizonsOnInactiveSlots),
+                                   message);
 }
 
 /// P1/B02 (DEC-078, invariant 31): an accepted stop waits for the canonical-copy target and
@@ -4522,5 +4716,10 @@ int main() {
   RUN_TEST(test_working_set_residence_does_not_grow_with_recorded_slots);
   RUN_TEST(test_inactive_committed_slot_retains_no_resident_working_set);
   RUN_TEST(test_b01_inactive_committed_slots_reserve_no_canonical_copy_or_horizon);
+  // S1.3 clause 2: the synthetic 60-descriptor characterization (S2b gates requires it). Both the
+  // well-formedness case and the law case are green on HEAD after S2b.1/S2b.2, so they run in the
+  // default gate.
+  RUN_TEST(test_s1_3_sixty_descriptor_characterization_is_well_formed);
+  RUN_TEST(test_s1_3_residence_is_flat_across_sixty_descriptors);
   return UNITY_END();
 }

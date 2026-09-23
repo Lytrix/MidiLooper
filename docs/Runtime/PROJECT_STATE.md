@@ -1,5 +1,42 @@
 # Project state (execution context)
 
+**2026-09-23 `runtime-working-set-ownership` S1.3 clause 2 landed on `feature/runtime-working-set-ownership`: the synthetic 60-descriptor characterization is green and red-proven — test-only, no firmware change.**
+
+S1.3's **device** slope stays blocked (the restored scratch slot does not survive a reboot — `Track 6 loaded
+state: EMPTY`, `index.bin` does not reconcile), so its **native** clause was the unblocked step, and
+`S2b gates` requires it. New `measureWorkingSetResidenceAcrossTracks(N)` in `test/test_continuous_capture`
+commits one-note descriptors across the 8x8 slot matrix — the existing single-track helper could not express
+N > `MAX_LOOPS_PER_TRACK` = 8 — and two default-gate cases now characterize the law at the contract's envelope:
+`test_s1_3_sixty_descriptor_characterization_is_well_formed` and
+`test_s1_3_residence_is_flat_across_sixty_descriptors`.
+
+**Numbers (exactly one active role in both variants).** Canonical **reservation flat at 40 chunks (205,280 B
+device)** at N = 8 and N = 60; the constant decomposes as boot's stop-descriptor tail reserve (32 chunks =
+8 tracks x 4 `CaptureStopJobs` x 1 chunk, bounded by the enabled set) plus the one active role's own canonical
+copy (8 chunks) — so it is not a claim of zero reservation, but of nothing reserved **per committed
+descriptor**. Payload is reported separately and grows 8 -> 60 chunks (41,056 -> 307,920 B); the runtime
+**directory** grows 15 -> 60 slots (95,160 -> 380,640 B at the S3.0 `LoopPlaybackRuntime` 6,344 B pin) and is
+reported, **not** asserted flat. Inactive descriptors hold **0** canonical credits and **0** transfer horizons
+(0 over 59); resident working sets stay **1**; 100 of 512 chunks used, so the reserve is intact and the flat
+result is not a capacity artifact. Native byte figures were **rejected as device numbers**: native
+`sizeof(EventChunk)` is 8,208 B against the device's 5,132 B, because `MidiEvent`'s `sysexData` union holds a
+64-bit pointer. Chunks are the device-identical unit and are what the law is asserted on.
+
+**Red-proven, not assumed.** Re-introducing the state S2b.1 removed (making `prewarmCanonicalCaptureOutput()`
+unconditional in `Track::prewarmPlaybackForSlot`) fails **both** cases — `reserved(8)=152` vs
+`reserved(60)=452` (~8 chunks per descriptor, the RC-MEM-5 slope) with the well-formedness case catching the
+pool exhausting at `free=0` — and seven suite cases go red, which is the expected cross-check against the
+1-vs-4 law cases and B01. The mutation was reverted immediately and `src/` is byte-identical (`git diff` on
+`src/` is empty).
+
+**Gates.** Full native **2,285 / 1 skipped / 2,284 succeeded / 0 failures** (was 2,283 / 1 / 2,282 — exactly
+the two cases added); `teensy41-capture-serial` **SUCCESS** with the post-link RAM1 budget enforced at
+`variables 96,128 / code 392,312 / padding 904 / locals 34,944`, byte-identical to the recorded line as
+expected with no `src/` change. Full packet and evidence:
+[ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) § P1 —
+S1.3 clause 2. **Still open:** every device leg (S1.3's slope to the failure point, S1.5's refusal-N, S1.4's
+pass->chunk conversion) and phases B–F.
+
 **2026-09-23 SESSION CLOSEOUT — `runtime-working-set-ownership` P0/P1 native scope complete on `feature/runtime-working-set-ownership`; the remaining gates need hardware.** Read this instead of the per-round entries below it.
 
 **What landed and is verified.** S0's decisions verified against their landing sites (no re-decision). S1.2's red scaling characterization, now **green**: the per-committed-slot boot reservation is gone, so reserved chunks and resident working sets are flat in recorded slots (they were 96→120 chunks and 8→11 bundles). The accepted-stop latch (S4f.0/S4f.1/S4f.2/S2b.6) with its deferred drive, canonical park and retire-path drain; the three boot/load admission tasks (S2b.1–S2b.3); the S4.0 per-slot liveness predicate with the S2b.4 release; S4f.5's stop-related in-flight consumers; S4f.4's four paused-worker transitions; B03 and B04 in the new `test_storage_manager_load` harness; S3.0's placement pins with a **per-env post-link RAM1 budget check**.

@@ -224,6 +224,22 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       (8 × 8 = 64 slots available), and the 512-chunk pool has to be budgeted for 60 committed slots before the
       "reservation flat in inactive-slot count" claim can be asserted, or the fixture will fail for capacity
       rather than for the law. This is the concrete next step, and **S2b gates** depends on it.
+      **SYNTHETIC 60-DESCRIPTOR CHARACTERISATION DONE 2026-09-23 (native, no production change).** New
+      cross-track helper `measureWorkingSetResidenceAcrossTracks(N)` spans the 8 × 8 slot matrix, and two
+      default-gate cases were added to `test_continuous_capture`:
+      `test_s1_3_sixty_descriptor_characterization_is_well_formed` and
+      `test_s1_3_residence_is_flat_across_sixty_descriptors`. With one active role, **reservation is flat at
+      exactly 40 chunks (205,280 B device) at N = 8 and N = 60**, while canonical payload grows 8 → 60 chunks
+      (41,056 → 307,920 B) and the runtime directory grows 15 → 60 slots (95,160 → 380,640 B, per-descriptor
+      directory state, reported not asserted flat). Inactive descriptors hold **0** canonical credits and **0**
+      transfer horizons (0 over 59); the active slot holds 8 credits + its horizon; resident working sets stay
+      **1**. 100 of 512 chunks used, so the reserve is intact and the flat result is not a capacity artifact.
+      **Red-proven:** re-introducing the state S2b.1 removed fails both cases (`reserved(8)=152` vs
+      `reserved(60)=452`, ~8 chunks/descriptor, pool exhausting at `free=0`); the mutation was reverted with
+      `src/` byte-identical. Native byte figures were rejected as device numbers (native `sizeof(EventChunk)`
+      is 8,208 B vs the device's 5,132 B). Full record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S1.3 clause 2. **Still open on this task:** the
+      *device* slope to the failure point (the reboot-survival obstacle above).
 - [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
       many canonical chunks those roots pin** via `SlotPassReferences` (the B10 baseline).
       **Clause 1 MEASURED 2026-09-23** (dense PASS run, no new telemetry): the undo root retains essentially the
@@ -295,12 +311,12 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       floor); the red fixture failing and recorded (S1.2); the S1.1 per-owner census on device (tags 1..16);
       the S1.5/S2b.3 boot-load residency baseline on **both** revisions (8 → 0 chunks per committed slot); and
       S1.4's two clauses (undo residency ≈2,635–2,659 KB over 83–84 slabs; pinned passes 0 → 5 → 8 → 3 → 7
-      across 0 → 2 slots). **Not satisfied, and the gate does not close without it: S1.3's device slope to the
+      across 0 → 2 slots); and — added the same day — S1.3's **second clause**, the synthetic 60-descriptor
+      characterisation (reservation flat at 40 chunks / 205,280 B from N = 8 to N = 60, red-proven). **Not
+      satisfied, and the gate does not close without it: S1.3's device slope to the
       failure point** — growing the library requires the restored scratch slot to survive a reboot, and it
       does not (`Track 6 loaded state: EMPTY`, `index.bin` does not reconcile), so N cannot be raised across
-      boots. S1.3's second clause (the synthetic metadata-only 60-slot characterisation) is **native and
-      unblocked**, and S2b gates additionally requires it; S1.5's refusal-N and S1.4's pass→chunk conversion
-      also remain.
+      boots. S1.5's refusal-N and S1.4's pass→chunk conversion also remain.
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
@@ -593,6 +609,14 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       using the S1 resident-library baseline plus a synthetic 60-descriptor fixture. Prove canonical
       reservation bytes flat in inactive-slot count; report canonical payload and derived bytes separately.
       The genuine 60-long-slot and total-residency gates stay in S6/S7, not this prerequisite slice.
+      **Synthetic half DONE 2026-09-23.** The 60-descriptor fixture exists and is green in the default gate
+      (`test_s1_3_sixty_descriptor_characterization_is_well_formed`,
+      `test_s1_3_residence_is_flat_across_sixty_descriptors`): canonical **reservation flat at 40 chunks
+      (205,280 B) at N = 8 and N = 60**, payload and the runtime directory reported **separately** (8 → 60
+      chunks / 41,056 → 307,920 B; 15 → 60 directory slots / 95,160 → 380,640 B), inactive descriptors hold
+      zero canonical credits and zero horizons. Red-proven against the pre-S2b.1 state. Details:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S1.3 clause 2. **Still open on this gate:** the
+      S1.3/S1.4 device material it depends on (S1.3's device slope, S1.5's refusal-N).
 
 ## S3 — introduce the reusable lease pool (no release yet)
 
