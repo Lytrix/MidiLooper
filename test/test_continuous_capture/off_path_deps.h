@@ -29,7 +29,11 @@ void EditManager::scheduleDeferredNoteEditDisplayRefresh() { OFF_PATH(); }
 MidiEventVec& EditManager::editMidiEvents(Track&) { OFF_PATH(); static MidiEventVec empty; return empty; }
 const MidiEventVec& EditManager::editMidiEvents(const Track&) const { OFF_PATH(); static MidiEventVec empty; return empty; }
 CommitResult Track::commitCaptureForStop(CommitReason, uint32_t, uint32_t, uint8_t) { OFF_PATH(); return {}; }
-void Track::silenceTrackMidiOutput() { OFF_PATH(); }
+// A physical output boundary, not an unrelated domain route: silencing is reachable from both stop
+// destinations, so failing closed here left the whole `Stopped`-destination deferred drain without any
+// native coverage (see B03). Counting it instead keeps it observable -- a fixture can assert the track
+// was silenced -- without pretending the silence itself is under test. Reset in setUp.
+void Track::silenceTrackMidiOutput() { ++g_nativeSilenceTrackCalls; }
 void Track::clearQueuedPlaybackStart() { OFF_PATH(); }
 void Track::queuePlaybackStartAtGrid(int32_t, uint32_t) { OFF_PATH(); }
 void Track::commitQueuedPlaybackStart(uint32_t) { OFF_PATH(); }
