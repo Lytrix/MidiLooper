@@ -1976,6 +1976,26 @@ returns no *further* credit. The slot is deliberately given no live owner, so th
 admissible refusal reason — and the same call succeeds after the store is drained, so the test cannot pass on an
 unrelated guard.
 
+**The refcount census is now part of the fixture, and it took three corrections to get right.** The final
+assertions are: `preparePlayingTrack()` has already admitted the slot's reservation, so `usedChunkCount() = 13`
+*includes* the 8 held credits and `freeChunkCount() = 499`; the append into a held chunk moves **neither**
+counter while spending one credit (8 → 7); the refused release moves nothing at all; and `clear()` + release
+returns exactly the reservation's own credits — `used` 13 → **5**, `free` 499 → **507**. That is the leak
+property S2b.4 asks for: the release gives back its own credits and nothing else.
+
+The three wrong cuts are recorded because the pool's accounting is easy to mis-model, and each failure was the
+evidence:
+
+| my predicted model | pool's answer | what it established |
+|---|---|---|
+| reservation raises `used` by 8 (21) | **13** | `preparePlayingTrack()` had already taken the reservation, so my baseline was post-reserve |
+| the appended event raises `used` by 1 (14) | **13** | writing into an already-held chunk allocates nothing new |
+| `used` excludes held credits, so release leaves it at 13 | **5** | `usedChunkCount()` counts *allocated* chunks — held **and** committed |
+
+So `usedChunkCount()`/`freeChunkCount()` are complements over all allocated chunks, and a reservation is visible
+in them; the invariant worth asserting is the exact ±credit-count symmetry across release, which is what the
+fixture now asserts.
+
 ### Verification
 
 | check | result |
