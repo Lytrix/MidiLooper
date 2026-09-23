@@ -161,6 +161,17 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   one. Next increment: link the `TrackManager`/`Track`/`Loop` set so `needsSlotLoad` and the pop done-test
   go live, then drive `beginLoadLoopJob` for B04, and only then make the S2b.5 call-site fix. Full native
   **2,275 / 1 skipped / 0 failures**; all firmware envs pass their per-env RAM1 budgets.
+- **Load harness increment 2 pinned to a measured structural choice.** Increment 2 needs
+  `Track`/`TrackManager`/`Loop` because `StorageManager::needsSlotLoad` ends in
+  `track.getLoop(slot).hasCommittedPasses()`. Probing the obvious route -- adding the queue to
+  `test_continuous_capture`, which already links those -- produced exactly three error classes and was
+  **rejected**: it would force `ARDUINO 1` for that whole TU (changing what *every* included production TU
+  compiles, since the tree's SD declarations sit behind `#if defined(ARDUINO)`, and the suite's 87 tests
+  currently depend on those guards being off), delete two now-duplicate stubs from `off_path_deps.h`, and
+  expose an unknown cascade through 87 unrelated tests. **Recommended next increment:** extract the shared
+  production include block into `test/test_support/track_harness.inc` and include it from both suites --
+  the load path gets its Track objects, the existing suite's boundary surface is untouched, and the include
+  set stops being duplicated. The probe was fully reverted; tree clean and `test_continuous_capture` 87/87.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the
