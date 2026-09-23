@@ -32,6 +32,15 @@ C4, C6); full native **2,291 / 1 skipped / 0 failures**; `teensy41-capture-seria
 [`REVIEW.md`](../../openspec/changes/deferred-slot-restore-liveness/REVIEW.md). **No `src/` behavior has
 changed**; A1.7 (C5) fixture, A1.8 observability and the A1.9/A1.10 Packet A gate remain.
 
+**Round 3 addition (same day).** A1.7's native closure is now **fully measured**: the drain TU plus a
+19-TU import set links in the new `test_storage_drain_restore` suite, and exactly three **boundary**
+items remain — a directory view for the in-memory SD card (`open(dir)`/`openNextFile`/`isDirectory`/
+`name`), a native wall clock in place of `RtcTime` (whose TU includes `core_pins.h`), and a public
+overlay setter in place of `src/LooperState.cpp` (which redefines the harness's `looperState` global).
+A first directory-view attempt corrupted the shared `SD.h` mid-edit and was **reverted in full**; that
+stub is critical-path for every native suite, so it needs its own reviewed edit with the load suite run
+immediately after. **No fixture, red evidence or diagnostic count is claimed for A1.7 yet.**
+
 
 **2026-09-23 — restore-liveness plan correction (documentation only).**
 The final review's callback re-entry finding is addressed in
