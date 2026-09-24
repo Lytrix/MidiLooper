@@ -944,6 +944,12 @@ void test_restore_request_reused_coordinates_are_a_new_request() {
                            StorageManagerInternal::restoreRequestGenerationFor(0, 2));
   TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::restoreRequestRecordIsCurrent(0, 2),
                             "the earlier record must not describe the new request");
+  // The done-test stays deliberately conservative after an external reset: a stale-but-decided record
+  // still counts as "finished with", so a user CLEAR does not auto-reload the cleared slot (that route
+  // reserves ~21.3 MB and trips the external-pool FATAL on device; recorded as a runtime-working-set
+  // finding). A fresh explicit request still begins because `beginRestoreRequest` clears a stale record.
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::isLoopSlotRestoreAttempted(0, 2),
+                           "the done-test stays conservative for a stale terminal");
   StorageManagerInternal::beginRestoreRequest(0, 2);
   TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(StorageManagerInternal::RestoreRequestState::Queued),
                                 static_cast<int>(StorageManagerInternal::restoreRequestState(0, 2)),

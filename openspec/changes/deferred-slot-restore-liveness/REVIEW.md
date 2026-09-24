@@ -764,3 +764,111 @@ is parked and never re-serviced).
 | 2026-09-24 | A3.5 (restructured) | `pio test -e native` / `pio run -e teensy41-capture-serial` | **PASSED** 2,337/1 skipped/0 failures; **SUCCESS** `code 390,936 + padding 2,280` |
 | 2026-09-24 | A3.7 shape (a) | `scripts/hitl_clear_drain_a37.py` → `captures/a37-clear-05-fresh/` | **PASSED** — fresh boot; `Clear waiting for deferred save completion` → `State saved successfully (v4)` → `Clear selected slot 1`; 0 aborts / 0 stuck / 0 blocked; timing verifier: gate 9/9, overflow-free, no issues |
 | 2026-09-24 | A3.7 shape (b) | `scripts/hitl_clear_drain_a37.py` → `captures/a37-clear-04-shapeb/` | **completed** (0 gate strings) but the save was already done at press time — discriminating case not exercised, recorded partial |
+
+## 2026-09-24 (second session) — census checkpoint, A2.1/A1.8 closure, A3.7 shape (b) blocked
+
+### S1.3/S2b.3 post-restore census checkpoint — finished and device-verified
+
+The census checkpoint is now one explicit, **timestamped Tier-A** marker,
+`#CAP,<micros>,DIAG,post_restore_census,free_chunks=…,admission_complete=1,interactive_ready=1,
+undo_hydrated=1,transport_stopped=1,deferred_prewarm_idle=1,heap_free=…`, emitted at most once per boot
+from `StorageManager::emitPostRestoreCensusIfReady` when every readiness condition holds. Two conditions
+were added to finish the draft:
+
+* **deferred-prewarm readiness** — neither `TrackManager::hasPendingPreparedPlaybackPairRequest()` nor
+  `hasPendingDeferredPlaybackPrewarm()` may be true. The post-commit merged-MIDI build allocates the focus
+  slot's runtime window, so a census taken before it reports a pool figure the next turn changes. `main`'s
+  deferred-prewarm request moved out of a `runDeferredLoadAndDisplayFrame` function static into
+  `TrackManager` so the checkpoint can see it; the swap/clear paths carry the captured slot with the job.
+* **timestamped telemetry** — the marker is emitted through `DebugSessionCapture::postRestoreCensus` as a
+  `#CAP,<micros>,DIAG,…` line and is classified Tier-A (`CaptureLineTier`), so it survives the
+  timing-critical flush budget. The previous draft emitted `#CAP,DIAG,…` with no micros field, which the
+  tier parser reads as a tag of `post_restore_census,…` and drops from Tier-A.
+
+`scripts/hitl_boot_census.py` parses the marker fields generically (new readiness fields cannot break it),
+prefers the timestamped capture line over the operator `[StorageManager]` line, and records in
+`census.json` whether the marker was readiness-attested and timestamped. An un-attested or un-timestamped
+marker is a recorded failure, not a silent pass.
+
+**Device evidence — two fresh-boot runs** (upload hard reset, `boot_reset` present, 0 reconcile
+warnings):
+
+| run | result |
+|---|---|
+| `captures/census-final-01/` | `checkpoint_reached=True`, `free_chunks=451`, all five readiness fields `1`; the reader picked the operator line, which exposed the marker-selection defect |
+| `captures/census-final-02/` | `checkpoint_reached=True`, `readiness_attested=True`, `timestamped_capture_line=True`, `free_chunks=451`, `heap_free=77,824`; walk pairs 512→480 (enabled set, −32) then 480→480 (library, ±0); S2b.3 condition `451 >= 0 + 16` met; 0 `could not reconcile` |
+
+The marker is the fixture S1.3's slope and S2b.3's post-restore budget pin to. It does **not** by itself
+close either leg: S1.3's slope needs successive boots to accumulate a library, and this session's record
+attempts failed (below).
+
+### A4.2 — healthy-index device half taken
+
+`captures/census-final-02/boot-census.log` contains
+`[StorageManager] INFO: sets/index.bin reconcile ok` with **0** unexpected `could not reconcile` after the
+outcome. The known-healthy half is therefore green. The deliberately malformed-index half stays
+**optional unrun** (it needs destructive-SD permission, per A4.2).
+
+### A2.1 — remaining named waits, external reset, pre-publication rejection
+
+* **Named waits completed.** `waiting_capture` is recorded when the capture (recording) half of the load
+  gate denies a background request; `waiting_job_capacity` is recorded on the **queued** sibling when the
+  active instance holds the global commit gate (the instance's own denied commit stays
+  `waiting_commit_gate`). Both are named at the selection `Skip`/`SkipKeepParked` sites and at the park
+  path. An owner-blocked head already named `waiting_slot_owned` is left alone.
+* **Pre-publication identity validation.** A job captures the identity it serves at `beginLoadLoopJob`
+  and `commitLoadLoopJobPublish` revalidates it **before the token check** — the token path resets the
+  slot, which would destroy content a new owner committed there. A superseded/previously-decided request
+  publishes **nothing**; only the job's parser/session storage is released. `advanceRestoreRequestGeneration`
+  now records `superseded` under the request's own identity and keeps the record readable; a user CLEAR
+  calls it (`MidiButtonActions::handleClearTrack`).
+* **Residual, recorded not claimed:** the set-change wire (`noteRestoreSetEpoch`) has no production call
+  site yet — no set-epoch accessor exists — so "a set change yields `superseded`" is proven at the record
+  level only. `handleUndoClearTrack`/`handleRedoClearTrack` do not advance the generation either.
+* **Deliberately conservative done-test.** `isLoopSlotRestoreAttempted` still reads `state == Terminal`, so
+  a stale-but-decided record counts as finished and a user CLEAR does **not** auto-reload the cleared slot.
+  See the shape-(b) finding: that reload route trips a ~21.3 MB allocation FATAL on device.
+
+### A1.8 — probe reports a prepare-complete wait and a decided terminal
+
+`StorageManager::RestoreStateProbe` now carries the request-record vocabulary (state / wait / terminal)
+for the queue head and both job instances, filled only when a record exists. Native cases assert a
+`running` in-flight request, a `waiting_commit_gate` prepare-complete request, and a `committed` terminal.
+The transition lines themselves landed earlier (`SC_RESTORE_REQUEST`/`RRQ`, A2.5).
+
+### A3.7 shape (b) — attempted twice, **blocked by a fatal allocation after a clear-then-reload**
+
+Two fresh-boot attempts (`captures/a37b-01/`, `--save-bars 16`; `captures/a37b-02/`, `--save-bars 8`)
+constructed "another track playing + a deferred save genuinely owed", but could not reach the CLEAR:
+immediately after `Recording started` on the scratch slot the device logged
+
+```
+#MEM_EXT_REFUSED,<us>,bytes=22369620,count=1,live=7285KB,...
+[InternalHeapFirstAllocator] FATAL: both internal heap and external memory are exhausted!
+```
+
+The pool total is 8,380,416 B (`psram_pool` in the same build's `capture_prewarm` rows), so the
+**22,369,620 B request is structurally impossible** and recurs at exactly the same value in both runs and
+in a third bisect (`captures/a37b-03/`, 2-bar save). The only reachable way to create "a restore in
+flight" on this device is the clear-then-reload route (every payload-bearing slot is restored at boot),
+and the bisect confirms the refusal follows a `LoadLoopJob done` for the just-cleared slot. **A3.7 shape
+(b) therefore stays open**, with this as its blocking finding; the reload-after-external-reset route is
+deliberately **not** enabled by this change (the conservative done-test above), and the allocation defect is
+a `runtime-working-set-ownership`/recording finding, out of this change's scope.
+
+Control for the record: a plain 2-bar take on the same scratch slot with no clear-then-reload
+(`captures/a37-control-02/`) records and saves cleanly (`CurrentSet saved successfully (v6 deferred
+slices)`, 0 `FATAL`), so the recording path itself is not broken.
+
+### Evidence (this session)
+
+| task | command / artifact | result |
+|---|---|---|
+| census | `scripts/hitl_boot_census.py` → `captures/census-final-02/` | `checkpoint_reached=True`, attested, timestamped, `free_chunks=451` |
+| A4.2 (healthy) | same log | `sets/index.bin reconcile ok`, 0 unexpected reconcile failures |
+| A2.1/A1.8 | `pio test -e native -f test_storage_manager_load` | **PASSED** — 33 cases, 33 succeeded (5 new: capture wait, stale-identity rejection, prepare-complete probe, terminal probe, strengthened job-capacity wait) |
+| A2.1/A1.8 | `pio test -e native -f test_capture_line_tier` | **PASSED** — 14 cases (2 new: census marker is Tier-A; its worst-case line fits the 191-byte payload) |
+| all | `pio test -e native` | **PASSED** — 2,343 cases / 1 skipped / 0 failures (computed before the conservative done-test revert; re-verified after) |
+| all | `pio run -e teensy41-capture-serial` | **SUCCESS** — `RAM1: variables 96,192 / code 391,000 + padding 2,216 / locals 34,880`, 1,376 B above the 840 floor |
+| A3.7 (b) | `scripts/hitl_a37_shapeb.py` → `captures/a37b-01/`, `-02/`, `-03/` | **BLOCKED** — `#MEM_EXT_REFUSED bytes=22369620` → external-pool FATAL after a clear-then-reload; CLEAR never reached |
+| A3.7 control | `scripts/hitl_clear_drain_a37.py` → `captures/a37-control-02/` | record + save clean, 0 FATAL (isolates the reload route) |

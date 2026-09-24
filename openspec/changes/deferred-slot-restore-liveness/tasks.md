@@ -188,6 +188,14 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       named waits and terminal record (A2.1), so the lines land with A2.1/A2.2 rather than being emitted
       with an invented state vocabulary now. The "no per-turn line" constraint is respected: the probe is
       on-demand only.
+      → **DONE 2026-09-24 (second session).** The transition lines landed with A2.1/A2.2
+      (`SC_RESTORE_REQUEST`/`RRQ`, six fields: track, slot, generation, epoch, state, wait, terminal) and
+      `RestoreStateProbe` now reports the request-record vocabulary for the queue head and both job
+      instances (`queueHead/activeJob/parkedJobRequestState|Wait|Terminal`), filled only when a record
+      exists. Native cases assert the five required states: **queued** and **blocked** on the queue head,
+      **in-flight** (`running`) on the owning instance, **prepare-complete-waiting**
+      (`waiting_commit_gate`), and a **decided terminal** (`committed`). `test_storage_manager_load`
+      **33/33**; the reconcile outcome mapping was already green with A4.1.
 
 - [x] A1.9 **Packet A review and mechanism ledger.** Record, for C1, C2, C4, C5, C6, one of: covered by a
       red desired-behavior fixture `<case>`, or withdrawn with the observation that falsified it; record
@@ -270,6 +278,26 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       `waiting_job_capacity`), the `refused`/`unnecessary` terminals, pre-publication identity validation,
       and `loopSlotRestoreAttempted_` retirement — the last three land with A2.2–A2.4, since they are the
       gates those tasks introduce.
+      → **DONE 2026-09-24 (second session), with one recorded residual.**
+      *Named waits:* `waiting_capture` and `waiting_job_capacity` are now recorded at the selection
+      `Skip`/`SkipKeepParked` sites and at the park path — recording denies by `waiting_capture`, and the
+      **queued sibling** of an instance holding the global commit gate waits in `waiting_job_capacity`
+      (the instance's own denied commit stays `waiting_commit_gate`). An owner-blocked head keeps its
+      `waiting_slot_owned` name.
+      *Pre-publication identity:* `beginLoadLoopJob` captures the identity it serves and
+      `commitLoadLoopJobPublish` revalidates it **before the token check** (whose reset would destroy a new
+      owner's content); a superseded or decided request publishes **nothing** and only the job's
+      parser/session storage is released. `advanceRestoreRequestGeneration` records `superseded` under the
+      request's own identity and keeps the record readable; a user CLEAR calls it.
+      *Residual (recorded, not claimed):* the set-change wire (`noteRestoreSetEpoch`) has no production
+      call site yet, because no set-epoch accessor exists; "a set change yields `superseded`" is proven at
+      the record level only. `handleUndoClearTrack`/`handleRedoClearTrack` do not advance the generation.
+      The done-test is deliberately conservative (`state == Terminal`), so a user CLEAR does not auto-reload
+      the cleared slot — see A3.7's shape (b) finding for why.
+      **Evidence:** `test_storage_manager_load` **33/33** (5 new cases: capture wait, stale-identity
+      rejection publishing nothing, prepare-complete probe, terminal probe, strengthened sibling
+      job-capacity wait); full native **2,343 / 1 skipped / 0 failures**; capture-serial SUCCESS
+      `code 391,000 + padding 2,216`. Details: [`REVIEW.md`](REVIEW.md) § 2026-09-24 (second session).
  Introduce
       the request identity `(track, slot, requestGeneration, setEpoch)`, explicit **queued/running** states,
       and the separate **wait** states
@@ -416,13 +444,16 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       floor, 12 ITCM banks unchanged. A2.5 device evidence recorded in `captures/a25-boot-gate/`.
 
 - [ ] A2.7 **Commit-bound prerequisite (review finding 1) — record, do not implement.**
-      → **OPEN (recording task).** To be recorded in the change review and the S1/S2b handoff notes:
-      `resumable-midi-boundary-playback-maintenance` **task 3.3** (bounded Commit preparation/cleanup) is
-      the named external prerequisite for any criterion that requires a restore to **apply** under active
-      transport. This change keeps every such criterion scoped to terminal-or-named-wait: A2.2's
-      `waiting_commit_gate` case asserts the commit is **not** applied under transport, and no
-      `main.cpp` commit-gate change exists in this change's diff (`MidiServiceDrain::admitLoadJobChild`
-      untouched).
+      → **OPEN (recording task), strengthened 2026-09-24 (second session).** To be recorded in the change
+      review and the S1/S2b handoff notes: `resumable-midi-boundary-playback-maintenance` **task 3.3**
+      (bounded Commit preparation/cleanup) is the named external prerequisite for any criterion that
+      requires a restore to **apply** under active transport. This change keeps every such criterion scoped
+      to terminal-or-named-wait: A2.2's `waiting_commit_gate` case asserts the commit is **not** applied
+      under transport, and no `main.cpp` commit-gate change exists in this change's diff
+      (`MidiServiceDrain::admitLoadJobChild` untouched). **Active-transport commit/cleanup is explicitly
+      retained as separate work**: it is not implemented, not relaxed, and not implied by any task here,
+      and A5.5 may not be read as closing it. The A3.7 shape (b) gate this session is the concrete
+      demonstration that the wait (not the commit) is what this change delivers.
       *(Referenced elsewhere as **runtime-maintenance 3.3**, to avoid confusion with this change's own
       Packet C tasks.)*
 
@@ -501,6 +532,15 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       session asserts the wait clears; and **a case with CLEAR on one track, another track playing, and a
       restore commit pending asserts the drain preserves the request and reports the named commit-gate
       wait instead of admitting an unbounded commit**.
+      → **RECONCILED 2026-09-24 (second session), task stays OPEN on the device integration only.** The
+      drain-side **decisions** this task names are landed and native-verified where Revision 5 placed them:
+      admission uses the same all-tracks eligibility (`backgroundJobMayBeServicedNow`,
+      `canPrepareBackgroundLoadLoopNow`), the wait reason is classified by the pure A3.2 function, the
+      budget and progress terms are A3.3's, and the caller contract is A3.4's. The three Verify cases that
+      need the **real** blocking drain plus the display stack are the A3.7 device gate's, per the amended
+      oracle. **A3.7 shape (b) is blocked this session** by the clear-then-reload allocation FATAL, so the
+      integration claim ("the drain advances a restore it waits on") is **not** taken and A3.1 stays open
+      with that reason. No clause is claimed green by inference.
 
 - [x] A3.2 **Named drain verdict (D4).**
       → **DONE 2026-09-24.** `SyncDrainFailureReason` gains **`BlockedByRestore`**, and
@@ -550,6 +590,16 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       terms were strictly subsumed by the per-grain counter, and removing them returned the build to the
       approved line (`code 392,344 + padding 872`). **Not claimed here:** that the drain *advances* the
       restore — that integration claim is A3.7 (device), per Revision 5.
+      → **RECONCILED 2026-09-24 (second session).** Re-checked against landed code and tests: every native
+      clause in this task's contract is present and green — `SyncDrainBudgetInput` carries
+      `restoreSliceSteps`/`restoreSdBytes`/`restoreOnlyBlocker` and `buildSyncDrainBudget` charges them;
+      `SyncDrainProgressSnapshot` carries `restorePhase`/`restoreProgressCounter` compared **before** the
+      no-active-work short-circuit; the counter is bumped per serviced grain and the terms are populated
+      from the live instances. Cases `test_drain_budget_includes_restore_work`,
+      `test_made_sync_drain_progress_counts_restore_motion` and `test_restore_only_drain_budget_is_bounded_not_zero`
+      are in the default gate (`test_persistence_sync_drain_budget`). **Nothing missing natively.** The
+      remaining clause is the A3.7 device integration claim, which is blocked by the shape-(b) finding, so
+      this task stays unchecked with that as its reason.
 
 - [x] A3.4 **Caller contract: completed / blocked / failed (D4 rule 7, G2 caller finding).**
       → **DONE 2026-09-24.** New pure contract owner `include/PersistenceDrainOutcome.h`:
@@ -709,6 +759,22 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       take to `EMPTY` instead of returning to `PLAYING` (reproduced on a capture from 2026-09-24 01:25,
       i.e. before this session's changes), so shape (b) used the dedicated script rather than that preset.
       Evidence: `captures/a37-clear-05-fresh/` (shape a), `captures/a37-clear-04-shapeb/` (shape b).
+      → **SHAPE (b) RE-ATTEMPTED 2026-09-24 (second session), still OPEN — blocked by a fatal
+      allocation.** `scripts/hitl_a37_shapeb.py` constructs "another track playing + a deferred save
+      genuinely owed + a restore in flight" and presses CLEAR on the reload target. Three fresh-boot
+      attempts (`captures/a37b-01/` 16-bar save, `-02/` 8-bar, `-03/` 2-bar bisect) all died before the
+      CLEAR with `#MEM_EXT_REFUSED bytes=22369620` →
+      `FATAL: both internal heap and external memory are exhausted!`. The pool total is **8,380,416 B**
+      (`psram_pool`), so the 22,369,620 B request is structurally impossible and reproduces at the same
+      value across runs. The only reachable route to "a restore in flight" on this device is
+      clear-then-reload (every payload-bearing slot is restored at boot), and the bisect shows the refusal
+      follows a `LoadLoopJob done` for the just-cleared slot. **This change therefore does not enable the
+      reload-after-external-reset route** (`isLoopSlotRestoreAttempted` stays `state == Terminal`,
+      conservative), and the allocation defect is recorded as a `runtime-working-set-ownership`/recording
+      finding, out of this change's scope. **Control:** a plain 2-bar take with no clear-then-reload
+      (`captures/a37-control-02/`) records and saves cleanly with **0 FATAL**, isolating the reload route.
+      Shape (b) remains a **mandatory** gate and is **not** taken, so the change is not archive-ready
+      (A5.5). See [`REVIEW.md`](REVIEW.md) § 2026-09-24 (second session).
 - [ ] A3.7 **Packet C device gate.** With a deferred save owed and a restore in flight, press CLEAR on the
       device — in both shapes: (a) nothing else sounding (including a restore whose cleanup starts the
       holdoff), and (b) **another track audibly playing**. **Verify:** shape (a) completes; shape (b)
@@ -746,6 +812,12 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       line is present and correct in both logs; 0 unexpected `could not reconcile` after repair.
       If the malformed-index case is not permitted, record Packet D's device clause as unrun and keep
       the task open.
+      → **HEALTHY-INDEX HALF TAKEN AND GREEN 2026-09-24 (second session).** A fresh-boot capture
+      (`captures/census-final-02/boot-census.log`) contains the named outcome
+      `[StorageManager] INFO: sets/index.bin reconcile ok`, with **0** unexpected `could not reconcile`
+      rows. The deliberately malformed-index half is **optional unrun** — it needs same-session
+      destructive-SD permission, which was not granted — so it is recorded unrun with that reason, which
+      A5.5 names as the one permitted optional gate.
 
 - [ ] A4.3 **Packet D gate.** Full native suite green; A4.1 cases green; RAM1 line recorded; A4.2
       status recorded as taken or explicitly unrun.
@@ -758,6 +830,15 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       stable. **Verify:** each leg's evidence is recorded in that change's
       `ARCHITECTURE-REVIEW.md`; any leg still failing returns as that change's finding, not this one's.
       This task is a handoff, not a second implementation of those legs.
+      → **IN PROGRESS 2026-09-24 (second session).** The post-restore census checkpoint is **finished and
+      device-verified** (see A4.2 / `captures/census-final-02/`): `free_chunks=451` after all restores,
+      readiness attested, S2b.3's `>= peak + 16` condition met, 0 reconcile failures. That is the fixture
+      S2b.3's post-restore budget and S1.3's slope pin to. **The slope itself is still blocked**: raising N
+      across boots requires a successful record, and this session's long takes on the fully-restored
+      library either failed the recording window (the separately tracked recording failures) or tripped the
+      clear-then-reload allocation FATAL recorded under A3.7. S1.1's per-owner census, S1.4's undo/root
+      baseline and S1.5's refusal point are unchanged from their recorded device runs. **No leg is
+      reinterpreted**; each returns as `runtime-working-set-ownership`'s finding.
 
 - [ ] A5.2 **Content-verified PASS** for the authorized scratch slot via the
       [`hitl-content-verification`](../../../.agents/skills/hitl-content-verification/SKILL.md)

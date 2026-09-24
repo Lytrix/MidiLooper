@@ -201,6 +201,12 @@ STORAGE_PERSIST_MEM bool isLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t 
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return false;
     }
+    // NOTE (A2.1): deliberately still `state == Terminal`, i.e. a stale-but-decided record counts as
+    // "finished with". Reading a stale terminal as *not* attempted makes `needsSlotLoad` true and lets a
+    // user CLEAR auto-reload the just-cleared slot; on device that reload reserves ~21.3 MB and trips
+    // `#MEM_EXT_REFUSED` / `FATAL: both internal heap and external memory are exhausted!` (recorded in
+    // REVIEW.md as a runtime-working-set-ownership defect, out of this change's scope). The generation
+    // advance still invalidates the identity for publication validation and for a fresh explicit request.
     return restoreRequestState(trackIndex, slotIndex) == RestoreRequestState::Terminal;
 }
 
