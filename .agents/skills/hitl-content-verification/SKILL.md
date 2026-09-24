@@ -103,6 +103,8 @@ base report `overall_ok`; `INCONCLUSIVE_CAPTURE` is not a pass.
 | USB serial port busy / no port | A leaked capture session; the managed harness kills it on exit, but confirm no stray `capture_session.py`. |
 | Build fails with `.flashmem` section conflicts | You set a fresh `PLATFORMIO_CORE_DIR`; unset it (section 4). |
 | Verifier cannot find an anchor | Use `verify_playback_content.py` (auto-selects an anchor); a fixed anchor is fixture-specific. |
+| Device wedges after transport stop: serial log ends mid-write (e.g. mid `PERS,work`), no boot line, `crash=0`, board still on USB but never answers | **Host-side fault, not firmware.** Closing the serial fd while the device is still emitting blocks `Serial.print` once the USB buffer fills, and the firmware then waits forever with no crash signature. Stop with the canonical protocol — `stop`, drain, `stop`, drain — and keep the port open through any `!CAPTURE_CONTENT` dump. A bespoke reader that closes right after `stop` reproduces this every time. Recovery: reset/re-upload. |
+| Device vanishes from USB entirely (`/dev/cu.usbmodem*` gone, no Teensy on the bus) | You reset with a **boot-only** request: `teensy_loader_cli --mcu=TEENSY41 -b` (or `-b -s`) parks the board in HalfKay with no sketch, so it never re-enumerates. Reboot by **re-uploading** (`pio run -e teensy41-capture-serial -t upload`), which programs and returns to the sketch. A `134`-baud open is a soft-reboot request and is less reliable than the upload path. |
 
 ## 8. Reuse for later verification scenarios
 

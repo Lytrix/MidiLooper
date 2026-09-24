@@ -840,6 +840,16 @@ SC_MEM_ATTR void capturePrewarmMemory(const char* phase) {
       (unsigned)LoopEventStore::freeChunkCount());
 }
 
+SC_MEM_ATTR void postRestoreCensus(uint16_t freeChunks, uint32_t heapFree) {
+  // Timestamped like every other DIAG line: `#CAP,<micros>,DIAG,...`. The tier parser takes the field
+  // after micros as the tag, so an un-timestamped form would also lose its Tier-A class.
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,post_restore_census,free_chunks=%u,admission_complete=1,"
+                       "interactive_ready=1,undo_hydrated=1,transport_stopped=1,"
+                       "deferred_prewarm_idle=1,heap_free=%lu\r\n"),
+                (unsigned long)micros(), static_cast<unsigned>(freeChunks),
+                (unsigned long)heapFree);
+}
+
 SC_MEM_ATTR void overdubWrapTick(uint32_t totalUs, uint32_t sealUs, uint32_t passApplyUs,
                                  uint32_t srcAppendUs, uint32_t commitUs, uint32_t sealPendUs,
                                  uint32_t beginUs) {

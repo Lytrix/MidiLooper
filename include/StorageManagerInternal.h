@@ -286,6 +286,14 @@ RestoreRequestWait restoreWaitReasonBlockingSave();
 /// the drain TU needs no vocabulary of its own.
 uint8_t restoreWaitCodeBlockingSave();
 bool restoreRequestRecordIsCurrent(uint8_t trackIndex, uint8_t slotIndex);
+/// A2.1: true once a terminal is recorded for the current record, so a publication can reject a request
+/// that was decided while its job was in flight.
+bool restoreRequestTerminalRecorded(uint8_t trackIndex, uint8_t slotIndex);
+/// A2.1/A1.8: true when any record exists for these coordinates (a live request or a decided terminal).
+bool restoreRequestRecordExists(uint8_t trackIndex, uint8_t slotIndex);
+/// A2.1/A1.8: the terminal recorded for these coordinates (`None` when undecided). Readable after an
+/// external generation advance, so a probe can report a superseded outcome.
+RestoreRequestTerminal restoreRequestTerminalFor(uint8_t trackIndex, uint8_t slotIndex);
 void markRestoreRequestRunning(uint8_t trackIndex, uint8_t slotIndex);
 void markRestoreRequestWaiting(uint8_t trackIndex, uint8_t slotIndex, RestoreRequestWait wait);
 /// Returns false when a terminal was already recorded for this identity (exactly-once).
@@ -359,6 +367,11 @@ bool appendBootLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex, uint16_t r
 void sortPendingLoopSlotRestoreQueue();
 bool peekFirstPendingLoopSlotRestore(DeferredLoopSlotRestore& out);
 void setRestoredSetBundlePath(const char* path);
+
+/// S1.3: true once the remaining-library background admission scan has finished. The census checkpoint
+/// needs this in addition to `hasPendingLoopSlotRestore()`, which cannot distinguish "scan complete" from
+/// "scan momentarily between turns".
+bool bootBackgroundFillAdmissionComplete();
 
 /// Boot / revision load: deferred undo-stack hydrate state (shared by epilogue + idle hydrate).
 extern char restoredSetBundlePath_[80];

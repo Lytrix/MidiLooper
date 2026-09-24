@@ -97,6 +97,26 @@ FLASHMEM bool TrackManager::servicePendingPreparedPlaybackPair() {
   return false;
 }
 
+FLASHMEM void TrackManager::requestDeferredPlaybackPrewarm(uint8_t trackIndex, uint8_t slotIndex) {
+  deferredPlaybackPrewarmPending_ = true;
+  deferredPlaybackPrewarmTrack_ = trackIndex;
+  deferredPlaybackPrewarmSlot_ = slotIndex;
+}
+
+FLASHMEM bool TrackManager::hasPendingDeferredPlaybackPrewarm() const {
+  return deferredPlaybackPrewarmPending_;
+}
+
+FLASHMEM bool TrackManager::takeDeferredPlaybackPrewarm(uint8_t& trackIndex, uint8_t& slotIndex) {
+  if (!deferredPlaybackPrewarmPending_) {
+    return false;
+  }
+  trackIndex = deferredPlaybackPrewarmTrack_;
+  slotIndex = deferredPlaybackPrewarmSlot_;
+  deferredPlaybackPrewarmPending_ = false;
+  return true;
+}
+
 void TrackManager::prewarmSelectedDisplayVisualCache() {
   const uint8_t trackIndex = getSelectedTrackIndex();
   Track& track = getTrack(trackIndex);

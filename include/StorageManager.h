@@ -83,6 +83,11 @@ public:
     static bool needsSlotLoad(uint8_t trackIndex, uint8_t slotIndex);
     /// True when boot restore queue is empty and no SlotLoadSession is active.
     static bool bootInteractiveReady();
+    /// S1.3/S2b.3: emit the one-shot `post_restore_census` checkpoint once every census condition holds
+    /// (background admission complete, restores + both job instances idle, undo hydration done, transport
+    /// stopped, no holdoff or in-flight persistence work). Session-capture only. See the definition for
+    /// why "last restore terminal plus a delay" is not the oracle.
+    static void emitPostRestoreCensusIfReady(const LooperState& state);
     /// True while undo snapshot bodies are still queued for idle hydrate from the runtime bundle.
     static bool hasPendingUndoSnapshotHydrate();
     static void requestUrgentEditSave();
@@ -246,6 +251,18 @@ public:
         /// The request the deferred save is currently waiting on, when it is waiting on one.
         bool saveBlockedBySlotLoad = false;
         bool saveBlockedByPostLoadHoldoff = false;
+        /// A1.8: the request-record vocabulary for the request each block above reports, so an operator
+        /// can tell a prepare-complete wait (`waiting_commit_gate`) and a decided terminal from ownership
+        /// alone. Null when no record exists for those coordinates (a cleared or never-begun record).
+        const char* queueHeadRequestState = nullptr;
+        const char* queueHeadRequestWait = nullptr;
+        const char* queueHeadRequestTerminal = nullptr;
+        const char* activeJobRequestState = nullptr;
+        const char* activeJobRequestWait = nullptr;
+        const char* activeJobRequestTerminal = nullptr;
+        const char* parkedJobRequestState = nullptr;
+        const char* parkedJobRequestWait = nullptr;
+        const char* parkedJobRequestTerminal = nullptr;
     };
     static void probeRestoreState(RestoreStateProbe& out);
 

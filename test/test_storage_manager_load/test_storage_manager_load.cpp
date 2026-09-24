@@ -559,6 +559,12 @@ void test_restore_state_probe_reports_queue_and_job_ownership() {
     TEST_ASSERT_EQUAL_UINT8(3, probe.queueHeadSlot);
     TEST_ASSERT_TRUE_MESSAGE(probe.queueHeadStartable,
                              "a queued request on a free slot must report startable");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("queued", probe.queueHeadRequestState,
+                                     "a queued request must report its `queued` record state");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("none", probe.queueHeadRequestWait,
+                                     "a queued request must not be given a fictitious wait");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("none", probe.queueHeadRequestTerminal,
+                                     "a queued request must not be given a fictitious terminal");
   }
 
   // (3) An in-flight job: the active instance owns the request and reports its phase and progress.
@@ -574,6 +580,10 @@ void test_restore_state_probe_reports_queue_and_job_ownership() {
     TEST_ASSERT_TRUE_MESSAGE(ownsSlot3, "the owning instance must name the request's (track, slot)");
     TEST_ASSERT_TRUE_MESSAGE(probe.activePayloadSize > 0 || probe.parkedPayloadSize > 0,
                              "an admitted job must report its payload size");
+    const char* jobState =
+        probe.activeJob ? probe.activeJobRequestState : probe.parkedJobRequestState;
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("running", jobState,
+                                     "an admitted job's request is `running`, not a wait or terminal");
   }
 
   // (4) A blocked head on a slot with a live owner: named, and reported not startable.
@@ -612,6 +622,59 @@ void test_restore_state_probe_reports_the_save_blocked_by_restore() {
   const bool hasSession = StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd();
   TEST_ASSERT_EQUAL_MESSAGE(hasSession ? 1 : 0, probe.saveBlockedBySlotLoad ? 1 : 0,
                             "the probe and the drain's own gate must agree on the save blocker");
+}
+
+/// **A1.8 — the probe reports a prepare-complete wait by name.** Under active transport the job's
+/// preparation is admitted (A2.2) but its commit is not, so the owning request must be reported
+/// `waiting_commit_gate`: the state the drain's verdict and an operator both read.
+void test_a18_probe_reports_prepare_complete_commit_gate_wait() {
+  SD.reset();
+  RestoreHarness::resetAllTracksAndPool();
+  StorageManagerInternal::resetAllRestoreRequestState();
+  RestoreHarness::setTrackAudiblyPlaying(1);  // transport active, focus track stopped
+
+  RestoreHarness::armBackgroundRestoreRequest(0, 5, 68);
+  bool commitPending = false;
+  for (int turn = 0; turn < 32; ++turn) {
+    RestoreHarness::runLoadServiceTurn();
+    if (StorageManager::hasLoadLoopJobCommitPending()) {
+      commitPending = true;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(commitPending, "the fixture needs a prepare-complete request");
+
+  StorageManager::RestoreStateProbe probe{};
+  StorageManager::probeRestoreState(probe);
+  const char* wait = probe.activeJob ? probe.activeJobRequestWait : probe.parkedJobRequestWait;
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "waiting_commit_gate", wait,
+      "a prepare-complete request under transport must be reported in its named commit-gate wait");
+}
+
+/// **A1.8 — the probe reports a decided terminal.** A request that has published reports its terminal
+/// (`committed`) rather than a wait, so "finished" and "still owed" are distinguishable from the probe.
+void test_a18_probe_reports_a_decided_terminal() {
+  SD.reset();
+  RestoreHarness::resetAllTracksAndPool();
+  StorageManagerInternal::resetAllRestoreRequestState();
+  RestoreHarness::setRuntimeTransportIdle();
+
+  RestoreHarness::armBackgroundRestoreRequest(0, 7, 67);
+  bool published = false;
+  for (int turn = 0; turn < 32 && !published; ++turn) {
+    RestoreHarness::runLoadServiceTurn();
+    published = trackManager.getSelectedTrack().getLoop(7).hasCommittedPasses();
+  }
+  TEST_ASSERT_TRUE_MESSAGE(published, "the fixture must reach publication");
+
+  StorageManager::RestoreStateProbe probe{};
+  StorageManager::probeRestoreState(probe);
+  const char* terminal =
+      probe.activeJob ? probe.activeJobRequestTerminal : probe.parkedJobRequestTerminal;
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "committed", terminal,
+      "the probe must report the decided terminal for the instance's request");
 }
 
 // ---------------------------------------------------------------------------
@@ -803,10 +866,16 @@ void test_a23_second_request_reports_job_capacity_wait_while_one_is_commit_pendi
 
   TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::isDeferredLoopSlotRestoreQueued(0, 3),
                            "the second request must still be tracked, not dropped");
-  TEST_ASSERT_EQUAL_STRING(
+  // A2.1: the wait is **recorded on the blocked request**, not merely a name the enum can produce.
+  TEST_ASSERT_EQUAL_INT_MESSAGE(
+      static_cast<int>(StorageManagerInternal::RestoreRequestState::Waiting),
+      static_cast<int>(StorageManagerInternal::restoreRequestState(0, 3)),
+      "the sibling-commit denial must be a named wait, not still queued");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
       "waiting_job_capacity",
       StorageManagerInternal::restoreRequestWaitName(
-          StorageManagerInternal::RestoreRequestWait::JobCapacity));
+          StorageManagerInternal::restoreRequestWaitFor(0, 3)),
+      "the blocked sibling must report the global job-capacity gate");
 }
 
 /// A fresh request is **queued**, not terminal: "not yet served" and "finished" are different states,
@@ -916,6 +985,76 @@ void test_restore_request_own_failure_cleanup_keeps_identity_as_retry_wait() {
   TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(StorageManagerInternal::RestoreRequestState::Waiting),
                                 static_cast<int>(StorageManagerInternal::restoreRequestState(0, 2)),
                                 "its own failed attempt is a retry wait, not superseded");
+}
+
+/// **A2.1 — recording names `waiting_capture`.** A queued background request whose preparation the
+/// documented SD-session deferral denies must report that reason by name, not sit `queued` with no
+/// explanation. This is the other half of the C1/C2 gate: transport alone no longer denies preparation
+/// (A2.2), so capture is the remaining named denial.
+void test_a21_recording_names_the_capture_wait() {
+  SD.reset();
+  RestoreHarness::resetAllTracksAndPool();
+  StorageManagerInternal::resetAllRestoreRequestState();
+  RestoreHarness::setRuntimeTransportIdle();
+
+  // Arm the request while idle, then start recording: the request is owed and preparation is denied.
+  RestoreHarness::armBackgroundRestoreRequest(0, 3, 74);
+  RestoreHarness::setTrackRecording(1);
+  RestoreHarness::runSingleLoadServiceTurn();
+
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::isDeferredLoopSlotRestoreQueued(0, 3),
+                           "the request must stay owed while capture defers it");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(
+      static_cast<int>(StorageManagerInternal::RestoreRequestState::Waiting),
+      static_cast<int>(StorageManagerInternal::restoreRequestState(0, 3)),
+      "a capture denial must be a named wait, not a terminal and not still queued");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "waiting_capture",
+      StorageManagerInternal::restoreRequestWaitName(
+          StorageManagerInternal::restoreRequestWaitFor(0, 3)),
+      "the recorded wait must name capture");
+}
+
+/// **A2.1 — the stale-identity rejection immediately before publication.** A job whose request an
+/// external reset superseded while the parsed body was still in flight must publish **nothing**: the
+/// slot may already hold a different owner's content, and the request it was serving has been decided.
+/// The `superseded` terminal stays readable under the identity it was created with.
+void test_a21_stale_identity_is_rejected_immediately_before_publication() {
+  SD.reset();
+  RestoreHarness::resetAllTracksAndPool();
+  StorageManagerInternal::resetAllRestoreRequestState();
+  RestoreHarness::setRuntimeTransportIdle();
+
+  RestoreHarness::armBackgroundRestoreRequest(0, 6, 76);
+  // Drive to the exact pre-publication window: the job is Committing (parsed, not yet applied).
+  bool commitPending = false;
+  for (int turn = 0; turn < 32; ++turn) {
+    RestoreHarness::runLoadServiceTurn();
+    if (StorageManager::hasLoadLoopJobCommitPending()) {
+      commitPending = true;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(commitPending, "the fixture needs a prepared, unpublished body");
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.getSelectedTrack().getLoop(6).hasCommittedPasses(),
+                            "the fixture must stop before publication");
+
+  // An external reset of the coordinates: a user CLEAR / a different owner committing that slot.
+  StorageManagerInternal::advanceRestoreRequestGeneration(0, 6);
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::restoreRequestRecordIsCurrent(0, 6),
+                            "the external reset must make the in-flight request stale");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "superseded",
+      StorageManagerInternal::restoreRequestTerminalName(
+          StorageManagerInternal::restoreRequestTerminalFor(0, 6)),
+      "the external reset must record `superseded` under the request's own identity");
+
+  // The commit step must reject the stale identity and publish nothing.
+  RestoreHarness::runSingleLoadServiceTurn();
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.getSelectedTrack().getLoop(6).hasCommittedPasses(),
+                            "a stale identity must publish NOTHING");
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::hasLoadLoopJobCommitPending(),
+                            "the rejected job must be released, not left commit-pending");
 }
 
 // ---------------------------------------------------------------------------
@@ -1074,6 +1213,8 @@ int main(int, char**) {
   // A1.8 — observability is default-gate: it is observation-only and passes on the current tree.
   RUN_TEST(test_restore_state_probe_reports_queue_and_job_ownership);
   RUN_TEST(test_restore_state_probe_reports_the_save_blocked_by_restore);
+  RUN_TEST(test_a18_probe_reports_prepare_complete_commit_gate_wait);
+  RUN_TEST(test_a18_probe_reports_a_decided_terminal);
   // A2.1 — the request record's identity/state contracts (default-gate; the record satisfies them).
   RUN_TEST(test_restore_request_state_is_driven_by_the_production_path);
   RUN_TEST(test_restore_request_slot_owned_denial_names_the_wait);
@@ -1084,6 +1225,8 @@ int main(int, char**) {
   RUN_TEST(test_restore_request_reused_coordinates_are_a_new_request);
   RUN_TEST(test_restore_request_set_change_supersedes_outstanding);
   RUN_TEST(test_restore_request_own_failure_cleanup_keeps_identity_as_retry_wait);
+  RUN_TEST(test_a21_recording_names_the_capture_wait);
+  RUN_TEST(test_a21_stale_identity_is_rejected_immediately_before_publication);
   // SD write-mode semantics: the stale-temp corruption fix, and the in-place patch contract.
   RUN_TEST(test_sd_rewrite_does_not_inherit_a_stale_temp_body);
   RUN_TEST(test_sd_in_place_patch_keeps_the_body_and_does_not_append);
