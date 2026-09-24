@@ -1,5 +1,27 @@
 # Project state (execution context)
 
+**2026-09-24 (fifth session) — the restore-liveness ruling is recorded as DEC-082; the change stays open on A3.7 shape (b).**
+
+[`DEC-082`](../DECISION_LOG.md#dec-082--the-restore-request-is-the-unit-identity-named-waits-preparation-under-transport-and-a-three-way-drain)
+records the ruling in four clauses (request identity with named waits and exactly-one-terminal; background
+preparation admitted under transport with apply still on the global commit gate and the task-3.3 boundary;
+the three-way completed/temporarily-blocked/failed drain that advances rather than cancels; and that a named
+wait is a valid outcome), with evidence stated **per clause**. The drain-advance **device integration
+(A3.7 shape (b)) is recorded as NOT VERIFIED** inside the entry itself, so the decision record does not
+pre-claim it. A5.4 is closed; A5.5's closeout table now reads A5.2/A4.3/A5.4 taken+green, A4.2's malformed
+half the one optional-unrun, A5.3 partial, and **A3.8 and A5.1 the two open mandatory items**.
+
+Also resolved this session: the "restored yet empty" mismatch I had flagged is **not a defect** — the
+earlier probe CLEARed the slot, whose persistence wrote an empty payload, and the reload committed that
+empty payload, so the next boot restored an empty-but-committed slot that correctly has no committed
+passes. It does name a quirk of the route-enabled behavior: after a CLEAR the stale request makes
+`needsSlotLoad` true, so the just-emptied slot is re-requested redundantly.
+
+**Waiting on the owner:** (1) whether to enable the reload-on-clear route in the change (the guard makes it
+safe; it is the semantics `advanceRestoreRequestGeneration` was built for), and (2) authorisation to clear a
+defined subset of the approved scratch range for the shape-(b) target. No further sweeps or SD cleanup were
+run.
+
 **2026-09-24 (third session) — the ~22 MB abort is diagnosed and fixed at its owner (`LoopEventStore`); `deferred-slot-restore-liveness` stays open.**
 
 The `#MEM_EXT_REFUSED bytes=22369620` abort that blocked A3.7 shape (b) is a **malformed size

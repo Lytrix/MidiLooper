@@ -2910,6 +2910,18 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (fifth session) — `DEC-082` records the restore-liveness ruling; A5.4 closed; the change stays open on A3.7 shape (b).**
+[`DEC-082`](../DECISION_LOG.md#dec-082--the-restore-request-is-the-unit-identity-named-waits-preparation-under-transport-and-a-three-way-drain)
+records the ruling in four clauses with **per-clause evidence**, and marks the drain-advance **device
+integration (A3.7 shape (b)) as NOT VERIFIED** inside its own evidence table, so the decision record does
+not pre-claim it. A5.4 is checked off; A5.5's closeout table now lists A5.2/A4.3/A5.4 taken+green, A4.2's
+malformed half the one optional-unrun, A5.3 partial, and **A3.8 and A5.1 open**. Also: the "restored yet
+empty" mismatch is **not a defect** (the probe's CLEAR wrote an empty payload and the reload committed it),
+but it names a route quirk — after a CLEAR the stale request makes `needsSlotLoad` true and re-requests the
+just-emptied slot. **Waiting on the owner:** enable reload-on-clear in the change, and authorise clearing a
+defined scratch subset for the shape-(b) target. No further sweeps or SD cleanup were run.
+
+
 **2026-09-24 (fourth session) — the corrupt-tick raise is intermittent, and the shape-(b) fixture could not hold its condition.**
 Re-running the a37b sequence with the guard produced **no** raise (no refusal, no `#MEM_EXT_REFUSED`, no
 FATAL, `captures/prod-probe-01/`), so the corruption is **intermittent/state-dependent**, not deterministic
