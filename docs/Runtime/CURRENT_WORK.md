@@ -2910,6 +2910,22 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (fourth session) — the corrupt-tick raise is intermittent, and the shape-(b) fixture could not hold its condition.**
+Re-running the a37b sequence with the guard produced **no** raise (no refusal, no `#MEM_EXT_REFUSED`, no
+FATAL, `captures/prod-probe-01/`), so the corruption is **intermittent/state-dependent**, not deterministic
+— and that run left the reload only `queued` (the scratch track was still overdubbing), which is not a
+restore in flight. A second construction (`scripts/hitl_a37_shapeb_v2.py`, route temporarily enabled,
+reverted byte-identical) aimed to put a `LoadLoopJob` in flight at the save-owed edge, but its reload target
+was already RAM-empty at the first CLEAR (`Clear ignored — selected slot is empty`), so no reload queued;
+re-selecting it then started an empty record (`length=0`) and the final CLEAR found no owed save
+(`captures/a37b2-01/`). **Conclusion:** closing A3.7 shape (b) needs the reload-on-clear route enabled
+**deliberately in the change** (with the guard) plus a target whose committed content is verified at the
+CLEAR edge — an owner decision on the route, not another script iteration. It also surfaced that a slot
+restored as `RRQ,2,1,0,0,committed` read as empty to `hasDataInSlot`; that disagreement needs understanding
+first. Device disclosure: track 3 slot 2 was already empty; track 5 slot 1 (approved scratch) holds a failed
+empty-record attempt.
+
+
 **2026-09-24 (third session) — the ~22 MB abort is diagnosed and fixed at its owner (`LoopEventStore`); `deferred-slot-restore-liveness` stays open.**
 `22369620 = 4 × 5,592,405` and `22369612 = 4 × 5,592,403` are a 4-byte-element vector: `LoopEventStore`'s
 `barFirstIndices_` (`std::vector<size_t, InternalHeapFirstAllocator<size_t>>`). `appendToTailChunk` and
