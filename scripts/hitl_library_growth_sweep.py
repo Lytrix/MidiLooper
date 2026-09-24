@@ -39,6 +39,7 @@ from hitl.control_constants import (  # noqa: E402
     RECORD_BUTTON_NOTE,
     TRACK_SELECT_NOTE_BASE,
 )
+from hitl.library_observation import parse_capture_lines  # noqa: E402
 
 MIDI_CLOCK = 0xF8
 MIDI_STOP = 0xFC
@@ -177,6 +178,11 @@ def boot_census(session: Session) -> dict[str, object]:
 
     The walk pair is reservation telemetry; the **post-restore** figure S2b.3/S1.3 pin to is the
     `post_restore_census` marker, which attests every readiness condition first.
+
+    `restored-library-stability` 1.4: the same window is also classified per slot by the shared
+    library-observation classifier, so each boot carries the observed fields, the four D4 quantities,
+    the window completeness and the nullable cause. The observation window is the capture log itself,
+    which is why the completion count is reported as window-scoped.
     """
     phases, rows = [], []
     marker: dict[str, object] | None = None
@@ -203,10 +209,12 @@ def boot_census(session: Session) -> dict[str, object]:
                              "credits": int(r.group(5)), "free_chunks": int(r.group(6))})
     pre = next((p["free_chunks"] for p in phases if p["phase"] == "before"), None)
     post = next((p["free_chunks"] for p in phases if p["phase"] == "after"), None)
+    observation = parse_capture_lines(session.lines)
     return {"phase_before_free": pre, "phase_after_free": post,
             "post_restore_free_chunks": marker.get("free_chunks") if marker else None,
             "census_marker": marker,
-            "library_rows": rows, "phases": phases}
+            "library_rows": rows, "phases": phases,
+            "library_observation": observation}
 
 
 def main() -> int:
@@ -270,7 +278,8 @@ def main() -> int:
         args.port = wait_for_port() or args.port
         banner, reconcile, loaded, empty_states = False, 0, [], []
         census = {"phase_before_free": None, "phase_after_free": None,
-                  "post_restore_free_chunks": None, "census_marker": None, "library_rows": []}
+                  "post_restore_free_chunks": None, "census_marker": None, "library_rows": [],
+                  "library_observation": None}
         try:
             s2 = Session(args.port, step_dir / "boot.log")
         except Exception as exc:  # noqa: BLE001 - recorded, not fatal
@@ -300,6 +309,12 @@ def main() -> int:
                "free_before": census["phase_before_free"],
                "free_after": census["phase_after_free"],
                "n_committed_slots": committed_slots,
+               # `restored-library-stability` 1.4: N is explicitly window-scoped — distinct slots whose
+               # `committed` terminal was observed within this capture window (background admission
+               # included). It is neither the boot playback set nor the library size, and an incomplete
+               # window is stated as such rather than presented as the settled library state.
+               "n_committed_slots_window_scoped": committed_slots,
+               "library_observation": census["library_observation"],
                "post_restore_free_chunks": census["post_restore_free_chunks"],
                "census_marker": census["census_marker"],
                "library_rows": census["library_rows"],

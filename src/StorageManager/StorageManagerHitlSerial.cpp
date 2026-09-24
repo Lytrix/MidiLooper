@@ -673,6 +673,13 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                        !clockManager.isTransportRunning()) {
                 trackManager.getTrack(trackManager.getSelectedTrackIndex())
                     .printStoppedServiceStatusForHitl();
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!LIB_OBSERVE") == 0) {
+                // `restored-library-stability` 1.3: request the bounded on-demand library observation.
+                // Deliberately not transport-gated: the states it must explain include a restore waiting
+                // on the commit gate while another track plays. The observation itself respects the
+                // SD-session admission and never blocks on it.
+                StorageManager::requestLibraryObservation();
+                Serial.println("[StorageManager] library observation requested");
             } else if (std::strcmp(sHitlSerialLineBuffer, "!TRACE_DRAIN") == 0 &&
                        !clockManager.isTransportRunning()) {
                 // Explicit stopped-only retrieval also works while a pending

@@ -13,6 +13,9 @@ _FIRMWARE_BOUNDARY_SUITES = {
     # Packet C (A3.4a): the real MIDI/controller dispatch route, which pulls the button manager and the
     # configured action table.
     "test_drain_reentry_callback_safety",
+    # restored-library-stability 1.3: the on-demand library observation links the load/restore owners
+    # against the in-memory SD card, so it needs the same hardware boundaries as the load suite.
+    "test_library_observation_session",
 }
 if env.get("PIOTEST_RUNNING_NAME") in _FIRMWARE_BOUNDARY_SUITES:
     env.Append(CPPPATH=["$PROJECT_DIR/test/test_support/firmware"])

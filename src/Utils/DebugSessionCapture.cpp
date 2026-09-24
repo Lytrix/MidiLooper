@@ -549,6 +549,62 @@ SC_MEM_ATTR void restoreRequest(uint8_t track, uint8_t slot, uint32_t requestGen
                 (unsigned long)requestGeneration, (unsigned long)setEpoch, state, wait, terminal);
 }
 
+// `restored-library-stability` 1.3 — the on-demand library observation's `LIBOBS` record family. A
+// distinct family from `DIAG,post_restore_census`: the observation is never emitted as, or by, the
+// settled census checkpoint.
+//
+// **Compact on purpose.** The capture text cap is `kMaxCaptureTextBytes = 192`; the first version used
+// full names and was silently truncated on device (`LIBOBS,slot,...` lost everything after
+// `passes`), so the framing fields read as zero. Enum fields are wire **codes**
+// (`LibraryObservation::causeCode` and friends) and keys are one/two characters; the host parser owns
+// the reverse mapping.
+SC_MEM_ATTR void libraryObservationBegin(uint32_t windowStartUs, uint32_t setEpoch, uint16_t slotCount) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,LIBOBS,B,a=%lu,e=%lu,s=%u\r\n"), (unsigned long)micros(),
+                (unsigned long)windowStartUs, (unsigned long)setEpoch,
+                static_cast<unsigned>(slotCount));
+}
+
+SC_MEM_ATTR void libraryObservationSlot(uint8_t track, uint8_t slot, uint8_t stateMask, char cause,
+                                        uint8_t payload, uint8_t offered, uint8_t request, uint8_t wait,
+                                        uint8_t terminal, uint32_t requestGeneration, uint32_t setEpoch,
+                                        uint8_t hasCommittedContent, uint16_t committedPassCount,
+                                        uint32_t highestCommittedPassId, uint32_t loopLengthTicks,
+                                        uint32_t committedEventCount, uint8_t requiredForInitialPlayback,
+                                        uint8_t committedTerminalInWindow, uint8_t invalidated) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,LIBOBS,S,t=%u,s=%u,st=%u,c=%c,p=%u,o=%u,q=%u,w=%u,m=%u,g=%lu,"
+                       "e=%lu,k=%u,a=%u,h=%lu,l=%lu,v=%lu,n=%u,i=%u,x=%u\r\n"),
+                (unsigned long)micros(), static_cast<unsigned>(track), static_cast<unsigned>(slot),
+                static_cast<unsigned>(stateMask), cause, static_cast<unsigned>(payload),
+                static_cast<unsigned>(offered), static_cast<unsigned>(request),
+                static_cast<unsigned>(wait), static_cast<unsigned>(terminal),
+                (unsigned long)requestGeneration, (unsigned long)setEpoch,
+                static_cast<unsigned>(hasCommittedContent), static_cast<unsigned>(committedPassCount),
+                (unsigned long)highestCommittedPassId, (unsigned long)loopLengthTicks,
+                (unsigned long)committedEventCount,
+                static_cast<unsigned>(requiredForInitialPlayback),
+                static_cast<unsigned>(committedTerminalInWindow), static_cast<unsigned>(invalidated));
+}
+
+SC_MEM_ATTR void libraryObservationEnd(uint32_t windowStartUs, uint32_t windowEndUs, uint16_t turns,
+                                       uint16_t restarts, uint16_t slotsObserved,
+                                       uint16_t payloadInventory, uint16_t initialPlaybackRequired,
+                                       uint16_t observedRestoreCompletions,
+                                       uint16_t committedAtCheckpoint, uint8_t admissionComplete,
+                                       uint8_t everyInitialPlaybackSlotObserved,
+                                       uint8_t consistentView, uint8_t complete) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,LIBOBS,E,a=%lu,b=%lu,t=%u,r=%u,s=%u,p=%u,i=%u,c=%u,m=%u,n=%u,"
+                       "e=%u,v=%u,x=%u\r\n"),
+                (unsigned long)micros(), (unsigned long)windowStartUs, (unsigned long)windowEndUs,
+                static_cast<unsigned>(turns), static_cast<unsigned>(restarts),
+                static_cast<unsigned>(slotsObserved), static_cast<unsigned>(payloadInventory),
+                static_cast<unsigned>(initialPlaybackRequired),
+                static_cast<unsigned>(observedRestoreCompletions),
+                static_cast<unsigned>(committedAtCheckpoint),
+                static_cast<unsigned>(admissionComplete),
+                static_cast<unsigned>(everyInitialPlaybackSlotObserved),
+                static_cast<unsigned>(consistentView), static_cast<unsigned>(complete));
+}
+
 SC_MEM_ATTR void stateTransition(const char* component, const char* from, const char* to) {
   emitCapPrintf("#CAP,%lu,ST,%s,%s,%s\r\n", (unsigned long)micros(), component, from, to);
 }

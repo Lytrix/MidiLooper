@@ -18,6 +18,7 @@
 #include "SavedSetCatalog.h"
 #include "StorageActivitySnapshot.h"
 #include "StorageLoopIo.h"
+#include "StorageManager/LibraryObservation.h"
 #include "PersistenceDrainOutcome.h"
 #include "PersistenceDrainGuard.h"
 #include "PersistenceSyncDrainBudget.h"
@@ -481,6 +482,39 @@ bool applyLoadedTransportFooter(uint8_t numTracks, const std::vector<uint8_t>& a
 bool handleHitlQuarantineCommandLine(const char* line);
 void quarantineCorruptRuntimeBundleOnSd();
 #endif
+
+/// `restored-library-stability` 1.3 — read-only view of the on-demand library observation, for the
+/// native fixtures. It reports the declared per-invocation bounds and the collection progress; it cannot
+/// request or advance the observation (the production entry points are
+/// `StorageManager::requestLibraryObservation` / `serviceLibraryObservation`).
+struct LibraryObservationView {
+    bool requested = false;
+    bool reportReady = false;
+    /// 0 idle, 1 collecting, 2 emitting, 3 done.
+    uint8_t phase = 0;
+    uint8_t cursorTrack = 0;
+    uint8_t cursorSlot = 0;
+    uint16_t turns = 0;
+    uint16_t restarts = 0;
+    uint16_t collected = 0;
+    uint16_t emittedSlots = 0;
+    uint16_t slotsPerInvocation = 0;
+    uint16_t sdProbesPerInvocation = 0;
+    uint8_t lastInvocationSlots = 0;
+    uint8_t lastInvocationSdProbes = 0;
+    uint32_t windowStartUs = 0;
+    uint32_t windowEndUs = 0;
+    uint32_t setEpochAtStart = 0;
+};
+
+LibraryObservationView libraryObservationView();
+/// The classified record for `(track, slot)`; a default-constructed record when it was never observed.
+const LibraryObservation::SlotResult& libraryObservationResultAt(uint8_t trackIndex, uint8_t slot);
+/// Test reset: drop any in-flight observation state. The production path never calls this.
+void resetLibraryObservationState();
+
+void requestLibraryObservationImpl();
+void serviceLibraryObservationImpl();
 
 inline bool hasPersistenceWorkPending() {
 #if BYPASS_STOP_UNDO_SAVE
