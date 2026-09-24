@@ -2928,3 +2928,31 @@ the tick, then fix that owner. Do not re-enable the route in the change itself u
 
 Evidence: `captures/a37b-01/`, `captures/a37b-02/`, `captures/a37b-03/` (aborts),
 `captures/a37-control-02/` (clean control).
+
+### Bounded clear/reload probe (2026-09-24, third session) — the corrupt tick is **not** reproduced by a clean clear-then-reload
+
+With the reload-after-external-reset route **temporarily enabled** in an investigation build (reverted
+afterwards; `src/StorageManager/LoopSlotRestoreQueue.cpp` restored byte-identical), the clear/reload probe
+(`scripts/hitl_clear_reload_probe.py`) cleared three populated slots and watched the reloads:
+
+| CLEAR (1-based) | reload request | outcome |
+|---|---|---|
+| track 3 slot 2 | `RRQ,2,1,1,0` queued → running → committed | clean, **no** `out-of-range tick` |
+| track 3 slot 3 | `RRQ,2,2,1,0` queued → running → committed | clean, **no** refusal |
+| track 3 slot 4 | reload window not captured (probe closed 8 s after the press) | unknown |
+
+No `#MEM_EXT_REFUSED`, no FATAL, and no `LoopEventStore refused out-of-range tick` line appeared in any
+captured window, so **the clean clear-then-reload of a populated slot does not produce the
+near-`UINT32_MAX` tick** in the two windows that were read, and the "torn payload from the clear's own
+save" hypothesis is **falsified for this condition**. Two caveats
+recorded rather than smoothed over: the reloads landed ~9 s after each CLEAR, i.e. **after the probe's 8 s
+window**, so the per-slot counters printed `requests=0` even though the reloads appear later in the log; and
+the a37b reproductions additionally had a **long record + deferred save in flight** at the CLEAR moment,
+which this probe did not, so the producer is still unidentified and its trigger is state-dependent.
+
+**Side effect to disclose.** Clear-then-reload re-commits the cleared slot from its payload, so the CLEAR
+attempts did **not** remove the track 3 slots 2–4 content — the reload restored it. Removing that content
+needs a clear on the **normal** firmware (route off, so no automatic reload) and then a check of whether the
+payload file was itself removed or merely left for a later boot scan.
+
+Evidence: `captures/cr-probe-01/session.log`.

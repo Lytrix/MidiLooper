@@ -1,5 +1,37 @@
 # Project state (execution context)
 
+**2026-09-24 (third session) — the ~22 MB abort is diagnosed and fixed at its owner (`LoopEventStore`); `deferred-slot-restore-liveness` stays open.**
+
+The `#MEM_EXT_REFUSED bytes=22369620` abort that blocked A3.7 shape (b) is a **malformed size
+calculation, not an allocator defect**. `22369620 = 4 × 5,592,405` and `22369612 = 4 × 5,592,403`: a
+4-byte-element vector. The sites are `LoopEventStore`'s bar index
+(`std::vector<size_t, InternalHeapFirstAllocator<size_t>>`, `size_t` = 4 on target):
+`appendToTailChunk` and `rebuildBarIndex` both did `bar = event.tick / BAR_TICKS;
+resize(bar + 1)` with **no bound**. `BAR_TICKS` is 768 and `floor(0xFFFFFFFF / 768) = 5,592,405` — exactly
+the observed element count — so the input is a tick near `UINT32_MAX` (uninitialised/sentinel), not
+content-derived. `clear()` drops the index and the next `append`/rebuild sizes it from the chunk events, so
+a corrupt tick in an adopted/reloaded chunk sizes it in one `resize`.
+
+**Fix (owner: `LoopEventStore`).** `MAX_INDEXED_BARS = 4096` (`MAX_INDEXED_TICKS = 4096 × BAR_TICKS`,
+far above the 64-bar target so no real loop or over-run take is affected); `append` **refuses** a larger
+tick as `LoopEventStoreAppendDeny::TickOutOfRange`, named and logged rather than silently clamped so the
+corrupt producer stays visible; `rebuildBarIndex` skips an out-of-range bar defensively for adopted
+content. **Reproducer red→green:** `test_out_of_range_tick_cannot_size_the_bar_index`. Full native
+**2,344 / 1 skipped / 0 failures**; capture-serial **SUCCESS** `code 391,064 + padding 2,152` (1,312 B
+above the 840 floor). Investigation: `runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § P1.
+
+**Producer: the obvious hypothesis is falsified.** With the route temporarily enabled, a bounded probe
+(`captures/cr-probe-01/`) cleared three populated slots and the queued reloads committed **cleanly** — no
+`out-of-range tick` refusal, no FATAL. So a clean clear-then-reload does **not** produce the corrupt tick,
+and the "torn payload from the clear's own save" hypothesis is withdrawn for that condition. The producer
+remains unidentified and its trigger is state-dependent: the a37b reproductions additionally had a long
+record and its deferred save in flight at the CLEAR, which the probe did not. **Next step:** reproduce with
+the record+save in flight, reading the `TickOutOfRange` refusal to name the producing slot. Side effect
+disclosed: clear-then-reload re-commits the cleared slot, so the probe did **not** remove the track 3
+slots 2-4 content. Also corrected: "clear-then-reload is the only reachable route" is stronger than the
+evidence supports — it is the route tried; a controlled boot/background-restore fixture may exercise the
+gate another way.
+
 **2026-09-24 (second session) — the post-restore census checkpoint is finished and device-verified; A2.1/A1.8 closed; A3.7 shape (b) blocked by a fatal allocation.**
 
 ## Census checkpoint (S1.3/S2b.3 fixture) — DONE and device-verified
