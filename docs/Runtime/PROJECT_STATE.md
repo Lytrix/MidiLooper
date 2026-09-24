@@ -22,7 +22,7 @@ safe; it is the semantics `advanceRestoreRequestGeneration` was built for), and 
 defined subset of the approved scratch range for the shape-(b) target. No further sweeps or SD cleanup were
 run.
 
-**2026-09-24 (third session) — the ~22 MB abort is diagnosed and fixed at its owner (`LoopEventStore`); `deferred-slot-restore-liveness` stays open.**
+**2026-09-24 (third session) — the oversized bar-index allocation is bounded at its owner (`LoopEventStore`); the producer and adopted-content integrity remain unresolved, and `deferred-slot-restore-liveness` stays open.**
 
 The `#MEM_EXT_REFUSED bytes=22369620` abort that blocked A3.7 shape (b) is a **malformed size
 calculation, not an allocator defect**. `22369620 = 4 × 5,592,405` and `22369612 = 4 × 5,592,403`: a
@@ -34,13 +34,20 @@ the observed element count — so the input is a tick near `UINT32_MAX` (uniniti
 content-derived. `clear()` drops the index and the next `append`/rebuild sizes it from the chunk events, so
 a corrupt tick in an adopted/reloaded chunk sizes it in one `resize`.
 
-**Fix (owner: `LoopEventStore`).** `MAX_INDEXED_BARS = 4096` (`MAX_INDEXED_TICKS = 4096 × BAR_TICKS`,
+**Bounded fix (owner: `LoopEventStore`) — this is exactly what it does, and no more.** `MAX_INDEXED_BARS = 4096` (`MAX_INDEXED_TICKS = 4096 × BAR_TICKS`,
 far above the 64-bar target so no real loop or over-run take is affected); `append` **refuses** a larger
 tick as `LoopEventStoreAppendDeny::TickOutOfRange`, named and logged rather than silently clamped so the
 corrupt producer stays visible; `rebuildBarIndex` skips an out-of-range bar defensively for adopted
 content. **Reproducer red→green:** `test_out_of_range_tick_cannot_size_the_bar_index`. Full native
 **2,344 / 1 skipped / 0 failures**; capture-serial **SUCCESS** `code 391,064 + padding 2,152` (1,312 B
 above the 840 floor). Investigation: `runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § P1.
+
+**Not resolved, and not to be read into the bound:** the **corrupt-tick producer** (intermittent — see
+below) and **adopted-content integrity** — `rebuildBarIndex` skips the bad bar, but the invalid event stays
+in its chunk and every other reader still sees the bad `tick`. The bound protects one index, not the
+content, and it does **not** show the route safe or semantically correct. **Owner decision: reload-on-clear
+stays disabled** — advancing a request generation invalidates stale work; it does not authorise reloading
+cleared content, and CLEAR unexpectedly restoring old SD content would violate its intended behaviour.
 
 **Producer: the obvious hypothesis is falsified.** With the route temporarily enabled, a bounded probe
 (`captures/cr-probe-01/`) cleared three populated slots and the queued reloads committed **cleanly** — no
@@ -49,13 +56,14 @@ and the "torn payload from the clear's own save" hypothesis is withdrawn for tha
 remains unidentified and its trigger is **intermittent**: re-running the full a37b sequence with the guard
 in place produced **no** refusal, no `#MEM_EXT_REFUSED` and no FATAL at all (`captures/prod-probe-01/`), and
 that run left the reload `queued` rather than in flight (the scratch track was still overdubbing), so it did
-not exercise A3.7 shape (b) either. **Next step:** catch the raise rather than assume it — repeat, or add
-allocation-site context so one catch names the store owner, or instrument the SD-load staging path (the only
-`rebuildBarIndex` caller outside `append`). Side effect
-disclosed: clear-then-reload re-commits the cleared slot, so the probe did **not** remove the track 3
-slots 2-4 content. Also corrected: "clear-then-reload is the only reachable route" is stronger than the
-evidence supports — it is the route tried; a controlled boot/background-restore fixture may exercise the
-gate another way.
+not exercise A3.7 shape (b) either. **Next step (owner direction):** the read-only `committed`-versus-`hasDataInSlot` trace first, then a
+fixture built through an **intended** restore entry point that can assert its own preconditions — target
+content exists immediately before CLEAR, a restore has actually started (an active `LoadLoopJob`, not a
+queued request), a save is owed, and another track is audibly playing. Catching the raise stays open but is
+not the next step. **Device scope: track 3 is untouched** — being RAM-empty is not permission to modify its
+persisted content — and no further device attempt is warranted until that fixture exists. Also corrected:
+"clear-then-reload is the only reachable route" is stronger than the evidence supports; it is the route
+tried.
 
 **2026-09-24 (second session) — the post-restore census checkpoint is finished and device-verified; A2.1/A1.8 closed; A3.7 shape (b) blocked by a fatal allocation.**
 

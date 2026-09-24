@@ -950,3 +950,64 @@ other committed slots.
 
 This also explains the first sweep's "flat" reading without contradiction: track 6 was already at its
 population, so the three steps overwrote existing slots and nothing could grow.
+
+## Read-only trace — `committed` does **not** imply nonempty content at a later CLEAR edge (2026-09-24, sixth session)
+
+Follows the "restored yet empty" mismatch. **No device mutation**: the trace reads the existing captures
+plus the code path, and track 3 is left untouched.
+
+### The publication chain
+
+* `commitLoadLoopJobPublish` calls `applyLoadedLoopSlotBodyCommit` and then
+  `markRestoreRequestTerminal(…, Committed)` **unconditionally** — the terminal records that a publication
+  happened, not how much content it carried.
+* `applyLoadedLoopSlotBodyCommit` → `applySnapshotToLoop` installs the payload's metadata and passes. For a
+  payload with no passes and `loopLengthTicks == 0` the slot ends genuinely empty.
+* `Track::hasDataInSlot` → `Loop::hasData()` = `hasCommittedPasses() || loopLengthTicks > 0 ||
+  !capture.store.empty()`. So `hasDataInSlot == false` means all three are false.
+
+**Therefore a `committed` terminal followed by `hasDataInSlot == false` is consistent, not contradictory:**
+it is an empty payload that published successfully. `committed` proves publication occurred; it proves
+nothing about content at a later edge.
+
+### The same slot and identity through the captures
+
+Target: track index 2 / slot index 1 (1-based track 3 / loop 2), the slot used by both probes.
+
+| Step | Evidence | Reading |
+|---|---|---|
+| sweep records it | `captures/s13-slope-02/step00_slot2/record.log`: `LoopPersist,slot:2:1` body written, `finalize=VerifyAndRename`, `done ok` | a payload was persisted |
+| next boots restore it | `step01`/`step02` `boot.log`: `RRQ,2,1,0,0` → `running` → `terminal,none,committed` (gen 0, epoch 0) | request identity advanced through publication |
+| probe CLEARs it | `captures/cr-probe-01/session.log` 20.772 s: `[TRACK] Track cleared @ tick 0`, `MIDI: Clear selected slot 2` | a **real** clear (not `Clear ignored`), so the slot had data then |
+| its persistence rewrites the payload | same log, micros 23,709,969–23,789,969 (`LoopPersist,slot:2:1` … `done ok`) | the clear's save lands ~3 s after the press |
+| the reload publishes | same log, micros 29,739,186 `RRQ,2,1,1,0,queued` → 29,927,130 `terminal,none,committed` (gen 1) | a **different** request identity; the route-enabled reload ran |
+| the next boot restores an empty slot | `captures/a37b2-01/session.log`: `RRQ,2,1,0,0` committed at 10.339 s, then `Clear ignored — selected slot is empty` at 17.579 s | the payload restored has no passes and length 0 |
+
+**Reading:** the reload at 29.7 s read the payload written at 23.7 s — the clear's own rewrite — and
+published the emptied content. So on the **route-enabled** firmware the emptied slot is re-requested and
+re-commits **empty**; on the shipped firmware (route off) the stale terminal keeps `needsSlotLoad` false, no
+reload is queued, and the inconsistency cannot arise. The fix owner is therefore **the reload-on-clear
+route**, which stays disabled — not the request record, and not `hasDataInSlot`.
+
+### Open, read-only question
+
+One datum disagrees and is **not** smoothed over: at 29.760 s — after the reload was queued but **before** it
+committed at 29.927 s — the focus change logged `Sent loop length CC feedback: 4 bars (3072 ticks) -> CC=3`,
+while the next boot restored the slot as empty. A CC feedback reads the loop's length, so either it was
+served from a stale display cache, or it described a different selected slot after
+`restorePlaybackAfterSlotClear` re-selected one. Resolving it needs a content-count or length line for the
+named slot at that instant (read-only), not another device mutation.
+
+### Route decision (owner, recorded)
+
+**Keep reload-on-clear disabled.** Bounding the bar-index allocation does not establish that the route is
+safe or semantically correct: it bounds one allocation, not content validity, ownership, or persistence
+ordering. CLEAR unexpectedly restoring old SD content could violate its intended behaviour, and advancing a
+request generation invalidates stale work without authorising a reload of cleared content. A3.7 shape (b)
+stays open while a fixture is built through an **intended** restore entry point.
+
+### Fixture preconditions before any further device attempt
+
+A shape-(b) fixture must assert, in order: the target content **exists immediately before** CLEAR; a restore
+has **actually started** (an active `LoadLoopJob`, not merely a queued request); a save is **owed**; and
+another track is **audibly playing**. Until it can assert all four, no further device attempt is warranted.

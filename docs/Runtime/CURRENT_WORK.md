@@ -2910,6 +2910,24 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (sixth session) — read-only trace: `committed` does not imply nonempty content; reload-on-clear stays disabled.**
+The "restored yet empty" mismatch is answered **read-only** (no device mutation; track 3 untouched).
+`commitLoadLoopJobPublish` records `Committed` unconditionally after `applyLoadedLoopSlotBodyCommit`, and
+`Track::hasDataInSlot` → `Loop::hasData()` = `hasCommittedPasses() || loopLengthTicks > 0 ||
+!capture.store.empty()`, so a `committed` terminal followed by `hasDataInSlot == false` is **consistent** —
+it is an empty payload that published successfully. Traced on the same slot and identity
+(track index 2 / slot index 1): sweep persisted `LoopPersist,slot:2:1`; boots restored `RRQ,2,1,0,0`
+(gen 0) committed; `cr-probe-01` CLEAR at 20.772 s was a real clear; its persistence rewrote the payload at
+23.71 s; the route-enabled reload `RRQ,2,1,1,0` (gen 1) committed at 29.927 s; `a37b2-01` then restored an
+empty-but-committed slot. **Owner of the condition: the reload-on-clear route**, which stays **disabled** —
+CLEAR unexpectedly restoring old SD content would violate its behaviour. One datum is left open and not
+smoothed over: a 29.760 s `loop length CC feedback: 4 bars (3072 ticks)` disagrees with the later empty
+state and needs a content/length line for the named slot (read-only). **Fix claim narrowed:** the oversized
+bar-index allocation is **bounded**; the **producer** and **adopted-content integrity** (the invalid event
+stays in its chunk for every other reader) remain unresolved. Full trace:
+`deferred-slot-restore-liveness/REVIEW.md` § read-only trace.
+
+
 **2026-09-24 (fifth session) — `DEC-082` records the restore-liveness ruling; A5.4 closed; the change stays open on A3.7 shape (b).**
 [`DEC-082`](../DECISION_LOG.md#dec-082--the-restore-request-is-the-unit-identity-named-waits-preparation-under-transport-and-a-three-way-drain)
 records the ruling in four clauses with **per-clause evidence**, and marks the drain-advance **device
@@ -2938,7 +2956,7 @@ first. Device disclosure: track 3 slot 2 was already empty; track 5 slot 1 (appr
 empty-record attempt.
 
 
-**2026-09-24 (third session) — the ~22 MB abort is diagnosed and fixed at its owner (`LoopEventStore`); `deferred-slot-restore-liveness` stays open.**
+**2026-09-24 (third session) — the oversized bar-index allocation is bounded at its owner (`LoopEventStore`); the producer and adopted-content integrity remain unresolved, and `deferred-slot-restore-liveness` stays open.**
 `22369620 = 4 × 5,592,405` and `22369612 = 4 × 5,592,403` are a 4-byte-element vector: `LoopEventStore`'s
 `barFirstIndices_` (`std::vector<size_t, InternalHeapFirstAllocator<size_t>>`). `appendToTailChunk` and
 `rebuildBarIndex` both sized it from `event.tick / BAR_TICKS` with **no bound**, and

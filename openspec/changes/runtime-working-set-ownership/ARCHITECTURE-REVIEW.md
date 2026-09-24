@@ -2917,17 +2917,29 @@ The allocation is a single `resize`, which is why it aborts rather than degradin
   content. 4096 bars is far above the 64-bar target: every real loop and over-run take is unaffected, and
   the index is capped at 16 KB instead of 22 MB.
 
-### What is **not** established, and the next step
+### What is **not** established (the fix claim is bounded)
 
-The **producer** of the corrupt tick is not identified. It is reached only with the reload-after-external-
-reset route enabled, which `deferred-slot-restore-liveness` deliberately leaves off, so the remaining
-hypotheses — a torn read of a payload the clear's deferred save is rewriting, or a stale adopted chunk —
-are untested. **Next step (bounded):** with this refusal in place the abort is gone, so enable the route
-in an investigation build and read the `TickOutOfRange` refusal to identify which slot/payload produced
-the tick, then fix that owner. Do not re-enable the route in the change itself until then.
+**What is fixed:** the **oversized allocation** is bounded. A tick beyond `MAX_INDEXED_TICKS` can no longer
+size `barFirstIndices_` to ~5.6M entries, and `rebuildBarIndex` no longer grows the index past
+`MAX_BAR_INDEX`. That removes the observed ablation, and nothing more.
+
+**What is NOT resolved**, and must not be read into the fix:
+
+* **the producer of the corrupt tick.** It is still unidentified, and it is intermittent: the full a37b
+  sequence re-run with the guard raised nothing at all (`captures/prod-probe-01/`), so the raise is
+  state-dependent and was not caught.
+* **adopted-content integrity.** `rebuildBarIndex` now *skips* an out-of-range bar, but the invalid event
+  **stays in its chunk**. Every other reader of that chunk — playback gather, display projection, content
+  resolution — still sees the bad `tick`. The bound protects one index, not the content.
+* the route that produced the raise is **not** shown safe or semantically correct by this bound, and
+  `deferred-slot-restore-liveness` keeps reload-on-clear **disabled**.
+
+**Next step (read-only first):** the committed-versus-empty trace below, then a fixture that can assert its
+own preconditions before any further device attempt. Catching the raise (repeat, allocation-site context, or
+SD-load-staging instrumentation) remains open but is not the next step.
 
 Evidence: `captures/a37b-01/`, `captures/a37b-02/`, `captures/a37b-03/` (aborts),
-`captures/a37-control-02/` (clean control).
+`captures/a37-control-02/` (clean control), `captures/prod-probe-01/` (no raise).
 
 ### Bounded clear/reload probe (2026-09-24, third session) — the corrupt tick is **not** reproduced by a clean clear-then-reload
 
