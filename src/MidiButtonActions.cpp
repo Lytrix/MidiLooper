@@ -9,6 +9,7 @@
 #include "MidiHandler.h"
 #include "TrackUndo.h"
 #include "StorageManager.h"
+#include "StorageManagerInternal.h"
 #include "PersistenceDrainGuard.h"
 #include "LooperState.h"
 #include "Logger.h"
@@ -816,6 +817,11 @@ STORAGE_PERSIST_MEM void MidiButtonActions::handleClearTrack() {
     trackManager.setLayeredSlotHeld(tidx, slot, false);
 
     track.clear();
+    // A2.1: a user CLEAR is an **external** reset of these coordinates, so the outstanding request is
+    // superseded under the identity it was created with and the generation advances. An in-flight job
+    // for this slot then rejects publication (see `commitLoadLoopJobPublish`), so a stale parse can never
+    // repopulate a slot the user just cleared.
+    StorageManagerInternal::advanceRestoreRequestGeneration(tidx, slot);
     StorageManager::markTrackSlotsMaterialDirty(tidx);
     StorageManager::admitTrackSlotPersistence(tidx);
     StorageManager::requestDeferredSaveState(looperState.getLooperState());

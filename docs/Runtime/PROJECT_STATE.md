@@ -1,5 +1,52 @@
 # Project state (execution context)
 
+**2026-09-24 (second session) — the post-restore census checkpoint is finished and device-verified; A2.1/A1.8 closed; A3.7 shape (b) blocked by a fatal allocation.**
+
+## Census checkpoint (S1.3/S2b.3 fixture) — DONE and device-verified
+
+`StorageManager::emitPostRestoreCensusIfReady` now emits one **timestamped Tier-A** marker per boot:
+`#CAP,<micros>,DIAG,post_restore_census,free_chunks=…,admission_complete=1,interactive_ready=1,undo_hydrated=1,transport_stopped=1,deferred_prewarm_idle=1,heap_free=…`.
+Two conditions finished the draft: **deferred-prewarm readiness** (no prepared-pair request and no
+post-commit merged-MIDI prewarm still owed; `main`'s prewarm request moved into `TrackManager` so the
+checkpoint can see it) and **timestamped telemetry** (the old `#CAP,DIAG,…` form had no micros field and
+was not Tier-A). `scripts/hitl_boot_census.py` parses the fields generically, prefers the capture line over
+the operator line, and records the readiness attestation and timestamped form in `census.json`.
+
+**Device evidence:** `captures/census-final-02/` — `checkpoint_reached=True`,
+`readiness_attested=True`, `timestamped_capture_line=True`, **`free_chunks=451`**, `heap_free=77,824`,
+walk pairs 512→480 (enabled set, −32) then 480→480 (library, ±0), S2b.3 condition
+`451 >= 0 + 16` met, **0** `could not reconcile`. `captures/census-final-01/` records the
+marker-selection defect the fix removed. A4.2's healthy-index half is green from the same log
+(`sets/index.bin reconcile ok`); the malformed half stays optional unrun (no destructive-SD permission).
+
+## A2.1 request identity and A1.8 observability — closed except one recorded residual
+
+The remaining named waits are wired (`waiting_capture`, `waiting_job_capacity`; the committing instance
+keeps `waiting_commit_gate`), and publication revalidates the captured request identity **before the token
+check**, so a superseded/decided request publishes nothing. A user CLEAR advances the generation and records
+`superseded`. `RestoreStateProbe` reports state/wait/terminal for the head and both job instances.
+**Residual:** the set-change wire (`noteRestoreSetEpoch`) has no production call site (no set-epoch
+accessor), so "a set change yields `superseded`" is record-level only.
+
+**Evidence:** full native **2,343 / 1 skipped / 0 failures**; `test_storage_manager_load` **33/33**;
+`test_capture_line_tier` **14/14**; capture-serial **SUCCESS**, RAM1
+`variables 96,192 / code 391,000 + padding 2,216 / locals 34,880` (1,376 B above the 840 floor).
+Commit `505bfc13` plus the follow-up slice (CLEAR generation wire, conservative done-test, shape-b script).
+
+## A3.7 shape (b) — re-attempted, still OPEN on a fatal allocation
+
+`scripts/hitl_a37_shapeb.py` constructs "another track playing + a deferred save genuinely owed + a restore
+in flight". Three fresh-boot attempts (`captures/a37b-01/` 16-bar, `-02/` 8-bar, `-03/` 2-bar bisect) died
+before the CLEAR with `#MEM_EXT_REFUSED bytes=22369620` →
+`FATAL: both internal heap and external memory are exhausted!`. The pool total is **8,380,416 B**, so the
+22,369,620 B request is structurally impossible and reproduces at the same value. The only reachable route
+to "a restore in flight" is clear-then-reload (every payload slot is restored at boot), and the bisect
+shows the refusal follows a `LoadLoopJob done` for the just-cleared slot. This change therefore does **not**
+enable reload-after-external-reset (`isLoopSlotRestoreAttempted` stays `state == Terminal`) and records the
+allocation defect as a `runtime-working-set-ownership`/recording finding. **Control:**
+`captures/a37-control-02/` records and saves cleanly with **0 FATAL**. Shape (b) is mandatory and not
+taken, so the change is **not archive-ready** (A5.5).
+
 **2026-09-24 — A3.2 attempted and reverted; the blocker is ITCM placement, not the design.**
 
 The pure drain-verdict classifier was built and its five fixtures passed, but the change needed ~96 B of

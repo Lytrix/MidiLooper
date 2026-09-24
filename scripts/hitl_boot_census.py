@@ -143,7 +143,13 @@ def main() -> int:
                                 "delta": p["free_chunks"] - pending_before})
             pending_before = None
 
-    marker_line = next((l for l in lines if MARKER in l), None)
+    # Prefer the timestamped capture record; the operator `[StorageManager]` line is emitted first and is
+    # not the Tier-A record. Selecting "the first line containing the marker" would report a false
+    # un-timestamped failure when both are present.
+    marker_line = next(
+        (l for l in lines if re.match(r"#CAP,\d+,DIAG,post_restore_census,", l)), None)
+    if marker_line is None:
+        marker_line = next((l for l in lines if MARKER in l), None)
     marker = None
     if marker_line:
         # Every `key=value` after the marker name. `free_chunks` is the S2b.3 figure; the readiness

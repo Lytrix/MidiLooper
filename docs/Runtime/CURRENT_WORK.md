@@ -2910,6 +2910,28 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (second session) — census checkpoint finished and verified; A2.1/A1.8 closed; A3.7 shape (b) blocked.**
+The **S1.3/S2b.3 post-restore census checkpoint** is done and fresh-boot device-verified
+(`captures/census-final-02/`): one timestamped Tier-A
+`#CAP,<micros>,DIAG,post_restore_census,…` marker whose readiness set now includes
+**deferred-prewarm idle** (`main`'s prewarm request moved into `TrackManager`) and which reports
+`free_chunks=451`, `heap_free=77,824`, all five readiness fields `1`, and S2b.3's `>= peak + 16`
+condition met with **0** reconcile failures. `scripts/hitl_boot_census.py` records the readiness
+attestation and the timestamped form, so a degenerate marker is a recorded failure. A4.2's
+healthy-index half is green from the same log; the malformed half stays optional unrun.
+**A2.1/A1.8 closed** (one residual recorded): `waiting_capture` / `waiting_job_capacity` are named,
+publication revalidates the captured request identity before the token reset, a user CLEAR advances
+the generation and records `superseded`, and `RestoreStateProbe` reports state/wait/terminal for the
+head and both instances. Residual: no production set-epoch wire. Evidence: full native
+**2,343 / 1 skipped / 0 failures**; `test_storage_manager_load` **33/33**; capture-serial SUCCESS
+`code 391,000 + padding 2,216`. **A3.7 shape (b) re-attempted and still OPEN:** the only reachable
+"restore in flight" route is clear-then-reload, which trips
+`#MEM_EXT_REFUSED bytes=22369620` → external-pool FATAL (pool is 8,380,416 B); the route is therefore
+not enabled by this change, the allocation defect is a `runtime-working-set-ownership` finding, and a
+plain-take control records cleanly. **This change is not archive-ready (A5.5): shape (b) is mandatory
+and untaken.** Details: `deferred-slot-restore-liveness/REVIEW.md` § 2026-09-24 (second session).
+
+
 **2026-09-24 — A3.5 RESTRUCTURED (topology conflict found by the device gate) and A3.7 shape (a) PASSED.**
 The A3.7 device run surfaced a real conflict: A3.5's holdoff wait called
 `midiHandler.handleMidiInput()` from inside the drain, and the HITL timing verifier
