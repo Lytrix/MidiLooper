@@ -930,7 +930,18 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       undo/root baseline and S1.5's refusal point are unchanged from their recorded device runs. **No leg is
       reinterpreted**; each returns as `runtime-working-set-ownership`'s finding. **A5.2 is now closed**
       (base-preset-specific recording failure; direct stream + pipeline PASS on the current firmware).
-      **S1.3 slope — a real capacity failure point found, but measured outside the approved range.**
+      → **HANDOFF RECORDED 2026-09-24 (ninth session).** The fixture this task was waiting for is finished
+      and device-verified, and its evidence is now written into
+      [`runtime-working-set-ownership/ARCHITECTURE-REVIEW.md`](../runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+      § A5.1 handoff: the census marker (`captures/census-final-03/`, `free_chunks=454`, attested,
+      timestamped), the **stable post-restore budget** (`post_restore_free_chunks=452` of 512 on three
+      consecutive fresh boots, walk 512→480, `N=29`), and the **S1.3 slope blocker** (N is the boot playback
+      set, so unselected recordings cannot raise it; the approved scratch range is fully populated; a sweep
+      outside it shrank the committed set 27 → 27 → 26 — a capacity/eviction finding, not a slope). Owner
+      direction recorded: no further growth sweeps until a defined subset of the existing scratch range is
+      authorised, and the slots written outside it are left untouched. **S1.3's slope stays open**, so this
+      task and archive stay open.
+      *(Earlier note, kept:)* **S1.3 slope — a real capacity failure point found, but measured outside the approved range.**
       A second sweep into **empty** slots (`captures/s13-slope-02/`, track 3 slots 2–4, 4-bar takes) grew the
       payload set while the committed boot-playback set **shrank** (N 27 → 27 → 26): each new recording
       evicted other committed payload slots (track 6 lost slots 7–8, then 6, then 4–5). (The marker read
