@@ -1,6 +1,6 @@
 ---
 name: hitl-content-verification
-description: Run hardware-in-the-loop content verification on the Teensy looper and read its evidence. Chooses the authoritative HITL entry point, prepares/resets the device, dumps committed record/overdub/effective content, captures playback, and compares inventories. Use when investigating snapshot or playback content parity, missing or duplicated rows, dense-content representability, stop/interruption reproduction, or when asked to rerun and verify a HITL run on hardware.
+description: Run hardware-in-the-loop content verification on the Teensy looper and read its evidence. Chooses the authoritative HITL entry point, prepares/resets the device, dumps committed record/overdub/effective content, captures playback, and compares inventories. Also carries the read-only restored-library attribution path (!LIB_OBSERVE, no content run). Use when investigating snapshot or playback content parity, missing or duplicated rows, dense-content representability, stop/interruption reproduction, restored-library or per-slot inventory questions, or when asked to rerun and verify a HITL run on hardware.
 ---
 
 # HITL content verification
@@ -113,3 +113,24 @@ The reusable sections are **device prep (3)**, **sandbox rules (4)**, **capture
 example preview parity or persistence restore) reuses all of them and replaces
 only section 5's content-creation command plus any scenario-specific expected
 counts. Prefer extending this skill over adding a near-duplicate.
+
+## 9. Read-only restored-library attribution (no content run)
+
+When the question is *which slots the device actually restored* rather than *what
+the restored loop contains*, do **not** run the content pipeline. Use the
+read-only boot-census entry point, which resets by re-uploading and then sends
+only `!LIB_OBSERVE` — it writes nothing, clears nothing, and never starts the
+transport:
+
+```
+.venv/bin/python scripts/hitl_boot_census.py --out-dir captures/<dir> \
+    --library-observe --settle-s 25 --observe-window-s 30
+# add --observe-early-close-s 0.15 to exercise the incomplete-window case
+```
+
+`census.json` then carries `library_observation`: the per-slot observed state, a
+nullable cause, and the four window-scoped quantities (payload inventory,
+initial-playback set, restore completions **in the window**, committed at the
+checkpoint). An observation whose `end` frame is missing or reads `complete=0` is
+**incomplete** — its counts are not the settled library state. Contract and the
+full reading recipe: [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](../../../docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md#the-on-demand-library-observation).

@@ -135,6 +135,7 @@ and the build's `free for local variables` checked afterwards — a long marker 
 ## Related
 
 - Recipe: [`.agents/skills/hitl-content-verification`](../../.agents/skills/hitl-content-verification/SKILL.md)
+- Read-only restored-library attribution (a different question: *which slots* the device restored, not *what the loop contains*): [`RUNTIME_STORAGE_AND_PERSISTENCE.md` § The on-demand library observation](RUNTIME_STORAGE_AND_PERSISTENCE.md#the-on-demand-library-observation)
 - HITL flow rules: [`.cursor/rules/HITL-Test-Flow.mdc`](../../.cursor/rules/HITL-Test-Flow.mdc)
 - Scenario catalog: [`docs/Guides/HITL_TEST_SCENARIOS.md`](HITL_TEST_SCENARIOS.md)
 - Membership/construction decision: [DEC-047](../DECISION_LOG.md)

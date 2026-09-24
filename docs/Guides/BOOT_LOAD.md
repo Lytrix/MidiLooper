@@ -122,5 +122,6 @@ After a long loop load, `stabilizeBootMemoryAfterLoad()` may clear undo stacks w
 | `src/TrackManager.cpp` | `beginBootLoad` / `onBootSlotLoadComplete` |
 | `src/DisplayManager.cpp` | `drawBootScreen` / `finishBootSetup` title gate |
 | `include/Utils/BootTelemetry.h` | `BOOT,*` milestones |
+| `src/StorageManager/LibraryObservationSession.cpp` | **On-demand library observation** (bounded per-slot inventory; `!LIB_OBSERVE` → `serviceLibraryObservation()` at the idle tail). The settled checkpoint stays in `StorageManager::emitPostRestoreCensusIfReady`; see [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](RUNTIME_STORAGE_AND_PERSISTENCE.md#the-on-demand-library-observation) |
 
 **History:** `50ad01b` deferred USB Host until after sync `loadState`; follow-up defers until deferred slot restore queue drains (SDIO + enumeration isolation). Full-set drain under title (`af1227c`) superseded for interactive ready by **boot playback set** enqueue (`feature/deferred-lazy-load`, OpenSpec `unified-commit-lazy-slot-load` Phase 2). That set is **union(selected, active)** per track (stopped remaps `active := selected` in `loadTransportSlotIndices`, and enables the playing slot so `updateAllTracks` can emit MO). Other payloads stay HEADER_READY until select/focus / Phase 4.

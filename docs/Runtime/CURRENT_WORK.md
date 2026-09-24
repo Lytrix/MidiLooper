@@ -2953,6 +2953,14 @@ the wire form is now compact codes with one/two-character keys, with the host pa
 updated, and the run repeated. **Packet A (1.0–1.5) is complete**; Packets B/C and the 4.x
 handoff/closeout remain open. Nothing outside § Now implementing was implemented.
 
+**Same-session follow-up — DEC-083 and the capture-tier fix.** The contract is recorded as **DEC-083 — the
+restored-library inventory is a bounded on-demand observation, separate from the settled census**. The
+truncation the first device run found is locked by test: `LIBOBS` is **Tier-A** in
+`CaptureLineTier::isTierALine`, with `test_library_observation_lines_fit_capture_text_budget` asserting
+worst-case records ≤ 191 bytes (`test_capture_line_tier` 15/15; full native re-run **2,374 / 1 skipped / 0 failures**; capture-serial RAM1 unchanged at `code 391,160 + padding 2,056`). Durable docs updated:
+`docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md` § *The on-demand library observation*, a `BOOT_LOAD.md`
+key-files row, and `.agents/skills/hitl-content-verification` § 9.
+
 **2026-09-24 (eleventh session) — S2b.8 — set-change epoch / external resets — LANDED native-only in `runtime-working-set-ownership`; documentation reconciled first.**
 Owner direction: take S2b.8 before S2b.7, with reconciliation first. **Reconciled:** `tasks.md` no longer
 links the archived `deferred-slot-restore-liveness` as a live sibling, and the transfer (S1.1/S1.3/S1.4/

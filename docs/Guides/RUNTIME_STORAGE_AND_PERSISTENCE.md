@@ -31,6 +31,9 @@ Most implementation details follow from these rules.
 - You are changing `StorageManager`, `StorageLoopIo`, persistence scheduling in `main.cpp`, or stop-path save triggers.
 - A long record/overdub run fails to reach `PERS,result,...,ok` or crashes before persistence completes.
 - You need the mental model linking **pass ownership**, **storage ownership**, and **chunk lifecycles**.
+- You are investigating a **restored-library** question — which slots have a payload, which are required
+  for initial playback, which are committed — or you are reading the post-restore census. See
+  [The on-demand library observation](#the-on-demand-library-observation).
 
 ---
 
@@ -147,6 +150,7 @@ Every architectural part should have a clear owner. Use this table before moving
 | **Per-slot loop write** | `StorageManager/WorkspaceSave.cpp`, `StorageLoopIo` | One chunk per slice today; slot file bytes | Chunk pool lifecycle |
 | **Storage backend** | `StorageLoopIo`, SD layout | On-disk representation; SAVE token; recovery load | RAM ownership of events |
 | **Recovery on load** | `StorageManager`, `StorageLoopIo` | Reconstruct longest valid prefix of persisted sealed chunks; quarantine invalid tails | Mutating live runtime chunks during load |
+| **On-demand library observation** | `StorageManager` (`LibraryObservationSession.cpp`) | A **bounded, explicitly requested** per-slot inventory: observed fields, a current-state set, a nullable cause, and the four window-scoped counts | Library behavior; the settled census checkpoint; load/restore admission |
 
 ### Cross-cutting rules
 
@@ -381,6 +385,73 @@ Not an architectural dependency. Primary bottleneck is SD flash latency, not RAM
 | Capture seal / publish | `src/Loop.cpp` |
 | Save triggers | `src/Track.cpp` |
 | Main-loop call | `src/main.cpp` |
+
+---
+
+## The on-demand library observation
+
+`restored-library-stability` 1.3. `StorageManager::emitPostRestoreCensusIfReady` is the **settled**
+checkpoint: once per boot, and only when the system is quiescent. That makes it unusable for explaining a
+restore that is *stuck* — a waiting request suppresses the very report meant to explain it. The on-demand
+observation is the separate, bounded diagnostic for exactly those states.
+
+**Contract.** Owner `StorageManager`; serviced by `StorageManager::serviceLibraryObservation()` from the
+**unconditional observation tail in `main`** (the idle-owner position that already calls
+`processHitlSerialCommands` / `emitPostRestoreCensusIfReady`), never from the admission-gated deferred
+load/restore frame. No thread, timer, interrupt or periodic cost, and inert (one flag check) unless
+requested.
+
+| Property | Value |
+|---|---|
+| Trigger | `!LIB_OBSERVE` on the session-capture serial surface (`requestLibraryObservation()`), deliberately not transport-gated |
+| Bound per invocation | 2 slots observed, at most 2 SD token probes, 2 records emitted |
+| Total | 64 slots (`NUM_TRACKS × MAX_LOOPS_PER_TRACK`): at most 32 collection + 32 emission invocations |
+| SD admission | the existing SD-session exclusion — never opens SD while capture, a load job or a persistence write holds the session |
+| Invalidation | a record is scoped to `(requestGeneration, setEpoch)` **and a content revision identity** and is re-checked immediately before it is emitted; a set-epoch change restarts the whole observation (at most 2 restarts) |
+| Records | the `LIBOBS` family (Tier-A), compact enum codes because `kMaxCaptureTextBytes` is 192 |
+| Degradation | a field that cannot be observed stays `unknown`; the report is still produced |
+
+**What it reports.** Per slot: payload (absent / invalid-token / verified / unknown), whether the slot was
+offered to the restore path, the request state with its named wait or terminal and full identity
+`(track, slot, requestGeneration, setEpoch)`, committed content, and whether the slot is required for
+initial playback. From those it derives a **current state set** over `empty` / `populated` / `pending`
+and, separately, a **nullable cause** (`catalog omission` / `restore refusal` / `intentional eviction` /
+`content loss` / `ambiguous` / `unknown`) with its evidence. `empty` is a state, never a cause, and it
+requires the absence to be *observed*. The `LIBOBS,E` frame carries the four window-scoped quantities:
+
+| Quantity | Meaning |
+|---|---|
+| `payload_inventory` | slots with a payload present and its token verified |
+| `initial_playback_required` | slots the boot requires committed before interactive ready |
+| `observed_restore_completions` | distinct slots whose `committed` terminal was observed **within this window** (background admission included) |
+| `committed_at_checkpoint` | slots holding committed content at the observation |
+
+**`observed_restore_completions` is window-scoped and is not the library size** — background admission
+visits every slot, so it counts observed completions in the window, not the boot playback set and not the
+payload inventory. An observation whose `end` frame is missing, or reports `complete=0`, is **incomplete**,
+and none of its counts may be presented as the settled library state.
+
+**Reading it.**
+
+```
+.venv/bin/python scripts/hitl_boot_census.py --out-dir captures/<dir> \
+    --library-observe --settle-s 25 --observe-window-s 30
+# add --observe-early-close-s 0.15 to exercise the incomplete-window case deliberately
+```
+
+`census.json` then carries `library_observation` alongside the walk/census figures.
+`scripts/hitl/library_observation.py` is the shared parser and classifier: `parse_observation_lines`
+decodes the device records, and `parse_capture_lines` classifies a **recorded capture** offline from its
+`RRQ` lines — where the payload, content and selection fields were not recorded, they are reported
+`unknown` **with the missing field named**, never inferred. `scripts/hitl_library_observation_report.py`
+runs the offline classifier over existing captures.
+
+**This is not the settled census.** `emitPostRestoreCensusIfReady` is unchanged and remains the memory
+measurement; the observation never emits into, or substitutes for, `DIAG,post_restore_census`.
+
+Normative requirements live in the change's
+`openspec/changes/restored-library-stability/specs/lazy-slot-hydration/spec.md`; design D2–D4 and the
+evidence are in that change's `design.md` and `ARCHITECTURE-REVIEW.md`.
 
 ---
 

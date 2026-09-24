@@ -336,7 +336,9 @@ settled census tag (O08 fails).
 - **Native verification:** `pio test -e native -f test_library_observation -f test_library_observation_session`
   → **21 cases, 21 succeeded, 0 failed**; the session suite alone is 8/8.
 - **Broad native verification:** full `pio test -e native` → **2,373 cases / 1 skipped / 2,372 succeeded /
-  0 failures** (baseline before this change: 2,352 / 1 skipped).
+  0 failures** (baseline before this change: 2,352 / 1 skipped). Re-run after the post-device `LIBOBS`
+  Tier-A/length fix: **2,374 / 1 skipped / 0 failures** (the +1 case is
+  `test_library_observation_lines_fit_capture_text_budget`).
 - **Build/RAM1 verification:** `pio run -e teensy41-capture-serial` → **SUCCESS**;
   `[RAM1 budget] variables 96,192 / ITCM 393,216 (code 391,160 + padding 2,056) / locals 34,880` — the
   approved 12-bank ITCM line is unchanged, `padding` is **1,216 B above the 840 floor**, and `locals`
@@ -508,3 +510,32 @@ relative to `runtime-working-set-ownership`'s S2b.7/S2b.8, which landed 2026-09-
 Recorded here so it is not lost, and **deliberately not re-based**: the baseline is edited by a human with
 the reason recorded in the *owning* change's review artifact, and this change neither caused nor consumes
 that 64 B. The required env (`teensy41-capture-serial`) is green and within budget.
+
+---
+
+## Post-device follow-up — `LIBOBS` is Tier-A, and the truncation is locked by test
+
+The device run's defect (records over the 192-byte capture text cap, silently truncated) is fixed on two
+fronts, not only by shortening the format:
+
+1. **`CaptureLineTier::isTierALine` now protects the `LIBOBS` family.** The observation is an explicitly
+   requested one-shot inventory (66 records, ≤2 per invocation) that is read back precisely in the stuck
+   states a dense run produces, so a Tier-A flood must not evict it.
+2. **`test_capture_line_tier::test_library_observation_lines_fit_capture_text_budget`** regenerates the
+   three record shapes at worst case (10-digit micros, every numeric field at its type maximum), asserts
+   each is ≤ 191 bytes, and asserts the Tier-A classification (including that a lookalike prefix
+   `LIBOBSX,` is not Tier-A). `test_capture_line_tier` is **15/15**.
+
+**Applicability of the earlier evidence.** The format/budget change is additive and does not alter the
+oracle, the bounds or the invalidation contract, so task 1.3's evidence still matches: the two native
+suites are re-run green (`test_library_observation` 13/13, `test_library_observation_session` 8/8, together
+21/21) and the full native suite is re-run at **2,374 / 1 skipped / 0 failures**. The device inventory in
+§ Task 1.5 was captured with the compact format and the Tier-A classification is a protection, not a
+content change, so those figures stand.
+
+**Durable docs updated with the behavior (closeout).** `docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md`
+§ *The on-demand library observation* (contract table, the four quantities, the window-scope warning, the
+reading recipe, and "this is not the settled census"), with a `Read this when` entry and an
+ownership-table row; a `docs/Guides/BOOT_LOAD.md` key-files row; and
+`.agents/skills/hitl-content-verification` § 9 (plus its discovery description) for the read-only
+attribution path. `DEC-083` records the decision and its rejected alternatives.

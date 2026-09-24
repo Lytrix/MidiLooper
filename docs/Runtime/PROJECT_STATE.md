@@ -87,6 +87,18 @@ relative to S2b.7/S2b.8, which only re-recorded `teensy41-capture-serial`. **Del
 that baseline is edited by a human with the reason recorded in the owning change's artifact. The required
 env (`teensy41-capture-serial`) is green and within budget.
 
+**Follow-up on the same session — DEC-083 and the capture-tier fix.** The observation's contract is
+recorded as **DEC-083 — the restored-library inventory is a bounded on-demand observation, separate from
+the settled census** (owner `StorageManager`, service point independent of load admission, 2/2/2 bounds,
+identity + content-revision invalidation, window-scoped four quantities, and the rejected alternatives).
+The device run's truncation is locked by test: `LIBOBS` is now **Tier-A** in
+`CaptureLineTier::isTierALine` (it is an explicitly requested one-shot inventory and must survive the
+timing-critical flush budget), with `test_library_observation_lines_fit_capture_text_budget` asserting
+worst-case records ≤ 191 bytes — `test_capture_line_tier` **15/15**, full native re-run **2,374 / 1 skipped / 0 failures**, and the capture-serial RAM1 line is unchanged (`code 391,160 + padding 2,056`). The durable guide now owns the
+behavior: `docs/Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md` § *The on-demand library observation* (with an
+ownership-table row and a `Read this when` entry), a `BOOT_LOAD.md` key-files row, and
+`.agents/skills/hitl-content-verification` § 9 for the read-only attribution path.
+
 **2026-09-24 (thirteenth session) — the restored-library instability gets an owner: `restored-library-stability` PROPOSED, planning complete, Packet A (observation-only firmware + read-only analysis) starts immediately.**
 
 Owner direction: own the instability instead of running another drain test, because it blocks the

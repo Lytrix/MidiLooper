@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-083](#dec-083--the-restored-library-inventory-is-a-bounded-on-demand-observation-separate-from-the-settled-census) | 2026-09-24 | The restored-library inventory is a **bounded on-demand observation**, separate from the settled census; it reports a state set and a nullable cause | Accepted — implemented, native-verified and **device-verified read-only** (Packet A of `restored-library-stability`); Packets B/C open |
 | [DEC-082](#dec-082--the-restore-request-is-the-unit-identity-named-waits-preparation-under-transport-and-a-three-way-drain) | 2026-09-24 | The restore **request** is the unit: identity, named waits, preparation under transport, three-way drain | Accepted — implemented; native + Packet B device gate + content PASS; **the drain-advance device integration (A3.7 shape b) is not yet verified**, so `deferred-slot-restore-liveness` stays open |
 | [DEC-081](#dec-081--audible-playback-never-gates-persistence-and-never-stops-for-it) | 2026-09-23 | Audible playback never gates persistence and never stops for it (supersedes the all-tracks-silent gate) | Accepted — implemented, built and **device-verified on the discriminating case** (five tracks audibly playing + a genuinely owed save → the clear's blocking drain completed in <833 ms, 0 `Clear aborted`/`drain stuck`) |
 | [DEC-080](#dec-080--deterministic-execution-packets-for-implementation-slices) | 2026-09-23 | Per-slice transition oracles, production-path fixtures and evidence-backed completion | Accepted — workflow only; applies to future implementation steps |
@@ -94,7 +95,101 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-083 -->
+<!-- Append new entries below (newest first). Next ID: DEC-084 -->
+
+## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
+
+**Date:** 2026-09-24
+**Owner:** `StorageManager` (observation state and service point); classifier is a pure function over a snapshot
+**Status:** Accepted — implemented, native-verified, and **device-verified read-only**. Packet A of the governing change; Packets B (repeatable fixture) and C (S2b.7 device confirmation) remain open.
+**Governing change:** [`restored-library-stability`](../openspec/changes/restored-library-stability/proposal.md) — spec delta `lazy-slot-hydration`, design D2–D6, evidence in its `ARCHITECTURE-REVIEW.md`.
+
+### Context
+
+`StorageManager::emitPostRestoreCensusIfReady` is the settled checkpoint: at most once per boot, and only
+when `bootBackgroundFillAdmissionComplete()`, `bootInteractiveReady()`, undo hydration, stopped transport,
+no holdoff/in-flight persistence and no owed prewarm all hold. A restore request stuck in a named wait
+therefore **suppresses the very report meant to explain it**, and the recorded library observables were
+thin enough that `n_committed_slots` (a window-scoped count) had been read as the boot playback set, which
+made an unreproducible "shrinking library" look like loss. Nothing captured a per-slot inventory.
+
+### Decision
+
+1. **The inventory is a derived report over existing production state — no new catalog, queue or owner.**
+   Payload presence/token, boot enumeration, the restore-request record, committed content and the boot
+   playback set are all read from their existing owners. No persisted per-slot catalog and no second queue.
+2. **Observation is separate from attribution, and both are separate from the settled census.** Per slot the
+   system reports observed fields, a **current state set** over `empty` / `populated` / `pending`, and a
+   **nullable historical cause** (`catalog omission` / `restore refusal` / `intentional eviction` /
+   `content loss` / `ambiguous` / `unknown`) with its evidence and a stated precedence. `empty` is a state
+   and is never a cause; `empty` requires the absence to be **observed** (a denied SD read leaves the state
+   unknown); a bare prior inventory establishes a disappearance, not its cause; a completed restore whose
+   content field could not be observed keeps a nullable cause rather than being attributed a loss.
+   `emitPostRestoreCensusIfReady` is unchanged and remains the memory measurement.
+3. **The inventory is collected by a bounded, on-demand observation with a declared owner, service point,
+   admission and invalidation contract.** Owner `StorageManager`; serviced at the **unconditional
+   observation tail in `main`** — deliberately **not** the admission-gated deferred load/restore frame, so a
+   stuck request cannot suppress its own diagnostic; no new thread, timer, interrupt or periodic cost.
+   Declared bound: **2 slots and at most 2 SD token probes per invocation**, 2 emitted records per
+   invocation, 64 slots total, bounded epoch restarts. SD-read admission reuses the existing SD-session
+   exclusion (never concurrent with capture, a load job or a persistence write).
+4. **Request identity is not a content identity.** A record is scoped to
+   `(requestGeneration, setEpoch)` **and a content revision identity** — committed pass count, highest
+   committed pass id, loop length, committed event count, re-read at each slice — and is re-checked
+   immediately before it is emitted, because a restore publication installs content under the *same*
+   request identity it later records its terminal for. A generation/content change invalidates that slot; a
+   set-epoch change restarts the whole observation; content fields are never carried across slices.
+5. **The wire records are compact enum codes, and `LIBOBS` is Tier-A.** The session-capture text cap is
+   `kMaxCaptureTextBytes = 192`; the first full-name form overran it and was **silently truncated on
+   device**, so a completed observation read `complete=0`. Records now carry codes with one/two-character
+   keys, and the family is protected from the timing-critical flush budget because it is an explicitly
+   requested one-shot inventory.
+6. **The four quantities are window-scoped and none of them is "the library size".** `payload_inventory`,
+   `initial_playback_required`, `observed_restore_completions` (completions observed **within this window**,
+   background admission included) and `committed_at_checkpoint`. An observation whose `end` frame is missing
+   or reports `complete=0` is **incomplete**, and its counts may not be presented as the settled library
+   state.
+
+### Evidence
+
+| Clause | Evidence |
+|---|---|
+| Classifier contract (two outputs, precedence, observed-absence rule) | `test_library_observation` **13/13**; `scripts/test_library_observation_classifier.py` **16 tests OK**; mutation of the `unknown` fallback to `content loss` fails exactly L01/L02 and reverts byte-identical |
+| Observation contract through the real service hook | `test_library_observation_session` **8/8** (blocked load admission, permanently waiting request, generation change, epoch restart, publication under an unchanged request identity, denied SD admission); full native **2,374 / 1 skipped / 0 failures** |
+| Placement | all new functions `FLASHMEM`/`TRACK_COLD_MEM`, state `DMAMEM`: the whole observation costs **+80 B of ITCM** and `teensy41-capture-serial` keeps the approved 12-bank line (`code 391,160 + padding 2,056`, floor 840, locals 34,880). The first build without that placement crossed a 13th bank; the placement was fixed rather than the budget re-based |
+| Wire length and tier | `test_library_observation_lines_fit_capture_text_budget` (worst-case lines ≤ 191 bytes) + `LIBOBS` Tier-A assertions in `test_capture_line_tier` |
+| Device inventory (read-only) | `captures/s13-libobs-full-02/`: payload inventory **36**, initial playback-required **8**, restore completions in the window **0**, committed at checkpoint **8**; 36 `populated` / 28 `empty` with **no loss cause anywhere**; 0 `FATAL`, no CLEAR/rename/quarantine/delete, no transport |
+| Incomplete window (device) | `captures/s13-libobs-incomplete-02/`: reported incomplete, **0** slot records, **all four counts `None`** |
+| Read-only capture re-analysis | `captures/s13-library-observation.json`: window-scoped `N` (27/27/26 with a ~1.8–2.5 s shorter window vs 29/29/29); the three unrecorded quantities reported `None` with the field named |
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Relax `emitPostRestoreCensusIfReady`'s gates | It would corrupt the settled memory measurement the checkpoint exists for. |
+| Harvest the inventory from the existing census only | It is exactly the state a stuck request suppresses. |
+| A free-running background traversal | Unbounded SD reads, and it would observe an inconsistent library across unrelated mutations. |
+| Service the observation from the deferred load/restore frame | That frame is admission-gated, so it is unavailable in precisely the state the observation must explain. |
+| A persisted per-slot catalog | Duplicates `loopSlotPayloadOnSdInRam_`, adds RAM1/DTCM state, and re-introduces the second-authority problem `runtime-working-set-ownership` exists to remove. |
+| A single forced one-of-four cause, or reading the cause off the device log by eye | Cannot represent an empty slot or a corrupt payload that also refused; the by-eye reading produced three separate misreads. |
+| Full enum names on the wire | Measured on device: the record exceeded the 192-byte cap and its trailing framing fields were truncated. |
+| `Loop::nextPassId_` alone as the content revision identity | Reset to 1 by `SlotReset`, the boot load and the edit-pass restore, so it is not monotonic across a slot's life. |
+| A new per-slot monotonic content counter | 64 slots of new state against the RAM1 floor. |
+| A 4-slot-per-invocation probe budget | Slots observed after the shared probe budget is spent could never have their token verified within that observation. |
+| `pending` as a historical cause | It is current state; the cause axis stays nullable. |
+
+### Consequences
+
+* A stuck restore is diagnosable **per slot**, with a named wait, a state set and a nullable cause, without a
+  bisect and without touching library behavior.
+* The four quantities can no longer be conflated: the completion count is explicitly window-scoped, and an
+  incomplete window reports `None` rather than a zero.
+* `runtime-working-set-ownership`'s S1/S2b device legs have a library state they can now *describe*; whether
+  it is **stable across boots** is still Packet B's complete-manifest comparison, not a claim of this entry.
+* The observation adds no owner, queue or persisted state; the only runtime cost is ~3.6 KB of `DMAMEM` and
+  +80 B of ITCM.
+
+---
 
 ## DEC-082 — The restore request is the unit: identity, named waits, preparation under transport, and a three-way drain
 
