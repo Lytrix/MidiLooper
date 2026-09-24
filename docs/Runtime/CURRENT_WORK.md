@@ -2933,12 +2933,15 @@ measurements and the later runtime stages. **Opened** `openspec/changes/restored
 (proposal + design + `lazy-slot-hydration` spec delta + tasks; `openspec validate` clean; **no implementation
 started**). **Scope:** own the instability; report an observed **current state** (`empty` / `populated` /
 `pending`) **separately** from a **nullable historical cause** (**catalog omission /
-restore refusal / intentional eviction / content loss**, plus `pending`, `ambiguous`,
-`unknown`), with evidence and stated precedence (`empty` is never a cause); add a per-slot
+restore refusal / intentional eviction / content loss**, plus `ambiguous`,
+`unknown`), with evidence and stated precedence (`empty` is never a cause; `pending` is current state, not a
+cause); add a per-slot
 **observed-state** inventory (payload + token, boot enumeration, request state/wait/terminal with full
 identity, committed content, selection) reporting **four distinct quantities** with an explicit observation
-**window**, collected through a **bounded on-demand snapshot** that does not depend on the settled census
-gates; define **one** repeatable fixture inside the already-approved
+**window**, collected through a **bounded on-demand observation** with a declared owner and a service point
+that runs **independently of normal load admission**, SD-read admission and an invalidation rule covering a
+request-generation change, a set-epoch change **and a content revision change** (a publication installs
+content under the same request identity, so it changes neither) — never carrying content fields forward; define **one** repeatable fixture inside the already-approved
 scratch range (track 5 slot 1, track 6 slots 1–8), observation-only firmware first, with any CLEAR needing **per-slot owner
 authorization** and stability proven by a **complete per-slot manifest comparison**; and carry the **S2b.7
 device confirmation** as an independently reportable packet. **Handoff, not absorption:** when the library is
@@ -2978,6 +2981,22 @@ tightenings: task 3.1 defines the **progress measurement interval as inside the 
 (`restoreProgressCounter()` sampled immediately before entry and after return), so an urgent-save discharge alone
 does **not** check off S2b.7; and Packet A is renamed **observation-only firmware and read-only analysis** with an
 unambiguous execution-packet requirement (mandatory for 1.2/1.3, not for the pure analysis tasks).
+**G2 third round 2026-09-24: one remaining BLOCKER — request identity does not identify the content version.**
+`commitLoadLoopJobPublish()` publishes restored content **under the same `(requestGeneration, setEpoch)`** that
+later records its `committed` terminal, so an observation spanning that publication could combine
+pre-publication fields with post-publication content without any invalidation firing; ordinary content changes
+had the same gap. The invalidation key now also carries a **content revision identity**: a slot's observation is
+invalidated or restarted when its committed content changes — including a publication under an unchanged request
+identity and any ordinary commit (capture / overdub / edit / clear) — content fields are never carried forward,
+and a native **publication-between-slices** test (generation and epoch deliberately unchanged) must prove no
+mixed record is accepted. Identity choice (design D2): re-read committed pass count, highest committed pass id,
+loop length and committed event count at each slice — `Loop::nextPassId_` alone is rejected because `SlotReset`,
+the boot load and the edit-pass restore reset it. Two tightenings: the declared service point must run
+**independently of normal load admission** — the unconditional observation tail in `main` (the idle-owner
+position that already calls `processHitlSerialCommands` / `emitPostRestoreCensusIfReady`), **not** the
+admission-gated deferred load/restore frame — and its test must drive the **actual service hook** with load
+admission blocked, not a directly invoked collector; and `pending` was removed from the historical-cause
+vocabulary (it is current state).
 **Observation-only attribution may proceed; the corrected
 measurement definitions come first, because they may explain part of the apparent instability without a
 firmware fix.**

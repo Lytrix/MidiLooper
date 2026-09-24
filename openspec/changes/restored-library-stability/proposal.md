@@ -48,10 +48,12 @@ possibility that a corrected measurement explains part of the apparent instabili
   corrupt payload that also refused is not forced into one cause; a single snapshot cannot prove a historical
   eviction.
 - **Make the inventory available in the stuck states it must explain** — a bounded, on-demand observation with a
-  declared owner, service point, SD-read admission and an invalidation/restart rule on a request-generation or
-  set-epoch change, independent of the settled census, collected incrementally with declared bounds, explicit
-  observation consistency, and capture framing. The settled census checkpoint stays unchanged for settled memory
-  figures.
+  declared owner and a service point that runs **independently of normal load admission** (so a blocked load
+  gate cannot suppress the diagnostic), SD-read admission, incremental collection with declared bounds,
+  explicit observation consistency, and capture framing. Invalidation covers a request-generation or set-epoch
+  change **and a content revision identity**, because a restore publication installs content under the *same*
+  request identity (so it changes neither generation nor epoch) and ordinary commits change content too. The
+  settled census checkpoint stays unchanged for settled memory figures.
 - **Define one repeatable fixture inside the already-approved scratch range** (track 5 slot 1, track 6 slots
   1–8), whose stability is proven by a **complete per-slot manifest comparison** across boots — not by one
   scratch slot surviving, which is compatible with other payload-bearing slots disappearing.
@@ -75,9 +77,10 @@ _None._ The behavior belongs to the existing hydration capability.
      `unknown`) with precedence and evidence; `empty` never a cause; no single-snapshot historical claims; and
      mandatory report completeness.
   2. **The on-demand library observation has a bound owner, admission and invalidation contract** — a declared
-     existing owner and service point, SD-read admission, incremental and bounded collection, invalidation or
-     restart on a request-generation or set-epoch change, permitted unknown degradation, and consistency
-     marking; the settled census checkpoint is retained unchanged.
+     existing owner and a service point independent of normal load admission, SD-read admission, incremental
+     and bounded collection, invalidation or restart on a request-generation change, a set-epoch change, **or a
+     content revision change** (publication under an unchanged request identity is named explicitly), permitted
+     unknown degradation, and consistency marking; the settled census checkpoint is retained unchanged.
 
 ## Known behavior, evidence-backed assumptions, and UNKNOWNs
 
