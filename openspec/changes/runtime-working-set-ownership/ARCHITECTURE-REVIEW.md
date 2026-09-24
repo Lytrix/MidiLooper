@@ -2987,3 +2987,29 @@ the a37b sequence enough times to catch the intermittent tick and read the refus
 allocation-site context to the refusal (the store's owner) so a single catch names the producer, or
 (c) instrument the SD-load staging path, which is the only caller of `rebuildBarIndex` outside `append`.
 Do not re-enable the route in the change until the raise is either caught or shown unreachable.
+
+### A3.7 shape (b) construction attempt with the guard (2026-09-24, fourth session) — fixture could not hold the condition
+
+A second construction (`scripts/hitl_a37_shapeb_v2.py`, route temporarily enabled) sequenced clear → long
+record → re-select → clear to put a `LoadLoopJob` in flight at the save-owed edge. It failed to hold the
+condition for a fixture reason, recorded rather than retried:
+
+* the reload target was **already RAM-empty** at the first CLEAR (`Clear ignored — selected slot is empty`
+  at 17.579 s), so **no reload was queued**;
+* re-selecting it at 45.867 s therefore **started a record** (`Loop 2: Start Recording`) instead of a
+  restore, and that record produced an empty take (`Recording stopped … length=0`);
+* the final CLEAR found no owed save (`MIDI: Clear selected slot 2`, no `Clear waiting`), so the drain did
+  not run.
+
+So the run proves nothing about shape (b) — no restore in flight, no named wait, no completion. The fixture
+assumes a target with committed RAM content that survives the boot restore; on this device the target came
+back from `RRQ,2,1,0,0,committed` yet read as empty to `hasDataInSlot`, which is itself worth understanding
+before another attempt. **Conclusion for the gate:** closing A3.7 shape (b) needs the reload-on-clear route
+enabled **deliberately in the change** (with the guard) plus a target whose committed content is verified at
+the CLEAR edge, not an ad-hoc temporary construction. That is an owner decision on the route, not another
+script iteration.
+
+**Device state disclosure:** the attempt cleared/recorded on track 3 slot 2 (already RAM-empty) and left a
+failed empty-record attempt on the approved scratch slot track 5 slot 1.
+
+Evidence: `captures/a37b2-01/session.log`.
