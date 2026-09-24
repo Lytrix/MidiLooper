@@ -1,5 +1,19 @@
 # Project state (execution context)
 
+**2026-09-24 (seventh session) — the A3.7 shape-(b) fixture is built; a passing run is recorded pending owner confirmation.**
+
+`scripts/hitl_a37_shapeb_fixture.py` gates shape (b) on four sampled preconditions and runs with
+**reload-on-clear disabled**, through the intended boot-restore entry point. Passing run
+`captures/a37fix-04/` (shipped firmware): target content 2 bars before the press; a restore for track 2
+slot 1 `running` at 8.246 s and unresolved at the 27.070 s edge (`waiting_commit_gate` from 10.637 s,
+committing only at 35.201 s); a save owed; another track playing (`Playback started` 9.849 s, no
+intervening stop). The drain **completed** (`State saved successfully (v4)` → `Clear selected slot 1`),
+0 aborts — the "completes" branch. Fixture bug found and fixed: `#CAP` lines flush from a PSRAM ring, so
+file order is not device-time order; analysis now orders by device time. Caveats for the owner: the restore
+was in the named `waiting_commit_gate` wait rather than holding the SD session, and precondition 4's
+evidence is sequence-based. `a37fix-01/02/03/05` were `INCONCLUSIVE` with the failing precondition named.
+No firmware changed; the route stays disabled; track 3 untouched.
+
 **2026-09-24 (fifth session) — the restore-liveness ruling is recorded as DEC-082; the change stays open on A3.7 shape (b).**
 
 [`DEC-082`](../DECISION_LOG.md#dec-082--the-restore-request-is-the-unit-identity-named-waits-preparation-under-transport-and-a-three-way-drain)
