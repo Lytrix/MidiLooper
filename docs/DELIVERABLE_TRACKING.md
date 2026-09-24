@@ -46,8 +46,9 @@ fails exactly the three advancement assertions. **Device: NOT RUN** — the clai
 **device-gated** on a stable restored library (S1.1/S1.3/S1.4/S1.5/S2b.3/S2b.5, the content PASS, and the S2b
 gate) or is a **later stage** (S3–S7, phases B–F) whose start the change's own execution order places after the
 S2b device gate. **The restored-library instability is no longer unowned:** `restored-library-stability`
-(proposed 2026-09-24, planning complete, Packet A (observation-only firmware + read-only analysis) startable immediately; **G2 review two rounds — BLOCKED then
-corrected**) owns it. A per-slot **observed current state** (`empty` / `populated` / `pending`) is reported
+(proposed 2026-09-24; **Packet A — observation-only firmware plus read-only analysis — 1.0–1.5 COMPLETE and
+device-verified 2026-09-24**; G2 review two rounds — BLOCKED then corrected) owns it. A per-slot
+**observed current state** (`empty` / `populated` / `pending`) is reported
 **separately** from a **nullable historical cause** (`catalog omission` / `restore refusal` / `intentional
 eviction` / `content loss` / `ambiguous` / `unknown`) — `empty` is a state, never a cause; four distinct
 quantities with an explicit
@@ -63,6 +64,25 @@ saved-set folder counter (`SetIndex{nextSequence}`); the runs that appeared to s
 `reconcile_warnings=0`; `DIAG,lcr,skip,restore` is content-resolution; `Track N loaded state: EMPTY` is
 present on stable boots too; and both sweeps' `library_rows` are all-zero. **The corrected measurement
 definitions come first — they may explain part of the apparent instability without a firmware fix.**
+
+**`restored-library-stability` Packet A (1.0–1.5) is COMPLETE — observation-only firmware plus read-only
+analysis.** Delivered: the corrected measurement definitions with citations; a pure two-output classifier
+(observed **current state set** vs a **nullable historical cause**, `empty` never a cause) with 13 native
+cases and a 13(+3)-test Python mirror; a **bounded on-demand observation** owned by `StorageManager`,
+serviced at the unconditional idle tail in `main` (independent of load admission), requested by
+`!LIB_OBSERVE`, emitted as the `LIBOBS` family, with SD-session admission, a 2-slot/2-probe/2-record
+per-invocation bound and `(requestGeneration, setEpoch)` **plus a content revision identity** re-checked
+before each record; 8 native cases through the real service hook with two mutation proofs. **Native
+2,373 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS keeping the approved **12-bank** ITCM
+line (`code 391,160 + padding 2,056`, floor 840 met with 1,216 B headroom, locals 34,880); the whole
+observation costs **+80 B of ITCM**. **Device-verified read-only** (`captures/s13-libobs-full-02/`):
+**payload inventory 36, initial playback-required 8, restore completions in the window 0, committed at the
+checkpoint 8**; 36 `populated` / 28 `empty` with **no loss cause anywhere**; the initial-playback set is one
+slot per track and all eight are committed; payloads on tracks 0–5 only. The read-only re-analysis of the
+recorded sweeps (`captures/s13-library-observation.json`) finds **no loss cause** and identifies `N` as
+**window-scoped**. The incomplete-window case reports incomplete with all four counts `None`. Open in the
+change: Packets **B** (the repeatable fixture, needs TBD-1 per-slot authorization for any CLEAR) and **C**
+(the S2b.7 device confirmation), plus the 4.x handoff/closeout.
 
 **`runtime-working-set-ownership` native scope (P0/P1) is COMPLETE, plus S2b.8 and S2b.7 delivered.** Full native
 **2,352 / 1 skipped / 0 failures** (2026-09-24; 2,344 before this session). Landed and green: S0

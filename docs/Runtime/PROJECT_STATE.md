@@ -1,5 +1,92 @@
 # Project state (execution context)
 
+**2026-09-24 (fourteenth session) — `restored-library-stability` Packet A 1.0–1.4 landed; 1.5 is open on upload authorization. The read-only re-analysis finds NO loss cause in either sweep.**
+
+Owner direction: proceed with Packet A. **Landed, in order:**
+
+- **1.0 — execution-packet gate.** `openspec/changes/restored-library-stability/ARCHITECTURE-REVIEW.md`
+  created with the G2 packets for the two firmware-editing slices (**1.2** classifier, **1.3** on-demand
+  observation; the packet for 1.3 states the SD-read-admission contract, the invalidation/restart rule and
+  the bounded-traversal oracle). No firmware edit preceded its packet.
+- **1.1 — measurement corrections recorded with citations** in the same artifact (a–g). The live claims
+  were corrected in `runtime-working-set-ownership` S1.3 / S2b.3 / the S2b gate, and the two historical
+  paragraphs in `PROJECT_STATE.md` / `CURRENT_WORK.md` now carry an explicit
+  `[Attribution CORRECTED 2026-09-24 …]` marker. No durable doc still asserts the catalog reconcile, or
+  `n_committed_slots`, as a demonstrated cause of loss.
+- **1.2 — the pure classifier.** New `include/StorageManager/LibraryObservation.h` +
+  `src/StorageManager/LibraryObservation.cpp`: observed fields, a **current state set** over
+  `empty`/`populated`/`pending`, and a **nullable historical cause**, with `empty` never a cause.
+  `test/test_library_observation/` — **13 cases green**; a mutation of the `unknown` fallback to
+  `content loss` fails exactly L01/L02/the unobserved case, then reverts byte-identical. The capture-side
+  mirror `scripts/hitl/library_observation.py` carries the same contract
+  (`scripts/test_library_observation_classifier.py`, 13 tests OK).
+- **1.3 — the bounded on-demand observation.** `src/StorageManager/LibraryObservationSession.cpp`, owned
+  by `StorageManager`, serviced at the **unconditional observation tail in `main`** (after
+  `emitPostRestoreCensusIfReady`) and never from the admission-gated load/restore frame; requested by
+  `!LIB_OBSERVE`; emitted as the distinct `LIBOBS` record family. Declared bound: **2 slots and 2 SD token
+  probes per invocation**, 2 emitted records per invocation, 64 slots total, bounded epoch restarts.
+  Invalidation covers `(requestGeneration, setEpoch)` **and a content revision identity** (committed pass
+  count, highest committed pass id, loop length, committed event count re-read at each slice), re-checked
+  immediately before each record is emitted. `test/test_library_observation_session/` — **8 cases green**
+  through the real service hook, including a commit-pending blocked load (O02), a permanently waiting
+  request (O01), a generation change (O04), a set-epoch restart (O05), a **publication under an unchanged
+  request identity** (O06) and denied SD admission (O07). Two mutations (drop the content-revision check;
+  gate the service on the commit gate) fail exactly the intended cases and revert byte-identical.
+  **Full native 2,373 / 1 skipped / 0 failures**; `pio run -e teensy41-capture-serial` SUCCESS with the
+  approved **12-bank** ITCM line intact (`variables 96,192 / ITCM 393,216 = code 391,160 + padding 2,056`,
+  `locals 34,880`; floor 840 met with 1,216 B headroom). The first build *without* flash placement crossed
+  into a **13th bank** (`ITCM 425,984`, locals 2,112 — the documented silent boot hang); the fix was to
+  place every new function in flash, **not** to re-base the budget. The whole observation costs **+80 B of
+  ITCM**.
+- **1.4 — read-only re-analysis of the recorded sweeps.** No device action.
+  `scripts/hitl_library_observation_report.py` runs the shared classifier over
+  `captures/s13-slope-02/` and `captures/s13-slope-final/` (→ `captures/s13-library-observation.json`), and
+  `scripts/hitl_library_growth_sweep.py`'s `boot_census()` now records `library_observation` and
+  `n_committed_slots_window_scoped` per step. **Finding: no slot in either sweep records a loss cause** —
+  every request-bearing slot is `not_applicable`, every other slot is `unknown` **with its missing fields
+  named**, and `content loss` / `restore refusal` / `catalog omission` / `intentional eviction` are not
+  evidenced anywhere. **`N` is window-scoped and the two sweeps' windows differ**: `s13-slope-02` closes at
+  ~12.85–12.93 s (420–423 lines) with N = 27/27/26, `s13-slope-final` runs to ~14.6–15.4 s (442–537 lines)
+  with N = 29/29/29 — the "shrinking" run is the one whose window closed **~1.8–2.5 s earlier**.
+  `payload_inventory`, `initial_playback_required` and `committed_at_checkpoint` are **not recoverable**
+  from those captures and are reported `None` with `payload_token`, `initial_playback_selection` and
+  `committed_content` named as the missing fields — the gap the device observation closes.
+
+**1.5 — DEVICE VERIFIED, read-only. The per-slot inventory that had never been captured, and no loss to attribute.**
+`pio run -e teensy41-capture-serial -t upload` (owner-authorized; the only reliable reset), then
+`scripts/hitl_boot_census.py --library-observe` on `/dev/cu.usbmodem154944801`. The only thing sent to the
+device is `!LIB_OBSERVE`; no CLEAR, rename, quarantine, delete or transport start, and **0 `FATAL`**.
+**Result** (`captures/s13-libobs-full-02/`): **payload inventory 36, initial playback-required set 8,
+observed restore completions in the window 0, committed at the checkpoint 8**; window
+`[13,017,777, 13,312,720]` µs, `turns=64`, `admission_complete=1`, `every_initial_observed=1`,
+`consistent_view=0` (cross-turn, marked), `complete=1`. Per slot: **36 `populated` / 28 `empty`**, and
+**no loss cause anywhere** (`content loss` / `restore refusal` / `catalog omission` / `intentional
+eviction` all zero); the 28 `empty` slots are payload-absent, request-none, content-none with cause
+`unknown` (no history — correctly not promoted to a loss). The initial-playback set is one slot per track —
+`(0,0) (1,2) (2,1) (3,0) (4,0) (5,0) (6,0) (7,0)` — and **all eight are committed**; payloads are present
+on tracks 0–5 (36 slots) and **absent on tracks 6 and 7**, which is the recorded
+`Track 6/7 loaded state: EMPTY` line, now measured per slot instead of read off a track-level line.
+`restore_completions = 0` because every required slot was already committed when the window opened.
+**Incomplete-window case** (`captures/s13-libobs-incomplete-02/`, `--observe-early-close-s 0.15`): reported
+**incomplete**, with **zero** slot records and **all four counts `None`** — never zeros, never presented as
+the settled library state. **The first device run found a real defect:** the `LIBOBS` slot record used full
+enum names, overran the capture text cap (`kMaxCaptureTextBytes = 192`) and was **silently truncated**, so
+a completed observation reported `complete=False`; the wire form is now compact enum **codes** with
+one/two-character keys, the host parser and a locking test were updated, and the run was repeated.
+**Reading:** the instability was an *observation*; this read-only attribution finds **no loss to attribute**
+and identifies the "shrinking" count as **window-scoped**. Whether a *repeated* boot reproduces the
+manifest is Packet B's complete-manifest comparison, not this packet's claim. Packet A (1.0–1.5) is
+**complete**; Packets B and C and the 4.x handoff/closeout remain open.
+
+**Flagged, not absorbed — stale `teensy41` RAM1 baseline (+64 B, pre-existing).** `pio run -e teensy41` fails
+the post-link budget check with `variables 79,232` vs the approved 79,168. **Verified not to be this
+change:** with the whole change stashed, the baseline tree builds to the identical line
+(`variables 79,232 / code 382,216 + padding 11,000 / locals 51,840`), and Packet A adds 0 B of DTCM/RAM1
+variables and 0 B of ITCM to that env. The `teensy41` entry was last re-based 2026-09-23 and is stale
+relative to S2b.7/S2b.8, which only re-recorded `teensy41-capture-serial`. **Deliberately not re-based** —
+that baseline is edited by a human with the reason recorded in the owning change's artifact. The required
+env (`teensy41-capture-serial`) is green and within budget.
+
 **2026-09-24 (thirteenth session) — the restored-library instability gets an owner: `restored-library-stability` PROPOSED, planning complete, Packet A (observation-only firmware + read-only analysis) starts immediately.**
 
 Owner direction: own the instability instead of running another drain test, because it blocks the
@@ -879,7 +966,13 @@ length=18432` — so a slot *can* come back byte-exact right after its own save+
 `Track 6 loaded state: EMPTY` (and track 7), `DIAG,lcr,skip,restore`, and a census whose non-zero-slot set
 **changed between boots** (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`), and track 6 emits no length
 feedback at all. **The obstacle is the SD catalog reconcile, not scratch-slot approval, and S1.3's slope sweep
-stays blocked** — the restored *set* is unstable across boots. **One datapoint of mine is withdrawn:** the
+stays blocked** — the restored *set* is unstable across boots. **[Attribution CORRECTED 2026-09-24: this
+paragraph's stated obstacle is withdrawn. `MidiLooper/sets/index.bin` is
+`SavedSetCatalog::SetIndex{ uint32_t nextSequence; }`, a saved-set folder counter, so a reconcile failure
+cannot by itself omit a slot; the shrinking boots report `reconcile_warnings=0`; `DIAG,lcr,skip,restore` is
+a content-resolution line; and `Track 6 loaded state: EMPTY` appears on stable boots too. The instability is
+real and now owned, unattributed, by `restored-library-stability` Packet A — see the 2026-09-24 session entry
+at the top of this file and that change's `ARCHITECTURE-REVIEW.md` § Task 1.1.]** **One datapoint of mine is withdrawn:** the
 "track 5 reads 3 bars" reading was a **wrong-slot read** (I pressed only the track button); track 5 **and slot 1**
 reads `24 bars (18432 ticks)`, and a further dump again reports `length=18432`, so this slot does survive the
 hard reset. Also recorded: a boot census needs a **forced** reboot (a serial open only sometimes resets), and

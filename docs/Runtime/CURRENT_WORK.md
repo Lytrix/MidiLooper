@@ -2911,6 +2911,48 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (fourteenth session) — `restored-library-stability` Packet A 1.0–1.4 landed (observation-only firmware + read-only analysis); 1.5 open on upload authorization.**
+
+Owner direction: proceed with Packet A. **1.0** execution packets for 1.2/1.3 recorded in the change's
+`ARCHITECTURE-REVIEW.md` before any firmware edit. **1.1** measurement corrections recorded with citations,
+and the live claims in `runtime-working-set-ownership` S1.3/S2b.3/the S2b gate corrected; the historical
+paragraphs in this file and `PROJECT_STATE.md` carry an explicit correction marker. **1.2** the pure
+classifier (`include/StorageManager/LibraryObservation.h`, `src/StorageManager/LibraryObservation.cpp`):
+observed fields, a **current state set**, a **nullable cause** from six values, `empty` never a cause —
+13 native cases green (`test/test_library_observation/`) plus a 13-test Python mirror, with a
+mutation-proof (the `unknown` fallback → `content loss` fails L01/L02, then reverts byte-identical).
+**1.3** the bounded on-demand observation
+(`src/StorageManager/LibraryObservationSession.cpp`): owned by `StorageManager`, serviced at the
+**unconditional observation tail in `main`** (never the admission-gated load/restore frame), requested by
+`!LIB_OBSERVE`, emitted as the distinct `LIBOBS` record family; **2 slots / 2 SD probes / 2 records per
+invocation**, SD-session admission respected, `(generation, epoch)` **plus a content revision identity**
+re-checked immediately before each record is emitted, bounded epoch restarts; **8 native cases green**
+through the real service hook (O01–O08), two mutation-proofs reverted byte-identical; **full native
+2,373 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS keeping the **12-bank** ITCM line
+(`code 391,160 + padding 2,056`, locals 34,880; floor 840) — the first build without flash placement
+crossed a 13th bank and the placement was fixed rather than the budget re-based; the observation costs
+**+80 B of ITCM**. **1.4** read-only re-analysis
+(`scripts/hitl_library_observation_report.py` → `captures/s13-library-observation.json`; the sweep parser
+now records `library_observation` + `n_committed_slots_window_scoped`): **no loss cause anywhere in either
+sweep**; N is window-scoped (27/27/26 on `s13-slope-02` closing ~12.85–12.93 s vs 29/29/29 on
+`s13-slope-final` closing ~14.6–15.4 s); the other three quantities are `None` with the missing fields
+named. **1.5 DEVICE VERIFIED (read-only)** — `teensy41-capture-serial` uploaded (owner-authorized; the only
+reliable reset) and `scripts/hitl_boot_census.py --library-observe` run on
+`/dev/cu.usbmodem154944801`; the only command sent is `!LIB_OBSERVE`, no CLEAR/rename/quarantine/delete and
+no transport, 0 `FATAL`. **Result** (`captures/s13-libobs-full-02/`): **payload inventory 36, initial
+playback-required 8, restore completions in the window 0, committed at checkpoint 8**; window
+`[13,017,777, 13,312,720]` µs, `turns=64`, `admission_complete=1`, `every_initial_observed=1`,
+`consistent_view=0` (cross-turn, marked), `complete=1`. **36 `populated` / 28 `empty` and no loss cause
+anywhere**; the initial-playback set is one slot per track — `(0,0) (1,2) (2,1) (3,0) (4,0) (5,0) (6,0)
+(7,0)` — all committed, with payloads on tracks 0–5 and none on tracks 6–7 (the recorded
+`Track 6/7 loaded state: EMPTY`, now per slot). The incomplete-window case
+(`captures/s13-libobs-incomplete-02/`, early close 0.15 s) reports **incomplete with all four counts
+`None`**. **The first device run found a real defect:** the `LIBOBS` record used full enum names, overran
+the 192-byte capture cap and was **silently truncated**, so a completed observation read `complete=False`;
+the wire form is now compact codes with one/two-character keys, with the host parser and a locking test
+updated, and the run repeated. **Packet A (1.0–1.5) is complete**; Packets B/C and the 4.x
+handoff/closeout remain open. Nothing outside § Now implementing was implemented.
+
 **2026-09-24 (eleventh session) — S2b.8 — set-change epoch / external resets — LANDED native-only in `runtime-working-set-ownership`; documentation reconciled first.**
 Owner direction: take S2b.8 before S2b.7, with reconciliation first. **Reconciled:** `tasks.md` no longer
 links the archived `deferred-slot-restore-liveness` as a live sibling, and the transfer (S1.1/S1.3/S1.4/
@@ -3377,7 +3419,13 @@ census's non-zero-slot set changed between boots (`{track=1,slot=2, track=4,slot
 Both `dump_and_capture` runs still report `track=5,slot=0,length=18432`, and track 5 **+ slot 1** reads
 `24 bars (18432 ticks)` — so this slot survives; an earlier "3 bars" reading of mine was a wrong-slot read and is
 withdrawn. **The S1.3 slope sweep stays blocked on the SD catalog reconcile** (the restored *set* is unstable
-across boots), not on scratch-slot approval. Also: a boot census needs a **forced** reboot, and repeated runs
+across boots), not on scratch-slot approval. **[Attribution CORRECTED 2026-09-24: the named obstacle is
+withdrawn. `sets/index.bin` is `SavedSetCatalog::SetIndex{ uint32_t nextSequence; }`, a saved-set folder
+counter, so a reconcile failure cannot by itself omit a slot; the shrinking boots report
+`reconcile_warnings=0`; `DIAG,lcr,skip,restore` is a content-resolution line; and `Track 6 loaded state:
+EMPTY` appears on stable boots too. The instability is real and now owned, unattributed, by
+`restored-library-stability` Packet A — see the 2026-09-24 session entry at the top of this file and that
+change's `ARCHITECTURE-REVIEW.md` § Task 1.1.]** Also: a boot census needs a **forced** reboot, and repeated runs
 without one accumulate residency (`live` 4,658 KB → **8,170 KB**, heap pinned at its 52 KB floor).
 **(4) Content: not a formal PASS, but the two "missing" rows are proven present.** `storage_matches_effective:
 true` and all 24 bars dense (1,746 rows) but `inventory_equal: false` with **2 unexplained missing rows in bar 0**

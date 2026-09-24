@@ -291,14 +291,25 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       *device* slope to the failure point. **DEVICE CENSUS TAKEN 2026-09-23 (Leg 1):** on HEAD (`26e96539`,
       hex `673e20ca…`) the restore walk spends **0 chunks** on committed slots (`free_chunks 480 → 480`,
       `credits=0` on all eight rows) with the enabled set at **32** chunks (was 96) and `free_chunks`
-      pre-restore **480 of 512** (was 400). **The sweep itself is still blocked, and the blocker moved:** a
-      growth attempt (`STIM-…-TEMP-RWSO-GROWTH`, track 6) reproduces the obstacle at **catalog** level —
+      pre-restore **480 of 512** (was 400). **The sweep itself is still blocked; the attribution is
+      CORRECTED 2026-09-24.** A growth attempt (`STIM-…-TEMP-RWSO-GROWTH`, track 6) observed
       `could not reconcile MidiLooper/sets/index.bin`, `Track 6 loaded state: EMPTY` (and track 7),
       `DIAG,lcr,skip,restore`, and a census whose non-zero-slot set **changed between boots**
-      (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`). So the obstacle is the SD catalog reconcile,
-      not scratch-slot approval, and successive boots do **not** accumulate a library. **A claim of mine —
-      that the library "can grow" because a reset-then-dump once returned `length=18432` — is withdrawn as
-      over-generalised;** Leg 3 of the device session records the falsification.
+      (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`). **Those observations stand; the
+      conclusion drawn from them did not.** `MidiLooper/sets/index.bin` is
+      `SavedSetCatalog::SetIndex{ uint32_t nextSequence; }` — a saved-set *folder counter*, not a slot
+      catalog — so a reconcile failure cannot by itself omit a slot; the live library is
+      `/MidiLooper/current/loops/loop_TT_SS.bin` plus the `loopSlotPayloadOnSdInRam_` mirror
+      (`src/StorageManager/LoopSlotRestoreQueue.cpp`). The boots that appeared to shrink report
+      `reconcile_warnings=0` (`captures/s13-slope-02/sweep-result.json`), `DIAG,lcr,skip,restore` is a
+      **content-resolution** line (`TrackDeferredMaintenance`/`LoopContentResolution`, `kind=skip`,
+      `reason=restore`), and `Track 6 loaded state: EMPTY` appears on the stable `N=29` boots
+      (`captures/s13-slope-final/`) too, so none of them tracks the shrink. The obstacle is therefore an
+      **unattributed** restored-library instability, owned since 2026-09-24 by
+      [`restored-library-stability`](../restored-library-stability/proposal.md) (Packet A,
+      observation-only firmware plus read-only analysis). An earlier claim of mine — that the library
+      "can grow" because a reset-then-dump once returned `length=18432` — is **withdrawn as
+      over-generalised**; Leg 3 of the device session records the falsification.
 - [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
       many canonical chunks those roots pin** via `SlotPassReferences` (the B10 baseline).
       **Clause 1 MEASURED 2026-09-23** (dense PASS run, no new telemetry): the undo root retains essentially the
@@ -406,16 +417,22 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       across 0 → 2 slots); — added the same day — S1.3's **second clause**, the synthetic 60-descriptor
       characterisation (reservation flat at 40 chunks / 205,280 B from N = 8 to N = 60, red-proven); and the
       **RWSO-24CAP device legs** (the zero per-committed-slot reservation census, and the 24-bar overdub
-      admitted with 0 denials). **Not satisfied: S1.3's slope *to the failure point*** — still blocked, now by
-      the **SD catalog reconcile defect** (`could not reconcile …/index.bin`, `Track 6 loaded state: EMPTY`,
-      `DIAG,lcr,skip,restore`, a restored-set that changes between boots), so successive boots do not
-      accumulate a library; and a **content-verified PASS**, which the pipeline run does not meet (2
+      admitted with 0 denials). **Not satisfied: S1.3's slope *to the failure point*** — still blocked,
+      **and the recorded attribution is corrected 2026-09-24**: the obstacle is an **unattributed
+      restored-library instability**, not a demonstrated SD-catalog-reconcile defect. `sets/index.bin` is a
+      saved-set folder counter (`SavedSetCatalog::SetIndex{ uint32_t nextSequence; }`), the boots that
+      appeared to shrink report `reconcile_warnings=0`, `DIAG,lcr,skip,restore` is a content-resolution
+      line, and `Track 6 loaded state: EMPTY` appears on stable boots too; the four corrected measurement
+      definitions and their evidence paths are recorded in
+      [`restored-library-stability/ARCHITECTURE-REVIEW.md`](../restored-library-stability/ARCHITECTURE-REVIEW.md)
+      § Task 1.1. Also open: a **content-verified PASS**, which the pipeline run does not meet (2
       unexplained missing rows in bar 0, Leg 4). S1.5's refusal-N and S1.4's pass→chunk conversion also remain.
       **The named blocker was the change now archived as**
       [`2026-09-24-deferred-slot-restore-liveness`](../archive/2026-09-24-deferred-slot-restore-liveness/proposal.md),
       which unblocked preparation under transport and the CLEAR completion branch but **did not** remove the
-      SD-catalog reconcile confound (its drain-advancement clause became S2b.7 here); this gate closes after
-      the sweep is re-run and this list is re-measured — a confounded gate is retried, never reinterpreted.
+      restored-library confound (its drain-advancement clause became S2b.7 here); this gate closes after
+      the sweep is re-run on a **stable, manifest-verified** library and this list is re-measured — a
+      confounded gate is retried, never reinterpreted.
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
@@ -590,9 +607,16 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       **8 KB → 0 KB**. **But see the correction:** those `free_chunks` are **pre-restore** — boot queues the loop
       restores and applies them via `LoadLoopJob` afterwards, so the "after boot with N committed slots" figure
       is the post-restore one, measured for HEAD as **440 of 512** (the restore costs 40 chunks). The baseline's
-      post-restore value is not measured. Also found: the restored slot reports `Track 6 loaded state: EMPTY` and
-      `index.bin` does not reconcile, so recording into the scratch slot does **not** currently grow the restored
-      library — the prerequisite S1.3 needs. See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.3.
+      post-restore value is not measured. Also observed: the restored slot reports `Track 6 loaded state: EMPTY`
+      and `index.bin` does not reconcile. **Attribution CORRECTED 2026-09-24:** `sets/index.bin` is
+      `SavedSetCatalog::SetIndex{ uint32_t nextSequence; }`, a saved-set **folder counter**, so the reconcile
+      line cannot by itself explain a missing slot, and `Track 6 loaded state: EMPTY` also appears on the
+      **stable** boots (`captures/s13-slope-final/`). Recording into the scratch slot therefore does not
+      demonstrably grow a stable library, but the cause is unattributed — owned by
+      [`restored-library-stability`](../restored-library-stability/proposal.md) Packet A (observation-only
+      firmware plus read-only analysis). See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.3 and
+      [`restored-library-stability/ARCHITECTURE-REVIEW.md`](../restored-library-stability/ARCHITECTURE-REVIEW.md)
+      § Task 1.1.
 - [x] S2b.4 Release the per-slot canonical reservation when the slot's role leaves the active set, using the same
       `noLiveOwnerForSlot` predicate as S4.0. **No release path exists today** (the only
       `canonicalCaptureOutput.store.clear()` is the runtime destructor; `releaseGrain` runs only from the
@@ -726,12 +750,16 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       **480 of 512** (was 400). Full table: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § Device
       session — RWSO-24CAP, Leg 1. **Still open — and still blocked, now sharply:** the **slope-to-failure
       sweep** (varying N across boots) and the failure point. A growth attempt (`STIM-…-TEMP-RWSO-GROWTH`,
-      track 6) was stopped by the **SD catalog reconcile defect**, which reproduces the recorded obstacle at
-      *catalog* level: `could not reconcile MidiLooper/sets/index.bin`, `Track 6 loaded state: EMPTY` (and
-      track 7), `DIAG,lcr,skip,restore`, and a census whose non-zero-slot set **changed between boots**
-      (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`). **An earlier claim of mine — that the library
-      "can grow" because Leg 3 dumped `length=18432` after a reset — is withdrawn as over-generalised:** a slot
-      can come back byte-exact right after its own save+reset, but successive boots do not accumulate a library.
+      track 6) was stopped by the **unattributed restored-library instability** (attribution corrected
+      2026-09-24; the earlier "SD catalog reconcile defect" reading is withdrawn): the run observed
+      `could not reconcile MidiLooper/sets/index.bin`, `Track 6 loaded state: EMPTY` (and track 7),
+      `DIAG,lcr,skip,restore`, and a census whose non-zero-slot set **changed between boots**
+      (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`). `sets/index.bin` is a saved-set folder
+      counter, so the reconcile line is not a demonstrated cause; the instability is owned by
+      [`restored-library-stability`](../restored-library-stability/proposal.md) Packet A. **An earlier claim of
+      mine — that the library "can grow" because Leg 3 dumped `length=18432` after a reset — is withdrawn as
+      over-generalised:** a slot can come back byte-exact right after its own save+reset, but successive boots
+      do not accumulate a stable library.
       **The 24-bar overdub itself is admitted on hardware (Leg 2):** the same run records `record loop length
       18432/18432`, **`Overdubbing started` twice** (ticks 755 and 22,836), **`op=overdub_start` denials 0**,
       0 `#MEM_DENIED` / `#MEM_EXT_REFUSED` / `FATAL`, SEVT `bars=24/24 count_ok/span_ok/bars_ok = true` and
