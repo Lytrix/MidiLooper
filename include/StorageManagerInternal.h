@@ -18,6 +18,7 @@
 #include "SavedSetCatalog.h"
 #include "StorageActivitySnapshot.h"
 #include "StorageLoopIo.h"
+#include "PersistenceDrainOutcome.h"
 #include "PersistenceSyncDrainBudget.h"
 #include "StorageManagerInternal/PersistenceWorkQueue.h"
 #include "SlotLoadSession.h"
@@ -189,6 +190,15 @@ bool resolvePersistKeyToTrackSlot(const PersistKey& key, uint8_t& trackIndexOut,
                                   uint8_t& slotIndexOut);
 SyncDrainProgressSnapshot captureSyncDrainProgressSnapshot();
 SyncDrainBudget buildSyncDrainBudgetForSession();
+/// A3.4: the detailed drain entry point. `saveState` remains a `Completed`-only wrapper so no existing
+/// caller silently gains new semantics, and both destructive callers use this one.
+struct SyncDrainResult {
+    SyncDrainOutcome outcome = SyncDrainOutcome::Failed;
+    /// The named reason for a blocked or failed outcome; a `waiting_*` name for a restore block.
+    const char* reason = "failed";
+};
+SyncDrainResult drainPersistenceWorkBlockingDetailed(const LooperState& state);
+/// Compatibility entry point: true only for `Completed`.
 bool drainPersistenceWorkBlocking(const LooperState& state);
 bool beginDeferredRuntimeBundleWrite(const LooperState& state);
 bool completeScopedRuntimeBundleWorkItemIfDone();

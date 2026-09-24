@@ -749,11 +749,24 @@ void MidiButtonActions::handleClearTrack() {
             track.stopPlaying();
         }
         logger.info("Clear waiting for deferred save completion");
-        if (!StorageManager::saveState(looperState.getLooperState())) {
+        // A3.4: use the detailed entry point. A **temporarily blocked** drain is an explicit refusal, not
+        // a failure and never silent success: report the named reason, leave the slot untouched (this
+        // return is the only slot-touching guard below), and leave the owed save owed.
+        const StorageManagerInternal::SyncDrainResult drainResult =
+            StorageManagerInternal::drainPersistenceWorkBlockingDetailed(looperState.getLooperState());
+        const SyncDrainCallerAction action = resolveDrainCallerAction(drainResult.outcome);
+        if (action != SyncDrainCallerAction::Proceed) {
             if (wasPlaying && track.hasDataInSlot(slot)) {
                 track.startPlaying(now);
             }
-            logger.error("Clear aborted: could not complete deferred save first");
+            if (action == SyncDrainCallerAction::RefuseBlocked) {
+                logger.error("Clear refused: deferred save temporarily blocked by %s; slot left "
+                             "untouched, save still owed",
+                             drainResult.reason);
+            } else {
+                logger.error("Clear aborted: could not complete deferred save first (%s)",
+                             drainResult.reason);
+            }
             return;
         }
     }
