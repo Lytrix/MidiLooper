@@ -26,7 +26,8 @@ possibility that a corrected measurement explains part of the apparent instabili
 ## What Changes
 
 - **Own the observation and its attribution**, in one narrowly scoped change whose first packet is
-  **read-only**.
+  **observation-only firmware plus read-only analysis** — instrumentation and analysis only, with no library
+  behavior change and no destructive SD action.
 - **Define the measurement before drawing conclusions.** Report four distinct quantities and make the
   observation window explicit:
   1. the **payload inventory** — slots with a payload present and its token valid;
@@ -36,16 +37,21 @@ possibility that a corrected measurement explains part of the apparent instabili
   4. the **currently committed set** at the observation.
   An incomplete window is reported as incomplete, and a completion count is never presented as the library
   size.
-- **Separate observation from attribution.** Per slot, record observed fields (payload validity, enumeration,
-  request state/wait/terminal with the **full identity** `(track, slot, requestGeneration, setEpoch)`,
-  committed content, selection). Attribution is **nullable**: `empty/not applicable`, `pending`,
-  `catalog omission`, `restore refusal`, `intentional eviction`, `content loss`, `ambiguous`, `unknown` —
-  always with supporting evidence and stated precedence. A slot that was never populated is not a loss; a
+- **Separate observation from attribution, on two axes.** Per slot, record observed fields (payload validity,
+  enumeration, request state/wait/terminal with the **full identity**
+  `(track, slot, requestGeneration, setEpoch)`, committed content, selection), then report an observed
+  **current state** (`empty` / `populated` / `pending`, a set) **separately** from a **nullable historical
+  cause** (`catalog omission`, `restore refusal`, `intentional eviction`, `content loss`, `ambiguous`,
+  `unknown`) — always with supporting evidence and stated precedence. `empty` is a state and is **never** a
+  cause; a slot that is `empty` with no history records cause `unknown`; a prior inventory establishes only the
+  disappearance, so its cause stays `unknown` without an explicit event; a
   corrupt payload that also refused is not forced into one cause; a single snapshot cannot prove a historical
   eviction.
-- **Make the inventory available in the stuck states it must explain** — a bounded, on-demand diagnostic
-  snapshot independent of the settled census, collected incrementally with declared bounds, explicit snapshot
-  consistency, and capture framing. The settled census checkpoint stays unchanged for settled memory figures.
+- **Make the inventory available in the stuck states it must explain** — a bounded, on-demand observation with a
+  declared owner, service point, SD-read admission and an invalidation/restart rule on a request-generation or
+  set-epoch change, independent of the settled census, collected incrementally with declared bounds, explicit
+  observation consistency, and capture framing. The settled census checkpoint stays unchanged for settled memory
+  figures.
 - **Define one repeatable fixture inside the already-approved scratch range** (track 5 slot 1, track 6 slots
   1–8), whose stability is proven by a **complete per-slot manifest comparison** across boots — not by one
   scratch slot surviving, which is compatible with other payload-bearing slots disappearing.
@@ -63,11 +69,15 @@ _None._ The behavior belongs to the existing hydration capability.
 ### Modified Capabilities
 
 - `lazy-slot-hydration`: add two requirements.
-  1. **Library state is reported as observed state, separate from an attributed cause** — observed fields per
-     slot, a nullable cause with precedence, `empty/not applicable` / `pending` / `ambiguous` / `unknown` as
-     valid outcomes, no single-snapshot historical claims, and mandatory report completeness.
-  2. **The library inventory is obtainable on demand and is not gated on a settled system** — bounded,
-     incremental, consistency-marked collection; the settled census checkpoint is retained unchanged.
+  1. **Observed current state is reported separately from a nullable historical cause** — observed fields per
+     slot; a current state that is a set over `empty` / `populated` / `pending`; a nullable cause
+     (`catalog omission` / `restore refusal` / `intentional eviction` / `content loss` / `ambiguous` /
+     `unknown`) with precedence and evidence; `empty` never a cause; no single-snapshot historical claims; and
+     mandatory report completeness.
+  2. **The on-demand library observation has a bound owner, admission and invalidation contract** — a declared
+     existing owner and service point, SD-read admission, incremental and bounded collection, invalidation or
+     restart on a request-generation or set-epoch change, permitted unknown degradation, and consistency
+     marking; the settled census checkpoint is retained unchanged.
 
 ## Known behavior, evidence-backed assumptions, and UNKNOWNs
 
@@ -127,8 +137,8 @@ _None._ The behavior belongs to the existing hydration capability.
 - **Firmware:** `StorageManager` restore/hydration ownership — `CurrentSetStorage`/`SavedSetIo` (payload paths,
   set index), `LoopSlotRestoreQueue` (payload mirror, boot background fill, request admission), and the
   census/observability path. The on-demand snapshot is a new bounded diagnostic alongside — not a relaxation
-  of — `emitPostRestoreCensusIfReady`. Packet A is **read-only**; any production change is specified only after
-  the attribution is evidenced.
+  of — `emitPostRestoreCensusIfReady`. Packet A is **observation-only firmware plus read-only analysis**; any
+  library **behavior** change is specified only after the attribution is evidenced.
 - **Harness/tooling:** the boot census and the library sweep gain the observed fields, the four quantities, the
   window completeness and the nullable cause; `scripts/hitl_boot_census.py` and
   `scripts/hitl_library_growth_sweep.py` are extended rather than replaced.

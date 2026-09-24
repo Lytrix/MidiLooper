@@ -62,32 +62,47 @@ Reuse the existing owners listed in *Context*; add no persisted per-slot catalog
 *Alternative rejected:* a persisted inventory — it would duplicate `loopSlotPayloadOnSdInRam_`, add
 RAM1/DTCM state, and re-introduce the second-authority problem the working-set change exists to remove.
 
-**D2 — The inventory is collected by a bounded, on-demand path that does not depend on the settled census.**
-Add an on-demand diagnostic snapshot gated only by an explicit request, with:
-- **incremental collection** — bounded slots (and bounded SD reads / content traversal) per invocation, so a
-  large library never forces an unbounded traversal in one turn;
-- **snapshot consistency** — each slot records the observation turn, and a snapshot assembled across turns is
-  marked as such rather than presented as one instant;
+**D2 — The inventory is collected by a bounded, on-demand observation with a declared owner, service point,
+admission and invalidation contract.**
+Owner: **`StorageManager`** (the existing persistence/restore owner — no new owner). Service point: the
+existing per-turn storage service in `main` that already runs the deferred restore/load work
+(`DeferredJobScheduler::runFrame` / `processDeferredLoopSlotRestore`), driven by an explicit on-demand
+request; the exact hook is pinned in the execution packet. No new thread, timer, interrupt or periodic
+hot-path cost. The observation is gated only by its explicit request, not by the settled census gates.
+
+- **incremental collection** — bounded slots *and* bounded SD reads / committed-content traversal per
+  invocation, with the per-invocation bound declared, so one line never implies a bounded traversal over the
+  whole library;
+- **SD-read admission** — respects the existing SD-session admission (the gate that excludes capture and
+  concurrent slot load / persistence write); never opens, reads or holds SD resources concurrently with a load
+  job, a persistence write, or capture;
+- **invalidation** — each slot's observation is scoped to `(track, slot, requestGeneration, setEpoch)`. A
+  request-generation advance (an external reset such as a clear) invalidates or restarts **that slot**; a set
+  epoch change invalidates or restarts the **whole** observation. Fields from different generations are never
+  combined into one slot record, and a content reference is never retained across slices;
+- **permitted degradation** — fields unavailable because admission was denied or an observation was
+  invalidated stay explicitly `unknown`, and the report is still produced and still names a waiting request;
+- **snapshot consistency** — the observation turn per slot, with cross-turn observations marked as such;
 - **capture framing** — window start/end, whether every initial-playback slot was observed, whether the
   background admission scan completed, and the four counts of D4.
+
 *Alternatives rejected:* (a) relax `emitPostRestoreCensusIfReady`'s gates — that would corrupt the settled
 memory measurement it exists for; (b) harvest the inventory from the existing census only — it is exactly the
-state that a stuck request suppresses.
+state that a stuck request suppresses; (c) a free-running background traversal — unbounded SD reads and it
+would observe an inconsistent library across unrelated mutations.
 
-**D3 — Observation and attribution are separate, and attribution is nullable.**
-The snapshot records observed fields (payload validity, enumeration, request state/wait/terminal with the full
-identity `(track, slot, requestGeneration, setEpoch)`, committed content, selection). A **pure** function maps
-the snapshot to a cause that may be `empty/not applicable`, `pending`, `catalog omission`, `restore refusal`,
-`intentional eviction`, `content loss`, `ambiguous`, or `unknown`, always with the supporting fields and a
-stated precedence:
-- `empty/not applicable` — no payload and no outstanding request; never a loss cause;
-- `pending` — a request that has not terminated; no loss or refusal is asserted;
-- `ambiguous` — two or more causes are equally consistent (recorded together);
-- `unknown` — the evidence is insufficient, including any **historical** eviction/deletion claim from a single
-  snapshot with no prior inventory or explicit event.
-*Alternatives rejected:* a forced one-of-four classification (cannot classify an empty slot, cannot represent a
-corrupt payload that also refused, and cannot prove a past event); and reading the cause off the device log by
-eye, which produced three separate misreads already.
+**D3 — Observed current state and a nullable historical cause are two separate outputs.**
+The report carries the observed fields (payload validity, enumeration, request state/wait/terminal with the
+full identity `(track, slot, requestGeneration, setEpoch)`, committed content, selection), a **current state**
+that is a *set* over `empty` / `populated` / `pending`, and a separate **historical cause** from
+`catalog omission` / `restore refusal` / `intentional eviction` / `content loss` / `ambiguous` / `unknown`,
+always with the supporting fields and a stated precedence. `empty` is a state, never a cause. A slot that is
+`empty` with no prior inventory and no event records cause `unknown` — the two are not in conflict because they
+are different outputs. A prior inventory establishes a *disappearance* but not its cause, so that case is also
+`unknown` unless an explicit event exists; only a recorded eviction decision yields `intentional eviction`.
+*Alternatives rejected:* a single forced one-of-four classification (cannot represent an empty slot, cannot
+represent a corrupt payload that also refused, cannot prove a past event, and made `empty` and `unknown`
+contradictory); and reading the cause off the device log by eye, which produced three separate misreads already.
 
 **D4 — Four distinct quantities and an explicit window; none of them is "the library size".**
 
@@ -102,9 +117,11 @@ The report SHALL state which window produced the completion count. *Alternative 
 treating `n_committed_slots` as the boot playback set and subtracting it from the payload inventory — a
 window-dependent count cannot carry that inference.
 
-**D5 — Packet A stays read-only; the fixture is bounded to the already-approved scratch range.**
-Read-only investigation needs no authorization. Building the fixture may require emptying a slot: a per-slot,
-explicitly authorized action in the same session (TBD-1), never a sweep.
+**D5 — Packet A is observation-only firmware plus read-only analysis; the fixture is bounded to the
+already-approved scratch range.**
+The instrumentation is bounded and non-destructive, so it needs no destructive-SD authorization; the analysis
+tasks need none either. Building the fixture may require emptying a slot: a per-slot, explicitly authorized
+action in the same session (TBD-1), never a sweep.
 
 **D6 — Fixture stability is proven by a complete per-slot manifest comparison, not by one slot surviving.**
 Each fixture boot compares the **whole expected manifest**: every slot's payload presence/token, committed
@@ -132,7 +149,7 @@ on, this change's closeout or any other change's closeout.
   the slice that adds it.
 - **[A partial snapshot could be misread as a settled one]** → capture framing is mandatory and an incomplete
   window must be stated; the spec forbids presenting an incomplete observation as the settled state.
-- **[The fixture needs a destructive action to build]** → D5: read-only Packet A first; per-named-slot
+- **[The fixture needs a destructive action to build]** → D5: observation-only Packet A first; per-named-slot
   authorization; reuse of the approved range before requesting anything new.
 - **[Packet A finds intentional eviction, not a defect]** → A valid outcome; the change then owns documenting
   the policy (TBD-2) and rebuilds the fixture around the accepted policy.

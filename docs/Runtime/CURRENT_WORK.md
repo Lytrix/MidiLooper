@@ -12,7 +12,7 @@ Three facts define what may be implemented right now:
    measurable natively), and phases B–E. **Every one of those is a device leg**, and the stage order is not
    bypassed merely because hardware evidence is blocked.
 2. **The restored-library instability now has an owner: `restored-library-stability`** (proposed 2026-09-24,
-   planning complete, `openspec validate` clean, **read-only Packet A can start immediately**). It exists
+   planning complete, `openspec validate` clean, **Packet A (observation-only firmware + read-only analysis) can start immediately**). It exists
    because the set of slots **observed** committed after a reboot is not reproducible **as measured**, which blocks fact 1's device legs. Its first
    finding is already recorded: the previous blocker attribution (SD catalog reconcile) does not hold —
    `sets/index.bin` is a saved-set *folder counter* (`SetIndex{nextSequence}`), the shrinking boots report
@@ -2927,18 +2927,19 @@ above the 840 floor); both fixes proven discriminating by removal. **No device r
 hardware-observable. **Next: S2b.7 — drain-driven restore advancement** (characterize advancement vs a
 correctly named wait; commit gate not relaxed). Packet: `ARCHITECTURE-REVIEW.md` § S2b.8.
 
-**2026-09-24 (thirteenth session) — the restored-library instability now has an owner: `restored-library-stability` PROPOSED, planning complete, read-only Packet A starts immediately.**
+**2026-09-24 (thirteenth session) — the restored-library instability now has an owner: `restored-library-stability` PROPOSED, planning complete, Packet A (observation-only firmware + read-only analysis) starts immediately.**
 Owner direction: give the instability an owner rather than another drain test, because it blocks the
 measurements and the later runtime stages. **Opened** `openspec/changes/restored-library-stability/`
 (proposal + design + `lazy-slot-hydration` spec delta + tasks; `openspec validate` clean; **no implementation
-started**). **Scope:** own the instability; attribute with a **nullable** classifier (**catalog omission /
-restore refusal / intentional eviction / content loss**, plus `empty/not applicable`, `pending`, `ambiguous`,
-`unknown`) kept **separate from observation**, with evidence and stated precedence; add a per-slot
+started**). **Scope:** own the instability; report an observed **current state** (`empty` / `populated` /
+`pending`) **separately** from a **nullable historical cause** (**catalog omission /
+restore refusal / intentional eviction / content loss**, plus `pending`, `ambiguous`,
+`unknown`), with evidence and stated precedence (`empty` is never a cause); add a per-slot
 **observed-state** inventory (payload + token, boot enumeration, request state/wait/terminal with full
 identity, committed content, selection) reporting **four distinct quantities** with an explicit observation
 **window**, collected through a **bounded on-demand snapshot** that does not depend on the settled census
 gates; define **one** repeatable fixture inside the already-approved
-scratch range (track 5 slot 1, track 6 slots 1–8), read-only first, with any CLEAR needing **per-slot owner
+scratch range (track 5 slot 1, track 6 slots 1–8), observation-only firmware first, with any CLEAR needing **per-slot owner
 authorization** and stability proven by a **complete per-slot manifest comparison**; and carry the **S2b.7
 device confirmation** as an independently reportable packet. **Handoff, not absorption:** when the library is
 stable, `runtime-working-set-ownership` finishes S1
@@ -2961,7 +2962,23 @@ snapshot consistency and capture framing, while the settled census stays for set
 forced one-of-four classification could not be truthful — observation is now separate from a **nullable**
 attribution, with full request identity, completeness and no single-snapshot historical claim. (4) One scratch
 slot surviving three boots does not establish stability — a **complete per-slot manifest comparison** is now
-required and any unexplained difference is a failure. **Read-only attribution may proceed; the corrected
+required and any unexplained difference is a failure.
+**G2 second round 2026-09-24: still BLOCKED on two remaining contracts, now corrected — no broader redesign.**
+(a) The classifier had **contradictory mandatory outcomes** (an absent payload with no request and no history had
+to be both `empty/not applicable` and `unknown`); the axes are now explicit and separate — observed **current
+state** (`empty` / `populated` / `pending`, a set) versus a **nullable historical cause** — `empty` is never a
+cause, a prior inventory establishes only the disappearance (cause stays `unknown` without an explicit event),
+and a single test with exactly the overlapping input is required. (b) The incremental observation had **no
+ownership or invalidation contract**; it is now owned by `StorageManager`, serviced at a declared **existing**
+per-turn service point (no new thread/timer), respects the existing **SD-session admission**, and **invalidates or
+restarts** the affected observation on a request-generation advance or a set-epoch change — never mixing fields
+from different generations, never retaining a content reference across slices, with unavailable fields left
+`unknown` while the waiting request is still named, plus a native **mutation-between-slices** test. Two
+tightenings: task 3.1 defines the **progress measurement interval as inside the drain call**
+(`restoreProgressCounter()` sampled immediately before entry and after return), so an urgent-save discharge alone
+does **not** check off S2b.7; and Packet A is renamed **observation-only firmware and read-only analysis** with an
+unambiguous execution-packet requirement (mandatory for 1.2/1.3, not for the pure analysis tasks).
+**Observation-only attribution may proceed; the corrected
 measurement definitions come first, because they may explain part of the apparent instability without a
 firmware fix.**
 **Wording recorded:** `runtime-working-set-ownership` has **no *currently eligible* native task** left; the
