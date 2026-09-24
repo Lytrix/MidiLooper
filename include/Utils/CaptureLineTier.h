@@ -142,6 +142,12 @@ inline bool isTierALine(const char* line) {
          // One-shot post-restore census checkpoint (S1.3/S2b.3). A slope run reads `free_chunks`
          // against the readiness fields, so the marker must survive the timing-critical flush budget.
          strncmp(tag, "DIAG,post_restore_census,", 25) == 0 ||
+         // `restored-library-stability` 1.3: the bounded on-demand library observation. It is an
+         // explicitly requested one-shot inventory (66 records, ≤2 emitted per invocation), and the
+         // whole point is to read it back in the stuck states a dense run produces — so it must survive
+         // the timing-critical flush budget. The records are compact by construction because
+         // `kMaxCaptureTextBytes` is 192 (a full-name form was silently truncated on device).
+         strncmp(tag, "LIBOBS,", 7) == 0 ||
          strncmp(tag, "DIAG,boot_reset,", 16) == 0
 #if SESSION_CAPTURE_SNAPSHOT_IDLE
          || strncmp(tag, "DIAG,snapshot_idle,", 19) == 0
