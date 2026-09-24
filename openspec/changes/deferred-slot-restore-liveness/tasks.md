@@ -833,14 +833,18 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       → **IN PROGRESS 2026-09-24 (second session).** The post-restore census checkpoint is **finished and
       device-verified** (see A4.2 / `captures/census-final-02/`): `free_chunks=451` after all restores,
       readiness attested, S2b.3's `>= peak + 16` condition met, 0 reconcile failures. That is the fixture
-      S2b.3's post-restore budget and S1.3's slope pin to. **The slope itself is still blocked**: raising N
-      across boots requires a successful record, and this session's long takes on the fully-restored
-      library either failed the recording window (the separately tracked recording failures) or tripped the
-      clear-then-reload allocation FATAL recorded under A3.7. S1.1's per-owner census, S1.4's undo/root
-      baseline and S1.5's refusal point are unchanged from their recorded device runs. **No leg is
-      reinterpreted**; each returns as `runtime-working-set-ownership`'s finding.
+      S2b.3's post-restore budget and S1.3's slope pin to. **The post-restore budget baseline is now
+      measured and stable:** three fresh-boot slope steps (`captures/s13-slope-final/`, sweep updated to
+      read the checkpoint marker) report `banner=True`, `reconcile_warnings=0`, `N=29` and
+      **`post_restore_free_chunks=452` of 512 on every boot**, with the restore walk adding no reservation
+      (512→480 both times). **The slope itself is still open:** the sweep's track/slot control selected
+      track 5 rather than the requested track 6, so its three "growth" steps recorded onto an already-full
+      slot and N never grew — a fixture defect recorded, not a slope. S1.1's per-owner census, S1.4's
+      undo/root baseline and S1.5's refusal point are unchanged from their recorded device runs. **No leg is
+      reinterpreted**; each returns as `runtime-working-set-ownership`'s finding. **A5.2 is now closed**
+      (base-preset-specific recording failure; direct stream + pipeline PASS on the current firmware).
 
-- [ ] A5.2 **Content-verified PASS** for the authorized scratch slot via the
+- [x] A5.2 **Content-verified PASS** for the authorized scratch slot via the
       [`hitl-content-verification`](../../../.agents/skills/hitl-content-verification/SKILL.md)
       pipeline (`dump_and_capture.py` + `verify_playback_content.py`), not a base-run verdict.
       **Verify:** `result: PASS`, `storage_matches_effective: true`, and every cycle
@@ -863,6 +867,28 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
         `exact_order: false` on every cycle and the wrong slot. **Storage equality alone does not close
         it**, which is exactly what this run shows.
       A5.2 therefore stays open; it is mandatory (A5.5) and its blocker is the recording-window failure.
+      → **CLOSED 2026-09-24 (second session) — the base preset was the blocker, not the device.**
+      **The recording failure is base-preset-specific.** A direct clock+note stream into the authorized
+      scratch slot records and saves cleanly (new `scripts/hitl_record_content.py`, which sends control
+      notes on the control channel — the base preset's failure does not reproduce), and the skill's own
+      pipeline then passes. **Run identity:** `git_commit 0c65a99e97a43169c8a3a03e732d2d506de25a49`
+      (clean tree), firmware hex `f3a33208591b3a087870e13023c63b529d8a27bab5da9499566009e453fee4a8`,
+      `teensy41-capture-serial`.
+      **Content:** `scripts/hitl_record_content.py --track 5 --loop-slot 1 --bars 2` →
+      `captures/cc-03/` (`RECS,stage,seal,…,64,0,ok`; `Recording stopped length=1536`; `CurrentSet saved
+      successfully`).
+      **Verification:** `dump_and_capture.py` + `verify_playback_content.py` →
+      `captures/cc-03-playback/content-review.json`:
+      * `result: PASS`, `storage_matches_effective: true`, `length: 1536`,
+        `CAPTURE_CONTENT,begin,track=5,slot=0,length=1536` (authorized scratch, 1-based loop 1);
+      * **all 11 cycles `inventory_equal: true` AND `exact_order: true`**, `missing_count=0`,
+        `extra_count=0`, `unexplained_missing_count=0` (64 rows per cycle);
+      * `RING,overflow` rows: **0**; `max_bar_refs: 32`, `capacity_path_exercised: false`.
+      **Stated scope:** this is a **parity** PASS (64 rows, 32 bar-refs), not a capacity re-stress (the
+      skill's note: below the old 256-reference ceiling it is a parity check only). The dump's serial log
+      has no boot banner because the reader attached mid-boot; the independently read content dump (64
+      rows) and 11/11 matching playback cycles are the evidence, and 0 overflow rows rules out the stale-run
+      signature. The base-preset recording failure remains a separately tracked harness/device interaction.
 
 - [ ] A5.3 **Documentation closeout.** Update `docs/Runtime/PROJECT_STATE.md`,
       `docs/Runtime/CURRENT_WORK.md`, `docs/DELIVERABLE_TRACKING.md`, the

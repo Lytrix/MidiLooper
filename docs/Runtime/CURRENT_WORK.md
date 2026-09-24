@@ -2929,11 +2929,16 @@ head and both instances. Residual: no production set-epoch wire. Evidence: full 
 `#MEM_EXT_REFUSED bytes=22369620` → external-pool FATAL (pool is 8,380,416 B); the route is therefore
 not enabled by this change, the allocation defect is a `runtime-working-set-ownership` finding, and a
 plain-take control records cleanly. **This change is not archive-ready (A5.5): shape (b) is mandatory
-and untaken.** **A5.2 is also still open:** a fresh `--preset base` content run reproduced the
-recording-window failure (`record stop did not reach PLAYING`, `INCONCLUSIVE_CAPTURE`), and no existing
-run meets all four clauses on the current firmware (`cp02-playback` meets them but predates the whole
-change at `491fa9ff`; `hitl-test-01-dump` has `exact_order: false`). Details:
-`deferred-slot-restore-liveness/REVIEW.md` § 2026-09-24 (second session).
+and untaken.** **A5.2 is CLOSED:** the base preset was the blocker, not the device — a direct clock+note
+stream (`scripts/hitl_record_content.py`) records cleanly and the skill pipeline passes on the current
+firmware (`captures/cc-03-playback/`: `result: PASS`, storage equality true,
+`CAPTURE_CONTENT,begin,track=5,slot=0,length=1536`, **11/11 cycles `inventory_equal` and `exact_order`**,
+0 missing/extra/unexplained, 0 overflow; parity PASS, not a capacity re-stress). The base-preset failure
+(`captures/cpv-final/`) stays a separately tracked harness/device interaction and must not be generalised.
+**A5.1 partial:** the updated sweep reports the post-restore budget stable at `N=29`,
+`post_restore_free_chunks=452` of 512 across three fresh boots with 0 reconcile failures; the slope itself
+is not measured because the sweep's track/slot control selected track 5, not track 6 (fixture defect).
+Details: `deferred-slot-restore-liveness/REVIEW.md` § 2026-09-24 (second session).
 
 
 **2026-09-24 — A3.5 RESTRUCTURED (topology conflict found by the device gate) and A3.7 shape (a) PASSED.**
