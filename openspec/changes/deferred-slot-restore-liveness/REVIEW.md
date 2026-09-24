@@ -1082,3 +1082,62 @@ commit-gated, so no route change was needed — the intended boot-restore entry 
 * **The fixture is timing-sensitive and refuses to over-claim:** `captures/a37fix-01/02/03/05/` were
   reported `INCONCLUSIVE` with the failing precondition named (e.g. `-05`: `target_length_bars_before_clear:
   0`, so the take did not land). Those runs are not counted as shape (b).
+
+## A3.7 shape (b) — the two review issues, resolved from existing evidence (2026-09-24, eighth session)
+
+### 1. Why the drain completed with a commit-waiting restore (the session-lifetime question)
+
+**Not because no `SlotLoadSession` was active.** `deferredSaveBlockedByActiveSlotLoadSd()` is
+`SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile()`, and a commit-waiting job keeps its session, so
+the gate was live. The drain completed because the scheduler's slot-load gate is **deliberately bypassed for
+an urgent owed workspace save**:
+
+* `processDeferredSaveState` returns early only when
+  `deferredSaveBlockedByActiveSlotLoadSd() && !inFlightPersistenceWork && !prioritizeWorkspaceSaveDrain()`.
+* `StorageManager::shouldPrioritizeWorkspaceSaveDrain()` is true when the workspace save is `pending` **and**
+  (`persistenceWorkItem.itemActive || PersistenceWorkQueue::queueDepth() > 0 ||
+  PersistenceWorkQueue::writingWorkItemCount() > 0`).
+* The drain sets `currentWorkspaceSave.pending = true` and `urgentRequested = true` before looping, so with
+  queued work the gate is bypassed and the save progresses to completion.
+
+The capture confirms that state: `#CAP,27070882,PERS,request,0,0,0,**sync_drain_already_pending**` followed by
+`PERS,work,…FinalizeWorkspace,…` — the save was already pending with queued work when the drain ran, so
+`prioritizeWorkspaceSaveDrain` held and the commit-waiting restore did not block it. **The completion is
+therefore explained by the priority bypass, not by an absent session**; a drain with no queued work behind it
+is the shape that must name `waiting_commit_gate`, and that is not what this run exercised.
+
+### 2. The analyser, corrected
+
+The previous analyser partitioned by the CLEAR line and then processed each partition **in file order**. That
+is wrong for `#CAP` lines, which are flushed from a PSRAM ring and can appear after later prompt lines. It also
+treated *any* `Playback started` as the other track's and blanket-excluded every stop within 0.5 s of the
+CLEAR without identifying its track.
+
+`analyse_log` now:
+
+* orders **every** check by device time (`#CAP,<micros>`), with the untimed `[StorageManager]` prints falling
+  back to file position relative to the drain line (their order is reliable);
+* attributes playback by **MIDI output channel** (`MO`), because every track transmits on its own channel,
+  rather than by the untracked `ST,Track` line;
+* requires a **non-target channel to emit notes both before and after** the drain, so the track is playing
+  *across* the edge, and requires the target's channel **not** to resume; there is no blanket stop exclusion.
+
+### Re-analysis of the same capture — `captures/a37fix-04/`, route off
+
+| precondition | device-time evidence |
+|---|---|
+| 1 content before CLEAR | target track 5 slot 1, `2 bars` |
+| 2 restore started, unresolved at the edge | `RRQ,1,0` (track 2 slot 1) `running` 8.246 s → `waiting_commit_gate` 10.637 s → `committed` 35.201 s (after the 27.070 s CLEAR) |
+| 3 save owed | `[27.070] Clear waiting for deferred save completion` |
+| 4 another track playing across the edge | **channel 6: 9 note events before and 6 after** the drain (resumes 28.794 s / 31.856 s), while the **target channel 5 has 0 note events after** |
+
+Outcome unchanged: `State saved successfully (v4)` → `Clear selected slot 1`, 0 `Clear aborted`, no named
+refusal. The note panic at 27.068 s (`MO,176,<ch>,123,0` on channels 1–12) is the CLEAR's own
+`sendAllNotesOff`; it silences *sounding* notes momentarily but does not stop the other track's playback,
+which resumes and is what the after-edge note count establishes.
+
+**Still recorded as insufficient for checkoff by the owner's direction:** precondition 2 is a named
+`waiting_commit_gate` wait (accepted as "in flight"), but the drain's completion in this run is explained by
+the `shouldPrioritizeWorkspaceSaveDrain` bypass, so the run demonstrates the **completes** branch under an
+urgent-save priority rather than a drain that had to wait on the restore. A3.7 and A3.8 stay open pending the
+owner's reading of that distinction.

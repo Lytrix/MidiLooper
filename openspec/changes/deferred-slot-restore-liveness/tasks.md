@@ -758,6 +758,21 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       sequence-based because `ST,Track` has no track index. Runs `a37fix-01/02/03/05` were `INCONCLUSIVE`
       with the failing precondition named and are **not** counted. Details: [`REVIEW.md`](REVIEW.md)
       § A3.7 shape (b) — seventh session.
+      → **Review issues RESOLVED 2026-09-24 (eighth session), checkoff still withheld by owner direction.**
+      (a) *Why the drain completed with a commit-waiting restore:* **not** an absent session —
+      `deferredSaveBlockedByActiveSlotLoadSd()` is `SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile()`
+      and a commit-waiting job keeps its session. The scheduler's slot-load gate is instead **bypassed for an
+      urgent owed workspace save**: `processDeferredSaveState` returns early only when the gate is live **and**
+      there is no in-flight work **and** `!shouldPrioritizeWorkspaceSaveDrain()`, and the latter is true when
+      the workspace save is `pending` with queued/in-flight work (the capture logs
+      `PERS,request,…,sync_drain_already_pending` + `FinalizeWorkspace`). So the run demonstrates the
+      **completes** branch under an urgent-save priority, not a drain forced to wait on the restore.
+      (b) *The analyser is corrected:* it now orders every check by **device time** (`#CAP,<micros>`, ring
+      flush means file order ≠ time order), attributes playback by **MIDI output channel** (`MO`) instead of
+      the untracked `ST,Track` line, requires a non-target channel to emit notes **before and after** the
+      drain, and no longer blanket-excludes stops. Re-analysis of `captures/a37fix-04/`: channel 6 emits 9
+      notes before and **6 after** the drain, target channel 5 emits **0** after. See [`REVIEW.md`](REVIEW.md)
+      § A3.7 shape (b) — eighth session.
       *(original entry follows)*
       **shape (a) PASSED 2026-09-24; shape (b) partial.** Run on track 5 /
       slot 1 (authorized scratch) with a **fresh boot** (`DIAG,boot_reset` present, no `RING,overflow`) via
