@@ -5,9 +5,11 @@ Authority: [G2 execution-packet workflow](../../../docs/Authority/IMPLEMENTATION
 [`tasks.md`](tasks.md). Numeric task ids live in `tasks.md`; this file carries the *evidence* they
 require and the mechanism ledger A1.9 asks for.
 
-**Status: Packet A in progress. A1.1 — native restore harness implemented and native-verified. No
-production (`src/`) behavior change has been made by this change.** Everything not listed under
-*Evidence record* below is specified only.
+**Status: Packets A–C in progress. A3.4a — drain re-entry and callback safety, A3.5 — holdoff MIDI
+servicing, and A3.6 — DEC-081/capture preservation are implemented and native-verified** (A3.4a: 6/6
+callback-boundary cases, 29/29 scope cases; A3.5: 18/18 bound cases, 4/4 real-drain cases; A3.6: 3
+regression cases). A3.4a and A3.5 are each red-proven. Full native green; capture-serial build SUCCESS.
+Only the A3.7/A3.8 device gate remains open in Packet C.
 
 Evidence vocabulary (DEC-080): **specified** → **fixture implemented** → **native verified** →
 **device verified**. None implies the next. A listed command is not evidence until its output is
@@ -503,6 +505,199 @@ two build-verified steps it was routine. `padding_floor` is a reviewed allowance
   drain-suite link closure again (the display owner's constructor); that suite stays as the A1.7 closure
   proof, and the contract is pinned in the pure suite where the oracle is tight.
 
+### A3.4a — drain re-entry and callback safety (landed; `src/` behavior verified natively)
+
+Design D4 rule 9, which is the precondition for A3.5's holdoff polling: the drain's MIDI service is a
+**callback boundary**, so a controller action can execute *inside* a blocking drain.
+
+**Execution packet (scope, oracle, controls).**
+
+- **Owner and entry path:** `StorageManager` keeps the drain; the guard is a scoped owner acquired by
+  `drainPersistenceWorkBlockingDetailed` before it touches shared save/budget/progress/result state.
+  No new manager and no ownership move.
+- **Transition oracle:** with the guard held, (a) a nested detailed drain returns
+  `TemporarilyBlocked("drain_in_progress")` and the compatibility `bool` wrapper returns false, without
+  changing the outer owner's `pending`/`urgentRequested`; (b) a CLEAR injected through the real MIDI
+  dispatch route (`midiButtonManager.handleMidiNote` → `MidiButtonProcessor` → callback →
+  `MidiButtonActions::executeAction` → `handleClearTrack`) reaches **no** slot-mutation call, silences
+  nothing, and leaves the slot's committed content intact; (c) the same injection with the guard free
+  *does* reach the mutations and resets the slot. `(c)` is the control that makes `(b)` discriminating.
+- **Counterexample that must fail:** with `refuseStorageCallbackDuringDrain` forced to always return
+  false, case `(b)` fails (`data=0 … mutations=6 silence=1`) and the nested-drain case fails. Recorded
+  below.
+- **Guard placement / RAM1.** The guard's own translation unit (`src/StorageManager/PersistenceDrainGuard.cpp`)
+  carries the acquire/release and the predicate; the state is one `bool` in the already-measured
+  `StorageSession` aggregate. The first capture-serial build **failed the RAM1 floor** (`padding 728 < 840`):
+  five guarded call sites plus the relocated `handleClearTrack` cost 336 B of ITCM against the A3.4 line.
+  The remedy is the change's own placement rule, not a re-base: **`handleClearTrack` is now
+  `STORAGE_PERSIST_MEM` (FLASH)** — a destructive slot-clear is not a MIDI clock hot path, and the
+  consolidate-slot-clear-restore extraction had already shrunk it. Result:
+  `code 391,896 + padding 1,320`, i.e. **480 B better than the A3.4 line** (`392,152 / 1,064`) and above
+  the 840 floor. Nothing was re-based; `padding_floor` stays 840.
+
+**Audit — MIDI-dispatched destructive/storage entry points and their pre-side-effect check.** Every one of
+these consults the same predicate through `refuseStorageCallbackDuringDrain` (`MidiButtonActions.cpp`) or
+`isPersistenceDrainInProgress` (`SavedSetIo.cpp`) **before** its first side effect:
+
+| Entry point | Conflict it would cause | Check site |
+|---|---|---|
+| `handleClearTrack` | stops the drained-for track, resets the slot, pushes an undo snapshot | first statement, before `stopPlaying` |
+| `handleUndo` / `handleRedo` | replaces the slot's content from the undo stack | before `restoreDeferredUndoSnapshotsBeforeUse` |
+| `handleUndoClearTrack` / `handleRedoClearTrack` | restores/removes content in the drain-owned slot | before the undo/redo apply |
+| `saveNewSetInternal` | writes a new set while the previous one's save is in flight | before the first catalog/directory write |
+| `copySavedSetIntoCurrent` | changes the set identity every outstanding request belongs to | before the first copy/rename |
+
+**Explicitly not guarded, with the reason:** `handleToggleTransport`, `handleToggleRecord`, the note-edit
+entries and `handleToggleLoadSaveMode`. None resets content or mutates persistence state; refusing them
+would break the "preserve normal musical input/transport service" requirement. A conflicting **undo or
+set-replacement** action is the destructive analogue, and those are guarded.
+
+**Structure change A3.4a made, and why.** `restorePlaybackAfterSlotClear` was defined twice —
+`MidiButtonActions.cpp` (anonymous namespace) and `TrackUndo.cpp` (namespace scope). Separate translation
+units never collide, but the include-based native harness concatenates both, so no suite could link the
+button routes **and** the undo path — which is exactly what a callback-boundary fixture needs. It now has
+one owner (`src/Track/SlotClearPlaybackRestore.cpp`, declared in `include/SlotClearPlaybackRestore.h`);
+no macro seam and no include-order rule remain. `storageSession` likewise moved to
+`src/StorageManager/StorageSessionState.cpp` so the guard's own TU does not drag in `Internal.cpp`'s cold
+persistence helpers.
+
+**Call back into the guard from the drain.** `drainPersistenceWorkBlockingDetailed` acquires
+`PersistenceDrainScope` and returns `drainInProgressResult()` when it does not get ownership. The scope's
+destructor is the single release path, so Completed, Blocked, Failed and the early `AdmissionRefused` break
+all release it identically — there is no per-outcome release to miss.
+
+**Evidence.**
+
+- `test_drain_reentry_callback_safety` — **6/6**, a new suite built on the continuous-capture boundary
+  closure plus the real button manager/processor/action table and the real Track transport. Cases: the
+  free-guard control (reaches the slot mutations), the held-guard refusal (zero mutations, zero silences,
+  content intact, guard still owned), the nested-drain named block, a conflicting undo refused before
+  content replacement, transport not refused by the guard, and guard release with a later drain taking it.
+- `test_storage_manager_load` — **29/29** (three new cases: one owner at a time and release-on-exit on the
+  real scope; the predicate false without an owner).
+- **Red-prove:** with the guard's predicate forced to always return false, the refusal case fails with
+  `data=0 committed=0 mutations=6 silence=1` and the nested-drain case fails. The fixtures are therefore
+  discriminating, not vacuous.
+- **Build:** `pio run -e teensy41-capture-serial` **SUCCESS** at
+  `RAM1: variables 96,192 / code 391,896 + padding 1,320 / locals 34,880` (480 B better than the A3.4
+  line); the RAM1 gate passes with no floor change.
+
+**Not claimed:** the device integration claim (`the drain advances the restore`) stays A3.7's, per
+Revision 5.
+
+### A3.5 — the finite post-load holdoff is waited out, servicing MIDI (landed)
+
+- **One declaration.** `LoadLoopBudget::PostLoadCommitSaveHoldoffMs` (100 ms) is set once by
+  `cleanupLoadLoopJobPublish` and read by both the remaining-time accessor and the wait, so the timeout
+  and the wait policy cannot drift.
+- **A read-only remainder.** `postLoadCommitSaveHoldoffRemainingMs()` reports the remainder without
+  clearing it; the scheduler's `deferredSaveBlockedByPostLoadCommitHoldoff()` clears an expired holdoff as
+  a side effect, which is the right edge for the scheduler and the wrong one for a caller deciding first
+  whether it can afford the wait.
+- **The wait is bounded and services MIDI.** `serviceMidiWhilePostLoadCommitHoldoffBlocks(maxWaitMs)`
+  loops on `handleMidiInput()` + `yield()` until the holdoff clears or the caller's remaining wall clock is
+  spent. The drain charges real elapsed time against `maxWallClockUs` and enters the wait only when
+  `holdoffWaitFitsInDrainBudget(remaining, budget)` — a pure decision — holds; otherwise it does not wait
+  and A3.2's classifier reports the named `post_load_holdoff`. MIDI is serviced **before** the deadline
+  check, so a message already queued is not dropped on a just-expired holdoff.
+- **Why the bound is part of the contract, not an optimization.** `maxWallClockUs` is the caller's promise.
+  A wait that ignored it would turn a named refusal into an overrun — the same defect A3.4 fixed on the
+  caller side.
+- **RESTRUCTURED — the drain does not service MIDI.** The first implementation called
+  `midiHandler.handleMidiInput()` from inside the drain's holdoff wait, which is exactly what D4 rule 8
+  asked for and exactly what the **MIDI-service topology gate** forbids:
+  `scripts/hitl/verify/midi_boundary_timing.py` requires every input drain to live in `src/main.cpp` and
+  there to be exactly **nine** (`_EXPECTED_MIDI_INPUT_CALL_COUNT`), and `ARCHITECTURE_RULES.md` /
+  `NAMING.md` define the interval path as work between consecutive `handleMidiInput()` entries. The drain
+  runs *on* that path, so servicing MIDI there moves an input drain into the interval. The A3.7 device
+  run surfaced it immediately (`unexpected_midi_input_call_site`), and the gate — not a judgement call —
+  rejected it.
+- **The restructured contract.** The drain detects the finite holdoff as the sole blocker, classifies it,
+  and returns the named `post_load_holdoff` **immediately**: the restore and the owed save are preserved,
+  nothing is discarded, and the holdoff expires on its own 100 ms deadline while `main` keeps servicing
+  MIDI on its own turns. The caller refuses by name (A3.4) and the next attempt completes the save. The
+  "wait it out" clause is therefore satisfied *by the system* (the save is not aborted) without the drain
+  blocking the interval path. `holdoffWaitFitsInDrainBudget`, the wait helper (`serviceMidi...`) and its
+  bound cases were removed with the wait.
+- **The scanner no longer counts comments.** The call-site scan matched prose, so documenting the
+  invariant next to the code it governs would itself fail the gate; whole-line comments are now skipped
+  while a trailing comment after a real call still is not.
+- **Evidence (after the restructure).** `test_storage_drain_restore` **6/6**: the drain names the
+  `post_load_holdoff`, leaves a queued MIDI message **untouched** (proving it is no longer a MIDI-service
+  point), and leaves the holdoff armed (proving it preserved rather than consumed the wait). Topology gate
+  **9/9, no extra call sites**. Full native **2,337 / 1 skipped / 0 failures**; capture-serial **SUCCESS**
+  `code 390,936 + padding 2,280`.
+- **Test-harness consequences, recorded deliberately.** Proving (a) needed two native seams that did not
+  exist: a controllable clock (`nativeMillisNow` / `nativeMillisAdvance`, with `micros()` derived from it)
+  and an injectable MIDI inbox on the Arduino stub. The inbox is **shared by every `NativeMidiPort`
+  instance**, because `MIDI_CREATE_INSTANCE` expands to a *definition* (`NativeMidiPort Name;`) rather than
+  an extern reference — a per-instance queue let the fixture push to one object while `MidiHandler` read
+  another, which produced a false negative until it was found. `yield()` advances the mock clock, which is
+  what makes a bounded yielding wait terminate (and be observable) on the host.
+- **Not claimed / scope notes.** The holdoff is armed through `armPostLoadCommitSaveHoldoff`, the documented
+  controllable input (the production setter's read/parse/commit/cleanup closure is not natively reachable);
+  the same pattern as `armBackgroundRestoreHoldoff`. Fixture (a) does not assert the save's own `Completed`
+  outcome, because no real workspace is written in this fixture — A3.5 owns that the wait happened rather
+  than the progress being discarded. The device integration claim stays A3.7's.
+
+### A3.6 — preserve the DEC-081 and capture behavior (landed)
+
+Three regression cases in `test_storage_drain_restore`, which links the real deferred-save scheduler:
+
+- **Audible playback is not a persistence gate (DEC-081).** A `TRACK_PLAYING` track leaves
+  `isCaptureRecordingForPersistence()` false, and the pure classifier given that input names no denial
+  (specifically not `BlockedByCapture`). The gate is recording only, as DEC-081 requires.
+- **A recording track parks the multi-frame writers.** With the track recording and a save owed,
+  `processDeferredSaveState` queues nothing, starts no workspace/bundle write, and leaves the save owed —
+  the recording branch returns before the multi-frame writers can advance.
+- **The mid-pass one-chunk flush still runs during a take.** With a real sealed chunk in
+  `PersistenceQueue`, the same call services one chunk (queue depth drops) while the multi-frame writers
+  stay at zero. The queued MIDI is left untouched, because the take path returns *before* A3.5's holdoff
+  wait — the separation the scheduler comment claims, now asserted.
+- **No semantic change:** `isCaptureRecordingForPersistence` is unchanged (tracks, `track.isRecording()`).
+
+**Harness defect this uncovered, and why it mattered.** Case (c) initially failed for a real reason, not a
+weak assertion: the in-memory SD stub compared the **raw** mode argument
+(`if (mode == FILE_WRITE || mode == FILE_WRITE_BEGIN)`), while `MidPassChunkPersist` opens its seal journal
+with `FILE_WRITE | O_CREAT`. That value matched neither branch, so the open fell through to the
+existing-file path and returned an **invalid handle** — on a card where the journal did not yet exist. The
+journal had therefore *never* opened under native test, and the entire mid-pass flush was unobservable.
+The stub now masks the mode to its core bits and honours `O_CREAT`. The production call is correct on the
+device (`FILE_WRITE` there is itself create-or-open); only the emulation was wrong.
+
+### A3.7 — Packet C device gate (shape (a) PASSED; shape (b) partial)
+
+Run on the authorized scratch slot (track 5 / slot 1) with a **fresh boot** — `DIAG,boot_reset` present,
+no `RING,overflow` — using `scripts/hitl_clear_drain_a37.py`: a 24-bar take on the scratch slot, then the
+CLEAR long press timed to land while the workspace save was still owed. (The 24-bar length matters: a
+2-bar take's save completes in ~560 ms, which is shorter than the 1400 ms long-press, so the clear always
+landed *after* the save and never took the drain path. That was measured, not assumed.)
+
+**Shape (a) — nothing else sounding: PASSED.**
+
+```
+[INFO] Clear waiting for deferred save completion      <- the drain path was taken
+[StorageManager] State saved successfully (v4).        <- the owed save actually completed
+[INFO] MIDI: Clear selected slot 1                     <- then the clear acted
+```
+
+**0** `Clear aborted`, **0** `Persistence drain stuck`, **0** `drain blocked`, **0** named refusals. The
+save-to-clear spacing is **<243 ms**. The packet's own timing verifier over this capture reports
+`call_site_gate_ok: True` (9/9 call sites, no extras), `overflow_free: True`, and **no issues**.
+Evidence: `captures/a37-clear-05-fresh/session.log`.
+
+**Shape (b) — another track audibly playing: completed, but not the discriminating case.**
+With a 4-bar overdub running, the CLEAR completed with 0 gate strings, but the deferred save had already
+finished by press time, so "a save owed *while* another track plays" was **not** exercised. Recorded as
+partial rather than claimed. Evidence: `captures/a37-clear-04-shapeb/session.log`.
+
+**Incidental finding, recorded for the next device session.** The `base` preset currently stops a 2-bar
+take to `EMPTY` instead of returning to `PLAYING`, so it aborts at its own precondition; the identical
+transition is present in `captures/host_midi_automation_serial_20260924_012548.log` (01:25, before this
+session's changes), so it is **not** a regression from Packet C. The most recent passing baseline
+(`captures/dec081-01`) used `record_bars: 4`, so the preset's stop behaviour looks length-dependent and
+needs its own look before shape (b) can use that preset as its vehicle.
+
 ### A1.7 — closed
 
 With A3.2's and A3.4's pure-decision cases landed, A1.7's amended scope is complete: closure proof green,
@@ -550,3 +745,22 @@ is parked and never re-serviced).
 | 2026-09-23 | A1.3 | as above | red as required: *never serviced after 64 turns (parkedEnd=1, parkedPhase=1, ownedTurns=64, activelyOwnedTurns=0)* |
 | 2026-09-23 | A1.5 | as above | red as required: *never served or owned after 32 turns (served=0, unowned=1, pending=2, headStillQueued=1)* |
 | 2026-09-23 | A1.6 | as above | red as required: *healed payload never retried (committed=0, attempted=1, pending=0)* |
+| 2026-09-24 | A3.4a | `pio test -e native -f test_drain_reentry_callback_safety` | **PASSED** — 6 cases, 6 succeeded: real MIDI dispatch route, free-guard control reaches the slot mutations; held guard refuses with 0 mutations / 0 silences and content intact; nested drain named block; conflicting undo refused; transport not refused; guard released for a later drain |
+| 2026-09-24 | A3.4a | same suite with `refuseStorageCallbackDuringDrain` forced false (temporary) | **red as required** — refusal case `data=0 committed=0 mutations=6 silence=1`, and the nested-drain case fails; the guard is what the fixtures discriminate |
+| 2026-09-24 | A3.4a | `pio test -e native -f test_storage_manager_load` | **PASSED** — 29 cases, 29 succeeded (three new scope-contract cases) |
+| 2026-09-24 | A3.4a | `pio test -e native` | **PASSED** — **2,332 succeeded / 1 skipped / 0 failures** (A3.4 line: 2,324/1/0) |
+| 2026-09-24 | A3.4a | `pio run -e teensy41-capture-serial` | **SUCCESS** — `RAM1: variables 96,192 / code 391,896 + padding 1,320 / locals 34,880`, above the 840 floor, no re-base |
+| 2026-09-24 | A3.5 | `pio test -e native -f test_persistence_sync_drain_budget` | **PASSED** — 18 cases, 18 succeeded (two new: the holdoff wait fits / does-not-fit bound) |
+| 2026-09-24 | A3.5 | `pio test -e native -f test_storage_drain_restore` | **PASSED** — 4 cases, 4 succeeded: real drain waits a fitting holdoff out and consumes an injected DIN message during the wait; the production 100 ms holdoff beyond the drain wall clock is not entered (message unserviced, holdoff still armed); the remainder reader is read-only |
+| 2026-09-24 | A3.5 | same suite with the wait disabled (temporary) | **red as required** — the wait case fails with `inbox=1` |
+| 2026-09-24 | A3.5 | `pio run -e teensy41-capture-serial` | **SUCCESS** — `RAM1: variables 96,192 / code 391,080 + padding 2,136 / locals 34,880` |
+| 2026-09-24 | A3.5 | `pio test -e native` | **PASSED** — **2,337 succeeded / 1 skipped / 0 failures** (A3.4a line: 2,332/1/0) |
+| 2026-09-24 | A3.6 | `pio test -e native -f test_storage_drain_restore` | **PASSED** — 7 cases, 7 succeeded (three new: playback is not a gate; recording parks the multi-frame writers; the mid-pass flush services a real sealed chunk during a take) |
+| 2026-09-24 | A3.6 | in-memory SD stub (`FILE_WRITE \| O_CREAT`) | **harness fix** — the stub classified the raw mode, so the seal-journal open returned an invalid handle and the mid-pass flush was unobservable natively; the stub now classifies by the flags that carry the meaning (`O_AT_END` = append, `O_CREAT` = create), because its own `FILE_WRITE`/`FILE_WRITE_BEGIN` fallbacks disagree with the native core's values |
+| 2026-09-24 | A3.6 | `pio test -e native` | **PASSED** — **2,340 succeeded / 1 skipped / 0 failures** |
+| 2026-09-24 | A3.6 | `pio run -e teensy41-capture-serial` | **SUCCESS** — `RAM1: variables 96,192 / code 391,080 + padding 2,136 / locals 34,880` |
+| 2026-09-24 | A3.5 (restructured) | topology gate `midi_input_call_sites` | **9/9, no extra call sites** — the drain-side input drain was removed; the scanner now skips whole-line comments |
+| 2026-09-24 | A3.5 (restructured) | `pio test -e native -f test_storage_drain_restore` | **PASSED** — 6/6: the drain names `post_load_holdoff`, leaves queued MIDI untouched, leaves the holdoff armed |
+| 2026-09-24 | A3.5 (restructured) | `pio test -e native` / `pio run -e teensy41-capture-serial` | **PASSED** 2,337/1 skipped/0 failures; **SUCCESS** `code 390,936 + padding 2,280` |
+| 2026-09-24 | A3.7 shape (a) | `scripts/hitl_clear_drain_a37.py` → `captures/a37-clear-05-fresh/` | **PASSED** — fresh boot; `Clear waiting for deferred save completion` → `State saved successfully (v4)` → `Clear selected slot 1`; 0 aborts / 0 stuck / 0 blocked; timing verifier: gate 9/9, overflow-free, no issues |
+| 2026-09-24 | A3.7 shape (b) | `scripts/hitl_clear_drain_a37.py` → `captures/a37-clear-04-shapeb/` | **completed** (0 gate strings) but the save was already done at press time — discriminating case not exercised, recorded partial |

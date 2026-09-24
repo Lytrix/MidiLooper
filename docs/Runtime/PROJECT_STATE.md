@@ -293,6 +293,70 @@ cold UI/manager symbols (`DisplayManager`, `EditManager`, `TrackManager` LED/mem
 include paths in the native env.
 
 
+**2026-09-24 — A3.5 restructured for the MIDI topology; A3.7 device shape (a) PASSED.**
+A3.5's first form serviced MIDI from inside the drain's holdoff wait, which the HITL timing verifier
+rejects: every `midiHandler.handleMidiInput()` call belongs in `src/main.cpp` (exactly nine) because the
+drain runs on the interval path (`ARCHITECTURE_RULES.md`, `NAMING.md`). The drain now **reports the named
+`post_load_holdoff` immediately** instead of waiting it out, preserving the restore and the owed save; the
+holdoff expires on its own 100 ms deadline while `main` services MIDI, and the next attempt completes the
+save. Topology gate **9/9 no extras**; `test_storage_drain_restore` 6/6; full native **2,337 / 0 failures**;
+capture-serial **SUCCESS** `code 390,936 + padding 2,280`. **A3.7 device gate, shape (a) "nothing else
+sounding": PASSED** on track 5/slot 1 with a fresh boot and a 24-bar take — `Clear waiting for deferred save
+completion` → `State saved successfully (v4)` → `Clear selected slot 1` in <243 ms, with **0** `Clear
+aborted`, **0** `Persistence drain stuck`, **0** `drain blocked`, and the timing verifier clean
+(`captures/a37-clear-05-fresh/`). Shape (b) completed but did not exercise the save-owed-while-playing case
+(partial, recorded). Driver: `scripts/hitl_clear_drain_a37.py`.
+
+**2026-09-24 — A3.6 DEC-081/capture preservation LANDED; Packet C native work complete.**
+Three regression cases in `test_storage_drain_restore` (real deferred-save scheduler): a `TRACK_PLAYING`
+track leaves `isCaptureRecordingForPersistence()` false and the classifier names no denial (DEC-081 holds);
+a recording track parks the multi-frame writers (nothing queued, no write started, the owed save stays
+owed); and the mid-pass one-chunk flush still services a real sealed chunk during a take while the
+multi-frame writers stay at zero. `isCaptureRecordingForPersistence` semantics unchanged.
+**Harness defect found and fixed by the third case:** the in-memory SD stub classified the **raw** mode
+argument, so `MidPassChunkPersist`'s seal journal (`FILE_WRITE | O_CREAT`) matched neither branch, fell
+through to the existing-file path, and got an invalid handle — the journal had never opened natively and
+the whole mid-pass flush was unobservable. The stub now classifies by the meaning-carrying flags
+(`O_AT_END` = append, `O_CREAT` = create), because its own `FILE_WRITE`/`FILE_WRITE_BEGIN` fallbacks
+disagree with the native core's values. Full native **2,340 / 1 skipped / 0 failures**; capture-serial
+**SUCCESS** `code 391,080 + padding 2,136`. **Only the A3.7/A3.8 device gate remains open in Packet C.**
+
+**2026-09-24 — A3.5 holdoff MIDI servicing LANDED and native-verified.**
+The finite post-load commit holdoff (100 ms) is now **waited out instead of aborting**: the interval is
+declared once (`LoadLoopBudget::PostLoadCommitSaveHoldoffMs`), `postLoadCommitSaveHoldoffRemainingMs()`
+reads the remainder **without clearing** it, and `serviceMidiWhilePostLoadCommitHoldoffBlocks(maxWaitMs)`
+waits while **servicing MIDI** (`midiHandler.handleMidiInput()` + `yield()`), bounded by the caller's
+remaining wall clock. The drain charges real elapsed time against `maxWallClockUs`, enters the wait only
+when the pure `holdoffWaitFitsInDrainBudget(remaining, budget)` holds, and otherwise leaves A3.2's
+classifier to report the named `post_load_holdoff`. Evidence: `test_persistence_sync_drain_budget`
+**18/18** (the fit/does-not-fit bound); `test_storage_drain_restore` **4/4** against the **real** drain — a
+fitting holdoff is waited out and an injected DIN message is **consumed during the wait**, while the
+production 100 ms holdoff against the minimum drain wall clock (~99 ms) is **not** entered (message
+unserviced, holdoff still armed). Red-proven by disabling the wait (`inbox=1`). Full native
+**2,337 / 1 skipped / 0 failures**; capture-serial **SUCCESS** `code 391,080 + padding 2,136`. Two native
+seams were added for this and are documented in `REVIEW.md` § A3.5: a controllable clock and an injectable
+MIDI inbox (shared across `NativeMidiPort` instances, because `MIDI_CREATE_INSTANCE` defines a copy).
+**Remaining in Packet C: A3.6 (preserve DEC-081/capture behavior) and the A3.7/A3.8 device gate.**
+
+**2026-09-24 — A3.4a drain re-entry and callback safety LANDED and native-verified.**
+The prerequisite for **A3.5 — holdoff MIDI servicing** is in: one scoped owner
+(`StorageManagerInternal::PersistenceDrainScope` + `isPersistenceDrainInProgress()`, state = one `bool` in
+the measured `StorageSession`), acquired by the detailed drain before any shared mutation. A **nested**
+drain returns `TemporarilyBlocked("drain_in_progress")` and the `bool` wrapper returns false, without
+changing the outer owner. **Audited and guarded before side effects:** `handleClearTrack` (first statement,
+before the stop), `handleUndo`/`handleRedo`, `handleUndoClearTrack`/`handleRedoClearTrack`,
+`saveNewSetInternal`, `copySavedSetIntoCurrent`. **Deliberately unguarded:** transport, record, note-edit and
+load/save-mode toggle — none resets content or persistence state. New suite
+`test_drain_reentry_callback_safety` **6/6** injects a CLEAR through the **real** MIDI route
+(`midiButtonManager.handleMidiNote` → processor → callback → `executeAction` → `handleClearTrack`), with a
+free-guard control that reaches the slot mutations and a held-guard refusal with **zero** mutations and
+zero silences; red-proven by forcing the predicate false. `test_storage_manager_load` **29/29**;
+`test_persistence_sync_drain_budget` 15/15; full native **2,332 / 1 skipped / 0 failures**; capture-serial
+build **SUCCESS** `code 391,896 + padding 1,320` (the first build failed the 840 floor at 728, so
+`handleClearTrack` moved to FLASH under the change's placement rule — 480 B better than the A3.4 line, no
+re-base). `restorePlaybackAfterSlotClear` now has one owner
+(`src/Track/SlotClearPlaybackRestore.cpp`). Packets A–D tasks and review: `REVIEW.md` § A3.4a.
+
 **2026-09-23 — restore-liveness plan correction (documentation only).**
 The final review's callback re-entry finding is addressed in
 [`deferred-slot-restore-liveness/tasks.md`](../../openspec/changes/deferred-slot-restore-liveness/tasks.md)
