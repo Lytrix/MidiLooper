@@ -2937,8 +2937,11 @@ firmware (`captures/cc-03-playback/`: `result: PASS`, storage equality true,
 (`captures/cpv-final/`) stays a separately tracked harness/device interaction and must not be generalised.
 **A5.1 partial:** the updated sweep reports the post-restore budget stable at `N=29`,
 `post_restore_free_chunks=452` of 512 across three fresh boots with 0 reconcile failures; the slope itself
-is not measured because the sweep's track/slot control selected track 5, not track 6 (fixture defect).
-Details: `deferred-slot-restore-liveness/REVIEW.md` § 2026-09-24 (second session).
+is not measured because N is the boot playback set (library-independent), so recording into an unselected
+scratch slot cannot raise it — the fixture must select/enable each recorded slot before the reboot. (An
+earlier note blaming the sweep's track selection is withdrawn: the 0-based walk indices were misread and
+the log shows `Selected track 6`.) Details: `deferred-slot-restore-liveness/REVIEW.md` § 2026-09-24
+(second session).
 
 
 **2026-09-24 — A3.5 RESTRUCTURED (topology conflict found by the device gate) and A3.7 shape (a) PASSED.**

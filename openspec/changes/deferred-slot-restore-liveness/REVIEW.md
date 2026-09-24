@@ -904,8 +904,15 @@ marker) → `captures/s13-slope-final/sweep-result.json`: every boot `banner=Tru
 **stable across boots** and the restore walk adds no new reservation (walk 512→480 both times). That is the
 S2b.3 post-restore budget baseline on the finished checkpoint.
 
-**Fixture defect recorded, not claimed as a slope:** the sweep did not grow N. Its track/slot control
-selected track 5 (the recorded rows land as `(5,1)` then `(5,2)`), not the requested track 6, so three
-"growth" steps recorded onto a nearly-full slot and N stayed 29. A real slope-to-failure needs the sweep's
-track/slot mapping corrected and empty scratch slots; until then S1.3's device slope stays open. The
-stable 452-across-boots figure is the part that is measured.
+**Fixture defect recorded, not claimed as a slope — and an earlier reading of it is withdrawn.** I first
+reported that the sweep "selected track 5 rather than track 6". That was **wrong**: the walk rows are
+**0-based** on both axes, so `track=5,slot=1` is track 6 / loop 2, exactly what the sweep was asked to
+record, and the log confirms `Button press: Track 6` / `Selected track 6`. The real reason N stayed 29 is
+structural: N counts the **boot playback set** (the `RRQ … committed` terminals, the union of
+selected/active per track), which is *deliberately independent of the library* — recording into an
+unselected scratch slot adds a payload that stays HEADER_READY, so it cannot raise N. The per-track
+library walk shows the representative slot for track 6 moving 1 → 2 → 3 (`credits=0`, `free=480`) while
+`post_restore_free_chunks` stays 452. **A real slope-to-N needs each recorded slot made part of the boot
+playback set (selected/enabled) before the reboot**, which is the fixture change S1.3 now needs; the flat
+452-across-boots figure is the part that is measured, and this correction is recorded rather than
+silently rewritten.
