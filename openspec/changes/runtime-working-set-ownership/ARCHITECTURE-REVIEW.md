@@ -3079,3 +3079,126 @@ until then**, so this leg stays open.
 
 S1.1's per-owner census (tags 1..16), S1.4's undo-residency clauses, and S1.5's device refusal point are
 unchanged by this session; their evidence stands as recorded earlier in this file. No leg is reinterpreted.
+
+---
+
+## S2b.8 — set-change epoch invalidation / external resets (2026-09-24, G2 execution packet)
+
+Transferred from the archived `2026-09-24-deferred-slot-restore-liveness` A2.1. Authority:
+`openspec/specs/lazy-slot-hydration/spec.md` § *Restore requests have identity, named waits, and one terminal
+outcome* (and its *A set change supersedes outstanding requests* scenario), **DEC-082** clause 1, and
+`tasks.md` S2b.8. Status at packet write: **specified** — no fixture, native run, build or checkoff yet.
+
+### Identity and scope
+
+- **Packet/task:** S2b.8. **Owner:** `StorageManagerInternal::RestoreRequestState` (record + external-reset
+  API) and the `MidiButtonActions` clear/undo/redo-clear routes. **No new owner, no ownership transfer**, so
+  no formal reassessment trigger fires.
+- **Production entry → deferred worker → commit/retirement:** none new. The slice corrects one record
+  function and adds two call sites on existing action handlers.
+- **Primary files:** `src/StorageManager/RestoreRequestState.cpp` (`noteRestoreSetEpoch`),
+  `include/StorageManagerInternal.h` (one read-only identity accessor), `src/MidiButtonActions.cpp`
+  (`handleUndoClearTrack`, `handleRedoClearTrack`).
+- **Preconditions present:** the record with its full identity, `advanceRestoreRequestGeneration`'s
+  original-identity-then-advance pattern, the pre-publication revalidation in `commitLoadLoopJobPublish`,
+  and the `refuseStorageCallbackDuringDrain` guard. **Prerequisites in this slice:** none. **External
+  blockers:** none — this task is native-completable.
+- **Mutation:** (1) `noteRestoreSetEpoch` records `superseded` **before** moving the epoch, so the terminal
+  stays under the identity the request was created with, and emits the one `RRQ` transition per decided
+  request; (2) `handleUndoClearTrack`/`handleRedoClearTrack` advance the request generation when the
+  undo/redo actually applies.
+- **Postconditions:** every outstanding request for a changed set, or for a slot whose content an external
+  owner replaced by undo/redo-clear, is terminal `superseded`, its record is no longer current, and an
+  in-flight job cannot publish into the replacement content.
+- **Explicit non-goals:** no runtime set-switch feature is introduced; the commit gate is untouched; the
+  conservative `isLoopSlotRestoreAttempted` done-test is unchanged; the drain-advancement clause is S2b.7;
+  the "commit by a different owner" clause is **not** re-wired here (see the audit).
+- **Commit boundary:** independently buildable and behavior-complete for the external-reset class it names.
+
+### Audit of every external-reset / set-change path (the task's first clause)
+
+| Path | Today | S2b.8 |
+|---|---|---|
+| User CLEAR (`handleClearTrack`) | **wired** — `advanceRestoreRequestGeneration`: superseded under the original identity, then advance | unchanged (cite) |
+| Undo-clear (`handleUndoClearTrack`) | **NOT wired** — `TrackUndo::undoForLoop` restores the pre-clear snapshot into the slot with no generation advance | **wired here** |
+| Redo-clear (`handleRedoClearTrack`) | **NOT wired** — `TrackUndo::redoForLoop` removes the slot's content again with no generation advance | **wired here** |
+| Set change | **No runtime entry point exists.** The loaded current set is established at boot (`StorageManager::loadCurrentWorkspaceAtBoot` → `loadCurrentSetFromDirectory` → `loadCurrentSetBundleAndActiveLoopSlots`), which calls `resetAllLoopSlotRestoreAttempted()` → `resetAllRestoreRequestState()` — a *full* record reset with `setEpoch = 0`, stronger than `superseded`, and it precedes any request because nothing has been queued yet in that session. `loadCurrentWorkspaceFromSd` (same directory load) has **zero firmware callers**. | **Recorded, not faked.** `noteRestoreSetEpoch` stays the record-level API for the boundary — corrected and native-tested. A production call site is not invented because none exists; the *equivalent external reset* the task allows is the undo/redo-clear class. The existing record-level scenario test is kept and strengthened. |
+| A different owner committing that slot | **Already terminates** such a request: `markLoopSlotRestoreAttempted` records `unnecessary`, and `commitLoadLoopJobPublish` revalidates the captured identity before the token check and publishes nothing when stale. | **Not re-wired**, with the reason: the request already reaches a terminal and publication is already blocked; converting it to a generation advance would change the B04/S2b.5 oracle (`unnecessary`) for no safety gain. Recorded as a **spec-wording gap** (the spec's generation clause names it, the delivered mechanism terminates it another way), not a defect. |
+
+**Decision (explicit, as the task requires): undo-clear and redo-clear ARE external resets.** They replace
+the slot's content by an external owner (the user), which is exactly the class the spec lists for
+`superseded` ("the slot was cleared by an external owner") and for the `requestGeneration` advance ("a user
+clear"). Leaving them unwired lets an in-flight restore job publish parsed payload over the content the user
+just restored or re-cleared, because its captured identity would still read current.
+
+**Two defects the audit found in `noteRestoreSetEpoch` itself, both in scope:** it recorded the superseded
+terminal with the **new** epoch stamped into the record (so the outcome no longer described the identity the
+request was created with, and the record read as *current-but-terminal*), and it emitted **no** `RRQ`
+transition, so the reason was not observable — which the spec's scenario requires ("AND the reason is
+observable").
+
+### Oracle fixed before behavior edits
+
+| Case | Initial state | Ordered actions | Expected observation after each step | Counterexample that must fail |
+|---|---|---|---|---|
+| **S2b.8-C1** set change, queued | records reset; `beginRestoreRequest(0,2)`; epoch 0 | `noteRestoreSetEpoch(7)` | terminal `superseded`; `restoreRequestEpochFor(0,2) == 0` (original identity); `restoreSetEpoch() == 7`; `restoreRequestRecordIsCurrent(0,2) == false` | epoch-stamped record (`record.epoch == 7`) — the pre-fix behavior |
+| **S2b.8-C2** set change, running | `beginRestoreRequest(0,2)` + `markRestoreRequestRunning(0,2)` | `noteRestoreSetEpoch(7)` | same as C1; the running state is superseded, not left running | a mark that skips a running record |
+| **S2b.8-C3** exactly-once / no re-decision | after C1 | second `noteRestoreSetEpoch(8)`; then `markRestoreRequestTerminal(0,2,Committed)` | terminal stays `superseded`; the second call returns **false**; `restoreRequestEpochFor(0,2)` still 0 | re-stamping the record with epoch 8, or overwriting `superseded` with `committed` |
+| **S2b.8-C4** stale work cannot publish (set route) | load suite: request driven to commit-pending | `noteRestoreSetEpoch(7)`; then one load service turn | `hasCommittedPasses()` false; `hasLoadLoopJobCommitPending()` false; terminal `superseded` | publishing the parsed body over the changed set |
+| **S2b.8-C5** undo-clear is an external reset | reentry suite: content + CLEAR, then a live request on the slot | `handleUndoClearTrack()` | generation advances again; terminal `superseded`; `recordIsCurrent == false`; content restored | no advance (the pre-fix behavior) |
+| **S2b.8-C6** redo-clear is an external reset | after C5, live request again | `handleRedoClearTrack()` | generation advances; terminal `superseded`; `recordIsCurrent == false`; content removed | no advance |
+| **S2b.8-C7** retry keeps identity (unchanged) | existing `test_restore_request_own_failure_cleanup_keeps_identity_as_retry_wait` | restore-path own cleanup | `waiting_retry`, identity kept, **not** current-mismatched by this slice | routing the retry through an external advance |
+
+### Controls and coverage
+
+- **Seams reused:** the load suite's in-memory SD + production load/queue path; the reentry suite's real MIDI
+  dispatch route, real `MidiButtonActions`, real `TrackUndo`, and real `PersistenceDrainScope`. One new
+  **read-only** accessor `restoreRequestEpochFor(track, slot)` exposes the record's own epoch so "under the
+  original identity" is checkable rather than asserted.
+- **Production paths exercised:** `noteRestoreSetEpoch` (record), `handleUndoClearTrack`/`handleRedoClearTrack`
+  (action), `handleClearTrack` (existing), the real publication revalidation. No copied lifecycle, no
+  success-returning stub on an asserted path.
+- **Busy/stale/overlap:** queued, running, and in-flight-at-commit-pending are covered; the parked-instance
+  case is already covered by `test_a21_stale_identity_is_rejected_immediately_before_publication`, which this
+  slice extends with the set-epoch route.
+- **Numbers:** counts from the suite run, not estimated. **Untestable-before-link:** none new.
+
+### Verification recipe
+
+- Focused: `pio test -e native -f test_storage_manager_load -f test_drain_reentry_callback_safety`.
+- Broad: `pio test -e native` (expect 2344 + the new cases, 1 skipped, 0 failures).
+- Build: `pio run -e teensy41-capture-serial` — the post-link `check_ram1_budget.py` must pass at the
+  per-env floor (capture-serial padding ≥ 840).
+- **Device:** none claimed. No behavior observable only on hardware is introduced.
+- **Discrimination:** each new case must fail when its own mutation is reverted (epoch-order for C1/C3;
+  the undo/redo call for C5/C6); the revert is applied, observed, and reverted byte-identical.
+
+### Completion record
+
+- **Oracle/contract unchanged.** No threshold was weakened. The only oracle change is an **addition**: the
+  read-only `restoreRequestEpochFor(track, slot)` accessor, which makes the already-normative
+  "under the identity it was created with" clause checkable instead of assumed.
+- **Fixture implemented and discriminating assertion demonstrated.** Mutation 1 (restore the pre-fix
+  epoch-first + re-stamp behavior) → `test_storage_manager_load` **3 failed / 32 succeeded**, failing
+  exactly the original-identity assertions (`Expected 0 Was 7`, `Expected 0 Was 8`) and the in-flight stale
+  check. Mutation 2 (remove the two handler calls) → `test_drain_reentry_callback_safety` **2 failed /
+  6 succeeded**, failing exactly the two new cases on `an undo-clear must advance the request generation
+  like CLEAR does` (`Expected 2 to be greater than 2`) and its redo twin (`Expected 3 to be greater than
+  3`). Both mutations reverted; `grep -rn "TEMPORARY MUTATION" src/` returns nothing.
+- **Native verification.** `pio test -e native` → **2,348 cases / 1 skipped / 2,347 succeeded /
+  0 failures** (baseline 2,344 / 1 skipped / 0 failures; +4 cases). Focused:
+  `test_storage_manager_load` **35/35**, `test_drain_reentry_callback_safety` **8/8**. Revision context:
+  working tree on `feature/runtime-working-set-ownership`, clean before this slice.
+- **Build/RAM1 verification.** `pio run -e teensy41-capture-serial` → **[SUCCESS]**; the post-link budget
+  check reports `variables 96,192 / ITCM 393,216 (code 391,080 + padding 2,136) / locals 34,880 |
+  approved floor: padding >= 840`, i.e. **1,296 B of headroom**. `code + padding` is constant at 393,216
+  against the pre-slice `391,064 + 2,152`, so the +16 B of code moved within the bank and **no FlexRAM bank
+  was crossed**; `variables` is unchanged.
+- **Device verification.** **NOT APPLICABLE** — the slice adds no hardware-observable behavior. It is
+  record/action logic fully covered natively, and no device class is claimed.
+- **Required reviews and durable docs.** `DECISION_REVIEW` → no formal trigger (decision ladder steps 1–3:
+  extend the existing owner, follow **DEC-082** clause 1); no new `DEC-###`. `tasks.md` S2b.8 checked with
+  the full record; `CURRENT_WORK` and `PROJECT_STATE` carry the session entry.
+- **Task IDs eligible for checkoff:** **S2b.8**. **Stage gates still open:** the S2b gate (device slope,
+  content PASS, census stability) and every S1/S2b device leg, all unchanged by this slice; **S2b.7** is the
+  next native slice.

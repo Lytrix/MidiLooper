@@ -13,25 +13,36 @@ finished and device-verified; content playback passes (11/11 cycles `inventory_e
 CLEAR's **permitted completion branch** is verified (shape (b): completion through workspace-save priority
 while a started restore remained commit-gated). **Explicitly NOT delivered — deferred to
 `runtime-working-set-ownership` S2b.7 and bound by `resumable-midi-boundary-playback-maintenance` task 3.3:**
-drain-driven restore advancement and active-transport commit safety. The set-change epoch residual is deferred
-to `runtime-working-set-ownership` S2b.8. Evidence is in the change's `REVIEW.md`; the runtime status is in
-`PROJECT_STATE.md` / `CURRENT_WORK.md`.
+drain-driven restore advancement and active-transport commit safety. The set-change epoch residual was
+deferred to `runtime-working-set-ownership` S2b.8 and **landed there 2026-09-24** (see below). Evidence is in
+the change's `REVIEW.md`; the runtime status is in `PROJECT_STATE.md` / `CURRENT_WORK.md`.
 
-**Next change is proposed: [`deferred-slot-restore-liveness`](../openspec/changes/deferred-slot-restore-liveness/proposal.md).**
-Planning artifacts complete, `openspec validate` clean, **implementation not started**. It fixes the
-restore-liveness defect that blocks every remaining device gate of `runtime-working-set-ownership`: a slot
-with committed SD content can stay `EMPTY` for a power cycle, the one-shot background-fill admission never
-re-offers it, the queue head can stall every request behind it, and the deferred-save drain then spins its
-whole stuck budget so CLEAR aborts. Six mechanisms (C1–C6) are recorded in its `design.md` **as hypotheses**;
-Packet A confirms or withdraws each with a fixture before any behavior edit.
+**Landed 2026-09-24 in `runtime-working-set-ownership` — S2b.8 external resets (native only).**
+Undo-clear and redo-clear are decided to **be external resets** and now advance the restore-request
+generation, so an in-flight restore job cannot publish a parsed payload over content the user just restored or
+re-cleared. `noteRestoreSetEpoch` was corrected to record `superseded` under each request's **original**
+identity before advancing the epoch and to emit its `RRQ` transition (two real defects: the record was
+re-stamped with the new epoch and read as *current*-but-terminal, and the reason was never emitted); the dead
+non-emitting `invalidateAllRestoreRequestsAsSuperseded` was removed. Recorded, not faked: **no runtime
+set-change entry point exists**, so none was invented (the set boundary is boot's full record reset), and
+"a different owner committing that slot" already terminates as `unnecessary` plus pre-publication rejection.
+Evidence: full native **2,348 / 1 skipped / 0 failures**; `test_storage_manager_load` 35/35,
+`test_drain_reentry_callback_safety` 8/8; capture-serial SUCCESS `code 391,080 + padding 2,136`; both fixes
+proven discriminating by removal. **No device run** — nothing hardware-observable.
 
-**`runtime-working-set-ownership` native scope (P0/P1) is COMPLETE.** Full native
-**2,289 / 1 skipped / 0 failures** (re-verified on a clean tree 2026-09-23). Landed and green: S0
+**Next native slice: `runtime-working-set-ownership` S2b.7 — drain-driven restore advancement.** It
+characterizes whether the blocking drain **advances** a restore holding the SD session or **names the wait**
+(the commit gate is not relaxed; bound by `resumable-midi-boundary-playback-maintenance` task 3.3). The
+remaining S1/S2b legs stay **device-gated** on a stable restored library.
+
+**`runtime-working-set-ownership` native scope (P0/P1) is COMPLETE, plus S2b.8.** Full native
+**2,348 / 1 skipped / 0 failures** (2026-09-24; 2,344 before S2b.8). Landed and green: S0
 verification, the S1.2/S1.3-clause-2/S1.5-clause-3 fixtures, the accepted-stop latch, boot/load admission
 removal (S2b.1–S2b.3), S4.0/S2b.4 liveness + release, S4f.5's stop consumers, S3.0 placement pins + the
-post-link RAM1 budget check, and B01–B06. **Remaining and device-gated:** S1.1's per-owner census, S1.3's
-device slope, S1.4's undo/root baseline, S1.5's device refusal point, S2b.3's post-restore baseline, S2b.5's
-device gate, the content PASS, D0.2's B07 allocation census (not measurable natively), and phases B–E.
+post-link RAM1 budget check, B01–B06, and **S2b.8 external resets**. **Remaining and device-gated:** S1.1's
+per-owner census, S1.3's device slope, S1.4's undo/root baseline, S1.5's device refusal point, S2b.3's
+post-restore baseline, S2b.5's device gate, the content PASS, D0.2's B07 allocation census (not measurable
+natively), S2b.7's drain-advancement characterization, and phases B–E.
 
 **DEC-081 is device-verified** on its discriminating case (five tracks audibly playing + a genuinely owed
 save → the clear's blocking drain completed in <833 ms, 0 `Clear aborted` / `drain stuck`), and the
@@ -59,7 +70,9 @@ reboot (`CAPTURE_CONTENT,begin,track=5,slot=0,length=3072`, 190 rows), with pre-
 **Correction (same day, later evidence):** the later RWSO-24CAP device session showed the **restored set is
 still unstable across boots** (`Track 6 loaded state: EMPTY`, a census that changes between boots), so this
 fix repaired reconcile and the save path but did **not** make the library faithful — the remaining blocker is
-the restore-liveness defect, proposed as [`deferred-slot-restore-liveness`](../openspec/changes/deferred-slot-restore-liveness/proposal.md).
+the restore-liveness defect, whose change was **archived 2026-09-24** as
+[`2026-09-24-deferred-slot-restore-liveness`](../openspec/changes/archive/2026-09-24-deferred-slot-restore-liveness/proposal.md)
+with a reduced scope (the restored-library instability itself was **not** removed).
 The Round 7 "the catalog IS stable" claim in the plan is scoped to *a recorded loop's body persists and its
 own slot restores across one reboot*; it does not extend to *the library accumulates across successive
 boots*, and it is the latter that the slope sweep needs.

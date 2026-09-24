@@ -436,9 +436,89 @@ void test_a34a_guard_is_released_and_a_later_drain_can_take_it() {
   TEST_ASSERT_FALSE(StorageManagerInternal::isPersistenceDrainInProgress());
 }
 
+// ---------------------------------------------------------------------------
+// S2b.8 — undo-clear / redo-clear are **external** resets of the restore request.
+//
+// `handleClearTrack` already supersedes an outstanding request and advances its generation (A2.1). The
+// undo-clear and redo-clear routes replace the slot's content again with **no** generation advance, so an
+// in-flight restore job could publish a parsed payload over the content the user just restored or
+// re-cleared. These cases drive the **real** button actions through their real entry points and assert the
+// request contract those routes now owe.
+// ---------------------------------------------------------------------------
+
+/// CLEAR the selected slot, then re-begin the request the just-cleared slot is owed. Returns the
+/// generation the CLEAR left behind so the caller can assert the undo/redo advance from it.
+uint32_t clearSlotAndRearmItsRestoreRequest(Track& track, uint8_t tidx, uint8_t slot) {
+  dispatchClearThroughRealMidiRoute();
+  TEST_ASSERT_FALSE_MESSAGE(track.hasDataInSlot(slot), "the fixture's CLEAR must empty the slot");
+  const uint32_t afterClear = StorageManagerInternal::restoreRequestGenerationFor(tidx, slot);
+  StorageManagerInternal::beginRestoreRequest(tidx, slot);
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::restoreRequestRecordIsCurrent(tidx, slot),
+                           "the fixture must leave a live request for the cleared slot");
+  return afterClear;
+}
+
+/// **S2b.8:** the undo-clear restores content into a slot with an outstanding restore request. That is an
+/// external replacement of the slot by the user, so the request is superseded under the identity it was
+/// created with and the generation advances -- exactly as the CLEAR it undoes does.
+void test_s2b8_undo_clear_supersedes_the_restore_request() {
+  configureClearOnShortPress();
+  Track& track = preparePlayingTrackWithContent();
+  const uint8_t tidx = trackManager.getSelectedTrackIndex();
+  const uint8_t slot = trackManager.getSelectedSlotIndex(tidx);
+  trackManager.setSlotEnabled(tidx, slot, true);
+
+  const uint32_t afterClear = clearSlotAndRearmItsRestoreRequest(track, tidx, slot);
+
+  midiButtonActions.handleUndoClearTrack();
+  TEST_ASSERT_TRUE_MESSAGE(track.hasDataInSlot(slot), "the undo-clear must restore the cleared content");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(
+      afterClear, StorageManagerInternal::restoreRequestGenerationFor(tidx, slot),
+      "an undo-clear must advance the request generation like CLEAR does");
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::restoreRequestRecordIsCurrent(tidx, slot),
+                            "the outstanding request must not stay current across the undo");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "superseded",
+      StorageManagerInternal::restoreRequestTerminalName(
+          StorageManagerInternal::restoreRequestTerminalFor(tidx, slot)),
+      "an undo-clear must record `superseded`, not `refused`");
+}
+
+/// **S2b.8:** the redo-clear removes the slot's content again. The same external-reset contract holds, so a
+/// request outstanding at the redo cannot publish into the re-cleared slot.
+void test_s2b8_redo_clear_supersedes_the_restore_request() {
+  configureClearOnShortPress();
+  Track& track = preparePlayingTrackWithContent();
+  const uint8_t tidx = trackManager.getSelectedTrackIndex();
+  const uint8_t slot = trackManager.getSelectedSlotIndex(tidx);
+  trackManager.setSlotEnabled(tidx, slot, true);
+
+  // Reach the redo-able state: CLEAR, then undo, so the `ClearSlot` entry sits on the redo side.
+  dispatchClearThroughRealMidiRoute();
+  midiButtonActions.handleUndoClearTrack();
+  TEST_ASSERT_TRUE_MESSAGE(track.hasDataInSlot(slot), "the fixture needs the undone content back");
+
+  const uint32_t beforeRedo = StorageManagerInternal::restoreRequestGenerationFor(tidx, slot);
+  StorageManagerInternal::beginRestoreRequest(tidx, slot);
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::restoreRequestRecordIsCurrent(tidx, slot),
+                           "the fixture must leave a live request before the redo");
+
+  midiButtonActions.handleRedoClearTrack();
+  TEST_ASSERT_FALSE_MESSAGE(track.hasDataInSlot(slot), "the redo-clear must remove the content again");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(
+      beforeRedo, StorageManagerInternal::restoreRequestGenerationFor(tidx, slot),
+      "a redo-clear must advance the request generation like CLEAR does");
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::restoreRequestRecordIsCurrent(tidx, slot),
+                            "the outstanding request must not stay current across the redo");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "superseded",
+      StorageManagerInternal::restoreRequestTerminalName(
+          StorageManagerInternal::restoreRequestTerminalFor(tidx, slot)),
+      "a redo-clear must record `superseded`, not `refused`");
+}
+
 void setUp() { A34aBoundary::resetSlotFlags(); }
 void tearDown() {}
-
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_a34a_control_clear_with_no_drain_reaches_the_action);
@@ -447,5 +527,8 @@ int main(int, char**) {
   RUN_TEST(test_a34a_conflicting_undo_is_refused_before_content_replacement);
   RUN_TEST(test_a34a_transport_is_not_refused_by_the_guard);
   RUN_TEST(test_a34a_guard_is_released_and_a_later_drain_can_take_it);
+  // S2b.8 — undo-clear / redo-clear are external resets of the restore request.
+  RUN_TEST(test_s2b8_undo_clear_supersedes_the_restore_request);
+  RUN_TEST(test_s2b8_redo_clear_supersedes_the_restore_request);
   return UNITY_END();
 }

@@ -712,6 +712,11 @@ void MidiButtonActions::handleUndoClearTrack() {
     if (TrackUndo::canUndoClearTrackForLoop(track, loop)) {
         logger.info("MIDI Button B: Undo Clear Track");
         TrackUndo::undoForLoop(track, loop);
+        // S2b.8: an undo-clear is an **external** reset of these coordinates. It replaces the slot's
+        // content by an external owner (the user), so an outstanding restore request is superseded under
+        // the identity it was created with and the generation advances -- without this, an in-flight job
+        // could publish a parsed payload over the content just restored. Same class as CLEAR below.
+        StorageManagerInternal::advanceRestoreRequestGeneration(trackIdx, slotIndex);
     } else {
         logger.info("Nothing to undo for clear/mute.");
     }
@@ -729,6 +734,9 @@ void MidiButtonActions::handleRedoClearTrack() {
     if (TrackUndo::canRedoClearTrackForLoop(track, loop)) {
         logger.info("MIDI Button B: Redo Clear Track");
         TrackUndo::redoForLoop(track, loop);
+        // S2b.8: a redo-clear removes the slot's content again -- the same external reset as the CLEAR it
+        // re-applies, so the request is superseded and the generation advances.
+        StorageManagerInternal::advanceRestoreRequestGeneration(trackIdx, slotIndex);
     } else {
         logger.info("Nothing to redo for clear/mute.");
     }

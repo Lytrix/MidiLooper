@@ -8,10 +8,11 @@ scoped to *a recorded loop's body persists and its own slot restores across one 
 RWSO-24CAP device session then showed the **restored library still does not accumulate across successive
 boots** (`Track 6 loaded state: EMPTY`, a `(track,slot)` census that changed between boots), which is what
 `runtime-working-set-ownership` S1.3's slope sweep needs. The fix here is not withdrawn — it repaired
-reconcile and the save path — but the remaining blocker is a **restore-liveness** defect, now proposed as
-the OpenSpec change
-[`deferred-slot-restore-liveness`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md)
-(six mechanisms C1–C6 in its `design.md`). **This plan is not the live queue for that defect.**
+reconcile and the save path — but the remaining blocker is a **restore-liveness** defect, whose OpenSpec
+change was **archived 2026-09-24** as
+[`2026-09-24-deferred-slot-restore-liveness`](../../openspec/changes/archive/2026-09-24-deferred-slot-restore-liveness/proposal.md)
+with a reduced scope that did **not** remove the restored-library instability. **This plan is not the live
+queue for that defect**, and the defect itself is unowned by any open change today.
 **Found by:** the `runtime-working-set-ownership` device session
 ([ARCHITECTURE-REVIEW § Device session — RWSO-24CAP](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)),
 which was blocked by it.
