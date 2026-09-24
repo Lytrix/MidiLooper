@@ -230,49 +230,47 @@ STORAGE_PERSIST_MEM void advanceRestoreRequestGeneration(uint8_t trackIndex, uin
     // moved. The next `beginRestoreRequest` for these coordinates clears it and starts fresh.
 }
 
-STORAGE_PERSIST_MEM void invalidateAllRestoreRequestsAsSuperseded() {
+STORAGE_PERSIST_MEM void noteRestoreSetEpoch(uint32_t setEpoch) {
+    if (setEpoch == restoreSetEpoch_) {
+        return;
+    }
+    // A set change invalidates every outstanding request, each reaching `superseded` **under the identity
+    // it was created with**. Mark first, then advance the epoch -- exactly the order
+    // `advanceRestoreRequestGeneration` uses per coordinate. An earlier version moved the epoch first and
+    // re-stamped each record with it, which (a) made the recorded outcome describe an identity the request
+    // never had and (b) left the record reading as *current*-but-terminal. Clearing the records afterwards
+    // wiped the terminal it had just recorded.
+    //
+    // While the loop runs, `restoreSetEpoch_` is still the epoch the requests were created under, so
+    // `restoreRequestRecordIsCurrent` is the correct "this record describes a live request" test.
     for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
         for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
-            RestoreRequestRecord& record = restoreRequestRecords_[trackIndex][slotIndex];
-            if (record.terminalRecorded || !restoreRequestRecordIsCurrent(trackIndex, slotIndex)) {
+            if (!restoreRequestRecordIsCurrent(trackIndex, slotIndex)) {
                 continue;
             }
+            RestoreRequestRecord& record = restoreRequestRecords_[trackIndex][slotIndex];
             // `superseded` is distinct from `refused`: a set change is not a failure.
             record.state = RestoreRequestState::Terminal;
             record.terminal = RestoreRequestTerminal::Superseded;
             record.wait = RestoreRequestWait::None;
             record.terminalRecorded = true;
+            emitRestoreRequestTransition(trackIndex, slotIndex, record);
         }
     }
-}
-
-STORAGE_PERSIST_MEM void noteRestoreSetEpoch(uint32_t setEpoch) {
-    if (setEpoch == restoreSetEpoch_) {
-        return;
-    }
-    // A set change invalidates every outstanding request, each reaching `superseded` under the identity
-    // it was created with. The epoch moves first, then the records are rebuilt as superseded terminals:
-    // clearing them afterwards (as an earlier version did) wiped the terminal it had just recorded.
+    // The records are deliberately **kept**. Each still describes the request that was just superseded,
+    // under its own identity, so `restoreRequestTerminalRecorded` stays true and the pre-publication check
+    // can reject an in-flight job; `restoreRequestRecordIsCurrent` is now false because the epoch moved.
     restoreSetEpoch_ = setEpoch;
-    for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
-        for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
-            RestoreRequestRecord& record = restoreRequestRecords_[trackIndex][slotIndex];
-            const bool wasCurrent = record.identityValid && !record.terminalRecorded;
-            record = RestoreRequestRecord{};
-            record.requestGeneration = restoreRequestGeneration_[trackIndex][slotIndex];
-            record.setEpoch = restoreSetEpoch_;
-            if (!wasCurrent) {
-                continue;
-            }
-            record.state = RestoreRequestState::Terminal;
-            record.terminal = RestoreRequestTerminal::Superseded;
-            record.terminalRecorded = true;
-            record.identityValid = true;
-        }
-    }
 }
 
 STORAGE_PERSIST_MEM uint32_t restoreSetEpoch() { return restoreSetEpoch_; }
+
+STORAGE_PERSIST_MEM uint32_t restoreRequestEpochFor(uint8_t trackIndex, uint8_t slotIndex) {
+    if (!coordinatesValid(trackIndex, slotIndex)) {
+        return 0;
+    }
+    return restoreRequestRecords_[trackIndex][slotIndex].setEpoch;
+}
 
 STORAGE_PERSIST_DATA uint32_t g_restoreProgressCounter = 0;
 

@@ -1,45 +1,38 @@
 # Current work (implementation scope)
 
-**2026-09-23 working state — `runtime-working-set-ownership` P0/P1 native scope complete; the next OpenSpec change is proposed and unimplemented.**
+**2026-09-24 working state — supersedes the 2026-09-23 preamble; the newest session entries are in
+[§ Now implementing](#now-implementing).**
 
 Two facts define what may be implemented right now:
 
-1. **`runtime-working-set-ownership`'s remaining gates are all device legs, and all of them are blocked by
-   a restore-liveness defect outside that change.** Native is complete and green (full native
-   **2,289 / 1 skipped / 0 failures**, re-verified on a clean tree 2026-09-23). Open: S1.1's per-owner
-   census, S1.3's device slope, S1.4's undo/root baseline, S1.5's device refusal point, S2b.3's
-   post-restore baseline, S2b.5's device gate, the content PASS, D0.2's B07 allocation census (not
-   measurable natively), and phases B–E. The restored set is unstable across boots, so no deterministic
-   single-slot capture can be produced until the defect is fixed.
-2. **New OpenSpec change `deferred-slot-restore-liveness` — PROPOSED 2026-09-23, planning complete,
-   `openspec validate` clean, three G2 adversarial contract reviews' ten findings corrected
-   (`tasks.md` Revisions 2–4), no implementation started.** It exists to unblock (1). Read its
-   [`proposal.md`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md) and
-   [`design.md`](../../openspec/changes/deferred-slot-restore-liveness/design.md) before coding it. Five
-   corrections bind any future work on it: (a) **scope** — it delivers diagnosable preparation and named
-   waits plus drain advancement where the commit gate admits; it does **not** by itself unblock CLEAR
-   while another track keeps playing, because that needs bounded commit/cleanup, the open clause of
-   **runtime-maintenance task 3.3**, and per-phase gate narrowing is design O5 (needs its own review);
-   (b) the commit gate is **global** — `hasLoadLoopJobCommitPending()` is true for *either* job instance,
-   so one request at commit blocks every other request's preparation (`waiting_job_capacity`), and
-   queue-head skipping does not solve that; (c) the drain must derive admission from the **same all-tracks
-   runtime eligibility** as the normal path (`handleClearTrack` stops only the selected track) and must
-   charge restore work in its budget and progress detection; (d) the drain's result is a **three-way
-   completed / temporarily blocked / failed** outcome with `saveState` kept as a `Completed`-only wrapper,
-   and a blocked CLEAR **refuses by name, leaves the slot untouched, and leaves the save owed** (retention
-   is O7, not built) — so a named refusal is an expected outcome, not a `Clear aborted`; (e) the finite
-   **100 ms post-load holdoff** is waited out within a bounded, MIDI-serviced budget or reported by name.
-   `MidiServiceDrain::admitLoadJobChild` must not be relaxed here.
-   **Do not implement it without the owner starting the apply workflow.**
+1. **`runtime-working-set-ownership`'s remaining gates are S2b.7 (native) and otherwise device legs blocked
+   by an unstable restored library outside that change.** Native is complete and green including S2b.8
+   (full native **2,348 / 1 skipped / 0 failures**, 2026-09-24). Open: S1.1's per-owner census, S1.3's device
+   slope, S1.4's undo/root baseline, S1.5's device refusal point, S2b.3's post-restore baseline, S2b.5's
+   device gate, the content PASS, D0.2's B07 allocation census (not measurable natively), **S2b.7**, and
+   phases B–E. The restored set is unstable across boots, so no deterministic
+   single-slot capture can be produced until the SD-catalog reconcile defect is fixed.
+2. **The restore-liveness change is ARCHIVED, not proposed.** `deferred-slot-restore-liveness` was archived
+   2026-09-24 as `2026-09-24-deferred-slot-restore-liveness` with a reduced, accurately described scope. It
+   delivered diagnosable preparation and named waits under transport, request identity with four terminals,
+   pre-publication stale-identity rejection, the post-restore census checkpoint, a content PASS, and CLEAR's
+   permitted completion branch. It did **not** deliver drain-driven restore advancement — now
+   `runtime-working-set-ownership` **S2b.7**, bound by
+   `resumable-midi-boundary-playback-maintenance` **task 3.3**, whose commit gate must not be relaxed — nor a
+   runtime set change (now **S2b.8**, landed 2026-09-24 as external resets). The commit gate is **global**
+   (`hasLoadLoopJobCommitPending()` is true for *either* job instance), so one request at commit blocks every
+   other request's preparation (`waiting_job_capacity`); a blocked CLEAR refuses by name, leaves the slot
+   untouched and the save owed; and the finite **100 ms post-load holdoff** is reported by name rather than
+   waited out in the drain. No implementation work remains gated on applying that change.
 
 **Scope note — landed work that is NOT tracked by an OpenSpec change.** The persistence-immediacy and SD
 temp-write work of 2026-09-23 landed on plan docs and code only:
 [`persistence_immediacy_clear_latency_refinement.md`](../Plans/persistence_immediacy_clear_latency_refinement.md)
 (the one-chunk-per-turn mid-pass flush, the queued-capture-chunk invocation reason, DEC-081) and
 [`sd_temp_write_truncation_refinement.md`](../Plans/sd_temp_write_truncation_refinement.md) (the
-`openForRewrite` fix and the self-healing `reconcileSetIndexOnSd`). `deferred-slot-restore-liveness`
-covers the **restore**-liveness half of the same defect cluster; **no change yet covers the save/immediacy
-half**. That gap is recorded, not papered over: a plan is not implementation authority
+`openForRewrite` fix and the self-healing `reconcileSetIndexOnSd`). `deferred-slot-restore-liveness` (now
+archived) addressed the **restore**-liveness half of the same defect cluster in part; **no change yet covers the save/immediacy
+half**, and the restored-library instability itself remains unowned. That gap is recorded, not papered over: a plan is not implementation authority
 ([`docs/Authority/README.md`](../Authority/README.md) conflict table).
 
 **Branch note.** `feature/runtime-working-set-ownership` is **738 commits ahead of `origin/dev`** with no
@@ -2910,6 +2903,22 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (eleventh session) — S2b.8 — set-change epoch / external resets — LANDED native-only in `runtime-working-set-ownership`; documentation reconciled first.**
+Owner direction: take S2b.8 before S2b.7, with reconciliation first. **Reconciled:** `tasks.md` no longer
+links the archived `deferred-slot-restore-liveness` as a live sibling, and the transfer (S1.1/S1.3/S1.4/
+S1.5/S2b.3/S2b.5 plus the new S2b.7/S2b.8) is recorded in the change. **Landed:** undo-clear and redo-clear
+are **decided to be external resets** and advance the restore-request generation (DEC-082 clause 1, no new
+DEC); `noteRestoreSetEpoch` marks `superseded` under each request's **original** identity *before* advancing
+the epoch and emits its `RRQ` transition (two real defects the audit found); the dead non-emitting
+`invalidateAllRestoreRequestsAsSuperseded` was removed. **Not faked:** no runtime set-change entry point
+exists, so none was invented (the set boundary is boot's full reset); "a different owner committing that
+slot" already terminates as `unnecessary` + pre-publication rejection and was not re-wired. **Evidence:**
+full native **2,348 / 1 skipped / 0 failures**; `test_storage_manager_load` 35/35,
+`test_drain_reentry_callback_safety` 8/8; capture-serial SUCCESS `code 391,080 + padding 2,136` (1,296 B
+above the 840 floor); both fixes proven discriminating by removal. **No device run** — nothing
+hardware-observable. **Next: S2b.7 — drain-driven restore advancement** (characterize advancement vs a
+correctly named wait; commit gate not relaxed). Packet: `ARCHITECTURE-REVIEW.md` § S2b.8.
+
 **2026-09-24 (tenth session) — `deferred-slot-restore-liveness` ARCHIVED (reduced scope); runtime measurements transferred to `runtime-working-set-ownership`.**
 Per owner direction this was a **scope correction, not another sweep**. Delivered and archived: preparation
 under transport; request identity with named waits + four terminals + stale-identity rejection; the census
@@ -3160,7 +3169,7 @@ A3.6 remain open.**
 
 **2026-09-23 — restore-liveness plan correction (documentation only).**
 The final review's callback re-entry finding is addressed in
-[`deferred-slot-restore-liveness/tasks.md`](../../openspec/changes/deferred-slot-restore-liveness/tasks.md)
+[`2026-09-24-deferred-slot-restore-liveness/tasks.md`](../../openspec/changes/archive/2026-09-24-deferred-slot-restore-liveness/tasks.md)
 **A3.4a — drain re-entry and callback safety**, required before **A3.5 — holdoff MIDI servicing**.
 The contract adds a scoped owner guard, pre-side-effect refusal of conflicting callbacks, live eligibility
 and target revalidation, and production-dispatch fixtures. CLEAR gates consistently permit named refusals
@@ -3169,10 +3178,11 @@ queued/running/waiting/terminal states and the actual `saveNewSetInternal()` cal
 acceptance fixtures. Firmware and verification tasks remain unimplemented/unrun.
 
 **Execution workflow:** use [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) packets and tasks D0 for every upcoming slice (DEC-080); acceptance fixtures precede production behavior changes.
-**Next OpenSpec change (proposed + G2-reviewed, not started):** [`deferred-slot-restore-liveness`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md)
-— read its `design.md` § G2 execution packets; its Packet A's acceptance fixtures assert the **desired**
-behavior and its five live mechanisms (C1/C2/C4/C5/C6; C3 withdrawn) are hypotheses to confirm or
-withdraw. Its apply-under-transport scope is bounded by **`resumable-midi-boundary-playback-maintenance`
+**Next OpenSpec slice (transferred, not a sibling change):** `runtime-working-set-ownership` **S2b.7** —
+drain-driven restore advancement. The change that was proposed here, `deferred-slot-restore-liveness`, was
+**archived 2026-09-24** with a reduced scope; its undelivered drain-advancement clause became S2b.7 and its
+set-change residual became S2b.8 (landed 2026-09-24). Its five live mechanisms (C1/C2/C4/C5/C6; C3 withdrawn)
+are settled. Applying a restore under transport remains bounded by **`resumable-midi-boundary-playback-maintenance`
 task 3.3** (bounded Commit), which is a named prerequisite and must not be relaxed here.
 
 **DEC-081 landed 2026-09-23 (owner direction): audible playback never gates persistence.**
@@ -3227,7 +3237,7 @@ and S1.3's slope sweep is NOT this fix but the restore-liveness defect** (`Track
 proposed as the OpenSpec change `deferred-slot-restore-liveness`, whose `design.md` records six mechanisms
 (C1–C6) for it.
 
-**Current handoff:** for `runtime-working-set-ownership`, follow [IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) (2026-09-23, DEC-079) for the first slice and its prerequisites; phase F is planned but uncreated. **Its remaining work is device-gated, and every device leg is blocked by the restore-liveness defect now proposed as [`deferred-slot-restore-liveness`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md)** — implement that first, then re-run this change's device legs (see that change's `tasks.md` A5.1).
+**Current handoff:** for `runtime-working-set-ownership`, follow [IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) (2026-09-23, DEC-079) for its slices and prerequisites; phase F is planned but uncreated. **Its remaining work is: S2b.7 (native, drain-driven restore advancement) and otherwise device-gated** — the restore-liveness change that was meant to unblock the device legs was **archived 2026-09-24** with a reduced scope, so the restored-library instability confound remains and those legs are re-run only on a stable library (see `tasks.md` S1.3/S2b.3 and the S2b gate).
 
 **Progress (2026-09-23, DEVICE SESSION — RWSO-24CAP): the S2b/S1.5 hardware gate is taken, the restored library
 survives a reboot, and a clear-drain blocker was worked around.** Flashed HEAD `26e96539`

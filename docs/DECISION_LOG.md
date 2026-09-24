@@ -100,8 +100,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Date:** 2026-09-24
 **Owner:** `StorageManager` restore path (`RestoreRequestState`, `LoadLoopJob`, `LoopSlotRestoreQueue`), the blocking drain (`PersistenceSyncDrainBudget` / `PersistenceDrainOutcome`), CLEAR in `MidiButtonActions`
-**Status:** Accepted — implemented and native-verified; device evidence exists for the request lifecycle (Packet B) and for content (A5.2). The **drain-advance device integration (A3.7 shape b) is not yet verified**, so the governing change `deferred-slot-restore-liveness` stays open and is not archived.
-**Governing change:** [`openspec/changes/deferred-slot-restore-liveness`](../openspec/changes/deferred-slot-restore-liveness/proposal.md) (Packets A–D).
+**Status:** Accepted — implemented and native-verified; device evidence exists for the request lifecycle (Packet B) and for content (A5.2). The **drain-advance device integration (A3.7 shape b) is not yet verified**, so the governing change was archived 2026-09-24 with that clause explicitly **deferred, not passed**, to `runtime-working-set-ownership` S2b.7.
+**Governing change:** `deferred-slot-restore-liveness` (Packets A–D), **archived 2026-09-24** as `2026-09-24-deferred-slot-restore-liveness` with a reduced scope; its two undelivered clauses were transferred to [`runtime-working-set-ownership`](../openspec/changes/runtime-working-set-ownership/tasks.md) as **S2b.7** (drain-driven advancement, bound by `resumable-midi-boundary-playback-maintenance` task 3.3) and **S2b.8** (set-change epoch / external resets, landed 2026-09-24).
 
 ### Context
 
@@ -153,7 +153,7 @@ generic `Clear aborted` with no reason.
 | Drain decisions, budget, progress, caller contract (native) | `test_persistence_sync_drain_budget` and `test_storage_drain_restore` (real drain), including the holdoff named instead of spun and the re-entry guard |
 | Content reaches the output (device) | [`captures/cc-03-playback/`](../captures/cc-03-playback/content-review.json): `result: PASS`, 11/11 cycles `inventory_equal` and `exact_order`, 0 missing/extra, firmware hex `f3a33208…` |
 | CLEAR with a save owed, nothing else sounding (device) | [`captures/a37-clear-05-fresh/`](../captures/a37-clear-05-fresh/): drain completed the save in <243 ms, 0 aborts / stuck / blocked |
-| **Drain advances a restore it waits on, with another track playing (A3.7 shape b)** | **NOT VERIFIED.** Every payload slot is restored at boot, so no cold slot exists post-boot, and the clear-then-reload route is deliberately not enabled. The ~22 MB abort that route produced was diagnosed and fixed in `runtime-working-set-ownership` (a malformed bar-index size, not an allocator defect — see that change's `ARCHITECTURE-REVIEW.md` § P1), so the route is now safe, but enabling it is a separate decision. No alternative fixture is proven. **This is why the change is not archived.** |
+| **Drain advances a restore it waits on, with another track playing (A3.7 shape b)** | **NOT VERIFIED.** Every payload slot is restored at boot, so no cold slot exists post-boot, and the clear-then-reload route is deliberately not enabled. The ~22 MB abort that route produced was diagnosed and fixed in `runtime-working-set-ownership` (a malformed bar-index size, not an allocator defect — see that change's `ARCHITECTURE-REVIEW.md` § P1), so the route is now safe, but enabling it is a separate decision. No alternative fixture is proven. **Deferred, not passed:** the change was archived 2026-09-24 with this clause transferred to `runtime-working-set-ownership` **S2b.7**. |
 
 ### Consequences
 

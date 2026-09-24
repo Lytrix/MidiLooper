@@ -21,8 +21,23 @@ and any remainder is either a **latent condition on a later stage** or an obliga
 allocation census and S2b.3's missing baseline (device measurements), S3.1–S3.3 and S4.1–S4.4 (the lease
 pool and generation release are **not** built — only S2b.4's per-slot release exists), S4f.1/S4f.2/S4f.3/
 S4f.6 (start/switch carriers), S4f.7–S4f.14, every S1/S2b/S2/S3/S4 gate, and phases B–E. The remaining
-device legs are blocked by the restore-liveness defect proposed as
-[`deferred-slot-restore-liveness`](../deferred-slot-restore-liveness/proposal.md).
+device legs are blocked by the restore-liveness defect that was **archived 2026-09-24** as
+[`2026-09-24-deferred-slot-restore-liveness`](../archive/2026-09-24-deferred-slot-restore-liveness/proposal.md)
+(reduced scope; the runtime measurements and the two new deferrals S2b.7/S2b.8 were transferred here).
+
+**Checkoff (2026-09-24, eleventh session): 23 → 24 of 147.** **S2b.8** is checked with its own evidence —
+it is the first task completed *here* rather than reconciled from earlier work, and the +2 in the denominator
+is the transfer of S2b.7 and S2b.8. **S2b.7** stays unchecked by design (its advancement clause is bound by
+`resumable-midi-boundary-playback-maintenance` task 3.3); the next native slice is S2b.7's characterization
+fixture. No other task changed state.
+
+**Transfer in (2026-09-24, tenth session).** The restore-liveness sub-change was archived as
+`2026-09-24-deferred-slot-restore-liveness` with a reduced, accurately described scope. Its unfinished runtime
+measurements are **transferred here, unchecked**: S1.1, S1.3, S1.4, S1.5, S2b.3, S2b.5. Two clauses it
+explicitly did **not** deliver became the named follow-ups **S2b.7** (drain-driven restore advancement, bound
+by `resumable-midi-boundary-playback-maintenance` task 3.3) and **S2b.8** (set-change epoch invalidation).
+The archive did not complete these; it transferred them, so nothing here is a pass by relocation. `DEC-082`
+records the restore-request ruling.
 
 **Ownership change.** Before any firmware edit: run
 [`docs/Templates/DECISION_REVIEW.md`](../../../docs/Templates/DECISION_REVIEW.md), the preflight, and the
@@ -395,9 +410,11 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `DIAG,lcr,skip,restore`, a restored-set that changes between boots), so successive boots do not
       accumulate a library; and a **content-verified PASS**, which the pipeline run does not meet (2
       unexplained missing rows in bar 0, Leg 4). S1.5's refusal-N and S1.4's pass→chunk conversion also remain.
-      **The named blocker is now the proposed change**
-      [`deferred-slot-restore-liveness`](../deferred-slot-restore-liveness/proposal.md); this gate closes after
-      that lands and this list is re-measured — a confounded gate is retried, never reinterpreted.
+      **The named blocker was the change now archived as**
+      [`2026-09-24-deferred-slot-restore-liveness`](../archive/2026-09-24-deferred-slot-restore-liveness/proposal.md),
+      which unblocked preparation under transport and the CLEAR completion branch but **did not** remove the
+      SD-catalog reconcile confound (its drain-advancement clause became S2b.7 here); this gate closes after
+      the sweep is re-run and this list is re-measured — a confounded gate is retried, never reinterpreted.
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
@@ -626,7 +643,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       **CHECKED 2026-09-23 (checkbox reconciliation):** the native half is complete and green, and its one
       remaining clause is a device gate that the contract assigns to a **different** task, so it is tracked
       there and not duplicated here. That device gate is currently blocked by the restore-liveness defect
-      proposed as `deferred-slot-restore-liveness`; this task is done, the device leg is not.
+      proposed as `deferred-slot-restore-liveness` (since archived 2026-09-24); this task is done, the device leg is not.
       Previous status:
       The predicate is `Track::noLiveOwnerForSlot(slot)` (S4.0) and its per-slot scope is now asserted in the
       S4.0 fixture: with a live job on slot 0, `noLiveOwnerForSlot(1)` is **true**, so a finalizing
@@ -748,16 +765,19 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       **STAYS OPEN, and every remaining clause is blocked on the same thing.** The native half is green and the
       24-bar-overdub admission claim is taken on hardware, but three clauses are unmet: the slope-to-failure
       sweep, the content-verified PASS, and the census stability it depends on. All three are confounded by the
-      restore-liveness defect (`Track 6 loaded state: EMPTY`, a census that changes between boots) now proposed
-      as [`deferred-slot-restore-liveness`](../deferred-slot-restore-liveness/proposal.md). Per the repo rule
+      restore-liveness defect (`Track 6 loaded state: EMPTY`, a census that changes between boots) whose change
+      was archived as
+      [`2026-09-24-deferred-slot-restore-liveness`](../archive/2026-09-24-deferred-slot-restore-liveness/proposal.md).
+      Per the repo rule
       that a missing or confounded gate is not a pass and a threshold is never weakened, this gate closes only
-      after that change lands and the sweep is re-run.
+      after the sweep is re-run on a stable library.
 
 - [ ] S2b.7 **Drain-driven restore advancement — deferred behavior (named follow-up).** The blocking drain's
       *decisions* are verified natively (A3.2 wait-reason classification, A3.3 budget/progress accounting,
-      A3.4 caller contract in `deferred-slot-restore-liveness`), and its **completes** branch is
+      A3.4 caller contract in the archived `2026-09-24-deferred-slot-restore-liveness`), and its
+      **completes** branch is
       device-verified with an owed save, an in-flight commit-gated restore and another track playing
-      (`deferred-slot-restore-liveness` A3.7 shape (b), `captures/a37fix-04/`). **Not verified, and deferred
+      (that change's A3.7 shape (b), `captures/a37fix-04/`). **Not verified, and deferred
       here:** that the drain **advances** a restore it waits on — i.e. that a restore holding the SD session
       is progressed by the drain rather than only reported. The observed completion came from
       `shouldPrioritizeWorkspaceSaveDrain()` bypassing the slot-load gate for an urgent owed save, so the
@@ -768,16 +788,55 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       at the drain edge, showing either that the drain advances it or that it names the wait — with no claim
       of advancement absent that evidence.
 
-- [ ] S2b.8 **Set-change epoch invalidation for the restore request record — deferred residual (named
-      follow-up).** Transferred from `deferred-slot-restore-liveness` A2.1, whose delivered scope covers the
+- [x] S2b.8 **Set-change epoch invalidation for the restore request record — external resets.**
+      Transferred from the archived `2026-09-24-deferred-slot-restore-liveness` A2.1, whose
+      delivered scope covers the
       request identity, the named waits, exactly-one-terminal, the external **CLEAR** generation advance, and
-      pre-publication identity validation. **Not delivered:** a production **set-change** wire. The record's
-      `noteRestoreSetEpoch` has no production call site because no set-epoch accessor exists, so
-      "a set change yields `superseded`" is proven at the record level only, and
-      `handleUndoClearTrack`/`handleRedoClearTrack` do not advance the generation either.
+      pre-publication identity validation. **Not delivered there:** a production **set-change** wire (the
+      record's `noteRestoreSetEpoch` had no production call site) and any undo/redo-clear external reset.
       **Verify:** a set-change entry point feeds the epoch (or an equivalent external reset) and native cases
       assert that outstanding requests reach the `superseded` terminal under the identity they were created
       with; the undo/redo-clear routes decide explicitly whether they are external resets.
+      **DONE 2026-09-24 — native only; device gate NOT APPLICABLE (no hardware-observable behavior).**
+      *Decision, explicit as the task requires:* **undo-clear and redo-clear ARE external resets.** They
+      replace the slot's content by an external owner (the user), which is the class the
+      `lazy-slot-hydration` spec lists for both `superseded` ("the slot was cleared by an external owner")
+      and the `requestGeneration` advance ("a user clear"). Both routes now call
+      `advanceRestoreRequestGeneration` when the undo/redo actually applies, so an in-flight job cannot
+      publish a parsed payload over the content just restored or re-cleared. This is an application of
+      **DEC-082** clause 1, so no new `DEC-###` is introduced.
+      *Two defects fixed in `noteRestoreSetEpoch` itself*, both found by the audit: it recorded the
+      `superseded` terminal with the **new** epoch stamped into the record (so the outcome described an
+      identity the request never had, and the record read as *current*-but-terminal), and it emitted **no**
+      `RRQ` transition, so the reason was not observable. It now marks **before** advancing the epoch --
+      the order `advanceRestoreRequestGeneration` uses -- keeps the records readable under their own
+      identity, and emits one transition per decided request. The dead, non-emitting
+      `invalidateAllRestoreRequestsAsSuperseded` was removed (grep: declaration + definition only).
+      *Set change:* **no runtime set-change entry point exists**, so none was invented. The loaded current
+      set is established at boot (`loadCurrentSetBundleAndActiveLoopSlots`), which calls
+      `resetAllLoopSlotRestoreAttempted()` → `resetAllRestoreRequestState()`: a **full** record reset with
+      `setEpoch = 0`, stronger than `superseded`, and it precedes any request because none is queued yet in
+      that session. `loadCurrentWorkspaceFromSd` (same directory load) has zero firmware callers.
+      `noteRestoreSetEpoch` therefore stays the record-level API for the boundary and is now corrected and
+      native-tested; the *equivalent external reset* the task allows is the undo/redo-clear class.
+      *Audit finding, recorded not re-wired:* "a different owner committing that slot" is already
+      terminated -- `markLoopSlotRestoreAttempted` records `unnecessary` and `commitLoadLoopJobPublish`
+      revalidates the captured identity before the token check and publishes nothing when stale. Converting
+      it to a generation advance would change the B04/S2b.5 `unnecessary` oracle for no safety gain, so it is
+      recorded as a spec-wording gap, not a defect.
+      **Evidence.** New read-only accessor `restoreRequestEpochFor(track, slot)` makes "under the identity it
+      was created with" checkable rather than assumed. `test_storage_manager_load` **35/35** (strengthened
+      set-change case + `test_s2b8_set_change_decides_a_request_exactly_once` +
+      `test_s2b8_set_change_is_rejected_immediately_before_publication`);
+      `test_drain_reentry_callback_safety` **8/8** (`test_s2b8_undo_clear_supersedes_the_restore_request`,
+      `test_s2b8_redo_clear_supersedes_the_restore_request`, through the real button routes); full native
+      **2,348 / 1 skipped / 2,347 succeeded / 0 failures**; `teensy41-capture-serial` **SUCCESS**
+      `variables 96,192 / code 391,080 + padding 2,136` (1,296 B above the 840 floor; `code + padding`
+      constant at 393,216, so no bank cross). **Discriminating by removal, both directions observed:**
+      restoring the epoch-first/re-stamp behavior fails exactly the original-identity assertions (3 failed,
+      32 succeeded), and removing the two handler calls fails exactly the two new reentry cases on the
+      generation assertion (2 failed, 6 succeeded); both mutations reverted byte-identical. Packet:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.8.
 
 ## S3 — introduce the reusable lease pool (no release yet)
 

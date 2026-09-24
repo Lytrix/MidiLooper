@@ -302,10 +302,16 @@ bool markRestoreRequestTerminal(uint8_t trackIndex, uint8_t slotIndex,
 /// External change of the coordinates: a user CLEAR, a set change, or a different owner committing that
 /// slot. The restore path's **own** failure cleanup must NOT call this (see `waiting_retry`).
 void advanceRestoreRequestGeneration(uint8_t trackIndex, uint8_t slotIndex);
-void invalidateAllRestoreRequestsAsSuperseded();
+/// S2b.8: the loaded current set's epoch moves here and every outstanding request is recorded
+/// `superseded` **under the identity it was created with** (the epoch that is still current when this is
+/// called). The supersession is emitted, so the reason is observable.
 void noteRestoreSetEpoch(uint32_t setEpoch);
 uint32_t restoreSetEpoch();
 uint32_t restoreRequestGenerationFor(uint8_t trackIndex, uint8_t slotIndex);
+/// S2b.8: the epoch the record itself was created under. Distinct from `restoreSetEpoch()` once an
+/// external reset has advanced the live epoch, so "superseded under the original identity" is checkable
+/// rather than assumed.
+uint32_t restoreRequestEpochFor(uint8_t trackIndex, uint8_t slotIndex);
 void resetAllRestoreRequestState();
 /// A3.3: a monotonic counter bumped each time the restore path is serviced (a job grain or a
 /// selection/admission turn). The blocking drain compares it to decide whether the restore it waits on

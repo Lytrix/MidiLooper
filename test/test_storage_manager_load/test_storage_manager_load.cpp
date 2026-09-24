@@ -957,11 +957,14 @@ void test_restore_request_reused_coordinates_are_a_new_request() {
 }
 
 /// A set change supersedes outstanding requests, and `superseded` is distinct from `refused`.
+/// **S2b.8 strengthened:** the terminal is recorded under the identity each request was **created with**,
+/// before the live epoch moves, so the outcome still describes that request rather than a fabricated one.
 void test_restore_request_set_change_supersedes_outstanding() {
   StorageManagerInternal::resetAllRestoreRequestState();
   StorageManagerInternal::beginRestoreRequest(0, 2);
   StorageManagerInternal::beginRestoreRequest(1, 4);
   StorageManagerInternal::markRestoreRequestRunning(0, 2);
+  const uint32_t originalEpoch = StorageManagerInternal::restoreSetEpoch();
 
   StorageManagerInternal::noteRestoreSetEpoch(7);
   TEST_ASSERT_EQUAL_INT(static_cast<int>(StorageManagerInternal::RestoreRequestState::Terminal),
@@ -970,6 +973,46 @@ void test_restore_request_set_change_supersedes_outstanding() {
       "superseded", StorageManagerInternal::restoreRequestTerminalName(
                         StorageManagerInternal::RestoreRequestTerminal::Superseded));
   TEST_ASSERT_EQUAL_UINT32(7, StorageManagerInternal::restoreSetEpoch());
+  // S2b.8: both the running request and the queued sibling reach `superseded`, and each record keeps the
+  // epoch it was created under. The live epoch has moved, so neither record is current any more: an
+  // in-flight job holding that identity is rejected before publication rather than publishing.
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(StorageManagerInternal::RestoreRequestState::Terminal),
+                        static_cast<int>(StorageManagerInternal::restoreRequestState(1, 4)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(originalEpoch,
+                                   StorageManagerInternal::restoreRequestEpochFor(0, 2),
+                                   "the supersede must be recorded under the request's original epoch");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(originalEpoch,
+                                   StorageManagerInternal::restoreRequestEpochFor(1, 4),
+                                   "a queued sibling keeps its original epoch too");
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::restoreRequestRecordIsCurrent(0, 2),
+                            "the running request must not stay current across a set change");
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::restoreRequestRecordIsCurrent(1, 4),
+                            "the queued sibling must not stay current across a set change");
+}
+
+/// **S2b.8 — exactly once across a second set change.** A request already decided `superseded` must not
+/// be re-decided by a later epoch, and its outcome must not be overwritten by a terminal the stale job
+/// tries to record afterwards.
+void test_s2b8_set_change_decides_a_request_exactly_once() {
+  StorageManagerInternal::resetAllRestoreRequestState();
+  StorageManagerInternal::beginRestoreRequest(0, 3);
+
+  StorageManagerInternal::noteRestoreSetEpoch(7);
+  StorageManagerInternal::noteRestoreSetEpoch(8);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(8, StorageManagerInternal::restoreSetEpoch(),
+                                   "the second set change must still move the live epoch");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0,
+                                   StorageManagerInternal::restoreRequestEpochFor(0, 3),
+                                   "the decided record keeps the epoch it was created under");
+  TEST_ASSERT_FALSE_MESSAGE(
+      StorageManagerInternal::markRestoreRequestTerminal(
+          0, 3, StorageManagerInternal::RestoreRequestTerminal::Committed),
+      "a stale identity must not be able to record a second terminal");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "superseded",
+      StorageManagerInternal::restoreRequestTerminalName(
+          StorageManagerInternal::restoreRequestTerminalFor(0, 3)),
+      "the first terminal must survive the later set change unchanged");
 }
 
 /// The restore path's **own** failure cleanup resets the slot but keeps the identity: the request goes to
@@ -1059,6 +1102,50 @@ void test_a21_stale_identity_is_rejected_immediately_before_publication() {
   RestoreHarness::runSingleLoadServiceTurn();
   TEST_ASSERT_FALSE_MESSAGE(trackManager.getSelectedTrack().getLoop(6).hasCommittedPasses(),
                             "a stale identity must publish NOTHING");
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::hasLoadLoopJobCommitPending(),
+                            "the rejected job must be released, not left commit-pending");
+}
+
+/// **S2b.8 — the set-change route rejects an in-flight publication too.** The same pre-publication window
+/// as A2.1, invalidated by `noteRestoreSetEpoch` instead of a generation advance: a set change must also
+/// publish nothing into the loaded slots, and the request must be readable as `superseded` under the
+/// identity it was created with.
+void test_s2b8_set_change_is_rejected_immediately_before_publication() {
+  SD.reset();
+  RestoreHarness::resetAllTracksAndPool();
+  StorageManagerInternal::resetAllRestoreRequestState();
+  RestoreHarness::setRuntimeTransportIdle();
+
+  RestoreHarness::armBackgroundRestoreRequest(0, 7, 78);
+  bool commitPending = false;
+  for (int turn = 0; turn < 32; ++turn) {
+    RestoreHarness::runLoadServiceTurn();
+    if (StorageManager::hasLoadLoopJobCommitPending()) {
+      commitPending = true;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(commitPending, "the fixture needs a prepared, unpublished body");
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.getSelectedTrack().getLoop(7).hasCommittedPasses(),
+                            "the fixture must stop before publication");
+  const uint32_t originalEpoch = StorageManagerInternal::restoreRequestEpochFor(0, 7);
+
+  // The loaded current set changes while the parsed body is still in flight.
+  StorageManagerInternal::noteRestoreSetEpoch(9);
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::restoreRequestRecordIsCurrent(0, 7),
+                            "the set change must make the in-flight request stale");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(originalEpoch,
+                                   StorageManagerInternal::restoreRequestEpochFor(0, 7),
+                                   "the terminal must be recorded under the request's original identity");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "superseded",
+      StorageManagerInternal::restoreRequestTerminalName(
+          StorageManagerInternal::restoreRequestTerminalFor(0, 7)),
+      "a set change must record `superseded`, not `refused` or `committed`");
+
+  RestoreHarness::runSingleLoadServiceTurn();
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.getSelectedTrack().getLoop(7).hasCommittedPasses(),
+                            "a stale identity must publish NOTHING into a changed set");
   TEST_ASSERT_FALSE_MESSAGE(StorageManager::hasLoadLoopJobCommitPending(),
                             "the rejected job must be released, not left commit-pending");
 }
@@ -1230,9 +1317,11 @@ int main(int, char**) {
   RUN_TEST(test_restore_request_records_exactly_one_terminal_per_identity);
   RUN_TEST(test_restore_request_reused_coordinates_are_a_new_request);
   RUN_TEST(test_restore_request_set_change_supersedes_outstanding);
+  RUN_TEST(test_s2b8_set_change_decides_a_request_exactly_once);
   RUN_TEST(test_restore_request_own_failure_cleanup_keeps_identity_as_retry_wait);
   RUN_TEST(test_a21_recording_names_the_capture_wait);
   RUN_TEST(test_a21_stale_identity_is_rejected_immediately_before_publication);
+  RUN_TEST(test_s2b8_set_change_is_rejected_immediately_before_publication);
   // SD write-mode semantics: the stale-temp corruption fix, and the in-place patch contract.
   RUN_TEST(test_sd_rewrite_does_not_inherit_a_stale_temp_body);
   RUN_TEST(test_sd_in_place_patch_keeps_the_body_and_does_not_append);

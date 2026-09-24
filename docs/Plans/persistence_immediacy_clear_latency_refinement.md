@@ -14,8 +14,9 @@ notes below are the earlier rounds, kept for the diagnosis. Part 2 (CLEAR latenc
 and is device-verified with five tracks audibly playing (the clear's blocking drain completed in **<833 ms**,
 0 `Clear aborted` / `drain stuck`). The content pass also PASSES (see Part 3 CORRECTED).
 **Process gap:** this work landed on plan docs + code with **no OpenSpec change**; the *restore*-liveness
-half of the same defect cluster is now proposed as
-[`deferred-slot-restore-liveness`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md), and
+half of the same defect cluster was handled by the change **archived 2026-09-24** as
+[`2026-09-24-deferred-slot-restore-liveness`](../../openspec/changes/archive/2026-09-24-deferred-slot-restore-liveness/proposal.md)
+(reduced scope), and
 **no OpenSpec change yet covers this save/immediacy half** — recorded in
 [PROJECT_STATE](../Runtime/PROJECT_STATE.md) and [CURRENT_WORK](../Runtime/CURRENT_WORK.md).
 

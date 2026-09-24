@@ -1,5 +1,27 @@
 # Project state (execution context)
 
+**2026-09-24 (eleventh session) — S2b.8 — set-change epoch / external resets — landed native-only in `runtime-working-set-ownership`; the archive transfer is reconciled in the change.**
+
+Owner direction: take S2b.8 before S2b.7, with documentation reconciliation first. **Reconciled:** the active
+change's `tasks.md` no longer links the archived `deferred-slot-restore-liveness` as a live sibling, and the
+transfer of S1.1/S1.3/S1.4/S1.5/S2b.3/S2b.5 plus the new S2b.7/S2b.8 is recorded there. **Landed (native,
+behavior):** undo-clear and redo-clear are **decided to be external resets** and now advance the
+restore-request generation (an application of DEC-082 clause 1, so no new `DEC-###`); `noteRestoreSetEpoch`
+records `superseded` under each request's **original** identity *before* advancing the epoch and now emits its
+`RRQ` transition — the audit found two real defects (the record was re-stamped with the new epoch and read as
+*current*-but-terminal, and the reason was never emitted); the dead, non-emitting
+`invalidateAllRestoreRequestsAsSuperseded` was removed. **Recorded, not faked:** no runtime set-change entry
+point exists (the set boundary is boot, a full `resetAllRestoreRequestState`), so none was invented; and "a
+different owner committing that slot" already terminates as `unnecessary` plus pre-publication rejection, so
+it was not re-wired. **Evidence:** full native **2,348 / 1 skipped / 0 failures** (baseline 2,344);
+`test_storage_manager_load` 35/35, `test_drain_reentry_callback_safety` 8/8; capture-serial SUCCESS
+`variables 96,192 / code 391,080 + padding 2,136` (1,296 B above the 840 floor, `code + padding` constant so
+no bank cross); both fixes proven **discriminating by removal** and reverted byte-identical. **No device
+run** — nothing hardware-observable is introduced, so no device class is claimed. **Next:** S2b.7 —
+drain-driven restore advancement (characterize advancement against a correctly named wait; the commit gate is
+not relaxed). Packet and full record: `runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § S2b.8;
+`tasks.md` S2b.8.
+
 **2026-09-24 (tenth session) — `deferred-slot-restore-liveness` archived with a reduced, accurately described scope; the runtime measurements return to `runtime-working-set-ownership`.**
 
 Owner direction: the runtime measurements belong with the parent change and archiving the sub-change does
@@ -433,7 +455,7 @@ fixture's request.
 Evidence: suite default gate 8/8 green; `RESTORE_LIVENESS_RED=1` → **13 cases / 4 failed** (exactly C1, C2,
 C4, C6); full native **2,291 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS at
 `code 392,328 / padding 888`. Details and packet evidence:
-[`REVIEW.md`](../../openspec/changes/deferred-slot-restore-liveness/REVIEW.md). **No `src/` behavior has
+[`REVIEW.md`](../../openspec/changes/archive/2026-09-24-deferred-slot-restore-liveness/REVIEW.md). **No `src/` behavior has
 changed**; A1.7 (C5) fixture, A1.8 observability and the A1.9/A1.10 Packet A gate remain.
 
 **Round 3 addition (same day).** A1.7's native closure is now **fully measured**: the drain TU plus a
@@ -530,7 +552,7 @@ re-base). `restorePlaybackAfterSlotClear` now has one owner
 
 **2026-09-23 — restore-liveness plan correction (documentation only).**
 The final review's callback re-entry finding is addressed in
-[`deferred-slot-restore-liveness/tasks.md`](../../openspec/changes/deferred-slot-restore-liveness/tasks.md)
+[`2026-09-24-deferred-slot-restore-liveness/tasks.md`](../../openspec/changes/archive/2026-09-24-deferred-slot-restore-liveness/tasks.md)
 **A3.4a — drain re-entry and callback safety**, required before **A3.5 — holdoff MIDI servicing**.
 The contract adds a scoped owner guard, pre-side-effect refusal of conflicting callbacks, live eligibility
 and target revalidation, and production-dispatch fixtures. CLEAR gates consistently permit named refusals
@@ -3129,31 +3151,31 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
 
 ## Active OpenSpec
 
-**2026-09-23 — the current working state.** Two changes carry this branch:
+**2026-09-24 — the current working state.** One change carries this branch:
 
-1. **`runtime-working-set-ownership`** — its native scope (P0/P1) is complete; **every remaining gate is a
-   device leg**, and all of them are blocked by the restore-liveness defect below. Reported native line:
-   full native **2,289 / 1 skipped / 0 failures** (re-verified on a clean tree 2026-09-23); RAM1
-   `code 392,328 / padding 888` in the DEC-081 build and `padding 840` as the enforced floor.
-2. **`deferred-slot-restore-liveness`** — **PROPOSED 2026-09-23, planning complete, `openspec validate`
-   clean; two G2 adversarial contract reviews returned BLOCKED and all nine findings are corrected
-   (`tasks.md` Revisions 2–3); no implementation started.** It exists to unblock (1): a slot with
-   committed SD content can stay `EMPTY` for a power cycle, the queue head can stall every request behind
-   it, and the deferred-save drain then spins its whole stuck budget so CLEAR aborts. Five live
-   mechanisms (C1/C2/C4/C5/C6) are recorded in its `design.md`, each to be covered by a
-   **desired-behavior** fixture before any behavior edit; C3 (one-shot enqueue) is **withdrawn**.
-   **Scope, so it cannot be over-read:** it delivers diagnosable preparation and named waits plus drain
-   advancement where the commit gate admits. It does **not** by itself unblock CLEAR while another track
-   keeps playing — that needs bounded commit/cleanup, the open clause of
-   `resumable-midi-boundary-playback-maintenance` **task 3.3**, named as an external prerequisite.
+1. **`runtime-working-set-ownership`** — its native scope (P0/P1) plus **S2b.8** is complete; **every
+   remaining gate is a device leg**, and all of them are blocked by the restored library being unstable
+   across boots. Reported native line: full native **2,348 / 1 skipped / 0 failures** (2026-09-24,
+   after S2b.8); RAM1 `variables 96,192 / code 391,080 + padding 2,136` (`padding 840` is the enforced
+   floor). Outstanding **native** work is **S2b.7** — drain-driven restore advancement (characterize
+   advancement vs a correctly named wait; the commit gate is not relaxed).
+2. **`deferred-slot-restore-liveness`** — **ARCHIVED 2026-09-24** as
+   `2026-09-24-deferred-slot-restore-liveness`, with a reduced, accurately described scope. It delivered
+   restore **preparation** under transport, request identity with named waits and four terminals,
+   pre-publication stale-identity rejection, the post-restore census checkpoint, a content PASS, and CLEAR's
+   permitted completion branch. It did **not** deliver drain-driven restore advancement (now
+   `runtime-working-set-ownership` **S2b.7**, bound by
+   `resumable-midi-boundary-playback-maintenance` **task 3.3**) or a runtime set change (now **S2b.8**,
+   landed as external resets), and it did **not** by itself unblock CLEAR while another track keeps playing.
+   Planning artifacts: the archived change's `proposal.md` / `design.md`.
 
 The maintained-LCR and phase-3 changes below are retained as historical base context and are not
 implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`deferred-slot-restore-liveness`** | **PROPOSED 2026-09-23 — planning complete, three G2 review rounds' ten findings corrected (`tasks.md` Revisions 2–4), implementation not started.** Restore-liveness change: a queued slot restore becomes a liveness obligation with an explicit identity `(track, slot, requestGeneration, setEpoch)`, separate **named wait** states (`waiting_slot_owned` / `waiting_capture` / `waiting_commit_gate` / `waiting_job_capacity` / `waiting_retry`) versus exactly one **terminal** outcome (`committed` / `unnecessary` / `refused` / `superseded`), and validated rather than blind generation advance. **Scope, stated plainly: it delivers diagnosable preparation and named waits plus drain advancement where the commit gate admits — it does NOT by itself unblock CLEAR during another track's playback.** Two global gates bound it: `MidiServiceDrain::admitLoadJobChild` (commit/cleanup need a content-independent bound) and `hasLoadLoopJobCommitPending()` (true for *either* job instance, so the denial is global, not per job); both are the open clause of `resumable-midi-boundary-playback-maintenance` **task 3.3**. **The drain's caller contract is a three-way outcome** — completed / temporarily blocked / failed — with `saveState` kept as a `Completed`-only wrapper and both callers (`handleClearTrack`, `SavedSetIo`) using the detailed entry point: a blocked CLEAR **refuses by name, leaves the slot untouched, and leaves the save owed**; retention as an accepted interaction is design O7. The finite **100 ms post-load holdoff** (`LoadLoopJob.cpp`) is waited out within a bounded, MIDI-serviced budget or reported by name. The blocking drain must **advance** the restore (active and parked instances) using the **same all-tracks runtime eligibility** as the normal path — `handleClearTrack` stops only the selected track — and restore work must be charged in the drain's budget and progress detection. Modifies the `lazy-slot-hydration` capability, whose current text permits the stall. Four G2 packets (A desired-behavior fixtures → B liveness → C drain advancement + caller contract → D reconcile outcome) + closeout; Packet A's red set is excluded from the initial green gate behind a named flag. Owner: `StorageManager`; no ownership move. Evidence and non-goals: [`proposal.md`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md), [`design.md`](../../openspec/changes/deferred-slot-restore-liveness/design.md) |
-| **`runtime-working-set-ownership`** | **Native scope (P0/P1) COMPLETE 2026-09-23; ready for implementation of phases B–E, but every remaining gate is a device leg.** The scaling-law change: runtime working sets become active-role owned, window-sized and generation-leased, so RAM scales with active roles rather than recorded slots. Landed and green: S0 verification, S1.2/S1.3-clause-2/S1.5-clause-3 fixtures, the accepted-stop latch (S4f.0/S4f.1/S4f.2/S2b.6), boot/load admission removal (S2b.1–S2b.3), S4.0/S2b.4 per-slot liveness and release, S4f.5's stop consumers, S3.0 placement pins + the post-link RAM1 budget check, and B01–B06. **Blocked on `deferred-slot-restore-liveness` for:** S1.1's per-owner census, S1.3's device slope, S1.4's undo/root baseline, S1.5's device refusal point, S2b.3's post-restore baseline, S2b.5's device gate, and the content PASS — the restored set is unstable across boots, so no deterministic single-slot capture can be produced. Envelope: 8 tracks x 1 sounding slot today (N derived, **provisional** until the sibling change lands); 16-channel banks and multi-slot-per-track are targets the law must not preclude. Governed by **Playhead-scheduled MVCC** ([NAMING.md](../Authority/NAMING.md)); invariants 1–31 plus **32–36**; `design.md` **Revisions 18–24**; **DEC-078** (every interaction accepted; finalization **per interval**; amends DEC-067/DEC-076 point 2; counter renamed **`accepted_stop_finalizer_wait`**), **DEC-079** (handoff corrections, [`IMPLEMENTATION_CONTRACT.md`](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) is binding), **DEC-080** (execution packets); stages S0–S7 + **S2b** (boot/load admission), windowed playback **extracted** to `windowed-playback-generation`. **Execution order: S0/S1 → S2b → S3/S4 → S4f → S5 → decoupling**; design revisions stop unless implementation contradicts the contract. RAM1 floor currently **840**, most recent build `code 392,328 / padding 888`, enforced by `scripts/check_ram1_budget.py` against `scripts/ram1_budget.json` |
+| **`deferred-slot-restore-liveness`** | **ARCHIVED 2026-09-24 as `2026-09-24-deferred-slot-restore-liveness` with a reduced, accurately described scope — see the Active OpenSpec section above.** The text below is the pre-implementation intent, retained as history; the delivered scope is narrower (preparation under transport, request identity with named waits, pre-publication stale-identity rejection, the census checkpoint, a content PASS, and CLEAR's permitted completion branch — **not** drain-driven advancement, which is `runtime-working-set-ownership` S2b.7, and **not** a runtime set change).** Restore-liveness change: a queued slot restore becomes a liveness obligation with an explicit identity `(track, slot, requestGeneration, setEpoch)`, separate **named wait** states (`waiting_slot_owned` / `waiting_capture` / `waiting_commit_gate` / `waiting_job_capacity` / `waiting_retry`) versus exactly one **terminal** outcome (`committed` / `unnecessary` / `refused` / `superseded`), and validated rather than blind generation advance. **Scope, stated plainly: it delivers diagnosable preparation and named waits plus drain advancement where the commit gate admits — it does NOT by itself unblock CLEAR during another track's playback.** Two global gates bound it: `MidiServiceDrain::admitLoadJobChild` (commit/cleanup need a content-independent bound) and `hasLoadLoopJobCommitPending()` (true for *either* job instance, so the denial is global, not per job); both are the open clause of `resumable-midi-boundary-playback-maintenance` **task 3.3**. **The drain's caller contract is a three-way outcome** — completed / temporarily blocked / failed — with `saveState` kept as a `Completed`-only wrapper and both callers (`handleClearTrack`, `SavedSetIo`) using the detailed entry point: a blocked CLEAR **refuses by name, leaves the slot untouched, and leaves the save owed**; retention as an accepted interaction is design O7. The finite **100 ms post-load holdoff** (`LoadLoopJob.cpp`) is waited out within a bounded, MIDI-serviced budget or reported by name. The blocking drain must **advance** the restore (active and parked instances) using the **same all-tracks runtime eligibility** as the normal path — `handleClearTrack` stops only the selected track — and restore work must be charged in the drain's budget and progress detection. Modifies the `lazy-slot-hydration` capability, whose current text permits the stall. Four G2 packets (A desired-behavior fixtures → B liveness → C drain advancement + caller contract → D reconcile outcome) + closeout; Packet A's red set is excluded from the initial green gate behind a named flag. Owner: `StorageManager`; no ownership move. Evidence and non-goals: [`proposal.md`](../../openspec/changes/archive/2026-09-24-deferred-slot-restore-liveness/proposal.md), [`design.md`](../../openspec/changes/archive/2026-09-24-deferred-slot-restore-liveness/design.md) |
+| **`runtime-working-set-ownership`** | **Native scope (P0/P1) plus S2b.8 COMPLETE 2026-09-24 — full native 2,348 / 1 skipped / 0 failures; every remaining gate is a device leg except S2b.7 (drain-advancement characterization).** The scaling-law change: runtime working sets become active-role owned, window-sized and generation-leased, so RAM scales with active roles rather than recorded slots. Landed and green: S0 verification, S1.2/S1.3-clause-2/S1.5-clause-3 fixtures, the accepted-stop latch (S4f.0/S4f.1/S4f.2/S2b.6), boot/load admission removal (S2b.1–S2b.3), S4.0/S2b.4 per-slot liveness and release, S4f.5's stop consumers, S3.0 placement pins + the post-link RAM1 budget check, and B01–B06. **Blocked on an unstable restored library (the archived `deferred-slot-restore-liveness` reduced the confound but did not remove it) for:** S1.1's per-owner census, S1.3's device slope, S1.4's undo/root baseline, S1.5's device refusal point, S2b.3's post-restore baseline, S2b.5's device gate, and the content PASS — the restored set is unstable across boots, so no deterministic single-slot capture can be produced. Envelope: 8 tracks x 1 sounding slot today (N derived, **provisional** until the sibling change lands); 16-channel banks and multi-slot-per-track are targets the law must not preclude. Governed by **Playhead-scheduled MVCC** ([NAMING.md](../Authority/NAMING.md)); invariants 1–31 plus **32–36**; `design.md` **Revisions 18–24**; **DEC-078** (every interaction accepted; finalization **per interval**; amends DEC-067/DEC-076 point 2; counter renamed **`accepted_stop_finalizer_wait`**), **DEC-079** (handoff corrections, [`IMPLEMENTATION_CONTRACT.md`](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) is binding), **DEC-080** (execution packets); stages S0–S7 + **S2b** (boot/load admission), windowed playback **extracted** to `windowed-playback-generation`. **Execution order: S0/S1 → S2b → S3/S4 → S4f → S5 → decoupling**; design revisions stop unless implementation contradicts the contract. RAM1 floor currently **840**, most recent build `variables 96,192 / code 391,080 + padding 2,136`, enforced by `scripts/check_ram1_budget.py` against `scripts/ram1_budget.json` |
 | **`capture-tier-a-budget-profiles`** | **Design (B1 pending)** — profile-selected, per-family **byte-budgeted** Tier-A capture with bounded bursts and edge/sample/stream semantics, so a 15–20 minute session fits the 1 MiB ring intact (measured Tier-A ~30–35 KB/s covers ~30 s). Critical reserve, per-family coverage, and a host verdict that cannot report an unconditional PASS over degraded evidence. Builds on the landed RC-MEM-7 degradation |
 | **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–**4.6** closed; **5.1**–**5.7** SHIPPED; **6.1**–**6.4** SHIPPED (**6.4** device [`164947`](../captures/session_20260912_164947.log) 2026-09-12); next open: **4b.3**, **6.5**; §**6.6** post-closeout polish non-blocking; [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write); boot sync load still legacy; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
