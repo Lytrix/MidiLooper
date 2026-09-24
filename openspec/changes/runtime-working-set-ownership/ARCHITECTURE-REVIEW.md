@@ -3202,3 +3202,75 @@ observable").
 - **Task IDs eligible for checkoff:** **S2b.8**. **Stage gates still open:** the S2b gate (device slope,
   content PASS, census stability) and every S1/S2b device leg, all unchanged by this slice; **S2b.7** is the
   next native slice.
+
+---
+
+## S2b.7 — does the drain advance a session-holding restore, or name the wait? (2026-09-24)
+
+Task: `tasks.md` S2b.7. Authority: the archived `2026-09-24-deferred-slot-restore-liveness` A3.1/A3.3
+deferral, **DEC-082** clause 3, and `resumable-midi-boundary-playback-maintenance` **task 3.3** (the
+prerequisite; the commit gate is not relaxed here). Status: **fixture implemented / native verified /
+behavior NOT delivered — the task stays unchecked.**
+
+### Why this is a measurement, not an implementation
+
+The archived change claimed the drain "advances rather than cancels", but its own evidence table recorded the
+only observed completion as reaching the *save* through `shouldPrioritizeWorkspaceSaveDrain()` bypassing the
+slot-load gate for an urgent owed save — i.e. the **save** advanced while the restore stayed where it was. The
+advancement clause was transferred here rather than claimed. This slice answers it directly instead of
+reading it into a device run, and the answer is negative.
+
+### The fixture
+
+`test/test_storage_drain_restore/test_storage_drain_restore.cpp` (the suite that already links the real drain,
+`LoadLoopJob`, `SlotLoadSession` and the shared load harness):
+
+- **S2b.7-C1** `test_s2b7_a_session_holding_restore_is_a_named_wait_and_is_not_advanced`.
+  State: track 0 audibly playing (DEC-081 — audible playback is *not* a persistence gate, so this must not be
+  what blocks the save); `armBackgroundRestoreRequest(2, 3, 70)` then one production
+  `runLoadServiceTurn()`, so a job holds the SD session and
+  `deferredSaveBlockedByActiveSlotLoadSd()` is **true**; a save owed.
+  Action: one real `StorageManagerInternal::drainPersistenceWorkBlockingDetailed`.
+  Result: `outcome = TemporarilyBlocked`, `reason = "slot_load_active"`, `restoreProgressCounter()` **1 → 1**,
+  `restoreWorkPhase()` **1 → 1**, save still owed, request record preserved.
+- **S2b.7-C2 (control)** `test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session`.
+  Same setup driven until the restore releases the SD session; the same drain no longer stops at
+  `slot_load_active` and **discharges the owed save** (`pending == false`). This is what makes "nothing moved"
+  in C1 the gate's doing rather than a fail-closed route.
+
+### Findings
+
+1. **The drain names the wait; it does not advance the restore.** The reported name is the **gate**
+   (`slot_load_active`, from the classifier's `!restoreWait` branch), not the request's own named wait —
+   correct, because the request it waits on is `running`, not waiting. A3.2's per-request wait naming is a
+   separate, already-covered branch (`test_persistence_sync_drain_budget`). So the honest reading is:
+   "**the drain waits on a session-holding restore and reports the gate**", and the advancement behavior the
+   archived change described is **not present in the plain case**.
+2. **It is not a failure and nothing is discarded.** `TemporarilyBlocked` (not `Failed`), and the owed save
+   stays owed — consistent with DEC-082 clause 4 (a named wait is a valid outcome).
+3. **The control isolates the gate.** With the restore released and the fixture clock advanced past the
+   finite 100 ms post-load holdoff, the drain discharges the save. The control deliberately stops short of
+   asserting `Completed`: this minimal fixture has no valid workspace to write, so the drain's own
+   `lastCompletedOk` check reports `Failed` for a reason **unrelated** to the restore gate; the full save path
+   has its own coverage.
+4. **What would have to change for advancement.** The commit gate is global
+   (`hasLoadLoopJobCommitPending()` is true for *either* job instance) and restores are applied by the
+   deferred load driver on the interval path, not by `processDeferredSaveState`. Advancing a session-holding
+   restore from inside the drain therefore needs bounded commit/cleanup — **task 3.3** — and is not a
+   local change to the drain loop. It is recorded as the prerequisite rather than attempted here.
+
+### Completion record
+
+- **Oracle unchanged**; no threshold weakened. **Fixture discriminating by removal:** inserting
+  `selectSubmittedLoadJobs()` + `stepSubmittedLoadJobs(16, false)` into the drain loop (the exact
+  counterexample the task names — a drain that advances the restore) fails C1, leaving `TemporarilyBlocked`;
+  the mutation was reverted, `git diff src/` empty, `grep "TEMPORARY MUTATION"` empty.
+- **Native:** `test_storage_drain_restore` **8/8**; full native **2,350 / 1 skipped / 0 failures** (2,348
+  before the two cases).
+- **Build/RAM1:** `teensy41-capture-serial` **SUCCESS**, `variables 96,192 / code 391,080 + padding 2,136`
+  (unchanged — the slice touches tests only).
+- **Device:** **NOT RUN / NOT APPLICABLE.** This slice measures a native contract; the device-side
+  drain-advance shape remains the archived A3.7 shape (b) question and is not re-claimed here.
+- **Task IDs eligible for checkoff:** **none.** S2b.7 stays unchecked: the *behavior* is not delivered. What
+  changed is the evidentiary status of its deferral, from "not verified" to **measured absent in the plain
+  case**, with the prerequisite named (task 3.3).

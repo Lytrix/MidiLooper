@@ -2919,6 +2919,24 @@ above the 840 floor); both fixes proven discriminating by removal. **No device r
 hardware-observable. **Next: S2b.7 — drain-driven restore advancement** (characterize advancement vs a
 correctly named wait; commit gate not relaxed). Packet: `ARCHITECTURE-REVIEW.md` § S2b.8.
 
+**2026-09-24 (eleventh session, same turn) — S2b.7 MEASURED: the drain NAMES THE WAIT and does NOT advance a session-holding restore; task stays open.**
+Fixture `test_s2b7_a_session_holding_restore_is_a_named_wait_and_is_not_advanced` in
+`test_storage_drain_restore`: track 0 audibly playing, a restore mid-preparation holding the SD session
+(`deferredSaveBlockedByActiveSlotLoadSd()` true), a save owed. One real
+`drainPersistenceWorkBlockingDetailed` → **`TemporarilyBlocked`**, named gate **`slot_load_active`** (not
+`Failed`, not `unexplained`), `restoreProgressCounter()` and `restoreWorkPhase()` **unchanged** (1 → 1,
+1 → 1), save still owed, request preserved. The name is the *gate*, not the request's own wait, because the
+in-flight request is `running`; A3.2's per-request wait naming is covered separately. Control
+`test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session` shows the same drain no longer
+stops at `slot_load_active` and discharges the owed save once the session is released (the control does not
+assert `Completed`: the minimal fixture has no valid workspace to write, so `lastCompletedOk` is false for an
+unrelated reason). **Discriminating by removal:** stepping the submitted load jobs inside the drain loop fails
+the fixture; reverted byte-identical. Full native **2,350 / 1 skipped / 0 failures**; capture-serial
+SUCCESS (src unchanged). **S2b.7 stays unchecked**: the advancement *behavior* is still not delivered, and
+the prerequisite is named — the global commit gate and `resumable-midi-boundary-playback-maintenance`
+**task 3.3** (bounded commit/cleanup). The archived change's "not verified" is now **"measured absent in the
+plain case"**. Packet: `ARCHITECTURE-REVIEW.md` § S2b.7.
+
 **2026-09-24 (tenth session) — `deferred-slot-restore-liveness` ARCHIVED (reduced scope); runtime measurements transferred to `runtime-working-set-ownership`.**
 Per owner direction this was a **scope correction, not another sweep**. Delivered and archived: preparation
 under transport; request identity with named waits + four terminals + stale-identity rejection; the census
