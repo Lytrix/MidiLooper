@@ -1,5 +1,57 @@
 # Project state (execution context)
 
+**2026-09-24 (fifteenth session) — `restored-library-stability` Packet B **2.2 — complete-manifest stability** is DEVICE VERIFIED: PASS across three consecutive boots; **2.1 — TBD-1 scratch authorization** is not required for the reused fixture; **2.3 and Packet C are transferred to `runtime-working-set-ownership` S2b.7** (unchecked there) and the change is closed and archived.**
+
+Owner direction: take **2.2 — complete-manifest stability** (compare the *entire* expected manifest across
+three consecutive boots), **reuse the existing device captures first**, and clear nothing merely to repeat
+evidence already available. **2.1 — scratch authorization** is needed only if a fixture requires emptying a
+slot, so it is not required for the reused fixture; **2.3 — drain fixture** and **Packet C — S2b.7 drain
+hardware confirmation** were transferred to `runtime-working-set-ownership` **S2b.7 — drain-driven restore
+advancement** (recorded there unchecked, with their independence clause) and did not delay this closeout.
+
+- **Reuse first — the existing captures settle two eligible boots, not three.** New read-only tooling
+  (`scripts/hitl/library_manifest.py` + `scripts/hitl_library_manifest_stability.py`, tests
+  `scripts/test_library_manifest_stability.py` **14/14**) compared all five existing `LIBOBS` captures
+  (`captures/s13-libobs-stability-existing.json`). `full-02` and `incomplete-03` are eligible fresh boots;
+  `full-01` is the pre-fix truncated long-form wire (`complete=0`); `incomplete-02` is a deliberately
+  incomplete window (0 slots, counts `None`); and `incomplete-01` is **not a boot** — no `boot_reset`, no
+  banner, `checkpoint_reached=False`: it is a mid-session attach at ~72 s uptime on the **same boot** as
+  `full-02`, and its manifest sha equals `full-02`'s. "Three consecutive boots" therefore cannot be
+  satisfied by relabelling; only the missing boots were captured.
+- **The gate.** The expected manifest was recorded from the existing Packet A boot `full-02` (reuse), and
+  three consecutive fresh read-only boots were captured back-to-back
+  (`captures/s13-libobs-stab-01/02/03`, each `boot_reset` + banner, `complete=1`, upload reset before each;
+  only `!LIB_OBSERVE` sent; 0 `FATAL`, 0 `#MEM_EXT_REFUSED`, 0 destructive-command lines). **All three match
+  the expected manifest in full — 0 manifest / lifecycle / settled-count differences over 64/64 slots — and
+  all four complete-manifest boots share manifest sha256 `4e451a07d0a94c18…`**: payload inventory 36
+  (tracks 0–5), initial playback-required 8 (`(0,0) (1,2) (2,1) (3,0) (4,0) (5,0) (6,0) (7,0)`), committed
+  at checkpoint 8, observed completions in the window 0; `turns=64`, `restarts=0`, `admission_complete=1`,
+  `every_initial_observed=1`. **Recorded precisely: no differences in the observed fields; no destructive
+  commands issued.** Identical observed records — or even identical file hashes — do not prove unchanged
+  payload bytes or the absence of a write, so the write statement rests on the command log (only
+  `!LIB_OBSERVE` sent) and the manifest statement on the observed fields. **The 36-vs-8 gap is a
+  disposition, not a loss:** 36 payload-present slots, 8 with in-RAM committed content, 8
+  initial-playback-required (the two 8-sets differ; overlap 4), and the remaining 28 payload-present slots
+  are unloaded — distinct from the *other* 28 (payload-absent). The runtime slope fixture (`S1.3`) must
+  vary the **committed/loaded** population and explain the 28 unloaded slots. Report
+  `captures/s13-libobs-stability-3boot.json`, identity
+  `captures/s13-libobs-stability-3boot.identity.json` (`git_commit 74cadc7b`,
+  `firmware_hex_sha256 ede704b614b7e9cd…`). No firmware edit, so no G2 packet was required; the read-only
+  recipe follows `hitl-content-verification` § 9.
+- **Reading.** The restored library's *observed* manifest reproduces exactly across three consecutive boots:
+  the Packet A "instability" was an observation artifact, with **no loss to attribute** and **no
+  boot-to-boot manifest drift**. **Task 2.1 is closed as not required for the reused fixture** (nothing was
+  cleared). **Task 2.3 — drain fixture and Packet C — drain hardware confirmation are TRANSFERRED** to
+  `runtime-working-set-ownership` **S2b.7 — drain-driven restore advancement** (recorded there unchecked), as
+  is **4.2 — drain-spec correction**; the closeout checklist holds **no remaining mandatory library task**.
+  **Next runtime work (recorded, not started): S1.3 — slope-fixture definition**, which must explain why 28
+  verified payloads remain unloaded and why only four initial-playback slots overlap the committed set;
+  repeatability does **not** establish correct hydration or a usable increasing-population fixture. The gate
+  is over the *current* library, not a constructed cleared fixture, and is not a capacity finding. Full
+  record:
+  [`restored-library-stability`](../../openspec/changes/restored-library-stability/ARCHITECTURE-REVIEW.md)
+  § Packet B; `tasks.md` 2.2. **Archived** through the normal workflow (2026-09-24).
+
 **2026-09-24 (fourteenth session) — `restored-library-stability` Packet A 1.0–1.4 landed; 1.5 is open on upload authorization. The read-only re-analysis finds NO loss cause in either sweep.**
 
 Owner direction: proceed with Packet A. **Landed, in order:**
@@ -67,6 +119,9 @@ eviction` all zero); the 28 `empty` slots are payload-absent, request-none, cont
 on tracks 0–5 (36 slots) and **absent on tracks 6 and 7**, which is the recorded
 `Track 6/7 loaded state: EMPTY` line, now measured per slot instead of read off a track-level line.
 `restore_completions = 0` because every required slot was already committed when the window opened.
+**[Corrected 2026-09-24, task 2.2 run: "all eight are committed" is not supported — 4 of the 8 required
+slots hold in-RAM committed content, and `committed_at_checkpoint = 8` is a partly different set; see the
+fifteenth-session entry and Packet B § *Disposition*.]**
 **Incomplete-window case** (`captures/s13-libobs-incomplete-02/`, `--observe-early-close-s 0.15`): reported
 **incomplete**, with **zero** slot records and **all four counts `None`** — never zeros, never presented as
 the settled library state. **The first device run found a real defect:** the `LIBOBS` slot record used full
@@ -77,6 +132,8 @@ one/two-character keys, the host parser and a locking test were updated, and the
 and identifies the "shrinking" count as **window-scoped**. Whether a *repeated* boot reproduces the
 manifest is Packet B's complete-manifest comparison, not this packet's claim. Packet A (1.0–1.5) is
 **complete**; Packets B and C and the 4.x handoff/closeout remain open.
+**[Superseded 2026-09-24 (fifteenth session): Packet B 2.2 PASS and the change is archived; 2.3/Packet
+C/4.2 transferred to `runtime-working-set-ownership` S2b.7.]**
 
 **Flagged, not absorbed — stale `teensy41` RAM1 baseline (+64 B, pre-existing).** `pio run -e teensy41` fails
 the post-link budget check with `variables 79,232` vs the approved 79,168. **Verified not to be this

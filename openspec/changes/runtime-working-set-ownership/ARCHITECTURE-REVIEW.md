@@ -3272,3 +3272,65 @@ discharge.
 - **Device:** **NOT RUN.** Every claim here is native. A hardware re-run of the archived A3.7 shape (b) would
   need the clear-then-reload route the owner deliberately kept disabled, so **no device class is claimed**.
 - **Task IDs eligible for checkoff:** **S2b.7**.
+
+---
+
+## Handoff from `restored-library-stability` — the restored library is stable, with the 36/8 disposition (2026-09-24; handoff only, **no stage started**)
+
+Task: `restored-library-stability` **4.1 — runtime handoff**. Its verify is "the handoff is recorded in that
+change; this change does not start S1, S2b or S3". **Nothing below is claimed as delivered here**, and no
+stage was started: this is the evidence transfer the blocked device legs were waiting on.
+
+**Evidence handed over** (read-only device observation; the only things sent were `!LIB_OBSERVE` and the
+upload that performs the reliable reset):
+
+- report `captures/s13-libobs-stability-3boot.json`; identity
+  `captures/s13-libobs-stability-3boot.identity.json` (`git_commit 74cadc7b`,
+  `firmware_hex_sha256 ede704b614b7e9cd…`, env `teensy41-capture-serial`).
+- **three consecutive fresh boots identical in the observed per-slot manifest** (0 differences, 64/64
+  slots); the two earlier eligible boots agree, so five complete-manifest observations share the observed
+  manifest sha256 `4e451a07d0a94c18fc177967521344c31ba4e9c8774a42d19aa1114f46e963f8`.
+- **Claim recorded precisely: no differences in the observed fields; no destructive commands issued.**
+  Identical observed records — or even identical file hashes — would not prove unchanged payload bytes or
+  the absence of a write. **What it does not prove:** unchanged bytes, capacity, or eviction. It removes the
+  *stability* obstacle; it does not measure the slope.
+
+**Disposition — 36 / 8 / 8 are three different populations** (full detail:
+[`restored-library-stability/ARCHITECTURE-REVIEW.md`](../restored-library-stability/ARCHITECTURE-REVIEW.md)
+§ Packet B → *Disposition*):
+
+- **36** = payload-present slots (RAM mirror + SD file + valid token).
+- **8** = slots with in-RAM committed content — the **loaded** working set
+  (`loop.passes.hasRecordPass() || !overdubPasses.empty()`).
+- **8** = initial playback-required (`isBootPlaybackSlot`, the selected/active union) — a **different** set
+  from the committed one (overlap 4; committed-only `(1,0) (1,1) (2,0) (5,1)`; required-only
+  `(2,1) (4,0) (6,0) (7,0)`).
+- the remaining **28 payload-present slots are unloaded**; separately, **28 slots are payload-absent**. The
+  two 28s are a numeric coincidence and must not be conflated.
+
+**What each handed-over leg may now use it for** — the leg still owns its fixture, oracle and verdict:
+
+- **S1.3 — device slope:** the stability obstacle recorded in `tasks.md` S1.3 is **removed** (a scratch
+  slot's payload survives boots). The slope fixture must **name and vary the committed/loaded population**
+  (select/enable each scratch slot so boot actually loads it), not merely create an SD payload, and must
+  explain the 28 unloaded slots; the payload inventory (36) and the loaded set (8) must be reported
+  separately. The failure point and error remain **unmeasured**. The fixture definition must answer the two
+  open "why" questions below and is **not** established by the repeatable observation.
+- **S2b.3 — post-restore budget evidence:** the "baseline's post-restore value is not measured" gap is
+  unchanged; this stable library is the fixture that can hold the measurement. Not measured here.
+- **S2b gates:** the device half's *slope-to-failure* blocker is now only the fixture, not library
+  stability. No gate is checked here.
+- **S3 — lease ownership:** the library is stable enough to hold a lease-acceptance run; the stage order is
+  not bypassed and S3 does not start here.
+
+**Transferred into this change (2026-09-24), owned here and unchecked:** `restored-library-stability`
+**2.3 — drain fixture** and **Packet C — S2b.7 drain device confirmation** are now the three unchecked
+"S2b.7 (TRANSFERRED …)" entries in `tasks.md` (the condition fixture, the device leg with the in-drain-call
+progress definition, and the independence clause). They are independently reportable, gate neither the
+runtime legs above nor the library closeout, and the native S2b.7 delivery recorded above continues to claim
+**no device class**.
+
+**Next runtime work (recorded, not started): S1.3 — slope-fixture definition.** It must explain **why 28
+verified payloads remain unloaded** and **why only four initial-playback slots overlap the committed set**.
+The three-boot observation is **repeatable**; that does **not** establish correct hydration or a usable
+increasing-population fixture, and S1.3 must not be read as proven by it.
