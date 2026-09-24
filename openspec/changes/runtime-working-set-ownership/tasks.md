@@ -310,6 +310,18 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       observation-only firmware plus read-only analysis). An earlier claim of mine — that the library
       "can grow" because a reset-then-dump once returned `length=18432` — is **withdrawn as
       over-generalised**; Leg 3 of the device session records the falsification.
+      **Handoff 2026-09-24 — the stability obstacle is removed:** `restored-library-stability` **2.2** proves
+      the observed per-slot manifest reproduces across three consecutive boots
+      (`captures/s13-libobs-stability-3boot.json`; five complete-manifest observations agree). The slope
+      fixture above **must vary the committed/loaded population** (select/enable each scratch slot so boot
+      loads it), not merely create an SD payload, and must explain the 28 unloaded slots; see
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *Handoff from `restored-library-stability`* for the
+      evidence link and the 36/8/8 disposition. The *slope and failure point remain unmeasured here.*
+      **NEXT (recorded 2026-09-24, not started) — S1.3 slope-fixture definition.** Before any sweep, define the
+      fixture so it answers: **why do 28 verified payloads remain unloaded**, and **why do only four
+      initial-playback slots overlap the committed set**? The observation is **repeatable**, which does
+      **not** establish correct hydration or a usable increasing-population fixture; the definition owns
+      those answers, not the stability gate.
 - [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
       many canonical chunks those roots pin** via `SlotPassReferences` (the B10 baseline).
       **Clause 1 MEASURED 2026-09-23** (dense PASS run, no new telemetry): the undo root retains essentially the
@@ -617,6 +629,11 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       firmware plus read-only analysis). See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.3 and
       [`restored-library-stability/ARCHITECTURE-REVIEW.md`](../restored-library-stability/ARCHITECTURE-REVIEW.md)
       § Task 1.1.
+      **Handoff 2026-09-24:** the "baseline's post-restore value is not measured" gap is unchanged, and the
+      stable library from `restored-library-stability` **2.2** is the fixture that can hold the measurement
+      (`captures/s13-libobs-stability-3boot.json`; disposition and evidence link in
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *Handoff from `restored-library-stability`*).
+      Nothing is measured here.
 - [x] S2b.4 Release the per-slot canonical reservation when the slot's role leaves the active set, using the same
       `noLiveOwnerForSlot` predicate as S4.0. **No release path exists today** (the only
       `canonicalCaptureOutput.store.clear()` is the runtime destructor; `releaseGrain` runs only from the
@@ -800,6 +817,13 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       Per the repo rule
       that a missing or confounded gate is not a pass and a threshold is never weakened, this gate closes only
       after the sweep is re-run on a stable library.
+      **Handoff 2026-09-24:** that stable library now exists — `restored-library-stability` **2.2** proves the
+      observed per-slot manifest reproduces across three consecutive boots
+      (`captures/s13-libobs-stability-3boot.json`; five complete-manifest observations agree). The device
+      half's blocker is therefore now only the slope fixture (S1.3), not library stability. Evidence link and
+      the 36/8/8 disposition:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *Handoff from `restored-library-stability`*. **No
+      gate is checked here.**
 
 - [x] S2b.7 **Drain-driven restore advancement — DELIVERED 2026-09-24 (native).** The blocking drain's
       *decisions* were already verified natively (A3.2 wait-reason classification, A3.3 budget/progress
@@ -856,6 +880,27 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       owner deliberately kept disabled, so no device class is claimed. Packet and full record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.7.
 
+- [ ] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 2.3) — drain fixture: hold the
+      condition on device.** Show the fixture yields a save owed + a restore holding the SD session + another
+      track playing, with `deferredSaveBlockedByActiveSlotLoadSd()` true at the drain edge. **Verify:** the
+      condition is observed, not assumed; the exact observables are recorded; no external advancement is
+      performed inside the run. *Unchecked on transfer; the library change no longer carries it.*
+- [ ] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 3.1) — drain device leg: report
+      which permitted outcome occurs.** Use the authoritative HITL entry point with a registered or reused
+      stimulus (list before adding; never edit a canonical stimulus). Report **which** outcome occurred,
+      with evidence, rather than asserting one: (i) the drain returns `TemporarilyBlocked` with the named
+      **`waiting_commit_gate`**; **or** (ii) the owed save is discharged by the documented **urgent-save
+      priority** while the restore remains commit-gated. Both require **no unintended publication** (no
+      committed pass appears while the gate denies) and the request preserved. **Progress is defined inside
+      the drain call:** sample `restoreProgressCounter()` immediately before the drain entry and immediately
+      after it returns; an urgent-save discharge with **no movement of the counter within the call** SHALL NOT
+      check off S2b.7's advancement clause and SHALL record `advancement NOT observed inside the drain`.
+      *Unchecked on transfer; the library change no longer carries it.*
+- [ ] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 3.2) — the device half is
+      independently reportable.** S2b.7's device confirmation SHALL be checkable from its own evidence alone
+      and SHALL NOT depend on `restored-library-stability`'s closeout (or any other change's closeout).
+      *Unchecked on transfer; the library change no longer carries it.*
+
 - [x] S2b.8 **Set-change epoch invalidation for the restore request record — external resets.**
       Transferred from the archived `2026-09-24-deferred-slot-restore-liveness` A2.1, whose
       delivered scope covers the
@@ -907,6 +952,12 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.8.
 
 ## S3 — introduce the reusable lease pool (no release yet)
+
+> **Handoff 2026-09-24 (recorded, not started):** the restored library is stable enough to hold a
+> lease-acceptance run — `restored-library-stability` **2.2** proves the observed per-slot manifest
+> reproduces across three consecutive boots (`captures/s13-libobs-stability-3boot.json`). S3 is **not
+> started here** and the stage order is not bypassed; evidence link and the 36/8/8 disposition:
+> [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *Handoff from `restored-library-stability`*.
 
 - [x] S3.0 **Placement and size pins (B11, invariant 36).** (**PINS + POST-LINK ENFORCEMENT DONE 2026-09-23; task open only for later members' pins.** `Track::placementPins()` in `include/Track.h` and a pin block in `src/Track/TrackPlaybackRuntime.cpp` now pin the latch layout platform-independently and the device sizes of `LoopPlaybackRuntime` 6,344 / `Loop` 984 / `TrackPlaybackRuntime` 32 / `Track` 384 / `CaptureStopJobs` 2,736 / `PendingInteractionLatch` 40. Effectiveness verified: a deliberately wrong pin failed the device build in all 8 TUs that include `Track.h`. The pins emit no code (`code`/`padding` unchanged). **RESOLVED by architect decision 2026-09-23:** accept the 32 B and re-base the floor **872 -> 840**,
       keeping the manager entries in ITCM. The earlier claim that the pins alone close the placement gate is
@@ -1523,6 +1574,17 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
 
 ## Closeout
 
+- [ ] **Correct the stale drain clause in the main `lazy-slot-hydration` spec (TRANSFERRED 2026-09-24 from
+      `restored-library-stability` task 4.2).** `openspec/specs/lazy-slot-hydration/spec.md` § *The blocking
+      persistence drain preserves and reports the restore it waits on* still reads "**Not delivered by this
+      requirement:** that the drain *advances* a restore that holds the SD session … **deferred** to
+      `runtime-working-set-ownership` S2b.7 … no advancement is claimed here." **S2b.7 landed 2026-09-24**
+      (native; `ARCHITECTURE-REVIEW.md` § S2b.7, with the device half now **transferred here** as the three
+      unchecked S2b.7 "TRANSFERRED" entries above and **no device class claimed**). This change owns the
+      correction and will apply it with its own spec delta at archive/sync — `restored-library-stability`
+      deliberately did **not** rewrite it. The corrected wording must say: advancement is **delivered
+      natively and bounded by task 3.3**, and the *device* confirmation is the transferred S2b.7 device leg
+      (unchecked here, independently reportable).
 - [ ] `DEC-###` status: the ownership rule and role tiers are **DEC-076**; the acceptance rule and per-interval
       finalization are **DEC-078** (landed 2026-09-19, amending DEC-067 and DEC-076 point 2). The **S6 canonical
       residency amendment** is still owed; ownership transfer is recorded in `ARCHITECTURE_RULES.md` where a

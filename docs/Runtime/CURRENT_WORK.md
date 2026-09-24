@@ -11,19 +11,29 @@ Three facts define what may be implemented right now:
    S2b.3's post-restore baseline, S2b.5's device gate, the content PASS, D0.2's B07 allocation census (not
    measurable natively), and phases B–E. **Every one of those is a device leg**, and the stage order is not
    bypassed merely because hardware evidence is blocked.
-2. **The restored-library instability now has an owner, and its first packet is complete:
-   `restored-library-stability`** (proposed 2026-09-24, `openspec validate` clean; **Packet A —
-   observation-only firmware plus read-only analysis — 1.0–1.5 COMPLETE and device-verified read-only
-   2026-09-24**; Packets B/C and the 4.x handoff/closeout open). It exists
-   because the set of slots **observed** committed after a reboot is not reproducible **as measured**, which blocks fact 1's device legs. Its first
+2. **The restored-library instability now has an owner, and that change is CLOSED and ARCHIVED: Packet A is
+   complete and Packet B's complete-manifest gate (2.2) is DEVICE VERIFIED PASS** (`restored-library-stability`,
+   archived 2026-09-24). **Packet A — observation-only firmware plus read-only analysis — 1.0–1.5 COMPLETE and
+   device-verified read-only 2026-09-24**; **2.2 — complete-manifest stability — PASS across three consecutive
+   boots 2026-09-24**, 0 differences in the observed fields over 64/64 slots, observed manifest sha256
+   `4e451a07d0a94c18…`, no destructive command issued; **2.1 not required for the reused fixture**;
+   **2.3, Packet C and 4.2 are TRANSFERRED to `runtime-working-set-ownership` S2b.7 — drain-driven restore
+   advancement** (unchecked there, independently reportable), so the library closeout has no remaining
+   mandatory task and does not gate on them. The change existed
+   because the set of slots **observed** committed after a reboot was not reproducible **as measured**,
+   which blocks fact 1's device legs. Its first
    finding is already recorded: the previous blocker attribution (SD catalog reconcile) does not hold —
    `sets/index.bin` is a saved-set *folder counter* (`SetIndex{nextSequence}`), the shrinking boots report
    `reconcile_warnings=0`, `DIAG,lcr,skip,restore` is a content-resolution line, and
-   `Track N loaded state: EMPTY` appears on stable boots too. **Packet A's read-only attribution finds no
-   loss cause anywhere in either sweep and identifies the shrinking count as window-scoped**; the device
-   inventory is 36 payload slots / 8 initial-playback slots / 8 committed, contract **DEC-083**. It
-   distinguishes **catalog omission / restore refusal / intentional eviction / content loss**, needs
-   per-slot authorization before any CLEAR, and carries the S2b.7 device confirmation.
+   `Track N loaded state: EMPTY` appears on stable boots too. **The read-only attribution finds no loss
+   cause anywhere and identifies the shrinking count as window-scoped**; the library manifest — 36 payload
+   slots / 8 initial-playback slots / 8 committed — **reproduces exactly across three consecutive boots**;
+   contract **DEC-083**. It
+   distinguishes **catalog omission / restore refusal / intentional eviction / content loss**, and needed
+   per-slot authorization before any CLEAR.
+   **Next runtime work (recorded, not started): S1.3 — slope-fixture definition**, which must explain why 28
+   verified payloads remain unloaded and why only four initial-playback slots overlap the committed set; a
+   repeatable observation does **not** establish correct hydration or a usable increasing-population fixture.
 3. **The restore-liveness change is ARCHIVED, not proposed.** `deferred-slot-restore-liveness` was archived
    2026-09-24 as `2026-09-24-deferred-slot-restore-liveness` with a reduced, accurately described scope. It
    delivered diagnosable preparation and named waits under transport, request identity with four terminals,
@@ -2914,6 +2924,45 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+
+**2026-09-24 (fifteenth session) — `restored-library-stability` Packet B **2.2 — complete-manifest stability** DEVICE VERIFIED: PASS across three consecutive boots; **2.1** not exercised (nothing cleared); Packet C untouched.**
+
+Owner direction: take **2.2 — complete-manifest stability** (compare the *entire* expected manifest across
+three consecutive boots), **reuse the existing device captures first**, clear nothing merely to repeat
+evidence already available, and keep **Packet C — S2b.7 drain hardware confirmation** independently
+reportable and out of this handoff's critical path.
+
+**Reuse first: the existing five `LIBOBS` captures settle two eligible boots, not three.** New read-only
+tooling (`scripts/hitl/library_manifest.py`, `scripts/hitl_library_manifest_stability.py`, tests
+`scripts/test_library_manifest_stability.py` **14/14**) compared them
+(`captures/s13-libobs-stability-existing.json`): `full-02` and `incomplete-03` are eligible fresh boots;
+`full-01` is the truncated pre-fix long-form wire; `incomplete-02` is an incomplete window; and
+`incomplete-01` is **not a boot** — no `boot_reset`, no banner, `checkpoint_reached=False`, a mid-session
+attach at ~72 s uptime on the **same boot** as `full-02` (its manifest sha equals `full-02`'s). So the
+missing boots were captured rather than relabelling a same-boot observation as a boot.
+
+**The gate.** Expected manifest recorded from the existing `full-02` (reuse); three consecutive fresh
+read-only boots captured back-to-back (`captures/s13-libobs-stab-01/02/03`, `boot_reset` + banner,
+`complete=1`, upload reset before each, only `!LIB_OBSERVE` sent, 0 `FATAL`, no destructive command).
+**All three match in full — 0 manifest / lifecycle / settled-count differences over 64/64 slots — and all
+four complete-manifest boots share the *observed* manifest sha256 `4e451a07d0a94c18…`**; 36 payload /
+8 initial-playback / 8 committed; `turns=64`, `restarts=0`. **Recorded precisely: no differences in the
+observed fields; no destructive commands issued** — an identical field record (or an identical file hash)
+does not prove unchanged bytes or the absence of a write, so the write statement rests on the command log
+and the manifest statement on the observed fields. The **36-vs-8 gap is dispositioned** (36 payload-present
+/ 8 in-RAM committed / 8 initial-playback-required; the two 8-sets differ, overlap 4; the remaining 28 are
+payload-present but unloaded, distinct from the other 28 payload-absent slots), and the runtime slope
+fixture must vary the committed/loaded population and explain the unloaded 28. Report
+`captures/s13-libobs-stability-3boot.json`, identity `captures/s13-libobs-stability-3boot.identity.json`
+(`git_commit 74cadc7b`, `firmware_hex_sha256 ede704b614b7e9cd…`). No firmware edit → no G2 packet; recipe is
+`hitl-content-verification` § 9. **2.1 is closed as not required for the reused fixture** (nothing cleared);
+**2.3 (S2b.7 condition), Packet C and 4.2 are TRANSFERRED to `runtime-working-set-ownership` S2b.7** (recorded
+there unchecked), so the closeout checklist has no remaining mandatory library task and the change is
+**archived**. **Next runtime work (recorded, not started): S1.3 — slope-fixture definition**, which must
+explain why 28 verified payloads remain unloaded and why only four initial-playback slots overlap the
+committed set; repeatability does not establish correct hydration or a usable increasing-population fixture.
+Full record: `restored-library-stability/ARCHITECTURE-REVIEW.md` § Packet B and
+`docs/Runtime/PROJECT_STATE.md` (fifteenth session).
 
 **2026-09-24 (fourteenth session) — `restored-library-stability` Packet A 1.0–1.4 landed (observation-only firmware + read-only analysis); 1.5 open on upload authorization.**
 

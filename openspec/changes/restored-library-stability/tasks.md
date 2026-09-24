@@ -8,9 +8,10 @@ without a firmware fix.
 
 This change is **investigation-first**. **Packet A is observation-only firmware plus read-only analysis** — it
 adds bounded instrumentation and performs no destructive SD action, so it needs no authorization beyond an
-upload. Packet B may need a per-slot destructive action (TBD-1) and stops without it. Packet C is a **device**
-confirmation that belongs to `runtime-working-set-ownership` S2b.7 and is **independently reportable**; this
-change supplies the fixture that can hold it.
+upload. Packet B's fixture was reused read-only, so **2.1 — TBD-1 scratch authorization is not required for
+it**. **2.3 — drain fixture and Packet C — drain hardware confirmation were TRANSFERRED 2026-09-24 to
+`runtime-working-set-ownership` S2b.7 — drain-driven restore advancement, where they are recorded unchecked**;
+this change carries no remaining mandatory library task.
 
 Every task that edits firmware follows the [G2 execution-packet workflow](../../../docs/Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice):
 pin the scope and transition oracle, establish the controlled production-path fixture, and record actual
@@ -134,59 +135,101 @@ Standing constraints for every task:
 
 ## 2. Packet B — one repeatable fixture inside the approved scratch range
 
-- [ ] 2.1 **TBD-1 authorization gate.** If the fixture needs a slot emptied, request the owner's explicit
-      authorization naming the **specific slots** and the action, in the same session. **Verify:** the
-      authorization is recorded in this change before the action; without it, Packet B stops at read-only and
-      this task stays unchecked.
-- [ ] 2.2 **Prove fixture stability by the complete manifest, not by one slot surviving.** Record the expected
+> **2.3 — drain fixture and Packet C are TRANSFERRED to `runtime-working-set-ownership` S2b.7 — drain-driven
+> restore advancement**, and are recorded there **unchecked**. The library-stability closeout (2.2 evidence,
+> spec sync, task 4.1 handoff, task 4.3 docs) does **not** depend on, and does not claim, either. This change
+> carries **no remaining mandatory library task**.
+
+- [x] 2.1 **TBD-1 authorization gate — NOT REQUIRED for the reused fixture.** If the fixture needs a slot
+      emptied, request the owner's explicit authorization naming the **specific slots** and the action, in
+      the same session. **Verify:** the authorization is recorded in this change before the action; without
+      it, Packet B stops at read-only.
+      **2026-09-24 disposition: not required, and nothing was cleared.** Stability was proven on the
+      **existing** library, so no slot was emptied and no per-slot authorization was requested or needed;
+      nothing was cleared "merely to repeat evidence already available". No `CLEAR`, rename, quarantine or
+      delete command was issued in the three runs (§ Packet B in `ARCHITECTURE-REVIEW.md`). This closes the
+      gate as **not applicable to this fixture**; a later fixture that must empty a slot re-opens it.
+- [x] 2.2 **Prove fixture stability by the complete manifest, not by one slot surviving.** Record the expected
       per-slot manifest — payload presence/token, committed content identity and counts, the initial
       playback-required set, and the authorized changes — and compare it in full on each of three consecutive
       boots. **Verify:** any unexplained difference between the observed and expected manifest is a
       **failure**, including a difference in a slot that is not part of the fixture; the pass requires every
       slot to match, not merely the fixture slot to persist; **no slot outside the approved range is written**
       (asserted from the offline manifest, not from intent).
-- [ ] 2.3 **Prove the fixture can hold the S2b.7 condition.** Show the fixture yields a save owed + a restore
-      holding the SD session + another track playing, with `deferredSaveBlockedByActiveSlotLoadSd()` true at
-      the drain edge. **Verify:** the condition is observed, not assumed; the exact observables are recorded;
-      no external advancement is performed inside the run.
+      **2026-09-24 — device verified: PASS.** Reuse first: the five existing `LIBOBS` captures were compared
+      read-only (`captures/s13-libobs-stability-existing.json`); they settle **two** eligible boots
+      (`full-02`, `incomplete-03`) — `full-01` is the truncated pre-fix format, `incomplete-02` is an
+      incomplete window, and `incomplete-01` is a **same-boot** mid-session observation, not a boot — so
+      they cannot satisfy "three consecutive boots" and the missing boots were captured. The expected
+      manifest was recorded from the existing `full-02`. Three consecutive fresh read-only boots
+      (`captures/s13-libobs-stab-01/02/03`, each `boot_reset` + banner, `complete=1`, upload reset before
+      each) matched the expected manifest **in full** — 0 manifest / lifecycle / settled-count differences
+      over 64/64 slots, all four boots sharing the *observed* manifest sha256
+      `4e451a07d0a94c18fc177967521344c31ba4e9c8774a42d19aa1114f46e963f8`; 36 payload / 8 initial-playback /
+      8 committed; 0 `FATAL`, only `!LIB_OBSERVE` sent, no destructive command issued. **Recorded
+      precisely:** this is "no differences in the observed fields; no destructive commands issued" — an
+      identical field record (or an identical file hash) does **not** prove unchanged bytes or the absence
+      of a write. The 36-vs-8 gap is dispositioned as three different populations (36 payload-present /
+      8 in-RAM committed / 8 initial-playback-required, the two 8-sets differing), and the disposition
+      transfers to the runtime slope fixture; see `ARCHITECTURE-REVIEW.md` § Packet B → *Disposition*.
+      Report `captures/s13-libobs-stability-3boot.json`, identity
+      `captures/s13-libobs-stability-3boot.identity.json`. Tooling (read-only, no firmware):
+      `scripts/hitl/library_manifest.py`, `scripts/hitl_library_manifest_stability.py`,
+      `scripts/test_library_manifest_stability.py` **14/14**. Full record:
+      `ARCHITECTURE-REVIEW.md` § Packet B.
+**2.3 — TRANSFERRED to `runtime-working-set-ownership` S2b.7 (recorded there, unchecked).** Prove the
+fixture can hold the S2b.7 condition: a save owed + a restore holding the SD session + another track playing,
+with `deferredSaveBlockedByActiveSlotLoadSd()` true at the drain edge. The condition is to be observed, not
+assumed, with the exact observables recorded and no external advancement inside the run. This change no
+longer carries the task; it is recorded, **unchecked**, under that change's **S2b.7 — drain-driven restore
+advancement**. The library closeout does not gate on it.
 
-## 3. Packet C — S2b.7 device confirmation (independently reportable; task owned by `runtime-working-set-ownership`)
+## 3. Packet C — TRANSFERRED to `runtime-working-set-ownership` S2b.7
 
-- [ ] 3.1 **Run the S2b.7 device leg on the held fixture.** Use the authoritative HITL entry point with a
-      registered or reused stimulus (list before adding; never edit a canonical stimulus). Report **which**
-      permitted outcome occurred, with evidence, rather than asserting one:
-      (i) the drain returns `TemporarilyBlocked` with the named **`waiting_commit_gate`**; **or**
-      (ii) the owed save is discharged by the documented **urgent-save priority** while the restore remains
-      commit-gated. Both require **no unintended publication** (no committed pass appears while the gate
-      denies) and the request preserved.
-      **Progress is defined inside the drain call:** `restoreProgressCounter()` (A3.3) SHALL be sampled
-      immediately before the drain entry and immediately after it returns, and the measurement interval is the
-      **drain invocation itself** (plus the drain's own report where it re-enters or loops). A restore that
-      advances only *outside* the drain call, or an **urgent-save discharge with no movement of the counter
-      within the call**, SHALL NOT check off `runtime-working-set-ownership` **S2b.7 — drain-driven restore
-      advancement**; it SHALL record `advancement NOT observed inside the drain` and S2b.7's advancement clause
-      stays unproven. Outcome (ii) is therefore **not** evidence of advancement, and the report says so.
-      **Verify:** the capture, the exact observables, the sampled interval and both counter values are recorded;
-      the outcome is stated as observed; the checkoff states explicitly whether advancement was observed
-      **inside the drain call**.
-- [ ] 3.2 **Keep Packet C independently reportable.** Give this packet its own checkoff and evidence, and do
-      **not** make it gate, or depend on, this change's closeout or another change's closeout — the defect the
-      archived sub-change's closeout dependency caused. **Verify:** S2b.7's device half can be checked from
-      Packet C's evidence alone; this change's closeout is not a precondition for it.
+**Packet C (3.1 the drain device leg, 3.2 independently reportable) is TRANSFERRED to
+`runtime-working-set-ownership` S2b.7 — drain-driven restore advancement, and is recorded there, unchecked.**
+It is the device half of S2b.7, whose advancement clause is **not** proven by an urgent-save discharge; the
+in-drain-call progress definition (`restoreProgressCounter()` sampled immediately before the drain entry and
+after it returns) and the independence requirement travel with it. No library task depends on it, and this
+change's closeout is not a precondition for it. The verbatim task text lives in that change's `tasks.md`
+under S2b.7 (the three "TRANSFERRED" entries).
 
 ## 4. Handoff and closeout
 
-- [ ] 4.1 **Hand the stable fixture and the classified library to `runtime-working-set-ownership`.** Record the
+- [x] 4.1 **Hand the stable fixture and the classified library to `runtime-working-set-ownership`.** Record the
       evidence link there for S1.3's device slope, S2b.3's post-restore baseline, the S2b gate, then S3 —
       lease ownership. **Verify:** the handoff is recorded in that change; **this change does not start S1, S2b
       or S3**, and does not bypass the stage order because hardware evidence was blocked.
-- [ ] 4.2 **Correct the stale drain requirement in its owning change.** The main `lazy-slot-hydration` drain
-      requirement still states that the drain's advancement is "**Not delivered** … deferred to
-      `runtime-working-set-ownership` S2b.7"; S2b.7 landed 2026-09-24. **Verify:**
-      `runtime-working-set-ownership` carries the correction in its spec delta / closeout; this change does not
-      rewrite another change's requirement.
-- [ ] 4.3 **Closeout.** Update `docs/Runtime/PROJECT_STATE.md`, `docs/Runtime/CURRENT_WORK.md` and
+      **2026-09-24 — recorded.** `runtime-working-set-ownership/ARCHITECTURE-REVIEW.md`
+      § *Handoff from `restored-library-stability`* carries the evidence link
+      (`captures/s13-libobs-stability-3boot.json` + identity), the precisely-worded claim
+      ("no differences in the observed fields; no destructive commands issued"), and the **36 / 8 / 8
+      disposition** (three populations; the two 8-sets differ; the 28 unloaded slots vs the other 28
+      payload-absent slots), with the slope-fixture instruction to vary the committed/loaded population.
+      Cross-references were added at that change's **S1.3**, **S2b.3**, **S2b gates** and **S3** rows.
+      **No S1/S2b/S3 task was started and no gate was checked there.**
+- [x] 4.2 **Correct the stale drain requirement in its owning change — TRANSFERRED to its runtime owner.**
+      The main `lazy-slot-hydration` drain requirement still states that the drain's advancement is
+      "**Not delivered** … deferred to `runtime-working-set-ownership` S2b.7"; S2b.7 landed 2026-09-24.
+      **Verify:** `runtime-working-set-ownership` carries the correction in its spec delta / closeout; this
+      change does not rewrite another change's requirement.
+      **2026-09-24 — correction TRANSFERRED to `runtime-working-set-ownership` and recorded in its Closeout.**
+      That change's Closeout now carries the stale clause, S2b.7's landing (`ARCHITECTURE-REVIEW.md` § S2b.7;
+      device half = the transferred S2b.7 entries, no device class claimed) and the corrected wording it will
+      apply with **its own** spec delta. The main-spec requirement text is left **unchanged** by this change,
+      per this task's ownership rule; the correction is no longer owed here.
+- [x] 4.3 **Closeout.** Update `docs/Runtime/PROJECT_STATE.md`, `docs/Runtime/CURRENT_WORK.md` and
       `docs/DELIVERABLE_TRACKING.md`; append a `DEC-###` entry if `ARCHITECTURE_RULES.md` requires one; record
       the wording "no **currently eligible** native task remains" for `runtime-working-set-ownership`.
       **Verify:** docs updated; `openspec validate restored-library-stability` clean; the archived scope matches
       what was actually evidenced.
+      **2026-09-24 — library closeout complete; archive-ready.** `PROJECT_STATE.md` and
+      `CURRENT_WORK.md` carry the corrected claim and the 36/8/8 disposition; `DELIVERABLE_TRACKING.md`
+      updated; **no new `DEC-###` is owed** (DEC-083 already owns the observation contract; this slice adds no
+      architecture or behavior decision); the spec sync applied the change's two ADDED requirements to
+      `openspec/specs/lazy-slot-hydration/spec.md` and `lazy-slot-hydration` validates; `openspec validate
+      restored-library-stability` is clean; the wording "no **currently eligible** native task remains" is
+      recorded for `runtime-working-set-ownership`. **Closeout checklist: no remaining mandatory library
+      task.** 2.3 and Packet C are **transferred** to `runtime-working-set-ownership` S2b.7 (recorded there,
+      unchecked) and 4.2 is **transferred** to its runtime owner; none of the three is owed here, so the
+      change is archive-ready and is archived through the normal workflow.

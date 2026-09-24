@@ -1,4 +1,4 @@
-# Architecture review — restored-library-stability (Packet A)
+# Architecture review — restored-library-stability (Packets A and B)
 
 This is the change's review/evidence artifact. It carries:
 
@@ -6,6 +6,9 @@ This is the change's review/evidence artifact. It carries:
 - **Task 1.0** — the G2 execution packets for the two firmware-editing slices of Packet A: **1.2**
   (observed fields, two outputs, four counts, pure classifier) and **1.3** (the bounded on-demand
   observation with its owner, admission and invalidation contract).
+- **Packet B** (appended) — **task 2.1** (not exercised: nothing needed clearing) and **task 2.2** — the
+  complete-manifest stability gate over three consecutive boots, with the read-only comparator that
+  performs it.
 
 Authority: [IMPLEMENTATION_READINESS.md](../../../docs/Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice);
 template: [EXECUTION_PACKET.md](../../../docs/Templates/EXECUTION_PACKET.md). Cite the approved contract
@@ -462,6 +465,8 @@ committed**. Payloads are present on tracks 0–5 (36 slots: `(0,0)`, `(1,0..2)`
 `Track 6/7 loaded state: EMPTY` observation seen on stable boots — now measured per slot instead of read
 off a track-level line. `restore_completions = 0` because every required slot was already committed when
 the window opened (the `committedAtWindowStart` mask doing its job).
+**[Corrected 2026-09-24, task 2.2 run: "all eight are committed" is not supported by the per-slot
+records — 4 of the 8 required slots hold in-RAM committed content; see § Packet B → *Disposition*.]**
 
 **Incomplete-window case** (`captures/s13-libobs-incomplete-02/`): the capture window closed 0.15 s after
 the request, before the observation's records had drained from the ring. The report says
@@ -539,3 +544,171 @@ reading recipe, and "this is not the settled census"), with a `Read this when` e
 ownership-table row; a `docs/Guides/BOOT_LOAD.md` key-files row; and
 `.agents/skills/hitl-content-verification` § 9 (plus its discovery description) for the read-only
 attribution path. `DEC-083` records the decision and its rejected alternatives.
+
+---
+
+## Packet B — task 2.1 (not exercised) and task 2.2 complete-manifest stability (device verified)
+
+Both Packet B tasks below are **read-only**: the only thing sent to the device is `!LIB_OBSERVE`, and the
+upload that performs the reliable reset. This section adds no firmware edit and issues no destructive
+command, so no G2 execution packet is required for it (task 1.0: only firmware-editing slices need one).
+
+### Task 2.1 — TBD-1 authorization gate: **NOT REQUIRED for the reused fixture**
+
+Stability was proven on the **existing** library, so no slot was emptied and no per-slot destructive
+authorization was requested or needed. Task 2.1 is therefore **complete as not applicable** for this
+fixture: the gate it defines is opened only by a fixture that needs a slot cleared, and "don't clear
+anything merely to repeat evidence already available" is the rule this run followed. This is an
+authorization disposition, not a claim that clearing is never needed — a later fixture that must empty a
+slot re-opens the gate. No `CLEAR`, rename, quarantine or delete command appears
+in any of the three new logs (`grep` for the destructive verbs over `boot-census.log` → 0 lines; the only
+`QUARANTINE` text is the boot banner's instruction line).
+
+### Task 2.2 — reuse first: what the existing Packet A captures actually settle
+
+`scripts/hitl_library_manifest_stability.py` was run over **all five** existing `LIBOBS` captures before any
+new device action (`captures/s13-libobs-stability-existing.json`):
+
+| capture | eligible? | why |
+|---|---|---|
+| `s13-libobs-full-02/` | **yes** | fresh boot (`boot_reset` + banner), `complete=1`, 64 slots |
+| `s13-libobs-incomplete-03/` | **yes** | fresh boot, `complete=1`, 64 slots |
+| `s13-libobs-full-01/` | no | the pre-fix long-form wire format was truncated (`complete=0`); the frame and its trailing fields are not the settled record |
+| `s13-libobs-incomplete-01/` | no | **not a boot**: no `boot_reset` and no banner — it is a mid-session attach at ~72 s uptime on the **same boot** as `full-02` (its `checkpoint_reached=False` because that boot's once-per-boot census had already fired) |
+| `s13-libobs-incomplete-02/` | no | the window was closed 0.15 s after the request (`complete=0`, 0 slot records, counts `None`) |
+
+The existing evidence therefore settles **two** eligible boots, not three, and the third complete-looking
+observation (`incomplete-01`) is not a second boot at all. Neither the requirement nor the intent ("compare
+in full on each of three consecutive boots") is met by re-labelling a same-boot observation as a boot, so
+the missing consecutive boots were captured. This is the **only** reason for the device action; the tooling
+itself is read-only and re-used `full-02` as the recorded expected manifest.
+
+### The gate — three consecutive fresh boots compared in full
+
+**Recipe** (`.agents/skills/hitl-content-verification` § 9):
+
+```
+for i in 01 02 03; do
+  .venv/bin/python scripts/hitl_boot_census.py --out-dir captures/s13-libobs-stab-$i \
+      --library-observe --settle-s 25 --observe-window-s 30
+done
+.venv/bin/python scripts/hitl_library_manifest_stability.py \
+    --expected-dir captures/s13-libobs-full-02 \
+    --boot captures/s13-libobs-stab-01 --boot captures/s13-libobs-stab-02 \
+    --boot captures/s13-libobs-stab-03 --out captures/s13-libobs-stability-3boot.json
+```
+
+`hitl_boot_census.py` resets by re-uploading before each capture, so the three captures are three
+**consecutive** boots of one run. Run identity:
+`captures/s13-libobs-stability-3boot.identity.json` — `git_commit 74cadc7b`, env
+`teensy41-capture-serial`, `firmware_hex_sha256 ede704b614b7e9cd…`, port
+`/dev/cu.usbmodem154944801`.
+
+The **expected per-slot manifest** is recorded from the existing Packet A boot `full-02` (reuse), and
+carries, per slot: payload presence/token, offered, the committed content identity and counts
+(`has_committed_content`, pass count, highest pass id, loop length, committed event count), the initial
+playback-required flag, and the observed request record. The comparison is performed in full over all 64
+slots, and the settled counts are compared too.
+
+| boot | window `[start,end]` µs | turns | restarts | admission / every-initial / complete | payload / initial / committed | manifest sha256 |
+|---|---|---|---|---|---|---|
+| `s13-libobs-full-02` (expected) | `[13,017,777, 13,312,720]` | 64 | 0 | 1 / 1 / 1 | 36 / 8 / 8 | `4e451a07d0a94c18…` |
+| `s13-libobs-stab-01` | `[14,135,590, 14,431,905]` | 64 | 0 | 1 / 1 / 1 | 36 / 8 / 8 | `4e451a07d0a94c18…` |
+| `s13-libobs-stab-02` | `[13,179,791, 13,476,012]` | 64 | 0 | 1 / 1 / 1 | 36 / 8 / 8 | `4e451a07d0a94c18…` |
+| `s13-libobs-stab-03` | `[13,066,713, 13,362,639]` | 64 | 0 | 1 / 1 / 1 | 36 / 8 / 8 | `4e451a07d0a94c18…` |
+
+**Result: `verdict: pass`** (`captures/s13-libobs-stability-3boot.json`) — every one of the three observed
+boots matches the recorded expected manifest **in full**: 0 manifest differences, 0 lifecycle differences,
+0 settled-count differences. The only window-scoped field D4 excludes
+(`observed_restore_completions`) is `0` in all of them, and every per-slot request record
+(`request`/`wait`/`terminal`/`generation`/`epoch`) reproduced as well, which is stronger than the manifest
+core requires. **There are no differences in the observed fields.** That is the whole claim: the observed
+manifest reproduces. It is **not** a claim that the payload files are byte-identical, and **not** a proof
+that no byte was written anywhere — an identical field record (or even an identical file hash) would
+establish unchanged observed content, not the absence of a write. The absence of a *destructive* action is
+established separately, by the command log: only `!LIB_OBSERVE` was sent, and no `CLEAR`, rename,
+quarantine or delete command was issued.
+
+The five complete-manifest observations (the two existing plus the three new) share the **same** observed
+manifest sha256 `4e451a07d0a94c18fc177967521344c31ba4e9c8774a42d19aa1114f46e963f8`, so the "same boot"
+reading of `incomplete-01` is also internally consistent (identical *observed* manifest within one boot)
+without being counted as a boot.
+
+### Disposition — the 36 payload slots vs the 8 committed slots (and the two different 8-sets)
+
+The three counts `36 / 8 / 8` are **three different populations**, and the gap between them is not a loss
+and not a write. Per-slot evidence: `captures/s13-libobs-full-02/census.json` (identical per-slot records in
+the three `stab-0N` captures).
+
+| D4 quantity | value | what it observes (firmware owner) |
+|---|---|---|
+| **payload inventory** | **36** | a payload file is present in the RAM mirror **and** the SD file exists with a valid token (`LibraryObservationSession.cpp::observeSlot` → `verifySaveFileTokenAtPath`) |
+| **initial playback-required set** | **8** | `isBootPlaybackSlot(...)` — the per-track union of the selected and active slot (`requiredForInitialPlayback`); one slot per track today, not "the loaded set" |
+| **currently committed at the checkpoint** | **8** | an **in-RAM** `Loop` has committed passes — `loop.passes.hasRecordPass() \|\| !loop.passes.overdubPasses.empty()`; counted in `LibraryObservation.cpp` |
+| **observed restore completions** | **0** | window-scoped (`committedTerminalInWindow`); every loaded slot was already committed when the window opened |
+
+**The two 8-sets are not the same set**, and neither is a subset of the other:
+
+- committed at the checkpoint (8): `(0,0) (1,0) (1,1) (1,2) (2,0) (3,0) (5,0) (5,1)`
+- initial playback-required (8): `(0,0) (1,2) (2,1) (3,0) (4,0) (5,0) (6,0) (7,0)`
+- overlap: `(0,0) (1,2) (3,0) (5,0)` — **4 slots**.
+
+Consequences that must be read correctly:
+
+- **28 = 36 − 8**: payload-present slots with **no in-RAM committed content** — `(2,1) … (2,7)`,
+  `(3,1) … (3,7)`, `(4,0) … (4,7)`, `(5,2) … (5,7)`; two of them, `(2,1)` and `(4,0)`, are in the
+  initial-playback-required set. They are on SD and not loaded; they are **not** loss.
+- **28 = 64 − 36** is a **different** 28: the payload-absent (`empty`) slots, cause `unknown` (no history),
+  correctly not promoted to a loss. The two 28s are a numeric coincidence and must not be conflated.
+- `(6,0)` and `(7,0)` are in the initial-playback-required set and are **payload-absent** — the recorded
+  `Track 6/7 loaded state: EMPTY`, now measured per slot.
+- **Correction to Packet A task 1.5.** Its sentence "the initial-playback set … and **all eight are
+  committed**" is not supported by the compact-format records and is corrected here: **4** of the 8 required
+  slots hold in-RAM committed content at the checkpoint (`(0,0) (1,2) (3,0) (5,0)`); `(2,1)` and `(4,0)`
+  are payload-present but unloaded, and `(6,0)`/`(7,0)` are payload-absent. The `committed_at_checkpoint`
+  count is also 8, but over the partly different set listed above. `[Corrected 2026-09-24, task 2.2 run.]`
+
+**Disposition for the runtime slope fixture (`runtime-working-set-ownership` S1.3).** The slope measures
+**residency against the committed/loaded working set**, so the population it varies is the
+**in-RAM committed** one (8 today), not the 36-slot payload inventory. The fixture must therefore:
+
+1. **name the population it varies** — committed/loaded slots (and therefore select/enable each scratch slot
+   so boot actually loads it), not merely create an SD payload; and
+2. **explain the other 28** — payload-present but unloaded slots are outside the runtime working set, so a
+   change in the payload inventory (36) must never be read as a change in the loaded set (8), and neither
+   may be read against the payload-absent 28.
+
+This is the disposition task 4.1 transfers; it is not a capacity or eviction finding.
+
+**Verify (task 2.2):**
+
+| Requirement | Result |
+|---|---|
+| any unexplained difference between observed and expected is a failure, including in a slot that is not part of the fixture | ✓ the comparator fails on any required-field, lifecycle-field or settled-count difference, and `authorized_changes` is empty (no fixture change was made), so every slot must match; locked by `test_content_difference_in_a_non_fixture_slot_fails`, `test_a_difference_in_a_non_fixture_slot_fails_the_three_boot_gate` |
+| the pass requires every slot to match, not merely the fixture slot to persist | ✓ 64/64 slots matched in each of the three boots; 0 differences |
+| three consecutive boots | ✓ `stab-01/02/03`, each a fresh boot (`boot_reset` + banner, `complete=1`), run back-to-back with the documented upload reset before each; only `!LIB_OBSERVE` was sent |
+| no slot outside the approved range is written (asserted from the offline manifest, not from intent) | ✓ **no differences in the observed fields** across all 64 slots, and **no destructive command issued** (0 `CLEAR`/rename/quarantine/delete lines; only `!LIB_OBSERVE`; 0 `FATAL`, 0 `#MEM_EXT_REFUSED`). Recorded precisely: identical observed records — or even identical file hashes — would establish unchanged *observed* content, **not** unchanged bytes and **not** the absence of a write; the no-destructive-action statement rests on the command log, and the manifest comparison rests on the observed fields |
+
+**Tooling added** (read-only; no firmware): `scripts/hitl/library_manifest.py` (the pure per-slot manifest
+comparator, required vs lifecycle vs window-scoped fields, fingerprints),
+`scripts/hitl_library_manifest_stability.py` (the CLI gate), and
+`scripts/test_library_manifest_stability.py` (**14/14**).
+
+### Not claimed here, and transferred out of this change
+
+- **Task 2.3** (the fixture can hold the S2b.7 condition — a save owed + a restore holding the SD session +
+  another track playing) is **not** done here and is **TRANSFERRED 2026-09-24 to
+  `runtime-working-set-ownership` S2b.7 — drain-driven restore advancement**, recorded there **unchecked**.
+- **Packet C** (the S2b.7 drain device confirmation) is **TRANSFERRED** the same way to that change's S2b.7,
+  independently reportable there (its 3.2 clause travels with it). Neither gates this stability result.
+- This gate proves the **current** library's *observed* manifest is reproducible across boots
+  (36 payload slots, 8 loaded/committed, 8 initial-playback-required — three different populations, see
+  *Disposition*). It is not a claim about unchanged payload bytes, not a claim that a *constructed* fixture
+  with an emptied slot is stable, and not a capacity or eviction finding.
+- **Task 4.2** (the stale drain clause in the main `lazy-slot-hydration` spec) is **TRANSFERRED** to its
+  runtime owner and recorded in that change's Closeout; this change does not rewrite another change's
+  requirement.
+- **Next runtime work (recorded, not started):** `runtime-working-set-ownership` **S1.3 — slope-fixture
+  definition** must explain **why 28 verified payloads remain unloaded** and **why only four
+  initial-playback slots overlap the committed set**. This stability gate shows the observation is
+  **repeatable**; it does **not** establish correct hydration or a usable increasing-population fixture.

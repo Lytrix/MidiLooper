@@ -78,11 +78,38 @@ line (`code 391,160 + padding 2,056`, floor 840 met with 1,216 B headroom, local
 observation costs **+80 B of ITCM**. **Device-verified read-only** (`captures/s13-libobs-full-02/`):
 **payload inventory 36, initial playback-required 8, restore completions in the window 0, committed at the
 checkpoint 8**; 36 `populated` / 28 `empty` with **no loss cause anywhere**; the initial-playback set is one
-slot per track and all eight are committed; payloads on tracks 0–5 only. The read-only re-analysis of the
+slot per track and **4** of its 8 slots hold in-RAM committed content at the checkpoint
+(`committed_at_checkpoint = 8` is a partly different set) **[corrected 2026-09-24, task 2.2 run]**; payloads
+on tracks 0–5 only. The read-only re-analysis of the
 recorded sweeps (`captures/s13-library-observation.json`) finds **no loss cause** and identifies `N` as
-**window-scoped**. The incomplete-window case reports incomplete with all four counts `None`. Open in the
-change: Packets **B** (the repeatable fixture, needs TBD-1 per-slot authorization for any CLEAR) and **C**
-(the S2b.7 device confirmation), plus the 4.x handoff/closeout.
+**window-scoped**. The incomplete-window case reports incomplete with all four counts `None`. **Transferred
+out of the change after Packet B 2.2:** task **2.3** — the S2b.7-condition fixture, **Packet C** — the S2b.7
+drain device confirmation, and **4.2** — the stale drain clause; all three now live, unchecked, in
+`runtime-working-set-ownership` S2b.7 (see Packet B below).
+
+**`restored-library-stability` Packet B 2.2 — complete-manifest stability: DEVICE VERIFIED PASS
+(2026-09-24).** Reuse first: the five existing `LIBOBS` captures settle only **two** eligible boots
+(`full-02`, `incomplete-03`) — `full-01` is the truncated pre-fix format, `incomplete-02` an incomplete
+window, and `incomplete-01` a **same-boot** mid-session observation, not a boot — so three consecutive
+read-only boots were captured (`captures/s13-libobs-stab-01/02/03`, upload reset before each, only
+`!LIB_OBSERVE` sent). All three match the expected manifest recorded from `full-02` **in full**: 0
+manifest / lifecycle / settled-count differences over 64/64 slots, observed manifest sha256
+`4e451a07d0a94c18…`, five complete-manifest observations agreeing. **Recorded precisely: no differences in
+the observed fields; no destructive commands issued** — this does **not** prove unchanged payload bytes or
+the absence of a write. **36 / 8 / 8 disposition:** 36 payload-present / 8 in-RAM committed / 8
+initial-playback-required are three populations (the two 8-sets overlap in only 4 slots), and the 28
+remaining payload-present slots are unloaded — distinct from the other 28 payload-absent slots; the runtime
+slope fixture must vary the committed/loaded population and explain the unloaded 28. **Task 2.1 is closed
+as not required for the reused fixture** (nothing was cleared). New read-only tooling
+`scripts/hitl/library_manifest.py` + `scripts/hitl_library_manifest_stability.py` (tests **14/14**). The
+evidence is handed to `runtime-working-set-ownership` (task 4.1), and this change's two requirements are
+synced into `openspec/specs/lazy-slot-hydration/spec.md`. **2.3 — drain fixture, Packet C — drain hardware
+confirmation and 4.2 — drain-spec correction were TRANSFERRED to `runtime-working-set-ownership`
+S2b.7 — drain-driven restore advancement** (recorded there unchecked, independently reportable), so the
+library closeout checklist has **no remaining mandatory task**; the change is **ARCHIVED** through the normal
+workflow (2026-09-24). **Next runtime work (recorded, not started): S1.3 — slope-fixture definition**, which
+must explain why 28 verified payloads remain unloaded and why only four initial-playback slots overlap the
+committed set — repeatability does not establish correct hydration or a usable increasing-population fixture.
 
 The instrumented observable is protected and documented: `LIBOBS` is **Tier-A** (worst-case records ≤ 191
 bytes, locked by `test_capture_line_tier` 15/15), the contract is recorded as **DEC-083**, and the behavior
