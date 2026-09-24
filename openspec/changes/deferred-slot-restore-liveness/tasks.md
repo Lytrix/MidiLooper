@@ -745,7 +745,21 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       bits and honours `O_CREAT`. This is a test-harness fidelity fix: the device's `FILE_WRITE` is itself
       create-or-open, so the production call is valid there and was only ever untestable here.
 
-- [~] A3.7 **Packet C device gate — shape (a) PASSED 2026-09-24; shape (b) partial.** Run on track 5 /
+- [~] A3.7 **Packet C device gate — shape (a) PASSED 2026-09-24; shape (b) taken 2026-09-24 via an intended entry point, pending owner confirmation.**
+      → **Shape (b) COMPLETION candidate 2026-09-24 (seventh session).**
+      `scripts/hitl_a37_shapeb_fixture.py` (reload-on-clear **disabled**) held all four preconditions
+      (`captures/a37fix-04/`): target content 2 bars immediately before the press; a restore for track 2
+      slot 1 started (`running` 8.246 s) and was unresolved at the edge (`waiting_commit_gate` 10.637 s,
+      committing only at 35.201 s); a save owed (`Clear waiting for deferred save completion`); another
+      track playing (`Playback started` at 9.849 s, no intervening stop). Outcome: the drain **completed**
+      (`State saved successfully (v4)` → `Clear selected slot 1`), 0 aborts, no named refusal — the
+      "completes" branch A3.7 allows. **Caveats for the owner:** the restore was in the named
+      `waiting_commit_gate` wait rather than holding the SD session, and precondition 4's evidence is
+      sequence-based because `ST,Track` has no track index. Runs `a37fix-01/02/03/05` were `INCONCLUSIVE`
+      with the failing precondition named and are **not** counted. Details: [`REVIEW.md`](REVIEW.md)
+      § A3.7 shape (b) — seventh session.
+      *(original entry follows)*
+      **shape (a) PASSED 2026-09-24; shape (b) partial.** Run on track 5 /
       slot 1 (authorized scratch) with a **fresh boot** (`DIAG,boot_reset` present, no `RING,overflow`) via
       `scripts/hitl_clear_drain_a37.py`, a 24-bar take, and CLEAR long-pressed while the save was owed.
       **Shape (a) "nothing else sounding" PASSED:** `Clear waiting for deferred save completion` → the
