@@ -89,6 +89,60 @@ bool sequencerRunning = false;
 // Packet A's C5 fixture and Packet C both drive the **real blocking persistence drain**, so its TU is
 // linked here rather than modelled by a test-only stand-in.
 #include "../../src/StorageManager/SyncDrainSaveState.cpp"
+// A3.5: the real drain now services MIDI while it waits, so the dispatch path it reaches must be linked.
+#include "../../src/MidiButtonActions.cpp"
+#include "../../src/Track/SlotClearPlaybackRestore.cpp"
+#include "../../src/EditManager/EditSessionInteraction.cpp"
+#include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
+// A3.4a/A3.5: the drain guard and the restore-request record both have their own translation units.
+#include "../../src/StorageManager/PersistenceDrainGuard.cpp"
+#include "../../src/StorageManager/RestoreRequestState.cpp"
+
+// The MIDI-service path reaches the transport/clock owners and the note-edit geometry owners. None is on
+// the asserted path (the fixture queues a transport message purely to observe that MIDI was serviced), so
+// each fails closed rather than pretending to act.
+/// The queued message is a **transport** message, so its callbacks are the observation of "MIDI was
+/// serviced". They are counted, not fail-closed: the point of the case is that the message reaches them.
+unsigned g_a35TransportServiceCalls = 0;
+void ClockManager::onMidiStart() { ++g_a35TransportServiceCalls; }
+void ClockManager::onMidiStop() { ++g_a35TransportServiceCalls; }
+void ClockManager::onMidiClockPulse() { ++g_a35TransportServiceCalls; }
+void ClockManager::requestTransitionTo(ClockSource) { ++g_a35TransportServiceCalls; }
+uint32_t ClockManager::setLastMidiClockTime(uint32_t) {
+  ++g_a35TransportServiceCalls;
+  return 0;
+}
+/// `handleMidiInput` needs the clock's micros projection. `ClockManager.cpp` pulls the Teensy
+/// `IntervalTimer`, which has no native stub, so the one accessor is supplied directly; it is a pure read
+/// of the manager's own state.
+uint32_t ClockManager::getMicrosPerTick() const { return microsPerTick; }
+void TrackManager::handleTransportStop() { TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__); }
+// The MIDI dispatch route's own boundaries. The fixture queues a **transport** message, so these are not
+// reached by the asserted path; they exist because `MidiButtonManager` is part of the button TU's closure.
+void MidiButtonManager::handleMidiNote(uint8_t, uint8_t, uint8_t, bool) { TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__); }
+bool BarStepButtonHandler::isBarStepButtonNote(uint8_t, uint8_t) const {
+  TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__);
+  return false;
+}
+// The MIDI dispatch path's global owners and the tempo global, which `StorageManager.cpp`'s TU would
+// normally supply; this suite links the drain closure rather than the whole manager.
+DisplayManager::DisplayManager() {}
+MidiFaderManager::MidiFaderManager() {}
+MidiFaderProcessor::MidiFaderProcessor() {}
+MidiFaderActions::MidiFaderActions() {}
+MidiButtonProcessor::MidiButtonProcessor() {}
+MidiButtonManager::MidiButtonManager() {}
+ControlSurfaceManager::ControlSurfaceManager() {}
+void ControlSurfaceManager::onEditEvent(EditEvent) { TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__); }
+BarStepButtonHandler::BarStepButtonHandler() {}
+MidiButtonManager midiButtonManager;
+ControlSurfaceManager controlSurfaceManager;
+DisplayManager displayManager;
+BarStepButtonHandler barStepButtonHandler;
+float bpm = 120.0f;
+void BarStepButtonHandler::handleMidiNote(uint8_t, uint8_t, uint8_t, bool) { TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__); }
+void ControlSurfaceManager::handleMidiCC(uint8_t, uint8_t, uint8_t) { TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__); }
+void ControlSurfaceManager::handleMidiPitchbend(uint8_t, int16_t) { TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__); }
 
 void setUp() {}
 void tearDown() {}

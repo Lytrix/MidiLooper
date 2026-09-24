@@ -18,6 +18,7 @@
 #include "Utils/MemoryPool.h"
 #include "Utils/MidiEventVecFnvHash.h"
 #include "Utils/TrackMem.h"
+#include "SlotClearPlaybackRestore.h"
 #include "UndoLoopGeometry.h"
 #include "LoopContentHistory.h"
 #include "Utils/DebugSessionCapture.h"
@@ -540,37 +541,6 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
         applyPublishedSnapshotSelect(loop, entry, false);
     }
     return applied;
-}
-
-TRACK_COLD_MEM void restorePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
-    bool foundPlaybackSlot = false;
-    uint8_t newActiveSlot = 0;
-    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-        if (trackManager.isSlotEnabled(trackIndex, s) &&
-            !trackManager.isSlotMuted(trackIndex, s) &&
-            track.hasDataInSlot(s)) {
-            foundPlaybackSlot = true;
-            newActiveSlot = s;
-            break;
-        }
-    }
-    if (foundPlaybackSlot) {
-        trackManager.setActiveLoopIndex(trackIndex, newActiveSlot);
-        for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-            if (trackManager.isSlotEnabled(trackIndex, s) &&
-                !trackManager.isSlotMuted(trackIndex, s) &&
-                track.hasDataInSlot(s)) {
-                track.resetPlaybackStateForSlot(s, now);
-            }
-        }
-        track.forceSetState(TRACK_STOPPED);
-        track.startPlaying(now);
-    } else {
-        track.sendAllNotesOff();
-        if (track.isPlaying()) {
-            track.forceSetState(TRACK_STOPPED);
-        }
-    }
 }
 
 TRACK_COLD_MEM void applyClearSlotUndoSideEffects(Track& track, const UndoEntry& entry, uint8_t slotIndex) {

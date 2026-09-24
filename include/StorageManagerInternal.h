@@ -19,6 +19,7 @@
 #include "StorageActivitySnapshot.h"
 #include "StorageLoopIo.h"
 #include "PersistenceDrainOutcome.h"
+#include "PersistenceDrainGuard.h"
 #include "PersistenceSyncDrainBudget.h"
 #include "StorageManagerInternal/PersistenceWorkQueue.h"
 #include "SlotLoadSession.h"

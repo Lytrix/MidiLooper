@@ -117,9 +117,19 @@ STORAGE_PERSIST_MEM bool finishPersistenceDrainReport(
     return true;
 }
 
-/// A3.4: maps the drain's internal outcome onto the caller-facing three-way result, carrying the named
+/// A3.4a: maps the drain's internal outcome onto the caller-facing three-way result, carrying the named
 /// reason. Kept beside the drain so the reason and the outcome cannot drift apart.
 namespace {
+/// A3.4a: the refusal a **nested** detailed drain returns -- a temporary block, by name, with no state
+/// change. Not routed through `makeDrainResult` because no gate was classified: this drain never started,
+/// so it must not touch the outer caller's budget, progress or result.
+SyncDrainResult drainInProgressResult() {
+    SyncDrainResult result{};
+    result.outcome = SyncDrainOutcome::TemporarilyBlocked;
+    result.reason = kDrainInProgressRefusalReason;
+    return result;
+}
+
 SyncDrainResult makeDrainResult(SyncDrainFailureReason failureReason,
                                 const PersistenceSyncDrainBudget::SyncDrainVerdict& verdict,
                                 bool completed) {
@@ -149,6 +159,15 @@ SyncDrainResult drainPersistenceWorkBlockingDetailed(const LooperState& state) {
     Serial.println("[StorageManager] BYPASS_STOP_UNDO_SAVE: skip saveState");
     return SyncDrainResult{SyncDrainOutcome::Completed, "bypassed"};
 #else
+    // A3.4a: one owner. A nested call (a second CLEAR serviced at a MIDI callback boundary inside this
+    // drain's wait, or any caller re-entering while it runs) refuses by name **before** it changes any
+    // shared save/budget/progress/result state. The guard is released by the scope on every exit below:
+    // Completed, Blocked, Failed and the early `AdmissionRefused` break alike.
+    StorageManagerInternal::PersistenceDrainScope drainScope;
+    if (!drainScope.acquired()) {
+        return drainInProgressResult();
+    }
+
     HotPathTelemetry::ScopedSaveState telemetryScope;
     Serial.println("[StorageManager] Draining persistence work queue to SD card...");
 
@@ -178,7 +197,6 @@ SyncDrainResult drainPersistenceWorkBlockingDetailed(const LooperState& state) {
             failureReason = SyncDrainFailureReason::ExceededSliceBudget;
             break;
         }
-
         // Terminal when a save is owed but no work item can carry it: the queue cannot admit the
         // finalize, so `hasPersistenceWorkPending()` is true on `pending` alone and no iteration can
         // change that. Fail fast with the cause instead of burning the whole stuck budget -- the

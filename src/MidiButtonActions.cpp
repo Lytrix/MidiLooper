@@ -9,9 +9,11 @@
 #include "MidiHandler.h"
 #include "TrackUndo.h"
 #include "StorageManager.h"
+#include "PersistenceDrainGuard.h"
 #include "LooperState.h"
 #include "Logger.h"
 #include "ControlSurfaceManager.h"
+#include "SlotClearPlaybackRestore.h"
 #include "TrackUndo.h"
 #include "Loop.h"
 #include "DisplayManager.h"
@@ -115,38 +117,23 @@ MidiButtonActions midiButtonActions;
 
 namespace {
 
-void restorePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
-  bool foundPlaybackSlot = false;
-  uint8_t newActiveSlot = 0;
-  for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
-    if (trackManager.isSlotEnabled(trackIndex, s) &&
-        !trackManager.isSlotMuted(trackIndex, s) &&
-        track.hasDataInSlot(s)) {
-      foundPlaybackSlot = true;
-      newActiveSlot = s;
-      break;
-    }
+/// A3.4a: the pre-side-effect refusal every **destructive/storage** button entry point shares. One
+/// literal and one log shape, so a device log distinguishes a deliberate refusal from an abort and no
+/// action invents its own wording. Normal musical input and transport do **not** call this.
+bool refuseStorageCallbackDuringDrain(const char* actionName) {
+  if (!StorageManagerInternal::isPersistenceDrainInProgress()) {
+    return false;
   }
-  if (foundPlaybackSlot) {
-    trackManager.setActiveLoopIndex(trackIndex, newActiveSlot);
-    for (uint8_t s = 0; s < ::Config::MAX_LOOPS_PER_TRACK; ++s) {
-      if (trackManager.isSlotEnabled(trackIndex, s) &&
-          !trackManager.isSlotMuted(trackIndex, s) &&
-          track.hasDataInSlot(s)) {
-        track.resetPlaybackStateForSlot(s, now);
-      }
-    }
-    track.forceSetState(TRACK_STOPPED);
-    track.startPlaying(now);
-  } else {
-    track.sendAllNotesOff();
-    // Clear of the last enabled playing slot must not leave TRACK_PLAYING on empty RAM —
-    // otherwise record press takes the mute-toggle path (session_20260803_170251).
-    if (track.isPlaying()) {
-      track.forceSetState(TRACK_STOPPED);
-    }
-  }
+  logger.error("%s refused: persistence %s in progress; no storage content changed",
+               actionName, StorageManagerInternal::kDrainInProgressRefusalReason);
+  return true;
 }
+
+// Retired by A3.4a: `restorePlaybackAfterSlotClear` now has one owner --
+// `src/Track/SlotClearPlaybackRestore.cpp`, declared in `include/SlotClearPlaybackRestore.h`. It used to
+// be defined here (anonymous namespace) *and* in `TrackUndo.cpp`, which the include-based native harness
+// cannot concatenate; a single owner removes the collision, the macro seam, and the include-order rule.
+
 
 // SavedSet gesture map (M2):
 // - Edit mode (note 38) double-press: toggle load/save set browser (enter + exit).
@@ -626,6 +613,11 @@ void MidiButtonActions::handleSelectTrack(uint8_t trackNumber) {
 }
 
 void MidiButtonActions::handleUndo() {
+    // A3.4a: undo/redo replaces content. A drain in progress owns the slot's persistence state, so the
+    // replacement is refused **before** the snapshot restore touches content or storage.
+    if (refuseStorageCallbackDuringDrain("Undo")) {
+        return;
+    }
     StorageManager::restoreDeferredUndoSnapshotsBeforeUse();
     Track& track = getCurrentTrack();
     if (editManager.isNoteEditActive()) {
@@ -668,6 +660,10 @@ void MidiButtonActions::handleUndo() {
 }
 
 void MidiButtonActions::handleRedo() {
+    // A3.4a: same content replacement as undo, so the same pre-side-effect refusal.
+    if (refuseStorageCallbackDuringDrain("Redo")) {
+        return;
+    }
     Track& track = getCurrentTrack();
     if (editManager.isNoteEditActive()) {
         if (editManager.getEditSession().undoStack.canRedo()) {
@@ -704,6 +700,10 @@ void MidiButtonActions::handleRedo() {
 }
 
 void MidiButtonActions::handleUndoClearTrack() {
+    // A3.4a: the clear-undo restores replaced content into the slot the outer drain owns.
+    if (refuseStorageCallbackDuringDrain("Undo clear")) {
+        return;
+    }
     Track& track = getCurrentTrack();
     const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
     const uint8_t slotIndex = trackManager.getSelectedSlotIndex(trackIdx);
@@ -717,6 +717,10 @@ void MidiButtonActions::handleUndoClearTrack() {
 }
 
 void MidiButtonActions::handleRedoClearTrack() {
+    // A3.4a: the clear-redo removes the slot's content again, the same conflict.
+    if (refuseStorageCallbackDuringDrain("Redo clear")) {
+        return;
+    }
     Track& track = getCurrentTrack();
     const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
     const uint8_t slotIndex = trackManager.getSelectedSlotIndex(trackIdx);
@@ -729,7 +733,7 @@ void MidiButtonActions::handleRedoClearTrack() {
     }
 }
 
-void MidiButtonActions::handleClearTrack() {
+STORAGE_PERSIST_MEM void MidiButtonActions::handleClearTrack() {
     // Always clear the selected slot (record long-press and slot long-press when selected).
     // TODO: long press >5 s → "Clear All Slots?" overlay; release when shown; single click
     // = YES, double click = NO ("YES: Click NO: Double Click").
@@ -737,6 +741,15 @@ void MidiButtonActions::handleClearTrack() {
     Track& track = getCurrentTrack();
     const uint8_t slot = trackManager.getSelectedSlotIndex(tidx);
     const uint32_t now = getCurrentTick();
+
+    // A3.4a: refuse **before any side effect** -- including the `stopPlaying()` below. A second CLEAR
+    // arriving at a MIDI callback boundary inside a drain (the drain services MIDI while it waits) must
+    // not redirect the outer drain's target, stop a track it is draining for, or reset the slot it is
+    // about to touch. Nothing is retained and nothing is queued: the request is refused by name, exactly
+    // as O7 records.
+    if (refuseStorageCallbackDuringDrain("Clear")) {
+        return;
+    }
 
     // Clear mutates pass ownership; complete any in-flight deferred save first so
     // the writer cannot read a slot while it is being reset.  A playing track
