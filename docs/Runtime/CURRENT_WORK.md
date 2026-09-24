@@ -2910,6 +2910,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (tenth session) — `deferred-slot-restore-liveness` ARCHIVED (reduced scope); runtime measurements transferred to `runtime-working-set-ownership`.**
+Per owner direction this was a **scope correction, not another sweep**. Delivered and archived: preparation
+under transport; request identity with named waits + four terminals + stale-identity rejection; the census
+checkpoint; content PASS; CLEAR's permitted completion branch (A3.7 both shapes). **Transferred unchecked**
+to `runtime-working-set-ownership`: S1.1, S1.3, S1.4, S1.5, S2b.3, S2b.5 and the new **S2b.7** (drain-driven
+restore advancement — explicitly not proven) and **S2b.8** (set-change epoch). A3.1/A3.3 closed with the
+advancement clause **explicitly deferred** to S2b.7; A3.8's claim corrected so it no longer covers that open
+prerequisite; A2.1 closed with the set-epoch residual deferred to S2b.8; A2.7's recording completed. `DEC-082`
+records the ruling; `docs/DELIVERABLE_TRACKING.md` carries the archived scope. **Next: resume
+`runtime-working-set-ownership` implementation**, whose remaining measurements and the deferred behavior are
+all visible and mandatory there.
+
+
 **2026-09-24 (ninth session) — A3.7 (both shapes) and A3.8 are CLOSED; A5.1's slope is the last open mandatory item.**
 Owner direction accepted the priority-bypass completion as the **completes** branch. Narrow record: **CLEAR
 completed through workspace-save priority while a started restore remained commit-gated**

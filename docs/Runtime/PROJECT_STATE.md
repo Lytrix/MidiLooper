@@ -1,5 +1,22 @@
 # Project state (execution context)
 
+**2026-09-24 (tenth session) — `deferred-slot-restore-liveness` archived with a reduced, accurately described scope; the runtime measurements return to `runtime-working-set-ownership`.**
+
+Owner direction: the runtime measurements belong with the parent change and archiving the sub-change does
+not require completing them. **Delivered and archived:** restore **preparation** advances under active
+transport; requests carry identity `(track, slot, requestGeneration, setEpoch)` with five named waits and four
+terminals, exactly-one-terminal, and pre-publication stale-identity rejection; the post-restore census
+checkpoint is finished and device-verified (`captures/census-final-03/`); content playback passes
+(`captures/cc-03-playback/`); and CLEAR's **permitted completion branch** is verified (A3.7 shape (b),
+`captures/a37fix-04/`: CLEAR completed through workspace-save priority while a started restore remained
+commit-gated). **Transferred, unchecked, and mandatory in `runtime-working-set-ownership`:** S1.1, S1.3,
+S1.4, S1.5, S2b.3, S2b.5, plus new **S2b.7** (drain-driven restore advancement — explicitly NOT proven; the
+observed completion came from `shouldPrioritizeWorkspaceSaveDrain()` bypassing the slot-load gate) and
+**S2b.8** (set-change epoch invalidation). Bound by `resumable-midi-boundary-playback-maintenance` task 3.3.
+The S1.3 slope remains blocked on the exhausted approved scratch range (N is the boot playback set; the range
+is fully populated; a sweep outside it shrank the committed set 27→27→26 — a capacity/eviction finding, not a
+slope). `DEC-082` records the ruling.
+
 **2026-09-24 (seventh session) — the A3.7 shape-(b) fixture is built; a passing run is recorded pending owner confirmation.**
 
 `scripts/hitl_a37_shapeb_fixture.py` gates shape (b) on four sampled preconditions and runs with

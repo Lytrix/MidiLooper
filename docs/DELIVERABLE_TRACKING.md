@@ -2,7 +2,20 @@
 
 > Project goal and decision log: [Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md). This page is the single shipped-vs-next overview.
 
-## Working state — 2026-09-23 (branch `feature/runtime-working-set-ownership`, nothing new on `dev`)
+## Working state — 2026-09-24 (branch `feature/runtime-working-set-ownership`, nothing new on `dev`)
+
+**`deferred-slot-restore-liveness` is CLOSED and ARCHIVED with a reduced, accurately described scope; its
+runtime measurements moved back to `runtime-working-set-ownership`.** Delivered: restore **preparation**
+advances under active transport (`waiting_capture` for recording, `waiting_commit_gate` / `waiting_job_capacity`
+for the global commit gate); requests carry identity `(track, slot, requestGeneration, setEpoch)` with named
+waits distinct from four terminals and pre-publication stale-identity rejection; the census checkpoint is
+finished and device-verified; content playback passes (11/11 cycles `inventory_equal` and `exact_order`); and
+CLEAR's **permitted completion branch** is verified (shape (b): completion through workspace-save priority
+while a started restore remained commit-gated). **Explicitly NOT delivered — deferred to
+`runtime-working-set-ownership` S2b.7 and bound by `resumable-midi-boundary-playback-maintenance` task 3.3:**
+drain-driven restore advancement and active-transport commit safety. The set-change epoch residual is deferred
+to `runtime-working-set-ownership` S2b.8. Evidence is in the change's `REVIEW.md`; the runtime status is in
+`PROJECT_STATE.md` / `CURRENT_WORK.md`.
 
 **Next change is proposed: [`deferred-slot-restore-liveness`](../openspec/changes/deferred-slot-restore-liveness/proposal.md).**
 Planning artifacts complete, `openspec validate` clean, **implementation not started**. It fixes the

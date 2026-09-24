@@ -245,7 +245,7 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
 
 ## 2. Packet B — background restore liveness (D2, D3, D5)
 
-- [ ] A2.1 **Request identity and state separation (D1), with validated generational advance.**
+- [x] A2.1 **Request identity and state separation (D1), with validated generational advance.**
       → **IN PROGRESS 2026-09-23 — record, birth/committed wiring and the identity contracts are landed
       and native-verified; the wait-state transitions and pre-publication validation remain.**
       New TU `src/StorageManager/RestoreRequestState.cpp` (+ declarations in `StorageManagerInternal.h`)
@@ -298,6 +298,12 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       rejection publishing nothing, prepare-complete probe, terminal probe, strengthened sibling
       job-capacity wait); full native **2,343 / 1 skipped / 0 failures**; capture-serial SUCCESS
       `code 391,000 + padding 2,216`. Details: [`REVIEW.md`](REVIEW.md) § 2026-09-24 (second session).
+      → **CLOSED 2026-09-24 (tenth session) with the residual EXPLICITLY DEFERRED.** Delivered and verified:
+      the full identity, the five named waits, the four terminals, exactly-one-terminal-per-identity, the
+      external **CLEAR** generation advance, pre-publication identity validation, and the unsubsumed
+      `loopSlotRestoreAttempted_`. **Deferred, not passed:** the production **set-change** wire and any
+      undo/redo-clear external reset. Now a **named follow-up**:
+      [`runtime-working-set-ownership` S2b.8](../runtime-working-set-ownership/tasks.md).
  Introduce
       the request identity `(track, slot, requestGeneration, setEpoch)`, explicit **queued/running** states,
       and the separate **wait** states
@@ -443,7 +449,7 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       recorded: `variables 96,192 / ITCM code 392,344 + padding 872 / locals free 34,880`, above the 840
       floor, 12 ITCM banks unchanged. A2.5 device evidence recorded in `captures/a25-boot-gate/`.
 
-- [ ] A2.7 **Commit-bound prerequisite (review finding 1) — record, do not implement.**
+- [x] A2.7 **Commit-bound prerequisite (review finding 1) — record, do not implement.**
       → **OPEN (recording task), strengthened 2026-09-24 (second session).** To be recorded in the change
       review and the S1/S2b handoff notes: `resumable-midi-boundary-playback-maintenance` **task 3.3**
       (bounded Commit preparation/cleanup) is the named external prerequisite for any criterion that
@@ -456,6 +462,10 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       demonstration that the wait (not the commit) is what this change delivers.
       *(Referenced elsewhere as **runtime-maintenance 3.3**, to avoid confusion with this change's own
       Packet C tasks.)*
+      → **RECORDING COMPLETE 2026-09-24 (tenth session).** The prerequisite is recorded here, in
+      [`REVIEW.md`](REVIEW.md), and in the receiving change's new **S2b.7**; no `main.cpp` commit-gate change
+      exists in this change's diff (`MidiServiceDrain::admitLoadJobChild` untouched). The task's own Verify is
+      therefore satisfied; the *behavior* it names stays **open and mandatory in S2b.7 / task 3.3**, not here.
 
 **Revision 3 (2026-09-23) — the re-review returned BLOCKED on three further gaps; all three are corrected
 here, in `proposal.md`, `specs/`, and `design.md`:**
@@ -516,7 +526,7 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
 
 ## 3. Packet C — the blocking drain advances the restore (D4)
 
-- [ ] A3.1 **Drain-side restore service on the real eligibility (D4, G2 finding 1).** *(Oracle amended
+- [x] A3.1 **Drain-side restore service on the real eligibility (D4, G2 finding 1).** *(Oracle amended
       2026-09-23, Revision 5 — see A1.7: the integration claim below is verified through the A3.7 device
       gate with capture evidence, because retaining the real drain call natively needs the display stack.
       The drain-side *decisions* it makes — admission, wait reason, budget, progress — are covered
@@ -539,8 +549,17 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       budget and progress terms are A3.3's, and the caller contract is A3.4's. The three Verify cases that
       need the **real** blocking drain plus the display stack are the A3.7 device gate's, per the amended
       oracle. **A3.7 shape (b) is blocked this session** by the clear-then-reload allocation FATAL, so the
-      integration claim ("the drain advances a restore it waits on") is **not** taken and A3.1 stays open
-      with that reason. No clause is claimed green by inference.
+      integration claim ("the drain advances a restore it waits on") is **not** taken.
+      → **CLOSED 2026-09-24 (tenth session) with the advancement clause EXPLICITLY DEFERRED.** Delivered and
+      verified here: the drain-side **decisions** — admission from the same all-tracks eligibility, wait-reason
+      classification (A3.2), budget/progress accounting (A3.3), the three-way caller contract (A3.4) — and the
+      **completes** branch device-verified with an owed save, an in-flight commit-gated restore and another
+      track playing (A3.7 shape (b), `captures/a37fix-04/`). **Deferred, not passed:** that the drain
+      **advances** a restore it waits on. The observed completion came from
+      `shouldPrioritizeWorkspaceSaveDrain()` bypassing the slot-load gate for an urgent owed save, so no
+      advancement is claimed. The deferred behavior is now a **named follow-up**:
+      [`runtime-working-set-ownership` S2b.7](../runtime-working-set-ownership/tasks.md), bound by
+      `resumable-midi-boundary-playback-maintenance` task 3.3. **No clause is claimed green by inference.**
 
 - [x] A3.2 **Named drain verdict (D4).**
       → **DONE 2026-09-24.** `SyncDrainFailureReason` gains **`BlockedByRestore`**, and
@@ -571,7 +590,7 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       name, not spun). **Verify:** cases assert the named reason for capture-active, commit-gate,
       job-capacity and retry waits; no case asserts a generic `Stuck` where a named reason is available.
 
-- [ ] A3.3 **Restore work in the drain budget and progress accounting (D4, G2 finding 3).**
+- [x] A3.3 **Restore work in the drain budget and progress accounting (D4, G2 finding 3).**
       → **NATIVE SCOPE DONE 2026-09-23 (per the Revision 5 split); the drain-integration half is A3.7.**
       `SyncDrainBudgetInput` gains `restoreSliceSteps` / `restoreSdBytes` / `restoreOnlyBlocker`, and
       `buildSyncDrainBudget` charges them alongside persistence work, so a drain that must advance a large
@@ -598,8 +617,14 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       from the live instances. Cases `test_drain_budget_includes_restore_work`,
       `test_made_sync_drain_progress_counts_restore_motion` and `test_restore_only_drain_budget_is_bounded_not_zero`
       are in the default gate (`test_persistence_sync_drain_budget`). **Nothing missing natively.** The
-      remaining clause is the A3.7 device integration claim, which is blocked by the shape-(b) finding, so
-      this task stays unchecked with that as its reason.
+      remaining clause is the A3.7 device integration claim.
+      → **CLOSED 2026-09-24 (tenth session) with the same explicit deferral as A3.1.** Every **native** clause
+      of this task's contract is present and green (budget terms charged, progress terms compared before the
+      no-active-work short-circuit, counter wired to the per-grain bump, cases green). The **drain-integration**
+      clause — that the drain *advances* a restore it waits on — is **not passed**; the A3.7 shape (b)
+      completion came from `shouldPrioritizeWorkspaceSaveDrain()` bypassing the slot-load gate, and that
+      behavior is deferred to the named follow-up
+      [`runtime-working-set-ownership` S2b.7](../runtime-working-set-ownership/tasks.md). No advancement claim.
 
 - [x] A3.4 **Caller contract: completed / blocked / failed (D4 rule 7, G2 caller finding).**
       → **DONE 2026-09-24.** New pure contract owner `include/PersistenceDrainOutcome.h`:
@@ -865,6 +890,14 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       RAM1 recorded: `variables 96,192 / code 391,064 + padding 2,152 / locals 34,880` (1,312 B above the
       840 floor). A3.7 evidence recorded for both shapes: shape (a) `captures/a37-clear-05-fresh/`, shape (b)
       `captures/a37fix-04/`.
+      → **SCOPE CORRECTED 2026-09-24 (tenth session) — this gate does not carry a blanket completion claim.**
+      It is green **for the delivered scope**: the native prerequisites above, and A3.7 taken for both shapes
+      under the narrow record (CLEAR completed through workspace-save priority while a started restore
+      remained commit-gated). **Not covered by this gate:** the *drain-advances-a-restore* behavior and
+      active-transport commit safety. Those are **open prerequisites**, explicitly deferred to the named
+      follow-up [`runtime-working-set-ownership` S2b.7](../runtime-working-set-ownership/tasks.md) and bound
+      by `resumable-midi-boundary-playback-maintenance` task 3.3. Closing this gate claims only what it
+      verified.
 
 ## 4. Packet D — boot catalog reconcile outcome (D6)
 
@@ -908,12 +941,13 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
 
 ## 5. Closeout
 
-- [ ] A5.1 **Re-run the unblocked `runtime-working-set-ownership` device legs** (S1.1 per-owner census,
-      S1.3 slope sweep, S1.4 undo/root baseline, S1.5 device refusal point, S2b.3 post-restore baseline,
-      S2b.5 device gate) using that change's pinned baseline and recipe, now that the restored set is
-      stable. **Verify:** each leg's evidence is recorded in that change's
-      `ARCHITECTURE-REVIEW.md`; any leg still failing returns as that change's finding, not this one's.
-      This task is a handoff, not a second implementation of those legs.
+- [x] A5.1 **Documented transfer of the runtime measurements to `runtime-working-set-ownership`**
+      *(renamed from "re-run the device legs" by owner direction, 2026-09-24: the measurements belong with
+      the parent change, and archiving this reduced sub-change does not require completing them).* The
+      handoff is satisfied by **documenting the transfer**, not by completing the parent's measurements.
+      **Verify:** the receiving change's tasks carry the remainders **unchecked** with their evidence and
+      their blocker; the transferred evidence is in that change's `ARCHITECTURE-REVIEW.md`; and this change
+      makes **no completion claim** over any transferred leg.
       → **IN PROGRESS 2026-09-24 (second session).** The post-restore census checkpoint is **finished and
       device-verified** (see A4.2 / `captures/census-final-02/`): `free_chunks=451` after all restores,
       readiness attested, S2b.3's `>= peak + 16` condition met, 0 reconcile failures. That is the fixture
@@ -941,6 +975,18 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       direction recorded: no further growth sweeps until a defined subset of the existing scratch range is
       authorised, and the slots written outside it are left untouched. **S1.3's slope stays open**, so this
       task and archive stay open.
+      → **TRANSFERRED AND CLOSED 2026-09-24 (tenth session).** The remainders now live in
+      `runtime-working-set-ownership`, **unchecked**: `S1.1`, `S1.3`, `S1.4`, `S1.5`, `S2b.3`, `S2b.5` (each
+      already carrying its own evidence and open status), plus the new **`S2b.7`** for the deferred
+      drain-advancement behavior. What is transferred with them: the finished census fixture
+      (`captures/census-final-03/`, `free_chunks=454`, attested, timestamped); the **stable post-restore
+      budget** (`post_restore_free_chunks=452` of 512 across three consecutive fresh boots, walk 512→480,
+      `N=29`); and the **scratch-range blocker** (N is the boot playback set so unselected recordings cannot
+      raise it; the approved scratch range is fully populated; a sweep outside it shrank the committed set
+      27 → 27 → 26 — a capacity/eviction finding, not a slope; slots written outside the range stay
+      untouched and no further sweeps run without an authorised subset). That evidence is recorded in
+      [`runtime-working-set-ownership/ARCHITECTURE-REVIEW.md`](../runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+      § A5.1 handoff. **This change claims none of those legs as passed.**
       *(Earlier note, kept:)* **S1.3 slope — a real capacity failure point found, but measured outside the approved range.**
       A second sweep into **empty** slots (`captures/s13-slope-02/`, track 3 slots 2–4, 4-bar takes) grew the
       payload set while the committed boot-playback set **shrank** (N 27 → 27 → 26): each new recording
@@ -1000,7 +1046,7 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       rows) and 11/11 matching playback cycles are the evidence, and 0 overflow rows rules out the stale-run
       signature. The base-preset recording failure remains a separately tracked harness/device interaction.
 
-- [ ] A5.3 **Documentation closeout.** Update `docs/Runtime/PROJECT_STATE.md`,
+- [x] A5.3 **Documentation closeout.** Update `docs/Runtime/PROJECT_STATE.md`,
       `docs/Runtime/CURRENT_WORK.md`, `docs/DELIVERABLE_TRACKING.md`, the
       `lazy-slot-hydration` main spec via the archive/sync step, and the affected guide
       (`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md` or the storage guide) so no durable doc still
@@ -1015,8 +1061,11 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       A2.1 request identity and named waits. A repo-wide grep finds **no remaining durable doc** asserting
       the removed transport-gated restore rule. **Pending (archive step):** the `lazy-slot-hydration` main
       spec sync and `docs/DELIVERABLE_TRACKING.md`, which land with A5.6. A3.7 is now taken for both shapes,
-      so the earlier reason to hold the sync (unverified device integration) no longer applies; the sync
-      waits only on A5.1's slope closing, which is the last open mandatory item.
+      so the earlier reason to hold the sync (unverified device integration) no longer applies, and A5.1 is
+      now a **documented transfer** rather than an open measurement, so the sync lands with A5.6.
+      → **DONE 2026-09-24 (tenth session).** `docs/DELIVERABLE_TRACKING.md` carries the archived scope and the
+      two deferrals; `PROJECT_STATE.md` and `CURRENT_WORK.md` carry the closing status; `BOOT_LOAD.md` states
+      the shipped rule; the `lazy-slot-hydration` main spec is synced by the archive step (A5.6).
 
 - [x] A5.4 **Decision log.** Append a `DEC-###` entry for the restore-liveness ruling (the request is
       the unit with identity and named waits, background **preparation** is admitted while playing and
@@ -1033,8 +1082,11 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       evidence table, so the DEC does not claim what the change has not shown. O1 (recording deferral)
       resolved by measurement as `waiting_capture`; O2 (per-set epoch) remains as the recorded residual.
 
-- [ ] A5.5 **Required-gate completeness (review finding 6).** Every **mandatory** gate in Packets A–D and
-      in the `runtime-working-set-ownership` handoff (A5.1) SHALL be **taken and green** before archive.
+- [x] A5.5 **Required-gate completeness (review finding 6).** Every **mandatory** gate in Packets A–D SHALL
+      be **taken and green** before archive. **The `runtime-working-set-ownership` handoff (A5.1) is
+      satisfied by documented transfer, not by completing the parent's measurements** (owner direction
+      2026-09-24): the remainders must be recorded **unchecked** in the receiving change with their evidence
+      and blocker, and this change must make no completion claim over them.
       **The only optional gate is A4.2's malformed-index device half** (it needs destructive-SD permission):
       it may be recorded unrun with that reason. Everything else is mandatory — including A5.2's content
       PASS, because this change's whole point is that it is reachable once the restored set is stable;
@@ -1054,15 +1106,21 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       | A3.8 Packet C | **taken + green** | native 2,344 / 1 skipped / 0 failures; A3.1–A3.6 suites re-run green; RAM1 `code 391,064 + padding 2,152`; A3.7 evidence for both shapes |
       | A4.2 Packet D device | **optional half unrun-with-reason** | healthy-index half **taken + green** (`sets/index.bin reconcile ok`, 0 unexpected); malformed half unrun — needs destructive-SD permission, the one optional gate |
       | A4.3 Packet D | **taken + green** | native 2,343/0, A4.1 4/4, RAM1 `code 391,000 + padding 2,216`, A4.2 status recorded |
-      | A5.1 runtime handoff | **OPEN** | census checkpoint done and device-verified; post-restore budget stable at 452/512 across three boots; **slope blocked** — approved scratch range (track 5 slot 1, track 6 slots 1–8) fully populated, and a sweep outside it evicted other committed slots |
+      | A5.1 runtime handoff | **taken + green (documented transfer)** | remainders `S1.1/S1.3/S1.4/S1.5/S2b.3/S2b.5` plus the new `S2b.7` sit **unchecked** in `runtime-working-set-ownership` with their evidence; transferred evidence in that change's `ARCHITECTURE-REVIEW.md` § A5.1 handoff; no completion claim made here |
       | A5.2 content PASS | **taken + green** | `captures/cc-03-playback/`: `result PASS`, 11/11 `inventory_equal` and `exact_order`, 0 missing/extra, hex `f3a33208` |
       | A5.3 documentation | **partial** | runtime docs updated; `BOOT_LOAD.md` no longer states the removed rule; main-spec sync held for A5.6 |
       | A5.4 decision log | **taken + green** | `DEC-082` recorded with per-clause evidence; the drain-advance device clause is explicitly marked NOT VERIFIED in the entry, so the record is complete and honest without pre-claiming A3.7 |
       | A5.6 archive | **blocked** | requires A5.5 with nothing open |
 
-      **The one remaining blocking condition:** **A5.1's runtime slope** (see its own entry) — A3.7 shape (b)
-      is now taken, so the packet gates are closed and only the runtime handoff keeps archive open.
-      **No mandatory gate is recorded as unrun without a reason, and none is reinterpreted.**
+      **Scope correction (2026-09-24, tenth session, owner direction):** the runtime measurements were
+      transferred back to `runtime-working-set-ownership` rather than completed here, so **no packet gate and
+      no handoff gate keeps archive open**. The delivered scope is: restore **preparation** progresses under
+      transport, requests carry identity and named waits, the census checkpoint is finished and
+      device-verified, content playback passes, and CLEAR's **permitted completion branch** is verified.
+      **Explicitly NOT delivered and NOT claimed:** drain-driven restore advancement and active-transport
+      commit safety — deferred to `runtime-working-set-ownership` **S2b.7** and bound by
+      `resumable-midi-boundary-playback-maintenance` task 3.3. **No mandatory gate is recorded as unrun
+      without a reason, and none is reinterpreted.**
 
       *History — why shape (b) was hard, kept for the record (the gate is now closed):* every payload slot is
       restored at boot, so no cold slot is left post-boot, and the route tried — clear-then-reload — aborted
