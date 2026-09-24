@@ -1044,3 +1044,41 @@ recorded `INCONCLUSIVE` with that reason rather than counted as shape (b).
 **Why this is not just another script variation:** the previous attempts failed because they asserted the
 *outcome* without first establishing the *inputs*. This design makes each input an explicit, sampled
 precondition, so a run that cannot hold them is diagnosable instead of ambiguous.
+
+## A3.7 shape (b) — taken through an intended entry point (2026-09-24, seventh session)
+
+`scripts/hitl_a37_shapeb_fixture.py` runs the shape with **reload-on-clear disabled** (the shipped
+firmware) and gates its verdict on the four preconditions. It found a fixture bug that had inverted an
+earlier reading: **`#CAP` lines are flushed from a PSRAM ring, so file order is not device-time order** — a
+ring line written at 10.6 s can appear after a prompt line written at 27.1 s. Every check now orders by
+device time (`#CAP,<micros>`), with the untimed `[StorageManager]` prints falling back to file position.
+
+### The passing run — `captures/a37fix-04/` (firmware = the committed tree, route **off**)
+
+| precondition | evidence |
+|---|---|
+| 1. target content exists immediately before CLEAR | track 5 slot 1, `target_length_bars_before_clear: 2` |
+| 2. a restore started and was unresolved at the edge | `RRQ,1,0` (track 2 slot 1) `queued` 8.232 s → **`running` 8.246 s** → **`waiting,waiting_commit_gate` 10.637 s** → `terminal,committed` only at **35.201 s** (after the 27.070 s CLEAR) |
+| 3. a save is owed | `[27.070] Clear waiting for deferred save completion` |
+| 4. another track audibly playing | track 6's take stopped with `[TRACK] Playback started @ tick 16` at 9.849 s, and no `ST,Track,PLAYING,STOPPED/EMPTY` before the CLEAR other than the CLEAR's own pre-drain stop at 27.068 s (excluded by a 0.5 s window) |
+
+**Outcome — the "completes" branch:** `[StorageManager] State saved successfully (v4).` →
+`[27.134] MIDI: Clear selected slot 1`; **0** `Clear aborted`, no named refusal, no `Persistence drain
+stuck`. `fixture-verdict.json`: all four preconditions `true`, `save_completed: true`.
+
+**Timing note:** the CLEAR at 27.070 s landed while the boot-scan's restore for track 2 slot 1 was still
+commit-gated, so no route change was needed — the intended boot-restore entry point held the shape.
+
+### Caveats recorded rather than smoothed over
+
+* **Precondition 2 is a named wait, not an SD-holding job.** At the edge the request was in
+  `waiting_commit_gate` — it had started, prepared, and was blocked at the commit gate — so it was *not*
+  holding the SD session, which is why the drain could complete rather than having to advance it. Whether
+  that satisfies "a restore in flight" for this gate is the owner's call; a strictly SD-holding
+  `LoadLoopJob` at the edge is a stronger condition this run does not prove.
+* **Precondition 4's evidence is sequence-based** because `ST,Track` carries no track index: a
+  `Playback started` after the other take, with no later stop. The fixture's run-time cross-check reported
+  `False` (its window was too narrow); the device-time sequence check reported `True`.
+* **The fixture is timing-sensitive and refuses to over-claim:** `captures/a37fix-01/02/03/05/` were
+  reported `INCONCLUSIVE` with the failing precondition named (e.g. `-05`: `target_length_bars_before_clear:
+  0`, so the take did not land). Those runs are not counted as shape (b).
