@@ -2910,6 +2910,29 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (third session) — the ~22 MB abort is diagnosed and fixed at its owner (`LoopEventStore`); `deferred-slot-restore-liveness` stays open.**
+`22369620 = 4 × 5,592,405` and `22369612 = 4 × 5,592,403` are a 4-byte-element vector: `LoopEventStore`'s
+`barFirstIndices_` (`std::vector<size_t, InternalHeapFirstAllocator<size_t>>`). `appendToTailChunk` and
+`rebuildBarIndex` both sized it from `event.tick / BAR_TICKS` with **no bound**, and
+`floor(0xFFFFFFFF / 768) = 5,592,405` matches the observed count exactly — a tick near `UINT32_MAX`, i.e. a
+torn/uninitialised value, not content. The index is rebuilt from chunk events after `clear()`/SD-load
+staging, so one corrupt tick sizes it in a single `resize`. **Fixed at the owner:** a 4096-bar ceiling
+(`MAX_INDEXED_TICKS = 4096 × BAR_TICKS`, far above the 64-bar target), `append` refusing a larger tick as
+`LoopEventStoreAppendDeny::TickOutOfRange` (named and logged, deliberately not silently clamped), and a
+defensive skip in `rebuildBarIndex` for adopted content. Reproducer red→green
+`test_out_of_range_tick_cannot_size_the_bar_index`; full native **2,344 / 1 skipped / 0 failures**;
+capture-serial SUCCESS `code 391,064 + padding 2,152`. Recorded in
+`runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § P1. **Open:** the corrupt tick's **producer** is
+not identified, and the obvious hypothesis is now **falsified** — with the route temporarily enabled, a
+bounded probe (`captures/cr-probe-01/`) cleared three populated slots and the reloads committed cleanly
+with no `out-of-range tick` refusal and no FATAL. The trigger is state-dependent (the a37b reproductions
+had a long record and its deferred save in flight at the CLEAR), so the next step reproduces with that
+record+save in flight. Side effect disclosed: clear-then-reload re-commits the slot, so the probe did not
+remove the track 3 slots 2-4 content. The reload route stays off in
+the change, so `deferred-slot-restore-liveness` A3.7 shape (b) and archive remain open. Its
+"clear-then-reload is the only reachable route" wording is corrected to "the route tried".
+
+
 **2026-09-24 (second session) — census checkpoint finished and verified; A2.1/A1.8 closed; A3.7 shape (b) blocked.**
 The **S1.3/S2b.3 post-restore census checkpoint** is done and fresh-boot device-verified
 (`captures/census-final-02/`): one timestamped Tier-A

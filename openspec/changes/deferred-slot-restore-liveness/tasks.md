@@ -783,8 +783,13 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       requested 22 MB in one `resize`. `LoopEventStore` now refuses an out-of-range tick by name and
       bounds the rebuild for adopted content, with a red→green reproducer
       (`test_out_of_range_tick_cannot_size_the_bar_index`); full native **2,344 / 1 skipped / 0 failures**,
-      capture-serial SUCCESS `code 391,064 + padding 2,152`. **The producer of the corrupt tick is not yet
-      identified**, so the reload route stays off in this change and shape (b) stays open. **Also
+      capture-serial SUCCESS `code 391,064 + padding 2,152`. **A bounded clear/reload probe then falsified
+      the obvious producer:** with the route temporarily enabled, clearing three populated slots queued
+      reloads that committed **cleanly**, with **no** `out-of-range tick` refusal and no FATAL
+      (`captures/cr-probe-01/`), so a clean clear-then-reload does **not** produce the near-`UINT32_MAX`
+      tick. The producer is therefore still unidentified and its trigger is state-dependent (the a37b
+      reproductions additionally had a long record and its deferred save in flight at the CLEAR). The
+      reload route stays off in this change and shape (b) stays open. **Also
       corrected:** "clear-then-reload is the only reachable route" is stronger than the evidence supports —
       it is the route tried; a controlled boot/background-restore fixture may exercise the gate another
       way, and that is not ruled out.
