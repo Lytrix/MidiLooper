@@ -68,7 +68,8 @@ instead of track 6 was a misreading of the 0-based walk indices and is withdrawn
 **S1.3 slope — capacity failure point found, measured outside the approved range.** A second sweep into
 empty slots (`captures/s13-slope-02/`, track 3 slots 2–4) grew the payload set while the committed
 boot-playback set **shrank** (N 27→27→26): each new recording evicted other committed payload slots
-(track 6 lost slots 7–8, then 6, then 4–5) and the census marker **stopped firing**. The approved scratch
+(track 6 lost slots 7–8, then 6, then 4–5). The marker read `None` only because the sweep closes at 10 s
+and the marker lands at ~11.8 s — a window artifact, withdrawn as evidence. The approved scratch
 range (track 5 slot 1, track 6 slots 1–8) was already fully populated, so the sweep wrote to **track 3
 slots 2–4, outside it** — disclosed in the change review; no SD delete/rename and no CLEAR, but removal
 needs the user's permission. **Growth sweeps are stopped** pending an extended scratch range or explicit

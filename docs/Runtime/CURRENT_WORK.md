@@ -2946,7 +2946,8 @@ the log shows `Selected track 6`.) Details: `deferred-slot-restore-liveness/REVI
 **S1.3 slope — capacity failure point found, outside the approved range (disclosed).** A second sweep into
 empty slots (`captures/s13-slope-02/`, track 3 slots 2–4) grew the payload set while the committed
 boot-playback set **shrank** (N 27→27→26): each recording evicted other committed payload slots (track 6
-lost slots 7–8, then 6, then 4–5) and the census marker **stopped firing**. The approved range (track 5
+lost slots 7–8, then 6, then 4–5). The marker's `None` is a window artifact (sweep closes at 10 s, marker
+lands ~11.8 s), withdrawn as evidence. The approved range (track 5
 slot 1, track 6 slots 1–8) was fully populated, so the sweep wrote to **track 3 slots 2–4, outside it**; no
 SD delete/rename and no CLEAR were used, but removal needs explicit permission. **Growth sweeps are stopped**
 pending an extended scratch range or clear permission.

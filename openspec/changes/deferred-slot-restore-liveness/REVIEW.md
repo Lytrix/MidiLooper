@@ -928,10 +928,16 @@ takes) did grow the payload set — but the **total committed boot-playback set 
 | step 1 | 27 | `(3,3)` | slots 1–5 |
 | step 2 | 26 | `(3,4)` | slots 1–3 |
 
-So each new recording **evicted other committed payload slots** (track 6 lost slots 7–8, then 6, then 4–5),
-and the `post_restore_census` **marker did not fire at all** in these boots (`post_restore_free=None`;
-`marker: []` at a 10 s boot wait). That is a genuine capacity/liveness failure point for
-`runtime-working-set-ownership`, but it is **confounded** by where it was measured.
+So each new recording **evicted other committed payload slots** (track 6 lost slots 7–8, then 6, then 4–5).
+That is a genuine capacity/eviction failure point for `runtime-working-set-ownership`.
+
+**Correction to my first reading of the missing marker.** I initially wrote that the
+`post_restore_census` marker "did not fire at all". That is **not** established: the sweep closes the port
+after `--boot-wait-s 10`, and the marker lands at **~11.8 s** in a comparable fresh boot
+(`census-final-03`), so `post_restore_free=None` here is a **window artifact**, not a readiness failure. The
+marker's absence is withdrawn as evidence; the eviction is not. Every slope-02 boot also logged
+`Track 6 loaded state: EMPTY` / `Track 7 loaded state: EMPTY` and `DIAG,lcr,skip,restore`, which is recorded
+as an observation (the same markers the earlier S1.3 blocker named) without being claimed as the cause.
 
 **Disclosure (device write outside the approved range).** The approved scratch range on this device is
 track 5 slot 1 (A3.7) and track 6 slots 1–8 (S1.3), and **track 6 slots 1–8 were already fully populated**,
