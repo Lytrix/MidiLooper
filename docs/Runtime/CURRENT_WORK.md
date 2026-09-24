@@ -2910,6 +2910,21 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (seventh session) — the A3.7 shape-(b) fixture is built and a passing run is recorded (pending owner confirmation).**
+`scripts/hitl_a37_shapeb_fixture.py` runs shape (b) with **reload-on-clear disabled** and gates its verdict
+on the four preconditions, through the intended boot-restore entry point. Passing run
+`captures/a37fix-04/`: all four held — target content 2 bars before the press; `RRQ,1,0` (track 2 slot 1)
+`running` 8.246 s → `waiting_commit_gate` 10.637 s → committed only at 35.201 s (after the 27.070 s CLEAR);
+`Clear waiting for deferred save completion`; `Playback started` at 9.849 s with no intervening stop — and
+the drain **completed** (`State saved successfully (v4)` → `Clear selected slot 1`), the "completes" branch
+A3.7 allows. **Fixture bug fixed:** `#CAP` lines flush from a PSRAM ring, so file order is not device-time
+order; every check now orders by device time. **Caveats:** the restore was in the named
+`waiting_commit_gate` wait rather than holding the SD session (owner's call whether that satisfies "restore
+in flight"), precondition 4's evidence is sequence-based, and runs `a37fix-01/02/03/05` were `INCONCLUSIVE`
+with the failing precondition named and are not counted. No firmware changed this session; the route stays
+disabled and track 3 was not touched.
+
+
 **2026-09-24 (sixth session) — read-only trace: `committed` does not imply nonempty content; reload-on-clear stays disabled.**
 The "restored yet empty" mismatch is answered **read-only** (no device mutation; track 3 untouched).
 `commitLoadLoopJobPublish` records `Committed` unconditionally after `applyLoadedLoopSlotBodyCommit`, and
