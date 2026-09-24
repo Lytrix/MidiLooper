@@ -1013,3 +1013,34 @@ stays open while a fixture is built through an **intended** restore entry point.
 A shape-(b) fixture must assert, in order: the target content **exists immediately before** CLEAR; a restore
 has **actually started** (an active `LoadLoopJob`, not merely a queued request); a save is **owed**; and
 another track is **audibly playing**. Until it can assert all four, no further device attempt is warranted.
+
+### Next fixture design for A3.7 shape (b) — an intended entry point, with self-asserted preconditions
+
+Owner direction: keep reload-on-clear **disabled**, leave track 3 untouched, and make no further device
+attempt until the fixture can assert its own preconditions. The intended entry point is therefore the **boot
+restore queue** (`enqueueRemainingLoopSlotRestores` → the deferred load frame), which is the change's own
+liveness mechanism, not a route that has to be enabled.
+
+**Shape.** Fresh boot; while the boot admission scan is still servicing payload slots, record a short take on
+the authorized scratch slot (track 5 slot 1) so its deferred save is owed and the scratch track is left
+audibly playing; long-press CLEAR on the target slot so the drain runs with a boot `LoadLoopJob` still
+active. The CLEAR target must be a slot whose content exists and that is **not** the save source.
+
+**The fixture must assert, in order, and fail loudly if any is false** — a miss is `INCONCLUSIVE`, never a
+pass:
+
+| # | Precondition | Read-only observation |
+|---|---|---|
+| 1 | target content exists **immediately before** CLEAR | the target's loop length from the focus-change CC feedback (`Sent loop length CC feedback: N bars`) or a `!CAPTURE_CONTENT` row count > 0, sampled in the same second as the press |
+| 2 | a restore has **actually started** (not merely queued) | an `RRQ,<t>,<s>,…,running` line or an active `LoadLoopJob` for some slot at the CLEAR instant — sampled from the capture, not assumed. **A `queued` request does not satisfy this** (that was the fourth-session miss) |
+| 3 | a save is **owed** | `Clear waiting for deferred save completion` is emitted, i.e. `hasDeferredSaveWork()` was true at the press |
+| 4 | another track is **audibly playing** | a track other than the CLEAR target is in `PLAYING` at the press (`ST,Track,…,PLAYING`), and the CLEAR does not stop it |
+
+**Verdict:** completion, or the named `waiting_commit_gate` / `waiting_job_capacity` wait, with **0
+unexplained `Clear aborted`** — a named refusal is an expected outcome while task 3.3 is open. If
+precondition 2 cannot be held (the boot restore window is short and the scan may finish first), the run is
+recorded `INCONCLUSIVE` with that reason rather than counted as shape (b).
+
+**Why this is not just another script variation:** the previous attempts failed because they asserted the
+*outcome* without first establishing the *inputs*. This design makes each input an explicit, sampled
+precondition, so a run that cannot hold them is diagnosable instead of ambiguous.
