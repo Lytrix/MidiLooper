@@ -10,6 +10,9 @@ _FIRMWARE_BOUNDARY_SUITES = {
     "test_storage_drain_restore",
     # Packet D (A4.1): the boot catalog reconcile outcome over the in-memory card.
     "test_storage_reconcile_index",
+    # Packet C (A3.4a): the real MIDI/controller dispatch route, which pulls the button manager and the
+    # configured action table.
+    "test_drain_reentry_callback_safety",
 }
 if env.get("PIOTEST_RUNNING_NAME") in _FIRMWARE_BOUNDARY_SUITES:
     env.Append(CPPPATH=["$PROJECT_DIR/test/test_support/firmware"])

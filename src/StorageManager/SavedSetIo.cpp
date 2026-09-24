@@ -336,6 +336,16 @@ bool patchCurrentSetAnchor() {
 }
 
 bool saveNewSetInternal(const LooperState& state, char* savedSetFolderOut, size_t outSize) {
+    // A3.4a: a drain owns the persistence state, so a save-new-set must refuse **before** it changes
+    // anything about the current set or the catalog. Without this it could call the drain re-entrantly
+    // (which now refuses by name) and then treat that refusal as a reason to keep going, or write a new
+    // set while the outer drain still has the previous one's content in flight.
+    if (isPersistenceDrainInProgress()) {
+        Serial.print("[StorageManager] Save new set refused: persistence ");
+        Serial.print(kDrainInProgressRefusalReason);
+        Serial.println(" in progress; no set written");
+        return false;
+    }
     if (!CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot) ||
         !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kSetsRoot) ||
         !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kSetsArchiveDir) ||
@@ -404,6 +414,15 @@ bool saveNewSetInternal(const LooperState& state, char* savedSetFolderOut, size_
 }
 
 bool copySavedSetIntoCurrent(const char* sourceSetDir) {
+    // A3.4a: a set replacement changes the set identity that every outstanding restore request belongs
+    // to. The outer drain holds an identity for the **current** set, so the replacement is refused
+    // before the first catalog/copy side effect instead of invalidating the drain's target underneath it.
+    if (isPersistenceDrainInProgress()) {
+        Serial.print("[StorageManager] Load set refused: persistence ");
+        Serial.print(kDrainInProgressRefusalReason);
+        Serial.println(" in progress; current set untouched");
+        return false;
+    }
     if (!CurrentSetStorage::ensureDirectory(PersistenceLayout::kRoot) ||
         !CurrentSetStorage::ensureDirectory(CurrentSetStorage::kCurrentSetDir) ||
         !CurrentSetStorage::ensureDirectory(CurrentWorkspaceStorage::kCurrentTempDir) ||

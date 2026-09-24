@@ -52,9 +52,11 @@ bool sequencerRunning = false;
 // The runtime's own explicit-request / background-fill entry points live beside the SD boot load, not
 // in the load-job TU: without them the suite could only reach the queue through internal helpers.
 #include "../../src/StorageManager.cpp"
-// Packet A's C5 fixture and Packet C both drive the **real blocking persistence drain**, so its TU is
-// linked here rather than modelled by a test-only stand-in.
-#include "../../src/StorageManager/SyncDrainSaveState.cpp"
+// A3.4a: the single-owner drain guard has its own translation unit, so the guard's mechanical contract is
+// verifiable here without the drain scheduler's dependency closure. The **real blocking drain** is linked
+// by `test_storage_drain_restore`; this suite deliberately does not pull its scheduler closure in.
+#include "../../src/StorageManager/Internal.cpp"
+#include "../../src/StorageManager/PersistenceDrainGuard.cpp"
 
 void setUp() {
   StorageManagerInternal::clearPendingLoopSlotRestoresAtBoot();
@@ -993,6 +995,61 @@ void test_sd_in_place_patch_keeps_the_body_and_does_not_append() {
   TEST_ASSERT_EQUAL_UINT8(0x5A, SD.files[metaPath][CurrentSetStorage::kLastActiveUnixOffset + 4]);
 }
 
+
+// ---------------------------------------------------------------------------
+// Packet C / A3.4a — the single-owner drain guard (mechanical contract).
+//
+// The owner is a pure state holder, so this suite pins its **scope** contract directly: one owner at a
+// time, a non-owning scope cannot release the owner, and the predicate reads false once the owner exits.
+// The nested **drain entry point** refusal and the callback-boundary half (the real MIDI dispatch route)
+// are pinned by `test_drain_reentry_callback_safety`, which links the drain owner.
+// ---------------------------------------------------------------------------
+
+/// One owner at a time: a nested scope must not acquire, and its destructor must not release the outer
+/// scope's guard. This is the state a nested CLEAR's drain call sees.
+void test_a34a_a_nested_scope_cannot_acquire_or_release_the_owner() {
+  StorageManagerInternal::PersistenceDrainScope owner;
+  TEST_ASSERT_TRUE_MESSAGE(owner.acquired(), "the first scope must take ownership");
+  TEST_ASSERT_TRUE(StorageManagerInternal::isPersistenceDrainInProgress());
+  {
+    StorageManagerInternal::PersistenceDrainScope nested;
+    TEST_ASSERT_FALSE_MESSAGE(nested.acquired(),
+                              "a second scope must not take ownership while one is held");
+  }
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::isPersistenceDrainInProgress(),
+                           "a non-owning scope's destructor must not release the outer guard");
+}
+
+/// The guard is released on every exit and a later drain can take it -- the shape a second CLEAR after a
+/// refusal depends on.
+void test_a34a_guard_is_released_and_a_later_drain_can_take_it() {
+  TEST_ASSERT_FALSE(StorageManagerInternal::isPersistenceDrainInProgress());
+  {
+    StorageManagerInternal::PersistenceDrainScope first;
+    TEST_ASSERT_TRUE(first.acquired());
+    TEST_ASSERT_TRUE(StorageManagerInternal::isPersistenceDrainInProgress());
+  }
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::isPersistenceDrainInProgress(),
+                            "the exit must release the guard whatever the outcome");
+  {
+    StorageManagerInternal::PersistenceDrainScope second;
+    TEST_ASSERT_TRUE_MESSAGE(second.acquired(), "a later drain must be able to take the guard");
+  }
+  TEST_ASSERT_FALSE(StorageManagerInternal::isPersistenceDrainInProgress());
+}
+
+/// The predicate is false whenever no drain owns the state, which is what lets the newly guarded
+/// destructive call sites fall through to their own logic instead of refusing everything.
+void test_a34a_guard_predicate_is_false_without_an_owner() {
+  TEST_ASSERT_FALSE(StorageManagerInternal::isPersistenceDrainInProgress());
+  {
+    StorageManagerInternal::PersistenceDrainScope owner;
+    TEST_ASSERT_TRUE(owner.acquired());
+    TEST_ASSERT_TRUE(StorageManagerInternal::isPersistenceDrainInProgress());
+  }
+  TEST_ASSERT_FALSE(StorageManagerInternal::isPersistenceDrainInProgress());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_restore_queue_orders_by_priority_and_peek_returns_the_head);
@@ -1030,5 +1087,9 @@ int main(int, char**) {
   // SD write-mode semantics: the stale-temp corruption fix, and the in-place patch contract.
   RUN_TEST(test_sd_rewrite_does_not_inherit_a_stale_temp_body);
   RUN_TEST(test_sd_in_place_patch_keeps_the_body_and_does_not_append);
+  // Packet C / A3.4a — the single-owner drain guard (mechanical contract).
+  RUN_TEST(test_a34a_a_nested_scope_cannot_acquire_or_release_the_owner);
+  RUN_TEST(test_a34a_guard_is_released_and_a_later_drain_can_take_it);
+  RUN_TEST(test_a34a_guard_predicate_is_false_without_an_owner);
   return UNITY_END();
 }

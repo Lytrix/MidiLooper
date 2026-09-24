@@ -108,7 +108,17 @@ class SDClass {
 
   File open(const char* path, int mode) {
     auto found = files.find(path);
-    if (mode == FILE_WRITE || mode == FILE_WRITE_BEGIN) {
+    // Classify by the **flags that carry the meaning**, not by the whole integer. The stub used to
+    // compare the raw argument, so a caller passing `FILE_WRITE | O_CREAT` -- the only express-create
+    // site, `MidPassChunkPersist`'s seal journal -- matched neither branch, fell through to the
+    // existing-file path, and got an **invalid handle** on a card where the journal did not exist yet.
+    // Masking to `FILE_WRITE_BEGIN` does not work either: this stub's fallback macros (1 and 2) and the
+    // native Arduino core's (`0x100` / a `0x02` flag) disagree, and the guard is `#ifndef`-based, so the
+    // numeric value depends on include order. `FILE_WRITE` means append (`O_AT_END`); a create/truncate
+    // open means start at 0.
+    const bool appendMode = (mode & O_AT_END) != 0;
+    const bool createMode = !appendMode && (mode & O_CREAT) != 0;
+    if (appendMode || createMode || mode == FILE_WRITE || mode == FILE_WRITE_BEGIN) {
       // Device-faithful write modes, and the reason this emulation exists.
       //
       // The Teensy SD class maps `FILE_WRITE` to `O_RDWR | O_CREAT | O_AT_END` (SD.h) -- it
@@ -125,7 +135,7 @@ class SDClass {
       }
       File handle;
       handle.bytes = &found->second;
-      handle.pos = mode == FILE_WRITE ? found->second.size() : 0;
+      handle.pos = appendMode ? found->second.size() : 0;
       handle.isOpen = true;
       handle.writable = true;
       return handle;
