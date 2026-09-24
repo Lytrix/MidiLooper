@@ -2910,6 +2910,23 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (ninth session) — A3.7 (both shapes) and A3.8 are CLOSED; A5.1's slope is the last open mandatory item.**
+Owner direction accepted the priority-bypass completion as the **completes** branch. Narrow record: **CLEAR
+completed through workspace-save priority while a started restore remained commit-gated**
+(`captures/a37fix-04/`: `track2/slot1/gen0/epoch0` observed `running` 8.246 s → unresolved `waiting_commit_gate`
+at the 27.070 s edge → committed 35.201 s; channel 6 emits 9 note events before and 6 after the drain,
+target channel 5 emits 0 after; outcome `State saved successfully (v4)`). The analyser was corrected to
+iterate **chronologically** (device-time sorted, not file order), key transitions by the **full request
+identity**, require an **observed `running`**, exclude the control channel from playback attribution, and gate
+on the outcome (a capture-block refusal is not shape (b)); `a37fix-01/03/05` are INCONCLUSIVE and not counted.
+**A3.8 closed:** native 2,344 / 1 skipped / 0 failures, A3.1–A3.6 suites green (`test_storage_manager_load`
+33/33, `test_drain_reentry_callback_safety` 6/6, `test_storage_drain_restore` 6/6,
+`test_persistence_sync_drain_budget` 15/15), RAM1 `code 391,064 + padding 2,152`, A3.7 evidence for both
+shapes. **Not claimed:** drain-driven restore advancement or active-transport commit safety —
+`resumable-midi-boundary-playback-maintenance` **task 3.3** stays open. **A5.1 remains the last open mandatory
+item** (slope blocked on the scratch range); archive stays gated.
+
+
 **2026-09-24 (eighth session) — the two A3.7 shape-(b) review issues are resolved; the gate stays open by owner direction.**
 (1) *Why the drain completed with a commit-waiting restore:* not an absent session —
 `deferredSaveBlockedByActiveSlotLoadSd()` is `SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile()` and a

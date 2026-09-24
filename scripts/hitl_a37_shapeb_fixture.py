@@ -46,7 +46,7 @@ from hitl.control_constants import (  # noqa: E402
 MIDI_CLOCK = 0xF8
 MIDI_STOP = 0xFC
 UPTIME_RE = re.compile(r"^\[(\d+\.\d+)\]")
-RRQ_RE = re.compile(r"RRQ,(\d+),(\d+),\d+,\d+,(\w+),\w+,(\w+)")
+RRQ_RE = re.compile(r"RRQ,(\d+),(\d+),(\d+),(\d+),(\w+),(\w+),(\w+)")
 LENGTH_RE = re.compile(r"Sent loop length CC feedback: (?:length=0|(\d+) bars)")
 
 
@@ -199,94 +199,130 @@ def device_time(line: str) -> float | None:
 MO_RE = re.compile(r"^#CAP,(\d+),MO,(\d+),(\d+),(\d+),(\d+)")
 
 
-def analyse_log(path: Path, target_track_1based: int) -> dict[str, object]:
-    """Analyse one captured run read-only.
+MO_RE = re.compile(r"^#CAP,(\d+),MO,(\d+),(\d+),(\d+),(\d+)")
 
-    Ordering is by **device time**, never file order: `#CAP` lines are flushed from a PSRAM ring, so a
-    ring line written at 10.6 s can appear after a prompt line written at 27.1 s. Lines without a device
-    time (the direct `[StorageManager]` prints) fall back to their file position relative to the drain
-    line, whose order is reliable.
 
-    Playback attribution uses the **MIDI output channel**: every track sends on its own channel, so an
-    `MO` note on a channel other than the target's is that other track playing. `ST,Track` carries no track
-    index and cannot be used for this.
+def analyse_log(path: Path, target_track_1based: int, num_tracks: int = 8) -> dict[str, object]:
+    """Analyse one captured run read-only, in **chronological** order.
+
+    Two ordering facts drive this:
+      * `#CAP` lines are flushed from a PSRAM ring, so file order is not time order -- a ring line written
+        at 10.6 s can appear after a prompt line written at 27.1 s. Request transitions and the target-length
+        reading must therefore be iterated in device-time order, not merely partitioned by timestamp.
+      * The direct `[StorageManager]` prints carry no device time; they fall back to file position relative
+        to the drain line, whose order is reliable.
+
+    Precondition 2 requires an **observed `running` transition for the same full request identity**
+    `(track, slot, requestGeneration, setEpoch)`: a named wait alone does not prove the restore ever started,
+    and attribution without the generation/epoch could match a superseded request. Playback attribution uses
+    the **MIDI output channel** (`MO`), because `ST,Track` carries no track index.
     """
     raw = [l.rstrip("\n") for l in path.read_text(encoding="utf-8", errors="replace").splitlines()]
-    timed = [(device_time(l), l) for l in raw]
-
-    clear_index = clear_time = None
-    for i, (t, l) in enumerate(timed):
+    clear_file_index = None
+    for i, l in enumerate(raw):
         if "Clear waiting for deferred save completion" in l:
-            clear_index, clear_time = i, (t if t is not None else 0.0)
+            clear_file_index = i
             break
-    if clear_index is None:
+    if clear_file_index is None:
         return {"error": "no CLEAR drain line found; the CLEAR did not take the drain path"}
 
-    def is_after(i: int, t: float | None) -> bool:
-        return (i > clear_index) if t is None else (t > clear_time)
+    # Chronological event list: device time where available, stable within equal times.
+    events = sorted(((t, i, l) for i, (t, l) in enumerate((device_time(x), x) for x in raw)
+                     if t is not None), key=lambda e: (e[0], e[1]))
+    clear_time = None
+    for t, i, l in events:
+        if i == clear_file_index:
+            clear_time = t
+            break
+    if clear_time is None:  # the drain line had no device time; fall back to the nearest earlier event
+        clear_time = max((t for t, i, _ in events if i < clear_file_index), default=0.0)
 
-    # (1) target content immediately before the press: the last loop-length feedback on the target.
+    before = [(t, i, l) for t, i, l in events if (t < clear_time) or (t == clear_time and i <= clear_file_index)]
+    after = [(t, i, l) for t, i, l in events if (t, i) not in {(b[0], b[1]) for b in before}]
+
+    # (1) target content immediately before the press, in chronological order.
     last_len = None
-    for i, (t, l) in enumerate(timed):
-        if is_after(i, t):
-            continue
+    for t, i, l in before:
         m = LENGTH_RE.search(l)
         if m:
             last_len = int(m.group(1)) if m.group(1) else 0
     content_exists = bool(last_len and last_len > 0)
 
-    # (2) a restore that started and was unresolved at the edge. `running` or a named `waiting_*` both
-    #     prove it started; a merely `queued` request does not.
-    open_requests: dict[tuple[int, int], str] = {}
-    for i, (t, l) in enumerate(timed):
-        if is_after(i, t):
-            continue
+    # (2) request identity and state, chronological, keyed by the full identity.
+    seen_running: set[tuple[int, int, int, int]] = set()
+    open_requests: dict[tuple[int, int, int, int], str] = {}
+    for t, i, l in before:
         m = RRQ_RE.search(l)
         if not m:
             continue
-        key = (int(m.group(1)), int(m.group(2)))
-        state = m.group(3)
+        ident = (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)))
+        state, wait, terminal = m.group(5), m.group(6), m.group(7)
         if state == "running":
-            open_requests[key] = "running"
+            seen_running.add(ident)
+            open_requests[ident] = "running"
         elif state == "waiting":
-            w = re.search(r",waiting,([a-z_]+),", l)
-            open_requests[key] = w.group(1) if w else "waiting"
+            open_requests[ident] = wait
         elif state == "terminal":
-            open_requests.pop(key, None)
+            open_requests.pop(ident, None)
+    # started AND unresolved: an observed `running` for an identity with no terminal before the press.
+    unresolved = {k: v for k, v in open_requests.items() if k in seen_running}
+    not_started = {k: v for k, v in open_requests.items() if k not in seen_running}
 
-    # (4) another track audibly playing, attributed by MIDI output channel. Require a *non-target* channel
-    #     to emit notes both before and after the drain, so it is playing across the CLEAR edge; the
-    #     target's channel must not resume. `MidiEvent.channel` is 1-based, and `MO` prints it verbatim.
+    # (4) another track playing across the edge, attributed by MIDI output channel. Only real track
+    #     channels count: the control channel (16) also carries `MO` traffic (button/CC echoes) and is not
+    #     a track, and the target's own channel is excluded by definition.
     target_channel = target_track_1based
+    control_channel = 16
     notes_before: dict[int, int] = {}
     notes_after: dict[int, int] = {}
-    for i, (t, l) in enumerate(timed):
+    after_keys = {(a[0], a[1]) for a in after}
+    for t, i, l in before + after:
         m = MO_RE.match(l)
-        if not m or int(m.group(2)) not in (128, 144):   # NoteOff / NoteOn only
+        if not m or int(m.group(2)) not in (128, 144):
             continue
         ch = int(m.group(3))
-        (notes_after if is_after(i, t) else notes_before)[ch] =             (notes_after if is_after(i, t) else notes_before).get(ch, 0) + 1
-    other_channels = sorted((ch for ch in notes_before if ch != target_channel
-                             and notes_after.get(ch, 0) > 0))
-    other_playing = len(other_channels) > 0
-    target_resumed = notes_after.get(target_channel, 0) > 0
+        if ch == control_channel or ch > num_tracks:
+            continue
+        bucket = notes_after if (t, i) in after_keys else notes_before
+        bucket[ch] = bucket.get(ch, 0) + 1
+    other_channels = sorted(ch for ch in notes_before
+                            if ch != target_channel and notes_after.get(ch, 0) > 0)
+    control_notes_before = 0  # reported implicitly by exclusion; kept out of the verdict
 
+    def ident_str(k: tuple[int, int, int, int]) -> str:
+        return f"track{k[0]+1}/slot{k[1]+1}/gen{k[2]}/epoch{k[3]}"
+
+    after_untimed = [l for i, l in enumerate(raw) if i > clear_file_index]
+    refused = [l for l in after_untimed if "Clear refused" in l]
+    completed = any("State saved successfully" in l for l in after_untimed)
+    # A3.7 shape (b) accepts completion or the named commit-gate / job-capacity wait. A capture-block
+    # refusal (`transport_active`) means a track was recording, which is not the shape under test.
+    accept_wait = any(("waiting_commit_gate" in l or "waiting_job_capacity" in l) for l in refused)
+    if completed:
+        outcome = "completed"
+    elif accept_wait:
+        outcome = "named_wait"
+    elif refused:
+        outcome = "refused_other"
+    else:
+        outcome = "unknown"
     return {
         "clear_drain_at_s": clear_time,
         "content_exists_before_clear": content_exists,
         "target_length_bars_before_clear": last_len,
-        "restore_started_before_clear": len(open_requests) > 0,
-        "open_restore_requests_at_clear": {f"{t+1}/{s+1}": v for (t, s), v in open_requests.items()},
+        "restore_started_before_clear": len(unresolved) > 0,
+        "unresolved_requests": {ident_str(k): v for k, v in unresolved.items()},
+        "open_but_never_ran_requests": {ident_str(k): v for k, v in not_started.items()},
         "save_owed": True,   # reaching the drain line is the evidence: handleClearTrack only drains if owed
-        "other_track_playing": other_playing,
+        "other_track_playing": len(other_channels) > 0,
         "other_track_channels_notes_before": {ch: notes_before[ch] for ch in other_channels},
         "other_track_channels_notes_after": {ch: notes_after[ch] for ch in other_channels},
         "target_channel": target_channel,
         "target_channel_notes_after_clear": notes_after.get(target_channel, 0),
-        "save_completed": any("State saved successfully" in l for l in
-                              [x for i, (t, x) in enumerate(timed) if is_after(i, t)]),
-        "named_wait": [l for i, (t, l) in enumerate(timed) if is_after(i, t) and "Clear refused" in l][:3],
-        "clear_aborted": [l for i, (t, l) in enumerate(timed) if is_after(i, t) and "Clear aborted" in l][:3],
+        "save_completed": completed,
+        "outcome": outcome,
+        "named_wait": refused[:3],
+        "clear_aborted": [l for l in after_untimed if "Clear aborted" in l][:3],
     }
 
 
@@ -301,6 +337,7 @@ def main() -> int:
     ap.add_argument("--other-bars", type=float, default=2.0)
     ap.add_argument("--other-channel", type=int, default=6)
     ap.add_argument("--midi-channel", type=int, default=5)
+    ap.add_argument("--tracks", type=int, default=8, help="Track count for MO channel attribution.")
     ap.add_argument("--bpm", type=float, default=120.0)
     ap.add_argument("--record-bars", type=float, default=2.0)
     ap.add_argument("--start-s", type=float, default=3.0,
@@ -314,11 +351,16 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.analyse_log is not None:
-        result = analyse_log(args.analyse_log, args.scratch_track)
+        result = analyse_log(args.analyse_log, args.scratch_track, args.tracks)
         print(json.dumps(result, indent=2))
         pre = [result.get("content_exists_before_clear"), result.get("restore_started_before_clear"),
                result.get("save_owed"), result.get("other_track_playing")]
-        print("ALL FOUR HELD" if all(pre) else "PRECONDITIONS NOT HELD")
+        if not all(pre):
+            print("PRECONDITIONS NOT HELD")
+        elif result.get("outcome") not in ("completed", "named_wait"):
+            print(f"PRECONDITIONS HELD BUT OUTCOME={result.get('outcome')!r} -> NOT SHAPE (b)")
+        else:
+            print(f"SHAPE (b) TAKEN: outcome={result.get('outcome')}")
         return 0
 
     out_dir: Path = args.out_dir.resolve()
@@ -417,7 +459,7 @@ def main() -> int:
         out.send(mido.Message.from_bytes([MIDI_STOP]))
         time.sleep(1.0)
 
-        result = analyse_log(out_dir / "session.log", args.scratch_track)
+        result = analyse_log(out_dir / "session.log", args.scratch_track, args.tracks)
         result["track"] = args.scratch_track
         result["slot"] = args.scratch_slot
         result["other_track_playing_runtime_crosscheck"] = other_playing
@@ -433,11 +475,15 @@ def main() -> int:
         print("[a37fix] --- verdict ---")
         for k, v in result.items():
             print(f"    {k}: {v}")
+        acceptable = result.get("outcome") in ("completed", "named_wait")
         if not all(preconditions):
             print("[a37fix] INCONCLUSIVE: the fixture could not hold all four preconditions "
                   "(no shape-(b) claim)")
+        elif not acceptable:
+            print(f"[a37fix] INCONCLUSIVE: preconditions held but the outcome was "
+                  f"{result.get('outcome')!r}, not completion or the commit-gate/job-capacity wait")
         else:
-            print("[a37fix] preconditions held: verify completion or the named wait above")
+            print(f"[a37fix] SHAPE (b) TAKEN: preconditions held; outcome={result.get('outcome')}")
     finally:
         out.close()
         log.close()
