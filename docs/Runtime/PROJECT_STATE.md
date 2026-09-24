@@ -1,13 +1,14 @@
 # Project state (execution context)
 
-**2026-09-24 (thirteenth session) — the restored-library instability gets an owner: `restored-library-stability` PROPOSED, planning complete, read-only Packet A starts immediately.**
+**2026-09-24 (thirteenth session) — the restored-library instability gets an owner: `restored-library-stability` PROPOSED, planning complete, Packet A (observation-only firmware + read-only analysis) starts immediately.**
 
 Owner direction: own the instability instead of running another drain test, because it blocks the
 measurements and the later runtime stages. **Opened** `openspec/changes/restored-library-stability/` — proposal,
 design, a `lazy-slot-hydration` spec delta and tasks; `openspec validate` clean; **no implementation started**.
-**Scope:** pre-register the four-class attribution (**catalog omission / restore refusal / intentional
-eviction / content loss**) as a **nullable** attribution separate from observation — `empty/not applicable`,
-`pending`, `ambiguous` and `unknown` are valid outcomes — and require evidence with stated precedence; add a
+**Scope:** pre-register the four-class historical cause (**catalog omission / restore refusal / intentional
+eviction / content loss**) as a **nullable** attribution kept separate from the observed **current state**
+(`empty` / `populated` / `pending`) — `empty` is never a cause; `pending`, `ambiguous` and `unknown` are valid
+causes — and require evidence with stated precedence; add a
 per-slot **observed-state** inventory (SD payload + token, boot enumeration, restore request state/wait/terminal
 with full identity, committed content, selection) reporting **four distinct quantities** with an explicit
 observation **window** (payload inventory; initial playback-required set; observed restore completions;
@@ -43,10 +44,29 @@ inactive), so a waiting request suppresses it. A bounded **on-demand** snapshot 
 of those gates, with incremental collection, snapshot consistency and capture framing; the settled census is
 kept for settled memory figures.
 (3) **The classifier could not truthfully classify every slot:** observation is now separate from a
-**nullable** attribution (`empty/not applicable`, `pending`, `ambiguous`, `unknown`), with precedence, full
-request identity and completeness, and no single-snapshot historical claims.
+**nullable historical cause** (the observed current state carries `empty` / `populated` / `pending`; the cause
+carries the four classes plus `pending`, `ambiguous`, `unknown`), with precedence, full
+request identity and completeness, and no single-snapshot historical claims. **(Corrected again in round 2 —
+see the state/cause split below.)**
 (4) **The fixture gate did not establish stability:** stability is now proven by a **complete per-slot manifest
-comparison** across boots, and any unexplained difference is a failure. **Read-only attribution may proceed;
+comparison** across boots, and any unexplained difference is a failure.
+
+**G2 second round 2026-09-24: still BLOCKED on two remaining contracts, now corrected — no broader redesign.**
+(a) **The classifier had contradictory mandatory outcomes:** an absent payload with no request and no history had
+to be both `empty/not applicable` and `unknown`. The two axes are now explicit and separate — **observed current
+state** (`empty` / `populated` / `pending`, a set) versus a **nullable historical cause** — with `empty` never a
+cause, a prior inventory establishing only the *disappearance* (cause stays `unknown` unless an explicit event
+exists), and a required single test using exactly the overlapping input. (b) **The incremental observation had no
+ownership or invalidation contract:** it is now owned by `StorageManager` and serviced at a declared **existing**
+per-turn service point (no new thread/timer), respects the existing **SD-session admission**, and **invalidates or
+restarts** the affected observation when a slot's request generation advances or the set epoch changes — never
+combining fields from different generations and never retaining a content reference across slices; unavailable
+fields stay `unknown` while the waiting request is still named, and a native **mutation-between-slices** test is
+required. Two tightenings: task 3.1 defines the **progress measurement interval as inside the drain call**
+(`restoreProgressCounter()` sampled immediately before entry and after return), so an urgent-save discharge alone
+does **not** check off S2b.7; and Packet A is renamed **observation-only firmware and read-only analysis**, with
+its execution-packet requirement made unambiguous (mandatory for 1.2/1.3, not for the pure analysis tasks).
+**Observation-only attribution may proceed;
 the corrected measurement definitions come first, because they may explain part of the apparent instability
 without a firmware fix.**
 
@@ -3235,15 +3255,18 @@ See [`docs/BRANCHING.md`](../BRANCHING.md).
    floor). **No *currently eligible* native task remains open in this change** — the stage order is not
    bypassed merely because hardware evidence is blocked.
 2. **`restored-library-stability`** — **PROPOSED 2026-09-24, planning complete, `openspec validate` clean,
-   nothing implemented; read-only Packet A can start immediately.** It owns the instability that blocks (1):
+   nothing implemented; Packet A (observation-only firmware + read-only analysis) can start immediately.** It owns the instability that blocks (1):
    the set of slots observed committed after a reboot is not reproducible **as measured**. It reports a
    per-slot observed state (SD payload + token, boot enumeration, request state/wait/terminal with full
    identity, committed content, selection) with **four distinct quantities** and an explicit observation
-   **window**, through a **bounded on-demand snapshot** that does not depend on the settled census gates; it
-   attributes with a **nullable** cause (`empty/not applicable`, `pending`, `catalog omission`, `restore
-   refusal`, `intentional eviction`, `content loss`, `ambiguous`, `unknown`) with evidence and precedence.
+   **window**, through a **bounded on-demand observation** with a declared owner, service point, SD-read
+   admission and an **invalidation/restart** rule on request-generation or set-epoch change, independent of the
+   settled census gates; the observed **current state** (`empty` / `populated` / `pending`) is reported
+   **separately** from a **nullable historical cause** (`catalog omission`, `restore
+   refusal`, `intentional eviction`, `content loss`, `ambiguous`, `unknown`) with evidence and precedence —
+   `empty` is never a cause.
    One repeatable fixture inside the already-approved scratch range (track 5 slot 1, track 6 slots 1–8),
-   stability proven by a **complete per-slot manifest comparison**; read-only first; any CLEAR needs **per-slot
+   stability proven by a **complete per-slot manifest comparison**; observation-only firmware first; any CLEAR needs **per-slot
    owner authorization**. It also carries the **S2b.7 device confirmation**, independently reportable. When
    the library is stable it **hands back** to (1) for S1 and the S2b device gates, then S3 — it does not
    absorb them.
@@ -3263,7 +3286,7 @@ implementation scope here.
 | Change | Focus |
 |--------|--------|
 | **`deferred-slot-restore-liveness`** | **ARCHIVED 2026-09-24 as `2026-09-24-deferred-slot-restore-liveness` with a reduced, accurately described scope — see the Active OpenSpec section above.** The text below is the pre-implementation intent, retained as history; the delivered scope is narrower (preparation under transport, request identity with named waits, pre-publication stale-identity rejection, the census checkpoint, a content PASS, and CLEAR's permitted completion branch — **not** drain-driven advancement, which is `runtime-working-set-ownership` S2b.7, and **not** a runtime set change).** Restore-liveness change: a queued slot restore becomes a liveness obligation with an explicit identity `(track, slot, requestGeneration, setEpoch)`, separate **named wait** states (`waiting_slot_owned` / `waiting_capture` / `waiting_commit_gate` / `waiting_job_capacity` / `waiting_retry`) versus exactly one **terminal** outcome (`committed` / `unnecessary` / `refused` / `superseded`), and validated rather than blind generation advance. **Scope, stated plainly: it delivers diagnosable preparation and named waits plus drain advancement where the commit gate admits — it does NOT by itself unblock CLEAR during another track's playback.** Two global gates bound it: `MidiServiceDrain::admitLoadJobChild` (commit/cleanup need a content-independent bound) and `hasLoadLoopJobCommitPending()` (true for *either* job instance, so the denial is global, not per job); both are the open clause of `resumable-midi-boundary-playback-maintenance` **task 3.3**. **The drain's caller contract is a three-way outcome** — completed / temporarily blocked / failed — with `saveState` kept as a `Completed`-only wrapper and both callers (`handleClearTrack`, `SavedSetIo`) using the detailed entry point: a blocked CLEAR **refuses by name, leaves the slot untouched, and leaves the save owed**; retention as an accepted interaction is design O7. The finite **100 ms post-load holdoff** (`LoadLoopJob.cpp`) is waited out within a bounded, MIDI-serviced budget or reported by name. The blocking drain must **advance** the restore (active and parked instances) using the **same all-tracks runtime eligibility** as the normal path — `handleClearTrack` stops only the selected track — and restore work must be charged in the drain's budget and progress detection. Modifies the `lazy-slot-hydration` capability, whose current text permits the stall. Four G2 packets (A desired-behavior fixtures → B liveness → C drain advancement + caller contract → D reconcile outcome) + closeout; Packet A's red set is excluded from the initial green gate behind a named flag. Owner: `StorageManager`; no ownership move. Evidence and non-goals: [`proposal.md`](../../openspec/changes/archive/2026-09-24-deferred-slot-restore-liveness/proposal.md), [`design.md`](../../openspec/changes/archive/2026-09-24-deferred-slot-restore-liveness/design.md) |
-| **`restored-library-stability`** | **PROPOSED 2026-09-24 — planning complete, `openspec validate` clean, read-only Packet A can start immediately; nothing implemented; G2 review BLOCKED then corrected (four contract fixes).** Owns the instability that blocks `runtime-working-set-ownership`'s device legs: the committed set is not reproducible **as measured**. Reports a per-slot **observed state** with **four distinct quantities** and an explicit observation **window**, through a **bounded on-demand snapshot** independent of the settled census gates; attribution is **nullable** (`empty/not applicable`, `pending`, `catalog omission`, `restore refusal`, `intentional eviction`, `content loss`, `ambiguous`, `unknown`) with evidence and precedence; one repeatable fixture inside the approved scratch range (track 5 slot 1, track 6 slots 1–8) with any CLEAR needing per-slot owner authorization, stability proven by a **complete per-slot manifest comparison**; carries the **S2b.7 device confirmation** as an independently reportable packet; hands back for S1/S2b/S3. **Corrected findings:** `n_committed_slots` is a **window-scoped observed-completion count** (background restores included) — not the boot playback set, so the earlier explanation is withdrawn; `sets/index.bin` is `SetIndex{nextSequence}` (a saved-set folder counter, not a slot catalog); the shrinking boots report `reconcile_warnings=0`; `DIAG,lcr,skip,restore` is content-resolution; `Track N loaded state: EMPTY` appears on stable boots too; and both sweeps' `library_rows` are all-zero. |
+| **`restored-library-stability`** | **PROPOSED 2026-09-24 — planning complete, `openspec validate` clean, Packet A (observation-only firmware + read-only analysis) can start immediately; nothing implemented; G2 review two rounds — BLOCKED then corrected (first four contract fixes, then two: the state-vs-cause split and the observation's ownership/admission/invalidation contract).** Owns the instability that blocks `runtime-working-set-ownership`'s device legs: the committed set is not reproducible **as measured**. Reports a per-slot **observed current state** (`empty` / `populated` / `pending`) **separately** from a **nullable historical cause** (`catalog omission` / `restore refusal` / `intentional eviction` / `content loss` / `ambiguous` / `unknown`) with evidence and precedence — `empty` is a state, never a cause; four distinct quantities with an explicit observation **window**; through a **bounded on-demand observation** with a declared owner, service point, SD-read admission and an **invalidation/restart** rule on request-generation or set-epoch change, independent of the settled census gates; one repeatable fixture inside the approved scratch range (track 5 slot 1, track 6 slots 1–8) with any CLEAR needing per-slot owner authorization, stability proven by a **complete per-slot manifest comparison**; carries the **S2b.7 device confirmation** as an independently reportable packet; hands back for S1/S2b/S3. **Corrected findings:** `n_committed_slots` is a **window-scoped observed-completion count** (background restores included) — not the boot playback set, so the earlier explanation is withdrawn; `sets/index.bin` is `SetIndex{nextSequence}` (a saved-set folder counter, not a slot catalog); the shrinking boots report `reconcile_warnings=0`; `DIAG,lcr,skip,restore` is content-resolution; `Track N loaded state: EMPTY` appears on stable boots too; and both sweeps' `library_rows` are all-zero. |
 | **`runtime-working-set-ownership`** | **Native scope (P0/P1) plus S2b.8 and S2b.7 COMPLETE 2026-09-24 — full native 2,352 / 1 skipped / 0 failures; every remaining gate is a device leg (no native task open).** The scaling-law change: runtime working sets become active-role owned, window-sized and generation-leased, so RAM scales with active roles rather than recorded slots. Landed and green: S0 verification, S1.2/S1.3-clause-2/S1.5-clause-3 fixtures, the accepted-stop latch (S4f.0/S4f.1/S4f.2/S2b.6), boot/load admission removal (S2b.1–S2b.3), S4.0/S2b.4 per-slot liveness and release, S4f.5's stop consumers, S3.0 placement pins + the post-link RAM1 budget check, and B01–B06. **Blocked on an unstable restored library — now owned by [`restored-library-stability`](../../openspec/changes/restored-library-stability/proposal.md) — for:** S1.1's per-owner census, S1.3's device slope, S1.4's undo/root baseline, S1.5's device refusal point, S2b.3's post-restore baseline, S2b.5's device gate, and the content PASS — the restored set is unstable across boots, so no deterministic single-slot capture can be produced. Envelope: 8 tracks x 1 sounding slot today (N derived, **provisional** until the sibling change lands); 16-channel banks and multi-slot-per-track are targets the law must not preclude. Governed by **Playhead-scheduled MVCC** ([NAMING.md](../Authority/NAMING.md)); invariants 1–31 plus **32–36**; `design.md` **Revisions 18–24**; **DEC-078** (every interaction accepted; finalization **per interval**; amends DEC-067/DEC-076 point 2; counter renamed **`accepted_stop_finalizer_wait`**), **DEC-079** (handoff corrections, [`IMPLEMENTATION_CONTRACT.md`](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) is binding), **DEC-080** (execution packets); stages S0–S7 + **S2b** (boot/load admission), windowed playback **extracted** to `windowed-playback-generation`. **Execution order: S0/S1 → S2b → S3/S4 → S4f → S5 → decoupling**; design revisions stop unless implementation contradicts the contract. RAM1 floor currently **840**, most recent build `variables 96,192 / code 391,080 + padding 2,136`, enforced by `scripts/check_ram1_budget.py` against `scripts/ram1_budget.json` |
 | **`capture-tier-a-budget-profiles`** | **Design (B1 pending)** — profile-selected, per-family **byte-budgeted** Tier-A capture with bounded bursts and edge/sample/stream semantics, so a 15–20 minute session fits the 1 MiB ring intact (measured Tier-A ~30–35 KB/s covers ~30 s). Critical reserve, per-family coverage, and a host verdict that cannot report an unconditional PASS over degraded evidence. Builds on the landed RC-MEM-7 degradation |
 | **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–**4.6** closed; **5.1**–**5.7** SHIPPED; **6.1**–**6.4** SHIPPED (**6.4** device [`164947`](../captures/session_20260912_164947.log) 2026-09-12); next open: **4b.3**, **6.5**; §**6.6** post-closeout polish non-blocking; [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write); boot sync load still legacy; snapshot nodes pack into 32 KB slabs (`DEC-048`) |

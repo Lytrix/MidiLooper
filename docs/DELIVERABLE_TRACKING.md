@@ -46,11 +46,14 @@ fails exactly the three advancement assertions. **Device: NOT RUN** — the clai
 **device-gated** on a stable restored library (S1.1/S1.3/S1.4/S1.5/S2b.3/S2b.5, the content PASS, and the S2b
 gate) or is a **later stage** (S3–S7, phases B–F) whose start the change's own execution order places after the
 S2b device gate. **The restored-library instability is no longer unowned:** `restored-library-stability`
-(proposed 2026-09-24, planning complete, read-only Packet A startable immediately; **G2 review BLOCKED then
-corrected**) owns it. Attribution is **nullable** (`catalog omission` / `restore refusal` / `intentional
-eviction` / `content loss`, plus `empty/not applicable`, `pending`, `ambiguous`, `unknown`) and kept separate
-from observation; the per-slot observed state reports **four distinct quantities** with an explicit
-observation **window**, collected through a **bounded on-demand snapshot** independent of the settled census
+(proposed 2026-09-24, planning complete, Packet A (observation-only firmware + read-only analysis) startable immediately; **G2 review two rounds — BLOCKED then
+corrected**) owns it. A per-slot **observed current state** (`empty` / `populated` / `pending`) is reported
+**separately** from a **nullable historical cause** (`catalog omission` / `restore refusal` / `intentional
+eviction` / `content loss` / `ambiguous` / `unknown`) — `empty` is a state, never a cause; four distinct
+quantities with an explicit
+observation **window**, collected through a **bounded on-demand observation** with a declared owner, service
+point, SD-read admission and an **invalidation/restart** rule on request-generation or set-epoch change,
+independent of the settled census
 gates; one fixture inside the approved scratch range with per-slot authorization for any CLEAR and stability
 proven by a **complete per-slot manifest comparison**; and it carries the S2b.7 device confirmation as an
 independently reportable packet. **Corrected findings:** `n_committed_slots` is a **window-scoped count of

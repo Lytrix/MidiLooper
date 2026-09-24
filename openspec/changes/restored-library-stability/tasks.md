@@ -6,10 +6,11 @@ observed-vs-attributed classifier (D3), and a manifest-based fixture gate (D6). 
 proceed; the corrected measurement definitions come first, because they may explain some apparent instability
 without a firmware fix.
 
-This change is **investigation-first**. Packet A is read-only and needs no authorization. Packet B may need a
-per-slot destructive action (TBD-1) and stops at read-only without it. Packet C is a **device** confirmation
-that belongs to `runtime-working-set-ownership` S2b.7 and is **independently reportable**; this change supplies
-the fixture that can hold it.
+This change is **investigation-first**. **Packet A is observation-only firmware plus read-only analysis** — it
+adds bounded instrumentation and performs no destructive SD action, so it needs no authorization beyond an
+upload. Packet B may need a per-slot destructive action (TBD-1) and stops without it. Packet C is a **device**
+confirmation that belongs to `runtime-working-set-ownership` S2b.7 and is **independently reportable**; this
+change supplies the fixture that can hold it.
 
 Every task that edits firmware follows the [G2 execution-packet workflow](../../../docs/Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice):
 pin the scope and transition oracle, establish the controlled production-path fixture, and record actual
@@ -22,18 +23,23 @@ Standing constraints for every task:
   slots 1–8). Anything outside it is not written.
 - **No destructive SD action** (quarantine, delete, rename, CLEAR) without the owner's explicit authorization
   for the **named slots** in the same session — [`Destructive-SD-Operations`](../../../.cursor/rules/Destructive-SD-Operations.mdc).
-- **Observe first; attribute second, and only with evidence.** `empty/not applicable`, `pending`, `ambiguous`
-  and `unknown` are valid outcomes. Never force one of four causes.
+- **Observe first; attribute second, and only with evidence.** Report the observed **current state**
+  (`empty` / `populated` / `pending`) separately from a **nullable historical cause**; `pending`, `ambiguous`
+  and `unknown` are valid causes. Never force one of four causes, and never record `empty` as a cause.
 - **State the window.** Every count is window-scoped; an incomplete window is reported as incomplete.
 - New firmware observables are session-gated, bounded per invocation, FLASH-resident where possible, and the
   post-link RAM1 budget (`padding >= 840`) is re-read in the slice that adds them.
 
-## 1. Packet A — read-only attribution (no behavior change)
+## 1. Packet A — observation-only firmware and read-only analysis
 
-- [ ] 1.0 **Execution-packet gate.** Before any behavior edit, write the G2 execution packet for that slice
-      into the change's review artifact (`ARCHITECTURE-REVIEW.md`): fixed transition oracle, controlled
-      production-path fixture, repeatable recipe, and evidence expectations. Scale to risk. **Verify:** a packet
-      exists for every slice that edits firmware; the read-only investigation tasks need no packet.
+- [ ] 1.0 **Execution-packet gate (unambiguous).** Every slice that **edits firmware** requires its own G2
+      execution packet in the change's review artifact (`ARCHITECTURE-REVIEW.md`) before the edit: fixed
+      transition oracle, controlled production-path fixture, repeatable recipe, and evidence expectations. In
+      Packet A that is **1.2** (where it adds code) and **1.3** (the on-demand observation is new firmware);
+      the pure analysis tasks **1.1, 1.4 and 1.5** require none. The packet for **1.3** SHALL state the
+      **SD-read admission** contract, the **invalidation/restart** rule, and the **bounded-traversal** oracle.
+      **Verify:** a packet exists for every firmware-editing slice and names those three contracts; no firmware
+      edit precedes its packet.
 - [ ] 1.1 **Correct the recorded measurement definitions and attribution (documentation only).** Record, with
       citations, in this change and in `runtime-working-set-ownership` S1.3/S2b.3 and the S2b gate:
       (a) `n_committed_slots` is the distinct `(track, slot)` of `RRQ,…,terminal,none,committed` observed
@@ -48,30 +54,51 @@ Standing constraints for every task:
       (g) both sweeps' `library_rows` are all-zero, so no per-slot inventory was captured.
       **Verify:** no durable doc still asserts the catalog reconcile, or `n_committed_slots`, as a demonstrated
       cause of loss; each fact is cited with its evidence path.
-- [ ] 1.2 **Define the observed-state fields, the nullable classifier, and the four counts.** Specify the
-      per-slot observed fields (payload validity, enumeration, request state/wait/terminal with the **full
-      identity** `(track, slot, requestGeneration, setEpoch)`, committed content inventory, selection), the
-      four quantities of design D4, the snapshot-completeness fields, and a **pure** classifier mapping
-      observation to a nullable cause with stated precedence. **Verify (native, red first):** a case per
-      outcome; an empty slot yields `empty/not applicable` and never a loss cause; a corrupt payload that also
-      produced a `refused` terminal records both and yields `ambiguous`; a queued/running/waiting request yields
-      `pending` with no terminal asserted; a historical deletion with no prior inventory yields `unknown`; two
-      equally consistent causes yield `ambiguous` with both recorded; the four counts and the window fields are
-      separate inputs/outputs.
-- [ ] 1.3 **Add the bounded on-demand diagnostic snapshot.** Provide a snapshot that does **not** depend on
-      `emitPostRestoreCensusIfReady`'s settled gates (`bootBackgroundFillAdmissionComplete`,
-      `bootInteractiveReady`'s empty queue / no live session / inactive jobs, no undo hydration pending,
-      transport stopped, no holdoff or in-flight persistence work, no owed playback prewarm). Specify:
+- [ ] 1.2 **Define the observed fields, the two separate outputs, and the four counts.** Specify the per-slot
+      observed fields (payload validity, enumeration, request state/wait/terminal with the **full identity**
+      `(track, slot, requestGeneration, setEpoch)`, committed content inventory, selection), the four quantities
+      of design D4, the completeness fields, and a **pure** classifier producing **two separate outputs**: an
+      observed **current state** (a set over `empty` / `populated` / `pending`) and a nullable **historical
+      cause** (`catalog omission` / `restore refusal` / `intentional eviction` / `content loss` / `ambiguous` /
+      `unknown`) with stated precedence. `empty` SHALL be a state and SHALL NOT be a cause. **Verify (native,
+      red first):** **the overlapping-input case** — a slot with no payload, no committed content, no request,
+      no prior inventory and no recorded event yields current state `empty` **and** cause `unknown`, in one
+      case asserting both, and asserting that `empty` is not recorded as a cause; a prior inventory with no
+      event yields cause `unknown` with the inventory as evidence (not `content loss`); an explicit eviction
+      event yields `intentional eviction`; a corrupt payload that also produced a `refused` terminal records
+      both and yields `ambiguous`; a queued/running/waiting request is `pending` with no terminal asserted;
+      two equally consistent causes yield `ambiguous` with both recorded; the four counts and the window fields
+      are separate inputs/outputs.
+- [ ] 1.3 **Add the bounded on-demand observation, with its owner, admission and invalidation contract.**
+      Provide an observation that does **not** depend on `emitPostRestoreCensusIfReady`'s settled gates
+      (`bootBackgroundFillAdmissionComplete`, `bootInteractiveReady`'s empty queue / no live session / inactive
+      jobs, no undo hydration pending, transport stopped, no holdoff or in-flight persistence work, no owed
+      playback prewarm). Specify:
+      **owner and service point** — owned by `StorageManager`, serviced at a declared **existing** per-turn
+      storage service point (design D2 proposes the deferred restore/load frame; the exact hook is pinned in the
+      execution packet), with no new thread, timer, interrupt or periodic hot-path cost;
       **incremental collection** — bounded slots and bounded SD reads / content traversal per invocation, with
       the per-invocation bound declared, so one line never implies a bounded traversal over the whole library;
-      **snapshot consistency** — the observation turn per slot, and a cross-turn snapshot marked as such;
+      **SD-read admission** — respects the existing SD-session admission (the gate that excludes capture and
+      concurrent slot load / persistence write) and never holds SD resources concurrently with a load job, a
+      persistence write, or capture;
+      **invalidation** — each slot's observation is scoped to `(track, slot, requestGeneration, setEpoch)`; a
+      request-generation advance invalidates or restarts **that slot**, a set-epoch change invalidates or
+      restarts the **whole** observation, fields from different generations are never combined into one slot
+      record, and a content reference is never retained across slices;
+      **permitted degradation** — fields unavailable because admission was denied or an observation was
+      invalidated stay explicitly `unknown`, and the report is still produced and still names a waiting request;
+      **snapshot consistency** — the observation turn per slot, and a cross-turn observation marked as such;
       **capture framing** — window start/end, whether every initial-playback slot was observed, whether
       admission completed, and the four counts. Retain the settled census unchanged for settled memory
-      measurements. **Verify:** a native case drives a **permanently waiting** request and asserts the snapshot
-      is still produced and names the state/wait, while the settled census does not fire; a case over a library
-      larger than one invocation asserts incremental collection within the bound and that the partial result is
-      marked incomplete with its turns; the snapshot is never emitted as the settled measurement; the RAM1 line
-      is recorded.
+      measurements. **Verify:** a native case drives a **permanently waiting** request and asserts the
+      observation is still produced and names the state/wait, while the settled census does not fire; a case
+      over a library larger than one invocation asserts incremental collection within the bound and that the
+      partial result is marked incomplete with its turns; **a native mutation-between-slices case** advances the
+      request generation (and, separately, the set epoch) between two collection slices and asserts the
+      affected observation is invalidated/restarted with no mixed-generation record; a denied-SD-admission case
+      asserts the affected fields are `unknown` while the report and the named waiting request are still
+      produced; the observation is never emitted as the settled measurement; the RAM1 line is recorded.
 - [ ] 1.4 **Re-analyze the existing captures read-only, then extend the sweep parser.** Run the classifier over
       `captures/s13-slope-02/` and `captures/s13-slope-final/` and extend
       `scripts/hitl_library_growth_sweep.py` to record the observed fields, the four quantities, the window
@@ -111,9 +138,17 @@ Standing constraints for every task:
       (i) the drain returns `TemporarilyBlocked` with the named **`waiting_commit_gate`**; **or**
       (ii) the owed save is discharged by the documented **urgent-save priority** while the restore remains
       commit-gated. Both require **no unintended publication** (no committed pass appears while the gate
-      denies), the request preserved, and progress advanced. (ii) is **not** evidence that the drain advanced
-      the restore, and the report says so. **Verify:** the capture and the exact observables are recorded; the
-      outcome is stated as observed.
+      denies) and the request preserved.
+      **Progress is defined inside the drain call:** `restoreProgressCounter()` (A3.3) SHALL be sampled
+      immediately before the drain entry and immediately after it returns, and the measurement interval is the
+      **drain invocation itself** (plus the drain's own report where it re-enters or loops). A restore that
+      advances only *outside* the drain call, or an **urgent-save discharge with no movement of the counter
+      within the call**, SHALL NOT check off `runtime-working-set-ownership` **S2b.7 — drain-driven restore
+      advancement**; it SHALL record `advancement NOT observed inside the drain` and S2b.7's advancement clause
+      stays unproven. Outcome (ii) is therefore **not** evidence of advancement, and the report says so.
+      **Verify:** the capture, the exact observables, the sampled interval and both counter values are recorded;
+      the outcome is stated as observed; the checkoff states explicitly whether advancement was observed
+      **inside the drain call**.
 - [ ] 3.2 **Keep Packet C independently reportable.** Give this packet its own checkoff and evidence, and do
       **not** make it gate, or depend on, this change's closeout or another change's closeout — the defect the
       archived sub-change's closeout dependency caused. **Verify:** S2b.7's device half can be checked from
