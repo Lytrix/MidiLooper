@@ -819,8 +819,14 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       destructive-SD permission, which was not granted — so it is recorded unrun with that reason, which
       A5.5 names as the one permitted optional gate.
 
-- [ ] A4.3 **Packet D gate.** Full native suite green; A4.1 cases green; RAM1 line recorded; A4.2
-      status recorded as taken or explicitly unrun.
+- [x] A4.3 **Packet D gate.**
+      → **DONE 2026-09-24 (second session).** Full native suite green: **2,343 cases / 1 skipped /
+      2,342 succeeded / 0 failures**. A4.1's `test_storage_reconcile_index` cases are green (4/4). RAM1
+      line recorded: `variables 96,192 / code 391,000 + padding 2,216 / locals 34,880` (1,376 B above the
+      840 floor). A4.2 status recorded: **healthy-index half taken and green**
+      (`captures/census-final-02/`, `sets/index.bin reconcile ok`, 0 unexpected `could not reconcile`),
+      **malformed half explicitly unrun** (needs same-session destructive-SD permission) — the single
+      optional gate A5.5 permits.
 
 ## 5. Closeout
 
@@ -896,6 +902,17 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       (`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md` or the storage guide) so no durable doc still
       describes the transport-gated restore rule this change removes
       ([`DOCUMENTATION_CLOSEOUT.md`](../../../docs/Authority/DOCUMENTATION_CLOSEOUT.md)).
+      → **PARTIAL 2026-09-24 (second session).** Landed: `docs/Runtime/PROJECT_STATE.md` and
+      `docs/Runtime/CURRENT_WORK.md` carry the session's status; the affected guide is
+      **`docs/Guides/BOOT_LOAD.md`** (not `DEFERRED_RUNTIME_PERSISTENCE.md`), whose "Post-boot slot
+      restore" row described the old "PLAYING allows focus/`LoadLoopJob` only" rule and now states the A2.2
+      bounded-preparation admission, the still-idle commit/cleanup gate and its global
+      `waiting_commit_gate`/`waiting_job_capacity` waits, and the task-3.3 boundary; a new row documents the
+      A2.1 request identity and named waits. A repo-wide grep finds **no remaining durable doc** asserting
+      the removed transport-gated restore rule. **Pending (archive step):** the `lazy-slot-hydration` main
+      spec sync and `docs/DELIVERABLE_TRACKING.md`, which land with A5.6 once A5.5 shows no open mandatory
+      gate — syncing the main spec early would advertise behavior whose device integration (A3.7) is not
+      yet verified.
 
 - [ ] A5.4 **Decision log.** Append a `DEC-###` entry for the restore-liveness ruling (the request is
       the unit with identity and named waits, background **preparation** is admitted while playing and
