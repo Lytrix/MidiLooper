@@ -306,7 +306,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `reason=restore`), and `Track 6 loaded state: EMPTY` appears on the stable `N=29` boots
       (`captures/s13-slope-final/`) too, so none of them tracks the shrink. The obstacle is therefore an
       **unattributed** restored-library instability, owned since 2026-09-24 by
-      [`restored-library-stability`](../restored-library-stability/proposal.md) (Packet A,
+      [`restored-library-stability`](../archive/2026-09-24-restored-library-stability/proposal.md) (Packet A,
       observation-only firmware plus read-only analysis). An earlier claim of mine — that the library
       "can grow" because a reset-then-dump once returned `length=18432` — is **withdrawn as
       over-generalised**; Leg 3 of the device session records the falsification.
@@ -317,11 +317,19 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       loads it), not merely create an SD payload, and must explain the 28 unloaded slots; see
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *Handoff from `restored-library-stability`* for the
       evidence link and the 36/8/8 disposition. The *slope and failure point remain unmeasured here.*
-      **NEXT (recorded 2026-09-24, not started) — S1.3 slope-fixture definition.** Before any sweep, define the
-      fixture so it answers: **why do 28 verified payloads remain unloaded**, and **why do only four
-      initial-playback slots overlap the committed set**? The observation is **repeatable**, which does
-      **not** establish correct hydration or a usable increasing-population fixture; the definition owns
-      those answers, not the stability gate.
+      **READ-ONLY DEFINITION DONE 2026-09-24 (no sweep, no firmware): the "28 unloaded" premise is
+      falsified.** All 36 payload slots are offered and restored to `terminal/committed`; 8 are pass-backed
+      (legacy payloads → `adoptPersistedSnapshot` populates `passes`) and **28 are published-root-backed**
+      (LSV1 payloads → `storePublishedSnapshot`, `passes` left empty) and are resident — boot restore costs
+      **27 pool chunks (480 → 453)** and **2,155 KB / 78 slabs** of snapshot arena, flat after settle, and
+      playback reads the root (`tryGatherPublishedSnapshotEventsInWindow`). The observation's
+      `committed_at_checkpoint` is therefore a **pass-backed subset**, not the loaded population, and is not
+      spec-conformant for root-backed slots. The four required-but-not-pass-backed slots are `(2,1)`/`(4,0)`
+      (root-backed) and `(6,0)`/`(7,0)` (payload-absent enabled slots; `Track 6/7 loaded state: EMPTY`).
+      **Controlled fixture defined:** fix one active role, add one payload per boot inside the approved
+      scratch range, and report `N_payload` / `N_pass` / `N_root` plus reservation, payload, root and
+      directory residency separately. **The slope run and the failure point remain unmeasured.** Full trace
+      and definition: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *S1.3 — slope-fixture definition*.
 - [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
       many canonical chunks those roots pin** via `SlotPassReferences` (the B10 baseline).
       **Clause 1 MEASURED 2026-09-23** (dense PASS run, no new telemetry): the undo root retains essentially the
@@ -436,7 +444,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       appeared to shrink report `reconcile_warnings=0`, `DIAG,lcr,skip,restore` is a content-resolution
       line, and `Track 6 loaded state: EMPTY` appears on stable boots too; the four corrected measurement
       definitions and their evidence paths are recorded in
-      [`restored-library-stability/ARCHITECTURE-REVIEW.md`](../restored-library-stability/ARCHITECTURE-REVIEW.md)
+      [`restored-library-stability/ARCHITECTURE-REVIEW.md`](../archive/2026-09-24-restored-library-stability/ARCHITECTURE-REVIEW.md)
       § Task 1.1. Also open: a **content-verified PASS**, which the pipeline run does not meet (2
       unexplained missing rows in bar 0, Leg 4). S1.5's refusal-N and S1.4's pass→chunk conversion also remain.
       **The named blocker was the change now archived as**
@@ -625,9 +633,9 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       line cannot by itself explain a missing slot, and `Track 6 loaded state: EMPTY` also appears on the
       **stable** boots (`captures/s13-slope-final/`). Recording into the scratch slot therefore does not
       demonstrably grow a stable library, but the cause is unattributed — owned by
-      [`restored-library-stability`](../restored-library-stability/proposal.md) Packet A (observation-only
+      [`restored-library-stability`](../archive/2026-09-24-restored-library-stability/proposal.md) Packet A (observation-only
       firmware plus read-only analysis). See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.3 and
-      [`restored-library-stability/ARCHITECTURE-REVIEW.md`](../restored-library-stability/ARCHITECTURE-REVIEW.md)
+      [`restored-library-stability/ARCHITECTURE-REVIEW.md`](../archive/2026-09-24-restored-library-stability/ARCHITECTURE-REVIEW.md)
       § Task 1.1.
       **Handoff 2026-09-24:** the "baseline's post-restore value is not measured" gap is unchanged, and the
       stable library from `restored-library-stability` **2.2** is the fixture that can hold the measurement
@@ -773,7 +781,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `DIAG,lcr,skip,restore`, and a census whose non-zero-slot set **changed between boots**
       (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`). `sets/index.bin` is a saved-set folder
       counter, so the reconcile line is not a demonstrated cause; the instability is owned by
-      [`restored-library-stability`](../restored-library-stability/proposal.md) Packet A. **An earlier claim of
+      [`restored-library-stability`](../archive/2026-09-24-restored-library-stability/proposal.md) Packet A. **An earlier claim of
       mine — that the library "can grow" because Leg 3 dumped `length=18432` after a reset — is withdrawn as
       over-generalised:** a slot can come back byte-exact right after its own save+reset, but successive boots
       do not accumulate a stable library.

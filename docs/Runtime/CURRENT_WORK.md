@@ -31,9 +31,9 @@ Three facts define what may be implemented right now:
    contract **DEC-083**. It
    distinguishes **catalog omission / restore refusal / intentional eviction / content loss**, and needed
    per-slot authorization before any CLEAR.
-   **Next runtime work (recorded, not started): S1.3 — slope-fixture definition**, which must explain why 28
-   verified payloads remain unloaded and why only four initial-playback slots overlap the committed set; a
-   repeatable observation does **not** establish correct hydration or a usable increasing-population fixture.
+   **S1.3 — slope-fixture definition (2026-09-24, sixteenth session, read-only):** the "28 unloaded" premise
+   is **falsified** — all 36 payload slots are restored, 8 pass-backed and 28 published-root-backed and
+   resident; the controlled increasing-population fixture is defined, and the sweep is **not yet run**.
 3. **The restore-liveness change is ARCHIVED, not proposed.** `deferred-slot-restore-liveness` was archived
    2026-09-24 as `2026-09-24-deferred-slot-restore-liveness` with a reduced, accurately described scope. It
    delivered diagnosable preparation and named waits under transport, request identity with four terminals,
@@ -2925,6 +2925,38 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (sixteenth session) — `runtime-working-set-ownership` S1.3 — slope-fixture definition: the read-only trace FALSIFIES the "28 unloaded" premise and defines the controlled increasing-population fixture. No device run, no firmware edit, no sweep.**
+
+Owner direction: continue directly in `runtime-working-set-ownership` (no new sub-change), start read-only,
+and keep **S2b.7 — drain hardware confirmation** separate.
+
+- **All 36 payload slots are loaded, not 8.** Boot offers every payload slot; all 36 reach
+  `terminal/committed` (the RRQ log matches the observation's request/terminal columns exactly). The 8/28
+  split is a **representation** split: `commitLoadLoopJobPublish` → `applyLoadedLoopSlotBodyCommit` branches
+  on `usesLoopSnapshotBodyFormatV1`. **Legacy** payloads go through `Loop::adoptPersistedSnapshot` (moves
+  `snapshot.passes` into `Loop::passes`) → `has_committed_content=1` (8); **LSV1** payloads install a
+  **published snapshot root** (`loop.storePublishedSnapshot`) and leave `passes` empty →
+  `has_committed_content=0` (28) even though playback reads that root
+  (`Loop::tryGatherPublishedSnapshotEventsInWindow`).
+- **The "unloaded" 28 are resident.** `#MEM_OWNERS` over the boot: `slab_live` 0 → 78, `slab_used` 0 →
+  2,455 KB, `snap` 0 → 2,155 KB, `chunks_free` 480 → 453, then flat after ~12.8 s; the `capture_prewarm` walk
+  reports `credits=0` on all 16 rows (canonical reservation flat, S2b.1), so payload/root residency is what
+  grows.
+- **The four required slots absent from the pass-backed set:** `(2,1)`/`(4,0)` are root-backed (loaded); the
+  gap is representational. `(6,0)`/`(7,0)` are `enabledMask=0x1` but payload-absent and never offered
+  (`Track 6/7 loaded state: EMPTY`) — a payload-less enabled slot, not a restore failure.
+- **Observation accuracy:** payload/enumeration/request/terminal/initial-playback/window are accurate;
+  `has_committed_content` / `committed_at_checkpoint` / `a,h,l,v` are **pass-backed only** and
+  **under-report** root-backed slots — **not spec-conformant**; recorded as an observability finding owned by
+  this change, and the fixture does not depend on it.
+- **Fixture defined (not run):** fix one active role (transport stopped, no record/overdub), vary `N_payload`
+  one slot per boot inside the approved scratch range (track 5 slot 1, track 6 slots 1–8), and report
+  `N_payload` / `N_pass` / `N_root` separately with reservation, payload, root and directory residency; the
+  failure point is the first refusal. **The slope run and failure point remain unmeasured.** Full trace:
+  `runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § *S1.3 — slope-fixture definition* and
+  `docs/Runtime/PROJECT_STATE.md` (sixteenth session).
+- **Separate:** **S2b.7 — drain hardware confirmation** (the three transferred unchecked tasks) is untouched.
+
 **2026-09-24 (fifteenth session) — `restored-library-stability` Packet B **2.2 — complete-manifest stability** DEVICE VERIFIED: PASS across three consecutive boots; **2.1** not exercised (nothing cleared); Packet C untouched.**
 
 Owner direction: take **2.2 — complete-manifest stability** (compare the *entire* expected manifest across
@@ -2958,11 +2990,10 @@ fixture must vary the committed/loaded population and explain the unloaded 28. R
 `hitl-content-verification` § 9. **2.1 is closed as not required for the reused fixture** (nothing cleared);
 **2.3 (S2b.7 condition), Packet C and 4.2 are TRANSFERRED to `runtime-working-set-ownership` S2b.7** (recorded
 there unchecked), so the closeout checklist has no remaining mandatory library task and the change is
-**archived**. **Next runtime work (recorded, not started): S1.3 — slope-fixture definition**, which must
-explain why 28 verified payloads remain unloaded and why only four initial-playback slots overlap the
-committed set; repeatability does not establish correct hydration or a usable increasing-population fixture.
-Full record: `restored-library-stability/ARCHITECTURE-REVIEW.md` § Packet B and
-`docs/Runtime/PROJECT_STATE.md` (fifteenth session).
+**archived**. **[Answered 2026-09-24 (sixteenth session): the "28 unloaded" premise is falsified — they are
+published-root-backed and resident; the S1.3 fixture is defined and the sweep not yet run.]** Full record:
+[`restored-library-stability` (archived)](../openspec/changes/archive/2026-09-24-restored-library-stability/ARCHITECTURE-REVIEW.md)
+§ Packet B and `docs/Runtime/PROJECT_STATE.md` (fifteenth session).
 
 **2026-09-24 (fourteenth session) — `restored-library-stability` Packet A 1.0–1.4 landed (observation-only firmware + read-only analysis); 1.5 open on upload authorization.**
 
