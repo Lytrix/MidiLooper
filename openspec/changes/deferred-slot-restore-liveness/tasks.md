@@ -164,7 +164,7 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       (`test_storage_drain_restore`), C5's mechanism in the ledger, and A3.1/A3.7 name the device gate as
       the oracle for the integration claim. **No native red fixture for C5 is claimed**, per Revision 5.
 
-- [ ] A1.8 **Observability, event-shaped (per `design.md` D6).** Add capture-tier lines: one per restore
+- [x] A1.8 **Observability, event-shaped (per `design.md` D6).** Add capture-tier lines: one per restore
       **state transition** (terminal or named wait) with the request identity and reason, and an on-demand
       queue/state probe reusing the existing `probeActiveLoadLoopJob` shape; add the boot reconcile named
       outcome (`ok` / `repaired` / `failed`) alongside the existing warning. **Verify:** native cases assert
@@ -944,6 +944,31 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       the change is **not** archive-ready and stays open with the blocking reason recorded. **Verify:** the
       closeout table lists each gate as taken+green, optional+unrun-with-reason, or open; archive proceeds
       only when nothing is in the third state.
+      → **CLOSEOUT TABLE 2026-09-24 (second session) — the change is NOT archive-ready; two mandatory gates
+      are open.** Every gate in Packets A–D and the A5.1 handoff, with its state:
+
+      | Gate | State | Evidence / blocker |
+      |---|---|---|
+      | A1.10 Packet A | **taken + green** | full native green with the (now empty) red set; `REVIEW.md` § Evidence |
+      | A2.5 Packet B device | **taken + green** | `captures/a25-boot-gate/`: 29/29 requests `queued→running→committed`, 0 overflow |
+      | A2.6 Packet B | **taken + green** | native green, red set promoted and flag deleted, RAM1 recorded |
+      | A3.8 Packet C | **OPEN** | native green and RAM1 recorded, but A3.7 shape (b) is not taken — see below |
+      | A4.2 Packet D device | **optional half unrun-with-reason** | healthy-index half **taken + green** (`sets/index.bin reconcile ok`, 0 unexpected); malformed half unrun — needs destructive-SD permission, the one optional gate |
+      | A4.3 Packet D | **taken + green** | native 2,343/0, A4.1 4/4, RAM1 `code 391,000 + padding 2,216`, A4.2 status recorded |
+      | A5.1 runtime handoff | **OPEN** | census checkpoint done and device-verified; post-restore budget stable at 452/512 across three boots; **slope blocked** — approved scratch range (track 5 slot 1, track 6 slots 1–8) fully populated, and a sweep outside it evicted other committed slots |
+      | A5.2 content PASS | **taken + green** | `captures/cc-03-playback/`: `result PASS`, 11/11 `inventory_equal` and `exact_order`, 0 missing/extra, hex `f3a33208` |
+      | A5.3 documentation | **partial** | runtime docs updated; `BOOT_LOAD.md` no longer states the removed rule; main-spec sync held for A5.6 |
+      | A5.4 decision log | **OPEN** | the ruling's device evidence is incomplete while A3.7 shape (b) is untaken |
+      | A5.6 archive | **blocked** | requires A5.5 with nothing open |
+
+      **The one blocking condition, stated once:** **A3.7 shape (b)** needs a restore in flight at CLEAR
+      time. Every payload slot is restored at boot, so no cold slot exists post-boot, and the only route —
+      clear-then-reload — aborts with `#MEM_EXT_REFUSED bytes=22369620` (an untagged `std::vector`
+      allocation of `4 × 0x555555`) against the 8,380,416 B pool. That allocation defect belongs to
+      `runtime-working-set-ownership`/the allocator, not to this change, and this change deliberately does
+      **not** enable the route (the conservative `isLoopSlotRestoreAttempted` done-test). Until it is fixed,
+      A3.7 (b), A3.8, A5.1's slope, A5.4 and archive stay open. **No mandatory gate is recorded as unrun
+      without a reason, and none is reinterpreted.**
 
 - [ ] A5.6 **Archive.** After A5.5 shows no open mandatory gate, archive per `openspec-archive-change`.
       **Verify:** `openspec validate` passes and the main `lazy-slot-hydration` spec reflects the shipped
