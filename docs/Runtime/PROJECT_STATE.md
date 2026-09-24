@@ -24,9 +24,12 @@ above the 840 floor). Investigation: `runtime-working-set-ownership/ARCHITECTURE
 (`captures/cr-probe-01/`) cleared three populated slots and the queued reloads committed **cleanly** — no
 `out-of-range tick` refusal, no FATAL. So a clean clear-then-reload does **not** produce the corrupt tick,
 and the "torn payload from the clear's own save" hypothesis is withdrawn for that condition. The producer
-remains unidentified and its trigger is state-dependent: the a37b reproductions additionally had a long
-record and its deferred save in flight at the CLEAR, which the probe did not. **Next step:** reproduce with
-the record+save in flight, reading the `TickOutOfRange` refusal to name the producing slot. Side effect
+remains unidentified and its trigger is **intermittent**: re-running the full a37b sequence with the guard
+in place produced **no** refusal, no `#MEM_EXT_REFUSED` and no FATAL at all (`captures/prod-probe-01/`), and
+that run left the reload `queued` rather than in flight (the scratch track was still overdubbing), so it did
+not exercise A3.7 shape (b) either. **Next step:** catch the raise rather than assume it — repeat, or add
+allocation-site context so one catch names the store owner, or instrument the SD-load staging path (the only
+`rebuildBarIndex` caller outside `append`). Side effect
 disclosed: clear-then-reload re-commits the cleared slot, so the probe did **not** remove the track 3
 slots 2-4 content. Also corrected: "clear-then-reload is the only reachable route" is stronger than the
 evidence supports — it is the route tried; a controlled boot/background-restore fixture may exercise the

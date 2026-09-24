@@ -788,8 +788,13 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       reloads that committed **cleanly**, with **no** `out-of-range tick` refusal and no FATAL
       (`captures/cr-probe-01/`), so a clean clear-then-reload does **not** produce the near-`UINT32_MAX`
       tick. The producer is therefore still unidentified and its trigger is state-dependent (the a37b
-      reproductions additionally had a long record and its deferred save in flight at the CLEAR). The
-      reload route stays off in this change and shape (b) stays open. **Also
+      reproductions additionally had a long record and its deferred save in flight at the CLEAR).
+      **A second reproduction attempt with the guard in place did not raise it at all** — no refusal line,
+      no `#MEM_EXT_REFUSED`, no FATAL (`captures/prod-probe-01/`) — so the raise is **intermittent**, and
+      that run also left the reload `queued` (not in flight) because the scratch track was still
+      overdubbing, which is why its drain completed rather than naming a wait. **Shape (b) was therefore
+      not exercised** by it: a queued request is not a restore in flight. The reload route stays off in
+      this change and shape (b) stays open. **Also
       corrected:** "clear-then-reload is the only reachable route" is stronger than the evidence supports —
       it is the route tried; a controlled boot/background-restore fixture may exercise the gate another
       way, and that is not ruled out.
