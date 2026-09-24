@@ -338,6 +338,13 @@ struct StorageSession {
   BootRecoveryJob bootRecovery;
   SetBrowserOverlayPolicy::NavigationState setBrowserNavigation;
 
+  /// Packet C / A3.4a of `deferred-slot-restore-liveness`: **one** blocking persistence drain owns the
+  /// shared persistence/restore state at a time. A nested drain call sees this and refuses by name
+  /// instead of mutating the outer caller's target or overwriting the outer drain's result. It lives
+  /// here rather than in a raw function-local static so it is measured with the rest of the session
+  /// state and explicitly constructed (the DMAMEM section is not zero-filled at startup).
+  bool drainInProgress = false;
+
   /// Explicit ctor so DMAMEM placement still runs member construction
   /// (.bss.dma is NOLOAD and is not zero-filled at startup).
   StorageSession() = default;
