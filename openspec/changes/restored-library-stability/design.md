@@ -65,10 +65,13 @@ RAM1/DTCM state, and re-introduce the second-authority problem the working-set c
 **D2 — The inventory is collected by a bounded, on-demand observation with a declared owner, service point,
 admission and invalidation contract.**
 Owner: **`StorageManager`** (the existing persistence/restore owner — no new owner). Service point: the
-existing per-turn storage service in `main` that already runs the deferred restore/load work
-(`DeferredJobScheduler::runFrame` / `processDeferredLoopSlotRestore`), driven by an explicit on-demand
-request; the exact hook is pinned in the execution packet. No new thread, timer, interrupt or periodic
-hot-path cost. The observation is gated only by its explicit request, not by the settled census gates.
+**unconditional per-turn observation tail** in `main` — the same idle-owner position that already calls
+`processHitlSerialCommands` / `emitPostRestoreCensusIfReady`, after MIDI service and persistence for the turn —
+driven by an explicit on-demand request; the exact hook is pinned in the execution packet. It is deliberately
+**not** the deferred load/restore frame (`DeferredJobScheduler::runFrame` /
+`processDeferredLoopSlotRestore`): `main` gates that on load admission (the commit gate), so a stuck request
+could suppress its own diagnostic. No new thread, timer, interrupt or periodic hot-path cost. The observation
+is gated only by its explicit request, not by the settled census gates.
 
 - **incremental collection** — bounded slots *and* bounded SD reads / committed-content traversal per
   invocation, with the per-invocation bound declared, so one line never implies a bounded traversal over the
@@ -76,10 +79,20 @@ hot-path cost. The observation is gated only by its explicit request, not by the
 - **SD-read admission** — respects the existing SD-session admission (the gate that excludes capture and
   concurrent slot load / persistence write); never opens, reads or holds SD resources concurrently with a load
   job, a persistence write, or capture;
-- **invalidation** — each slot's observation is scoped to `(track, slot, requestGeneration, setEpoch)`. A
-  request-generation advance (an external reset such as a clear) invalidates or restarts **that slot**; a set
-  epoch change invalidates or restarts the **whole** observation. Fields from different generations are never
-  combined into one slot record, and a content reference is never retained across slices;
+- **invalidation** — each slot's observation is scoped to `(track, slot, requestGeneration, setEpoch)` **and a
+  content revision identity**. A request-generation advance (an external reset such as a clear) invalidates or
+  restarts **that slot**; a set epoch change invalidates or restarts the **whole** observation. Fields from
+  different generations are never combined into one slot record, and a content reference is never retained
+  across slices;
+- **content version** — request identity is **not** a content identity: `commitLoadLoopJobPublish()` publishes
+  the parsed body under the **same** `(requestGeneration, setEpoch)` it later records its `committed` terminal
+  for, so a publication produces no generation or epoch change at all. The observation therefore also carries a
+  per-slot **content revision identity**, and invalidates or restarts that slot's observation when it changes.
+  Identity choice: re-read from existing content at each slice — committed pass count, highest committed pass
+  id, `loopLengthTicks`, and committed event count. *Alternatives rejected:* `Loop::nextPassId_` alone (it is
+  reset to 1 by `SlotReset`, the boot load and the edit-pass restore, so it is not monotonic across a slot's
+  life) and a new per-slot monotonic counter (64 slots of new state against the RAM1 floor). Content fields are
+  never carried forward; they are observed in the slice that reports them;
 - **permitted degradation** — fields unavailable because admission was denied or an observation was
   invalidated stay explicitly `unknown`, and the report is still produced and still names a waiting request;
 - **snapshot consistency** — the observation turn per slot, with cross-turn observations marked as such;
@@ -89,7 +102,9 @@ hot-path cost. The observation is gated only by its explicit request, not by the
 *Alternatives rejected:* (a) relax `emitPostRestoreCensusIfReady`'s gates — that would corrupt the settled
 memory measurement it exists for; (b) harvest the inventory from the existing census only — it is exactly the
 state that a stuck request suppresses; (c) a free-running background traversal — unbounded SD reads and it
-would observe an inconsistent library across unrelated mutations.
+would observe an inconsistent library across unrelated mutations; (d) service the observation from the
+deferred load/restore frame — that frame is admission-gated, so it is unavailable in precisely the state the
+observation must explain.
 
 **D3 — Observed current state and a nullable historical cause are two separate outputs.**
 The report carries the observed fields (payload validity, enumeration, request state/wait/terminal with the

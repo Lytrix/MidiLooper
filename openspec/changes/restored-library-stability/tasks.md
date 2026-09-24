@@ -24,8 +24,9 @@ Standing constraints for every task:
 - **No destructive SD action** (quarantine, delete, rename, CLEAR) without the owner's explicit authorization
   for the **named slots** in the same session — [`Destructive-SD-Operations`](../../../.cursor/rules/Destructive-SD-Operations.mdc).
 - **Observe first; attribute second, and only with evidence.** Report the observed **current state**
-  (`empty` / `populated` / `pending`) separately from a **nullable historical cause**; `pending`, `ambiguous`
-  and `unknown` are valid causes. Never force one of four causes, and never record `empty` as a cause.
+  (`empty` / `populated` / `pending`) separately from a **nullable historical cause**; `ambiguous` and
+  `unknown` are valid causes, and `pending` belongs to the **current state**, never to the cause. Never force
+  one of four causes, and never record `empty` as a cause.
 - **State the window.** Every count is window-scoped; an incomplete window is reported as incomplete.
 - New firmware observables are session-gated, bounded per invocation, FLASH-resident where possible, and the
   post-link RAM1 budget (`padding >= 840`) is re-read in the slice that adds them.
@@ -75,17 +76,27 @@ Standing constraints for every task:
       jobs, no undo hydration pending, transport stopped, no holdoff or in-flight persistence work, no owed
       playback prewarm). Specify:
       **owner and service point** — owned by `StorageManager`, serviced at a declared **existing** per-turn
-      storage service point (design D2 proposes the deferred restore/load frame; the exact hook is pinned in the
-      execution packet), with no new thread, timer, interrupt or periodic hot-path cost;
+      service point that runs **independently of normal load admission** (design D2 selects the unconditional
+      observation tail in `main`, the idle-owner position that already calls `processHitlSerialCommands` /
+      `emitPostRestoreCensusIfReady`, **not** the admission-gated deferred load/restore frame; the exact hook
+      is pinned in the execution packet), with no new thread, timer, interrupt or periodic hot-path cost. The
+      test SHALL drive the **actual service hook** on a turn where load admission is blocked, not a directly
+      invoked collector;
       **incremental collection** — bounded slots and bounded SD reads / content traversal per invocation, with
       the per-invocation bound declared, so one line never implies a bounded traversal over the whole library;
       **SD-read admission** — respects the existing SD-session admission (the gate that excludes capture and
       concurrent slot load / persistence write) and never holds SD resources concurrently with a load job, a
       persistence write, or capture;
-      **invalidation** — each slot's observation is scoped to `(track, slot, requestGeneration, setEpoch)`; a
+      **invalidation** — each slot's observation is scoped to `(track, slot, requestGeneration, setEpoch)`
+      **and a content revision identity**; a
       request-generation advance invalidates or restarts **that slot**, a set-epoch change invalidates or
       restarts the **whole** observation, fields from different generations are never combined into one slot
       record, and a content reference is never retained across slices;
+      **content version** — request identity is **not** a content identity: a restore publication installs
+      content under the **same** identity that later records its terminal, so it changes neither generation nor
+      epoch. Carry a per-slot content revision identity (design D2: committed pass count, highest committed
+      pass id, loop length, committed event count re-read at each slice) and invalidate/restart the slot when it
+      changes; never carry content fields forward;
       **permitted degradation** — fields unavailable because admission was denied or an observation was
       invalidated stay explicitly `unknown`, and the report is still produced and still names a waiting request;
       **snapshot consistency** — the observation turn per slot, and a cross-turn observation marked as such;
@@ -93,10 +104,16 @@ Standing constraints for every task:
       admission completed, and the four counts. Retain the settled census unchanged for settled memory
       measurements. **Verify:** a native case drives a **permanently waiting** request and asserts the
       observation is still produced and names the state/wait, while the settled census does not fire; a case
+      asserts the observation advances through the **actual service hook while load admission is blocked**; a
+      case
       over a library larger than one invocation asserts incremental collection within the bound and that the
       partial result is marked incomplete with its turns; **a native mutation-between-slices case** advances the
       request generation (and, separately, the set epoch) between two collection slices and asserts the
-      affected observation is invalidated/restarted with no mixed-generation record; a denied-SD-admission case
+      affected observation is invalidated/restarted with no mixed-generation record; **a native
+      publication-between-slices case publishes content between two collection slices with the request
+      generation and set epoch deliberately unchanged** and asserts the content revision identity changed and
+      no record mixed the pre-publication observation with the post-publication content (plus the same for an
+      ordinary capture/edit commit); a denied-SD-admission case
       asserts the affected fields are `unknown` while the report and the named waiting request are still
       produced; the observation is never emitted as the settled measurement; the RAM1 line is recorded.
 - [ ] 1.4 **Re-analyze the existing captures read-only, then extend the sweep parser.** Run the classifier over

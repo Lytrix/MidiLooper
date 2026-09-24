@@ -99,8 +99,10 @@ instances inactive). The settled post-restore census checkpoint SHALL be retaine
 measurements, and the on-demand observation SHALL NOT replace, relax or be reported as that measurement.
 
 **Owner and service point.** The observation SHALL be owned by the existing persistence/restore owner and
-serviced at a **declared existing service point** on the interval/idle turn. It SHALL NOT introduce a new
-thread, timer, interrupt, or periodic hot-path cost.
+serviced at a **declared existing service point** on the interval/idle turn. The service point SHALL run
+**independently of normal load admission** — the admission `main` gates at the commit gate — so the
+observation SHALL NOT be serviced only from the load/restore frame, which that admission can suppress. It
+SHALL NOT introduce a new thread, timer, interrupt, or periodic hot-path cost.
 
 **Incremental collection.** Collection SHALL be incremental and bounded per invocation: SD reads and
 committed-content traversal SHALL be bounded and accounted for, and one observation over a large library SHALL
@@ -110,11 +112,21 @@ NOT perform an unbounded traversal in one turn. The per-invocation bound SHALL b
 excludes capture and concurrent slot load or persistence write. It SHALL NOT open, read, or hold SD resources
 concurrently with a load job, a persistence write, or capture.
 
-**Invalidation.** A slot's observation SHALL be scoped to the identity it was taken under
-`(track, slot, requestGeneration, setEpoch)`. If a slot's request generation or the current set epoch changes
-while an observation is in progress, the affected slot's observation SHALL be **invalidated or restarted**.
-Fields observed under different generations SHALL NOT be combined into one slot record, and a content
+**Invalidation.** A slot's observation SHALL be scoped to `(track, slot, requestGeneration, setEpoch)` **and
+to a content revision identity**. If a slot's request generation or the current set epoch changes while an
+observation is in progress, the affected slot's observation SHALL be **invalidated or restarted**. Fields
+observed under different generations SHALL NOT be combined into one slot record, and a content
 reference SHALL NOT be retained across observation slices.
+
+**Content version.** Request identity alone SHALL NOT be treated as identifying the content version: restored
+content is published **under the same request identity** that later records its terminal, so a publication can
+happen without any generation or epoch change. Each slot's observation SHALL therefore also carry a
+**content revision identity** that changes whenever that slot's committed content changes — including a
+publication under an unchanged request identity, and any ordinary committed-content change (a capture,
+overdub, or edit commit; a clear). Content fields SHALL be observed in the slice that reports them and SHALL
+NOT be carried forward. If the content revision identity differs between slices, the affected slot's
+observation SHALL be invalidated or restarted, and no record SHALL combine a pre-change observation with
+post-change content.
 
 **Permitted degradation.** Fields that are unavailable because admission was denied, or because an
 observation was invalidated, SHALL remain explicitly `unknown` in the report. The report SHALL nonetheless be
@@ -143,6 +155,27 @@ assembled across turns SHALL NOT be presented as a single consistent instant.
 - **THEN** that slot's observation is invalidated or restarted
 - **AND** the report does not combine pre-change and post-change fields into one slot record
 - **AND** the affected fields are reported `unknown` if they cannot be re-observed within the observation
+
+#### Scenario: A publication between slices invalidates without a generation change
+
+- **WHEN** a slot's restore publishes content between two slices of one observation
+- **AND** the request generation and the set epoch are both unchanged
+- **THEN** the slot's content revision identity differs between the slices
+- **AND** the affected slot's observation is invalidated or restarted
+- **AND** no record combines the pre-publication observation with the post-publication content
+
+#### Scenario: An ordinary content change is covered the same way
+
+- **WHEN** a slot's committed content changes between two slices through an ordinary commit (a capture,
+  overdub, or edit commit, or a clear) rather than a restore publication
+- **THEN** the slot's content revision identity differs between the slices
+- **AND** the affected slot's observation is invalidated or restarted, with no mixed record
+
+#### Scenario: The observation is serviced while normal load admission is blocked
+
+- **WHEN** normal load admission is blocked (the commit gate denies the load child)
+- **THEN** the observation still advances at its declared service point
+- **AND** it is not dependent on the load/restore frame that admission can suppress
 
 #### Scenario: A set-epoch change invalidates the whole observation
 

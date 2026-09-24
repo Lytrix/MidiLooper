@@ -52,7 +52,7 @@ corrected**) owns it. A per-slot **observed current state** (`empty` / `populate
 eviction` / `content loss` / `ambiguous` / `unknown`) — `empty` is a state, never a cause; four distinct
 quantities with an explicit
 observation **window**, collected through a **bounded on-demand observation** with a declared owner, service
-point, SD-read admission and an **invalidation/restart** rule on request-generation or set-epoch change,
+point that runs **independently of normal load admission**, SD-read admission, and an **invalidation/restart** rule covering request-generation change, set-epoch change **and content revision change** (a publication installs content under the same request identity),
 independent of the settled census
 gates; one fixture inside the approved scratch range with per-slot authorization for any CLEAR and stability
 proven by a **complete per-slot manifest comparison**; and it carries the S2b.7 device confirmation as an
