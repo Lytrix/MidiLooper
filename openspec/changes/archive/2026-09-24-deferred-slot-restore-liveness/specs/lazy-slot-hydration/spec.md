@@ -180,12 +180,17 @@ The restore queue SHALL make progress on every startable request, regardless of 
 - **WHEN** every queued request is startable
 - **THEN** they are begun in priority order
 
-### Requirement: The blocking persistence drain advances the restore it waits on
+### Requirement: The blocking persistence drain preserves and reports the restore it waits on
 
-The blocking deferred-save drain SHALL advance a restore it is waiting on, rather than only observing it. The drain SHALL service both the active and the parked restore job instances through the existing
-selection and admission, within a declared per-iteration budget, and SHALL NOT introduce a second loader,
-a second queue, or a parallel admission policy. The drain SHALL NOT cancel, supersede, or discard the
-restore in order to complete.
+**Delivered scope of this requirement.** The blocking deferred-save drain SHALL service the restore it waits
+on where the applicable gate admits, using the existing selection and admission, within a declared
+per-iteration budget, and SHALL NOT introduce a second loader, a second queue, or a parallel admission
+policy. The drain SHALL NOT cancel, supersede, or discard the restore in order to complete; where the gate
+denies, it SHALL preserve the request and report the **named** wait. **Not delivered by this requirement:**
+that the drain *advances* a restore that holds the SD session rather than only reporting it. That behavior is
+**deferred** to `runtime-working-set-ownership` S2b.7 and is bound by
+`resumable-midi-boundary-playback-maintenance` **task 3.3** (bounded commit/cleanup); no advancement is
+claimed here.
 
 The drain SHALL derive its admission from the **same actual runtime eligibility** the normal load path
 uses, evaluated across all tracks — it SHALL NOT assume that a CLEAR leaves the runtime non-timing-critical,
@@ -203,14 +208,14 @@ therefore that the drain itself makes the restore progress. If the restore reach
 not break — capture active on that slot, or a denying commit gate — the drain SHALL report that named
 reason instead of spinning its stuck budget and aborting.
 
-#### Scenario: A blocking drain completes by advancing the restore
+#### Scenario: A blocking drain completes without cancelling the restore
 
-- **WHEN** a deferred save is owed and a slot restore is in flight, with no external advancement of the
-  restore
-- **AND** the runtime eligibility admits commit and cleanup
-- **THEN** the drain advances the restore to a terminal state within its budget
-- **AND** the drain then completes
-- **AND** the restore was not cancelled to achieve that
+- **WHEN** a deferred save is owed, a restore for `(track, slot, requestGeneration, setEpoch)` has started
+  and is unresolved at the CLEAR edge, and another track is audibly playing
+- **THEN** the drain completes the owed save by the workspace-save priority path
+- **AND** the restore request remains tracked with its identity and named wait, and was not cancelled,
+  superseded, or discarded to achieve that
+- **AND** no claim is made that the drain advanced the restore
 
 #### Scenario: A parked job is serviced, not only an active one
 
@@ -268,10 +273,13 @@ the owed save SHALL remain owed and be retried by the normal scheduler. On a fai
 SHALL report the failure with its reason. The caller SHALL NOT report success while persistence remains
 pending.
 
-The finite post-load commit holdoff SHALL be handled as a bounded wait: when completion is otherwise
-reachable, the drain SHALL wait out the holdoff within its declared budget while continuing to service
-MIDI, and if the wait would exceed the budget it SHALL return the named holdoff wait rather than blocking
-indefinitely. The holdoff duration SHALL be a single named declaration.
+The finite post-load commit holdoff SHALL be **reported by name, never waited out inside the drain**. The
+drain runs on the interval path, and every MIDI input-service call lives in `main`; a drain that blocked
+there and serviced MIDI would move an input drain into the interval. When the holdoff is the sole blocker the
+drain SHALL therefore classify it and return the named `post_load_holdoff` immediately, changing nothing: the
+restore and the owed save are preserved, and the holdoff expires on its own deadline while `main` keeps
+servicing MIDI. The caller refuses by name and a later attempt completes the save. The holdoff duration SHALL
+be a single named declaration.
 
 #### Scenario: A temporarily blocked drain is not reported as success
 
@@ -286,17 +294,19 @@ indefinitely. The holdoff duration SHALL be a single named declaration.
 - **AND** the owed save remains owed and is retried later
 - **AND** the refusal is reported by name, distinguishable from a real failure
 
-#### Scenario: The finite post-load holdoff is waited out rather than aborting
+#### Scenario: The finite post-load holdoff is reported, not waited out inside the drain
 
-- **WHEN** the only remaining blocker is the post-load commit holdoff and completion is otherwise reachable
-- **THEN** the drain waits it out within its budget while continuing to service MIDI
-- **AND** the save completes rather than the operation aborting
+- **WHEN** the only remaining blocker is the post-load commit holdoff
+- **THEN** the drain returns the named `post_load_holdoff` immediately, without waiting and without
+  servicing MIDI inside the drain
+- **AND** the restore and the owed save are preserved and the queued MIDI is left for `main` to service
 
-#### Scenario: A holdoff longer than the budget is reported, not blocked on
+#### Scenario: The caller refuses by name on the holdoff and retries later
 
-- **WHEN** waiting out the holdoff would exceed the drain's wall-clock budget
-- **THEN** the drain returns the named holdoff wait
-- **AND** the caller refuses the operation by name rather than blocking indefinitely
+- **WHEN** the drain returns the named holdoff wait
+- **THEN** the caller refuses the destructive operation by name rather than blocking indefinitely
+- **AND** the holdoff expires on its own deadline while `main` keeps servicing MIDI, so a later attempt
+  completes the save
 
 #### Scenario: A failed drain is distinguishable from a blocked one
 

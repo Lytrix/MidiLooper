@@ -1137,6 +1137,17 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       preconditions. **Track 3 is left untouched** — being RAM-empty is not permission to modify its
       persisted content.
 
-- [ ] A5.6 **Archive.** After A5.5 shows no open mandatory gate, archive per `openspec-archive-change`.
+- [x] A5.6 **Archive.** After A5.5 shows no open mandatory gate, archive per `openspec-archive-change`.
+      → **DONE 2026-09-24 (tenth session).** Archived as `2026-09-24-deferred-slot-restore-liveness` after
+      the reduced-scope correction. Spec sync applied to `openspec/specs/lazy-slot-hydration/spec.md`:
+      **+6 added, ~1 modified** (the drain requirement retitled to
+      "The blocking persistence drain preserves and reports the restore it waits on", and the holdoff
+      requirement corrected to report-by-name rather than an in-drain wait). `openspec validate
+      lazy-slot-hydration --type spec` passes. **3 tasks remained unchecked at archive, all permitted and
+      recorded:** A1.4 (withdrawn by review finding 5, ledger-recorded), A4.2 (optional malformed-index half
+      unrun — no destructive-SD permission), and this archive task itself. The runtime measurements were
+      **transferred, not completed**: `runtime-working-set-ownership` S1.1/S1.3/S1.4/S1.5/S2b.3/S2b.5 stay
+      unchecked there, plus the new deferrals **S2b.7** (drain-driven restore advancement) and **S2b.8**
+      (set-change epoch).
       **Verify:** `openspec validate` passes and the main `lazy-slot-hydration` spec reflects the shipped
       behavior.
