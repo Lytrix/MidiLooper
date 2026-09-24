@@ -571,8 +571,10 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult cleanupLoadLoopJobPublish() {
     loadLoopJob_.buffer.shrink_to_fit();
     loadLoopJob_.active = false;
     loadLoopJob_.phase = LoadLoopJobPhase::Reading;
-    // Hold deferred save across the post-commit prewarm frame (000659).
-    postLoadLoopCommitSaveHoldoffUntilMs_ = millis() + 100u;
+    // Hold deferred save across the post-commit prewarm frame (000659). The interval is declared once in
+    // `LoadLoopBudget::PostLoadCommitSaveHoldoffMs` (A3.5), so the wait policy and the timeout cannot
+    // drift.
+    postLoadLoopCommitSaveHoldoffUntilMs_ = millis() + LoadLoopBudget::PostLoadCommitSaveHoldoffMs;
     return SlotLoadAdvanceResult::Completed;
 }
 
@@ -780,6 +782,21 @@ bool deferredSaveBlockedByPostLoadCommitHoldoff() {
     return false;
 }
 
+/// A3.5: the holdoff's **remaining** wait, without clearing it. The drain needs to know how long it can
+/// wait before it decides whether to wait at all: `deferredSaveBlockedByPostLoadCommitHoldoff()` is a
+/// question ("is it blocking?") whose answer clears an expired holdoff, which is the right edge for the
+/// scheduler but the wrong one for a caller that must compare the remaining interval against its budget.
+uint32_t postLoadCommitSaveHoldoffRemainingMs() {
+    if (postLoadLoopCommitSaveHoldoffUntilMs_ == 0) {
+        return 0;
+    }
+    const uint32_t now = millis();
+    if (now >= postLoadLoopCommitSaveHoldoffUntilMs_) {
+        return 0;
+    }
+    return postLoadLoopCommitSaveHoldoffUntilMs_ - now;
+}
+
 bool anyLoadLoopJobActive() {
     return loadLoopJob_.active || parkedLoadLoopJob_.active;
 }
@@ -807,6 +824,15 @@ bool getBootTitleLoadDrain() {
 
 void armBackgroundRestoreHoldoff(uint32_t delayMs) {
     backgroundRestoreHoldoffUntilMs_ = millis() + delayMs;
+}
+
+/// A3.5: arm the **post-load commit save holdoff** without running a commit+cleanup. The production
+/// setter is `cleanupLoadLoopJobPublish`, which a native fixture cannot reach without the full
+/// read/parse/commit/cleanup closure; this is the same controllable-input pattern as
+/// `armBackgroundRestoreHoldoff` and the transport boundary, and it writes the one state the production
+/// path writes, so the wait policy under test is the production policy.
+void armPostLoadCommitSaveHoldoff(uint32_t delayMs) {
+    postLoadLoopCommitSaveHoldoffUntilMs_ = millis() + delayMs;
 }
 
 /// A3.3: charge the drain for the restore work it may have to advance. One persist-like slice step per

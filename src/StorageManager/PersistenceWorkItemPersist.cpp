@@ -3,6 +3,7 @@
 
 #include "StorageManagerInternal.h"
 
+#include "LoadLoopBudget.h"
 #include "StorageManager.h"
 #include "CurrentSetStorage.h"
 #include "CurrentWorkspaceStorage.h"

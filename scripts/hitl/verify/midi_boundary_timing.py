@@ -399,12 +399,27 @@ def extract_stop_timeline(lines: list[str], *, start_index: int = 0) -> dict[str
     }
 
 
+def _is_comment_line(line: str) -> bool:
+    """True for a whole-line C++ comment.
+
+    The call-site gate counts *calls*, so prose that names the entry point must not be mistaken for one.
+    A comment that quotes the call is exactly how this rule gets explained next to the code it governs
+    (see the A3.5 holdoff note in `SyncDrainSaveState.cpp`), and counting it would make documenting the
+    invariant break the gate. Line comments and block-comment bodies (leading `*`) are excluded; a
+    trailing comment after real code is not, so a call followed by `// ...` is still counted.
+    """
+    stripped = line.strip()
+    return stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*")
+
+
 def midi_input_call_sites(repo_root: Path) -> list[str]:
-    """Return production MIDI-input invocation sites, excluding declarations."""
+    """Return production MIDI-input invocation sites, excluding declarations and comments."""
     hits: list[str] = []
     for path in (repo_root / "src").rglob("*.cpp"):
         rel = path.relative_to(repo_root).as_posix()
         for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if _is_comment_line(line):
+                continue
             if _MIDI_INPUT_CALL_RE.search(line):
                 hits.append(f"{rel}:{line_number}")
     return sorted(hits)

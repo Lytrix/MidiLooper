@@ -226,6 +226,14 @@ bool trackHasCurrentSetDirtyLoopSlot(uint8_t trackIndex);
 
 bool deferredSaveBlockedByActiveSlotLoadSd();
 bool deferredSaveBlockedByPostLoadCommitHoldoff();
+/// A3.5: the finite post-load commit holdoff's remaining wait in ms, or 0 when none is pending. Read-only:
+/// it never clears the holdoff, so the drain can compare the remaining interval against its wall-clock
+/// budget before deciding whether to wait it out or report the named `post_load_holdoff` block.
+uint32_t postLoadCommitSaveHoldoffRemainingMs();
+/// A3.5: arm the post-load commit save holdoff directly (the production setter is
+/// `cleanupLoadLoopJobPublish`, which a native fixture cannot reach without the full commit closure).
+/// Documented controllable input, like `armBackgroundRestoreHoldoff`; it writes the same state.
+void armPostLoadCommitSaveHoldoff(uint32_t delayMs);
 void stepWallClockFromSdCatalogSync(uint8_t maxSetsPerSlice);
 
 /// A2.1 (`design.md` D1): a restore request's lifecycle state. Queued work awaits selection; running

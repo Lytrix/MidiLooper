@@ -191,12 +191,40 @@ SyncDrainResult drainPersistenceWorkBlockingDetailed(const LooperState& state) {
     SyncDrainProgressSnapshot lastProgress = captureSyncDrainProgressSnapshot();
     SyncDrainFailureReason failureReason = SyncDrainFailureReason::None;
     PersistenceSyncDrainBudget::SyncDrainVerdict verdict{};
+    // A3.5: the caller's wall clock is a promise of two orders -- a step budget and a wall-clock cap. The
+    // drain charges real elapsed time against the cap so a holdoff wait cannot silently overrun it.
+    const uint32_t drainStartUs = micros();
 
     while (hasPersistenceWorkPending()) {
         if (steps >= drainBudget.maxSliceSteps) {
             failureReason = SyncDrainFailureReason::ExceededSliceBudget;
             break;
         }
+        const uint32_t elapsedUs = micros() - drainStartUs;
+        if (drainBudget.maxWallClockUs != 0 && elapsedUs >= drainBudget.maxWallClockUs) {
+            failureReason = SyncDrainFailureReason::ExceededSliceBudget;
+            break;
+        }
+
+        // A3.5 rule 8, restructured for the MIDI-service topology (option 1): the finite post-load
+        // commit holdoff is **reported by name, never waited out inside the drain**. The drain runs on
+        // the interval path, and the timing contract puts every `midiHandler.handleMidiInput()` call in
+        // `main.cpp` (nine of them), so a drain that blocked here and serviced MIDI would move an input
+        // drain into the interval. Instead the drain returns the named `post_load_holdoff` immediately:
+        // nothing is discarded, the restore and the owed save are preserved, and the holdoff expires on
+        // its own 100 ms deadline while `main` keeps servicing MIDI. The caller refuses by name (A3.4)
+        // and a retry -- or the normal scheduler turn -- then completes the save.
+        if (!deferredSaveBlockedByActiveSlotLoadSd() &&
+            deferredSaveBlockedByPostLoadCommitHoldoff()) {
+            verdict = PersistenceSyncDrainBudget::classifySyncDrainVerdict(
+                StorageManagerInternal::isCaptureRecordingForPersistence(),
+                StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd(),
+                StorageManagerInternal::deferredSaveBlockedByPostLoadCommitHoldoff(),
+                StorageManagerInternal::restoreWaitCodeBlockingSave());
+            failureReason = verdict.reason;
+            break;
+        }
+
         // Terminal when a save is owed but no work item can carry it: the queue cannot admit the
         // finalize, so `hasPersistenceWorkPending()` is true on `pending` alone and no iteration can
         // change that. Fail fast with the cause instead of burning the whole stuck budget -- the
