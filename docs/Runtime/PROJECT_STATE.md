@@ -58,8 +58,12 @@ harness/device interaction — it must not be generalised to "recording is broke
 
 **A5.1 partial:** the updated slope fixture (`hitl_library_growth_sweep.py` now reads the census marker)
 reports `N=29`, `post_restore_free_chunks=452` of 512 on three consecutive fresh boots with 0 reconcile
-failures — the post-restore budget is stable. The **slope itself is not measured**: the sweep's track/slot
-control selected track 5, not the requested track 6, so N never grew (a fixture defect, recorded).
+failures — the post-restore budget is stable. The **slope itself is not measured, for a structural
+reason:** N is the boot playback set (`RRQ … committed`), deliberately independent of the library, so
+recording into an *unselected* scratch slot adds a HEADER_READY payload and cannot raise N; the fixture
+must select/enable each recorded slot before the reboot. (An earlier note that the sweep selected track 5
+instead of track 6 was a misreading of the 0-based walk indices and is withdrawn — the log shows
+`Selected track 6`.)
 
 **2026-09-24 — A3.2 attempted and reverted; the blocker is ITCM placement, not the design.**
 

@@ -843,9 +843,12 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       measured and stable:** three fresh-boot slope steps (`captures/s13-slope-final/`, sweep updated to
       read the checkpoint marker) report `banner=True`, `reconcile_warnings=0`, `N=29` and
       **`post_restore_free_chunks=452` of 512 on every boot**, with the restore walk adding no reservation
-      (512→480 both times). **The slope itself is still open:** the sweep's track/slot control selected
-      track 5 rather than the requested track 6, so its three "growth" steps recorded onto an already-full
-      slot and N never grew — a fixture defect recorded, not a slope. S1.1's per-owner census, S1.4's
+      (512→480 both times). **The slope itself is still open, and the reason is structural:** N is the
+      **boot playback set** (`RRQ … committed`), deliberately independent of the library, so recording into
+      an *unselected* scratch slot adds a HEADER_READY payload that cannot raise N. The fixture must make
+      each recorded slot part of the boot playback set (selected/enabled) before the reboot. (An earlier
+      note that the sweep "selected track 5 rather than track 6" was a misreading of the 0-based walk
+      indices and is **withdrawn** — the log shows `Selected track 6`.) S1.1's per-owner census, S1.4's
       undo/root baseline and S1.5's refusal point are unchanged from their recorded device runs. **No leg is
       reinterpreted**; each returns as `runtime-working-set-ownership`'s finding. **A5.2 is now closed**
       (base-preset-specific recording failure; direct stream + pipeline PASS on the current firmware).
