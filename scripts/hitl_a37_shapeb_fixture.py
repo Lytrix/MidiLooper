@@ -196,40 +196,51 @@ def device_time(line: str) -> float | None:
     return None
 
 
+MO_RE = re.compile(r"^#CAP,(\d+),MO,(\d+),(\d+),(\d+),(\d+)")
+
+
 def analyse_log(path: Path, target_track_1based: int) -> dict[str, object]:
-    """Analyse one captured run read-only, ordering every check by device time."""
+    """Analyse one captured run read-only.
+
+    Ordering is by **device time**, never file order: `#CAP` lines are flushed from a PSRAM ring, so a
+    ring line written at 10.6 s can appear after a prompt line written at 27.1 s. Lines without a device
+    time (the direct `[StorageManager]` prints) fall back to their file position relative to the drain
+    line, whose order is reliable.
+
+    Playback attribution uses the **MIDI output channel**: every track sends on its own channel, so an
+    `MO` note on a channel other than the target's is that other track playing. `ST,Track` carries no track
+    index and cannot be used for this.
+    """
     raw = [l.rstrip("\n") for l in path.read_text(encoding="utf-8", errors="replace").splitlines()]
     timed = [(device_time(l), l) for l in raw]
 
-    clear_index = None
-    clear_time = None
+    clear_index = clear_time = None
     for i, (t, l) in enumerate(timed):
         if "Clear waiting for deferred save completion" in l:
-            clear_index, clear_time = i, t if t is not None else 0.0
+            clear_index, clear_time = i, (t if t is not None else 0.0)
             break
     if clear_index is None:
         return {"error": "no CLEAR drain line found; the CLEAR did not take the drain path"}
 
-    # Device time orders ring-flushed `#CAP` lines correctly; the direct `[StorageManager]` prints carry no
-    # time, so they fall back to file position relative to the drain line (their order is reliable).
     def is_after(i: int, t: float | None) -> bool:
-        if t is None:
-            return i > clear_index
-        return t > clear_time
+        return (i > clear_index) if t is None else (t > clear_time)
 
-    before = [l for i, (t, l) in enumerate(timed) if not is_after(i, t)]
-    after = [l for i, (t, l) in enumerate(timed) if is_after(i, t)]
-
+    # (1) target content immediately before the press: the last loop-length feedback on the target.
     last_len = None
-    for l in reversed(before):
+    for i, (t, l) in enumerate(timed):
+        if is_after(i, t):
+            continue
         m = LENGTH_RE.search(l)
         if m:
             last_len = int(m.group(1)) if m.group(1) else 0
-            break
     content_exists = bool(last_len and last_len > 0)
 
+    # (2) a restore that started and was unresolved at the edge. `running` or a named `waiting_*` both
+    #     prove it started; a merely `queued` request does not.
     open_requests: dict[tuple[int, int], str] = {}
-    for l in before:
+    for i, (t, l) in enumerate(timed):
+        if is_after(i, t):
+            continue
         m = RRQ_RE.search(l)
         if not m:
             continue
@@ -242,39 +253,40 @@ def analyse_log(path: Path, target_track_1based: int) -> dict[str, object]:
             open_requests[key] = w.group(1) if w else "waiting"
         elif state == "terminal":
             open_requests.pop(key, None)
-    restore_started = len(open_requests) > 0
 
-    save_owed = True  # reaching the drain line *is* the evidence: handleClearTrack only drains if owed
-    # (4) another track audibly playing. The CLEAR itself stops the selected track immediately before the
-    # drain (`handleClearTrack` -> `track.stopPlaying()`), so a `PLAYING -> STOPPED` inside a short window
-    # before the drain line is the CLEAR's own stop, not another track's. Exclude it.
-    kClearOwnStopWindowS = 0.5
-    last_start = last_stop = None
-    for l in before:
-        if "Playback started" in l:
-            last_start = l
-        if re.search(r"ST,Track,PLAYING,(STOPPED|EMPTY)", l):
-            t = device_time(l)
-            if t is not None and t >= clear_time - kClearOwnStopWindowS:
-                continue  # the CLEAR stopping its own selected track
-            last_stop = l
-    sequence_playing = last_start is not None
-    if sequence_playing and last_stop is not None:
-        ts, ls = device_time(last_start), device_time(last_stop)
-        if ts is not None and ls is not None:
-            sequence_playing = ts > ls
+    # (4) another track audibly playing, attributed by MIDI output channel. Require a *non-target* channel
+    #     to emit notes both before and after the drain, so it is playing across the CLEAR edge; the
+    #     target's channel must not resume. `MidiEvent.channel` is 1-based, and `MO` prints it verbatim.
+    target_channel = target_track_1based
+    notes_before: dict[int, int] = {}
+    notes_after: dict[int, int] = {}
+    for i, (t, l) in enumerate(timed):
+        m = MO_RE.match(l)
+        if not m or int(m.group(2)) not in (128, 144):   # NoteOff / NoteOn only
+            continue
+        ch = int(m.group(3))
+        (notes_after if is_after(i, t) else notes_before)[ch] =             (notes_after if is_after(i, t) else notes_before).get(ch, 0) + 1
+    other_channels = sorted((ch for ch in notes_before if ch != target_channel
+                             and notes_after.get(ch, 0) > 0))
+    other_playing = len(other_channels) > 0
+    target_resumed = notes_after.get(target_channel, 0) > 0
 
     return {
         "clear_drain_at_s": clear_time,
         "content_exists_before_clear": content_exists,
         "target_length_bars_before_clear": last_len,
-        "restore_started_before_clear": restore_started,
+        "restore_started_before_clear": len(open_requests) > 0,
         "open_restore_requests_at_clear": {f"{t+1}/{s+1}": v for (t, s), v in open_requests.items()},
-        "save_owed": save_owed,
-        "other_track_playing": sequence_playing,
-        "save_completed": any("State saved successfully" in l for l in after),
-        "named_wait": [l for l in after if "Clear refused" in l][:3],
-        "clear_aborted": [l for l in after if "Clear aborted" in l][:3],
+        "save_owed": True,   # reaching the drain line is the evidence: handleClearTrack only drains if owed
+        "other_track_playing": other_playing,
+        "other_track_channels_notes_before": {ch: notes_before[ch] for ch in other_channels},
+        "other_track_channels_notes_after": {ch: notes_after[ch] for ch in other_channels},
+        "target_channel": target_channel,
+        "target_channel_notes_after_clear": notes_after.get(target_channel, 0),
+        "save_completed": any("State saved successfully" in l for l in
+                              [x for i, (t, x) in enumerate(timed) if is_after(i, t)]),
+        "named_wait": [l for i, (t, l) in enumerate(timed) if is_after(i, t) and "Clear refused" in l][:3],
+        "clear_aborted": [l for i, (t, l) in enumerate(timed) if is_after(i, t) and "Clear aborted" in l][:3],
     }
 
 

@@ -2910,6 +2910,23 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (eighth session) — the two A3.7 shape-(b) review issues are resolved; the gate stays open by owner direction.**
+(1) *Why the drain completed with a commit-waiting restore:* not an absent session —
+`deferredSaveBlockedByActiveSlotLoadSd()` is `SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile()` and a
+commit-waiting job keeps its session. The scheduler's slot-load gate is **bypassed for an urgent owed
+workspace save**: `processDeferredSaveState` returns early only when the gate is live **and** there is no
+in-flight work **and** `!shouldPrioritizeWorkspaceSaveDrain()`, and the latter is true when the save is
+`pending` with queued/in-flight work (the capture logs `PERS,request,…,sync_drain_already_pending` +
+`FinalizeWorkspace`). So the run shows the **completes** branch under an urgent-save priority, not a drain
+forced to wait on the restore. (2) *The analyser is corrected:* every check orders by **device time**
+(`#CAP,<micros>`; ring flush means file order ≠ time order), playback is attributed by **MIDI output channel**
+(`MO`) rather than the untracked `ST,Track`, a non-target channel must emit notes **before and after** the
+drain, and the blanket stop exclusion is gone. Re-analysis of `captures/a37fix-04/`: channel 6 emits 9 notes
+before and 6 after the drain, target channel 5 emits 0 after. **A3.7 and A3.8 stay open** — the owner's
+reading of the urgent-save-priority distinction is the remaining question. No firmware changed; route off;
+track 3 untouched.
+
+
 **2026-09-24 (seventh session) — the A3.7 shape-(b) fixture is built and a passing run is recorded (pending owner confirmation).**
 `scripts/hitl_a37_shapeb_fixture.py` runs shape (b) with **reload-on-clear disabled** and gates its verdict
 on the four preconditions, through the intended boot-restore entry point. Passing run
