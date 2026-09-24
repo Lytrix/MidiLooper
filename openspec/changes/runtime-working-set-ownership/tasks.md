@@ -753,6 +753,32 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       that a missing or confounded gate is not a pass and a threshold is never weakened, this gate closes only
       after that change lands and the sweep is re-run.
 
+- [ ] S2b.7 **Drain-driven restore advancement — deferred behavior (named follow-up).** The blocking drain's
+      *decisions* are verified natively (A3.2 wait-reason classification, A3.3 budget/progress accounting,
+      A3.4 caller contract in `deferred-slot-restore-liveness`), and its **completes** branch is
+      device-verified with an owed save, an in-flight commit-gated restore and another track playing
+      (`deferred-slot-restore-liveness` A3.7 shape (b), `captures/a37fix-04/`). **Not verified, and deferred
+      here:** that the drain **advances** a restore it waits on — i.e. that a restore holding the SD session
+      is progressed by the drain rather than only reported. The observed completion came from
+      `shouldPrioritizeWorkspaceSaveDrain()` bypassing the slot-load gate for an urgent owed save, so the
+      advancement clause needs its own fixture and must not be read into that run.
+      **Bound by** `resumable-midi-boundary-playback-maintenance` **task 3.3** (bounded commit/cleanup); do not
+      relax the commit gate here.
+      **Verify:** a fixture where a save is owed, another track plays, and a restore **holds the SD session**
+      at the drain edge, showing either that the drain advances it or that it names the wait — with no claim
+      of advancement absent that evidence.
+
+- [ ] S2b.8 **Set-change epoch invalidation for the restore request record — deferred residual (named
+      follow-up).** Transferred from `deferred-slot-restore-liveness` A2.1, whose delivered scope covers the
+      request identity, the named waits, exactly-one-terminal, the external **CLEAR** generation advance, and
+      pre-publication identity validation. **Not delivered:** a production **set-change** wire. The record's
+      `noteRestoreSetEpoch` has no production call site because no set-epoch accessor exists, so
+      "a set change yields `superseded`" is proven at the record level only, and
+      `handleUndoClearTrack`/`handleRedoClearTrack` do not advance the generation either.
+      **Verify:** a set-change entry point feeds the epoch (or an equivalent external reset) and native cases
+      assert that outstanding requests reach the `superseded` terminal under the identity they were created
+      with; the undo/redo-clear routes decide explicitly whether they are external resets.
+
 ## S3 — introduce the reusable lease pool (no release yet)
 
 - [x] S3.0 **Placement and size pins (B11, invariant 36).** (**PINS + POST-LINK ENFORCEMENT DONE 2026-09-23; task open only for later members' pins.** `Track::placementPins()` in `include/Track.h` and a pin block in `src/Track/TrackPlaybackRuntime.cpp` now pin the latch layout platform-independently and the device sizes of `LoopPlaybackRuntime` 6,344 / `Loop` 984 / `TrackPlaybackRuntime` 32 / `Track` 384 / `CaptureStopJobs` 2,736 / `PendingInteractionLatch` 40. Effectiveness verified: a deliberately wrong pin failed the device build in all 8 TUs that include `Track.h`. The pins emit no code (`code`/`padding` unchanged). **RESOLVED by architect decision 2026-09-23:** accept the 32 B and re-base the floor **872 -> 840**,
