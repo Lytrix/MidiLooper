@@ -766,13 +766,28 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       CLEAR with `#MEM_EXT_REFUSED bytes=22369620` →
       `FATAL: both internal heap and external memory are exhausted!`. The pool total is **8,380,416 B**
       (`psram_pool`), so the 22,369,620 B request is structurally impossible and reproduces at the same
-      value across runs. The only reachable route to "a restore in flight" on this device is
+      value across runs. The route tried to put "a restore in flight" on this device is
       clear-then-reload (every payload-bearing slot is restored at boot), and the bisect shows the refusal
-      follows a `LoadLoopJob done` for the just-cleared slot. **This change therefore does not enable the
+      follows a `LoadLoopJob done` for the just-cleared slot. *(This is the route tried, not proof that it
+      is the only one: a controlled boot/background-restore fixture may exercise the gate another way.)* **This change therefore does not enable the
       reload-after-external-reset route** (`isLoopSlotRestoreAttempted` stays `state == Terminal`,
-      conservative), and the allocation defect is recorded as a `runtime-working-set-ownership`/recording
-      finding, out of this change's scope. **Control:** a plain 2-bar take with no clear-then-reload
+      conservative), and the allocation defect is recorded as a `runtime-working-set-ownership` finding,
+      out of this change's scope. **Control:** a plain 2-bar take with no clear-then-reload
       (`captures/a37-control-02/`) records and saves cleanly with **0 FATAL**, isolating the reload route.
+      → **UPDATE 2026-09-24 (third session):** the allocation was investigated at its caller and the
+      responsible owner fixed in `runtime-working-set-ownership`
+      ([`ARCHITECTURE-REVIEW.md`](../runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) § P1 — the
+      ~22 MB `#MEM_EXT_REFUSED` abort). It is a **malformed size calculation**, not an allocator defect:
+      `LoopEventStore`'s `barFirstIndices_` was sized from `event.tick / BAR_TICKS` with no bound, and a
+      near-`UINT32_MAX` tick (`floor(0xFFFFFFFF / 768) = 5,592,405` — exactly the observed element count)
+      requested 22 MB in one `resize`. `LoopEventStore` now refuses an out-of-range tick by name and
+      bounds the rebuild for adopted content, with a red→green reproducer
+      (`test_out_of_range_tick_cannot_size_the_bar_index`); full native **2,344 / 1 skipped / 0 failures**,
+      capture-serial SUCCESS `code 391,064 + padding 2,152`. **The producer of the corrupt tick is not yet
+      identified**, so the reload route stays off in this change and shape (b) stays open. **Also
+      corrected:** "clear-then-reload is the only reachable route" is stronger than the evidence supports —
+      it is the route tried; a controlled boot/background-restore fixture may exercise the gate another
+      way, and that is not ruled out.
       Shape (b) remains a **mandatory** gate and is **not** taken, so the change is not archive-ready
       (A5.5). See [`REVIEW.md`](REVIEW.md) § 2026-09-24 (second session).
 - [ ] A3.7 **Packet C device gate.** With a deferred save owed and a restore in flight, press CLEAR on the
@@ -962,13 +977,16 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       | A5.6 archive | **blocked** | requires A5.5 with nothing open |
 
       **The one blocking condition, stated once:** **A3.7 shape (b)** needs a restore in flight at CLEAR
-      time. Every payload slot is restored at boot, so no cold slot exists post-boot, and the only route —
-      clear-then-reload — aborts with `#MEM_EXT_REFUSED bytes=22369620` (an untagged `std::vector`
-      allocation of `4 × 0x555555`) against the 8,380,416 B pool. That allocation defect belongs to
-      `runtime-working-set-ownership`/the allocator, not to this change, and this change deliberately does
-      **not** enable the route (the conservative `isLoopSlotRestoreAttempted` done-test). Until it is fixed,
-      A3.7 (b), A3.8, A5.1's slope, A5.4 and archive stay open. **No mandatory gate is recorded as unrun
-      without a reason, and none is reinterpreted.**
+      time. Every payload slot is restored at boot, so no cold slot is left post-boot; the route tried —
+      clear-then-reload — aborted with `#MEM_EXT_REFUSED bytes=22369620` before the third session.
+      **That abort is now diagnosed and fixed at its owner** (`LoopEventStore` sized `barFirstIndices_`
+      from an unbounded `event.tick / BAR_TICKS`; a near-`UINT32_MAX` tick requested 22 MB in one
+      `resize`) — see [`runtime-working-set-ownership/ARCHITECTURE-REVIEW.md`](../runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+      § P1. `LoopEventStore` now refuses an out-of-range tick by name, so the abort is gone; what remains
+      is to **identify the producer of the corrupt tick** and to prove the gate with a fixture. This
+      change deliberately does **not** enable the reload route (the conservative
+      `isLoopSlotRestoreAttempted` done-test) until then. A3.7 (b), A3.8, A5.1's slope, A5.4 and archive
+      stay open. **No mandatory gate is recorded as unrun without a reason, and none is reinterpreted.**
 
 - [ ] A5.6 **Archive.** After A5.5 shows no open mandatory gate, archive per `openspec-archive-change`.
       **Verify:** `openspec validate` passes and the main `lazy-slot-hydration` spec reflects the shipped

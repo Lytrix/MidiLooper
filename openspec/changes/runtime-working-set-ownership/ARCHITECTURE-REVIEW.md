@@ -2875,3 +2875,56 @@ scratch-slot approval.
 - The **content-verified PASS** (Leg 4), which needs the cycle-window re-capture above.
 - A baseline (`83be2e19`) comparison run for the 24-bar shape; the pre-change RC-MEM-5 leg is the recorded
   comparator and the boot census baseline is already on record, so nothing here re-derives them.
+
+## P1 — the ~22 MB `#MEM_EXT_REFUSED` abort is a malformed bar-index size, not an allocator defect (2026-09-24, second session)
+
+**Found by** `deferred-slot-restore-liveness`'s A3.7 shape (b) work: the clear-then-reload route the gate
+needs aborted the firmware with `#MEM_EXT_REFUSED bytes=22369620` / `bytes=22369612` followed by
+`[InternalHeapFirstAllocator] FATAL: both internal heap and external memory are exhausted!` (three
+fresh-boot reproductions; a plain-take control records cleanly). This change owns the investigation; the
+deferred change stays open on the device gate.
+
+### The caller, not the allocator
+
+The request is **not** an allocator fault. `22369620 = 4 × 5,592,405` and `22369612 = 4 × 5,592,403`: a
+4-byte-element vector. The two sites are `LoopEventStore`'s bar index, `BarIndexVec =
+std::vector<size_t, InternalHeapFirstAllocator<size_t>>` (`size_t` is 4 bytes on the target):
+
+* `LoopEventStore::appendToTailChunk` — `const uint32_t bar = evt.tick / BAR_TICKS; barFirstIndices_.resize(bar + 1, …)`
+* `LoopEventStore::rebuildBarIndex` — the same computation over adopted chunks (SD load, snapshot restore,
+  deep clone), which bypass `append`.
+
+Neither had a bound. `BAR_TICKS` is 768 and
+`floor(0xFFFFFFFF / 768) = 5,592,405` — exactly the observed element count. So the input is a **tick near
+`UINT32_MAX`**, i.e. an uninitialised/sentinel tick (a negative tick cast to `uint32_t`, or a torn
+payload byte range), not a content-derived count. The reported tag is `tag=0` (untagged), which is why the
+owner was not visible in the refusal line.
+
+**Lifetime through clear/reload:** the store belongs to the reloaded `Loop`. `clear()` drops
+`barFirstIndices_`; the next `append` (or a `rebuildBarIndex` after SD-load staging sets `barIndexDirty_`)
+rebuilds it from the chunk events, so a corrupt tick in an adopted/reloaded chunk sizes the index directly.
+The allocation is a single `resize`, which is why it aborts rather than degrading.
+
+### Reproducer (red → green) and the fix
+
+* **Reproducer:** `test/test_loop_event_store` → `test_out_of_range_tick_cannot_size_the_bar_index`.
+  Red on the old code (the event was accepted and the index grew to 5.6M entries); green now.
+* **Owner fix (`LoopEventStore`):** a supported-tick ceiling
+  (`LoopEventStoreConfig::MAX_INDEXED_BARS = 4096`, `MAX_INDEXED_TICKS = 4096 × BAR_TICKS`), with
+  `append` **refusing** `evt.tick > MAX_INDEXED_TICKS` as `LoopEventStoreAppendDeny::TickOutOfRange`
+  (named and logged, deliberately **not** silently clamped — a cap that hides the corrupt producer is the
+  failure mode to avoid), and `rebuildBarIndex` skipping an out-of-range bar defensively for adopted
+  content. 4096 bars is far above the 64-bar target: every real loop and over-run take is unaffected, and
+  the index is capped at 16 KB instead of 22 MB.
+
+### What is **not** established, and the next step
+
+The **producer** of the corrupt tick is not identified. It is reached only with the reload-after-external-
+reset route enabled, which `deferred-slot-restore-liveness` deliberately leaves off, so the remaining
+hypotheses — a torn read of a payload the clear's deferred save is rewriting, or a stale adopted chunk —
+are untested. **Next step (bounded):** with this refusal in place the abort is gone, so enable the route
+in an investigation build and read the `TickOutOfRange` refusal to identify which slot/payload produced
+the tick, then fix that owner. Do not re-enable the route in the change itself until then.
+
+Evidence: `captures/a37b-01/`, `captures/a37b-02/`, `captures/a37b-03/` (aborts),
+`captures/a37-control-02/` (clean control).
