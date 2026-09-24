@@ -119,6 +119,38 @@ STORAGE_PERSIST_MEM bool restoreRequestRecordIsCurrent(uint8_t trackIndex, uint8
            record.setEpoch == restoreSetEpoch_;
 }
 
+/// A2.1: true once a terminal has been recorded for the current record. A job that captured a live
+/// identity at begin and finds a terminal here must publish nothing: the request it was serving has
+/// already been decided (set change → `superseded`, bounded failure → `refused`).
+STORAGE_PERSIST_MEM bool restoreRequestTerminalRecorded(uint8_t trackIndex, uint8_t slotIndex) {
+    if (!coordinatesValid(trackIndex, slotIndex)) {
+        return false;
+    }
+    return restoreRequestRecords_[trackIndex][slotIndex].terminalRecorded;
+}
+
+/// A2.1/A1.8: true when a record exists for these coordinates at all -- a live request, or one that was
+/// decided (a terminal) and has not yet been cleared by a new request. A never-begun record reads false,
+/// so a probe reports "no request" rather than a fabricated `queued`.
+STORAGE_PERSIST_MEM bool restoreRequestRecordExists(uint8_t trackIndex, uint8_t slotIndex) {
+    if (!coordinatesValid(trackIndex, slotIndex)) {
+        return false;
+    }
+    const RestoreRequestRecord& record = restoreRequestRecords_[trackIndex][slotIndex];
+    return record.identityValid || record.terminalRecorded;
+}
+
+/// The terminal outcome recorded for these coordinates, or `None`. Reported even when the record is no
+/// longer current (an external generation advance keeps the superseded outcome readable), so a probe can
+/// say *what happened* to a request that was decided rather than cleared.
+STORAGE_PERSIST_MEM RestoreRequestTerminal restoreRequestTerminalFor(uint8_t trackIndex,
+                                                                    uint8_t slotIndex) {
+    if (!coordinatesValid(trackIndex, slotIndex)) {
+        return RestoreRequestTerminal::None;
+    }
+    return restoreRequestRecords_[trackIndex][slotIndex].terminal;
+}
+
 STORAGE_PERSIST_MEM RestoreRequestWait restoreRequestWaitFor(uint8_t trackIndex, uint8_t slotIndex) {
     if (!coordinatesValid(trackIndex, slotIndex)) {
         return RestoreRequestWait::None;
@@ -179,9 +211,23 @@ STORAGE_PERSIST_MEM void advanceRestoreRequestGeneration(uint8_t trackIndex, uin
     if (!coordinatesValid(trackIndex, slotIndex)) {
         return;
     }
+    RestoreRequestRecord& record = restoreRequestRecords_[trackIndex][slotIndex];
+    // A2.1: an external reset supersedes the outstanding request **under the identity it was created
+    // with**, before the generation moves. Clearing first (as the initial version did) erased the
+    // outcome, so "a job whose slot owner changed before publication is superseded" had nothing to
+    // observe.
+    if (restoreRequestRecordIsCurrent(trackIndex, slotIndex) && !record.terminalRecorded) {
+        record.state = RestoreRequestState::Terminal;
+        record.terminal = RestoreRequestTerminal::Superseded;
+        record.wait = RestoreRequestWait::None;
+        record.terminalRecorded = true;
+        emitRestoreRequestTransition(trackIndex, slotIndex, record);
+    }
     ++restoreRequestGeneration_[trackIndex][slotIndex];
-    clearRecord(restoreRequestRecords_[trackIndex][slotIndex],
-                restoreRequestGeneration_[trackIndex][slotIndex]);
+    // The record is deliberately **kept** here. It still describes the request that was just
+    // superseded, so `restoreRequestTerminalRecorded` stays true and the pre-publication check can
+    // reject an in-flight job; `restoreRequestRecordIsCurrent` is now false because the generation
+    // moved. The next `beginRestoreRequest` for these coordinates clears it and starts fresh.
 }
 
 STORAGE_PERSIST_MEM void invalidateAllRestoreRequestsAsSuperseded() {

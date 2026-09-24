@@ -143,6 +143,15 @@ void test_timing_telemetry_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,6701483,DIAG,snapshot_slab_fail,site=slab_open,bytes=32768,nodes=1754,slabs=12"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,500,DIAG,boot_reset,crash=1"));
+  // S1.3/S2b.3 post-restore census checkpoint: a one-shot boot marker the slope run pins the pool
+  // figure to. It must be Tier-A, and it must be the timestamped form (`#CAP,<micros>,DIAG,...`),
+  // which is also what makes `tagOf` read `DIAG,post_restore_census,...` rather than the micros field.
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,39819493,DIAG,post_restore_census,free_chunks=452,admission_complete=1,"
+      "interactive_ready=1,undo_hydrated=1,transport_stopped=1,deferred_prewarm_idle=1,"
+      "heap_free=77824"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,39819493,DIAG,post_restore_census,free_chunks=0,admission_complete=0"));
 #if SESSION_CAPTURE_SNAPSHOT_IDLE
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,us=79169,pending=1,root=0x0,root_rev=0,"
@@ -258,6 +267,21 @@ void test_snapshot_unit_lines_fit_capture_text_budget() {
   TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), resetLen);
 }
 
+void test_post_restore_census_line_fits_capture_text_budget() {
+  // DebugSessionCapture kMaxCaptureTextBytes is 192; payload is 191 + NUL. Worst case is a 10-digit
+  // micros field and both numeric fields at their type maxima.
+  constexpr size_t kMaxCaptureTextPayload = 191;
+  char census[256];
+  const int censusLen = snprintf(
+      census, sizeof(census),
+      "#CAP,%lu,DIAG,post_restore_census,free_chunks=%u,admission_complete=1,"
+      "interactive_ready=1,undo_hydrated=1,transport_stopped=1,deferred_prewarm_idle=1,"
+      "heap_free=%lu",
+      4294967295ul, 65535u, 4294967295ul);
+  TEST_ASSERT_GREATER_THAN(0, censusLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), censusLen);
+}
+
 void test_transport_and_persistence_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,21524068,ST,Track,STOPPED,ARMED"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,22800000,PERS,queue,1,2,3,ok"));
@@ -336,6 +360,7 @@ int main() {
   RUN_TEST(test_bridge_begin_denial_is_critical_capture_evidence);
   RUN_TEST(test_snapshot_idle_lines_fit_capture_text_budget);
   RUN_TEST(test_snapshot_unit_lines_fit_capture_text_budget);
+  RUN_TEST(test_post_restore_census_line_fits_capture_text_budget);
   RUN_TEST(test_transport_and_persistence_lines_are_tier_a);
   RUN_TEST(test_note_and_display_traffic_is_not_tier_a);
   RUN_TEST(test_other_diag_subtags_are_not_tier_a);

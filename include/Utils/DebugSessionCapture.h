@@ -151,6 +151,11 @@ SC_MEM_ATTR void capturePrewarm(uint8_t track, uint8_t slot, bool fullViews,
  *  psram_free, psram_pool, heap_free, free_chunks. Walks the smalloc pool, so it is
  *  called only from the pre-transport boot prewarm. */
 SC_MEM_ATTR void capturePrewarmMemory(const char* phase);
+/** S1.3/S2b.3 one-shot post-restore census checkpoint (Tier-A):
+ *  DIAG,post_restore_census,free_chunks,admission_complete,interactive_ready,undo_hydrated,
+ *  transport_stopped,deferred_prewarm_idle,heap_free. Emitted at most once per boot, only when every
+ *  readiness condition holds; see `StorageManager::emitPostRestoreCensusIfReady`. */
+SC_MEM_ATTR void postRestoreCensus(uint16_t freeChunks, uint32_t heapFree);
 SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                                   uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
                                   size_t chunkRefCount, const char* outcome);

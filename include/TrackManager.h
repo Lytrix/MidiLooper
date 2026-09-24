@@ -46,6 +46,14 @@ public:
   /// this off-MIDI owner turn. Returns true when one request was serviced.
   bool servicePendingPreparedPlaybackPair();
   bool hasPendingPreparedPlaybackPairRequest() const;
+  /// Deferred post-commit playback prewarm: the focus slot's merged-MIDI window build that `main`
+  /// schedules after a LoadLoopJob Commit so it can never stack with Commit/Cleanup. It is owned here
+  /// (not in a `main` static) because the post-restore census checkpoint must wait for it: the build
+  /// allocates the focus slot's runtime window, so a census taken before it under-reads the pool.
+  void requestDeferredPlaybackPrewarm(uint8_t trackIndex, uint8_t slotIndex);
+  bool hasPendingDeferredPlaybackPrewarm() const;
+  /// Consume the pending request, if any, reporting its `(track, slot)`. False when none is pending.
+  bool takeDeferredPlaybackPrewarm(uint8_t& trackIndex, uint8_t& slotIndex);
   /// Build visual cache for the selected display slot (cold path; defer from setup).
   void prewarmSelectedDisplayVisualCache();
 
@@ -226,6 +234,11 @@ private:
   bool pendingEnabledSetReplacement[Config::NUM_TRACKS] = {false};
 
   bool bootLoadInProgress_ = false;
+
+  /// Deferred post-commit playback prewarm request (one at a time; a later request supersedes).
+  bool deferredPlaybackPrewarmPending_ = false;
+  uint8_t deferredPlaybackPrewarmTrack_ = 0;
+  uint8_t deferredPlaybackPrewarmSlot_ = 0;
 
   //friend class UI; // Optional: if you have a UI or debug class needing internal access
 };

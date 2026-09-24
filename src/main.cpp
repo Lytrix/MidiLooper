@@ -241,9 +241,6 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     uint32_t now, uint32_t& lastDisplayUpdate, bool timingCriticalTrackActive,
     bool postOverdubPlayingMidiDrain) {
   static bool bootSlotLoadRefreshPending = true;
-  static bool firstCommitPrewarmPending = false;
-  static uint8_t firstCommitPrewarmTrack = 0;
-  static uint8_t firstCommitPrewarmSlot = 0;
   static MidiServiceDrain::ActiveLoadDisplayContinuation activeLoadDisplayContinuation{};
   StorageManager::setBootTitleLoadDrain(bootSlotLoadRefreshPending);
   bool captureActive = false;
@@ -317,11 +314,14 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 
   // A prewarm created by an active Commit is deliberately retained until a
   // noncritical LoadAndDisplay turn. It must never become a second hidden child
-  // inside the committing turn.
-  if (!timingCriticalTrackActive && firstCommitPrewarmPending &&
-      !StorageManager::hasLoadLoopJobCommitPending()) {
-    prewarmPlaybackMergedEventsForSlot(firstCommitPrewarmTrack, firstCommitPrewarmSlot);
-    firstCommitPrewarmPending = false;
+  // inside the committing turn. The pending request is owned by `trackManager` so the
+  // post-restore census checkpoint can wait for it (S1.3/S2b.3).
+  if (!timingCriticalTrackActive && !StorageManager::hasLoadLoopJobCommitPending()) {
+    uint8_t prewarmTrack = 0;
+    uint8_t prewarmSlot = 0;
+    if (trackManager.takeDeferredPlaybackPrewarm(prewarmTrack, prewarmSlot)) {
+      prewarmPlaybackMergedEventsForSlot(prewarmTrack, prewarmSlot);
+    }
   }
 
   if (timingCriticalTrackActive &&
@@ -380,9 +380,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
       // separate owner turn. Queue prewarm only after that continuation has
       // retired; doing it here would stack a third expensive child behind
       // Commit and Cleanup.
-      firstCommitPrewarmPending = true;
-      firstCommitPrewarmTrack = focusTrack;
-      firstCommitPrewarmSlot = focusSlot;
+      trackManager.requestDeferredPlaybackPrewarm(focusTrack, focusSlot);
     }
     if (allowDeferredSlotRestore && !timingCriticalTrackActive &&
         !SlotLoadSession::isActive()) {
@@ -927,6 +925,10 @@ void loop() {
 
 #if defined(SESSION_CAPTURE)
   StorageManager::processHitlSerialCommands();
+  // S1.3/S2b.3: the one-shot post-restore census checkpoint. Idle-owner position (after MIDI service and
+  // persistence for this turn) so the pool figure it reports is a settled one; the call itself decides
+  // readiness and emits at most once per boot.
+  StorageManager::emitPostRestoreCensusIfReady(looperState.getLooperState());
 #endif
 
   // S0: observation-only timing telemetry emission (no scheduling decisions).

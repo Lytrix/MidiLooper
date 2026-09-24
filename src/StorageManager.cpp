@@ -54,6 +54,10 @@
 
 using namespace StorageManagerInternal;
 
+/// The sketch owns the transport global and the load path reads it the same way (`LoadLoopJob.cpp`), so
+/// the census checkpoint follows the established declaration rather than routing through ClockManager.
+extern bool sequencerRunning;
+
 namespace {
 #if defined(SESSION_CAPTURE)
 #if defined(__IMXRT1062__)
@@ -248,6 +252,74 @@ bool StorageManager::bootInteractiveReady() {
     // loadTransportSlotIndices remaps active→selected while stopped.
     return StorageManagerInternal::pendingLoopSlotRestoreCount() == 0 && !SlotLoadSession::isActive() &&
            !StorageManagerInternal::anyLoadLoopJobActive();
+}
+
+/// S1.3/S2b.3 — the **post-restore census checkpoint**, as one explicit marker.
+///
+/// Emitted once per boot, under `SESSION_CAPTURE`, when the S1.3 census conditions all hold. "The last
+/// restore terminal plus a delay" is deliberately not the oracle: publish installs content and emits the
+/// `committed` terminal, cleanup then runs on a *separate* turn, deferred playback prewarm and boot undo
+/// hydration follow, and the remaining-library background admission scan is incremental on top of that.
+///
+///  - `bootBackgroundFillAdmissionComplete` — the scan finished, so a momentarily empty queue cannot
+///    qualify. `hasPendingLoopSlotRestore()`/`bootInteractiveReady()` do not cover this.
+///  - `bootInteractiveReady()` — restore queue empty, no live `SlotLoadSession`, **both** job instances
+///    inactive.
+///  - `!undoSnapshotsPending_` — boot undo hydration finished.
+///  - `!sequencerRunning` and `!isCaptureRecordingForPersistence()` — transport stopped, so the active
+///    working set is comparable between measurements.
+///  - no post-load commit holdoff and no in-flight persistence work — the pool figure is not read while a
+///    writer still owns chunks.
+///  - **no deferred playback prewarm** — neither a prepared-pair request nor the post-commit merged-MIDI
+///    build is still owed. Both allocate the focus slot's runtime window, so a census taken before them
+///    would report a pool figure that the very next turn changes. `main` services them on the
+///    LoadAndDisplay owner turn; the checkpoint attests that work has drained.
+///
+/// The restored-slot inventory is reported by the caller's `!CAPTURE_CONTENT` dump, which is independently
+/// verified; this marker carries the readiness fields and `freeChunks()` so a slope run can pin the
+/// checkpoint instead of guessing a delay.
+STORAGE_PERSIST_MEM void StorageManager::emitPostRestoreCensusIfReady(const LooperState& state) {
+#if defined(SESSION_CAPTURE)
+    static bool emitted = false;
+    if (emitted) {
+        return;
+    }
+    if (!StorageManagerInternal::bootBackgroundFillAdmissionComplete()) {
+        return;
+    }
+    if (!StorageManager::bootInteractiveReady()) {
+        return;
+    }
+    if (StorageManagerInternal::undoSnapshotsPending_) {
+        return;
+    }
+    if (sequencerRunning || StorageManagerInternal::isCaptureRecordingForPersistence()) {
+        return;
+    }
+    if (StorageManagerInternal::deferredSaveBlockedByPostLoadCommitHoldoff() ||
+        StorageManager::hasActivePersistenceWorkItem() ||
+        PersistenceWorkQueue::queueDepth() > 0) {
+        return;
+    }
+    if (trackManager.hasPendingPreparedPlaybackPairRequest() ||
+        trackManager.hasPendingDeferredPlaybackPrewarm()) {
+        return;
+    }
+    emitted = true;
+    const uint16_t freeChunks = LoopEventStore::freeChunkCount();
+    const unsigned heapFree = static_cast<unsigned>(MemoryMonitor::getInternalHeapFreeBytes());
+    // PROGMEM: this tree sits on the FlexRAM bank boundary, so the format strings do not belong in RAM1
+    // `.rodata`. Same rule as the drain report.
+    Serial.printf_P(PSTR("[StorageManager] post_restore_census free_chunks=%u admission_complete=1 "
+                         "interactive_ready=1 undo_hydrated=1 transport_stopped=1 "
+                         "deferred_prewarm_idle=1 heap_free=%u\n"),
+                    static_cast<unsigned>(freeChunks), heapFree);
+    // Timestamped Tier-A capture line (`#CAP,<micros>,DIAG,...`), so it is classified by
+    // `CaptureLineTier` and cannot be parsed as a tag-less line.
+    DebugSessionCapture::postRestoreCensus(freeChunks, static_cast<uint32_t>(heapFree));
+#else
+    (void)state;
+#endif
 }
 
 void StorageManager::requestCommitRevision() {

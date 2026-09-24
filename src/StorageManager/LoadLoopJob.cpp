@@ -51,6 +51,11 @@ struct LoadLoopJob {
     LoopSnapshotBodyFormatV1LoadParseState lsv1ParseState{};
     ImmutableLoopSnapshotRef loadedLoopSnapshot;
     SlotLoadSession* session = nullptr;
+    /// A2.1: the request identity captured when this job began, so publication can reject a request that
+    /// an external reset superseded -- or that reached a terminal -- while the job was in flight.
+    bool requestTracked = false;
+    uint32_t requestGeneration = 0;
+    uint32_t requestSetEpoch = 0;
 };
 #if defined(__IMXRT1062__)
 DMAMEM LoadLoopJob loadLoopJob_{};
@@ -120,6 +125,9 @@ STORAGE_PERSIST_MEM void clearLoadLoopJobInstance(LoadLoopJob& job) {
     job.payloadSize = 0;
     job.payloadOffset = 0;
     job.saveTokenVerified = false;
+    job.requestTracked = false;
+    job.requestGeneration = 0;
+    job.requestSetEpoch = 0;
 }
 
 STORAGE_PERSIST_MEM void clearLoadLoopJob() {
@@ -145,6 +153,9 @@ STORAGE_PERSIST_MEM void swapLoadLoopJobs(LoadLoopJob& a, LoadLoopJob& b) {
     swap(a.lsv1ParseState, b.lsv1ParseState);
     swap(a.loadedLoopSnapshot, b.loadedLoopSnapshot);
     swap(a.session, b.session);
+    swap(a.requestTracked, b.requestTracked);
+    swap(a.requestGeneration, b.requestGeneration);
+    swap(a.requestSetEpoch, b.requestSetEpoch);
 }
 
 STORAGE_PERSIST_MEM bool shouldFinishLoadLoopJobBeforePreempt() {
@@ -315,6 +326,51 @@ static bool backgroundHeadMayBegin() {
     return queuedRestoreMayBegin(head.track, head.slot);
 }
 
+/// A2.1: is preparation denied by the capture (recording) half of the load gate? Recording keeps the
+/// documented SD-session deferral, and it is the reason a queued request names `waiting_capture`.
+STORAGE_PERSIST_MEM bool backgroundPreparationDeniedByCapture() {
+    for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+        if (trackManager.getTrack(i).isRecording()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// A2.1: name **why** a background request's preparation cannot advance. A denial is not an unexplained
+/// queue stall, and the two reasons are distinguishable by name:
+///  - recording keeps the documented SD-session deferral -> `waiting_capture`;
+///  - a sibling job instance holding commit/cleanup is the **global** commit gate ->
+///    `waiting_job_capacity` (queue ordering cannot fix it; the bounded-commit prerequisite
+///    `resumable-midi-boundary-playback-maintenance` task 3.3 can).
+/// When neither holds, preparation is admitted and nothing is named here.
+STORAGE_PERSIST_MEM void nameBackgroundPreparationDenial(uint8_t trackIndex, uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    if (backgroundPreparationDeniedByCapture()) {
+        markRestoreRequestWaiting(trackIndex, slotIndex, RestoreRequestWait::Capture);
+        return;
+    }
+    if (StorageManager::hasLoadLoopJobCommitPending()) {
+        markRestoreRequestWaiting(trackIndex, slotIndex, RestoreRequestWait::JobCapacity);
+    }
+}
+
+/// A2.1: the same naming for the queued background head, which is the request a `Skip`/`SkipKeepParked`
+/// decision leaves unserved. An owner-blocked head is already named `waiting_slot_owned`, so it is left
+/// alone rather than overwritten with a queue-wide reason.
+STORAGE_PERSIST_MEM void nameBlockedBackgroundHeadWait() {
+    DeferredLoopSlotRestore head{};
+    if (!peekFirstPendingLoopSlotRestore(head)) {
+        return;
+    }
+    if (!queuedRestoreMayBegin(head.track, head.slot)) {
+        return;
+    }
+    nameBackgroundPreparationDenial(head.track, head.slot);
+}
+
 STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex) {
     clearLoadLoopJobInstance(loadLoopJob_);
     char loopPath[64];
@@ -375,6 +431,11 @@ STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex)
     // A2.1: the request is now being advanced by an admitted job, which is `running` -- not a
     // fictitious wait and not a terminal.
     markRestoreRequestRunning(trackIndex, slotIndex);
+    // Capture the identity this job is serving. `requestTracked` false means no request record existed
+    // (the legacy path), in which case publication keeps its pre-A2.1 behavior.
+    loadLoopJob_.requestTracked = restoreRequestRecordIsCurrent(trackIndex, slotIndex);
+    loadLoopJob_.requestGeneration = restoreRequestGenerationFor(trackIndex, slotIndex);
+    loadLoopJob_.requestSetEpoch = restoreSetEpoch();
     loadLoopJob_.track = trackIndex;
     loadLoopJob_.slot = slotIndex;
     loadLoopJob_.payloadOffset = payloadOffset;
@@ -442,6 +503,8 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
                 swapLoadLoopJobs(loadLoopJob_, parkedLoadLoopJob_);
                 return;
             case LoadLoopSelectionPolicy::ParkedIdleAction::SkipKeepParked:
+                // A2.1: a skipped background request is in a **named** wait, not an unexplained stall.
+                nameBlockedBackgroundHeadWait();
                 return;
         }
         return;
@@ -491,6 +554,8 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
             }
             return;
         case LoadLoopSelectionPolicy::EmptyIdleAction::Skip:
+            // A2.1: the queue is left unserved for a reason, and that reason is recorded by name.
+            nameBlockedBackgroundHeadWait();
             return;
     }
 }
@@ -500,6 +565,24 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
         return SlotLoadAdvanceResult::Failed;
     }
     Loop& loop = trackManager.getTrack(loadLoopJob_.track).getLoop(loadLoopJob_.slot);
+
+    // A2.1: validate the request identity **immediately before publication**, and **before** the token
+    // check -- the token path resets the slot, which would destroy content that a new owner has since
+    // committed there. A job that captured a live request and now finds it superseded (an external
+    // generation advance, a set change) or already decided must publish **nothing**: the parsed body
+    // belongs to a request nobody owns any more. Only this job's parser/session storage is released --
+    // the Loop is left exactly as the current owner left it. The `superseded` terminal was recorded
+    // under the request's own identity at the generation advance, so it is not lost here.
+    if (loadLoopJob_.requestTracked &&
+        (loadLoopJob_.requestGeneration !=
+             restoreRequestGenerationFor(loadLoopJob_.track, loadLoopJob_.slot) ||
+         loadLoopJob_.requestSetEpoch != restoreSetEpoch() ||
+         restoreRequestTerminalRecorded(loadLoopJob_.track, loadLoopJob_.slot))) {
+        Serial.println(
+            "[StorageManager] LoadLoopJob superseded before publication; publishing nothing");
+        clearLoadLoopJobInstance(loadLoopJob_);
+        return SlotLoadAdvanceResult::Failed;
+    }
 
     if (!loadLoopJob_.saveTokenVerified) {
         Serial.println("[StorageManager] WARN: LoadLoopJob token mismatch");
@@ -968,6 +1051,17 @@ void STORAGE_PERSIST_MEM stepSubmittedLoadJobsImpl(uint32_t budgetUs, bool activ
                                   RestoreRequestWait::CommitGate);
     }
     if (!jobIsFocus && !preparationAllowed) {
+        // A2.1: the parked request carries its reason, so the drain and the probe can report *why* it
+        // cannot advance instead of a generic slot-load block. Its **own** commit being denied is
+        // already recorded as `waiting_commit_gate` above; the two reasons left here are recording
+        // (this request is deferred by capture) and a sibling instance holding the global gate (the
+        // *queued* request is the one that then waits for job capacity).
+        if (backgroundPreparationDeniedByCapture()) {
+            markRestoreRequestWaiting(loadLoopJob_.track, loadLoopJob_.slot,
+                                      RestoreRequestWait::Capture);
+        } else if (commitPendingNow) {
+            nameBlockedBackgroundHeadWait();
+        }
         if (!bootTitleLoadDrain_) {
             parkActiveLoadLoopJob();
         }
@@ -1098,6 +1192,18 @@ void STORAGE_PERSIST_MEM StorageManager::probeRestoreState(RestoreStateProbe& ou
     using namespace StorageManagerInternal;
     out = RestoreStateProbe{};
 
+    // A1.8: fill the record vocabulary only when a record exists, so a cleared/never-begun coordinate
+    // reports "no request" instead of a fabricated `queued`/`none`/`none`.
+    const auto fillRequestNames = [](uint8_t trackIndex, uint8_t slotIndex, const char*& state,
+                                     const char*& wait, const char*& terminal) {
+        if (!restoreRequestRecordExists(trackIndex, slotIndex)) {
+            return;
+        }
+        state = restoreRequestStateName(restoreRequestState(trackIndex, slotIndex));
+        wait = restoreRequestWaitName(restoreRequestWaitFor(trackIndex, slotIndex));
+        terminal = restoreRequestTerminalName(restoreRequestTerminalFor(trackIndex, slotIndex));
+    };
+
     out.queuedCount = pendingLoopSlotRestoreCount();
     DeferredLoopSlotRestore head{};
     if (peekFirstPendingLoopSlotRestore(head)) {
@@ -1108,6 +1214,8 @@ void STORAGE_PERSIST_MEM StorageManager::probeRestoreState(RestoreStateProbe& ou
         // The head's own startability, which is the state an operator needs to tell "the head is
         // blocked on an owner" from "the queue is empty" without a bisect.
         out.queueHeadStartable = queuedRestoreMayBegin(head.track, head.slot);
+        fillRequestNames(head.track, head.slot, out.queueHeadRequestState, out.queueHeadRequestWait,
+                         out.queueHeadRequestTerminal);
     }
 
     if (loadLoopJob_.active) {
@@ -1118,6 +1226,8 @@ void STORAGE_PERSIST_MEM StorageManager::probeRestoreState(RestoreStateProbe& ou
         out.activeJobIsFocus = loadLoopJobIsFocusSlot();
         out.activeBytesRead = loadLoopJob_.bytesRead;
         out.activePayloadSize = loadLoopJob_.payloadSize;
+        fillRequestNames(loadLoopJob_.track, loadLoopJob_.slot, out.activeJobRequestState,
+                         out.activeJobRequestWait, out.activeJobRequestTerminal);
     }
     if (parkedLoadLoopJob_.active) {
         out.parkedJob = true;
@@ -1126,6 +1236,8 @@ void STORAGE_PERSIST_MEM StorageManager::probeRestoreState(RestoreStateProbe& ou
         out.parkedJobPhase = static_cast<uint8_t>(parkedLoadLoopJob_.phase);
         out.parkedBytesRead = parkedLoadLoopJob_.bytesRead;
         out.parkedPayloadSize = parkedLoadLoopJob_.payloadSize;
+        fillRequestNames(parkedLoadLoopJob_.track, parkedLoadLoopJob_.slot, out.parkedJobRequestState,
+                         out.parkedJobRequestWait, out.parkedJobRequestTerminal);
     }
 
     out.saveBlockedBySlotLoad = deferredSaveBlockedByActiveSlotLoadSd();

@@ -161,6 +161,13 @@ STORAGE_PERSIST_MEM void enqueueRemainingLoopSlotRestores() {
     bootBackgroundFillAdmissionStarted_ = false;
 }
 
+/// S1.3: the remaining-library background admission scan finished. `hasPendingLoopSlotRestore()` cannot
+/// answer this — the scan is incremental, so the queue can be momentarily empty mid-scan and a census
+/// taken then would under-count the intended slots.
+bool bootBackgroundFillAdmissionComplete() {
+    return bootBackgroundFillAdmissionComplete_;
+}
+
 bool readLoopSlotPayloadOnSdInRamEntry(uint8_t trackIndex, uint8_t slotIndex) {
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return false;
