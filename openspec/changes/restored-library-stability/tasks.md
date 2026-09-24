@@ -29,7 +29,10 @@ Standing constraints for every task:
   one of four causes, and never record `empty` as a cause.
 - **State the window.** Every count is window-scoped; an incomplete window is reported as incomplete.
 - New firmware observables are session-gated, bounded per invocation, FLASH-resident where possible, and the
-  post-link RAM1 budget (`padding >= 840`) is re-read in the slice that adds them.
+  post-link RAM1 budget (`padding >= 840`) is re-read in the slice that adds them. A new capture record
+  family is classified Tier-A where the analysis depends on reading it back, and every record shape fits
+  `DebugSessionCapture::kMaxCaptureTextBytes` (192) at worst case — an over-long record is **silently
+  truncated**, which is how a completed observation once read `complete=False`.
 
 ## 1. Packet A — observation-only firmware and read-only analysis
 

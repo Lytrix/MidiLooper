@@ -73,7 +73,7 @@ serviced at the unconditional idle tail in `main` (independent of load admission
 `!LIB_OBSERVE`, emitted as the `LIBOBS` family, with SD-session admission, a 2-slot/2-probe/2-record
 per-invocation bound and `(requestGeneration, setEpoch)` **plus a content revision identity** re-checked
 before each record; 8 native cases through the real service hook with two mutation proofs. **Native
-2,373 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS keeping the approved **12-bank** ITCM
+2,374 / 1 skipped / 0 failures** (after the `LIBOBS` Tier-A/length fix); `teensy41-capture-serial` SUCCESS keeping the approved **12-bank** ITCM
 line (`code 391,160 + padding 2,056`, floor 840 met with 1,216 B headroom, locals 34,880); the whole
 observation costs **+80 B of ITCM**. **Device-verified read-only** (`captures/s13-libobs-full-02/`):
 **payload inventory 36, initial playback-required 8, restore completions in the window 0, committed at the
@@ -83,6 +83,11 @@ recorded sweeps (`captures/s13-library-observation.json`) finds **no loss cause*
 **window-scoped**. The incomplete-window case reports incomplete with all four counts `None`. Open in the
 change: Packets **B** (the repeatable fixture, needs TBD-1 per-slot authorization for any CLEAR) and **C**
 (the S2b.7 device confirmation), plus the 4.x handoff/closeout.
+
+The instrumented observable is protected and documented: `LIBOBS` is **Tier-A** (worst-case records ≤ 191
+bytes, locked by `test_capture_line_tier` 15/15), the contract is recorded as **DEC-083**, and the behavior
+is owned by [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md#the-on-demand-library-observation)
+(plus a `BOOT_LOAD.md` key-files row and `.agents/skills/hitl-content-verification` § 9).
 
 **`runtime-working-set-ownership` native scope (P0/P1) is COMPLETE, plus S2b.8 and S2b.7 delivered.** Full native
 **2,352 / 1 skipped / 0 failures** (2026-09-24; 2,344 before this session). Landed and green: S0
