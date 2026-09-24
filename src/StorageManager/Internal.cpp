@@ -44,9 +44,9 @@ void clearAutoSaveBeforeLoadFolderPending() {
     autoSaveBeforeLoadFolderPending[0] = '\0';
     autoSaveBeforeLoadFolderPendingValid = false;
 }
-// Cold persistence job aggregate — OCRAM/RAM2. Not on the MIDI clock / ISR hot path.
+// Cold persistence job aggregate -- OCRAM/RAM2. Not on the MIDI clock / ISR hot path.
 // Size ~5.5 KB; DTCM is reserved for midiHandler / trackManager / playback.
-DMAMEM StorageSession storageSession;
+DMAMEM StorageSession storageSession{};
 
 STORAGE_PERSIST_MEM void resetStorageSessionJobs() {
     storageSession.currentWorkspaceSave.pending = false;

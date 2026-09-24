@@ -2910,6 +2910,78 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 — A3.5 RESTRUCTURED (topology conflict found by the device gate) and A3.7 shape (a) PASSED.**
+The A3.7 device run surfaced a real conflict: A3.5's holdoff wait called
+`midiHandler.handleMidiInput()` from inside the drain, and the HITL timing verifier
+(`scripts/hitl/verify/midi_boundary_timing.py`) requires every input drain to live in `src/main.cpp` with
+exactly **nine** call sites — backed by `ARCHITECTURE_RULES.md`/`NAMING.md`'s definition of the interval
+path. The drain runs *on* that path, so servicing MIDI there moved an input drain into the interval; the
+gate reported `unexpected_midi_input_call_site`. **Restructured (option 1):** the drain no longer waits the
+holdoff out or services MIDI — it detects the finite holdoff as the sole blocker, classifies it, and returns
+the named `post_load_holdoff` immediately, preserving the restore and the owed save. The holdoff expires on
+its own 100 ms deadline while `main` services MIDI; the caller refuses by name (A3.4) and the next attempt
+completes the save. The wait helper and its bound cases were removed; the call-site scanner now skips
+whole-line comments. Verified: topology gate **9/9 no extras**, `test_storage_drain_restore` **6/6**, full
+native **2,337 / 0 failures**, capture-serial **SUCCESS** `code 390,936 + padding 2,280`.
+**Device gate A3.7 shape (a) "nothing else sounding" PASSED** (`captures/a37-clear-05-fresh/`, fresh boot,
+24-bar take): `Clear waiting for deferred save completion` → **`State saved successfully (v4)`** →
+`Clear selected slot 1` in <243 ms, **0** `Clear aborted` / **0** `Persistence drain stuck` / **0** `drain
+blocked`, timing verifier `call_site_gate_ok: True` and `overflow_free: True`. **Shape (b) "another track
+playing" completed but the save was already done at press time — recorded partial, not claimed.** New
+driver: `scripts/hitl_clear_drain_a37.py`. Incidental: the `base` preset stops a 2-bar take to `EMPTY`
+instead of `PLAYING` (present before this session's changes), so it is not a Packet C regression.
+
+**2026-09-24 — A3.6 DEC-081/capture preservation LANDED (Packet C native work complete).**
+Three regression cases in `test_storage_drain_restore` against the real deferred-save scheduler: audible
+playback is **not** a persistence gate (a `TRACK_PLAYING` track leaves
+`isCaptureRecordingForPersistence()` false and the classifier names no denial — DEC-081 holds); a
+recording track **parks the multi-frame writers** (nothing queued, no write started, the owed save stays
+owed); and the **mid-pass one-chunk flush still runs during a take** (a real sealed chunk is serviced,
+queue depth drops, multi-frame writers stay at zero, and the take path returns before A3.5's holdoff wait).
+**Harness defect fixed:** the in-memory SD stub classified the raw mode argument, so the seal journal's
+`FILE_WRITE | O_CREAT` fell through and got an invalid handle — the mid-pass flush was unobservable
+natively. The stub now classifies by the flags that carry the meaning (`O_AT_END` = append, `O_CREAT` =
+create). Full native **2,340 / 1 skipped / 0 failures**; capture-serial **SUCCESS**
+`code 391,080 + padding 2,136`. **Packet C's native work is complete; only the A3.7/A3.8 device gate
+remains, which needs the board.**
+
+**2026-09-24 — A3.5 holdoff MIDI servicing LANDED (next: A3.6, then the A3.7/A3.8 device gate).**
+The finite post-load commit holdoff is now **waited out, not aborted**. One declaration
+(`LoadLoopBudget::PostLoadCommitSaveHoldoffMs`, 100 ms) drives both the deadline and the wait;
+`postLoadCommitSaveHoldoffRemainingMs()` reads the remainder without clearing it; and
+`serviceMidiWhilePostLoadCommitHoldoffBlocks(maxWaitMs)` waits while **servicing MIDI**
+(`midiHandler.handleMidiInput()` + `yield()`), bounded by the caller's remaining wall clock. The drain
+charges real elapsed time against `maxWallClockUs` and waits only when the pure
+`holdoffWaitFitsInDrainBudget(remaining, budget)` holds; otherwise A3.2's classifier reports the named
+`post_load_holdoff`. **Evidence:** `test_persistence_sync_drain_budget` **18/18** (the bound);
+`test_storage_drain_restore` **4/4** with the **real** drain — a fitting holdoff is waited out and an
+injected DIN message is consumed during the wait, while the production 100 ms holdoff against the minimum
+drain wall clock (~99 ms) is not entered (message unserviced, holdoff armed). Red-proven by disabling the
+wait. Full native **2,337 / 1 skipped / 0 failures**; capture-serial **SUCCESS**
+`code 391,080 + padding 2,136`. **Harness seams added (see `REVIEW.md` § A3.5):** a controllable native
+clock (`nativeMillisNow`/`nativeMillisAdvance`, `micros()` derived) and an injectable MIDI inbox shared by
+every `NativeMidiPort` instance (`MIDI_CREATE_INSTANCE` **defines** a copy, which produced a false
+negative until found); `yield()` advances the mock clock so a bounded yielding wait terminates.
+**A3.6 — preserve DEC-081/capture behavior is next; the A3.7/A3.8 device gate remains open.**
+
+**2026-09-24 — A3.4a drain re-entry and callback safety LANDED (next: A3.5 holdoff MIDI servicing).**
+The plan-correction entry below is now implemented. One scoped owner
+(`StorageManagerInternal::PersistenceDrainScope` + `isPersistenceDrainInProgress()`) is acquired by
+`drainPersistenceWorkBlockingDetailed` before any shared mutation; a nested call returns
+`TemporarilyBlocked("drain_in_progress")` (bool wrapper false) without changing the outer owner, and the
+destructor is the single release path for Completed/Blocked/Failed alike. Callback audit landed
+pre-side-effect: `handleClearTrack` (before the stop), `handleUndo`/`handleRedo`,
+`handleUndoClearTrack`/`handleRedoClearTrack`, `saveNewSetInternal`, `copySavedSetIntoCurrent`.
+Transport/record/note-edit/load-save-mode stay unguarded by design. New suite
+`test_drain_reentry_callback_safety` **6/6** drives a CLEAR through the **real** MIDI dispatch route with a
+free-guard control and a held-guard refusal (zero mutations, zero silences); red-proven by forcing the
+predicate false. `test_storage_manager_load` **29/29**; full native **2,332 / 1 skipped / 0 failures**;
+capture-serial **SUCCESS** `code 391,896 + padding 1,320` (first build failed the 840 floor at 728, so
+`handleClearTrack` moved to FLASH — 480 B better than the A3.4 line, no re-base).
+**A3.5 — holdoff MIDI servicing is now unblocked**: the holdoff poll may service MIDI, because a CLEAR
+arriving in the wait is refused by name instead of re-entering the drain. **A3.7/A3.8 device gate and
+A3.6 remain open.**
+
 **2026-09-23 — restore-liveness plan correction (documentation only).**
 The final review's callback re-entry finding is addressed in
 [`deferred-slot-restore-liveness/tasks.md`](../../openspec/changes/deferred-slot-restore-liveness/tasks.md)
