@@ -434,6 +434,21 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppen
     }
     return false;
   }
+  // A tick beyond any supported loop length is a torn/uninitialised value, not content. Refuse it here:
+  // letting it through sizes `barFirstIndices_` to `tick / BAR_TICKS + 1`, which for a near-UINT32_MAX
+  // tick is a ~22 MB single request that aborts the allocator (`#MEM_EXT_REFUSED bytes=22369620`).
+  // Refusing names the reason instead of silently clamping, so the corrupt producer stays visible.
+  if (evt.tick > LoopEventStoreConfig::MAX_INDEXED_TICKS) {
+    if (denyOut != nullptr) {
+      *denyOut = LoopEventStoreAppendDeny::TickOutOfRange;
+    }
+#if defined(ARDUINO)
+    logger.log(CAT_TRACK, LOG_WARNING, "LoopEventStore refused out-of-range tick %lu (max %lu)",
+               static_cast<unsigned long>(evt.tick),
+               static_cast<unsigned long>(LoopEventStoreConfig::MAX_INDEXED_TICKS));
+#endif
+    return false;
+  }
 
   uint16_t tailId = UINT16_MAX;
   if (!chunkIds_.empty()) {
@@ -1271,6 +1286,13 @@ void LoopEventStore::rebuildBarIndex() const {
     const EventChunk& c = chunk(id);
     for (uint16_t i = 0; i < c.used; ++i) {
       const uint32_t bar = c.events[i].tick / LoopEventStoreConfig::BAR_TICKS;
+      // Defensive bound: adopted content (SD load, snapshot restore, deep clone) bypasses `append`, so
+      // an out-of-range tick could still reach here. Skipping it keeps the index finite; the event stays
+      // in its chunk and is reported by the append path's refusal at the producer.
+      if (bar > LoopEventStoreConfig::MAX_BAR_INDEX) {
+        ++globalIndex;
+        continue;
+      }
       if (barFirstIndices_.size() <= bar) {
         barFirstIndices_.resize(bar + 1, NO_EVENT_INDEX);
       }

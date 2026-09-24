@@ -26,6 +26,14 @@ constexpr uint16_t POOL_CHUNKS_PER_BLOCK = 64;
 constexpr uint16_t POOL_BLOCK_COUNT =
     (POOL_CHUNK_COUNT + POOL_CHUNKS_PER_BLOCK - 1) / POOL_CHUNKS_PER_BLOCK;
 constexpr uint32_t BAR_TICKS = 768;
+/// The longest loop the bar index will describe. Deliberately far above any supported loop (64 bars is
+/// the target maximum) so a legitimate over-run take is unaffected, but finite: the index is sized from
+/// `tick / BAR_TICKS`, and an unbounded tick (a torn or uninitialised value near UINT32_MAX) otherwise
+/// requests ~5.6M entries -- a single ~22 MB allocation that aborts the firmware (`#MEM_EXT_REFUSED
+/// bytes=22369620`). 4096 bars caps the index at 16 KB while leaving every real loop untouched.
+constexpr uint32_t MAX_INDEXED_BARS = 4096;
+constexpr uint32_t MAX_INDEXED_TICKS = MAX_INDEXED_BARS * BAR_TICKS;
+constexpr uint32_t MAX_BAR_INDEX = MAX_INDEXED_BARS;
 constexpr uint32_t INTERNAL_HEAP_SAFETY_FLOOR_BYTES = 12 * 1024;
 }  // namespace LoopEventStoreConfig
 
@@ -91,6 +99,9 @@ enum class LoopEventStoreAppendDeny : uint8_t {
   None,
   PoolUnavailable,
   PoolExhausted,
+  /// The event's tick is beyond any supported loop length (a torn/uninitialised value). It is refused
+  /// rather than allowed to size the bar index, which would otherwise request megabytes for one event.
+  TickOutOfRange,
 };
 
 /// Append-only fixed-size event chunks backed by a global PSRAM pool.

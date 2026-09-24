@@ -238,6 +238,32 @@ void test_first_index_for_bar_uses_bar_index() {
   TEST_ASSERT_EQUAL(3u, store.firstIndexForBar(9));
 }
 
+/// **A near-UINT32_MAX tick is a torn/uninitialised value, and it must not size the bar index.**
+/// `barFirstIndices_` is resized to `event.tick / BAR_TICKS + 1` with no bound, so one such event grows
+/// it to ~5.6M `size_t` entries -- a single ~22 MB request through `InternalHeapFirstAllocator`, which
+/// aborts the firmware when both heaps are exhausted. That is the recorded `#MEM_EXT_REFUSED
+/// bytes=22369620` failure that blocks A3.7 shape (b). The store must refuse the event at ingestion.
+void test_out_of_range_tick_cannot_size_the_bar_index() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(0, 1, 60, 100)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(1536, 1, 61, 100)));
+  const size_t boundedSize = store.barFirstIndices().size();
+  TEST_ASSERT_EQUAL_UINT32(3u, static_cast<uint32_t>(boundedSize));
+
+  LoopEventStoreAppendDeny deny = LoopEventStoreAppendDeny::None;
+  const bool accepted = store.append(MidiEvent::NoteOn(0xFFFFFFFFu, 1, 62, 100), &deny);
+  TEST_ASSERT_FALSE_MESSAGE(accepted, "an out-of-range tick must be refused, not indexed");
+  TEST_ASSERT_TRUE_MESSAGE(deny == LoopEventStoreAppendDeny::TickOutOfRange,
+                           "the refusal must name the reason");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(boundedSize),
+      static_cast<uint32_t>(store.barFirstIndices().size()),
+      "a refused event must not grow the bar index");
+}
+
 void test_transfer_capture_chunk_ids_to_published() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1002,6 +1028,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_drop_events_at_or_beyond_tick_removes_overflow);
   RUN_TEST(test_map_overflow_note_on_keeps_in_loop_stop_off);
   RUN_TEST(test_first_index_for_bar_uses_bar_index);
+  RUN_TEST(test_out_of_range_tick_cannot_size_the_bar_index);
   RUN_TEST(test_first_index_for_bar_skips_empty_bar);
   RUN_TEST(test_transfer_capture_chunk_ids_to_published);
   RUN_TEST(test_detach_chunks_to_committed_seals_and_transfers);
