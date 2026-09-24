@@ -111,6 +111,18 @@ workflow (2026-09-24). **Next runtime work (recorded, not started): S1.3 — slo
 must explain why 28 verified payloads remain unloaded and why only four initial-playback slots overlap the
 committed set — repeatability does not establish correct hydration or a usable increasing-population fixture.
 
+**`runtime-working-set-ownership` S1.3 — slope-fixture definition (2026-09-24, read-only; the "28 unloaded"
+premise is FALSIFIED).** All 36 payload slots are restored (8 pass-backed via `Loop::adoptPersistedSnapshot`,
+28 **published-root-backed** via `Loop::storePublishedSnapshot`); the 28 are resident — snapshot arena
+0 → **2,155 KB / 78 slabs** and `chunks_free` 480 → **453**, flat after settle — and playback reads the root
+(`Loop::tryGatherPublishedSnapshotEventsInWindow`). The observation's `committed_at_checkpoint` is therefore
+a **pass-backed subset**, not the loaded population (and is not spec-conformant for root-backed slots). The
+four required-but-not-pass-backed slots are `(2,1)`/`(4,0)` (root-backed) and `(6,0)`/`(7,0)`
+(payload-absent enabled slots). The controlled increasing-population fixture is **defined** (fix one active
+role; add one payload per boot inside the approved scratch range; report `N_payload`/`N_pass`/`N_root` and
+reservation/payload/root/directory residency separately). **The slope run and the failure point are not yet
+measured.** No device run, no firmware edit.
+
 The instrumented observable is protected and documented: `LIBOBS` is **Tier-A** (worst-case records ≤ 191
 bytes, locked by `test_capture_line_tier` 15/15), the contract is recorded as **DEC-083**, and the behavior
 is owned by [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md#the-on-demand-library-observation)

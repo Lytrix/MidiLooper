@@ -3296,7 +3296,7 @@ upload that performs the reliable reset):
   *stability* obstacle; it does not measure the slope.
 
 **Disposition — 36 / 8 / 8 are three different populations** (full detail:
-[`restored-library-stability/ARCHITECTURE-REVIEW.md`](../restored-library-stability/ARCHITECTURE-REVIEW.md)
+[`restored-library-stability/ARCHITECTURE-REVIEW.md`](../archive/2026-09-24-restored-library-stability/ARCHITECTURE-REVIEW.md)
 § Packet B → *Disposition*):
 
 - **36** = payload-present slots (RAM mirror + SD file + valid token).
@@ -3334,3 +3334,138 @@ runtime legs above nor the library closeout, and the native S2b.7 delivery recor
 verified payloads remain unloaded** and **why only four initial-playback slots overlap the committed set**.
 The three-boot observation is **repeatable**; that does **not** establish correct hydration or a usable
 increasing-population fixture, and S1.3 must not be read as proven by it.
+
+---
+
+## S1.3 — slope-fixture definition: the loaded population traced read-only (2026-09-24; **definition only, no sweep**)
+
+Task: `tasks.md` S1.3. Scope: **read-only** — the archived `restored-library-stability` captures
+(`captures/s13-libobs-full-02/`, and the identical `s13-libobs-stab-01/02/03/`), the firmware source, no
+device action, no firmware edit, no SD write. **The premise supplied with this task — "28 verified payloads
+remain unloaded" — is falsified below.** S2b.7's device confirmation is a separate transferred task and is
+untouched by this section.
+
+### The trace — enumeration → request → publication → later residency
+
+The boot playback set is the per-track `enabledMask` (`[StorageManager] Boot transport t=… enabledMask=…`):
+`t0 s0`, `t1 s2`, `t2 s1`, `t3 s0`, `t4 s0`, `t5 s0`, `t6 s0`, `t7 s0` — exactly the observation's
+`required_for_initial_playback` set. Boot queues it focus-first (`Boot focus track=4 active=0 selected=0`,
+`Queuing boot playback loop slot restore 6 pending; first 4/0`), then the background admission scan offers
+**every remaining payload slot** (the RRQ `queued` burst from ~7.1 s). The observation's `offered` flag
+matches: 36 offered, 28 not offered, and **every offered slot has an RRQ record ending `terminal/committed`**
+(36/36 — parsed from the boot log; the observation's `request`/`terminal` columns reproduce it exactly).
+
+| slot | payload | last RRQ | `k` | `a/l/v` | publication branch | resident |
+|---|---|---|---|---|---|---|
+| `(0,0)` *required* | verified | terminal/committed | 1 | 2 / 15360 / 729 | legacy → `adoptPersistedSnapshot` moves `snapshot.passes` into `Loop::passes` | yes, **pass-backed** |
+| `(2,0)` | verified | terminal/committed | 1 | 1 / 6912 / 196 | legacy | yes, pass-backed |
+| `(5,1)` | verified | terminal/committed | 1 | 1 / 3072 / 192 | legacy | yes, pass-backed |
+| `(2,1)` *required* | verified | terminal/committed | 0 | 0 / 0 / 0 | **LSV1** → `storePublishedSnapshot` published **root** | yes, **root-backed** |
+| `(4,0)` *required* | verified | terminal/committed | 0 | 0 / 0 / 0 | LSV1 root | yes, root-backed |
+| `(4,7)` | verified | terminal/committed | 0 | 0 / 0 / 0 | LSV1 root | yes, root-backed |
+| `(3,1)` | verified | terminal/committed | 0 | 0 / 0 / 0 | LSV1 root | yes, root-backed |
+| `(6,0)` *required* | **absent** | *never RRQ'd* | 0 | 0 / 0 / 0 | none — nothing to restore | **no** |
+
+Representative full trace, `(2,1)`: enumerated by the scan and offered; `RRQ,2,1,0,0,queued` at
+3,122,760 µs → `running` at 6,284,641 µs → `terminal,committed` at 6,321,844 µs. Publication runs
+`commitLoadLoopJobPublish` → `applyLoadedLoopSlotBodyCommit`; the branch is
+`usesLoopSnapshotBodyFormatV1 = (probeLoopSnapshotBodyFormat(…) == SupportedV1)`.
+
+**Why the pass count is not the loaded count (VERIFIED by the two exhaustive publish branches).**
+
+- **Legacy payload** → `applySnapshotToLoop` → `Loop::adoptPersistedSnapshot`, which does
+  `passes = std::move(snapshot.passes)` and sets `loopLengthTicks` — so `passes` is populated and the
+  observation's `has_committed_content` (`loop.passes.hasRecordPass() || !overdubPasses.empty()`) is `1`.
+- **LSV1 payload** → `applySnapshotToLoop` receives an empty legacy oracle, so `passes` stays empty and
+  `loopLengthTicks` is 0; the content is installed as a **published snapshot root**
+  (`loop.storePublishedSnapshot(std::move(loadedLoopSnapshot), 0, kSnapshotCoverageCurrent)`).
+  `publishedSnapshot()` is exactly what playback reads (`Loop::tryGatherPublishedSnapshotEventsInWindow` →
+  `publishedSnapshot()` → `publishedSnapshotIsCurrent()`), so the slot **is loaded and playable**.
+
+The observation has no root-presence field, so those 28 slots read `has_committed_content = 0`,
+`loop_length_ticks = 0`, `committed_event_count = 0`.
+
+**Later residency (the "unloaded" 28 are consuming residency).** From the same boot log's `#MEM_OWNERS`
+ticks:
+
+| uptime µs | `slab_live` | `slab_used` KB | `snap` KB | `chunks_free` |
+|---|---|---|---|---|
+| 4,845,405 (before the restore drain) | 0 | 0 | 0 | 480 |
+| 8,819,368 | 61 | 1,934 | 1,698 | 461 |
+| 12,820,394 (after settle) | 78 | 2,455 | 2,155 | 453 |
+| 16.8 s … 40.8 s | 78 | 2,455 | 2,155 | 453 (flat) |
+
+So the boot restores cost **27 pool chunks (480 → 453)** and **2,155 KB of snapshot arena across 78 slabs**,
+and the residency is **flat after settle**. The `capture_prewarm` walk reports `credits=0` on all 16 rows
+(S2b.1: inactive slots hold no canonical capture credits; the enabled set walks 512 → 480, the library walk
+480 → 480) — the *canonical reservation* is flat; the *payload and root residency* is what grows.
+
+### The four initial-playback slots absent from the pass-backed committed set
+
+`(2,1)` and `(4,0)`: payload present, offered, restored to `terminal/committed`, **root-backed** (LSV1) — they
+are loaded; they differ from the pass-backed set only in representation.
+`(6,0)` and `(7,0)`: `enabledMask=0x1` says the boot playback set wants slot 0, but the payload is **absent**
+and neither slot is ever offered or RRQ'd — the recorded `Track 6 loaded state: EMPTY` /
+`Track 7 loaded state: EMPTY`. These are the only two genuinely-unloaded required slots, and the cause is a
+**payload-less enabled slot**, not a restore failure. `(0,0)`, `(1,2)`, `(3,0)`, `(5,0)` are required **and**
+pass-backed.
+
+### Does the observation report current content accurately?
+
+| observed field | verdict | basis |
+|---|---|---|
+| `payload` presence/token | **accurate** | RAM mirror + SD file + token verify; 36 verified, all 36 offered and restored |
+| enumeration / `offered` | **accurate** | matches the RRQ set exactly (36 offered, 28 not, 0 populated-unoffered, 0 offered-without-payload) |
+| request state / wait / terminal | **accurate** | 36/36 last RRQ `terminal/committed` matches the observation |
+| `required_for_initial_playback` | **accurate at the instant** | matches the boot `enabledMask` set |
+| `committed_terminal_in_window`, window framing | **accurate** | all restores completed before the 13.0 s window; `i=0`, `restore_completions=0` |
+| **`has_committed_content` / `committed_at_checkpoint` / content identity `a,h,l,v`** | **NOT a complete content signal — under-reports** | pass-backed only; excludes the 28 published-root slots, which hold resident, playable content |
+
+**Consequence:** the `36 payload / 8 committed` gap is **not** evidence that 28 slots failed to hydrate. It is
+`N_payload = 36`, `N_pass = 8`, `N_root = 28` (inferred from the two-branch publish path and corroborated by
+the snapshot-arena growth), plus the two payload-absent enabled slots. The observation is **spec-non-conformant
+for root-backed slots** — the requirement says the content field reports "whether the slot holds committed
+content", and a published root is committed content. This is an **observability finding owned here**, not a
+library-loss finding; the archived change's firmware is not edited and no new sub-change is created.
+
+### Controlled fixture definition (device slope) — vary the loaded population, hold active roles fixed
+
+**Populations (report separately, never conflate).**
+
+- `N_payload` — payload-verified slots; the population boot restores today (36).
+- `N_pass` — pass-backed subset (`has_committed_content`; 8 today). **Not** the loaded population.
+- `N_root` — published-root subset (28 today; inferred, no per-slot field exists yet).
+- `N_active` — active roles: per-track `active`/`selected`/`playing` + transport state. **Held constant.**
+
+**Controlled variation.**
+
+1. **Fix the active role** — one active slot, transport stopped, no record/overdub/edit during the measurement
+   boot (the observation runs already do this: focus `t4 s0`, all other tracks `playing=0`).
+2. **Vary `N_payload` one slot per boot, inside the approved scratch range only** (track 5 slot 1, track 6
+   slots 1–8): save the slot, re-upload for a fresh boot, boot, measure. Because background admission offers
+   every payload slot, each added payload grows the loaded population by exactly one while `N_active` is
+   unchanged. This is the controlled increasing-population fixture the observation lacked.
+3. **Per boot record** — `N_payload`, `N_pass`, `N_active`; the post-restore census marker (`free_chunks`,
+   readiness fields); the `#MEM_OWNERS` progression (`slab_live`, `slab_used`, `snap`, `chunks_free`) once
+   settled; the per-owner tag census (`scripts/parse_working_set_census.py`); the `capture_prewarm` walk rows;
+   `LIBOBS` for the manifest; RRQ for the restore outcomes (assert every populated slot is offered and
+   `terminal/committed`).
+4. **Report separately:** canonical **reservation** (expect flat in inactive-slot count — S2b.1/S2b.4),
+   canonical **payload/chunks** (expect growth with `N_payload`), **root/snapshot residency** (expect growth),
+   and the **runtime directory** (expect growth).
+5. **Failure point** — the first N at which the pool or the snapshot arena refuses (a `#MEM_EXT_REFUSED`, a
+   `refused` restore terminal, or `chunks_free` at/below the reserve), plus the recorded error.
+6. **Stop conditions** — any `FATAL`; any non-terminal request; any unexplained manifest difference (the 2.2
+   comparator); any write outside the approved range. **Do not** use `committed_at_checkpoint` as N.
+
+**Non-claims.** Active roles fixed means the *active* working set is constant, so residency growth is
+attributable to the inactive loaded population — it is not a claim about active-role scaling. The definition
+is not a run: **no sweep has been performed**, and the failure point is still unmeasured.
+
+### Open (recorded, not implemented here)
+
+- A **per-slot root-presence / representation field** (e.g. `publishedSnapshot() != nullptr`) would let the
+  slope attribute residency per representation and make the archived observation's content field
+  spec-conformant. It needs an owning change; the fixture above does not depend on it.
+- The two **payload-absent enabled slots** `(6,0)`/`(7,0)` are a library/config fact the fixture must not
+  mistake for a restore failure.
