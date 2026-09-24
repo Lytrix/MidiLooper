@@ -989,14 +989,16 @@ re-commits **empty**; on the shipped firmware (route off) the stale terminal kee
 reload is queued, and the inconsistency cannot arise. The fix owner is therefore **the reload-on-clear
 route**, which stays disabled — not the request record, and not `hasDataInSlot`.
 
-### Open, read-only question
+### The one disagreeing datum — resolved read-only (it was a stale feedback value)
 
-One datum disagrees and is **not** smoothed over: at 29.760 s — after the reload was queued but **before** it
-committed at 29.927 s — the focus change logged `Sent loop length CC feedback: 4 bars (3072 ticks) -> CC=3`,
-while the next boot restored the slot as empty. A CC feedback reads the loop's length, so either it was
-served from a stale display cache, or it described a different selected slot after
-`restorePlaybackAfterSlotClear` re-selected one. Resolving it needs a content-count or length line for the
-named slot at that instant (read-only), not another device mutation.
+At 29.760 s — after the reload was queued but **before** it committed at 29.927 s — the focus change logged
+`Sent loop length CC feedback: 4 bars (3072 ticks) -> CC=3`, which disagreed with the empty state. The next
+capture resolves it **without any device mutation**: in `captures/a37b2-01/session.log`, selecting the same
+slot reports `Sent loop length CC feedback: length=0 -> CC=0 (1 bar default)` at 16.048 s, immediately
+before `Clear ignored — selected slot is empty` at 17.579 s. So the slot's length is **0** — the 3072 value
+at 29.760 s was a **stale focus-change feedback** served before the reload's publish, not the slot's state,
+and the reload published an **empty** payload. The trace is therefore closed: no content survived, and the
+`committed`-versus-`hasDataInSlot` relationship is fully explained by the empty payload.
 
 ### Route decision (owner, recorded)
 
