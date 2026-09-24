@@ -22,6 +22,18 @@ drain-driven restore advancement (characterize advancement against a correctly n
 not relaxed). Packet and full record: `runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § S2b.8;
 `tasks.md` S2b.8.
 
+**Same session, second slice — S2b.7 MEASURED: the blocking drain NAMES THE WAIT and does NOT advance a
+session-holding restore; the task stays open.** Fixture + control in `test_storage_drain_restore`: with track 0
+audibly playing, a restore mid-preparation holding the SD session and a save owed, one real
+`drainPersistenceWorkBlockingDetailed` returns **`TemporarilyBlocked`** with the named gate
+**`slot_load_active`** (not `Failed`, not `unexplained`), `restoreProgressCounter()`/`restoreWorkPhase()`
+unchanged and the save still owed; the control shows the same drain discharging the save once the session is
+released. Full native **2,350 / 1 skipped / 0 failures**; capture-serial SUCCESS (src unchanged). The
+advancement behavior is still not delivered — the prerequisite is the global commit gate and
+`resumable-midi-boundary-playback-maintenance` **task 3.3** — so the archived change's "not verified" is now
+**"measured absent in the plain case"**. Packet: `ARCHITECTURE-REVIEW.md` § S2b.7. **No remaining native work
+in this change**; everything left is device-gated (stable restored library) or a later stage.
+
 **2026-09-24 (tenth session) — `deferred-slot-restore-liveness` archived with a reduced, accurately described scope; the runtime measurements return to `runtime-working-set-ownership`.**
 
 Owner direction: the runtime measurements belong with the parent change and archiving the sub-change does

@@ -787,6 +787,29 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       **Verify:** a fixture where a save is owed, another track plays, and a restore **holds the SD session**
       at the drain edge, showing either that the drain advances it or that it names the wait — with no claim
       of advancement absent that evidence.
+      **MEASURED 2026-09-24 — the drain NAMES THE WAIT and does NOT advance the restore; task stays OPEN.**
+      Fixture `test_s2b7_a_session_holding_restore_is_a_named_wait_and_is_not_advanced` in
+      `test_storage_drain_restore`: track 0 audibly playing, a restore for track 2 slot 3 mid-preparation so
+      `deferredSaveBlockedByActiveSlotLoadSd()` is true, and a save owed. One real
+      `drainPersistenceWorkBlockingDetailed` returns **`TemporarilyBlocked`** with the named gate
+      **`slot_load_active`** (not `Failed`, not `unexplained`), with `restoreProgressCounter()` and
+      `restoreWorkPhase()` **unchanged** (1 → 1 and 1 → 1) and the save still owed — so **no advancement is
+      claimed or observed**. The name reported is the *gate*, not the request's own wait, because the
+      in-flight request is `running` rather than waiting; A3.2's per-request wait naming is covered in
+      `test_persistence_sync_drain_budget`. Control
+      `test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session` drives the same restore to
+      release the SD session and shows the same drain no longer stops at `slot_load_active` and discharges the
+      owed save, so "nothing moved" is the gate's doing rather than a fail-closed route. The control
+      deliberately does **not** assert `Completed`: this minimal fixture has no valid workspace to write, so
+      the drain's own `lastCompletedOk` check reports `Failed` for a reason unrelated to the restore gate.
+      **Discriminating by removal:** making the drain step the submitted load jobs inside its loop fails the
+      fixture (the outcome leaves `TemporarilyBlocked`); the mutation was reverted, `src/` byte-identical.
+      **Why it stays unchecked:** the drain-advancement *behavior* is still not delivered, and the measurement
+      now says why — the commit gate is global and `resumable-midi-boundary-playback-maintenance` **task 3.3**
+      (bounded commit/cleanup) remains the prerequisite. This refines the archived change's deferral from
+      "not verified" to **"measured absent in the plain case"**. Evidence: full native **2,350 / 1 skipped /
+      0 failures** (2,348 before this fixture); packet:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.7.
 
 - [x] S2b.8 **Set-change epoch invalidation for the restore request record — external resets.**
       Transferred from the archived `2026-09-24-deferred-slot-restore-liveness` A2.1, whose
