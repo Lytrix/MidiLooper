@@ -42,10 +42,18 @@ preserved; a focused slot with the gate admitting → the drain commits the rest
 Full native **2,352 / 1 skipped / 0 failures**; `test_storage_drain_restore` 10/10; disabling the service step
 fails exactly the three advancement assertions. **Device: NOT RUN** — the claims are native.
 
-**No native work remains in `runtime-working-set-ownership`.** Everything left is **device-gated** on a stable
-restored library (S1.1/S1.3/S1.4/S1.5/S2b.3/S2b.5, the content PASS, and the S2b gate) or is a **later stage**
-(S3–S7, phases B–F) whose start the change's own execution order places after the S2b device gate. The
-restored-library instability itself is **unowned by any open change** — recorded, not papered over.
+**No currently eligible native work remains in `runtime-working-set-ownership`.** What is left there is
+**device-gated** on a stable restored library (S1.1/S1.3/S1.4/S1.5/S2b.3/S2b.5, the content PASS, and the S2b
+gate) or is a **later stage** (S3–S7, phases B–F) whose start the change's own execution order places after the
+S2b device gate. **The restored-library instability is no longer unowned:** `restored-library-stability`
+(proposed 2026-09-24, planning complete, read-only Packet A startable immediately) owns it, pre-registers the
+four-class attribution (catalog omission / restore refusal / intentional eviction / content loss), requires a
+per-slot inventory that separates the payload set from the boot playback set, defines one fixture inside the
+approved scratch range with per-slot authorization for any CLEAR, and carries the S2b.7 device confirmation.
+Its first read-only findings already correct the previous attribution: `sets/index.bin` is a saved-set folder
+counter (`SetIndex{nextSequence}`), the shrinking boots report `reconcile_warnings=0`, `DIAG,lcr,skip,restore`
+is content-resolution, `Track N loaded state: EMPTY` is present on stable boots too, and both sweeps'
+`library_rows` are all-zero — so no per-slot inventory was ever captured.
 
 **`runtime-working-set-ownership` native scope (P0/P1) is COMPLETE, plus S2b.8 and S2b.7 delivered.** Full native
 **2,352 / 1 skipped / 0 failures** (2026-09-24; 2,344 before this session). Landed and green: S0

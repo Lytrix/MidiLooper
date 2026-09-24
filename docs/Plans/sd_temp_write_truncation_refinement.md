@@ -12,7 +12,10 @@ reconcile and the save path — but the remaining blocker is a **restore-livenes
 change was **archived 2026-09-24** as
 [`2026-09-24-deferred-slot-restore-liveness`](../../openspec/changes/archive/2026-09-24-deferred-slot-restore-liveness/proposal.md)
 with a reduced scope that did **not** remove the restored-library instability. **This plan is not the live
-queue for that defect**, and the defect itself is unowned by any open change today.
+queue for that defect**; the instability is now owned by
+[`restored-library-stability`](../../openspec/changes/restored-library-stability/proposal.md) (proposed
+2026-09-24), which attributes each non-committed slot to catalog omission, restore refusal, intentional
+eviction or content loss before any fix is proposed.
 **Found by:** the `runtime-working-set-ownership` device session
 ([ARCHITECTURE-REVIEW § Device session — RWSO-24CAP](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)),
 which was blocked by it.

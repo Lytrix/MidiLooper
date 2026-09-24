@@ -3,16 +3,24 @@
 **2026-09-24 working state — supersedes the 2026-09-23 preamble; the newest session entries are in
 [§ Now implementing](#now-implementing).**
 
-Two facts define what may be implemented right now:
+Three facts define what may be implemented right now:
 
-1. **`runtime-working-set-ownership`'s remaining gates are S2b.7 (native) and otherwise device legs blocked
-   by an unstable restored library outside that change.** Native is complete and green including S2b.8
-   (full native **2,348 / 1 skipped / 0 failures**, 2026-09-24). Open: S1.1's per-owner census, S1.3's device
-   slope, S1.4's undo/root baseline, S1.5's device refusal point, S2b.3's post-restore baseline, S2b.5's
-   device gate, the content PASS, D0.2's B07 allocation census (not measurable natively), **S2b.7**, and
-   phases B–E. The restored set is unstable across boots, so no deterministic
-   single-slot capture can be produced until the SD-catalog reconcile defect is fixed.
-2. **The restore-liveness change is ARCHIVED, not proposed.** `deferred-slot-restore-liveness` was archived
+1. **`runtime-working-set-ownership` has no *currently eligible* native task left.** Native is complete and
+   green including S2b.8 and S2b.7 (full native **2,352 / 1 skipped / 0 failures**, 2026-09-24). Open:
+   S1.1's per-owner census, S1.3's device slope, S1.4's undo/root baseline, S1.5's device refusal point,
+   S2b.3's post-restore baseline, S2b.5's device gate, the content PASS, D0.2's B07 allocation census (not
+   measurable natively), and phases B–E. **Every one of those is a device leg**, and the stage order is not
+   bypassed merely because hardware evidence is blocked.
+2. **The restored-library instability now has an owner: `restored-library-stability`** (proposed 2026-09-24,
+   planning complete, `openspec validate` clean, **read-only Packet A can start immediately**). It exists
+   because the committed set is not reproducible across boots, which blocks fact 1's device legs. Its first
+   finding is already recorded: the previous blocker attribution (SD catalog reconcile) does not hold —
+   `sets/index.bin` is a saved-set *folder counter* (`SetIndex{nextSequence}`), the shrinking boots report
+   `reconcile_warnings=0`, `DIAG,lcr,skip,restore` is a content-resolution line, and
+   `Track N loaded state: EMPTY` appears on stable boots too. It distinguishes **catalog omission /
+   restore refusal / intentional eviction / content loss**, needs per-slot authorization before any CLEAR,
+   and carries the S2b.7 device confirmation.
+3. **The restore-liveness change is ARCHIVED, not proposed.** `deferred-slot-restore-liveness` was archived
    2026-09-24 as `2026-09-24-deferred-slot-restore-liveness` with a reduced, accurately described scope. It
    delivered diagnosable preparation and named waits under transport, request identity with four terminals,
    pre-publication stale-identity rejection, the post-restore census checkpoint, a content PASS, and CLEAR's
@@ -2918,6 +2926,29 @@ full native **2,348 / 1 skipped / 0 failures**; `test_storage_manager_load` 35/3
 above the 840 floor); both fixes proven discriminating by removal. **No device run** — nothing
 hardware-observable. **Next: S2b.7 — drain-driven restore advancement** (characterize advancement vs a
 correctly named wait; commit gate not relaxed). Packet: `ARCHITECTURE-REVIEW.md` § S2b.8.
+
+**2026-09-24 (thirteenth session) — the restored-library instability now has an owner: `restored-library-stability` PROPOSED, planning complete, read-only Packet A starts immediately.**
+Owner direction: give the instability an owner rather than another drain test, because it blocks the
+measurements and the later runtime stages. **Opened** `openspec/changes/restored-library-stability/`
+(proposal + design + `lazy-slot-hydration` spec delta + tasks; `openspec validate` clean; **no implementation
+started**). **Scope:** own the instability; pre-register the four-class attribution (**catalog omission /
+restore refusal / intentional eviction / content loss**) and require evidence to separate them; add a per-slot
+library inventory observable (payload + token, boot enumeration, request state/terminal, committed content,
+selection) emitted at the existing census point; define **one** repeatable fixture inside the already-approved
+scratch range (track 5 slot 1, track 6 slots 1–8), read-only first, with any CLEAR needing **per-slot owner
+authorization**; and carry the **S2b.7 device confirmation** once the fixture can hold a session-holding
+restore. **Handoff, not absorption:** when the library is stable, `runtime-working-set-ownership` finishes S1
+and the S2b device gates, then starts S3 — this change does not start them.
+**First findings, already recorded (all read-only) and they correct the previous attribution:**
+`MidiLooper/sets/index.bin` is `SavedSetCatalog::SetIndex{ uint32_t nextSequence; }` — a saved-set folder
+counter, **not** a slot catalog; the boots that shrank the committed set (`captures/s13-slope-02/`, N 27 → 27
+→ 26) report **`reconcile_warnings=0`**; `DIAG,lcr,skip,restore` is a **content-resolution** line
+(`TrackDeferredMaintenance` / `LoopContentResolution`), not a library marker; `Track 6/7 loaded state: EMPTY`
+appears on the **stable** `N=29` boots too. Also: both sweeps' `library_rows` are **all-zero** (16 rows,
+`phases: 0`), so no per-slot inventory was ever captured — the gap Packet A closes.
+**Wording recorded:** `runtime-working-set-ownership` has **no *currently eligible* native task** left; the
+stage order is not bypassed because hardware evidence is blocked. Packets:
+`restored-library-stability/proposal.md`, `design.md`, `tasks.md`.
 
 **2026-09-24 (twelfth session) — S2b.7 DELIVERED: the blocking drain now SERVICES the restore it waits on.**
 Owner direction: continue S2b.7, i.e. deliver the advancement. **Measured first, then implemented** (the
