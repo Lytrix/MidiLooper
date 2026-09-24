@@ -745,7 +745,7 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       bits and honours `O_CREAT`. This is a test-harness fidelity fix: the device's `FILE_WRITE` is itself
       create-or-open, so the production call is valid there and was only ever untestable here.
 
-- [~] A3.7 **Packet C device gate — shape (a) PASSED 2026-09-24; shape (b) taken 2026-09-24 via an intended entry point, pending owner confirmation.**
+- [x] A3.7 **Packet C device gate — BOTH SHAPES TAKEN 2026-09-24.**
       → **Shape (b) COMPLETION candidate 2026-09-24 (seventh session).**
       `scripts/hitl_a37_shapeb_fixture.py` (reload-on-clear **disabled**) held all four preconditions
       (`captures/a37fix-04/`): target content 2 bars immediately before the press; a restore for track 2
@@ -773,6 +773,22 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       drain, and no longer blanket-excludes stops. Re-analysis of `captures/a37fix-04/`: channel 6 emits 9
       notes before and **6 after** the drain, target channel 5 emits **0** after. See [`REVIEW.md`](REVIEW.md)
       § A3.7 shape (b) — eighth session.
+      → **CLOSED 2026-09-24 (ninth session) by owner direction. Narrow record:** *CLEAR completed through
+      workspace-save priority while a started restore remained commit-gated.* Evidence
+      (`captures/a37fix-04/`, analyser `scripts/hitl_a37_shapeb_fixture.py`): target content 2 bars
+      immediately before the press; **`track2/slot1/gen0/epoch0` observed `running` at 8.246 s and
+      unresolved at the edge in `waiting_commit_gate`** (committed only at 35.201 s, after the 27.070 s
+      CLEAR); save owed; another track playing across the edge by **MIDI-output-channel** attribution
+      (channel 6: 9 note events before, 6 after; target channel 5: 0 after); outcome
+      `State saved successfully (v4)` → `Clear selected slot 1`, 0 aborts, no named refusal — the
+      **completes** branch. The analyser requires chronological (device-time) order, the **full request
+      identity**, and an **observed `running`** (a named wait alone is not accepted), and it rejects a
+      capture-block refusal; runs `a37fix-01/02/03/05` are recorded INCONCLUSIVE with the failing
+      precondition named and are **not** counted. **This does NOT prove drain-driven restore advancement
+      or active-transport commit safety** — the completion came from `shouldPrioritizeWorkspaceSaveDrain()`
+      bypassing the slot-load gate for an urgent owed save, and bounded commit/cleanup remains
+      runtime-maintenance **task 3.3**, which is open and untouched. Shape (a) remains
+      `captures/a37-clear-05-fresh/`.
       *(original entry follows)*
       **shape (a) PASSED 2026-09-24; shape (b) partial.** Run on track 5 /
       slot 1 (authorized scratch) with a **fresh boot** (`DIAG,boot_reset` present, no `RING,overflow`) via
@@ -829,7 +845,7 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       way, and that is not ruled out.
       Shape (b) remains a **mandatory** gate and is **not** taken, so the change is not archive-ready
       (A5.5). See [`REVIEW.md`](REVIEW.md) § 2026-09-24 (second session).
-- [ ] A3.7 **Packet C device gate.** With a deferred save owed and a restore in flight, press CLEAR on the
+- [x] A3.7 **Packet C device gate.** *(Closed 2026-09-24; see the entry above.)* With a deferred save owed and a restore in flight, press CLEAR on the
       device — in both shapes: (a) nothing else sounding (including a restore whose cleanup starts the
       holdoff), and (b) **another track audibly playing**. **Verify:** shape (a) completes; shape (b)
       either completes or is recorded as the named commit-gate wait **with `runtime-maintenance 3.3` still
@@ -839,8 +855,16 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       capture paths. If cancellation turns out to be necessary, STOP and return to design for the `DEC`
       (proposal TBD-3) rather than implementing it here.
 
-- [ ] A3.8 **Packet C gate.** Full native suite green; A3.1–A3.6 cases, including A3.4a — drain re-entry and callback safety, green; RAM1 line recorded;
+- [x] A3.8 **Packet C gate.** Full native suite green; A3.1–A3.6 cases, including A3.4a — drain re-entry and callback safety, green; RAM1 line recorded;
       A3.7 evidence recorded for both shapes.
+      → **DONE 2026-09-24 (ninth session).** Full native green **2,344 / 1 skipped / 0 failures** (firmware
+      unchanged since that build: `git diff 732ec619..HEAD -- src include` empty). Required suites re-run:
+      `test_storage_manager_load` **33/33**, `test_drain_reentry_callback_safety` **6/6**,
+      `test_storage_drain_restore` **6/6**, `test_persistence_sync_drain_budget` **15/15** (was 18 before the
+      A3.5 restructure removed the three holdoff-wait bound cases), `test_storage_reconcile_index` **4/4**.
+      RAM1 recorded: `variables 96,192 / code 391,064 + padding 2,152 / locals 34,880` (1,312 B above the
+      840 floor). A3.7 evidence recorded for both shapes: shape (a) `captures/a37-clear-05-fresh/`, shape (b)
+      `captures/a37fix-04/`.
 
 ## 4. Packet D — boot catalog reconcile outcome (D6)
 
@@ -979,9 +1003,9 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       `waiting_commit_gate`/`waiting_job_capacity` waits, and the task-3.3 boundary; a new row documents the
       A2.1 request identity and named waits. A repo-wide grep finds **no remaining durable doc** asserting
       the removed transport-gated restore rule. **Pending (archive step):** the `lazy-slot-hydration` main
-      spec sync and `docs/DELIVERABLE_TRACKING.md`, which land with A5.6 once A5.5 shows no open mandatory
-      gate — syncing the main spec early would advertise behavior whose device integration (A3.7) is not
-      yet verified.
+      spec sync and `docs/DELIVERABLE_TRACKING.md`, which land with A5.6. A3.7 is now taken for both shapes,
+      so the earlier reason to hold the sync (unverified device integration) no longer applies; the sync
+      waits only on A5.1's slope closing, which is the last open mandatory item.
 
 - [x] A5.4 **Decision log.** Append a `DEC-###` entry for the restore-liveness ruling (the request is
       the unit with identity and named waits, background **preparation** is admitted while playing and
@@ -1015,7 +1039,8 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       | A1.10 Packet A | **taken + green** | full native green with the (now empty) red set; `REVIEW.md` § Evidence |
       | A2.5 Packet B device | **taken + green** | `captures/a25-boot-gate/`: 29/29 requests `queued→running→committed`, 0 overflow |
       | A2.6 Packet B | **taken + green** | native green, red set promoted and flag deleted, RAM1 recorded |
-      | A3.8 Packet C | **OPEN** | native green and RAM1 recorded, but A3.7 shape (b) is not taken — see below |
+      | A3.7 Packet C device | **taken + green** | shape (a) `captures/a37-clear-05-fresh/`; shape (b) `captures/a37fix-04/` — CLEAR completed through workspace-save priority while `track2/slot1/gen0/epoch0` remained `waiting_commit_gate`; narrow record, no drain-advance claim |
+      | A3.8 Packet C | **taken + green** | native 2,344 / 1 skipped / 0 failures; A3.1–A3.6 suites re-run green; RAM1 `code 391,064 + padding 2,152`; A3.7 evidence for both shapes |
       | A4.2 Packet D device | **optional half unrun-with-reason** | healthy-index half **taken + green** (`sets/index.bin reconcile ok`, 0 unexpected); malformed half unrun — needs destructive-SD permission, the one optional gate |
       | A4.3 Packet D | **taken + green** | native 2,343/0, A4.1 4/4, RAM1 `code 391,000 + padding 2,216`, A4.2 status recorded |
       | A5.1 runtime handoff | **OPEN** | census checkpoint done and device-verified; post-restore budget stable at 452/512 across three boots; **slope blocked** — approved scratch range (track 5 slot 1, track 6 slots 1–8) fully populated, and a sweep outside it evicted other committed slots |
@@ -1024,25 +1049,24 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       | A5.4 decision log | **taken + green** | `DEC-082` recorded with per-clause evidence; the drain-advance device clause is explicitly marked NOT VERIFIED in the entry, so the record is complete and honest without pre-claiming A3.7 |
       | A5.6 archive | **blocked** | requires A5.5 with nothing open |
 
-      **The one blocking condition, stated once:** **A3.7 shape (b)** needs a restore in flight at CLEAR
-      time. Every payload slot is restored at boot, so no cold slot is left post-boot, and the route tried —
-      clear-then-reload — aborted with `#MEM_EXT_REFUSED bytes=22369620` before the third session.
-      **Narrowed claim:** the **oversized bar-index allocation is now bounded** (`LoopEventStore` sized
-      `barFirstIndices_` from an unbounded `event.tick / BAR_TICKS`, and a near-`UINT32_MAX` tick requested
-      22 MB in one `resize`; it now refuses such a tick by name — see
+      **The one remaining blocking condition:** **A5.1's runtime slope** (see its own entry) — A3.7 shape (b)
+      is now taken, so the packet gates are closed and only the runtime handoff keeps archive open.
+      **No mandatory gate is recorded as unrun without a reason, and none is reinterpreted.**
+
+      *History — why shape (b) was hard, kept for the record (the gate is now closed):* every payload slot is
+      restored at boot, so no cold slot is left post-boot, and the route tried — clear-then-reload — aborted
+      with `#MEM_EXT_REFUSED bytes=22369620` before the third session. The **oversized bar-index allocation is
+      now bounded** (`LoopEventStore` sized `barFirstIndices_` from an unbounded `event.tick / BAR_TICKS`;
+      a near-`UINT32_MAX` tick requested 22 MB in one `resize`; it now refuses such a tick by name — see
       [`runtime-working-set-ownership/ARCHITECTURE-REVIEW.md`](../runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
-      § P1). That does **not** establish that the route is safe or correct: the **corrupt-tick producer**
-      is still unidentified (it is intermittent and was not caught), and **adopted-content integrity** is
-      unresolved — `rebuildBarIndex` skips the bad bar but the invalid event stays in its chunk for every
-      other reader. **Owner decision: keep reload-on-clear disabled.** Advancing the request generation
-      invalidates stale work; it does not authorise reloading cleared content, and CLEAR unexpectedly
-      restoring old SD content would violate its intended behaviour. A3.7 (b) stays open while a fixture is
-      built through an **intended** restore entry point, and no further device attempt is warranted until
-      that fixture can assert: target content exists immediately before CLEAR; a restore has actually
-      started (an active `LoadLoopJob`, not a queued request); a save is owed; and another track is audibly
-      playing. **Track 3 is left untouched** — being RAM-empty is not permission to modify its persisted
-      content. A5.1's slope and archive stay open. **No mandatory gate is recorded as unrun without a
-      reason, and none is reinterpreted.**
+      § P1). That does **not** establish that the route is safe or semantically correct: the
+      **corrupt-tick producer** is still unidentified (intermittent, not caught) and **adopted-content
+      integrity** is unresolved — `rebuildBarIndex` skips the bad bar, but the invalid event stays in its
+      chunk for every other reader. **Owner decision: reload-on-clear stays disabled.** Advancing a request
+      generation invalidates stale work; it does not authorise reloading cleared content. Shape (b) was
+      instead taken through the **intended** boot-restore entry point with a fixture that asserts its four
+      preconditions. **Track 3 is left untouched** — being RAM-empty is not permission to modify its
+      persisted content.
 
 - [ ] A5.6 **Archive.** After A5.5 shows no open mandatory gate, archive per `openspec-archive-change`.
       **Verify:** `openspec validate` passes and the main `lazy-slot-hydration` spec reflects the shipped

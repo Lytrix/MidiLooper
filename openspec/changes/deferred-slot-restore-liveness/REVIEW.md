@@ -1141,3 +1141,53 @@ which resumes and is what the after-edge note count establishes.
 the `shouldPrioritizeWorkspaceSaveDrain` bypass, so the run demonstrates the **completes** branch under an
 urgent-save priority rather than a drain that had to wait on the restore. A3.7 and A3.8 stay open pending the
 owner's reading of that distinction.
+
+## A3.7 shape (b) — CLOSED (narrow record), 2026-09-24, ninth session
+
+Owner direction: the priority-bypass completion satisfies the **completes** branch. A3.7's contract requires
+an owed save, an in-flight restore, another track playing, and completion **or** the specified named wait; it
+does **not** require the restore to block the drain or to advance inside it. Requiring that now would
+strengthen the gate retrospectively.
+
+**Narrow record: CLEAR completed through workspace-save priority while a started restore remained
+commit-gated.**
+
+### Analyser corrections applied before the close
+
+* **Chronological order, not merely partitioned.** Request transitions and the target-length reading are now
+  iterated over a device-time-sorted event list; the previous version partitioned by the CLEAR line and then
+  walked each side in **file order**, which is wrong for ring-flushed `#CAP` lines.
+* **Full request identity.** Transitions are keyed by `(track, slot, requestGeneration, setEpoch)`, so a
+  superseded request at the same coordinates cannot be mistaken for the live one.
+* **Observed `running` required.** A named wait alone no longer counts: the identity must have shown a
+  `running` transition and have no terminal before the press. `open_but_never_ran_requests` is reported
+  separately and never satisfies the precondition.
+* **Playback attribution excludes the control channel.** `MO` traffic on channel 16 is button/CC echo, not a
+  track; only channels `1..NUM_TRACKS` count, and the target's channel is excluded by definition.
+* **Outcome gate.** A capture-block refusal (`transport_active`, i.e. a track was recording) is **not** shape
+  (b). Only completion or the `waiting_commit_gate` / `waiting_job_capacity` wait is accepted.
+
+### Verdict table over the fixture runs
+
+| run | preconditions | outcome | verdict |
+|---|---|---|---|
+| `a37fix-01` | other-track false (only channel 16) | `refused_other` (`transport_active`) | INCONCLUSIVE |
+| `a37fix-03` | other-track false | `refused_other` | INCONCLUSIVE |
+| **`a37fix-04`** | **all four true** | **`completed`** | **SHAPE (b) TAKEN** |
+| `a37fix-05` | target length 0 | `completed` | INCONCLUSIVE |
+
+`a37fix-04` evidence, device-time ordered: target track 5 slot 1 at **2 bars** immediately before the press;
+**`track2/slot1/gen0/epoch0` observed `running` at 8.246 s** and unresolved at the 27.070 s edge in
+`waiting_commit_gate` (committed only at 35.201 s); `Clear waiting for deferred save completion`; **channel 6
+emits 9 note events before and 6 after** the drain while the target channel 5 emits **0** after; outcome
+`State saved successfully (v4)` → `Clear selected slot 1`, 0 `Clear aborted`.
+
+### Scope of the claim (does not exceed the evidence)
+
+This proves the CLEAR **completed** with an owed save, an in-flight (commit-gated) restore, and another track
+playing. It does **not** prove:
+
+* **drain-driven restore advancement** — the completion came from `shouldPrioritizeWorkspaceSaveDrain()`
+  bypassing the slot-load gate for an urgent owed save, not from the drain advancing the restore; and
+* **active-transport commit safety** — bounded Commit/cleanup remains `resumable-midi-boundary-playback-maintenance`
+  **task 3.3**, which stays open and untouched.
