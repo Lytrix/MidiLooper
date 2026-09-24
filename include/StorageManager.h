@@ -197,6 +197,15 @@ public:
     static void serviceDeferredRestoreForDrain();
     /// Idle slice: hydrate one track undo stack snapshot body from the runtime bundle.
     static void processDeferredUndoSnapshots();
+    /// `restored-library-stability` 1.3: request the bounded on-demand library observation. Raised only
+    /// from the session-capture HITL surface (`!LIB_OBSERVE`); without a request the observation never
+    /// advances and emits nothing.
+    static void requestLibraryObservation();
+    /// `restored-library-stability` 1.3: service the on-demand observation at the **unconditional
+    /// observation tail** in `main` — the idle-owner position that already calls
+    /// `processHitlSerialCommands` / `emitPostRestoreCensusIfReady`, deliberately **not** the
+    /// admission-gated deferred load/restore frame.
+    static void serviceLibraryObservation();
     /// On slot select: queue loop slot payload for deferred restore (never sync-loads).
     static void requestLoopSlotRestoreFromSd(uint8_t trackIndex, uint8_t slotIndex);
     /// Enqueue all HEADER_READY SD payloads for background fill (neighbors → track → forward).

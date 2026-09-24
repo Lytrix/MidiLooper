@@ -263,6 +263,31 @@ SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t he
 SC_MEM_ATTR void restoreRequest(uint8_t track, uint8_t slot, uint32_t requestGeneration,
                                 uint32_t setEpoch, const char* state, const char* wait,
                                 const char* terminal);
+/// `restored-library-stability` 1.3: the on-demand library observation's record family (`LIBOBS`), a
+/// separate family from the settled `post_restore_census` checkpoint. Three record shapes: `begin`
+/// (window open), one slot record per observed `(track, slot)`, and `end` (the four D4 counts and the
+/// window framing). Event-shaped and bounded by the caller's per-invocation emission bound.
+///
+/// The wire form is **compact on purpose**: the session-capture text cap is
+/// `kMaxCaptureTextBytes = 192`, and a full-name record exceeds it and is silently truncated (measured
+/// on device 2026-09-24, where the frame's trailing fields were lost). Enum fields are emitted as codes
+/// (`LibraryObservation::causeCode` / `payloadCode` / `offeredCode` / `requestCode` / `terminalCode`) and
+/// keys are short; the host parser owns the reverse mapping.
+SC_MEM_ATTR void libraryObservationBegin(uint32_t windowStartUs, uint32_t setEpoch, uint16_t slotCount);
+SC_MEM_ATTR void libraryObservationSlot(uint8_t track, uint8_t slot, uint8_t stateMask, char cause,
+                                        uint8_t payload, uint8_t offered, uint8_t request, uint8_t wait,
+                                        uint8_t terminal, uint32_t requestGeneration, uint32_t setEpoch,
+                                        uint8_t hasCommittedContent, uint16_t committedPassCount,
+                                        uint32_t highestCommittedPassId, uint32_t loopLengthTicks,
+                                        uint32_t committedEventCount, uint8_t requiredForInitialPlayback,
+                                        uint8_t committedTerminalInWindow, uint8_t invalidated);
+SC_MEM_ATTR void libraryObservationEnd(uint32_t windowStartUs, uint32_t windowEndUs, uint16_t turns,
+                                       uint16_t restarts, uint16_t slotsObserved,
+                                       uint16_t payloadInventory, uint16_t initialPlaybackRequired,
+                                       uint16_t observedRestoreCompletions,
+                                       uint16_t committedAtCheckpoint, uint8_t admissionComplete,
+                                       uint8_t everyInitialPlaybackSlotObserved,
+                                       uint8_t consistentView, uint8_t complete);
 SC_MEM_ATTR void persistenceBundle(const char* workType, uint32_t totalUs,
                                    uint32_t maxSliceUs, uint32_t sliceCount,
                                    uint32_t undoEntryCount, uint32_t snapshotCount);
@@ -379,6 +404,34 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) \
   DebugSessionCapture::restoreRequest(track, slot, requestGeneration, setEpoch, state, wait, terminal)
+// `restored-library-stability` 1.3. `#ifndef`-guarded so a native suite can substitute its own recorder
+// for the observation's emitted records without a capture build.
+#ifndef SC_LIBRARY_OBSERVATION_BEGIN
+#define SC_LIBRARY_OBSERVATION_BEGIN(windowStartUs, setEpoch, slotCount) \
+  DebugSessionCapture::libraryObservationBegin(windowStartUs, setEpoch, slotCount)
+#endif
+#ifndef SC_LIBRARY_OBSERVATION_SLOT
+#define SC_LIBRARY_OBSERVATION_SLOT(track, slot, state, cause, payload, offered, request, wait, \
+                                    terminal, requestGeneration, setEpoch, hasCommittedContent, \
+                                    committedPassCount, highestCommittedPassId, loopLengthTicks, \
+                                    committedEventCount, requiredForInitialPlayback, \
+                                    committedTerminalInWindow, invalidated) \
+  DebugSessionCapture::libraryObservationSlot(                                            \
+      track, slot, state, cause, payload, offered, request, wait, terminal, requestGeneration, \
+      setEpoch, hasCommittedContent, committedPassCount, highestCommittedPassId, loopLengthTicks, \
+      committedEventCount, requiredForInitialPlayback, committedTerminalInWindow, invalidated)
+#endif
+#ifndef SC_LIBRARY_OBSERVATION_END
+#define SC_LIBRARY_OBSERVATION_END(windowStartUs, windowEndUs, turns, restarts, slotsObserved, \
+                                   payloadInventory, initialPlaybackRequired,                  \
+                                   observedRestoreCompletions, committedAtCheckpoint,          \
+                                   admissionComplete, everyInitialPlaybackSlotObserved,        \
+                                   consistentView, complete)                                   \
+  DebugSessionCapture::libraryObservationEnd(                                                  \
+      windowStartUs, windowEndUs, turns, restarts, slotsObserved, payloadInventory,            \
+      initialPlaybackRequired, observedRestoreCompletions, committedAtCheckpoint,              \
+      admissionComplete, everyInitialPlaybackSlotObserved, consistentView, complete)
+#endif
 #define SC_PERSIST_BUNDLE(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount) \
   DebugSessionCapture::persistenceBundle(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount)
 #define SC_PERSIST_DIAG(freeChunks, usedChunks, reserve, queueDepth, writingChunks, transportBlk, \
@@ -486,6 +539,27 @@ inline void restartCaptureBootGrace() {}
 #define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) ((void)0)
+// `restored-library-stability` 1.3: no records without a capture build (the request trigger is
+// session-capture-only too). `#ifndef`-guarded for a native suite that substitutes its own recorder.
+#ifndef SC_LIBRARY_OBSERVATION_BEGIN
+#define SC_LIBRARY_OBSERVATION_BEGIN(windowStartUs, setEpoch, slotCount) ((void)0)
+#endif
+#ifndef SC_LIBRARY_OBSERVATION_SLOT
+#define SC_LIBRARY_OBSERVATION_SLOT(track, slot, state, cause, payload, offered, request, wait, \
+                                    terminal, requestGeneration, setEpoch, hasCommittedContent, \
+                                    committedPassCount, highestCommittedPassId, loopLengthTicks, \
+                                    committedEventCount, requiredForInitialPlayback, \
+                                    committedTerminalInWindow, invalidated) \
+  ((void)0)
+#endif
+#ifndef SC_LIBRARY_OBSERVATION_END
+#define SC_LIBRARY_OBSERVATION_END(windowStartUs, windowEndUs, turns, restarts, slotsObserved, \
+                                   payloadInventory, initialPlaybackRequired,                  \
+                                   observedRestoreCompletions, committedAtCheckpoint,          \
+                                   admissionComplete, everyInitialPlaybackSlotObserved,        \
+                                   consistentView, complete)                                   \
+  ((void)0)
+#endif
 #define SC_PERSIST_BUNDLE(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount) ((void)0)
 #define SC_PERSIST_DIAG(freeChunks, usedChunks, reserve, queueDepth, writingChunks, transportBlk, \
                         heapBlk, budgetBlk, sliceDone, peakLatUs, dirtyAgeMs, maxBacklog, pending, \

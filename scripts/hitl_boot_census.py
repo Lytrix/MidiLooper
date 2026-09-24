@@ -50,6 +50,8 @@ import serial
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+from hitl.library_observation import parse_observation_lines  # noqa: E402
+
 ROW_RE = re.compile(
     r"capture_prewarm,track=(\d+),slot=(\d+),full=(\d+),ready=(\d+),credits=(\d+),free_chunks=(\d+)")
 PHASE_RE = re.compile(r"capture_prewarm,phase=(\w+).*free_chunks=(\d+)")
@@ -74,6 +76,16 @@ def main() -> int:
     ap.add_argument("--out-dir", type=Path, required=True)
     ap.add_argument("--no-reset", action="store_true")
     ap.add_argument("--settle-s", type=float, default=20.0)
+    ap.add_argument("--library-observe", action="store_true",
+                    help="After the boot window, request the bounded on-demand library observation "
+                         "(!LIB_OBSERVE) and read its LIBOBS records back. Read-only: no SD write, no "
+                         "CLEAR, no transport.")
+    ap.add_argument("--observe-window-s", type=float, default=25.0,
+                    help="Upper bound on the observation read window; the observation itself is bounded "
+                         "to 64 slots / 2 per invocation.")
+    ap.add_argument("--observe-early-close-s", type=float, default=0.0,
+                    help="Close the observation window this many seconds after requesting it, to "
+                         "exercise the incomplete-window case (0 = wait for the end record).")
     args = ap.parse_args()
 
     out_dir: Path = args.out_dir.resolve()
@@ -115,6 +127,30 @@ def main() -> int:
             time.sleep(1.0)
             break
         time.sleep(0.2)
+
+    # `restored-library-stability` 1.5: the read-only on-demand library observation. Requested after the
+    # boot window settles so the boot's own restore work is not still in flight, and read back as its own
+    # record family. No device action other than the request line: it writes nothing, clears nothing, and
+    # does not start the transport.
+    observation_lines: list[str] = []
+    if args.library_observe:
+        request_index = len(lines)
+        try:
+            ser.write(b"!LIB_OBSERVE\n")
+            ser.flush()
+        except Exception as exc:  # noqa: BLE001 - recorded, not fatal
+            print(f"[census] could not request the library observation: {exc}")
+        observe_deadline = time.monotonic() + args.observe_window_s
+        if args.observe_early_close_s > 0:
+            observe_deadline = min(observe_deadline,
+                                   time.monotonic() + args.observe_early_close_s)
+        while time.monotonic() < observe_deadline:
+            if any("LIBOBS,end," in line for line in lines[request_index:]):
+                time.sleep(0.5)
+                break
+            time.sleep(0.1)
+        observation_lines = [line for line in lines[request_index:] if "LIBOBS," in line]
+
     stop = True
     time.sleep(0.3)
     try:
@@ -174,6 +210,9 @@ def main() -> int:
     readiness_attested = bool(marker) and all(marker.get(k) == 1 for k in readiness_keys)
     timestamped = bool(marker) and re.match(r"#CAP,\d+,DIAG,post_restore_census,", marker["line"]) is not None
 
+    # `restored-library-stability` 1.5: the on-demand observation, read back as its own record family.
+    library_observation = parse_observation_lines(lines) if args.library_observe else None
+
     summary = {
         "port": port,
         "boot_banner": banner,
@@ -200,6 +239,9 @@ def main() -> int:
         if marker else None,
         "s2b3_condition_met": (marker["free_chunks"] >= max((r["credits"] for r in rows), default=0) + 16)
         if marker else None,
+        # `restored-library-stability` 1.5: the bounded on-demand observation's own records, or None when
+        # it was not requested. Its four quantities are reported separately from the walk/census figures.
+        "library_observation": library_observation,
     }
     (out_dir / "census.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
@@ -232,6 +274,22 @@ def main() -> int:
               f"(peak_capture_reservation+16) -> met={summary['s2b3_condition_met']}")
     print("[census] The walk pairs above are walk checkpoints, not the post-restore one; the post-restore "
           "figure is the marker's free_chunks.")
+    if library_observation is not None:
+        counts = library_observation["counts"]
+        window = library_observation["window"]
+        print(f"[census] LIBRARY OBSERVATION slots={len(library_observation['slots'])} "
+              f"complete={library_observation['complete']} "
+              f"payload_inventory={counts['payload_inventory']} "
+              f"initial_playback={counts['initial_playback_required']} "
+              f"restore_completions={counts['observed_restore_completions']} "
+              f"committed_at_checkpoint={counts['committed_at_checkpoint']}")
+        if window:
+            print(f"[census]    window=[{window['start_us']},{window['end_us']}] turns={window['turns']} "
+                  f"restarts={window['restarts']} admission_complete={window['admission_complete']} "
+                  f"every_initial_observed={window['every_initial_playback_slot_observed']} "
+                  f"consistent_view={window['consistent_view']}")
+        if library_observation["incomplete_window"]:
+            print("[census]    INCOMPLETE window: these counts are NOT the settled library state.")
     return 0
 
 

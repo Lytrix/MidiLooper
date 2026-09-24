@@ -929,6 +929,11 @@ void loop() {
   // persistence for this turn) so the pool figure it reports is a settled one; the call itself decides
   // readiness and emits at most once per boot.
   StorageManager::emitPostRestoreCensusIfReady(looperState.getLooperState());
+  // `restored-library-stability` 1.3: the bounded on-demand library observation. Same unconditional
+  // idle-owner tail, deliberately **not** the admission-gated deferred load/restore frame: a restore
+  // stuck at the commit gate must not be able to suppress the diagnostic meant to explain it. Inert
+  // (one flag check) unless `!LIB_OBSERVE` requested it.
+  StorageManager::serviceLibraryObservation();
 #endif
 
   // S0: observation-only timing telemetry emission (no scheduling decisions).
