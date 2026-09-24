@@ -2929,7 +2929,11 @@ head and both instances. Residual: no production set-epoch wire. Evidence: full 
 `#MEM_EXT_REFUSED bytes=22369620` → external-pool FATAL (pool is 8,380,416 B); the route is therefore
 not enabled by this change, the allocation defect is a `runtime-working-set-ownership` finding, and a
 plain-take control records cleanly. **This change is not archive-ready (A5.5): shape (b) is mandatory
-and untaken.** Details: `deferred-slot-restore-liveness/REVIEW.md` § 2026-09-24 (second session).
+and untaken.** **A5.2 is also still open:** a fresh `--preset base` content run reproduced the
+recording-window failure (`record stop did not reach PLAYING`, `INCONCLUSIVE_CAPTURE`), and no existing
+run meets all four clauses on the current firmware (`cp02-playback` meets them but predates the whole
+change at `491fa9ff`; `hitl-test-01-dump` has `exact_order: false`). Details:
+`deferred-slot-restore-liveness/REVIEW.md` § 2026-09-24 (second session).
 
 
 **2026-09-24 — A3.5 RESTRUCTURED (topology conflict found by the device gate) and A3.7 shape (a) PASSED.**
