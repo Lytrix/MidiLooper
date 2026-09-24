@@ -996,16 +996,24 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       | A5.6 archive | **blocked** | requires A5.5 with nothing open |
 
       **The one blocking condition, stated once:** **A3.7 shape (b)** needs a restore in flight at CLEAR
-      time. Every payload slot is restored at boot, so no cold slot is left post-boot; the route tried —
+      time. Every payload slot is restored at boot, so no cold slot is left post-boot, and the route tried —
       clear-then-reload — aborted with `#MEM_EXT_REFUSED bytes=22369620` before the third session.
-      **That abort is now diagnosed and fixed at its owner** (`LoopEventStore` sized `barFirstIndices_`
-      from an unbounded `event.tick / BAR_TICKS`; a near-`UINT32_MAX` tick requested 22 MB in one
-      `resize`) — see [`runtime-working-set-ownership/ARCHITECTURE-REVIEW.md`](../runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
-      § P1. `LoopEventStore` now refuses an out-of-range tick by name, so the abort is gone; what remains
-      is to **identify the producer of the corrupt tick** and to prove the gate with a fixture. This
-      change deliberately does **not** enable the reload route (the conservative
-      `isLoopSlotRestoreAttempted` done-test) until then. A3.7 (b), A3.8, A5.1's slope, A5.4 and archive
-      stay open. **No mandatory gate is recorded as unrun without a reason, and none is reinterpreted.**
+      **Narrowed claim:** the **oversized bar-index allocation is now bounded** (`LoopEventStore` sized
+      `barFirstIndices_` from an unbounded `event.tick / BAR_TICKS`, and a near-`UINT32_MAX` tick requested
+      22 MB in one `resize`; it now refuses such a tick by name — see
+      [`runtime-working-set-ownership/ARCHITECTURE-REVIEW.md`](../runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+      § P1). That does **not** establish that the route is safe or correct: the **corrupt-tick producer**
+      is still unidentified (it is intermittent and was not caught), and **adopted-content integrity** is
+      unresolved — `rebuildBarIndex` skips the bad bar but the invalid event stays in its chunk for every
+      other reader. **Owner decision: keep reload-on-clear disabled.** Advancing the request generation
+      invalidates stale work; it does not authorise reloading cleared content, and CLEAR unexpectedly
+      restoring old SD content would violate its intended behaviour. A3.7 (b) stays open while a fixture is
+      built through an **intended** restore entry point, and no further device attempt is warranted until
+      that fixture can assert: target content exists immediately before CLEAR; a restore has actually
+      started (an active `LoadLoopJob`, not a queued request); a save is owed; and another track is audibly
+      playing. **Track 3 is left untouched** — being RAM-empty is not permission to modify its persisted
+      content. A5.1's slope and archive stay open. **No mandatory gate is recorded as unrun without a
+      reason, and none is reinterpreted.**
 
 - [ ] A5.6 **Archive.** After A5.5 shows no open mandatory gate, archive per `openspec-archive-change`.
       **Verify:** `openspec validate` passes and the main `lazy-slot-hydration` spec reflects the shipped
