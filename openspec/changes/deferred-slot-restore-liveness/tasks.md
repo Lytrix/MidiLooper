@@ -855,8 +855,9 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       **S1.3 slope — a real capacity failure point found, but measured outside the approved range.**
       A second sweep into **empty** slots (`captures/s13-slope-02/`, track 3 slots 2–4, 4-bar takes) grew the
       payload set while the committed boot-playback set **shrank** (N 27 → 27 → 26): each new recording
-      evicted other committed payload slots (track 6 lost slots 7–8, then 6, then 4–5) and the
-      `post_restore_census` marker **did not fire** in those boots. The approved scratch range is
+      evicted other committed payload slots (track 6 lost slots 7–8, then 6, then 4–5). (The marker read
+      `None` there only because the sweep closes at 10 s and the marker lands at ~11.8 s — a window
+      artifact, withdrawn as evidence, not a readiness failure.) The approved scratch range is
       track 5 slot 1 and **track 6 slots 1–8, which were already fully populated**, so N could not be grown
       inside it; the sweep therefore wrote to **track 3 slots 2–4, outside the approved range** — disclosed
       in [`REVIEW.md`](REVIEW.md), no SD quarantine/delete/rename and no CLEAR, but those slots can only be
