@@ -2956,3 +2956,34 @@ needs a clear on the **normal** firmware (route off, so no automatic reload) and
 payload file was itself removed or merely left for a later boot scan.
 
 Evidence: `captures/cr-probe-01/session.log`.
+
+### Producer reproduction attempt (2026-09-24, fourth session) — intermittent; the raise did **not** recur
+
+The a37b sequence was re-run with the reload route temporarily enabled (reverted byte-identical) and the
+guard in place: prepare track 6 slot 1 with a short pass, pre-CLEAR it, record 8 bars on scratch track 5
+slot 1, then CLEAR. Result (`captures/prod-probe-01/session.log`):
+
+* the record completed and the CLEAR took the drain path —
+  `Clear waiting for deferred save completion` → `State saved successfully (v4)` →
+  `Clear ignored — selected slot is empty`;
+* **no** `LoopEventStore refused out-of-range tick` line, **no** `#MEM_EXT_REFUSED`, **no** FATAL.
+
+**This is not evidence that the guard prevented it.** Had the corrupt tick reached `append`, the guard
+would have logged the refusal; no refusal appeared, so the corrupt tick simply **did not occur** in this
+run. The a37b raise is therefore **intermittent/state-dependent**, not deterministic — one clean
+reproduction attempt cannot identify the producer.
+
+Two secondary observations, recorded because they bound the next attempt:
+
+* the pre-CLEAR's reload request (`RRQ,5,0,1,0,queued`) was **queued but never ran** — no
+  `running`/`committed` followed — because the scratch track was still overdubbing when it was selected, so
+  restore *preparation* was denied by capture. A queued request is not a `LoadLoopJob`.
+* that is also why the CLEAR's drain **completed** rather than naming a wait: no slot-load session was
+  active, so `deferredSaveBlockedByActiveSlotLoadSd()` was false. **A3.7 shape (b) was therefore not
+  exercised** by this run — a queued request is not "a restore in flight".
+
+**Next step, revised:** to identify the producer, catch the raise rather than assume it. Either (a) repeat
+the a37b sequence enough times to catch the intermittent tick and read the refusal's context, or (b) add
+allocation-site context to the refusal (the store's owner) so a single catch names the producer, or
+(c) instrument the SD-load staging path, which is the only caller of `rebuildBarIndex` outside `append`.
+Do not re-enable the route in the change until the raise is either caught or shown unreachable.

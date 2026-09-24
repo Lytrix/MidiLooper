@@ -2925,9 +2925,11 @@ capture-serial SUCCESS `code 391,064 + padding 2,152`. Recorded in
 `runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § P1. **Open:** the corrupt tick's **producer** is
 not identified, and the obvious hypothesis is now **falsified** — with the route temporarily enabled, a
 bounded probe (`captures/cr-probe-01/`) cleared three populated slots and the reloads committed cleanly
-with no `out-of-range tick` refusal and no FATAL. The trigger is state-dependent (the a37b reproductions
-had a long record and its deferred save in flight at the CLEAR), so the next step reproduces with that
-record+save in flight. Side effect disclosed: clear-then-reload re-commits the slot, so the probe did not
+with no `out-of-range tick` refusal and no FATAL. The trigger is **intermittent**: re-running the
+full a37b sequence with the guard in place raised nothing at all (no refusal, no FATAL,
+`captures/prod-probe-01/`) and left the reload `queued` rather than in flight, so it did not exercise
+A3.7 shape (b) either. The next step is to catch the raise — repeat, add allocation-site context, or
+instrument the SD-load staging path (the only `rebuildBarIndex` caller outside `append`). Side effect disclosed: clear-then-reload re-commits the slot, so the probe did not
 remove the track 3 slots 2-4 content. The reload route stays off in
 the change, so `deferred-slot-restore-liveness` A3.7 shape (b) and archive remain open. Its
 "clear-then-reload is the only reachable route" wording is corrected to "the route tried".
