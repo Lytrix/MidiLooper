@@ -954,11 +954,20 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       gate — syncing the main spec early would advertise behavior whose device integration (A3.7) is not
       yet verified.
 
-- [ ] A5.4 **Decision log.** Append a `DEC-###` entry for the restore-liveness ruling (the request is
+- [x] A5.4 **Decision log.** Append a `DEC-###` entry for the restore-liveness ruling (the request is
       the unit with identity and named waits, background **preparation** is admitted while playing and
       apply waits on the commit gate, the drain **advances** rather than cancels) with its device
       evidence, and record O1/O2 if they were resolved by measurement.
       **Verify:** the index row, the Next-ID bump, and the entry body are present and consistent.
+      → **DONE 2026-09-24 (fifth session).** [`DEC-082`](../../../docs/DECISION_LOG.md#dec-082--the-restore-request-is-the-unit-identity-named-waits-preparation-under-transport-and-a-three-way-drain)
+      records the ruling in four clauses — request identity with named waits and exactly-one-terminal;
+      background **preparation** admitted under transport with apply still on the global commit gate
+      (task 3.3 boundary); the three-way completed / temporarily-blocked / failed drain that advances rather
+      than cancels; and the explicit statement that a named wait is a valid outcome. The index row, the
+      `Next ID: DEC-083` bump and the body are present. Evidence is stated **per clause**, and the
+      drain-advance **device integration (A3.7 shape (b)) is recorded as NOT VERIFIED** in the entry's own
+      evidence table, so the DEC does not claim what the change has not shown. O1 (recording deferral)
+      resolved by measurement as `waiting_capture`; O2 (per-set epoch) remains as the recorded residual.
 
 - [ ] A5.5 **Required-gate completeness (review finding 6).** Every **mandatory** gate in Packets A–D and
       in the `runtime-working-set-ownership` handoff (A5.1) SHALL be **taken and green** before archive.
@@ -983,7 +992,7 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       | A5.1 runtime handoff | **OPEN** | census checkpoint done and device-verified; post-restore budget stable at 452/512 across three boots; **slope blocked** — approved scratch range (track 5 slot 1, track 6 slots 1–8) fully populated, and a sweep outside it evicted other committed slots |
       | A5.2 content PASS | **taken + green** | `captures/cc-03-playback/`: `result PASS`, 11/11 `inventory_equal` and `exact_order`, 0 missing/extra, hex `f3a33208` |
       | A5.3 documentation | **partial** | runtime docs updated; `BOOT_LOAD.md` no longer states the removed rule; main-spec sync held for A5.6 |
-      | A5.4 decision log | **OPEN** | the ruling's device evidence is incomplete while A3.7 shape (b) is untaken |
+      | A5.4 decision log | **taken + green** | `DEC-082` recorded with per-clause evidence; the drain-advance device clause is explicitly marked NOT VERIFIED in the entry, so the record is complete and honest without pre-claiming A3.7 |
       | A5.6 archive | **blocked** | requires A5.5 with nothing open |
 
       **The one blocking condition, stated once:** **A3.7 shape (b)** needs a restore in flight at CLEAR

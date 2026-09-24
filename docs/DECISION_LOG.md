@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-082](#dec-082--the-restore-request-is-the-unit-identity-named-waits-preparation-under-transport-and-a-three-way-drain) | 2026-09-24 | The restore **request** is the unit: identity, named waits, preparation under transport, three-way drain | Accepted — implemented; native + Packet B device gate + content PASS; **the drain-advance device integration (A3.7 shape b) is not yet verified**, so `deferred-slot-restore-liveness` stays open |
 | [DEC-081](#dec-081--audible-playback-never-gates-persistence-and-never-stops-for-it) | 2026-09-23 | Audible playback never gates persistence and never stops for it (supersedes the all-tracks-silent gate) | Accepted — implemented, built and **device-verified on the discriminating case** (five tracks audibly playing + a genuinely owed save → the clear's blocking drain completed in <833 ms, 0 `Clear aborted`/`drain stuck`) |
 | [DEC-080](#dec-080--deterministic-execution-packets-for-implementation-slices) | 2026-09-23 | Per-slice transition oracles, production-path fixtures and evidence-backed completion | Accepted — workflow only; applies to future implementation steps |
 | [DEC-079](#dec-079--runtime-working-set-implementation-handoff-corrections) | 2026-09-23 | Executable boot slice, per-holder budget, retained regeneration job and interaction composition | Accepted — OpenSpec corrections only; runtime gates open |
@@ -93,7 +94,77 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-082 -->
+<!-- Append new entries below (newest first). Next ID: DEC-083 -->
+
+## DEC-082 — The restore request is the unit: identity, named waits, preparation under transport, and a three-way drain
+
+**Date:** 2026-09-24
+**Owner:** `StorageManager` restore path (`RestoreRequestState`, `LoadLoopJob`, `LoopSlotRestoreQueue`), the blocking drain (`PersistenceSyncDrainBudget` / `PersistenceDrainOutcome`), CLEAR in `MidiButtonActions`
+**Status:** Accepted — implemented and native-verified; device evidence exists for the request lifecycle (Packet B) and for content (A5.2). The **drain-advance device integration (A3.7 shape b) is not yet verified**, so the governing change `deferred-slot-restore-liveness` stays open and is not archived.
+**Governing change:** [`openspec/changes/deferred-slot-restore-liveness`](../openspec/changes/deferred-slot-restore-liveness/proposal.md) (Packets A–D).
+
+### Context
+
+A boot or background slot restore could stall with no diagnosis: a queued request was served only while the
+transport was idle, a job parked by the transport gate was never re-serviced, a priority head blocked by a
+live owner stalled every request behind it, a transient SD failure latched a slot for the whole power cycle,
+and CLEAR's blocking drain could not advance a restore it was waiting on. The observable failure was the
+same in every case — a request that was neither served nor in a named wait, and a CLEAR reported as a
+generic `Clear aborted` with no reason.
+
+### Decision
+
+1. **The request is the unit of correctness, with identity and named waits.** A restore request is
+   identified by `(track, slot, requestGeneration, setEpoch)` and is in exactly one lifecycle state:
+   `queued`, `running`, `waiting`, or `terminal`. Waits are named — `waiting_slot_owned`,
+   `waiting_capture`, `waiting_commit_gate`, `waiting_job_capacity`, `waiting_retry` — and terminals are
+   `committed`, `unnecessary`, `refused`, `superseded`. A wait never becomes a terminal from elapsed turns
+   alone; a second terminal for one identity is refused; a reused `(track, slot)` is a **different** request;
+   an **external** reset (user CLEAR, set change, a different owner committing that slot) records
+   `superseded` under the request's own identity and advances the generation, while the restore path's
+   **own** failure cleanup keeps the identity and names `waiting_retry`. Publication revalidates the
+   captured identity immediately before install and **publishes nothing** when it is stale.
+2. **Background preparation is admitted under active transport; apply is not.** A bounded open/read/parse
+   slice may advance while playback continues (`canPrepareBackgroundLoadLoopNow`), so a queued request is no
+   longer deferred merely because a track is playing. Commit and cleanup still require the idle gate
+   (`MidiServiceDrain::admitLoadJobChild`, untouched here), and that gate is **global** across both job
+   instances: a prepare-complete request reports `waiting_commit_gate`, and a sibling blocked by it reports
+   `waiting_job_capacity`. **Applying a restore under active transport is explicitly out of scope** and
+   waits on `resumable-midi-boundary-playback-maintenance` **task 3.3** (bounded Commit). Recording keeps
+   its existing deferral and names `waiting_capture`.
+3. **The blocking drain decides completed / temporarily blocked / failed, and advances rather than
+   cancels.** `drainPersistenceWorkBlockingDetailed` returns `SyncDrainResult { outcome, reason }`, mapped
+   through one decision function (`resolveDrainCallerAction`): only `Completed` proceeds; a
+   `TemporarilyBlocked` drain is an explicit refusal that **names the gate**, leaves the target untouched,
+   and leaves the owed save owed; `Failed` stays distinguishable. `saveState` remains a `Completed`-only
+   wrapper for pre-existing callers. One scoped owner (`PersistenceDrainScope`) prevents re-entry, and the
+   drain's budget and progress accounting charge restore work, so a drain advancing a large restore is not
+   misreported as stuck.
+4. **A named wait is a valid, successful outcome of this change.** It may last until the bounded-commit
+   prerequisite lands. Retention as an accepted-interaction CLEAR latch is **O7** and is not built.
+
+### Evidence
+
+| Clause | Evidence |
+|---|---|
+| Request lifecycle, named waits, exactly-one-terminal, identity validation | native `test_storage_manager_load` **33/33** including the production-path and stale-identity cases; full native **2,344 / 1 skipped / 0 failures** |
+| Boot restore liveness (device) | [`captures/a25-boot-gate/`](../captures/a25-boot-gate/): 87 `RRQ` transitions over **29** distinct `(track, slot)` requests, all `queued → running → committed`, 0 non-terminal, 0 `RING,overflow` |
+| Preparation under transport + named waits (native) | `test_restore_request_prepare_complete_waits_at_commit_gate`, `test_a21_recording_names_the_capture_wait`, and the strengthened sibling-capacity case |
+| Drain decisions, budget, progress, caller contract (native) | `test_persistence_sync_drain_budget` and `test_storage_drain_restore` (real drain), including the holdoff named instead of spun and the re-entry guard |
+| Content reaches the output (device) | [`captures/cc-03-playback/`](../captures/cc-03-playback/content-review.json): `result: PASS`, 11/11 cycles `inventory_equal` and `exact_order`, 0 missing/extra, firmware hex `f3a33208…` |
+| CLEAR with a save owed, nothing else sounding (device) | [`captures/a37-clear-05-fresh/`](../captures/a37-clear-05-fresh/): drain completed the save in <243 ms, 0 aborts / stuck / blocked |
+| **Drain advances a restore it waits on, with another track playing (A3.7 shape b)** | **NOT VERIFIED.** Every payload slot is restored at boot, so no cold slot exists post-boot, and the clear-then-reload route is deliberately not enabled. The ~22 MB abort that route produced was diagnosed and fixed in `runtime-working-set-ownership` (a malformed bar-index size, not an allocator defect — see that change's `ARCHITECTURE-REVIEW.md` § P1), so the route is now safe, but enabling it is a separate decision. No alternative fixture is proven. **This is why the change is not archived.** |
+
+### Consequences
+
+* A stalled restore is now diagnosable: `RRQ` carries the request identity, state, wait and terminal; the
+  on-demand `StorageManager::probeRestoreState` reports the queue head's startability and each instance's
+  request state; the drain reports the named gate instead of a generic block.
+* `LoopSlotRestoreAttempted` is subsumed by the request record, so exactly-once has one source of truth.
+* RAM1 was deliberately re-based once for the record (native 96,192 / code 391,064 + padding 2,152 at this
+  entry), which is above the 840 floor.
+* The route that would let a cleared slot reload is **not** enabled by this change; enabling it is a
+  behavior decision pending the shape-(b) fixture and the owner's authorisation to clear scratch content.
 
 ## DEC-081 — Audible playback never gates persistence, and never stops for it
 
