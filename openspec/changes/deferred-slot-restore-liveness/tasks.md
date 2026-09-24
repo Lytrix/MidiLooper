@@ -846,6 +846,23 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       **Verify:** `result: PASS`, `storage_matches_effective: true`, and every cycle
       `inventory_equal: true` / `exact_order: true` with 0 missing and 0 extra. If the two
       unexplained bar-0 rows recur, they are retried, never reinterpreted.
+      → **ATTEMPTED 2026-09-24 (second session), STILL OPEN — no run on the current firmware meets all
+      clauses.** A fresh capture attempt with the canonical entry point
+      (`host_midi_hitl.py run --preset base --track 5 --loop-slot 1`) reproduced the separately tracked
+      recording-window failure (`captures/cpv-final/`: `record note span 219/0`, `stored record grid
+      count=0`, `record stop did not reach PLAYING`, `INCONCLUSIVE_CAPTURE`), matching
+      `captures/a51-finding-01.md` — so the pipeline cannot be driven on this firmware yet.
+      **Existing runs are attached and classified against all four clauses, none closes it:**
+      * `captures/cp02-playback/` (content `captures/content-pass-02/`, track 5 slot 1) — `result: PASS`,
+        `storage_matches_effective: true`, 3/3 cycles `inventory_equal: true` and `exact_order: true`,
+        0 missing / 0 extra, but it is pinned to `git_commit 491fa9ff`, **60 commits behind HEAD and
+        before every Packet A/B/C implementation of this change**, so it is not evidence for the shipped
+        behavior.
+      * `captures/hitl-test-01-dump/` (`git_commit 2b756909`, `git_dirty: true`, track 6 slot 1) —
+        `result: PASS`, storage equality true, 5/5 `inventory_equal: true`, 0 missing / 0 extra, but
+        `exact_order: false` on every cycle and the wrong slot. **Storage equality alone does not close
+        it**, which is exactly what this run shows.
+      A5.2 therefore stays open; it is mandatory (A5.5) and its blocker is the recording-window failure.
 
 - [ ] A5.3 **Documentation closeout.** Update `docs/Runtime/PROJECT_STATE.md`,
       `docs/Runtime/CURRENT_WORK.md`, `docs/DELIVERABLE_TRACKING.md`, the
