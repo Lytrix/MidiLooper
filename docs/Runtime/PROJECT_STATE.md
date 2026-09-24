@@ -47,6 +47,20 @@ allocation defect as a `runtime-working-set-ownership`/recording finding. **Cont
 `captures/a37-control-02/` records and saves cleanly with **0 FATAL**. Shape (b) is mandatory and not
 taken, so the change is **not archive-ready** (A5.5).
 
+**A5.2 CLOSED the same round — the base preset was the blocker, not the device.** A direct clock+note
+stream into the authorized scratch slot records and saves cleanly (`scripts/hitl_record_content.py`), and
+the skill pipeline then passes on the current firmware: `captures/cc-03-playback/content-review.json` is
+`result: PASS`, `storage_matches_effective: true`, `CAPTURE_CONTENT,begin,track=5,slot=0,length=1536`,
+**11/11 cycles `inventory_equal: true` and `exact_order: true`**, 0 missing / 0 extra / 0 unexplained, 0
+`RING,overflow`; run identity `git_commit 0c65a99e`, hex `f3a33208…`. It is a parity PASS (64 rows), not a
+capacity re-stress. The base preset still fails (`captures/cpv-final/`) and is a separately tracked
+harness/device interaction — it must not be generalised to "recording is broken".
+
+**A5.1 partial:** the updated slope fixture (`hitl_library_growth_sweep.py` now reads the census marker)
+reports `N=29`, `post_restore_free_chunks=452` of 512 on three consecutive fresh boots with 0 reconcile
+failures — the post-restore budget is stable. The **slope itself is not measured**: the sweep's track/slot
+control selected track 5, not the requested track 6, so N never grew (a fixture defect, recorded).
+
 **2026-09-24 — A3.2 attempted and reverted; the blocker is ITCM placement, not the design.**
 
 The pure drain-verdict classifier was built and its five fixtures passed, but the change needed ~96 B of

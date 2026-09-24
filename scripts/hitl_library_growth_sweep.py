@@ -45,6 +45,10 @@ MIDI_STOP = 0xFC
 PREWARM_RE = re.compile(r"DIAG,capture_prewarm,(.*)$")
 FREE_RE = re.compile(r"free_chunks=(\d+)")
 ROW_RE = re.compile(r"track=(\d+),slot=(\d+),full=(\d+),ready=(\d+),credits=(\d+),free_chunks=(\d+)")
+# S1.3/S2b.3: the authoritative post-restore figure is the explicit census checkpoint, not the
+# capture_prewarm walk pair (which is reservation telemetry for the enabled/library sets).
+CENSUS_RE = re.compile(r"#CAP,\d+,DIAG,post_restore_census,(.*)$")
+CENSUS_FIELD_RE = re.compile(r"([a-z_]+)=(\d+)")
 
 
 class Session:
@@ -169,9 +173,19 @@ def stop_transport_cleanly(out, session: Session, *, drain_s: float = 3.0) -> No
 
 
 def boot_census(session: Session) -> dict[str, object]:
-    """Read the boot prewarm census: phase lines plus the per-(track,slot) library walk."""
+    """Read the boot census: phase lines, the per-(track,slot) library walk, and the checkpoint marker.
+
+    The walk pair is reservation telemetry; the **post-restore** figure S2b.3/S1.3 pin to is the
+    `post_restore_census` marker, which attests every readiness condition first.
+    """
     phases, rows = [], []
+    marker: dict[str, object] | None = None
     for line in session.lines:
+        census = CENSUS_RE.search(line)
+        if census:
+            fields = {m.group(1): int(m.group(2)) for m in CENSUS_FIELD_RE.finditer(census.group(1))}
+            marker = fields
+            continue
         m = PREWARM_RE.search(line)
         if not m:
             continue
@@ -190,6 +204,8 @@ def boot_census(session: Session) -> dict[str, object]:
     pre = next((p["free_chunks"] for p in phases if p["phase"] == "before"), None)
     post = next((p["free_chunks"] for p in phases if p["phase"] == "after"), None)
     return {"phase_before_free": pre, "phase_after_free": post,
+            "post_restore_free_chunks": marker.get("free_chunks") if marker else None,
+            "census_marker": marker,
             "library_rows": rows, "phases": phases}
 
 
@@ -253,7 +269,8 @@ def main() -> int:
         time.sleep(2.0)
         args.port = wait_for_port() or args.port
         banner, reconcile, loaded, empty_states = False, 0, [], []
-        census = {"phase_before_free": None, "phase_after_free": None, "library_rows": []}
+        census = {"phase_before_free": None, "phase_after_free": None,
+                  "post_restore_free_chunks": None, "census_marker": None, "library_rows": []}
         try:
             s2 = Session(args.port, step_dir / "boot.log")
         except Exception as exc:  # noqa: BLE001 - recorded, not fatal
@@ -266,6 +283,13 @@ def main() -> int:
             banner = any("boot_reset" in l for l in s2.lines)
             reconcile = sum(1 for l in s2.lines if "could not reconcile" in l)
             census = boot_census(s2)
+            # N = distinct (track, slot) requests that reached `committed` this boot, from the A1.8 RRQ line.
+            committed = set()
+            for l in s2.lines:
+                m = re.search(r"RRQ,(\d+),(\d+),\d+,\d+,terminal,none,committed", l)
+                if m:
+                    committed.add((int(m.group(1)), int(m.group(2))))
+            committed_slots = len(committed)
             empty_states = [l for l in s2.lines if "loaded state: EMPTY" in l]
             loaded = [l for l in s2.lines if "loaded state:" in l]
         finally:
@@ -275,14 +299,17 @@ def main() -> int:
                "boot_banner": banner, "reconcile_warnings": reconcile,
                "free_before": census["phase_before_free"],
                "free_after": census["phase_after_free"],
+               "n_committed_slots": committed_slots,
+               "post_restore_free_chunks": census["post_restore_free_chunks"],
+               "census_marker": census["census_marker"],
                "library_rows": census["library_rows"],
                "empty_state_count": len(empty_states),
                "loaded_state_lines": loaded}
         steps.append(row)
         print(f"[sweep] step {i} slot {slot}: banner={banner} reconcile={reconcile} "
-              f"free_before={row['free_before']} free_after={row['free_after']} "
-              f"rows={len(census['library_rows'])} empty_states={len(empty_states)} "
-              f"elapsed={time.monotonic()-t0:.0f}s")
+              f"N={committed_slots} post_restore_free={row['post_restore_free_chunks']} "
+              f"(walk {row['free_before']}->{row['free_after']}) "
+              f"rows={len(census['library_rows'])} elapsed={time.monotonic()-t0:.0f}s")
 
         if not banner:
             print("[sweep] STOP: no boot banner, the reset did not take")

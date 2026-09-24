@@ -874,3 +874,38 @@ slices)`, 0 `FATAL`), so the recording path itself is not broken.
 | A3.7 control | `scripts/hitl_clear_drain_a37.py` → `captures/a37-control-02/` | record + save clean, 0 FATAL (isolates the reload route) |
 | A5.2 | `scripts/host_midi_hitl.py run --preset base --track 5 --loop-slot 1` → `captures/cpv-final/` | **INCONCLUSIVE_CAPTURE** — recording-window failure reproduced (`record note span 219/0`, `stored record grid count=0`, `record stop did not reach PLAYING`), matching `captures/a51-finding-01.md`; the content pipeline cannot be driven on this firmware yet |
 | A5.2 | existing runs classified against all four clauses | `captures/cp02-playback/` meets every content clause but is pinned to `491fa9ff` (60 commits behind HEAD, before all of this change's implementation); `captures/hitl-test-01-dump/` has storage equality and 5/5 `inventory_equal` but `exact_order: false` and the wrong slot. **Neither closes A5.2** |
+
+### A5.2 — closed: the base preset was the blocker, not the device
+
+The recording-window failure is **base-preset-specific**. A direct clock+note stream into the authorized
+scratch slot records and saves cleanly, and the skill's pipeline then passes on the current firmware:
+
+* content creator `scripts/hitl_record_content.py --track 5 --loop-slot 1 --bars 2` → `captures/cc-03/`
+  (`RECS,stage,seal,…,64,0,ok`, `Recording stopped length=1536`, `CurrentSet saved successfully`);
+* `dump_and_capture.py` + `verify_playback_content.py` → `captures/cc-03-playback/content-review.json`:
+  `result: PASS`, `storage_matches_effective: true`, `CAPTURE_CONTENT,begin,track=5,slot=0,length=1536`,
+  **11/11 cycles `inventory_equal: true` and `exact_order: true`**, `missing_count=0`, `extra_count=0`,
+  `unexplained_missing_count=0`, **0** `RING,overflow`.
+* Run identity: `git_commit 0c65a99e97a43169c8a3a03e732d2d506de25a49` (clean), firmware hex
+  `f3a33208591b3a087870e13023c63b529d8a27bab5da9499566009e453fee4a8`.
+* Scope: a **parity** PASS (64 rows, `max_bar_refs 32`), not a capacity re-stress; the dump's serial log
+  has no boot banner (the reader attached mid-boot), but the independently read content dump and 11/11
+  matching cycles are the evidence and 0 overflow rows rules out the stale-run signature.
+
+The base preset still fails (`captures/cpv-final/`) and remains a separately tracked harness/device
+interaction — it must **not** be generalised to "recording is broken", which is what the earlier
+`a51-finding-01.md` wording implied.
+
+### A5.1 — census checkpoint is stable across fresh boots; the slope fixture needs fixing
+
+Three fresh-boot slope steps (`scripts/hitl_library_growth_sweep.py`, updated to read the checkpoint
+marker) → `captures/s13-slope-final/sweep-result.json`: every boot `banner=True`, `reconcile_warnings=0`,
+**`post_restore_free_chunks=452`** of 512 and `N=29` committed requests, i.e. the post-restore budget is
+**stable across boots** and the restore walk adds no new reservation (walk 512→480 both times). That is the
+S2b.3 post-restore budget baseline on the finished checkpoint.
+
+**Fixture defect recorded, not claimed as a slope:** the sweep did not grow N. Its track/slot control
+selected track 5 (the recorded rows land as `(5,1)` then `(5,2)`), not the requested track 6, so three
+"growth" steps recorded onto a nearly-full slot and N stayed 29. A real slope-to-failure needs the sweep's
+track/slot mapping corrected and empty scratch slots; until then S1.3's device slope stays open. The
+stable 452-across-boots figure is the part that is measured.
