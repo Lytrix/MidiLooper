@@ -347,8 +347,19 @@ bool saveNewSetInternal(const LooperState& state, char* savedSetFolderOut, size_
     if (!SD.exists(CurrentSetStorage::kCurrentMetaPath)) {
         return false;
     }
-    if (StorageManager::hasDeferredSaveWork() && !StorageManager::saveState(state)) {
-        return false;
+    if (StorageManager::hasDeferredSaveWork()) {
+        // A3.4: the save-new-set pre-flight uses the detailed entry point too. A **temporarily blocked**
+        // drain must not be treated as failure (that would report a real error for a named wait) nor as
+        // success (that would let the new set be written while persistence is still pending). Either way
+        // the new set is not written, and the reason is reported.
+        const SyncDrainResult drainResult = drainPersistenceWorkBlockingDetailed(state);
+        if (drainResult.outcome != SyncDrainOutcome::Completed) {
+            Serial.print("[StorageManager] Save new set refused: pre-flight drain ");
+            Serial.print(drainResult.outcome == SyncDrainOutcome::TemporarilyBlocked ? "blocked by "
+                                                                                    : "failed: ");
+            Serial.println(drainResult.reason);
+            return false;
+        }
     }
 
     SavedSetCatalog::SetIndex index{};

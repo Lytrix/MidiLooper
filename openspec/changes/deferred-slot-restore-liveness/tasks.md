@@ -136,7 +136,7 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       payload from a byte snapshot and drives 32 further turns with no external advancement. New harness
       helpers: `snapshotSlotPayloadBytes`, `replaceSlotPayloadBytes`, `truncateSlotPayload`.
 
-- [ ] A1.7 **[C5 — drain cannot advance the restore] characterization + native closure proof (AMENDED 2026-09-23).**
+- [x] A1.7 **[C5 — drain cannot advance the restore] characterization + native closure proof (AMENDED 2026-09-23).**
       **Amended scope (Revision 5).** The original text required a native red fixture that calls the real
       blocking drain with a restore in flight. Two rounds of measurement (`REVIEW.md` § A1.7) falsified
       that as a *native* obligation: retaining the real `drainPersistenceWorkBlocking` call needs most of
@@ -158,7 +158,11 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       `printf_P`, `print(value,base)` + `DEC/HEX/OCT/BIN`, `File::flush`, `O_CREAT`, directory handles in
       the SD stub, `RtcTime`/`loadSaveMode`/display-light boundary stubs), and runs one behaviour-free
       case. C5's mechanism is recorded in the ledger. The pure-decision cases are A3.3's work.
-      **Still open:** the A3.2/A3.4 pure-decision cases (they land with their implementation tasks).
+      → **DONE 2026-09-24.** The pure-decision cases have landed with their implementation tasks: drain
+      budget/progress accounting (three cases, with A3.3), the **A3.2 wait-reason classification** (five
+      cases), and the **A3.4 three-way caller-contract mapping** (three cases). Closure proof green
+      (`test_storage_drain_restore`), C5's mechanism in the ledger, and A3.1/A3.7 name the device gate as
+      the oracle for the integration claim. **No native red fixture for C5 is claimed**, per Revision 5.
 
 - [ ] A1.8 **Observability, event-shaped (per `design.md` D6).** Add capture-tier lines: one per restore
       **state transition** (terminal or named wait) with the request identity and reason, and an on-demand
@@ -547,7 +551,29 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       approved line (`code 392,344 + padding 872`). **Not claimed here:** that the drain *advances* the
       restore — that integration claim is A3.7 (device), per Revision 5.
 
-- [ ] A3.4 **Caller contract: completed / blocked / failed (D4 rule 7, G2 caller finding).** Give the drain
+- [x] A3.4 **Caller contract: completed / blocked / failed (D4 rule 7, G2 caller finding).**
+      → **DONE 2026-09-24.** New pure contract owner `include/PersistenceDrainOutcome.h`:
+      `SyncDrainOutcome { Completed, TemporarilyBlocked, Failed }` and
+      `resolveDrainCallerAction(outcome)` → `{ Proceed, RefuseBlocked, ReportFailure }`, plus
+      `drainOutcomeLeavesTargetUntouched`. **Only `Completed` proceeds**; a blocked drain is an explicit
+      refusal that leaves the target untouched and the save owed; a failure is reported as a failure and
+      stays distinguishable from the blocked wait. There is deliberately **one** decision function, so both
+      call sites and the tests share it rather than each encoding the rule.
+      `drainPersistenceWorkBlockingDetailed` returns `SyncDrainResult { outcome, reason }`, mapping the
+      A3.2 verdict onto the three-way result — so the **reason and the outcome cannot drift**, and a
+      blocked outcome carries the `waiting_*` name. **`saveState` stays a `Completed`-only wrapper**, which
+      is the compatibility guarantee for any pre-existing caller.
+      **Both call sites use the detailed entry point:** `handleClearTrack` now reports a blocked drain as
+      `Clear refused: deferred save temporarily blocked by <reason>; slot left untouched, save still owed`
+      (with the existing `Clear aborted` line reserved for a real failure), and `saveNewSetInternal` refuses
+      the new set for either non-completed outcome while reporting which it was — it neither treats a wait
+      as failure nor proceeds while persistence is pending. **Retention is O7 and is not built.**
+      **Three new cases** in `test_persistence_sync_drain_budget`: only `Completed` licenses the operation
+      and only it leaves the target touched; blocked and failed are distinguishable; and every A3.2 named
+      gate is a *temporary block* while `Stuck` is the failure side (pinning the verdict→outcome mapping).
+      Suite **15/15**; full native **2,324 / 1 skipped / 0 failures**; RAM1 `code 392,152 + padding 1,064`
+      (224 B above the floor). **A3.4a (re-entry guard) remains open** and is unaffected.
+ Give the drain
       a three-way result and expose it without silently changing existing callers: `saveState` keeps its
       `bool` as a thin `Completed`-only wrapper, and both call sites
       (`MidiButtonActions::handleClearTrack`, `saveNewSetInternal()` in `SavedSetIo.cpp` (save-new-set pre-flight)) use the detailed

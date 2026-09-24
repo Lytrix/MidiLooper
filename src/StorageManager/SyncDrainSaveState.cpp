@@ -117,11 +117,37 @@ STORAGE_PERSIST_MEM bool finishPersistenceDrainReport(
     return true;
 }
 
-bool drainPersistenceWorkBlocking(const LooperState& state) {
+/// A3.4: maps the drain's internal outcome onto the caller-facing three-way result, carrying the named
+/// reason. Kept beside the drain so the reason and the outcome cannot drift apart.
+namespace {
+SyncDrainResult makeDrainResult(SyncDrainFailureReason failureReason,
+                                const PersistenceSyncDrainBudget::SyncDrainVerdict& verdict,
+                                bool completed) {
+    SyncDrainResult result{};
+    if (completed) {
+        result.outcome = SyncDrainOutcome::Completed;
+        result.reason = "ok";
+        return result;
+    }
+    // A3.2's classification already names the gate; the caller contract and the verdict share it.
+    result.reason = verdict.gate;
+    if (failureReason == SyncDrainFailureReason::BlockedByCapture ||
+        failureReason == SyncDrainFailureReason::BlockedByRestore ||
+        failureReason == SyncDrainFailureReason::BlockedBySlotLoad ||
+        failureReason == SyncDrainFailureReason::BlockedByPostLoadHoldoff) {
+        result.outcome = SyncDrainOutcome::TemporarilyBlocked;
+    } else {
+        result.outcome = SyncDrainOutcome::Failed;
+    }
+    return result;
+}
+}  // namespace
+
+SyncDrainResult drainPersistenceWorkBlockingDetailed(const LooperState& state) {
 #if BYPASS_STOP_UNDO_SAVE
     (void)state;
     Serial.println("[StorageManager] BYPASS_STOP_UNDO_SAVE: skip saveState");
-    return true;
+    return SyncDrainResult{SyncDrainOutcome::Completed, "bypassed"};
 #else
     HotPathTelemetry::ScopedSaveState telemetryScope;
     Serial.println("[StorageManager] Draining persistence work queue to SD card...");
@@ -193,12 +219,20 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
 
     // A3.2 / RAM1: the terminal report is FLASH-resident (see `finishPersistenceDrainReport`).
     if (!hasPersistenceWorkPending()) {
-        return finishPersistenceDrainReport(SyncDrainFailureReason::None, verdict, steps,
-                                           stuckIterations, drainBudget, telemetryScope);
+        const bool ok = finishPersistenceDrainReport(SyncDrainFailureReason::None, verdict, steps,
+                                                    stuckIterations, drainBudget, telemetryScope);
+        return makeDrainResult(SyncDrainFailureReason::None, verdict, ok);
     }
-    return finishPersistenceDrainReport(failureReason, verdict, steps, stuckIterations, drainBudget,
-                                       telemetryScope);
+    const bool ok = finishPersistenceDrainReport(failureReason, verdict, steps, stuckIterations,
+                                                drainBudget, telemetryScope);
+    return makeDrainResult(failureReason, verdict, ok);
 #endif
+}
+
+/// A3.4: the compatibility entry point. True only for `Completed`, so every pre-existing caller keeps its
+/// exact semantics; destructive callers use the detailed form.
+bool drainPersistenceWorkBlocking(const LooperState& state) {
+    return drainPersistenceWorkBlockingDetailed(state).outcome == SyncDrainOutcome::Completed;
 }
 
 }  // namespace StorageManagerInternal

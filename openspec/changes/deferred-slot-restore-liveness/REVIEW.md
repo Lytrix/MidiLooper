@@ -477,6 +477,39 @@ extraction in one slice; the hand re-indentation corrupted the function and had 
 two build-verified steps it was routine. `padding_floor` is a reviewed allowance, and the checker's
 "move code out of ITCM" remedy was the right one — no re-base was needed.
 
+### A3.4 — the caller contract: completed / blocked / failed (landed)
+
+- **One decision, shared.** `include/PersistenceDrainOutcome.h` owns `SyncDrainOutcome { Completed,
+  TemporarilyBlocked, Failed }` and `resolveDrainCallerAction` → `{ Proceed, RefuseBlocked, ReportFailure }`.
+  Both real call sites and the tests use that one function instead of each encoding the rule.
+- **Only `Completed` proceeds.** A blocked drain is an explicit refusal: the target is left untouched and
+  the save stays owed. A failure is reported as a failure and stays distinguishable from the blocked wait
+  (the two caller log lines depend on that).
+- **Reason and outcome cannot drift.** `drainPersistenceWorkBlockingDetailed` maps the **A3.2 verdict**
+  onto the three-way result, so a blocked outcome carries the `waiting_*` name; there is no second
+  classification.
+- **Compatibility held.** `saveState` remains the `Completed`-only `bool` wrapper, so no pre-existing
+  caller gains new semantics. Both destructive callers switched to the detailed entry point:
+  `handleClearTrack` reports a blocked drain as `Clear refused: … temporarily blocked by <reason>; slot
+  left untouched, save still owed` and keeps `Clear aborted` for a real failure; `saveNewSetInternal`
+  refuses the new set for either non-completed outcome and says which — neither treating a wait as failure
+  nor proceeding while persistence is pending. **Retention is O7 and is not built.**
+- **Evidence:** `test_persistence_sync_drain_budget` **15/15** (three new cases: only `Completed` licenses
+  the operation; blocked and failed are distinguishable; every named gate is a temporary block while
+  `Stuck` is the failure side). Full native **2,324 / 1 skipped / 0 failures**; firmware SUCCESS at
+  `code 392,152 + padding 1,064` (224 B above the floor).
+- **Not claimed:** the drain-integration/device half (A3.7), and **A3.4a**'s re-entry guard, which remains
+  open. A first attempt to also exercise the three-way result through the *real* drain ran into the
+  drain-suite link closure again (the display owner's constructor); that suite stays as the A1.7 closure
+  proof, and the contract is pinned in the pure suite where the oracle is tight.
+
+### A1.7 — closed
+
+With A3.2's and A3.4's pure-decision cases landed, A1.7's amended scope is complete: closure proof green,
+budget/progress accounting cases green, wait-reason classification green, caller-contract mapping green,
+C5's mechanism in the ledger, and A3.1/A3.7 naming the device gate as the oracle for the integration
+claim. **No native red fixture for C5 is claimed**, per Revision 5 — the integration claim remains A3.7's.
+
 ---
 
 ## Mechanism ledger (A1.9)

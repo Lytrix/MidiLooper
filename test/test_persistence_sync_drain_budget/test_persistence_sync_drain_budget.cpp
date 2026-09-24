@@ -7,6 +7,7 @@
 #include "../../src/PersistenceSyncDrainBudget.cpp"
 
 #include "LoopPasses.h"
+#include "PersistenceDrainOutcome.h"
 #include "PersistenceSyncDrainBudget.h"
 
 namespace {
@@ -267,6 +268,64 @@ void test_drain_verdict_reserves_stuck_for_an_unexplained_gate() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Packet C / A3.4 — the caller contract.
+//
+// `saveState` returned only bool, and every `false` was treated as failure at both call sites, so a named
+// *temporary* wait could not coexist with "the operation reported success". The drain now returns
+// completed / temporarily blocked / failed, and the rule that reads it is a pure function, so it is
+// pinned exactly here. The real drain's blocked classification comes from the A3.2 verdict (tested
+// above), and the drain-integration/device half is A3.7.
+// ---------------------------------------------------------------------------
+
+/// **Only `Completed` proceeds.** A blocked drain is an explicit refusal — never silent success, never a
+/// destructive license — and a failure is reported as a failure.
+void test_a34_only_completed_licenses_the_destructive_operation() {
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(SyncDrainCallerAction::Proceed),
+                        static_cast<int>(resolveDrainCallerAction(SyncDrainOutcome::Completed)));
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(SyncDrainCallerAction::RefuseBlocked),
+      static_cast<int>(resolveDrainCallerAction(SyncDrainOutcome::TemporarilyBlocked)));
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(SyncDrainCallerAction::ReportFailure),
+                        static_cast<int>(resolveDrainCallerAction(SyncDrainOutcome::Failed)));
+
+  TEST_ASSERT_FALSE_MESSAGE(drainOutcomeLeavesTargetUntouched(SyncDrainOutcome::Completed),
+                            "only Completed may touch the target");
+  TEST_ASSERT_TRUE_MESSAGE(drainOutcomeLeavesTargetUntouched(SyncDrainOutcome::TemporarilyBlocked),
+                           "a blocked CLEAR must leave the slot untouched and the save owed");
+  TEST_ASSERT_TRUE_MESSAGE(drainOutcomeLeavesTargetUntouched(SyncDrainOutcome::Failed),
+                           "a failed drain must not license the destructive operation either");
+}
+
+/// The blocked wait and a real failure stay **distinguishable**, which is what the two caller log lines
+/// rely on (a named refusal is an expected outcome; an abort is not).
+void test_a34_blocked_and_failed_are_distinguishable() {
+  TEST_ASSERT_TRUE(resolveDrainCallerAction(SyncDrainOutcome::TemporarilyBlocked) !=
+                   resolveDrainCallerAction(SyncDrainOutcome::Failed));
+  TEST_ASSERT_TRUE(drainOutcomeLeavesTargetUntouched(SyncDrainOutcome::TemporarilyBlocked));
+  TEST_ASSERT_TRUE(drainOutcomeLeavesTargetUntouched(SyncDrainOutcome::Failed));
+}
+
+/// The blocked/failed split is driven by the **A3.2** named classification, so the verdict and the caller
+/// contract cannot drift: every named gate is a temporary block, and `Stuck` is the failure side.
+void test_a34_named_gates_are_temporary_blocks_not_failures() {
+  const uint8_t waits[] = {SyncDrainWait::kSlotOwned, SyncDrainWait::kCapture,
+                           SyncDrainWait::kCommitGate, SyncDrainWait::kJobCapacity,
+                           SyncDrainWait::kRetry};
+  for (uint8_t wait : waits) {
+    const PersistenceSyncDrainBudget::SyncDrainVerdict v =
+        PersistenceSyncDrainBudget::classifySyncDrainVerdict(false, true, false, wait);
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(SyncDrainFailureReason::BlockedByRestore),
+                          static_cast<int>(v.reason));
+    TEST_ASSERT_TRUE_MESSAGE(v.gate != nullptr && v.gate[0] != '\0',
+                             "a blocked verdict must name its reason for the refusal log");
+  }
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(SyncDrainFailureReason::Stuck),
+                        static_cast<int>(PersistenceSyncDrainBudget::classifySyncDrainVerdict(
+                                             false, false, false, SyncDrainWait::kNone)
+                                             .reason));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_loop_persist_slice_steps_scales_with_chunks);
@@ -283,5 +342,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_drain_verdict_keeps_slot_load_when_no_wait_is_named);
   RUN_TEST(test_drain_verdict_names_the_post_load_holdoff);
   RUN_TEST(test_drain_verdict_reserves_stuck_for_an_unexplained_gate);
+  // A3.4 — the caller contract.
+  RUN_TEST(test_a34_only_completed_licenses_the_destructive_operation);
+  RUN_TEST(test_a34_blocked_and_failed_are_distinguishable);
+  RUN_TEST(test_a34_named_gates_are_temporary_blocks_not_failures);
   return UNITY_END();
 }
