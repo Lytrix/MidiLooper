@@ -13,7 +13,7 @@ Three facts define what may be implemented right now:
    bypassed merely because hardware evidence is blocked.
 2. **The restored-library instability now has an owner: `restored-library-stability`** (proposed 2026-09-24,
    planning complete, `openspec validate` clean, **read-only Packet A can start immediately**). It exists
-   because the committed set is not reproducible across boots, which blocks fact 1's device legs. Its first
+   because the set of slots **observed** committed after a reboot is not reproducible **as measured**, which blocks fact 1's device legs. Its first
    finding is already recorded: the previous blocker attribution (SD catalog reconcile) does not hold —
    `sets/index.bin` is a saved-set *folder counter* (`SetIndex{nextSequence}`), the shrinking boots report
    `reconcile_warnings=0`, `DIAG,lcr,skip,restore` is a content-resolution line, and
@@ -2931,21 +2931,39 @@ correctly named wait; commit gate not relaxed). Packet: `ARCHITECTURE-REVIEW.md`
 Owner direction: give the instability an owner rather than another drain test, because it blocks the
 measurements and the later runtime stages. **Opened** `openspec/changes/restored-library-stability/`
 (proposal + design + `lazy-slot-hydration` spec delta + tasks; `openspec validate` clean; **no implementation
-started**). **Scope:** own the instability; pre-register the four-class attribution (**catalog omission /
-restore refusal / intentional eviction / content loss**) and require evidence to separate them; add a per-slot
-library inventory observable (payload + token, boot enumeration, request state/terminal, committed content,
-selection) emitted at the existing census point; define **one** repeatable fixture inside the already-approved
+started**). **Scope:** own the instability; attribute with a **nullable** classifier (**catalog omission /
+restore refusal / intentional eviction / content loss**, plus `empty/not applicable`, `pending`, `ambiguous`,
+`unknown`) kept **separate from observation**, with evidence and stated precedence; add a per-slot
+**observed-state** inventory (payload + token, boot enumeration, request state/wait/terminal with full
+identity, committed content, selection) reporting **four distinct quantities** with an explicit observation
+**window**, collected through a **bounded on-demand snapshot** that does not depend on the settled census
+gates; define **one** repeatable fixture inside the already-approved
 scratch range (track 5 slot 1, track 6 slots 1–8), read-only first, with any CLEAR needing **per-slot owner
-authorization**; and carry the **S2b.7 device confirmation** once the fixture can hold a session-holding
-restore. **Handoff, not absorption:** when the library is stable, `runtime-working-set-ownership` finishes S1
+authorization** and stability proven by a **complete per-slot manifest comparison**; and carry the **S2b.7
+device confirmation** as an independently reportable packet. **Handoff, not absorption:** when the library is
+stable, `runtime-working-set-ownership` finishes S1
 and the S2b device gates, then starts S3 — this change does not start them.
 **First findings, already recorded (all read-only) and they correct the previous attribution:**
 `MidiLooper/sets/index.bin` is `SavedSetCatalog::SetIndex{ uint32_t nextSequence; }` — a saved-set folder
-counter, **not** a slot catalog; the boots that shrank the committed set (`captures/s13-slope-02/`, N 27 → 27
-→ 26) report **`reconcile_warnings=0`**; `DIAG,lcr,skip,restore` is a **content-resolution** line
+counter, **not** a slot catalog; the boots that appeared to shrink (`captures/s13-slope-02/`) report
+**`reconcile_warnings=0`**; `DIAG,lcr,skip,restore` is a **content-resolution** line
 (`TrackDeferredMaintenance` / `LoopContentResolution`), not a library marker; `Track 6/7 loaded state: EMPTY`
 appears on the **stable** `N=29` boots too. Also: both sweeps' `library_rows` are **all-zero** (16 rows,
 `phases: 0`), so no per-slot inventory was ever captured — the gap Packet A closes.
+**G2 implementation-contract review 2026-09-24: BLOCKED, then corrected — four contract fixes.** (1)
+`n_committed_slots` is a **window-scoped count of observed `RRQ … committed` completions**, background
+restores included — **not** the boot playback set, so the earlier explanation for `N=29` is **withdrawn** and
+subtracting a playback set from the payload set does **not** establish loss; four quantities + the window are
+now reported and incomplete windows are tested. (2) `emitPostRestoreCensusIfReady` is once-per-boot and needs
+`bootInteractiveReady()` (empty queue, no live session, both jobs inactive), so a waiting request suppresses
+it — a **bounded on-demand snapshot** independent of those gates is now required, with incremental collection,
+snapshot consistency and capture framing, while the settled census stays for settled memory figures. (3) A
+forced one-of-four classification could not be truthful — observation is now separate from a **nullable**
+attribution, with full request identity, completeness and no single-snapshot historical claim. (4) One scratch
+slot surviving three boots does not establish stability — a **complete per-slot manifest comparison** is now
+required and any unexplained difference is a failure. **Read-only attribution may proceed; the corrected
+measurement definitions come first, because they may explain part of the apparent instability without a
+firmware fix.**
 **Wording recorded:** `runtime-working-set-ownership` has **no *currently eligible* native task** left; the
 stage order is not bypassed because hardware evidence is blocked. Packets:
 `restored-library-stability/proposal.md`, `design.md`, `tasks.md`.
@@ -3140,7 +3158,10 @@ firmware (`captures/cc-03-playback/`: `result: PASS`, storage equality true,
 **A5.1 partial:** the updated sweep reports the post-restore budget stable at `N=29`,
 `post_restore_free_chunks=452` of 512 across three fresh boots with 0 reconcile failures; the slope itself
 is not measured because N is the boot playback set (library-independent), so recording into an unselected
-scratch slot cannot raise it — the fixture must select/enable each recorded slot before the reboot. (An
+scratch slot cannot raise it — the fixture must select/enable each recorded slot before the reboot.
+**[WITHDRAWN 2026-09-24, G2 review: "N is the boot playback set" is wrong — `n_committed_slots` is a
+window-scoped count of observed `RRQ … committed` completions with background restores included, so it is
+neither the playback-required set nor the library; see `restored-library-stability` design D4.]** (An
 earlier note blaming the sweep's track selection is withdrawn: the 0-based walk indices were misread and
 the log shows `Selected track 6`.) Details: `deferred-slot-restore-liveness/REVIEW.md` § 2026-09-24
 (second session).

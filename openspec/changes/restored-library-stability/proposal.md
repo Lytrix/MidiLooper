@@ -1,47 +1,58 @@
 ## Why
 
 `runtime-working-set-ownership` has **no currently eligible native task** left (S2b.8 and S2b.7 landed
-2026-09-24), and every remaining gate is a **device** leg. All of them are blocked by one thing: the set of
-slots that come back committed after a reboot is **not reproducible**, so no deterministic fixture can be
-held long enough to measure anything. `runtime-working-set-ownership` recorded the blocker as the SD catalog
-reconcile; the evidence does not support that attribution. Two measured facts:
+2026-09-24), and every remaining gate is a **device** leg. Those legs need a fixture that holds the same
+library state across boots, and today none can be shown to. The observation is real; its **cause is
+unattributed**, and the measurements used so far cannot attribute it.
 
-- The boots that **shrank** the committed boot-playback set (`captures/s13-slope-02/`, N 27 → 27 → 26) report
-  **`reconcile_warnings=0`** — reconcile did not fail there. The `could not reconcile
-  MidiLooper/sets/index.bin` observation comes from a *different* session and is not demonstrated in the
-  shrinking runs.
-- `MidiLooper/sets/index.bin` is `SavedSetCatalog::SetIndex{ uint32_t nextSequence; }` — a **saved-set folder
-  counter**, not a catalog of slot payloads. The live library is `/MidiLooper/current/loops/loop_TT_SS.bin`
-  plus the RAM mirror `loopSlotPayloadOnSdInRam_`. So an `index.bin` reconcile failure cannot by itself
-  explain a slot missing from the committed set.
+The G2 review found the recorded explanation was itself a measurement error. Two corrections drive this
+proposal:
 
-The instability currently has **no owner**: `deferred-slot-restore-liveness` was archived with a reduced
-scope, and `runtime-working-set-ownership` treats it as an external blocker. Until it is owned and
-characterised, S1 — residency measurements, the S2b — boot/load admission device gate, and S3 — lease
-ownership cannot start.
+- **`n_committed_slots` is not the boot playback set.** `scripts/hitl_library_growth_sweep.py` counts the
+  distinct `(track, slot)` of `RRQ,…,terminal,none,committed` lines observed **within the capture window**.
+  Background admission visits every slot, so this is a count of **observed restore completions in a window** —
+  it is neither the library nor the playback-required set, and the earlier "N is deliberately independent of
+  the library, so a flat N is correct" explanation is **withdrawn**. The capture may also close before
+  admission finishes, which changes the count on its own.
+- **The diagnostic is unavailable exactly where it is needed.** `emitPostRestoreCensusIfReady` fires at most
+  once per boot and only when the system is settled, including `bootInteractiveReady()`
+  (`pendingLoopSlotRestoreCount() == 0`, no live `SlotLoadSession`, both restore jobs inactive). A request
+  stuck waiting therefore suppresses the report meant to explain it.
+
+The instability also had no owner: `deferred-slot-restore-liveness` was archived with a reduced scope, and
+`runtime-working-set-ownership` treats the library as an external blocker. This change owns it — and owns the
+possibility that a corrected measurement explains part of the apparent instability **without a firmware fix**.
 
 ## What Changes
 
-- **Own the instability** in one narrowly scoped change whose first packet is **read-only**.
-- **Pre-register the attribution taxonomy** and require the evidence to separate, per lost slot, four
-  distinct classes instead of assuming one cause:
-  1. **Catalog omission** — the SD payload exists and verifies, but the boot/reconcile path never enumerates it.
-  2. **Restore refusal** — the payload exists and is enumerated, but the request never reaches `committed`
-     (a terminal `unnecessary`/`refused`/`superseded`, a gate, or no request at all).
-  3. **Intentional eviction** — a deliberate, bounded policy dropped or reused the slot (a *decision*, which
-     must be named and justified if found, not inferred from the symptom).
-  4. **Content loss** — the payload is present but carries no committed content (empty/truncated body, or a
-     body that fails validation).
-- **Require a per-slot inventory observable** — slot identity + SD payload presence/token validity + boot
-  enumeration + the restore request state/terminal + committed content inventory — recorded alongside the
-  existing post-restore census, so a "missing slot" is attributable from one capture instead of a bisect.
-- **Define exactly one repeatable fixture inside the already-approved scratch range** (track 5 slot 1 and
-  track 6 slots 1–8). Read-only investigation starts immediately.
-- **Carry the S2b.7 hardware confirmation here** (`runtime-working-set-ownership` S2b.7, drain-driven restore
-  advancement): once the fixture can reliably hold a session-holding restore, run the device leg and verify
-  progress, the named commit-gate wait, the preserved request/save, and no unintended publication.
-- **Hand off, not absorb:** when the library is stable, `runtime-working-set-ownership` finishes S1 — residency
-  measurements and S2b — boot/load admission device gates, then starts S3 — lease ownership.
+- **Own the observation and its attribution**, in one narrowly scoped change whose first packet is
+  **read-only**.
+- **Define the measurement before drawing conclusions.** Report four distinct quantities and make the
+  observation window explicit:
+  1. the **payload inventory** — slots with a payload present and its token valid;
+  2. the **initial playback-required set** — slots boot must commit before interactive ready;
+  3. the **observed restore completions** — distinct slots whose `committed` terminal was observed in **this
+     window** (background admission included);
+  4. the **currently committed set** at the observation.
+  An incomplete window is reported as incomplete, and a completion count is never presented as the library
+  size.
+- **Separate observation from attribution.** Per slot, record observed fields (payload validity, enumeration,
+  request state/wait/terminal with the **full identity** `(track, slot, requestGeneration, setEpoch)`,
+  committed content, selection). Attribution is **nullable**: `empty/not applicable`, `pending`,
+  `catalog omission`, `restore refusal`, `intentional eviction`, `content loss`, `ambiguous`, `unknown` —
+  always with supporting evidence and stated precedence. A slot that was never populated is not a loss; a
+  corrupt payload that also refused is not forced into one cause; a single snapshot cannot prove a historical
+  eviction.
+- **Make the inventory available in the stuck states it must explain** — a bounded, on-demand diagnostic
+  snapshot independent of the settled census, collected incrementally with declared bounds, explicit snapshot
+  consistency, and capture framing. The settled census checkpoint stays unchanged for settled memory figures.
+- **Define one repeatable fixture inside the already-approved scratch range** (track 5 slot 1, track 6 slots
+  1–8), whose stability is proven by a **complete per-slot manifest comparison** across boots — not by one
+  scratch slot surviving, which is compatible with other payload-bearing slots disappearing.
+- **Carry the S2b.7 hardware confirmation** (`runtime-working-set-ownership` S2b.7, drain-driven restore
+  advancement) as an **independently reportable** packet that reports which permitted outcome occurred.
+- **Hand off, not absorb:** when the library is stable, `runtime-working-set-ownership` finishes S1 and the S2b
+  device gates, then starts S3.
 
 ## Capabilities
 
@@ -51,76 +62,79 @@ _None._ The behavior belongs to the existing hydration capability.
 
 ### Modified Capabilities
 
-- `lazy-slot-hydration`: add a requirement that the restored library is **inventory-attributed** — a slot that
-  is not `COMMITTED` after boot SHALL be attributable to one of the four named classes from recorded
-  evidence, and the system SHALL expose the per-slot inventory that makes that attribution possible. This
-  extends the existing observability requirement (which covers restore request progress and the boot catalog
-  reconcile outcome) without changing the hydration lifecycle.
+- `lazy-slot-hydration`: add two requirements.
+  1. **Library state is reported as observed state, separate from an attributed cause** — observed fields per
+     slot, a nullable cause with precedence, `empty/not applicable` / `pending` / `ambiguous` / `unknown` as
+     valid outcomes, no single-snapshot historical claims, and mandatory report completeness.
+  2. **The library inventory is obtainable on demand and is not gated on a settled system** — bounded,
+     incremental, consistency-marked collection; the settled census checkpoint is retained unchanged.
 
 ## Known behavior, evidence-backed assumptions, and UNKNOWNs
 
 **Known (measured, cited):**
 
-- `captures/s13-slope-final/`: three fresh boots, `N=29` committed, `post_restore_free_chunks=452` every boot,
-  `reconcile_warnings=0`, enabled-set cost 512 → 480, library restore walk adds **0** reservation.
-- `captures/s13-slope-02/`: two failing steps into empty slots outside the scratch range report
-  `reconcile_warnings=0` while N shrank 27 → 27 → 26.
-- Both sweeps: `library_rows` are **all-zero** (16 rows, `phases: 0`); the sweep captured **no** per-slot
-  inventory. The N figure, `free_before/after`, `reconcile_warnings`, `empty_state_count` and the
-  `Track N loaded state:` lines are the only library observables recorded.
+- `captures/s13-slope-02/` (the run that appeared to shrink): `reconcile_warnings=0` on every boot.
+- `captures/s13-slope-final/`: `post_restore_free_chunks=452` on three fresh boots; `free_before/after`
+  512 → 480 is the **enabled-set** walk, not the library.
+- Both sweeps: `library_rows` are **all-zero** (16 rows, `phases: 0`) — no per-slot inventory was captured.
 - `Track 6 loaded state: EMPTY` / `Track 7 loaded state: EMPTY` appear on **every** boot in both sweeps,
-  including the boots where N is stable at 29 — so that marker does not track the shrink.
+  including the stable ones.
 - `DIAG,lcr,skip,restore` is emitted by `TrackDeferredMaintenance`/`LoopContentResolution` as a
-  **content-resolution** device-gate line (`kind=skip`, `reason=restore`), not by the library path.
+  **content-resolution** device-gate line.
+- `SavedSetCatalog::SetIndex` is `{ uint32_t nextSequence; }`; the live library is
+  `/MidiLooper/current/loops/loop_TT_SS.bin` plus the `loopSlotPayloadOnSdInRam_` mirror.
 
-**Assumptions (evidence-backed, to be confirmed or falsified by Packet A):**
+**Assumptions (evidence-backed, to be tested by Packet A):**
 
-- The live library is the per-slot `loop_TT_SS.bin` payload set under `/MidiLooper/current/loops/`, mirrored
-  in RAM by `loopSlotPayloadOnSdInRam_` and rebuilt by a boot scan.
-- The observed shrink is a property of the **boot playback set** (`RRQ … committed`, the union of
-  selected/active slots per track), which is deliberately independent of the library — so a library that
-  gained payloads can still show a smaller committed set.
+- The live library is the per-slot payload set under `/MidiLooper/current/loops/`, mirrored in RAM and
+  rebuilt by a boot scan.
+- The observed completion count varies with the observation window and background admission, so **some** of
+  the apparent instability may be a measurement artifact.
 
 **UNKNOWN (must not be assumed):**
 
-- Whether any lost slot lost its **payload**, its **enumeration**, its **restore**, or only its **selection**.
+- Whether any slot lost its payload, its enumeration, its restore, its selection — or none of these.
 - Whether the shrink is an intentional bounded policy (slot reuse / one sounding slot per track) or a defect.
-- Whether the `sets/index.bin` reconcile failure and the library shrink are related at all; they have not been
+- Whether the `sets/index.bin` reconcile failure and the library observation are related; they have never been
   observed in the same boot.
 
 **Open decisions (TBD, owner-gated):**
 
 - **TBD-1 — fixture construction.** Which slots inside the approved scratch range may be **cleared** (not just
-  read) to build the fixture. Read-only investigation needs no authorization; any CLEAR, rename or delete on
-  the card needs the owner's explicit authorization for **named slots** in the same session
-  (`Destructive-SD-Operations`). No wider sweep.
+  read). Read-only investigation needs no authorization; any CLEAR, rename or delete needs the owner's explicit
+  authorization for **named slots** in the same session (`Destructive-SD-Operations`). No wider sweep.
 - **TBD-2 — scope growth.** If Packet A finds intentional eviction, whether the bounded policy is accepted and
   documented or becomes its own change.
 
 ## Non-goals
 
+- **Not a claim that the library is broken.** The first deliverable is a measurement that can tell loss from a
+  measurement artifact; a firmware fix is proposed only after attribution.
 - **No wider sweep and no uncontrolled recording.** The previous attempt wrote into track 3 slots 2–4, outside
   the approved range; that is not repeated.
-- **No destructive SD action** without per-slot authorization (quarantine, delete or rename).
-- **Not the lease pool, and not S1/S2b/S3.** Those stay with `runtime-working-set-ownership`, whose execution
-  order this change does not bypass just because hardware evidence is blocked.
+- **No destructive SD action** without per-slot authorization.
+- **Not the lease pool, and not S1/S2b/S3.** Those stay with `runtime-working-set-ownership`; its stage order is
+  not bypassed because hardware evidence is blocked.
 - **Not a drain-behavior change.** S2b.7's implementation is landed in `runtime-working-set-ownership`; this
-  change only carries its **device confirmation**.
+  change only carries its device confirmation.
+- **Not a replacement for the settled census checkpoint.** The on-demand snapshot is a separate diagnostic and
+  must not be reported as the settled memory measurement.
 - **Not a claim that recording is broken.** The recorded base-preset failures are a separate harness/device
   interaction.
 
 ## Impact
 
-- **Firmware:** `StorageManager` restore/hydration ownership — `CurrentSetStorage`/`SavedSetIo` (payload paths
-  and set index), `LoopSlotRestoreQueue` (payload mirror, boot background fill, request admission), and the
-  census/observability path. Packet A is **read-only**; any production change is specified only after the
-  attribution is evidenced.
-- **Harness/tooling:** the boot census and the library sweep gain a per-slot inventory record; the existing
-  `scripts/hitl_boot_census.py` marker and `scripts/hitl_library_growth_sweep.py` parser are extended rather
-  than replaced.
+- **Firmware:** `StorageManager` restore/hydration ownership — `CurrentSetStorage`/`SavedSetIo` (payload paths,
+  set index), `LoopSlotRestoreQueue` (payload mirror, boot background fill, request admission), and the
+  census/observability path. The on-demand snapshot is a new bounded diagnostic alongside — not a relaxation
+  of — `emitPostRestoreCensusIfReady`. Packet A is **read-only**; any production change is specified only after
+  the attribution is evidenced.
+- **Harness/tooling:** the boot census and the library sweep gain the observed fields, the four quantities, the
+  window completeness and the nullable cause; `scripts/hitl_boot_census.py` and
+  `scripts/hitl_library_growth_sweep.py` are extended rather than replaced.
 - **Device:** the approved scratch range is reused; any clearing is authorized per slot.
-- **Docs:** `runtime-working-set-ownership` S1.3/S2b.3 and the S2b gate lose their unnamed external blocker and
-  gain a named owner; `CURRENT_WORK` / `PROJECT_STATE` / `DELIVERABLE_TRACKING` record "no **currently
-  eligible** native task remains".
-- **RAM1:** no new runtime state is assumed; any added observable is bounded and session-gated, and the
-  post-link budget (`padding >= 840`) applies as usual.
+- **Docs:** `runtime-working-set-ownership` S1.3/S2b.3 and the S2b gate lose an unnamed and now-corrected
+  blocker and gain a named owner; `CURRENT_WORK` / `PROJECT_STATE` / `DELIVERABLE_TRACKING` record "no
+  **currently eligible** native task remains".
+- **RAM1:** the new diagnostic is bounded and session-gated; the post-link budget (`padding >= 840`) applies to
+  the slice that adds it.

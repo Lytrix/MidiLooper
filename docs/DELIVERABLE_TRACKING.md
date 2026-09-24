@@ -46,14 +46,20 @@ fails exactly the three advancement assertions. **Device: NOT RUN** — the clai
 **device-gated** on a stable restored library (S1.1/S1.3/S1.4/S1.5/S2b.3/S2b.5, the content PASS, and the S2b
 gate) or is a **later stage** (S3–S7, phases B–F) whose start the change's own execution order places after the
 S2b device gate. **The restored-library instability is no longer unowned:** `restored-library-stability`
-(proposed 2026-09-24, planning complete, read-only Packet A startable immediately) owns it, pre-registers the
-four-class attribution (catalog omission / restore refusal / intentional eviction / content loss), requires a
-per-slot inventory that separates the payload set from the boot playback set, defines one fixture inside the
-approved scratch range with per-slot authorization for any CLEAR, and carries the S2b.7 device confirmation.
-Its first read-only findings already correct the previous attribution: `sets/index.bin` is a saved-set folder
-counter (`SetIndex{nextSequence}`), the shrinking boots report `reconcile_warnings=0`, `DIAG,lcr,skip,restore`
-is content-resolution, `Track N loaded state: EMPTY` is present on stable boots too, and both sweeps'
-`library_rows` are all-zero — so no per-slot inventory was ever captured.
+(proposed 2026-09-24, planning complete, read-only Packet A startable immediately; **G2 review BLOCKED then
+corrected**) owns it. Attribution is **nullable** (`catalog omission` / `restore refusal` / `intentional
+eviction` / `content loss`, plus `empty/not applicable`, `pending`, `ambiguous`, `unknown`) and kept separate
+from observation; the per-slot observed state reports **four distinct quantities** with an explicit
+observation **window**, collected through a **bounded on-demand snapshot** independent of the settled census
+gates; one fixture inside the approved scratch range with per-slot authorization for any CLEAR and stability
+proven by a **complete per-slot manifest comparison**; and it carries the S2b.7 device confirmation as an
+independently reportable packet. **Corrected findings:** `n_committed_slots` is a **window-scoped count of
+observed `RRQ … committed` completions** with background restores included — *not* the boot playback set, so
+the earlier explanation is withdrawn and a count difference does not establish loss; `sets/index.bin` is a
+saved-set folder counter (`SetIndex{nextSequence}`); the runs that appeared to shrink report
+`reconcile_warnings=0`; `DIAG,lcr,skip,restore` is content-resolution; `Track N loaded state: EMPTY` is
+present on stable boots too; and both sweeps' `library_rows` are all-zero. **The corrected measurement
+definitions come first — they may explain part of the apparent instability without a firmware fix.**
 
 **`runtime-working-set-ownership` native scope (P0/P1) is COMPLETE, plus S2b.8 and S2b.7 delivered.** Full native
 **2,352 / 1 skipped / 0 failures** (2026-09-24; 2,344 before this session). Landed and green: S0
