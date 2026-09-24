@@ -33,7 +33,7 @@ Standing constraints for every task:
 
 ## 1. Packet A — observation-only firmware and read-only analysis
 
-- [ ] 1.0 **Execution-packet gate (unambiguous).** Every slice that **edits firmware** requires its own G2
+- [x] 1.0 **Execution-packet gate (unambiguous).** Every slice that **edits firmware** requires its own G2
       execution packet in the change's review artifact (`ARCHITECTURE-REVIEW.md`) before the edit: fixed
       transition oracle, controlled production-path fixture, repeatable recipe, and evidence expectations. In
       Packet A that is **1.2** (where it adds code) and **1.3** (the on-demand observation is new firmware);
@@ -41,7 +41,7 @@ Standing constraints for every task:
       **SD-read admission** contract, the **invalidation/restart** rule, and the **bounded-traversal** oracle.
       **Verify:** a packet exists for every firmware-editing slice and names those three contracts; no firmware
       edit precedes its packet.
-- [ ] 1.1 **Correct the recorded measurement definitions and attribution (documentation only).** Record, with
+- [x] 1.1 **Correct the recorded measurement definitions and attribution (documentation only).** Record, with
       citations, in this change and in `runtime-working-set-ownership` S1.3/S2b.3 and the S2b gate:
       (a) `n_committed_slots` is the distinct `(track, slot)` of `RRQ,…,terminal,none,committed` observed
       **within the capture window**, background admission included — so it is neither the boot playback set nor
@@ -55,7 +55,7 @@ Standing constraints for every task:
       (g) both sweeps' `library_rows` are all-zero, so no per-slot inventory was captured.
       **Verify:** no durable doc still asserts the catalog reconcile, or `n_committed_slots`, as a demonstrated
       cause of loss; each fact is cited with its evidence path.
-- [ ] 1.2 **Define the observed fields, the two separate outputs, and the four counts.** Specify the per-slot
+- [x] 1.2 **Define the observed fields, the two separate outputs, and the four counts.** Specify the per-slot
       observed fields (payload validity, enumeration, request state/wait/terminal with the **full identity**
       `(track, slot, requestGeneration, setEpoch)`, committed content inventory, selection), the four quantities
       of design D4, the completeness fields, and a **pure** classifier producing **two separate outputs**: an
@@ -70,7 +70,7 @@ Standing constraints for every task:
       both and yields `ambiguous`; a queued/running/waiting request is `pending` with no terminal asserted;
       two equally consistent causes yield `ambiguous` with both recorded; the four counts and the window fields
       are separate inputs/outputs.
-- [ ] 1.3 **Add the bounded on-demand observation, with its owner, admission and invalidation contract.**
+- [x] 1.3 **Add the bounded on-demand observation, with its owner, admission and invalidation contract.**
       Provide an observation that does **not** depend on `emitPostRestoreCensusIfReady`'s settled gates
       (`bootBackgroundFillAdmissionComplete`, `bootInteractiveReady`'s empty queue / no live session / inactive
       jobs, no undo hydration pending, transport stopped, no holdoff or in-flight persistence work, no owed
@@ -116,13 +116,13 @@ Standing constraints for every task:
       ordinary capture/edit commit); a denied-SD-admission case
       asserts the affected fields are `unknown` while the report and the named waiting request are still
       produced; the observation is never emitted as the settled measurement; the RAM1 line is recorded.
-- [ ] 1.4 **Re-analyze the existing captures read-only, then extend the sweep parser.** Run the classifier over
+- [x] 1.4 **Re-analyze the existing captures read-only, then extend the sweep parser.** Run the classifier over
       `captures/s13-slope-02/` and `captures/s13-slope-final/` and extend
       `scripts/hitl_library_growth_sweep.py` to record the observed fields, the four quantities, the window
       completeness and the nullable cause per slot. **Verify:** each slot gets an observed state; each
       attribution carries its evidence or is `unknown` with the missing field named; the re-analysis performs
       **no** device write; the reported `N` is explicitly window-scoped.
-- [ ] 1.5 **Read-only device attribution, including incomplete windows.** Capture fresh boots of the current
+- [x] 1.5 **Read-only device attribution, including incomplete windows.** Capture fresh boots of the current
       device state without writing or clearing anything, classify per boot, and **explicitly test the
       incomplete-window case** — a capture closed before background admission completes or before every
       initial-playback slot is observed. **Verify:** the four quantities are reported per boot; the window
