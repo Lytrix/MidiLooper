@@ -3035,3 +3035,47 @@ script iteration.
 failed empty-record attempt on the approved scratch slot track 5 slot 1.
 
 Evidence: `captures/a37b2-01/session.log`.
+
+## A5.1 handoff — census checkpoint, the post-restore budget baseline, and the slope blocker (2026-09-24)
+
+Recorded here per `deferred-slot-restore-liveness` A5.1, which is a handoff, not a second implementation.
+
+### The fixture this change was waiting for is finished and device-verified
+
+`StorageManager::emitPostRestoreCensusIfReady` emits one timestamped Tier-A marker per boot
+(`#CAP,<micros>,DIAG,post_restore_census,…`) once every readiness condition holds — background admission
+complete, both job instances idle with no live `SlotLoadSession`, undo hydrated, transport stopped, no
+post-load holdoff or in-flight persistence work, and no deferred playback prewarm owed. Reader:
+`scripts/hitl_boot_census.py`. Final-firmware evidence `captures/census-final-03/`:
+`checkpoint_reached=True`, `readiness_attested=True`, `timestamped_capture_line=True`,
+`free_chunks=454`, S2b.3's `>= peak + 16` condition met, 0 reconcile failures.
+
+### S2b.3 — post-restore budget baseline: measured and stable
+
+Three consecutive fresh boots (`captures/s13-slope-final/`, sweep updated to read the marker) report
+`banner=True`, `reconcile_warnings=0`, `N=29` committed boot-playback-set requests and
+**`post_restore_free_chunks=452` of 512 on every boot**, with the restore walk adding no reservation
+(512 → 480 both times). That is the figure S2b.3's `post_restore_free_chunks >= peak_capture_reservation + 16`
+is read against.
+
+### S1.3 — the slope to failure remains OPEN, with a measured blocker
+
+N is the **boot playback set** (`RRQ … committed`), deliberately independent of the library, so recording
+into an *unselected* scratch slot adds a HEADER_READY payload and cannot raise it; the fixture must make each
+recorded slot part of the boot playback set before the reboot. The approved scratch range is
+track 5 slot 1 and **track 6 slots 1–8, which is fully populated**, so N could not be grown inside it. A
+sweep into empty slots **outside** that range grew the payload set while the committed boot-playback set
+**shrank** (N 27 → 27 → 26) as each recording evicted other committed payload slots (track 6 lost slots 7–8,
+then 6, then 4–5) — a genuine capacity/eviction finding for this change, **not** a valid increasing-N slope.
+Those boots also logged `Track 6/7 loaded state: EMPTY` and `DIAG,lcr,skip,restore`, recorded as
+observations without a claimed cause.
+
+**Owner direction (2026-09-24):** leave the slots written outside the approved range untouched; prefer
+reusing the existing scratch range; clear a defined subset only once explicitly authorised; record both the
+SD payload count and the successfully restored committed-slot count at every step. **No further growth sweeps
+until then**, so this leg stays open.
+
+### Unchanged from their recorded device runs
+
+S1.1's per-owner census (tags 1..16), S1.4's undo-residency clauses, and S1.5's device refusal point are
+unchanged by this session; their evidence stands as recorded earlier in this file. No leg is reinterpreted.
