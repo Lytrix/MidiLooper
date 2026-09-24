@@ -3002,9 +3002,19 @@ condition for a fixture reason, recorded rather than retried:
   not run.
 
 So the run proves nothing about shape (b) — no restore in flight, no named wait, no completion. The fixture
-assumes a target with committed RAM content that survives the boot restore; on this device the target came
-back from `RRQ,2,1,0,0,committed` yet read as empty to `hasDataInSlot`, which is itself worth understanding
-before another attempt. **Conclusion for the gate:** closing A3.7 shape (b) needs the reload-on-clear route
+assumes a target with committed RAM content that survives the boot restore; the target came back from
+`RRQ,2,1,0,0,committed` yet read as empty to `hasDataInSlot`.
+
+**That mismatch is now explained and is not a defect.** The earlier probe (`captures/cr-probe-01/`) had
+CLEARed track 3 slot 2, whose persistence rewrote the slot payload as **empty**, and the reload that
+followed (`RRQ,2,1,1,0`) committed that empty payload (`captures/cr-probe-01/session.log`: clear at 20.772 s,
+reload committed at 29.927 s). The next boot therefore restored an empty-but-committed payload, which
+correctly has no committed passes and so reads empty to `hasDataInSlot`
+(`captures/a37b2-01/session.log`: restore committed at 10.339 s, `Clear ignored — selected slot is empty` at
+17.579 s). It does show a quirk of the route-enabled behavior worth naming for the route decision: after a
+CLEAR, the stale request makes `needsSlotLoad` true, so the just-emptied slot is re-requested and commits an
+empty payload — redundant work the normal (route-off) firmware avoids by keeping the stale terminal as
+"attempted". **Conclusion for the gate:** closing A3.7 shape (b) needs the reload-on-clear route
 enabled **deliberately in the change** (with the guard) plus a target whose committed content is verified at
 the CLEAR edge, not an ad-hoc temporary construction. That is an owner decision on the route, not another
 script iteration.
