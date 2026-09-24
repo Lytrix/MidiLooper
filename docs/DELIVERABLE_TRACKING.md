@@ -30,29 +30,32 @@ Evidence: full native **2,348 / 1 skipped / 0 failures**; `test_storage_manager_
 `test_drain_reentry_callback_safety` 8/8; capture-serial SUCCESS `code 391,080 + padding 2,136`; both fixes
 proven discriminating by removal. **No device run** — nothing hardware-observable.
 
-**S2b.7 MEASURED, and it did not go the way the deferral hoped: the blocking drain NAMES THE WAIT and does
-NOT advance a session-holding restore.** With another track audibly playing, a restore mid-preparation holding
-the SD session and a save owed, one real drain returns `TemporarilyBlocked` with the named gate
-`slot_load_active` — not `Failed`, not `unexplained` — with the restore's progress counter and phase
-**unchanged** and the save still owed; the control shows the same drain discharging the save once the session
-is released. The task **stays unchecked**: the advancement behavior is still not delivered, and its
-prerequisite is the global commit gate plus `resumable-midi-boundary-playback-maintenance` **task 3.3**
-(bounded commit/cleanup). The archived change's "not verified" is now **"measured absent in the plain case"**.
-Full native **2,350 / 1 skipped / 0 failures**.
+**S2b.7 DELIVERED: the blocking drain now SERVICES the restore it waits on.** It was measured first — the drain
+named `slot_load_active` and advanced nothing (progress 1 → 1, phase 1 → 1) — and then implemented:
+`StorageManager::serviceDeferredRestoreForDrain()` runs the **same** selection/admission + bounded step the
+deferred-load frame uses, called once per drain iteration while a restore holds the SD session, with a
+termination clause that reports the named wait as soon as the restore is gated instead of spending the drain
+budget. No new owner, loader, queue or admission policy; the commit gate is untouched
+(`resumable-midi-boundary-playback-maintenance` **task 3.3** still owns the bound). **Behavior:** another track
+playing → progress **1 → 8**, `TemporarilyBlocked` / **`waiting_commit_gate`**, nothing published, request
+preserved; a focused slot with the gate admitting → the drain commits the restore and discharges the save.
+Full native **2,352 / 1 skipped / 0 failures**; `test_storage_drain_restore` 10/10; disabling the service step
+fails exactly the three advancement assertions. **Device: NOT RUN** — the claims are native.
 
 **No native work remains in `runtime-working-set-ownership`.** Everything left is **device-gated** on a stable
 restored library (S1.1/S1.3/S1.4/S1.5/S2b.3/S2b.5, the content PASS, and the S2b gate) or is a **later stage**
 (S3–S7, phases B–F) whose start the change's own execution order places after the S2b device gate. The
 restored-library instability itself is **unowned by any open change** — recorded, not papered over.
 
-**`runtime-working-set-ownership` native scope (P0/P1) is COMPLETE, plus S2b.8, with S2b.7 measured.** Full native
-**2,350 / 1 skipped / 0 failures** (2026-09-24; 2,344 before this session). Landed and green: S0
+**`runtime-working-set-ownership` native scope (P0/P1) is COMPLETE, plus S2b.8 and S2b.7 delivered.** Full native
+**2,352 / 1 skipped / 0 failures** (2026-09-24; 2,344 before this session). Landed and green: S0
 verification, the S1.2/S1.3-clause-2/S1.5-clause-3 fixtures, the accepted-stop latch, boot/load admission
 removal (S2b.1–S2b.3), S4.0/S2b.4 liveness + release, S4f.5's stop consumers, S3.0 placement pins + the
-post-link RAM1 budget check, B01–B06, and **S2b.8 external resets**. **Remaining and device-gated:** S1.1's
+post-link RAM1 budget check, B01–B06, **S2b.8 external resets**, and **S2b.7 drain-side restore service**.
+**Remaining and device-gated:** S1.1's
 per-owner census, S1.3's device slope, S1.4's undo/root baseline, S1.5's device refusal point, S2b.3's
 post-restore baseline, S2b.5's device gate, the content PASS, D0.2's B07 allocation census (not measurable
-natively), S2b.7's drain-advancement characterization, and phases B–E.
+natively), and phases B–E.
 
 **DEC-081 is device-verified** on its discriminating case (five tracks audibly playing + a genuinely owed
 save → the clear's blocking drain completed in <833 ms, 0 `Clear aborted` / `drain stuck`), and the

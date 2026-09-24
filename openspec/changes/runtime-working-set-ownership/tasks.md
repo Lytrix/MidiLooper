@@ -25,11 +25,12 @@ device legs are blocked by the restore-liveness defect that was **archived 2026-
 [`2026-09-24-deferred-slot-restore-liveness`](../archive/2026-09-24-deferred-slot-restore-liveness/proposal.md)
 (reduced scope; the runtime measurements and the two new deferrals S2b.7/S2b.8 were transferred here).
 
-**Checkoff (2026-09-24, eleventh session): 23 → 24 of 147.** **S2b.8** is checked with its own evidence —
-it is the first task completed *here* rather than reconciled from earlier work, and the +2 in the denominator
-is the transfer of S2b.7 and S2b.8. **S2b.7** stays unchecked by design (its advancement clause is bound by
-`resumable-midi-boundary-playback-maintenance` task 3.3); the next native slice is S2b.7's characterization
-fixture. No other task changed state.
+**Checkoff (2026-09-24, eleventh session): 23 → 25 of 147.** **S2b.8** and **S2b.7** are checked with their
+own evidence — the first two tasks completed *here* rather than reconciled from earlier work, and the +2 in
+the denominator is the transfer of S2b.7 and S2b.8. S2b.8 delivered the external resets; **S2b.7 delivered
+the drain-side restore service** (it first *measured* the absence of advancement, then implemented it — both
+records are in the task text, so the measurement and the delivery are not confused). No other task changed
+state, and **no native task remains open in this change**.
 
 **Transfer in (2026-09-24, tenth session).** The restore-liveness sub-change was archived as
 `2026-09-24-deferred-slot-restore-liveness` with a reduced, accurately described scope. Its unfinished runtime
@@ -772,43 +773,59 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       that a missing or confounded gate is not a pass and a threshold is never weakened, this gate closes only
       after the sweep is re-run on a stable library.
 
-- [ ] S2b.7 **Drain-driven restore advancement — deferred behavior (named follow-up).** The blocking drain's
-      *decisions* are verified natively (A3.2 wait-reason classification, A3.3 budget/progress accounting,
-      A3.4 caller contract in the archived `2026-09-24-deferred-slot-restore-liveness`), and its
+- [x] S2b.7 **Drain-driven restore advancement — DELIVERED 2026-09-24 (native).** The blocking drain's
+      *decisions* were already verified natively (A3.2 wait-reason classification, A3.3 budget/progress
+      accounting, A3.4 caller contract in the archived `2026-09-24-deferred-slot-restore-liveness`), and its
       **completes** branch is
       device-verified with an owed save, an in-flight commit-gated restore and another track playing
-      (that change's A3.7 shape (b), `captures/a37fix-04/`). **Not verified, and deferred
-      here:** that the drain **advances** a restore it waits on — i.e. that a restore holding the SD session
-      is progressed by the drain rather than only reported. The observed completion came from
+      (that change's A3.7 shape (b), `captures/a37fix-04/`). **Deferred here:** that the drain **advances** a
+      restore it waits on — i.e. that a restore holding the SD session is progressed by the drain rather than
+      only reported. The observed completion came from
       `shouldPrioritizeWorkspaceSaveDrain()` bypassing the slot-load gate for an urgent owed save, so the
-      advancement clause needs its own fixture and must not be read into that run.
+      advancement clause needed its own fixture and must not be read into that run.
       **Bound by** `resumable-midi-boundary-playback-maintenance` **task 3.3** (bounded commit/cleanup); do not
       relax the commit gate here.
       **Verify:** a fixture where a save is owed, another track plays, and a restore **holds the SD session**
       at the drain edge, showing either that the drain advances it or that it names the wait — with no claim
       of advancement absent that evidence.
-      **MEASURED 2026-09-24 — the drain NAMES THE WAIT and does NOT advance the restore; task stays OPEN.**
-      Fixture `test_s2b7_a_session_holding_restore_is_a_named_wait_and_is_not_advanced` in
-      `test_storage_drain_restore`: track 0 audibly playing, a restore for track 2 slot 3 mid-preparation so
-      `deferredSaveBlockedByActiveSlotLoadSd()` is true, and a save owed. One real
-      `drainPersistenceWorkBlockingDetailed` returns **`TemporarilyBlocked`** with the named gate
-      **`slot_load_active`** (not `Failed`, not `unexplained`), with `restoreProgressCounter()` and
-      `restoreWorkPhase()` **unchanged** (1 → 1 and 1 → 1) and the save still owed — so **no advancement is
-      claimed or observed**. The name reported is the *gate*, not the request's own wait, because the
-      in-flight request is `running` rather than waiting; A3.2's per-request wait naming is covered in
-      `test_persistence_sync_drain_budget`. Control
-      `test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session` drives the same restore to
-      release the SD session and shows the same drain no longer stops at `slot_load_active` and discharges the
-      owed save, so "nothing moved" is the gate's doing rather than a fail-closed route. The control
-      deliberately does **not** assert `Completed`: this minimal fixture has no valid workspace to write, so
-      the drain's own `lastCompletedOk` check reports `Failed` for a reason unrelated to the restore gate.
-      **Discriminating by removal:** making the drain step the submitted load jobs inside its loop fails the
-      fixture (the outcome leaves `TemporarilyBlocked`); the mutation was reverted, `src/` byte-identical.
-      **Why it stays unchecked:** the drain-advancement *behavior* is still not delivered, and the measurement
-      now says why — the commit gate is global and `resumable-midi-boundary-playback-maintenance` **task 3.3**
-      (bounded commit/cleanup) remains the prerequisite. This refines the archived change's deferral from
-      "not verified" to **"measured absent in the plain case"**. Evidence: full native **2,350 / 1 skipped /
-      0 failures** (2,348 before this fixture); packet:
+      **IMPLEMENTED — the drain now SERVICES the restore it waits on.** `StorageManager::serviceDeferredRestoreForDrain()`
+      (`src/StorageManager/LoopSlotRestoreQueue.cpp`, one `StorageManager`-owned entry, no new owner) runs the
+      **same** selection/admission + bounded step the deferred-load frame uses
+      (`DeferredJobScheduler::runFrame` → `selectSubmittedLoadJobs` + `stepSubmittedLoadJobs`), and the drain
+      loop calls it once per iteration whenever `deferredSaveBlockedByActiveSlotLoadSd()` is true. No second
+      loader, queue or admission policy: commit/cleanup still need the global idle gate and record
+      `waiting_commit_gate`. A **termination clause** (D4 point 6) ends the episode as soon as the restore
+      reaches a wait the drain cannot clear, so it reports that named wait instead of spending its budget
+      re-servicing a gated request. Restore grains already count as drain progress (`restoreProgressCounter`,
+      A3.3), so the new work cannot be misreported as stuck.
+      **D4 point 1 (active **and** parked instances) needed no new promotion.** The existing selection step
+      already promotes a parked instance (`ensureActiveLoadLoopJobSelected` → `LoadLoopSelectionPolicy::PromoteParkedLow`).
+      An explicit `promoteParkedLoadLoopJobForDrainService()` was written, **proven redundant by removing it**
+      (the parked case stays green without it), and deleted — recorded here rather than left as surface.
+      **Fixtures (default gate, `test_storage_drain_restore`, real drain):**
+      `test_s2b7_the_drain_advances_a_session_holding_restore_and_names_the_commit_gate` (another track
+      audibly playing: progress **1 → 8**, `TemporarilyBlocked` with `waiting_commit_gate`, the loop does
+      **not** publish, the request stays `waiting` with no terminal, the save stays owed);
+      `test_s2b7_the_drain_advances_the_restore_to_completion_where_the_gate_admits` (focused slot, nothing
+      timing-critical, **no external advancement** between assertions: the drain commits the restore and
+      discharges the owed save);
+      `test_s2b7_the_drain_services_a_parked_instance_holding_the_session` (session held by the parked
+      instance alone: serviced, progress advances, still publishes nothing while the gate denies);
+      and the control `test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session`.
+      **Discriminating by removal:** disabling the drain's service step reverts to the measured pre-slice
+      behavior and fails exactly the three advancement assertions (`Expected 1 Was 1`, `progress=2->2`,
+      `Expected 3 Was 3`); the mutation was reverted, `src/` byte-identical.
+      **Recorded nuance, not a defect:** with the transport idle and the restore on a **non-focus** slot,
+      focus policy parks it before it can be stepped, and the drain's urgent-save priority discharges the save
+      without advancing the restore — so the gate-admits fixture uses the focused slot, and the parked/shape
+      cases assert the commit gate rather than the save's discharge.
+      **Evidence:** `test_storage_drain_restore` **10/10**; `test_drain_reentry_callback_safety` 8/8; full
+      native **2,352 / 1 skipped / 0 failures** (2,350 before these two new cases;
+      `test_drain_reentry_callback_safety` had to link `DeferredJobScheduler.cpp` because the real drain now
+      reaches it — a build fix, recorded); `teensy41-capture-serial` **SUCCESS** `variables 96,192 /
+      code 391,080 + padding 2,136` (1,296 B above the 840 floor). **Device: NOT RUN** — every claim here is
+      native; a hardware re-run of the archived A3.7 shape (b) would need the clear-then-reload route the
+      owner deliberately kept disabled, so no device class is claimed. Packet and full record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.7.
 
 - [x] S2b.8 **Set-change epoch invalidation for the restore request record — external resets.**

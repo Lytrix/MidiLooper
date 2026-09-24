@@ -235,6 +235,32 @@ SyncDrainResult drainPersistenceWorkBlockingDetailed(const LooperState& state) {
             break;
         }
         const SyncDrainProgressSnapshot beforeProgress = lastProgress;
+        // S2b.7 (D4): the main loop is *inside* this drain, so its deferred-load frame cannot run and a
+        // restore holding the SD session would never release it -- the drain could only report the wait
+        // (measured 2026-09-24: `slot_load_active`, restore progress and phase unchanged). Service the
+        // request the save is waiting on here, through the same selection/admission and phase gates as the
+        // frame, so the wait can actually clear. The step is bounded and the commit gate is untouched:
+        // commit/cleanup still need the global idle gate and record `waiting_commit_gate`
+        // (`resumable-midi-boundary-playback-maintenance` task 3.3 owns that bound; it is not relaxed).
+        // Restore progress counts as drain progress through `restoreProgressCounter` (A3.3), so this
+        // cannot be misreported as stuck.
+        if (StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd()) {
+            StorageManager::serviceDeferredRestoreForDrain();
+            // D4 point 6 (termination): a restore the drain advanced into a wait it cannot clear -- the
+            // global commit gate under another playing track, or capture during a take -- is the end of
+            // this episode's useful work. Report that named wait instead of spending the whole budget
+            // re-servicing a gated request, and never force the commit it waits on.
+            if (StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd() &&
+                StorageManagerInternal::restoreWaitCodeBlockingSave() != SyncDrainWait::kNone) {
+                verdict = PersistenceSyncDrainBudget::classifySyncDrainVerdict(
+                    StorageManagerInternal::isCaptureRecordingForPersistence(),
+                    StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd(),
+                    StorageManagerInternal::deferredSaveBlockedByPostLoadCommitHoldoff(),
+                    StorageManagerInternal::restoreWaitCodeBlockingSave());
+                failureReason = verdict.reason;
+                break;
+            }
+        }
         StorageManager::processDeferredSaveState(state);
         yield();
         steps++;

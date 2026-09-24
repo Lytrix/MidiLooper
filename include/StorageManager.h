@@ -190,6 +190,11 @@ public:
     static bool hasLoadLoopJobCommitPending();
     /// Idle slice: restore deferred loop slot payload(s) via DeferredJobScheduler.
     static void processDeferredLoopSlotRestore();
+    /// S2b.7 (D4): one bounded restore-service step for the blocking drain. Same selection/admission and
+    /// phase gates as `processDeferredLoopSlotRestore` (active **and** parked instances), used because the
+    /// main loop is inside the drain and cannot run its deferred-load frame. Commit/cleanup remain on the
+    /// global idle gate; this never relaxes it.
+    static void serviceDeferredRestoreForDrain();
     /// Idle slice: hydrate one track undo stack snapshot body from the runtime bundle.
     static void processDeferredUndoSnapshots();
     /// On slot select: queue loop slot payload for deferred restore (never sync-loads).

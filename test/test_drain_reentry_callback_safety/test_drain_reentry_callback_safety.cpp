@@ -135,6 +135,9 @@ uint32_t ClockManager::getMicrosPerTick() const { return microsPerTick; }
 #include "../../src/SetBrowserOverlayPolicy.cpp"
 #include "../../src/ControlSurface/EditEventFeedback.cpp"
 #include "../../src/StorageManager/SyncDrainSaveState.cpp"
+// S2b.7: the blocking drain now services the restore it waits on, through the same scheduler entry the
+// deferred-load frame uses, so the real drain needs that entry linked here.
+#include "../../src/DeferredJobScheduler.cpp"
 
 // The loop-edit geometry session is not on the CLEAR path; it fails closed if a fixture enters it.
 #define A34A_OFF_PATH() TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__)

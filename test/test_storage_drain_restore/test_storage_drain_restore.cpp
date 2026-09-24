@@ -89,6 +89,9 @@ bool sequencerRunning = false;
 // Packet A's C5 fixture and Packet C both drive the **real blocking persistence drain**, so its TU is
 // linked here rather than modelled by a test-only stand-in.
 #include "../../src/StorageManager/SyncDrainSaveState.cpp"
+// S2b.7: the drain now services the restore it waits on, through the same scheduler entry the deferred
+// load frame uses, so that entry must be linked for the real drain to resolve.
+#include "../../src/DeferredJobScheduler.cpp"
 // A3.5: the real drain now services MIDI while it waits, so the dispatch path it reaches must be linked.
 #include "../../src/MidiButtonActions.cpp"
 #include "../../src/Track/SlotClearPlaybackRestore.cpp"
@@ -312,74 +315,180 @@ void test_a36_the_mid_pass_one_chunk_flush_runs_during_a_take() {
 }
 
 // ---------------------------------------------------------------------------
-// S2b.7 — a restore that holds the SD session at the drain edge.
+// S2b.7 / D4 — the blocking drain **advances** the restore it waits on.
 //
-// The question this closes: does the blocking drain **advance** a restore it waits on, or does it
-// **name the wait**? The archived `deferred-slot-restore-liveness` deferred the advancement claim, and
-// the A3.7 shape-(b) device run showed the drain completing through the urgent-save priority bypass
-// (`shouldPrioritizeWorkspaceSaveDrain()`) -- which advances the *save*, not the restore. This fixture
-// measures the plain case: another track audibly playing, a restore mid-preparation holding the SD
-// session (so `deferredSaveBlockedByActiveSlotLoadSd()` is true), and a save owed. It asserts the named
-// wait and the **absence** of advancement, then proves with a control that the same drain completes once
-// the restore releases the session -- so "nothing moved" is the gate's doing, not a fail-closed route.
-// The commit gate is not relaxed here (`resumable-midi-boundary-playback-maintenance` task 3.3).
+// The archived `deferred-slot-restore-liveness` deferred this claim: the drain loop ran only
+// `processDeferredSaveState`, and the main loop is *inside* the drain, so a restore holding the SD
+// session could never release it. The earlier fixture in this file recorded the gap (the drain returned
+// `slot_load_active` with restore progress and phase unchanged, nothing advanced). These cases now
+// assert the delivered behavior and its three contract shapes from D4 / archived A3.1's verify list:
+// another track playing (named commit-gate wait, nothing published), the gate admitting (completion),
+// and a **parked** instance holding the session (serviced rather than stranded).
+// The commit gate is never relaxed: `resumable-midi-boundary-playback-maintenance` task 3.3 owns that.
 // ---------------------------------------------------------------------------
 
-/// **S2b.7:** a session-holding restore is a **named wait**, not a failure, and the drain does not
-/// advance it.
-void test_s2b7_a_session_holding_restore_is_a_named_wait_and_is_not_advanced() {
+/// Order-independent reset for the S2b.7 cases. The load-job instances, the deferred-restore queue, the
+/// request records and the boot background-fill scan all outlive `resetAllTracksAndPool()`, and a
+/// completed fill arms a 2 s `armBackgroundRestoreHoldoff` that would otherwise block a later case's
+/// non-focus request.
+void resetLoadSubsystemForS2b7() {
   SD.reset();
   RestoreHarness::resetAllTracksAndPool();
+  StorageManagerInternal::clearLoadLoopJob();
+  StorageManagerInternal::clearPendingLoopSlotRestoresAtBoot();
   StorageManagerInternal::resetAllRestoreRequestState();
+  StorageManagerInternal::armBackgroundRestoreHoldoff(0);
+}
+
+/// **S2b.7 (D4 point 3, commit-gate shape):** another track audibly plays, so the global commit gate
+/// denies. The drain must still **advance** the restore's preparation, then report the request's own
+/// named wait -- and it must publish nothing and preserve both the request and the owed save.
+void test_s2b7_the_drain_advances_a_session_holding_restore_and_names_the_commit_gate() {
+  resetLoadSubsystemForS2b7();
   RestoreHarness::setRuntimeTransportIdle();
   // Another track plays: DEC-081 says audible playback is not a persistence gate, so this must not be
-  // what blocks the save.
+  // what blocks the save -- it is what makes the restore's **commit** the gated step.
   RestoreHarness::setTrackAudiblyPlaying(0);
   RestoreHarness::armBackgroundRestoreRequest(2, 3, 70);
   RestoreHarness::runLoadServiceTurn();
 
   const bool sessionHeld = StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd();
   const uint32_t progressBefore = StorageManagerInternal::restoreProgressCounter();
-  const uint8_t phaseBefore = StorageManagerInternal::restoreWorkPhase();
   storageSession.currentWorkspaceSave.pending = true;
 
   const SyncDrainResult result =
       StorageManagerInternal::drainPersistenceWorkBlockingDetailed(looperState.getLooperState());
 
   const uint32_t progressAfter = StorageManagerInternal::restoreProgressCounter();
-  const uint8_t phaseAfter = StorageManagerInternal::restoreWorkPhase();
-  char message[420];
-  snprintf(message, sizeof(message),
-           "held=%d outcome=%d reason=%s progress=%u->%u phase=%u->%u save_owed=%d",
+  char message[320];
+  snprintf(message, sizeof(message), "held=%d outcome=%d reason=%s progress=%u->%u save_owed=%d",
            sessionHeld ? 1 : 0, static_cast<int>(result.outcome), result.reason,
            static_cast<unsigned>(progressBefore), static_cast<unsigned>(progressAfter),
-           static_cast<unsigned>(phaseBefore), static_cast<unsigned>(phaseAfter),
            storageSession.currentWorkspaceSave.pending ? 1 : 0);
 
   TEST_ASSERT_TRUE_MESSAGE(sessionHeld, "the fixture must hold the SD session with a restore");
-  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(SyncDrainOutcome::TemporarilyBlocked),
-                                static_cast<int>(result.outcome),
-                                "a session-holding restore is a temporary block, never a failure");
-  TEST_ASSERT_EQUAL_STRING_MESSAGE("slot_load_active", result.reason,
-                                   "the drain must name the gate it waits on, not report `unexplained`");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+  TEST_ASSERT_GREATER_THAN_MESSAGE(
       progressBefore, progressAfter,
-      "S2b.7: the drain must not be claimed to advance the restore -- progress must NOT move");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(phaseBefore),
-                                   static_cast<uint32_t>(phaseAfter),
-                                   "S2b.7: the in-flight restore's phase must NOT move");
+      "S2b.7: the drain must ADVANCE the restore it waits on, not only report it");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(SyncDrainOutcome::TemporarilyBlocked),
+                                static_cast<int>(result.outcome), message);
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "waiting_commit_gate", result.reason,
+      "the drain must report the restore's own named commit-gate wait, not the generic slot-load gate");
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.getTrack(2).getLoop(3).hasCommittedPasses(),
+                            "the commit gate must NOT be bypassed: nothing may be published");
   TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.pending,
-                           "the owed save must stay owed: a temporary block discards nothing");
-  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::restoreRequestRecordExists(2, 3),
-                           "the request must be preserved, not decided, by the drain");
+                           "the owed save must stay owed: the block discards nothing");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "waiting",
+      StorageManagerInternal::restoreRequestStateName(
+          StorageManagerInternal::restoreRequestState(2, 3)),
+      "the request must be preserved in its named wait, not decided");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(
+      "none",
+      StorageManagerInternal::restoreRequestTerminalName(
+          StorageManagerInternal::restoreRequestTerminalFor(2, 3)),
+      "no terminal may be recorded for a request that is only waiting");
 }
 
-/// **S2b.7 control:** once the restore releases the SD session, the *same* drain completes and the owed
-/// save is written. This is what makes the block above the gate's doing rather than a fail-closed route.
+/// **S2b.7 (D4 point 3, gate-admits shape):** with nothing timing-critical, the drain advances the
+/// restore to its **committed** terminal with **no external advancement** between the assertions, and
+/// then discharges the owed save. This is the case the archived A3.1 verify list requires.
+///
+/// The restore is armed for the **focused** slot on purpose: with the transport idle but the job on a
+/// non-focus slot, focus policy parks it before it can be stepped and the urgent-save priority discharges
+/// the save without advancing the restore -- correct for the save, but not the advancement case. Focused,
+/// the drain itself must complete it.
+void test_s2b7_the_drain_advances_the_restore_to_completion_where_the_gate_admits() {
+  resetLoadSubsystemForS2b7();
+  RestoreHarness::setRuntimeTransportIdle();
+  const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
+  const uint8_t focusSlot = trackManager.getSelectedSlotIndex(focusTrack);
+  RestoreHarness::armBackgroundRestoreRequest(focusTrack, focusSlot, 72);
+  // Admit the job so it holds the SD session. After this the drain -- not the fixture -- must do the work.
+  RestoreHarness::runLoadServiceTurn();
+  const bool sessionHeld = StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd();
+  const uint32_t progressBefore = StorageManagerInternal::restoreProgressCounter();
+  storageSession.currentWorkspaceSave.pending = true;
+
+  (void)StorageManagerInternal::drainPersistenceWorkBlockingDetailed(looperState.getLooperState());
+  // The commit arms the finite post-load holdoff, which the drain reports by name instead of waiting it
+  // out; move the fixture clock past it so the second drain can reach the save.
+  nativeMillisAdvance(LoadLoopBudget::PostLoadCommitSaveHoldoffMs + 1u);
+  (void)StorageManagerInternal::drainPersistenceWorkBlockingDetailed(looperState.getLooperState());
+
+  char message[256];
+  snprintf(message, sizeof(message), "held=%d progress=%u->%u committed=%d save_owed=%d",
+           sessionHeld ? 1 : 0, static_cast<unsigned>(progressBefore),
+           static_cast<unsigned>(StorageManagerInternal::restoreProgressCounter()),
+           trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses() ? 1 : 0,
+           storageSession.currentWorkspaceSave.pending ? 1 : 0);
+  TEST_ASSERT_TRUE_MESSAGE(sessionHeld, "the fixture must hold the SD session with a restore");
+  // The commit/cleanup steps do not bump the preparation progress counter (only the preparation grains
+  // do), so completion is asserted by the terminal state itself, which is the stronger evidence.
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses(),
+                           message);
+  TEST_ASSERT_FALSE_MESSAGE(storageSession.currentWorkspaceSave.pending,
+                            "the drain must then discharge the owed save it was blocked on");
+}
+
+/// **S2b.7 (D4 point 1, parked instance):** a parked job keeps its session, so the drain's wait can
+/// outlive the active instance. With the session held by the **parked** instance alone the drain must
+/// still service it rather than leave it stranded.
+void test_s2b7_the_drain_services_a_parked_instance_holding_the_session() {
+  resetLoadSubsystemForS2b7();
+  RestoreHarness::setRuntimeTransportIdle();
+  RestoreHarness::setTrackAudiblyPlaying(0);
+  RestoreHarness::armBackgroundRestoreRequest(3, 2, 66);
+  RestoreHarness::runLoadServiceTurn();
+  // Force the stall shape D4 point 1 names: the only live instance is the parked one.
+  StorageManagerInternal::parkActiveLoadLoopJob();
+  const bool sessionHeld = StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd();
+  const uint32_t progressBefore = StorageManagerInternal::restoreProgressCounter();
+  storageSession.currentWorkspaceSave.pending = true;
+
+  const SyncDrainResult result =
+      StorageManagerInternal::drainPersistenceWorkBlockingDetailed(looperState.getLooperState());
+
+  char message[320];
+  snprintf(message, sizeof(message),
+           "held=%d active=%d any=%d outcome=%d reason=%s progress=%u->%u save_owed=%d",
+           sessionHeld ? 1 : 0, StorageManagerInternal::isActiveLoadLoopJobRunning() ? 1 : 0,
+           StorageManagerInternal::anyLoadLoopJobActive() ? 1 : 0,
+           static_cast<int>(result.outcome), result.reason,
+           static_cast<unsigned>(progressBefore),
+           static_cast<unsigned>(StorageManagerInternal::restoreProgressCounter()),
+           storageSession.currentWorkspaceSave.pending ? 1 : 0);
+  char diag[320];
+  snprintf(diag, sizeof(diag), "held=%d outcome=%d reason=%s committed=%d save_owed=%d progress=%u",
+           sessionHeld ? 1 : 0, static_cast<int>(result.outcome), result.reason,
+           trackManager.getTrack(3).getLoop(2).hasCommittedPasses() ? 1 : 0,
+           storageSession.currentWorkspaceSave.pending ? 1 : 0,
+           static_cast<unsigned>(StorageManagerInternal::restoreProgressCounter()));
+  TEST_ASSERT_TRUE_MESSAGE(sessionHeld, "the parked instance must be holding the SD session");
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::anyLoadLoopJobActive(),
+                           "the fixture must leave the parked instance live");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(
+      progressBefore, StorageManagerInternal::restoreProgressCounter(),
+      "the drain must service the parked instance holding the session, not leave it stranded");
+  // The commit gate still denies, so the parked request must not publish. The **save** is deliberately
+  // not asserted as owed here: the drain raises the urgent-save priority, and
+  // `shouldPrioritizeWorkspaceSaveDrain()` may then discharge the save while the restore stays
+  // commit-gated -- the same shape as the archived A3.7 shape (b) device run (`captures/a37fix-04/`).
+  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(SyncDrainOutcome::TemporarilyBlocked),
+                                static_cast<int>(result.outcome), diag);
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("waiting_commit_gate", result.reason,
+                                   "the parked request's named wait must be reported");
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.getTrack(3).getLoop(2).hasCommittedPasses(),
+                            "the commit gate must not be bypassed for a parked request either");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(SyncDrainOutcome::TemporarilyBlocked),
+                                static_cast<int>(result.outcome), message);
+}
+
+/// **S2b.7 control:** once the restore releases the SD session, the *same* drain is no longer gated by
+/// the slot load and discharges the owed save. This keeps "the restore is the gate" falsifiable.
 void test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session() {
-  SD.reset();
-  RestoreHarness::resetAllTracksAndPool();
-  StorageManagerInternal::resetAllRestoreRequestState();
+  resetLoadSubsystemForS2b7();
   RestoreHarness::setRuntimeTransportIdle();
   RestoreHarness::armBackgroundRestoreRequest(4, 1, 72);
 
@@ -426,8 +535,10 @@ int main(int, char**) {
   RUN_TEST(test_a36_audible_playback_is_not_a_persistence_gate);
   RUN_TEST(test_a36_a_recording_track_parks_the_multi_frame_writers);
   RUN_TEST(test_a36_the_mid_pass_one_chunk_flush_runs_during_a_take);
-  // S2b.7 — a session-holding restore is a named wait, not an advancement.
-  RUN_TEST(test_s2b7_a_session_holding_restore_is_a_named_wait_and_is_not_advanced);
+  // S2b.7 / D4 — the drain advances the restore it waits on.
+  RUN_TEST(test_s2b7_the_drain_advances_a_session_holding_restore_and_names_the_commit_gate);
+  RUN_TEST(test_s2b7_the_drain_advances_the_restore_to_completion_where_the_gate_admits);
+  RUN_TEST(test_s2b7_the_drain_services_a_parked_instance_holding_the_session);
   RUN_TEST(test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session);
   return UNITY_END();
 }

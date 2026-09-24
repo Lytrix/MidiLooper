@@ -2919,23 +2919,34 @@ above the 840 floor); both fixes proven discriminating by removal. **No device r
 hardware-observable. **Next: S2b.7 — drain-driven restore advancement** (characterize advancement vs a
 correctly named wait; commit gate not relaxed). Packet: `ARCHITECTURE-REVIEW.md` § S2b.8.
 
-**2026-09-24 (eleventh session, same turn) — S2b.7 MEASURED: the drain NAMES THE WAIT and does NOT advance a session-holding restore; task stays open.**
-Fixture `test_s2b7_a_session_holding_restore_is_a_named_wait_and_is_not_advanced` in
-`test_storage_drain_restore`: track 0 audibly playing, a restore mid-preparation holding the SD session
-(`deferredSaveBlockedByActiveSlotLoadSd()` true), a save owed. One real
-`drainPersistenceWorkBlockingDetailed` → **`TemporarilyBlocked`**, named gate **`slot_load_active`** (not
-`Failed`, not `unexplained`), `restoreProgressCounter()` and `restoreWorkPhase()` **unchanged** (1 → 1,
-1 → 1), save still owed, request preserved. The name is the *gate*, not the request's own wait, because the
-in-flight request is `running`; A3.2's per-request wait naming is covered separately. Control
-`test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session` shows the same drain no longer
-stops at `slot_load_active` and discharges the owed save once the session is released (the control does not
-assert `Completed`: the minimal fixture has no valid workspace to write, so `lastCompletedOk` is false for an
-unrelated reason). **Discriminating by removal:** stepping the submitted load jobs inside the drain loop fails
-the fixture; reverted byte-identical. Full native **2,350 / 1 skipped / 0 failures**; capture-serial
-SUCCESS (src unchanged). **S2b.7 stays unchecked**: the advancement *behavior* is still not delivered, and
-the prerequisite is named — the global commit gate and `resumable-midi-boundary-playback-maintenance`
-**task 3.3** (bounded commit/cleanup). The archived change's "not verified" is now **"measured absent in the
-plain case"**. Packet: `ARCHITECTURE-REVIEW.md` § S2b.7.
+**2026-09-24 (twelfth session) — S2b.7 DELIVERED: the blocking drain now SERVICES the restore it waits on.**
+Owner direction: continue S2b.7, i.e. deliver the advancement. **Measured first, then implemented** (the
+measurement is kept in the task text so the two are not confused): with another track playing, a restore
+mid-preparation holding the SD session and a save owed, the pre-change drain returned `TemporarilyBlocked` /
+`slot_load_active` with progress **1 → 1** and phase **1 → 1** — reported, never advanced. **Landed:**
+`StorageManager::serviceDeferredRestoreForDrain()` runs the **same** selection/admission + bounded step the
+deferred-load frame uses, and the drain calls it once per iteration while
+`deferredSaveBlockedByActiveSlotLoadSd()`; a **termination clause** (D4 point 6) reports the named wait as soon
+as the restore is gated instead of burning the budget. No new owner, loader, queue or admission policy, and
+**the commit gate is untouched** (task 3.3 still owns the bound). D4 point 1 (parked instance) needed no new
+code: the existing selection path already promotes it — an explicit promote was written, **proven redundant by
+removal**, and deleted. **Behavior now:** another track playing → progress **1 → 8**, `TemporarilyBlocked` /
+**`waiting_commit_gate`**, nothing published, request preserved, save owed; focused slot with the gate
+admitting → the drain commits the restore and discharges the save; parked-only session → serviced, nothing
+published. **Evidence:** `test_storage_drain_restore` **10/10**, `test_drain_reentry_callback_safety` **8/8**
+(now links `DeferredJobScheduler.cpp` — a build fix the real drain required), full native **2,352 / 1 skipped /
+0 failures**, capture-serial **SUCCESS** `code 391,080 + padding 2,136`. **Discriminating by removal:**
+disabling the drain's service step fails exactly the three advancement assertions; reverted byte-identical.
+**Device: NOT RUN** — every claim is native; no device class claimed. **S2b.7 is checked**; no native task
+remains open in this change. Packet: `ARCHITECTURE-REVIEW.md` § S2b.7.
+
+**2026-09-24 (eleventh session) — S2b.8 DELIVERED (external resets); S2b.7 first MEASURED as absent.**
+S2b.8: undo-clear/redo-clear are decided to be external resets and advance the restore-request generation;
+`noteRestoreSetEpoch` now records `superseded` under each request's **original** identity before advancing the
+epoch and emits its `RRQ` transition; the dead non-emitting `invalidateAllRestoreRequestsAsSuperseded` was
+removed. S2b.7 was then measured (not delivered at that point): the drain named `slot_load_active` and did not
+advance the restore. Evidence: full native 2,348 → 2,350; `test_storage_manager_load` 35/35;
+`test_drain_reentry_callback_safety` 8/8. Packets: `ARCHITECTURE-REVIEW.md` § S2b.8 and § S2b.7.
 
 **2026-09-24 (tenth session) — `deferred-slot-restore-liveness` ARCHIVED (reduced scope); runtime measurements transferred to `runtime-working-set-ownership`.**
 Per owner direction this was a **scope correction, not another sweep**. Delivered and archived: preparation

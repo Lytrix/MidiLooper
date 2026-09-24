@@ -415,3 +415,21 @@ void STORAGE_PERSIST_MEM StorageManager::processDeferredLoopSlotRestore() {
         false, StorageManager::isFocusedLoopSlotRestoreWork(), false);
     DeferredJobScheduler::runFrame(budgetUs);
 }
+
+void STORAGE_PERSIST_MEM StorageManager::serviceDeferredRestoreForDrain() {
+    // S2b.7 (D4): while the drain blocks, the main loop cannot run its deferred-load frame, so a restore
+    // holding the SD session would never release it and the drain could only report the wait. Service the
+    // request the drain waits on with the **same** selection/admission + bounded step the frame uses, so
+    // this reuses the existing state machine and phase gates and adds no second loader, queue or admission
+    // policy. `stepSubmittedLoadJobs` still enforces the **global** idle gate for commit/cleanup and names
+    // `waiting_commit_gate`, so this never admits an unbounded commit:
+    // `resumable-midi-boundary-playback-maintenance` task 3.3 keeps that bound.
+    // D4 point 1 (active **and** parked instances) needs no extra promotion here: the selection step
+    // below already promotes a parked instance through
+    // `ensureActiveLoadLoopJobSelected` -> `LoadLoopSelectionPolicy::PromoteParkedLow`, so reusing it is
+    // what keeps the drain from growing a parallel admission policy. Verified by removing an explicit
+    // promote: the parked-instance case stays green without it.
+    const uint32_t budgetUs = LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
+        false, StorageManager::isFocusedLoopSlotRestoreWork(), false);
+    DeferredJobScheduler::runFrame(budgetUs);
+}
