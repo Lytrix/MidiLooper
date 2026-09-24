@@ -282,6 +282,48 @@ void test_post_restore_census_line_fits_capture_text_budget() {
   TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), censusLen);
 }
 
+void test_library_observation_lines_fit_capture_text_budget() {
+  // `restored-library-stability` 1.3. `DebugSessionCapture::kMaxCaptureTextBytes` is 192 (payload 191 +
+  // NUL). The first wire form used full enum names, overran this, and was **silently truncated on
+  // device**: the frame's trailing fields were lost and a completed observation read `complete=False`.
+  // Worst case is a 10-digit micros field and every numeric field at its type maximum.
+  constexpr size_t kMaxCaptureTextPayload = 191;
+  char slot[256];
+  const int slotLen = snprintf(
+      slot, sizeof(slot),
+      "#CAP,%lu,LIBOBS,S,t=%u,s=%u,st=%u,c=%c,p=%u,o=%u,q=%u,w=%u,m=%u,g=%lu,e=%lu,k=%u,a=%u,"
+      "h=%lu,l=%lu,v=%lu,n=%u,i=%u,x=%u",
+      4294967295ul, 255u, 255u, 7u, 'a', 3u, 2u, 5u, 5u, 4u, 4294967295ul, 4294967295ul, 1u, 65535u,
+      4294967295ul, 4294967295ul, 4294967295ul, 1u, 1u, 1u);
+  TEST_ASSERT_GREATER_THAN(0, slotLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), slotLen);
+
+  char end[256];
+  const int endLen = snprintf(
+      end, sizeof(end),
+      "#CAP,%lu,LIBOBS,E,a=%lu,b=%lu,t=%u,r=%u,s=%u,p=%u,i=%u,c=%u,m=%u,n=%u,e=%u,v=%u,x=%u",
+      4294967295ul, 4294967295ul, 4294967295ul, 65535u, 65535u, 65535u, 65535u, 65535u, 65535u,
+      65535u, 1u, 1u, 1u, 1u);
+  TEST_ASSERT_GREATER_THAN(0, endLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), endLen);
+
+  char begin[256];
+  const int beginLen = snprintf(begin, sizeof(begin), "#CAP,%lu,LIBOBS,B,a=%lu,e=%lu,s=%u",
+                                4294967295ul, 4294967295ul, 4294967295ul, 65535u);
+  TEST_ASSERT_GREATER_THAN(0, beginLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), beginLen);
+
+  // The observation must survive the timing-critical flush budget: it is an explicitly requested
+  // one-shot inventory, read back precisely in the stuck states a dense run produces.
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,500,LIBOBS,B,a=100,e=0,s=64"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,500,LIBOBS,S,t=0,s=0,st=2,c=n,p=3,o=2,q=5,w=0,m=1,g=0,e=0,k=1,a=1,h=4,l=1920,v=88,n=1,"
+      "i=0,x=0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,500,LIBOBS,E,a=100,b=200,t=64,r=0,s=64,p=36,i=8,c=0,m=8,n=1,e=1,v=0,x=1"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,500,LIBOBSX,S,t=0"));
+}
+
 void test_transport_and_persistence_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,21524068,ST,Track,STOPPED,ARMED"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,22800000,PERS,queue,1,2,3,ok"));
@@ -361,6 +403,7 @@ int main() {
   RUN_TEST(test_snapshot_idle_lines_fit_capture_text_budget);
   RUN_TEST(test_snapshot_unit_lines_fit_capture_text_budget);
   RUN_TEST(test_post_restore_census_line_fits_capture_text_budget);
+  RUN_TEST(test_library_observation_lines_fit_capture_text_budget);
   RUN_TEST(test_transport_and_persistence_lines_are_tier_a);
   RUN_TEST(test_note_and_display_traffic_is_not_tier_a);
   RUN_TEST(test_other_diag_subtags_are_not_tier_a);
