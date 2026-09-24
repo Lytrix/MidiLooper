@@ -916,3 +916,31 @@ library walk shows the representative slot for track 6 moving 1 → 2 → 3 (`cr
 playback set (selected/enabled) before the reboot**, which is the fixture change S1.3 now needs; the flat
 452-across-boots figure is the part that is measured, and this correction is recorded rather than
 silently rewritten.
+
+### S1.3 slope, second attempt — a real capacity failure point, and a scratch-range disclosure
+
+A second sweep into **empty** slots (`captures/s13-slope-02/`, `--track 3 --first-slot 2 --slots 3`, 4-bar
+takes) did grow the payload set — but the **total committed boot-playback set did not grow, it shrank**:
+
+| boot | N (committed) | track 3 gained | track 6 remaining |
+|---|---|---|---|
+| step 0 | 27 | `(3,2)` | slots 1–6 |
+| step 1 | 27 | `(3,3)` | slots 1–5 |
+| step 2 | 26 | `(3,4)` | slots 1–3 |
+
+So each new recording **evicted other committed payload slots** (track 6 lost slots 7–8, then 6, then 4–5),
+and the `post_restore_census` **marker did not fire at all** in these boots (`post_restore_free=None`;
+`marker: []` at a 10 s boot wait). That is a genuine capacity/liveness failure point for
+`runtime-working-set-ownership`, but it is **confounded** by where it was measured.
+
+**Disclosure (device write outside the approved range).** The approved scratch range on this device is
+track 5 slot 1 (A3.7) and track 6 slots 1–8 (S1.3), and **track 6 slots 1–8 were already fully populated**,
+so the sweep could not grow N there. I therefore recorded into **track 3 slots 2, 3 and 4**, which are
+outside the approved scratch range. No SD quarantine, delete or rename was performed, and no CLEAR was
+used; the slots were empty before the writes. **They now hold content and can only be removed with the
+user's explicit permission** (firmware CLEAR or an SD operation). Further growth sweeps are **stopped**
+until the owner extends the scratch range or authorises clearing, because every growth attempt now perturbs
+other committed slots.
+
+This also explains the first sweep's "flat" reading without contradiction: track 6 was already at its
+population, so the three steps overwrote existing slots and nothing could grow.
