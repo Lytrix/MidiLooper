@@ -15,7 +15,10 @@ with a reduced scope that did **not** remove the restored-library instability. *
 queue for that defect**; the instability is now owned by
 [`restored-library-stability`](../../openspec/changes/restored-library-stability/proposal.md) (proposed
 2026-09-24), which attributes each non-committed slot to catalog omission, restore refusal, intentional
-eviction or content loss before any fix is proposed.
+eviction or content loss before any fix is proposed. **Packet A — the observation-only firmware and
+read-only analysis — completed and was device-verified read-only 2026-09-24: it found no loss cause in
+either recorded sweep and identified the shrinking count as window-scoped ([DEC-083](../DECISION_LOG.md);
+durable behavior in [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](../Guides/RUNTIME_STORAGE_AND_PERSISTENCE.md#the-on-demand-library-observation)).**
 **Found by:** the `runtime-working-set-ownership` device session
 ([ARCHITECTURE-REVIEW § Device session — RWSO-24CAP](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)),
 which was blocked by it.

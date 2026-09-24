@@ -11,15 +11,19 @@ Three facts define what may be implemented right now:
    S2b.3's post-restore baseline, S2b.5's device gate, the content PASS, D0.2's B07 allocation census (not
    measurable natively), and phases B–E. **Every one of those is a device leg**, and the stage order is not
    bypassed merely because hardware evidence is blocked.
-2. **The restored-library instability now has an owner: `restored-library-stability`** (proposed 2026-09-24,
-   planning complete, `openspec validate` clean, **Packet A (observation-only firmware + read-only analysis) can start immediately**). It exists
+2. **The restored-library instability now has an owner, and its first packet is complete:
+   `restored-library-stability`** (proposed 2026-09-24, `openspec validate` clean; **Packet A —
+   observation-only firmware plus read-only analysis — 1.0–1.5 COMPLETE and device-verified read-only
+   2026-09-24**; Packets B/C and the 4.x handoff/closeout open). It exists
    because the set of slots **observed** committed after a reboot is not reproducible **as measured**, which blocks fact 1's device legs. Its first
    finding is already recorded: the previous blocker attribution (SD catalog reconcile) does not hold —
    `sets/index.bin` is a saved-set *folder counter* (`SetIndex{nextSequence}`), the shrinking boots report
    `reconcile_warnings=0`, `DIAG,lcr,skip,restore` is a content-resolution line, and
-   `Track N loaded state: EMPTY` appears on stable boots too. It distinguishes **catalog omission /
-   restore refusal / intentional eviction / content loss**, needs per-slot authorization before any CLEAR,
-   and carries the S2b.7 device confirmation.
+   `Track N loaded state: EMPTY` appears on stable boots too. **Packet A's read-only attribution finds no
+   loss cause anywhere in either sweep and identifies the shrinking count as window-scoped**; the device
+   inventory is 36 payload slots / 8 initial-playback slots / 8 committed, contract **DEC-083**. It
+   distinguishes **catalog omission / restore refusal / intentional eviction / content loss**, needs
+   per-slot authorization before any CLEAR, and carries the S2b.7 device confirmation.
 3. **The restore-liveness change is ARCHIVED, not proposed.** `deferred-slot-restore-liveness` was archived
    2026-09-24 as `2026-09-24-deferred-slot-restore-liveness` with a reduced, accurately described scope. It
    delivered diagnosable preparation and named waits under transport, request identity with four terminals,
