@@ -198,3 +198,99 @@ Each entry is the actual command, context and result. NOT RUN is stated explicit
 - **Device fault runs:** NOT RUN (task 5.2).
 - **Task IDs eligible for checkoff:** **2.3**; **2.1**/**2.2** still need their own verification, and
   **1.3**/**3.3** now have a seam to run against.
+
+## Slice C — device fault injection (tasks 1.3, 3.3, first half of 5.2)
+
+### Identity and scope
+
+- **Task:** the recovery half of **5.2**, plus the fault-run clause of **1.3** and all of **3.3**.
+  The second half of 5.2 (rapid-redraw / dense-MIDI baseline-vs-DMA comparison) is recorded separately.
+- **Status:** device-verified for all four recovery transitions; the healthy path was verified in Slice A.
+- **Injection:** `MIDILOOPER_DISPLAY_DMA_FAULT=1` forces a rejected submission, `=2` forces an active
+  transfer to never report completion; `MIDILOOPER_DISPLAY_DMA_FAULT_COUNT=N` limits the fault to N fired
+  events (0 = whole boot). All compiled out at 0 — the production image is untouched.
+
+### Oracle and observations
+
+| Case | Expected | Observed (`#DMA_XFER`, `SSD1322_API:` lines) |
+|---|---|---|
+| Healthy (Slice A) | DMA only | `init=1, degraded=0, dma_frames 36→655, blocking_frames=0` |
+| Forced timeout, transient (`=2`, `COUNT=2`) | 2 timeouts, then recovery | `timeouts=1` → `timeouts=2` → `DMA recovered; transfers resumed` → `recoveries=1, degraded=0`, then `dma_frames` climbs; one `blocking_frames` during the cooldown |
+| Forced rejection, transient (`=1`, `COUNT=2`) | 2 rejections, then recovery | `DMA rejected; SPI fallback` ×2 → `rejections=2, blocking_frames=1` → `DMA recovered` → `recoveries=1`, `dma_frames` climbs |
+| Forced timeout, permanent (`=2`, `COUNT=0`) | degrade at the limit | `timeouts=1,2,3` → `DMA degraded for this boot` → `degraded=1, dma_frames=0`, `blocking_frames` climbs monotonically (12→107) |
+
+Every run booted cleanly, kept painting, and produced no crash signature. `0` timeouts, rejections or
+recoveries on the healthy run; `degraded=0` is the only state the production build can reach.
+
+### Defect found in the harness (fixed before checkoff)
+
+`FAULT_COUNT` originally counted *polls*, not fired timeouts. `pollDisplayTransfer` runs many times before
+the 20 ms bound elapses, so a `COUNT=2` budget was spent before the first timeout ever tripped and the run
+showed `timeouts=1`. The counter now advances only when a timeout actually fires; the re-run produces
+exactly `timeouts=2` as configured. This is a harness bug, not a transport bug — the observation is recorded
+because it is exactly the kind of drift that would make a future 5.2 re-run untrustworthy.
+
+### Completion record
+
+- **Device runs:** three variants, `teensy41-capture-serial`, `captures/dma-fault-timeout-transient`,
+  `captures/dma-fault-reject-transient`, `captures/dma-fault-timeout-permanent`, plus the re-verified
+  `captures/dma-fault-timeout-transient-r2`. Logs are the `serial.log` in each.
+- **Builds:** all four variants SUCCESS; the production build stays `RAM1 variables 96,160 / code 391,448 /
+  padding 1,768 / locals 34,912`.
+- **Task IDs eligible for checkoff:** **1.3** (the bound trips at 20 ms, the retry holds for 100 ms, the
+  limit degrades at 3 consecutive failures) and **3.3** (rejection and timeout both recover the wrapper,
+  resync over blocking SPI, retry, and degrade boundedly; the diagnostics distinguish every state).
+
+## Slice D — same-scenario baseline vs DMA comparison (second half of 5.2, subject of 5.3)
+
+### Method
+
+`host_midi_hitl.py run --preset base --track 5 --loop-slot 1 --midi-channel 5 --build-upload`, run twice
+from the same tree: DMA on (default) and DMA off (`-DMIDILOOPER_DISPLAY_DMA=0`). Both builds add
+`-D SESSION_CAPTURE_BPM=1` so the device's tempo is auditable and the harness paces to the measured value
+rather than its 120 fallback. The device is **internally clocked**; the internal BPM is only ever the
+persisted workspace value or an externally-measured one (`ClockManager::setBpm` has no callers).
+
+### Tempo validated first
+
+Measured from the device's own `BAR` markers (bar 1 → bar 2), in **both** runs:
+`768 → 1537 ticks over 2.0 s = 383.3 ticks/s = 119.8 BPM`. The earlier pair in this slice was discarded
+because the tempo precondition had not been checked; this pair is the one the comparison rests on.
+
+### Transport comparison (same fixture, same slot, same tempo)
+
+| | DMA on (`captures/dma-compare2-on`) | DMA off (`captures/dma-compare2-off`) |
+|---|---|---|
+| Census | `init=1, degraded=0, dma_frames=905, blocking_frames=0, timeouts=0, rejections=0, recoveries=0` | `init=0, degraded=0, dma_frames=0, blocking_frames=900` |
+| `DFRAME` transfer µs | 44–49 | 4,496–4,802 |
+| `DIAG,midi_gap` (maxUs/over) | 25628/1, 371514/79, 102035/128, 59520/161, 126213/7 | 25615/1, 387472/164, 102500/212, 76186/195, 40966/123, 110810/127 |
+| FATAL / `#MEM_DENIED` / crash | 0 / 0 / `crash=0` | 0 / 0 / `crash=0` |
+
+The census is the decisive control: the DMA-off build records `init=0` and 900 blocking frames, the DMA-on
+build records 905 DMA frames and **zero** blocking frames. Per-frame blocking falls from ~4.5 ms to ~45 µs
+(~100x). **The reduced-blocking claim is SUPPORTED.**
+
+The MIDI-gap figures are captured but are **not a clean A/B**: the two runs do not follow the same path,
+because both aborted early (see below), so the sampled windows are not equivalent. They are recorded as
+evidence that the metric exists and is unaffected in kind, not as a measured improvement.
+
+### Run-level verdict (why 5.2/5.3 are not yet ticked)
+
+Both runs returned `Result: INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` with abort reason
+**"second overdub transition not confirmed"**, and both sealed 1,920 / 2,304 ticks for a 1,536-tick (2-bar)
+request. This is the documented base-preset **setup-oracle race** class (CURRENT_WORK records four
+consecutive aborts on setup-state races "while the device was fine"), and it is present with DMA **off**
+as well — so it is not attributable to this transport. The earlier pair additionally showed "record stop
+did not reach PLAYING". Per the HITL skill, `INCONCLUSIVE_CAPTURE` is not a pass, so the run-level content
+verdict stays open even though every transport clause of 5.2 is verified.
+
+### Completion record
+
+- **Runs:** `captures/dma-compare2-on`, `captures/dma-compare2-off` (discarded first pair:
+  `captures/dma-compare-on`, `captures/dma-compare-off`). Metadata pins `git_commit 908fc279`, build env
+  `teensy41-capture-serial`, firmware sha in each `metadata.json`.
+- **Claim:** reduced blocking **supported**; MIDI-gap **captured, not a clean A/B**; recovery transitions
+  **supported** (Slice C); frame completeness **user-confirmed** (task 4.2).
+- **Device left on:** the production DMA-on build (`init=1`, `dma_frames` climbing, `blocking_frames=0`).
+- **Task IDs eligible for checkoff:** none for 5.2/5.3 yet — recommend the owner decide whether the
+  transport-level evidence closes them or whether a clean managed run is required.
