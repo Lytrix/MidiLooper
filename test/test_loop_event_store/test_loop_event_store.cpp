@@ -728,7 +728,7 @@ void test_snapshot_one_bar_node_count_and_unchanged_membership_share() {
               firstNodes, snapshotAllocByteCount(), firstSlabs);
   TEST_ASSERT_TRUE(firstNodes >= 51);
   TEST_ASSERT_TRUE(firstNodes <= 200);
-  TEST_ASSERT_TRUE(firstSlabs >= 1);
+  // A smaller construction can fit in the parent's already allocated slab.
   TEST_ASSERT_TRUE(firstSlabs <= 3);
   TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(parent->noteMembership(40, 0).get()));
   TEST_ASSERT_EQUAL(32u, snapshotMembershipCount(parent->eventMembership(0).get()));
@@ -1007,8 +1007,120 @@ void test_snapshot_release_preserves_shared_descendants_during_every_grain() {
   } while (!release.complete());
 }
 
+void test_snapshot_batch_reuses_private_index_nodes() {
+  const auto slabsBefore = snapshotSlabCensus().liveSlabs;
+  {
+    auto empty = LoopSnapshot::createEmpty(7, 768, 0, 1, 1);
+    LoopSnapshotChangeSet changes;
+    for (unsigned i = 0; i < 128; ++i)
+      changes.notes.push_back(addSnapshotNote(i + 1, 60 + i % 12, i * 6, i * 6 + 4));
+    for (unsigned i = 0; i < 80; ++i) {
+      SnapshotEventChange change;
+      change.next.loopId = 7;
+      change.next.eventId = i + 1;
+      // Reverse each membership page to exercise sorting after cache reuse.
+      change.next.canonicalOrder = i ^ 15u;
+      change.next.value = MidiEvent::ControlChange(i * 6, 1, 7, i);
+      changes.events.push_back(change);
+    }
+    resetSnapshotAllocCounters();
+    LoopSnapshotConstruction construction(empty, changes);
+    TEST_ASSERT_TRUE(drainSnapshotConstruction(construction));
+    const auto root = construction.freeze();
+    TEST_ASSERT_NOT_NULL(root.get());
+    for (unsigned i = 0; i < 128; ++i) {
+      const auto note = root->findNoteAtPitch(i + 1, 60 + i % 12);
+      TEST_ASSERT_NOT_NULL(note.get());
+      TEST_ASSERT_EQUAL(i * 6, note->startTick);
+    }
+    unsigned eventIndex = 0;
+    forEachSnapshotMembershipReference(root->eventMembership(0).get(),
+        [&](const LoopSnapshotEventRef& event) {
+          TEST_ASSERT_EQUAL((eventIndex ^ 15u) + 1, event->eventId);
+          TEST_ASSERT_EQUAL(eventIndex++, event->canonicalOrder);
+        });
+    TEST_ASSERT_EQUAL(80, eventIndex);
+    // 208 objects + 36 note directory/page/membership nodes + 5 event
+    // memberships + event page + two index roots + frozen root = 253.
+    std::printf("snapshot-batch nodes=%u slabs=%u bytes=%u\n",
+        snapshotAllocNodeCount(), snapshotSlabCensus().liveSlabs,
+        snapshotAllocByteCount());
+    TEST_ASSERT_LESS_OR_EQUAL(256, snapshotAllocNodeCount());
+    const auto nodes = snapshotAllocNodeCount();
+    TEST_ASSERT_TRUE(construction.step(1));
+    TEST_ASSERT_EQUAL_PTR(root.get(), construction.freeze().get());
+    TEST_ASSERT_EQUAL(nodes, snapshotAllocNodeCount());
+  }
+  TEST_ASSERT_EQUAL(slabsBefore, snapshotSlabCensus().liveSlabs);
+}
+
+void test_snapshot_reused_edits_isolate_parent_sibling_and_failure() {
+  LoopSnapshotChangeSet initial;
+  for (unsigned i = 1; i <= 40; ++i)
+    initial.notes.push_back(addSnapshotNote(i, 60, i * 10, i * 10 + 5));
+  const auto parent = buildSnapshotForTests(initial);
+  TEST_ASSERT_NOT_NULL(parent.get());
+  LoopSnapshotChangeSet leftChanges, rightChanges;
+  for (unsigned i = 1; i <= 40; ++i) {
+    SnapshotNoteChange replacement;
+    replacement.kind = SnapshotChangeKind::Replace;
+    replacement.previous = parent->findNoteAtPitch(i, 60);
+    replacement.next = *replacement.previous;
+    replacement.next.endTick += 2;
+    leftChanges.notes.push_back(replacement);
+    rightChanges.notes.push_back(addSnapshotNote(40 + i, 60, i * 10, i * 10 + 3));
+  }
+  LoopSnapshotConstruction left(parent, leftChanges), right(parent, rightChanges);
+  size_t turns = 0;
+  while ((!left.complete() || !right.complete()) && turns++ < 10000) {
+    TEST_ASSERT_TRUE(left.step(1));
+    TEST_ASSERT_TRUE(right.step(1));
+    TEST_ASSERT_EQUAL(40, snapshotMembershipCount(parent->noteMembership(60, 0).get()));
+    TEST_ASSERT_EQUAL(15, parent->findNoteAtPitch(1, 60)->endTick);
+    TEST_ASSERT_NULL(parent->findNoteAtPitch(41, 60).get());
+  }
+  TEST_ASSERT_TRUE(left.complete() && right.complete());
+  const auto a = left.freeze(), b = right.freeze();
+  TEST_ASSERT_EQUAL(40, snapshotMembershipCount(a->noteMembership(60, 0).get()));
+  TEST_ASSERT_EQUAL(80, snapshotMembershipCount(b->noteMembership(60, 0).get()));
+  for (unsigned i = 1; i <= 40; ++i) {
+    TEST_ASSERT_EQUAL(i * 10 + 7, a->findNoteAtPitch(i, 60)->endTick);
+    TEST_ASSERT_EQUAL(i * 10 + 5, b->findNoteAtPitch(i, 60)->endTick);
+    TEST_ASSERT_NOT_NULL(b->findNoteAtPitch(40 + i, 60).get());
+  }
+  LoopSnapshotConstruction failed(parent, leftChanges);
+  failed.failAfterUnitsForTest(40);
+  TEST_ASSERT_FALSE(drainSnapshotConstruction(failed));
+  TEST_ASSERT_TRUE(failed.failed());
+  TEST_ASSERT_NULL(failed.freeze().get());
+  for (unsigned i = 1; i <= 40; ++i)
+    TEST_ASSERT_EQUAL(i * 10 + 5, parent->findNoteAtPitch(i, 60)->endTick);
+}
+
+void test_snapshot_reused_membership_preserves_capacity_limit() {
+  const auto parent = buildSnapshotForTests({});
+  LoopSnapshotChangeSet changes;
+  for (unsigned i = 1; i <= kSnapshotMembershipMaxRefsPerBar + 1; ++i)
+    changes.notes.push_back(addSnapshotNote(i, 60, 0, 1));
+  LoopSnapshotConstruction construction(parent, changes);
+  resetSnapshotAllocCounters();
+  TEST_ASSERT_FALSE(construction.step(0));
+  TEST_ASSERT_EQUAL(0, snapshotAllocNodeCount());
+  for (unsigned turn = 0; turn < 2000000 && !construction.failed() &&
+       !construction.complete(); ++turn)
+    construction.step(1);
+  TEST_ASSERT_TRUE(construction.failed());
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopSnapshotFailureReason::MembershipCapacity),
+                    static_cast<int>(construction.failureReason()));
+  TEST_ASSERT_NULL(construction.freeze().get());
+  TEST_ASSERT_EQUAL(0, snapshotMembershipCount(parent->noteMembership(60, 0).get()));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_snapshot_batch_reuses_private_index_nodes);
+  RUN_TEST(test_snapshot_reused_edits_isolate_parent_sibling_and_failure);
+  RUN_TEST(test_snapshot_reused_membership_preserves_capacity_limit);
   RUN_TEST(test_snapshot_release_shared_root_is_one_unit_and_readable);
   RUN_TEST(test_snapshot_release_unique_graph_is_quantized_and_releases_all_leaves);
   RUN_TEST(test_snapshot_release_preserves_shared_descendants_during_every_grain);

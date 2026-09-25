@@ -295,6 +295,7 @@ struct MutableMembershipEdit {
   uint32_t barIndex = 0;
   std::shared_ptr<SnapshotMembership<Reference>> membership;
   uint16_t pageCount = 0;
+  SnapshotMembership<Reference>* tail = nullptr; // owned by membership's chain
 };
 
 template <typename Reference>
@@ -833,7 +834,8 @@ struct LoopSnapshotNoteBarApply {
         currentMembership = edit.membership;
         currentPageCount = edit.pageCount;
         mutationPage = currentMembership.get();
-        appendPage = currentMembership.get();
+        appendPage = edit.tail;
+        membershipCopy.sourceWasEmpty = false;
         barStage = currentBarRemovesReference ? BarStage::RemoveReference
                                               : BarStage::AppendReference;
         return true;
@@ -850,7 +852,8 @@ struct LoopSnapshotNoteBarApply {
     const size_t pageOffset = pageOffsetForBar<LoopSnapshotNoteRef>(currentBarIndex);
     currentPage->memberships[pageOffset] = currentMembership;
     membershipEdits.push_back(
-        {currentDirectory, currentBarIndex, currentMembership, currentPageCount});
+        {currentDirectory, currentBarIndex, currentMembership, currentPageCount,
+         membershipCopy.tail.get()});
     mutationPage = currentMembership.get();
     appendPage = membershipCopy.tail.get();
   }
@@ -878,6 +881,15 @@ struct LoopSnapshotNoteBarApply {
 
   bool finishCurrentBar(LoopSnapshot& snapshot) {
     snapshot.spanRoot_ = nextRoot;
+    if (currentBarAppendsReference) {
+      for (auto& edit : membershipEdits) {
+        if (edit.directory == currentDirectory && edit.barIndex == currentBarIndex) {
+          edit.pageCount = currentPageCount;
+          edit.tail = appendPage;
+          break;
+        }
+      }
+    }
     currentBarActive = false;
     currentMembership.reset();
     currentPage.reset();
@@ -1085,7 +1097,8 @@ struct LoopSnapshotEventBarApply {
         currentMembership = edit.membership;
         currentPageCount = edit.pageCount;
         mutationPage = currentMembership.get();
-        appendPage = currentMembership.get();
+        appendPage = edit.tail;
+        membershipCopy.sourceWasEmpty = false;
         barStage = currentBarRemovesReference ? BarStage::RemoveReference
                                               : BarStage::AppendReference;
         return true;
@@ -1102,7 +1115,8 @@ struct LoopSnapshotEventBarApply {
     const size_t pageOffset = pageOffsetForBar<LoopSnapshotEventRef>(currentBarIndex);
     currentPage->memberships[pageOffset] = currentMembership;
     membershipEdits.push_back(
-        {currentDirectory, currentBarIndex, currentMembership, currentPageCount});
+        {currentDirectory, currentBarIndex, currentMembership, currentPageCount,
+         membershipCopy.tail.get()});
     mutationPage = currentMembership.get();
     appendPage = membershipCopy.tail.get();
   }
@@ -1148,6 +1162,15 @@ struct LoopSnapshotEventBarApply {
 
   bool finishCurrentBar(LoopSnapshot& snapshot) {
     snapshot.eventRoot_ = nextRoot;
+    if (currentBarAppendsReference) {
+      for (auto& edit : membershipEdits) {
+        if (edit.directory == currentDirectory && edit.barIndex == currentBarIndex) {
+          edit.pageCount = currentPageCount;
+          edit.tail = appendPage;
+          break;
+        }
+      }
+    }
     currentBarActive = false;
     currentMembership.reset();
     currentPage.reset();
@@ -1281,7 +1304,7 @@ LOOP_COLD_MEM void LoopSnapshotConstruction::handoffLoopLengthTicks(
 
 LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
     uint32_t playheadPhaseTick) {
-  if (noteApply_) {
+  if (noteApplyActive_) {
     if (!noteApply_->applySoonestBar(candidate_, playheadPhaseTick)) {
       failureReason_ = noteApply_->pageCapacityExceeded
                            ? LoopSnapshotFailureReason::MembershipCapacity
@@ -1289,12 +1312,12 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
       return false;
     }
     if (noteApply_->done()) {
-      noteApply_.reset();
+      noteApplyActive_ = false;
       ++nextChangeIndex_;
     }
     return true;
   }
-  if (eventApply_) {
+  if (eventApplyActive_) {
     if (!eventApply_->applySoonestBar(candidate_, playheadPhaseTick)) {
       failureReason_ = eventApply_->pageCapacityExceeded
                            ? LoopSnapshotFailureReason::MembershipCapacity
@@ -1302,7 +1325,7 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
       return false;
     }
     if (eventApply_->done()) {
-      eventApply_.reset();
+      eventApplyActive_ = false;
       ++nextChangeIndex_;
     }
     return true;
@@ -1319,22 +1342,24 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
                                                      : true;
       }
     }
-    noteApply_ = std::make_unique<LoopSnapshotNoteBarApply>();
+    if (!noteApply_) noteApply_ = std::make_unique<LoopSnapshotNoteBarApply>();
     if (!noteApply_->begin(candidate_, incoming, constructionSpanRoot_)) {
       noteApply_.reset();
       failureReason_ = LoopSnapshotFailureReason::Allocation;
       return false;
     }
+    noteApplyActive_ = true;
     return applyNextBar(playheadPhaseTick);
   }
   const size_t eventIndex = nextChangeIndex_ - changes_.notes.size();
-  eventApply_ = std::make_unique<LoopSnapshotEventBarApply>();
+  if (!eventApply_) eventApply_ = std::make_unique<LoopSnapshotEventBarApply>();
   if (!eventApply_->begin(candidate_, changes_.events[eventIndex],
                          constructionEventRoot_)) {
     eventApply_.reset();
     failureReason_ = LoopSnapshotFailureReason::Allocation;
     return false;
   }
+  eventApplyActive_ = true;
   return applyNextBar(playheadPhaseTick);
 }
 
