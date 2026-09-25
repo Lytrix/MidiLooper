@@ -4848,26 +4848,44 @@ Behavior preservation is structural: no resource call moves in this slice, so
 
 ### Completion record (2026-09-25)
 
-Landed `include/Utils/WorkingSetLease.h` — `WorkingSetRole` bitmask (composable), `WorkingSetLease`
-identity (`slot + generation + role`), declared `WorkingSetLeaseCaps`, and `WorkingSetLeasePool`
-(`acquire` / `release` / `releaseAllRoles` / `isHeld` / `holderCount` / `rolesHeldAtSlot`). The pool
-holds counts only: acquisition and release are O(1), allocate nothing, and report `CapReached`,
-`InvalidRole`, `NotHeld` or `StaleGeneration` instead of growing or asserting.
+Landed `include/Utils/WorkingSetLease.h` — composable `WorkingSetRole`, generation-qualified
+identity, `WorkingSetLeaseSlot` (the per-slot lease a `LoopPlaybackRuntime` carries),
+`WorkingSetLeaseTable<MaxSlots>` (the multi-slot census S4.1 needs), and declared `WorkingSetLeaseCaps`.
+Every operation is O(1) and allocates nothing; `CapReached` / `InvalidRole` / `NotHeld` /
+`StaleGeneration` are reported rather than resolved by growing or asserting.
 
-Two contract facts the first fixtures corrected, both now enforced by tests: a **composite** role set
-(`PlaybackWindow | LiveCapture`) is valid and must not be mistaken for an undeclared role — the first
-implementation tested `workingSetCapFor(role) == 0`, which is true for any composite set and refused it;
-and `holderCount` counts **distinct identities per class**, so one composite lease is one playback
-holder and one capture holder, not two of either.
+**Wired to the real admission points (behavior unchanged):**
 
-`test/test_working_set_lease` — 11 cases green; full native **2,434 passed / 1 skipped** (the
-vocabulary adds a suite without touching a production TU): composable roles on one identity, generation-qualified
-identity, invalid role, generation-mismatched release as a reported no-op, unheld release, total release
-(all roles at an identity; another generation untouched), cap breach reported without growth, composite
-lease refused when any named class is full, per-class census, and the default caps matching the measured
-envelope (8 / 1 / 1 / 1).
+- `Track::prewarmPlaybackForSlot` — after the reserves it already established succeed, the record
+  arm records `PlaybackWindow | LiveCapture` on that slot's runtime. `ok` still decides admission;
+  no resource call moved, and capture admission is not newly gated on the lease.
+- `Track::admitOverdubStartWorkingSet` — the boot-cold overdub-start path records the same set, so
+  the two cold admission points cannot disagree about who owns the slot.
+- `TrackManager::prewarmPlaybackRuntime` now calls the new `Track::prewarmBootPlaybackRuntimeSlots()`,
+  which carries the **same** predicate and the same `prewarmPlaybackForSlot(s, false)` body, so boot
+  behavior is identical while the slot's owner holds the admission rule.
 
-**Not converted:** no production call site routes through the pool yet. `prewarmPlaybackForSlot`,
-`admitOverdubStartWorkingSet` and the accepted stop's park still own their resources directly, so no
-behavior changed and `test_playback_prewarm` is untouched. That routing — and the S3.2 liveness
-predicates whose fixtures it needs — is S3.1's open remainder.
+**RAM1 accounting (why the lease sits on the per-slot runtime):** the first cut put the table on
+`TrackPlaybackRuntime`, which is a by-value member of the 8-way `Track` array, so 16 B there costs
+128 B of DTCM. The `sizeof(Track) == 384` pin rejected it — correctly, and it also caught a real
+defect in that edit (the cleanup had deleted `runtimeBySlot_`, which the pin reported as the wrong
+size). The table is not needed per-track: `LoopPlaybackRuntime` **is** the per-slot working set and is
+externally allocated, so the 3-byte `WorkingSetLeaseSlot` member there costs no DTCM.
+`sizeof(LoopPlaybackRuntime)` stays 6,344 and `sizeof(Track)` stays 384 (both pins still active). The
+capture-serial budget moved `code 391,960 → 391,912` and `padding 1,256 → 1,304`: **no `variables`
+growth**, +48 B of code.
+
+**Two contract facts the fixtures corrected:** a composite role set is valid and must not be read as
+an undeclared role (the first cut tested the single-class cap lookup against the combined bitmask), and
+the generation check must precede the empty-role check in `release`/`releaseAll` — otherwise the
+previous holder's late release after reuse is misreported as `NotHeld` instead of `StaleGeneration`,
+which is exactly the S4.2 discrimination.
+
+`test/test_working_set_lease` — 11 cases green; full native **2,434 passed / 1 skipped**, including
+`test_playback_prewarm`, so the routing is behavior-preserving.
+
+**Still open (S3.1 remainder):** nothing calls `releaseWorkingSetLease` / `releaseAllWorkingSetLeases`
+yet — release belongs to S4.1, which is why the generation never advances in this slice and the lease
+is currently write-only. S4.1's release should call `releaseAllWorkingSetLeases()` on the slot runtime,
+and S4.2's `captureStopOwner` generation should read `workingSetGeneration()`. The S3.2 liveness
+predicates are the other half of this task.
