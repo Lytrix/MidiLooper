@@ -1279,3 +1279,9 @@ published/borrowed artifacts that cannot be repurposed even after preparation -
 the views, the selected bridge, `bridgeBases`, `preparedCompanionHistory_.rows`
 (becomes canonical history) and the transfer-horizon rows (become committed chunk
 refs).
+
+### Explicit stopped heap diagnostic
+
+`MemoryMonitor::emitStoppedHeapStats` is a synchronous, explicit session-capture diagnostic (DEC-084 — explicit stopped heap inspection), never a scheduled runtime/admission operation. The serial entry rejects transport, external clock, active track/capture/stop work and deferred save/load/prewarm before inspecting allocator state. Internal traversal caps at 4096 nodes; external traversal is bounded by pool size / 12 header positions (plus allocator trailer validation). It can block main-loop service: the host must keep MIDI clock/transport quiet throughout. Completeness and elapsed microseconds are returned; no allocation probes or metadata mutations occur.
+
+The diagnostic clock guard also requires one second without a received MIDI clock pulse, tracked before ClockManager’s stopped-transport early return. This capture-only timestamp bookkeeping performs no allocation or heap inspection. Diagnostic timestamps are initialized during ClockManager setup.

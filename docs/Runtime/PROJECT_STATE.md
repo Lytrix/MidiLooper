@@ -1,5 +1,198 @@
 # Project state (execution context)
 
+**2026-09-25 — S1.6c.2 — snapshot construction reuse implemented, device gate open.** Candidate-private pitch/page/membership edits now persist across one construction (DEC-085), with cached tail/count updates and cached-event sort-state reset. Native **2,402 passed / 1 skipped**, focused snapshot **42/42**, target build green; RAM1 unchanged (code391,368 + padding1,848; variables96,160; locals34,912). Image `94b09b51…`. Fresh N=56 census: external payload **7,006,576 → 3,238,256 bytes**, snapshot slabs **151 → 36**; all 64 observed slot records match the earlier census (both lack consistent-view attestation). This saves **3,768,320 bytes (~3.59 MiB)** without deleting content or shrinking the capture ring.
+Stopped-only follow-up (`captures/snapshot-reuse-24bar/stopped-heap.log`): internal arena356,800B, allocated chunk bytes199,392B, free chunks157,408B, largest free chunk122,768B, unused tail12,288B; external payload5,246,288B, free3,100,380B, largest request3,046,620B. Both scans complete. This disproves interpreting the *stopped* 12KiB tail as total available heap. It does not retroactively measure free lists at the earlier live refusals; tail-based snapshot admission remains the next hypothesis to verify without live scans. No leak/fragmentation verdict from this one stopped reading.
+
+
+The stress rerun is **INVALID_TARGET_INTERRUPTED**, not acceptance: configured track8/slot4 but the no-clear harness armed selected **track8/slot1**, recorded/overdubbed and persisted `slot:7:0`. Interrupted and explicitly stopped; `STOP_STATUS` confirms STOPPED/pending=0. No clear/delete/rename or cleanup. User reports device85.4BPM, explaining host24-bar timing yielding17devicebars (13,056ticks). No fatal/external refusal, but seven late `snapshot_reserve/heap_low` rows and minimum heap tail12KiB mean overall heap correctness remains open. Host precondition now fails before gestures unless the latest device-time DISP since track selection verifies the configured slot; host tests56/56. No further content runs until the selection fixture is corrected. Role-specific reservations remain unchanged pending their transition/admission contract. Evidence: `captures/snapshot-reuse-preflight/`, `captures/snapshot-reuse-24bar/`, `captures/snapshot-reuse-image/`. Recorded in local runtime checkpoints; capacity acceptance remains open.
+
+
+**2026-09-25 — S1.6c.1 — known owner lifetime fixes delivered in the working tree:** whole-take release now frees origin/rank side arrays (24,576 bytes of previously retained payload); draw-source compose reuses pending-paint backing, filters slide inclusion in place, and retires obsolete paint before allocating a larger copy. Selected-bridge authority and compose/paint separation preserved. Red→green regressions; focused 301/301, full native **2,399 passed / 1 skipped**; capture-serial SUCCESS, RAM budgets unchanged. Final image `10695e07…`. **Capacity is not fixed:** the same N=56 24-bar HITL (`captures/heap-ownerfix-24bar-02`) still fatals ~47.62 s into RECORD on a 6,096-byte DisplayNote vector reserve, before overdub. S1.6c — owner correction/capacity revalidation remains open. No live heap scan or content-clearing workaround. Board recovered: N=56, chunks403, target empty, zero differences in compared content fields across 64 slots. Edits uncommitted.
+
+
+**2026-09-25 — S1.6b — original workload rerun:** same effective N=56 24-bar record/24-bar overdub configuration, user track 8 slot 4, no CLEAR, image `a71b50eb…`. `captures/heap-rerun-24bar-01/` reproduces fatal exhaustion ~32.08 s into RECORD: 8192-byte DisplayNote vector growth request, caller `0x6008c919`, external live 8144 KiB / 1176 blocks, reported internal tail 8 KiB. No overdub or record stop reached; harness SERIAL_INCOMPLETE. No heap scan during the workload. Stopped preflight scan complete; no same-boot after-sample because firmware aborted. Recovery returns N=56 / 403 free chunks, target empty, zero differences in 10 compared content fields across 64 slots (not a byte/write guarantee; observation consistent_view=false is not a new stability proof). Exact display container and leak/fragmentation remain unresolved. Evidence: active runtime review packet and `captures/heap-rerun-24bar-01/result-summary.json`. No firmware/script changes in this rerun; OpenSpec gates remain unchanged.
+
+
+**2026-09-25 — S1.6d — stopped heap diagnostics:** added capture-only `!HEAP_STATS` under MemoryMonitor. No periodic/live allocator inspection or allocation probes. Refuses transport, active tracks/capture/stop work, deferred storage/prewarm, selected external clock, and pulses received within the last second. Raw allocator chunk/gap metrics, unused internal tail, completeness and scan duration are separate. DEC-084 records the explicit stopped/clock-quiet exception. Native **2,394 passed / 1 skipped**, focused diagnostic **5/5**, capture-serial build green (RAM1 variables 96,160; code 391,368; padding 1,848; locals 34,912). Initial stopped readings complete in ~49 ms; final stopped/clock-refusal device gate passed in `captures/stopped-heap-03/` (exact refusal, no scan). S1.6d is checked. Work remains uncommitted. This adds evidence, not a malloc leak verdict or the S1.6c — owner correction; capacity gates remain open.
+
+
+**2026-09-25 — S1.6 heap correctness:** physical external accounting now excludes internal
+fallback, balances tags on address reuse, and reuses saturated-table tombstones. Three native
+red regressions → 5/5; full native 2,389 passed / 1 skipped; capture-serial green and flashed,
+RAM1 unchanged. Capacity sweeps remain paused. The N=56 canonical 24-bar run still fails in
+recording: 5,216-byte request from `DisplayManager::resolveDisplayNotesByDrawSource`, resolved
+against pinned ELF, external live8,142KB with no accounting misses. This is not attribution of
+the older 8KB request or proof of a leak. S1.6a is complete; S1.6b allocation/lifetime attribution
+and S1.6c owner fix remain open, as do S1.5 overdub refusal and S2b.3 workload-peak budget.
+See active runtime-working-set-ownership ARCHITECTURE-REVIEW.md § S1.6 and
+`captures/heap-attribution-24bar-01/allocation-attribution.json`. Earlier lower-N/reclassify
+recommendations are superseded by this heap-correctness priority. Work is uncommitted.
+Recovery confirmed N=56 / 403 free chunks, zero observed content-field differences across
+64 slots, and the failed target still empty. Board recovered; no clear/delete/rename.
+
+
+**2026-09-25 — S1.5 device refusal-point attempted on the N=56 library: REFUSED IN THE RECORD PHASE, so the overdub reserve admission was never reached. S1.5 stays open.**
+Pinned capture-serial image `b289af53…`, git `1ccff16a`; target **user track 8 slot 4**
+(verified empty, authorized this session); fixture `STIM-BASE-2-2-01-TEMP-S15-24BAR` — the RWSO-24CAP
+canonical shape with `--record-bars 24 --overdub-bars 24` and `--no-clear-before-record`. Pre-flight
+(read-only): complete 64/64 observation, payload 59, initial playback 8, committed 56
+(pass-backed 56 / root-backed 53), `chunks_free 403`, `live 6846 KB`, `heap_free 84 KB`, target empty.
+The device entered RECORDING at 89.169 s; from 91.961 s `snapshot_reserve` denied every ~1 s
+(`need=40960B`, `heap_free` 68 → 0 KB over 39 denials); at 130.538 s
+`MEM_EXT_REFUSED bytes=8192 tag=0 heap_free=0KB live=8527KB chunks_free=391` plus the fatal exhaustion
+line, then no response (no crash report, no reboot). `Overdubbing started` = **0** and
+`op=overdub_start` denials = **0**, so the **overdub reserve admission was never reached** — this is the
+S1.3 record-phase hard-failure class (internal heap, not chunks: 391 of 512 free; `snap` unchanged),
+not the S1.5 overdub-refusal clause. Bracket **(2, 56]**: admitted at the 2-slot RWSO-24CAP library
+(2026-09-23), refused here; S1.3's 2-bar slope recorded its first named denial at N = 55.
+
+Recovery boot is identical: banner, `reconcile=0`, all readiness fields, complete observation,
+payload 59, initial playback 8, committed 56 (56/53), **0 content-field differences over all 64 slots**,
+target (8,4) still empty, `chunks_free 403`, `live 6842 KB`. No clear/delete/rename; only the authorized
+target was addressed.
+
+**S1.5 remains open.** The next bounded step is a target that lets the 24-bar loop exist at an N with
+internal-heap headroom (record it, then overdub it), or an explicit decision to treat the N = 56
+record-phase refusal as the S1.5 / S2b.3 capacity boundary. No firmware change and no `DEC-###` owed.
+Evidence `captures/s15-24bar-t8s4-01/refusal-analysis.json`, `captures/s15-preflight-01/`,
+`captures/s15-recovery-02/`; full record
+[`runtime-working-set-ownership/ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ S1.5 — device refusal-point result. Work remains uncommitted on `feature/runtime-working-set-ownership`
+(HEAD `1ccff16a`).
+
+**2026-09-25 — S1.3 residency slope COMPLETE: dense probe reached hard allocation failure.**
+The fixed-role two-bar slope remains N=10..56 (46 verified additions). A separate dense
+four-bar probe at N=56, user track 8 slot 4, supplied a one-clock note cadence across pitches
+0–127. Recording started; at 41.448245 s device time, before record stop, the allocator refused
+8,192 bytes with 4 KB internal heap free (`tag=0`) and emitted the fatal exhaustion line.
+This is the measured failure point for this library/workload, not a universal smallest N or a
+64-bar capacity claim. The untagged allocating caller is not identified. The last sampled free
+chunk count was 393: do not classify this as chunk-count exhaustion.
+
+The failed take had no verified persisted payload; the fixture withheld its survival reboot.
+Separate crash recovery and a final read-only boot confirm the original 56 loaded slots,
+unchanged other observed content fields, matching boot roles, and an empty failed target.
+Board is stopped at track 6 slot 3. No clear/delete/rename or existing-slot overwrite.
+
+S1.3 is checked: measured slope plus hard failure/error, alongside the previously completed
+synthetic 60-descriptor characterization. S1.5 — 24-bar overdub refusal, S1.4 — undo/pin baseline,
+S2b.3 — workload-peak budget and the other device gates remain open. No S3 — lease ownership start.
+Host tests **42/42**, OpenSpec/diff checks pass. No firmware edits/build this slice; pinned image
+`b289af534577e25b57c52146b27f66c245c97f43a5028fc10a37b9a8a9bbd208` reused.
+Evidence: `captures/s13-dense-evidence/pressure-result.json`, `captures/s13-dense-t8s4-01/`,
+`captures/s13-dense-recovery-01/result.json`; existing slope in `captures/s13-slope-evidence/extended-slope.json`.
+Work remains uncommitted on `feature/runtime-working-set-ownership` (HEAD `1ccff16a`).
+
+<!-- S13_EXTENDED_PROGRESS_BEGIN -->
+**Historical checkpoint — superseded by dense-probe completion above: S1.3 extended sweep N=10..56.**
+46 two-bar additions passed exact 62-event / 1,536-tick SD/RAM survival before and after reboot.
+All boot roles stayed fixed; no other observed content fields changed; 45 repeated intermediate
+owner baselines matched exactly. Free chunks 449->403; snapshot telemetry 2,187->4,196 KB;
+slab-used 2,491->4,774 KB; tracked live 4,221->6,846 KB. Tracked live/high includes the core
+`extmem_malloc` internal fallback and is NOT a physical PSRAM-free oracle.
+
+First named denial occurred at N=55 while recording the 56th slot (user track 8 slot 3):
+`snapshot_reserve / heap_low`, 40,960-byte margin + 32,768-byte floor, heap 48 then 44 KB;
+17 denial lines, zero wrapper allocation refusals. Publication deferred; the take persisted in
+legacy format and survived reboot exactly. This is a temporary publication-admission boundary,
+not a hard residency/canonical failure. S1.3 remained open at that earlier checkpoint;
+S1.5 — 24-bar overdub refusal and S2b.3 — workload-peak reserve remain OPEN. S3 is not started.
+
+Growth stopped at that boundary. The supervisor initially advanced because survival passed;
+the next target (track 8 slot 4) was interrupted during preflight before recording. The host
+runner now returns a stop status on named memory denials even if survival succeeds. Final fresh
+read-only boot confirms 56 loaded, same observed content/roles, stopped focus track 6 slot 3.
+No clearing/deleting/renaming or populated-slot overwrite. User authorization for empty slots
+was sufficient; this stop is a measured boundary, not exhausted authorization.
+
+Evidence: `captures/s13-slope-evidence/extended-slope.json`, `extended-episode-peaks.json`,
+`captures/s13-empty-anchor-t8s3-01/`, `captures/s13-sweep-closeout-01/`. Host tests 40/40;
+OpenSpec validates. Firmware unchanged this slice (SHA256 `b289af53…`, code 391,304 / padding
+1,912); prior native evidence 2,384 passed / 1 skipped remains applicable, not newly rerun.
+Changes remain uncommitted on `feature/runtime-working-set-ownership`.
+<!-- S13_EXTENDED_PROGRESS_END -->
+
+**2026-09-25 — S1.3 fixed-role growth MEASURED, range 10–15 loaded slots.**
+Five two-bar takes into user track 6 slots 4–8 passed exact SD/RAM event-and-length parity
+before and after reboot (62 rows / 1,536 ticks each). All ten boot checkpoints used the same
+stopped transport and boot playback footer; focus was restored to track 6 slot 3. Each loaded-set
+comparison added only its intended target and lost none; existing observed content fields stayed
+unchanged. Four repeated intermediate baselines reproduced every reported owner total exactly.
+Payload inventory stayed **36**; content union/pass count **10 -> 15**, root count **8 -> 13**.
+
+Post-restore free chunks: **449, 448, 447, 446, 445, 444** at N=10..15. Cold reservation walk
+remained **512 -> 480**, all walked credits zero (not workload peak). Snapshot telemetry grew
+**2,187 -> 2,410 KB**, slab-used **2,491 -> 2,745 KB**, live **4,221 -> 4,799 KB**; heap_free
+stayed 84 KB. Live increments are **65, 352, 64, 33, 64 KB**: retain the N=11->12 jump,
+not a single linear per-slot attribution. Subsequent code/capture attribution identifies the 64->65 canonical-chunk backing-block boundary
+(328,448 bytes); see the extended review entry.
+No observed MEM_EXT_REFUSED, MEM_DENIED, FATAL or RING overflow in the ten measurement logs.
+
+**Stopped because all approved empty scratch slots are now populated, not because of capacity.**
+S1.3 and S1.5 remain unchecked: failure point not reached, two-bar workload only. S2b.3 remains
+open because workload peak reservation is unmeasured; S3 does not start. Next device growth needs
+explicit authorization for additional verified-empty slots outside the prior scratch range (the final
+manifest lists candidates), or permission to recycle a named scratch subset. No clear/delete/rename
+or recording outside track 6 slots 4–8 occurred this slice. Board left stopped, focus track 6 slot 3.
+
+Evidence: `captures/s13-slope-evidence/slope.json`; detailed runs `s13-slope-slot4-04` and
+`s13-slope-slot5-01` through `s13-slope-slot8-01`. Full native **2,384 passed / 1 skipped / 0 failures**;
+decoder 51/51; host 35/35; OpenSpec/diff checks pass. Firmware unchanged from the prior green
+capture-serial image (SHA256 `b289af53…`, code 391,304 / padding 1,912); only host tools/tests/docs
+changed this slice. Work remains uncommitted on `feature/runtime-working-set-ownership`.
+
+
+**2026-09-25 — S1.3 controlled one-slot survival PASS (uncommitted branch work).**
+Track 6 slot 3 / `(5,2)` was verified empty, then received one two-bar take. Take identity
+matched start/stop/commit/admitted target. Two full SD reads were identical; the production
+legacy parser with an explicit Teensy event-layout adapter decoded **62 events / 1,536 ticks**,
+exactly equal to stopped RAM. Only then was the unchanged firmware re-uploaded for the survival
+boot. Restored RAM and two new SD reads match all events and the original file hash. Loaded
+union **9 -> 10** (passes 9 -> 10, roots 8 -> 8), payload inventory stays 36 because an existing
+empty payload gained content. Settled free chunks **450 -> 449**; after-boot attested checkpoint
+449. No clear/delete/rename, no non-scratch recording. Evidence:
+`captures/s13-controlled-01/` and `captures/s13-controlled-survival-01/`.
+Verification: full native **2,383 passed / 1 skipped / 0 failures**; host **29/29**;
+firmware build and OpenSpec validation pass.
+This closes the one-slot fixture blocker, not S1.3's multi-point slope or S1.5's refusal point.
+Next: define fixed-focus/active-role cohorts within the remaining approved scratch slots, compare
+complete content sets (detect eviction), and measure through the first classified failure. The
+selected/initial-playback slot changed in this fixture, so its one-chunk difference is descriptive,
+not an isolated per-slot slope. S2b.3 still needs workload peak reservation; S3 remains gated.
+
+
+Native evidence recorded: each denied/cancelled slot retains 16,384 fixed event-capacity units
+and 8 canonical credits; same-slot retry reuses measured buffers, three slots total 49,152 units.
+Full native: **2,379 passed / 1 skipped / 0 failures**; focused 99/99; host 23/23.
+See `captures/s13-native-cancel-retention/`. No production cleanup fix or device claim.
+
+
+**2026-09-25 — S1.3 native retention characterization:** failed record admission followed by
+real manager cancellation retains the slot's prewarmed fixed event buffers and canonical credits.
+Repeating the same slot reuses the measured buffers; distinct slots retain distinct sets.
+This supports the existing per-slot ownership diagnosis, not an exact device-byte attribution
+or a new capacity/slope checkoff. Firmware and board untouched in this slice.
+
+
+**2026-09-25 — S1.3 continuation: stopped readback recovered without reset; arm capacity refusal.**
+Explicit MIDI Stop made identity stats and library observation available on the same boot. The
+settled observation reports 36 payloads / 9 loaded slots; track 6 slots 3-8 have no committed events.
+The repaired fixture handles selection-created ARMED, explicit MIDI Start/Stop, and delayed RID.
+Final attempt on track 6 slot 4 refused record_start/prewarm_failed (4096-byte external refusal;
+heap_free=4KB). No stimulus notes; failure Stop confirmed by stats. Earlier slot-3 attempt started
+an empty recording and was stopped in the next run, length=0. No clearing, reboot, or firmware edit.
+23 host tests pass. Added-population range remains 0: this warmed-state refusal is not a slope
+or controlled capacity checkoff. Next is native prewarm/arm-cancel attribution; SD-event parity
+is still unavailable through the current diagnostic commands. Details in the active review packet.
+
+
+**2026-09-25 — S1.3 residency-slope fixture takeover.** Host regression repaired: note streaming,
+record stop, fresh identity checks and nonzero failure status. Seven new host tests; no device run.
+The unfinished legacy-only synchronous payload probe was withdrawn. Stored-event parity remains
+unverified, reboot withheld, and the earlier “payload did not survive” attribution below is historical
+and superseded by the take-correlation investigation. An enqueued row not yet transmitted at readback
+is outstanding evidence, not proof of permanent ring loss. S3 — lease ownership remains gated.
+
 **2026-09-24 (seventeenth session) — `runtime-working-set-ownership` S1.3 — the content-representation
 correction, and the corrected telemetry CONTRADICTS the "28 root-backed" premise: only 9 of the 36 verified
 payload slots hold content. The slope fixture is blocked at its first step by a saved payload that did not

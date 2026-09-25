@@ -215,3 +215,7 @@ What is **not** per-bar yet:
 - [Display.md](Display.md), [Playback.md](Playback.md) — consumer contracts
 - [note_edit_hydrate_enhancement.md](../../Plans/note_edit_hydrate_enhancement.md) — NOTE_EDIT analyze around `selectedTick`
 - [INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md](../../Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) — allocator tier for cold representations
+
+**Draw-source buffer lifetime (2026-09-25):** `resolveDisplayNotesByDrawSource` borrows the previous pending-paint backing via `DrawSourceComposeScratch` for its synchronous candidate. Adoption swaps the candidate into `liveDisplayNotes`; old compose storage returns to pending paint before copying/transforms. If the existing handoff frame remains authoritative, it is not swapped or mutated. Scope exit returns borrowed storage. No new persistent buffer or display-authority change; slide inclusion filtering now preserves capacity in place.
+
+Pending-paint growth explicitly retires obsolete backing before copy assignment when the composed source exceeds capacity. This avoids target libstdc++'s allocate-copy-free overlap; compose remains intact and capacity-fitting frames retain reuse. No record/display rows are dropped to fit memory.

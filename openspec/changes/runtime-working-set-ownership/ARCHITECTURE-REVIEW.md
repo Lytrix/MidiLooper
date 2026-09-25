@@ -3714,6 +3714,46 @@ the admitted persist key is asserted to equal the recorded slot before the reboo
    Neither the workload peak nor the verified fixture exists yet, so the task stays open with its full
    arithmetic unexercised.
 
+### Payload oracle, first attempt (2026-09-24, eighteenth session, third round)
+
+Bounded to the chain `take -> stored payload -> restored content`. The read side is now in place; the
+**write side is blocked on the fixture's arm sequence**, which is a harness problem, not a firmware one.
+
+**Landed (read side, all read-only).**
+
+- `!SLOT_PAYLOAD <trackIndex> <slotIndex>` — stopped-only, read-only digest of one slot's **stored**
+  payload (`src/StorageManager/SlotPayloadProbe.cpp`): path, file size, epoch wrapping, format, per-pass
+  `id/type/sealedAt/events`, and an FNV-1a digest over the exact event bytes. It streams the file, never
+  writes, publishes, adopts or touches the pool, and the wire format it decodes is the writer's own
+  (`writeLegacyLoopPersisted` + `writeCapturePassSlotFileHeader`).
+- **Format-aware, because the first attempt mis-parsed a real file**: an LSV1 body is a sectioned snapshot
+  container, and decoding it as a legacy header produced `passes=393216, events=16777216` on a 3,524-byte
+  file. The probe now runs `probeLoopSnapshotBodyFormat` first and answers
+  `SLOT_PAYLOAD,not_decodable,...,reason=non_legacy_body_use_boot_content_dump` for a non-legacy body
+  instead of inventing numbers. **A legacy payload is therefore required for this oracle** (or the boot
+  content dump for an LSV1 slot).
+- The single-session fixture gained channel-readiness retry (measured: silent at +2 s after a flash,
+  answering by +5 s) and reads the stored payload on the same connection before the close.
+
+**Blocked: the fixture cannot arm a fresh take on the pinned slot with a single record press.**
+Ordered device evidence (`captures/s13-payload-04/session.log`):
+
+| time | device |
+|---|---|
+| 6.365 s | already in `LOOP_EDIT` at boot (so a `Loop N` press refreshes it, it does not cause it) |
+| 9.001 s | `Global Transport` → `Transport started` |
+| 10.308 s | `Loop 2` short press |
+| 11.604 s | `Global Transport` → `Transport stopped` |
+| 13.206 s | `Record/Overdub (short)` → **`Toggle Play/Stop`** |
+| 18.629 s | `Record/Overdub (short)` → **`Live Overdub`**, `Overdub session opened: events=0` |
+
+So a short `Record/Overdub` press is **context-dependent** on this state and neither outcome arms a fresh
+take; the take never reaches `Recording started`, and the fixture now refuses to stream notes or read a
+payload in that case (it exits with `take_not_armed` rather than producing an unarmed "payload result").
+The record harness succeeds because `_run_record_arm_until_capturing` drives an **arm loop** with serial
+confirmation, not one press; the next bounded step is to adopt that loop in the single-session fixture.
+**No reboot, no clear, and no payload claim is made from the unarmed runs.**
+
 ### Pinned fixture parameters (S1.3 slope, S1.1 owner census, S2b.3 post-restore budget)
 
 ### Recorded-slot → persistence-target correctness, instrumented (2026-09-24, eighteenth session, second round)
@@ -3867,3 +3907,814 @@ that departs from them is not the pinned measurement.
    at/below the reserve) **within the authorized population**. If the sweep reaches the end of the
    authorized range with no refusal, that is **not** a capacity finding: report the measured range and
    leave **S1.5 — refusal point** open.
+
+
+## S1.3 — takeover: restore a discriminating single-session identity fixture (2026-09-25)
+
+Scope: host fixture repair, removing the unfinished payload probe from the firmware command path.
+Preserved the incoming draft and diff in `/tmp/runtime-takeover-20260925/`. The draft had removed
+note generation, record stop and transport stop, stopped selecting the requested slot, and accepted
+`Loop ` as recording evidence. It could not establish a take or payload survival. Its synchronous
+legacy-only SD decoder had no load/persistence admission and rejected LSV1; it is not an acceptable
+payload oracle. No persistence or capture behavior change is part of this repair.
+
+Execution packet: reuse the existing one-connection Session and RID identity fields. Require a fresh
+RID start for the requested track/slot before sending notes, then record-stop confirmation, global
+transport-stop confirmation, and a fresh after-take admission identity matching every boundary.
+A queued but untransmitted RID is reported as outstanding at the sample, never inferred lost.
+Missing/ambiguous evidence aborts with nonzero status; reboot remains withheld even on identity PASS,
+because stored event parity is a separate, still-unimplemented oracle. Explicit serial selection must
+never silently choose another device. No CLEAR, reboot, payload probe, or new firmware instrumentation.
+
+Tests: fake serial/MIDI adapters execute the production host orchestration. Cases cover normal order,
+false Loop/overdub markers, stale/wrong-slot start, absent stop, absent or mismatched admission, and
+configured note channel. Baseline regression: incoming draft never streams/stops and its generic Loop
+marker accepts non-recording UI. Host parser and identity tests plus Python compilation are required.
+Device result: NOT RUN until fixture repair passes; no firmware gate is claimed from host tests.
+Decision review: existing HITL Session/RID owners reused; no new runtime owner, timing policy, SD format
+or architecture decision. Relevant standing contracts are capture-gated observation and bounded SD
+work; no speculative persistence fix or allocator change.
+
+### Takeover result (supersedes the preceding uncommitted payload-probe draft)
+
+The draft probe was withdrawn, including its serial entry point: it rejected LSV1 and bypassed
+storage scheduling. Historical draft claims that its read side "landed" are not current status.
+Backup: `/tmp/runtime-takeover-20260925/`. Firmware files now match HEAD.
+The host fixture restores note generation and stop actions, requires fresh RID start identity,
+checks every admission boundary, rejects missing baseline evidence before controls, and returns
+exit 2 for inconclusive evidence. A stopped-only stats response establishes global stopped state;
+an arbitrary Track transition does not. Pending ring output is not classified as loss.
+Seven host tests exercise production orchestration and note streaming; no hardware run was made.
+Stored event parity and survival remain open. Do not infer payload success from file existence/size.
+
+## S1.3 — empty-target, stopped-session continuation (2026-09-25)
+
+Execution packet: extend the existing single-session diagnostic, host-only. The oracle is a
+complete 64-slot observation, settled restore requests, verified/absent payload for the target,
+and zero target committed content/length/events before a recording action. Existing metadata-only
+payloads may become nonempty: count the loaded union, not a change in payload-file count.
+Reuse the registered arm sequence (Record -> ARMED -> transport start), protocol transition parser,
+and existing CAPTURE_CONTENT command. No missing-clock transport retry, CLEAR, firmware change,
+reboot, or direct SD probe. An explicit MIDI Stop precedes baseline only when requested.
+Tests cover an armed start and reject populated, pending, invalidated, and incomplete targets.
+On-device scope: at most one take in empty user track 6 slot 3 if the preflight passes;
+track 6 slot 2 is already populated. Reboot remains withheld until stored-event parity is proved.
+
+Read-only preflight plus explicit MIDI Stop: `captures/s13-takeover-preflight/`,
+`captures/s13-takeover-observation/`, `captures/s13-takeover-stopped/`,
+`captures/s13-takeover-settled/`. The ungated library request was acknowledged before Stop;
+after Stop, identity stats and library frames answered. This does not establish a dead command
+channel or a close/reopen fault. Settled observation: payload=36, union=9, pass=9, root=8;
+user track 6 slots 3-8 have verified payloads but zero committed content, length and events.
+`consistent_view=false` is expected for multi-turn collection (`processLibraryObservation` sets
+it after turn 1); no invalidated rows or pending requests remain in the settled observation.
+Firmware identity of these attaches is not independently attested; no boot result is claimed.
+
+### Continuation outcome — device refusal; no slope checkoff
+
+Host tests: `PYTHONPATH=scripts .venv/bin/python -m unittest
+scripts/test_hitl_identity_one_session.py scripts/test_record_stop_persist_target.py` — **23/23**.
+OpenSpec validates; `git diff --check` passes. No firmware source changed, built, or flashed.
+The temporary stimulus descends from STIM-BASE-2-FIXTURE-01 but is an identity-only diagnostic:
+host notes 48-59, six-clock spacing, two bars, no clear/overdub/undo. It is not a canonical baseline pass.
+
+Device attempts (all on the same boot, no reset):
+- `s13-takeover-take-01`: user track 6 slot 3 reached Recording; RID stayed buffered and the
+  host sent no stimulus notes. The first driver did not stop on failure. The next run's explicit
+  MIDI Stop stopped this empty take (`length=0`). This lapse is fixed with failure-stop handling.
+- `-02`: track 6 slot 4 armed but never reached Recording; explicit failure Stop confirmed by
+  stopped-only identity stats. No notes. `-03`: missing-clock arm handling exposed a clock/button
+  toggle race; no Recording and no notes. `-04`: selection had already armed the slot; a redundant
+  Record press cancelled it. The fixture now reuses that arm. No notes.
+- `-05`: track 6 slot 4 passed empty-target preflight and armed; record admission refused:
+  `#MEM_EXT_REFUSED ... bytes=4096 ... live=8389KB ... heap_free=4KB ... tag=13`;
+  `companion_history_reserve/pool_refusing`, then `record_start/prewarm_failed`.
+  See `captures/s13-takeover-take-05/refusal-analysis.json` and `session.log`.
+  No note stream began; failure MIDI Stop followed by stopped-only stats confirms stopped state.
+  Final counters remain take=1, entered=1, enq=1, tx=1 (the earlier empty slot-3 take only).
+
+The final driver recognizes the explicit record-start refusal instead of reporting only the timeout.
+It supports explicit MIDI Start/Stop, supplies clocks during armed-start and stop waits, and requires
+final admission identity to match exactly baseline take+1 and all pinned slot boundaries. A fresh
+human recording-start line is provisional when RID is buffered; final direct readback is mandatory.
+This adjusts the previous pre-stream RID requirement based on observed buffering, not the final oracle.
+
+**S1.3 stays open, measured added-population range=0.** This is an actual admission/capacity refusal
+in the present warmed runtime, not a controlled increasing-N failure point. Do not check S1.5 off.
+The initial RAM census changed during fixture attempts; do not fit a slope from these runs.
+The installed firmware hash is not independently attested, so these are diagnostic attaches, not a
+new final-firmware gate. No CLEAR, SD deletion/rename, or reboot was performed.
+
+Next bounded work: reproduce/attribute prewarm residency across arm/cancel in native tests before
+another hardware growth attempt. Existing owner is Track playback/capture prewarm; do not introduce
+an allocator workaround or start S3 implicitly. Separately, `!CAPTURE_CONTENT` reads **RAM** passes
+(Track::printStoppedCaptureContentForHitl), not an SD payload. Pre-reboot stored-event parity still
+requires a bounded verification path reusing StorageManager's load readers for both legacy and LSV1;
+no such command is currently exposed. A token-only observation or RAM dump cannot substitute.
+
+Read-only owner trace after refusal: `Track::startRecording` denies before resetting passes when
+`prewarmPlaybackForSlot(activeLoopIndex, true)` fails. The latter obtains the slot runtime and
+calls `prewarmViews`, canonical-output reservation and later preparation while accumulating `ok`;
+this is not an atomic all-or-nothing allocator transaction. Retained per-slot derived capacity is
+within the main change's ownership problem. The existing native `test_record_arm_admission_is_repeatable`
+asserts three successful grants on **one slot**, not byte stability or cross-slot cancellation.
+Its former claim that it "exonerates" arm residency was removed, along with the stale test comment
+claiming device-proven wrong-target persistence. No test behavior changed by those corrections.
+
+## S1.3 — native failed-admission/cancel retention packet (2026-09-25)
+
+Scope: characterization in the existing continuous-capture harness, no firmware change.
+Use real Track::startRecording and TrackManager::cancelPendingRecordArm; force the existing
+MemoryMonitor reserve-denial boundary, then observe prewarmed view/staging capacity and canonical
+credits before/after cancel. Compare repeat attempts on one slot with attempts on distinct slots.
+The denial injection identifies partial-admission ownership, not the device allocation byte limit.
+No new lease policy, cleanup behavior, or hardware slope checkoff is authorized by this measurement.
+Required evidence: successful control already covered by the admission test; new fixture must show
+no admitted capture or populated content, real cancelled arm, and report retained owner capacities.
+
+### Native retention result
+
+`test_s13_failed_arm_cancel_retains_distinct_slot_capacity` passes through the real
+`TrackManager::startRecordingTrack` stopped-clock arm, `Track::startRecording` with the existing
+forced reserve denial, and `TrackManager::cancelPendingRecordArm`. It verifies no capture or
+committed content was admitted and the pending arm clears. After cancel, each touched slot retains
+**16,384 fixed event-capacity units and 8 canonical chunk credits**. Three distinct slots retain
+16,384 -> 32,768 -> 49,152 event-capacity units. A second attempt on the same slot preserves the
+measured capacity and live-staging allocation address. These counts cover view, bridge-base,
+staging and prepared-pair event capacities; they are neither total resident bytes nor device bytes.
+The canonical credits are additional ownership and must not be summed as event capacity.
+
+Harness correction: `ClockManager::shouldQuantizeRecordStart` was hardcoded true even when
+`nativeTransportRunning=false`. It now returns `isTransportRunning()`, matching production's
+clock-running predicate. The old stub drove the new test down the running-clock reclaim path
+instead of the stopped arm path; the fail-closed boundary exposed this before any false result.
+
+Validation: focused **99/99**; full native **2,379 passed / 1 skipped / 0 failed**; host **23/23**;
+OpenSpec and diff checks pass. Verbose repeat collected the otherwise hidden capacity output.
+Evidence: `captures/s13-native-cancel-retention/{measurement.json,native-focused.log,native-all.log}`.
+Firmware/build/upload NOT RUN (test-only changes); board untouched this slice.
+
+Conclusion: rejected admission plus cancelled arm can leave per-slot working capacity resident.
+The measured buffers do not grow on the second same-slot attempt; this is not proof that every
+allocation is stable or that it alone explains the device's 4,096-byte refusal. Production cancellation
+clears flags/state/pre-roll and does not release these runtime owners. The full ownership solution is
+already scoped by S3.2 (liveness predicates) and S4.1 (guarded release); no blanket free-on-cancel was
+added. S1.3 and S1.5 remain open. Future device measurement must begin from a controlled working-set
+baseline, not the accumulated arm-attempt state, and still needs the pre-reboot SD-content oracle.
+
+## S1.3 — bounded SD byte readback execution packet (2026-09-25)
+
+G0 VERIFIED: CAPTURE_CONTENT is RAM-only. LIBOBS verifies only the file token. LoadLoopJob
+supports both body formats but its error paths reset live slots/retry and its success publishes;
+it is not a read-only inspection API. CurrentWorkspaceStorage supplies the outer-header reader,
+and StorageLoopIo supplies legacy/LSV1 host-compatible parsers. LibraryObservationSession already
+owns SD observation admission. DEC-083 bounds observation; DEC-073 governs root currency.
+G0 PASS for an observation extension, no ownership transfer or format change.
+
+G1: Stateless 64-byte page output, existing StorageManager owner/admission, SESSION_CAPTURE gate.
+One open/seek/read/close per request plus bounded token/header inspection. No file handle or parsed
+snapshot survives a board command. No per-slot/global RAM1 state, no growing PSRAM allocation.
+Stopped only; reject active/queued persistence, load session/job or capture. Explicit slot indices,
+fixed path formatter; no arbitrary paths. Response carries size, body offset, set epoch and RAM
+publication fingerprints. Host rejects changing identity/size/offset, malformed/short pages and
+non-token files. Two identical full reads are required, then native production parsers decode the
+payload; compare event rows against the stopped RAM oracle, not merely byte count or token.
+
+G2 adversarial review: busy SD owner -> refuse, never wait; invalid slot/offset -> refuse before
+read; no publication/retry/reset on missing/corrupt file; stopped capture/overdub -> refuse; serial
+backpressure -> do not read until sufficient TX capacity; partial response -> host fails closed;
+mid-read save/change -> busy or fingerprint mismatch, plus repeated full read equality. This is a
+controlled idle diagnostic, not an atomic file snapshot under concurrent external card modification.
+No transport hot-path work, no whole-file board parse, no new lease/loader. Native page tests and
+production-decoder format tests precede full native/build gates. Device upload only for dedicated
+HITL evaluation; no clear/delete/rename. Runtime stage gates remain unchanged.
+
+## S1.3 — controlled one-slot survival closeout (2026-09-25)
+
+**2026-09-25 — S1.3 controlled one-slot survival PASS (uncommitted branch work).**
+Track 6 slot 3 / `(5,2)` was verified empty, then received one two-bar take. Take identity
+matched start/stop/commit/admitted target. Two full SD reads were identical; the production
+legacy parser with an explicit Teensy event-layout adapter decoded **62 events / 1,536 ticks**,
+exactly equal to stopped RAM. Only then was the unchanged firmware re-uploaded for the survival
+boot. Restored RAM and two new SD reads match all events and the original file hash. Loaded
+union **9 -> 10** (passes 9 -> 10, roots 8 -> 8), payload inventory stays 36 because an existing
+empty payload gained content. Settled free chunks **450 -> 449**; after-boot attested checkpoint
+449. No clear/delete/rename, no non-scratch recording. Evidence:
+`captures/s13-controlled-01/` and `captures/s13-controlled-survival-01/`.
+This closes the one-slot fixture blocker, not S1.3's multi-point slope or S1.5's refusal point.
+Next: define fixed-focus/active-role cohorts within the remaining approved scratch slots, compare
+complete content sets (detect eviction), and measure through the first classified failure. The
+selected/initial-playback slot changed in this fixture, so its one-chunk difference is descriptive,
+not an isolated per-slot slope. S2b.3 still needs workload peak reservation; S3 remains gated.
+
+
+Implementation: `readSlotPayloadPageForHitl` provides stateless, stopped/admission-gated
+64-byte reads. `!SLOT_BYTES` waits for sufficient TX room before opening SD and returns directly;
+it never publishes/adopts a slot. Host performs two identical reads, checks the envelope/token,
+and compares decoded events with the stopped RAM dump. Firmware SHA256 for both uploads:
+`b289af534577e25b57c52146b27f66c245c97f43a5028fc10a37b9a8a9bbd208`.
+File SHA256 before/after: `1b943c589051ff4b89ff56d4045fe61f460611dbb54bf2aad09a411dbc3955c2`.
+Firmware: RAM1 variables 96,160 / code 391,304 / padding 1,912 / locals 34,912; no rebase.
+
+The first host verdict was inconclusive; read-only reanalysis corrected two verifier assumptions:
+1. Epoch file CRC uses `PersistenceSchema::crc32Continue` in 256-byte grains, including SAVE.
+   Its complement convention differs from a single zlib whole-body CRC. The stored CRC matches
+   the existing firmware exactly; no checksum or file-format firmware change was made.
+2. Legacy event bytes embed the Teensy ABI (20 bytes). Native `MidiEvent` is larger because its
+   SysEx union includes a host pointer. The host IO adapter converts explicit target fields before
+   passing event batches to the production legacy parser. Target SysEx/LSV1 fail closed. Existing
+   native LSV1 tests exercise native-format bytes, not a target LSV1 file. The earlier execution
+   packet's both-format host assumption is narrowed; extending target LSV1 is future observer work.
+The target legacy test is a literal 20-byte event fixture plus production tails; truncated input
+is rejected. CRC test uses an independent bitwise continuation. Firmware was not changed or
+reflashed to repair either host assumption. Original failed verdict retained alongside reanalysis.
+
+The host sent 32 note pairs; this slice compares the 62 committed rows, not intended-stimulus
+parity. It does not certify playback, note-boundary completeness, undo, peak capture reservation,
+or a 64-bar workload. No S1/S2b gate is checked from that narrower result. The after-boot observation
+precedes track selection; payload contents and loaded union are therefore restore evidence.
+Scope stops at the authorized one-slot fixture. No new architectural owner or DEC is introduced:
+this extends DEC-083 observation and retains existing runtime ownership/stage gates.
+
+Validation: full native **2,383 passed / 1 skipped / 0 failed** (2,384 total); target decoder
+focused **50/50**; host **29/29**. Capture-serial build/upload and OpenSpec validate pass;
+diff check clean. Population set comparison adds only `(5,2)`, removes no previously loaded slot.
+Evidence source copies/hash manifest include untracked host files, not just git diff. Work remains
+uncommitted on the feature branch; this is branch verification, not a dev release.
+
+## S1.3 — fixed-role growth execution packet
+
+**2026-09-25 — S1.3 fixed-role growth sweep (authorized continuation).**
+Reuse the verified two-bar single-session stimulus and SD parity gate. Add one verified-empty
+track-6 scratch slot per cold boot, starting at user slot 4; never overwrite populated content.
+Return selected track/slot to track 6 slot 3 before reboot and wait for persistence admission
+through the existing SD-page oracle. At the next boot require identical transport footer roles,
+all post-restore readiness fields, and complete LIBOBS; compare the full loaded set and retained
+slot content signatures, not payload inventory. Verify the new payload/RAM after reboot against
+its pre-reboot bytes/events. Record owner telemetry at the same settled pre-interaction checkpoint.
+Stop at the first named resource refusal, fixture failure, eviction, or authorized-range exhaustion;
+do not relabel a host/fixture failure as a capacity boundary. No firmware changes or clearing.
+G2 oracle: N -> N+1, only the target added, zero losses or existing content-field changes, roles
+unchanged. Reboot gate: stored events match RAM and return-to-focus storage admission succeeds.
+Evidence is one directory per attempt with upload identity, command logs, source hashes and raw
+observations. This measures the two-bar workload, not the 64-bar capacity envelope or peak capture
+reservation. S1.3 stays open if the first genuine resource boundary cannot be established.
+
+### S1.3 host interoperability correction during fixed-role sweep
+
+The slot-4 take chose LSV1, so the earlier legacy-only host limitation was reached. No new
+firmware was added. The host adapter now converts the legacy-oracle event arrays and root-event
+records from the 20-byte Teensy ABI into host representations, preserving metadata and membership
+sections, then runs the production LSV1 parser and resolver. A captured synthetic target-format
+body is a golden fixture; 62 events / 1,536 ticks match RAM. Pointer-bearing SysEx remains rejected.
+The earlier closeout's target-LSV1 rejection is superseded by this extension. The adapter uses the
+serialized note-field stride (16 bytes), not the production estimate constant (20 bytes); no firmware
+size-estimate or on-card format change was made. Full native 2,384 passed / 1 skipped / 0 failures;
+focused decoder suite 51/51.
+
+The initial whole-file-hash survival condition was stronger than content survival and rejected a
+valid restore: slot 4's epoch, nextPassId and persisted geometry changed after normal focus/save
+activity, while its LoopSnapshot section remained byte-identical. Both snapshots independently
+passed repeated full read/CRC/SD-to-RAM equality and all 62 events and length matched across reboot.
+The host now requires exact event multiset and length equality, explicitly reports both hashes and
+file_bytes_equal, and never treats this as byte invariance or absence of writes. A discriminating
+host test rejects changed length, missing events and duplicate events despite permitting metadata
+hash changes. No comparison oracle was dropped: raw-file equality remains separately reported.
+
+Setup attempts slot4-01 (GUI Auto-mode failure), slot4-02 (bundled CLI cannot parse target HEX), and
+slot4-03 (missing required host serial argument) sent no recording stimulus. The GUI loader was
+restarted; the normal PlatformIO post-compile uploader then re-uploaded the exact pinned image.
+Slot4-04 recorded only once; its stopped evidence was reanalysed offline, fixed focus restored,
+and survival checked without re-recording. Preserve all original verdicts alongside corrections.
+
+## S1.3 — fixed-role sweep outcome and remaining gate
+
+**2026-09-25 — S1.3 fixed-role growth MEASURED, range 10–15 loaded slots.**
+Five two-bar takes into user track 6 slots 4–8 passed exact SD/RAM event-and-length parity
+before and after reboot (62 rows / 1,536 ticks each). All ten boot checkpoints used the same
+stopped transport and boot playback footer; focus was restored to track 6 slot 3. Each loaded-set
+comparison added only its intended target and lost none; existing observed content fields stayed
+unchanged. Four repeated intermediate baselines reproduced every reported owner total exactly.
+Payload inventory stayed **36**; content union/pass count **10 -> 15**, root count **8 -> 13**.
+
+Post-restore free chunks: **449, 448, 447, 446, 445, 444** at N=10..15. Cold reservation walk
+remained **512 -> 480**, all walked credits zero (not workload peak). Snapshot telemetry grew
+**2,187 -> 2,410 KB**, slab-used **2,491 -> 2,745 KB**, live **4,221 -> 4,799 KB**; heap_free
+stayed 84 KB. Live increments are **65, 352, 64, 33, 64 KB**: retain the N=11->12 jump,
+not a single linear per-slot attribution. Its responsible owner is not identified by this census.
+No observed MEM_EXT_REFUSED, MEM_DENIED, FATAL or RING overflow in the ten measurement logs.
+
+**Stopped because all approved empty scratch slots are now populated, not because of capacity.**
+S1.3 and S1.5 remain unchecked: failure point not reached, two-bar workload only. S2b.3 remains
+open because workload peak reservation is unmeasured; S3 does not start. Next device growth needs
+explicit authorization for additional verified-empty slots outside the prior scratch range (the final
+manifest lists candidates), or permission to recycle a named scratch subset. No clear/delete/rename
+or recording outside track 6 slots 4–8 occurred this slice. Board left stopped, focus track 6 slot 3.
+
+Evidence: `captures/s13-slope-evidence/slope.json`; detailed runs `s13-slope-slot4-04` and
+`s13-slope-slot5-01` through `s13-slope-slot8-01`. Full native **2,384 passed / 1 skipped / 0 failures**;
+decoder 51/51; host 35/35; OpenSpec/diff checks pass. Firmware unchanged from the prior green
+capture-serial image (SHA256 `b289af53…`, code 391,304 / padding 1,912); only host tools/tests/docs
+changed this slice. Work remains uncommitted on `feature/runtime-working-set-ownership`.
+
+The two-bar fixture is now reproducible and growable. Earlier “zero added slots” and “restore
+survival blocked” entries are historical; do not restart that investigation. The next unknown is the
+resource boundary beyond this measured population, not token validity or take attribution.
+All new takes persisted as LSV1. Whole-file hashes changed across normal epoch/geometry persistence;
+that is reported separately from event survival and never counted as absence of writes. Target LSV1
+host support now uses a golden Teensy-format synthetic fixture; no target storage format changed.
+No architectural decision was introduced: implementation/evaluation under existing DEC-083 and
+DEC-076; no new owner, no cleanup policy, no stage bypass. Session closeout docs and task status
+are reconciled. UI/clock note-boundary parity and 64-bar density remain outside this small workload.
+
+## S1.3 — extended empty-slot sweep execution packet
+
+User authorized other verified-empty slots, preserving recordings. G2 oracle unchanged: each
+step adds exactly one loaded slot, with exact stored/RAM event survival and identical boot
+roles. Host extension accepts track+slot and restores the target track's original populated
+selection before global focus 6/3; refuses an empty restoration anchor before any recording.
+Start with track 5 slots 2–8. Keep a cross-track admission refusal distinct from loaded-population
+residency exhaustion; no automatic S1.3/S1.5 checkoff for a confounded first extended point.
+Host-only change; pinned firmware and no-clear/no-overwrite policy remain unchanged.
+
+### S1.3 — canonical backing-block attribution (read-only follow-up)
+
+The large N=11->12 increase has a concrete owner: `LoopEventStore::allocChunk` opens backing
+storage in `POOL_CHUNKS_PER_BLOCK=64` groups before marking the first id in that block used.
+Free chunks 448->447 means settled use 64->65. On Teensy `EventChunk` is 5,132 bytes, so the next
+backing block costs 328,448 bytes (320.75 KiB), despite only one additional chunk being occupied.
+The capture's largest allocation class grows 1,344->1,665 KB and its live allocation count 2->3;
+a new snapshot slab contributes the remaining ~32 KB of the 352 KB rounded live increase.
+This matches the allocation boundary and telemetry to their rounding precision; it is not a new
+per-slot working-view bundle or a runtime-directory vector doubling (runtimeBySlot_ is an array).
+Do not fit a uniform per-slot total slope across this block boundary. No firmware changes or extra
+device probes were needed for this attribution. It supersedes the prior unowned-jump note.
+
+### S1.3 — empty-selection anchor fixture extension
+
+To continue the authorized empty-slot sweep beyond populated-anchor tracks, add an explicit
+host opt-in for restoring an originally empty selected slot. Production path: stopped
+`startRecordingTrack` queues an arm without capture; `handleTransportStop` clears pending
+record actions and exits ARMED. Before any take on such a track, exercise that route with no
+Start/clocks/notes, require no increase in record identity emitter entries, an empty selected-slot
+RAM dump, unchanged observed content over all 64 slots, and restored global focus. After the
+take, explicitly Stop the arm before any dump/SD request; the normal before/after boot-role and
+content comparisons remain mandatory. Failure stops the sweep; do not infer empty-selection
+restoration from code alone. No firmware change, cleanup, overwrite, or relaxed publication gate.
+
+**Empty-selection anchor device gate PASS:** `captures/s13-empty-anchor-t3s3-01`.
+Preflight identity entries stayed zero; all observed content fields unchanged. The subsequent
+62-event take grew N=41->42, survived SD/RAM parity across reboot, and preserved the original
+boot footer roles including the empty selected slot. Fixed stopped global focus 6/3 restored.
+Host suites 39/39. Continue candidate tracks 3 slots 4–8, 7 slots 2–8, 8 slots 2–8 with the same
+preflight, stopping at first failure. Empty original anchors themselves are not recorded into.
+
+**Accounting interpretation correction (during extended sweep):** do not subtract the logged
+ExternalPoolAccounting `live/high` from physical PSRAM capacity. The wrapper records every
+successful `extmem_malloc` return without classifying its address. The pinned Teensy core
+`cores/teensy4/extmem.c::extmem_malloc` tries `sm_malloc_pool` then falls back to `malloc`.
+Consequently `#MEM_EXT_REFUSED` is a null return after that fallback, not the earliest physical
+PSRAM denial; the wrapper comment claiming it is the earliest pool refusal is incorrect. The
+N=53->54 episode reports tracked live/high above the boot-reported 8,182 KB pool with zero
+wrapper refusals. This proves the counter is not a valid physical-free oracle; it does not by
+itself identify all accounting drift. Preserve the raw measured tracked-byte slope and the
+independent chunk/slab/snapshot counts. No allocator or instrumentation change in this sweep;
+no PSRAM-headroom claim or first-PSRAM-refusal checkoff from these counters.
+
+## S1.3 — extended sweep closeout (2026-09-25)
+
+**2026-09-25 — S1.3 extended residency sweep: N=10..56; first publication denial recorded.**
+46 two-bar additions passed exact 62-event / 1,536-tick SD/RAM survival before and after reboot.
+All boot roles stayed fixed; no other observed content fields changed; 45 repeated intermediate
+owner baselines matched exactly. Free chunks 449->403; snapshot telemetry 2,187->4,196 KB;
+slab-used 2,491->4,774 KB; tracked live 4,221->6,846 KB. Tracked live/high includes the core
+`extmem_malloc` internal fallback and is NOT a physical PSRAM-free oracle.
+
+First named denial occurred at N=55 while recording the 56th slot (user track 8 slot 3):
+`snapshot_reserve / heap_low`, 40,960-byte margin + 32,768-byte floor, heap 48 then 44 KB;
+17 denial lines, zero wrapper allocation refusals. Publication deferred; the take persisted in
+legacy format and survived reboot exactly. This is a temporary publication-admission boundary,
+not a hard residency/canonical failure. S1.3 — residency slope remains OPEN on that distinction;
+S1.5 — 24-bar overdub refusal and S2b.3 — workload-peak reserve remain OPEN. S3 is not started.
+
+Growth stopped at that boundary. The supervisor initially advanced because survival passed;
+the next target (track 8 slot 4) was interrupted during preflight before recording. The host
+runner now returns a stop status on named memory denials even if survival succeeds. Final fresh
+read-only boot confirms 56 loaded, same observed content/roles, stopped focus track 6 slot 3.
+No clearing/deleting/renaming or populated-slot overwrite. User authorization for empty slots
+was sufficient; this stop is a measured boundary, not exhausted authorization.
+
+Evidence: `captures/s13-slope-evidence/extended-slope.json`, `extended-episode-peaks.json`,
+`captures/s13-empty-anchor-t8s3-01/`, `captures/s13-sweep-closeout-01/`. Host tests 40/40;
+OpenSpec validates. Firmware unchanged this slice (SHA256 `b289af53…`, code 391,304 / padding
+1,912); prior native evidence 2,384 passed / 1 skipped remains applicable, not newly rerun.
+Changes remain uncommitted on `feature/runtime-working-set-ownership`.
+
+**Owner-level interpretation.** `admitSnapshotPublicationTurn` calls
+`MemoryMonitor::admitOperationMemory(SnapshotReserve, 40960)`. Its own contract explicitly
+keeps publication pending on denial and permits passes-authoritative persistence. The gate
+requires 72 KiB internal-heap headroom; the first denial reports 48 KiB, later 44 KiB. Both
+pre/post-reboot production decodes of this take report `legacy`, 62 events / 1,536 ticks.
+Thus the first *observed named denial* in this ordered sweep is established; neither the
+smallest universal refusal N nor a failed recording or physically exhausted pool is established.
+S1.3's hard-failure wording is not silently weakened to accept temporary backpressure.
+
+**Host correction disclosure.** Track 5 slot 2 initially timed out because returning to the
+already-selected populated global anchor pressed its slot again and toggled playback. The
+original failed result remains. `resumed-result.json` verifies the same take after the navigation
+fix; it was not rerecorded. Populated-anchor steps then passed through N=41. Empty-anchor
+preflight was proven at N=41->42 before expanding to tracks 3, 7, 8. Each later step repeated
+it: no Start/clocks/notes, zero new identity entries, empty local dump, unchanged content fields.
+Final tests also pin the stop-on-memory-denial behavior that the original batch runner missed.
+
+**Next bounded packet, not started:** use the current 56-slot library as a verified baseline;
+keep the snapshot-denial result as a backpressure result. Establish a denser production-path
+pressure fixture in a remaining verified-empty slot if a hard-capacity point is required by S1.3.
+Record its changed workload explicitly; do not splice it into the homogeneous two-bar slope.
+Correct physical-pool-vs-core-fallback accounting before claiming PSRAM headroom or first
+physical-pool refusal. S1.5 separately requires a valid 24-bar overdub, and S2b.3 requires actual
+peak reservation; neither is established by the cold walk or this publication gate. No new
+architecture decision, allocator policy, or publication behavior was introduced this slice.
+
+## S1.3 — dense pressure probe execution packet (2026-09-25)
+
+Scope: user accepted the next denser take. Host-only temporary variant of the listed
+STIM-BASE-2-FIXTURE-01, named S13-DENSE-4BAR; production start/capture/stop/persist/restore
+owners unchanged. Baseline: 56 loaded slots, fixed boot roles, track 8 slot 4 verified empty.
+Workload: 4 bars at 120 BPM / 24 clocks per quarter, step 1 clock, gate 1 clock, cyclic pitches
+0–127 on channel 8. Emit Off before the next On and omit a final On whose Off would lie
+outside the clock window: 384 clocks, 383 balanced note pairs supplied. Actual committed
+inventory is measured independently; SD/RAM parity is not a claim of lossless MIDI ingress.
+Reuse the no-take empty-anchor preflight, complete 64-slot observation, recorded-slot identity,
+two equal full SD reads + checksum/production decoder + event/length parity before reboot,
+and exact growth/unchanged other content fields/boot roles after reboot. Preserve 6/3 focus.
+Native controls: sparse generator unchanged; dense generator has 384 clocks, 383 pairs,
+one-clock gates, requested channel and no remaining active notes; profile propagates to driver.
+Run bound 360 s. Named snapshot denial alone is backpressure; failed admission, exhausted
+allocator or missing publication/persistence is classified at its actual boundary. No timeout
+is capacity proof. A hard crash ends writes; preserve evidence before recovery. No new
+firmware build/upload image, no cleanup, no lease-stage change. Broad native/build evidence
+is reused because this packet edits only host stimulus/driver/tests/docs. Completion requires
+captured result and classification, not a planned pass. S1.5's 24-bar overdub remains separate.
+
+## S1.3 — dense-pressure completion
+
+**2026-09-25 — S1.3 residency slope COMPLETE: dense probe reached hard allocation failure.**
+The fixed-role two-bar slope remains N=10..56 (46 verified additions). A separate dense
+four-bar probe at N=56, user track 8 slot 4, supplied a one-clock note cadence across pitches
+0–127. Recording started; at 41.448245 s device time, before record stop, the allocator refused
+8,192 bytes with 4 KB internal heap free (`tag=0`) and emitted the fatal exhaustion line.
+This is the measured failure point for this library/workload, not a universal smallest N or a
+64-bar capacity claim. The untagged allocating caller is not identified. The last sampled free
+chunk count was 393: do not classify this as chunk-count exhaustion.
+
+The failed take had no verified persisted payload; the fixture withheld its survival reboot.
+Separate crash recovery and a final read-only boot confirm the original 56 loaded slots,
+unchanged other observed content fields, matching boot roles, and an empty failed target.
+Board is stopped at track 6 slot 3. No clear/delete/rename or existing-slot overwrite.
+
+S1.3 is checked: measured slope plus hard failure/error, alongside the previously completed
+synthetic 60-descriptor characterization. S1.5 — 24-bar overdub refusal, S1.4 — undo/pin baseline,
+S2b.3 — workload-peak budget and the other device gates remain open. No S3 — lease ownership start.
+Host tests **42/42**, OpenSpec/diff checks pass. No firmware edits/build this slice; pinned image
+`b289af534577e25b57c52146b27f66c245c97f43a5028fc10a37b9a8a9bbd208` reused.
+Evidence: `captures/s13-dense-evidence/pressure-result.json`, `captures/s13-dense-t8s4-01/`,
+`captures/s13-dense-recovery-01/result.json`; existing slope in `captures/s13-slope-evidence/extended-slope.json`.
+Work remains uncommitted on `feature/runtime-working-set-ownership` (HEAD `1ccff16a`).
+
+
+**Verification and classification.** Baseline/empty-anchor preflight passed with no new take
+identity entries and unchanged observed content. Selected track 8 / Loop 4 then started recording
+at 35.986 s. Snapshot publication denied at heap 36, 20 and 16 KB before the 8 KiB allocation
+refusal at 41.448245 s; `ExternalMemoryFirstAllocator` reports both external and internal
+allocation failure. The host reports `record_stop_unobserved`, but that timeout is not the
+capacity oracle: the direct refusal and fatal lines are. Tag zero leaves the precise caller
+unattributed; no allocator fix or speculative ownership attribution is included.
+
+The host generated a separate 4-bar/120-BPM/384-clock profile, step=gate=1, with 383 balanced
+pairs (final clock is Off only). It continues to record configured/supplied stimulus separately
+from committed content: no 383-note capture completeness claim after an abort. Sparse default
+behavior retains its prior test. The two-bar slope is not relabelled as dense or 64-bar evidence.
+`extmem_malloc` fallback/accounting caveats from the previous entry continue to apply.
+
+`reboot_after_take_allowed=false` remains in the failed result. `s13-dense-recovery-01` is a
+separately labelled crash recovery, not a survival reboot: no content-creation actions, original
+56-slot observed set preserved, failed target absent/empty. Final fresh boot matches original
+role footer and stopped focus 6/3. No denial gate was relaxed. No new DEC entry is owed: this is
+the authorized measurement under the existing runtime ownership contract, with no new owner,
+policy or exception. Session closeout updates tasks, project/current state and deliverable tracking.
+Remaining device gates, including undo/pins and 24-bar overdub refusal, retain their own oracles.
+
+## S1.5 — device refusal-point execution packet (2026-09-25)
+
+Scope: S1.5 clause 3's **device** half — the smallest N at which a 24-bar overdub is refused — on the
+library S1.3 left at **N = 56 loaded slots**, plus the boot `live` figure against the ~191-chunk peak
+reservation. Owner: the host HITL harness and a read-only census; **no firmware edit**. Non-goals: the
+native id-ceiling result (already answered: admitted at every N up to 63), S1.3's slope (complete),
+S1.4's undo/pins, and S2b.3's peak-reservation gate (its own owner and arithmetic).
+
+Fixture: the verified `STIM-BASE-2-2-01` base preset through the legacy passthrough with
+`--record-bars 24 --overdub-bars 24`, forked as a temporary, unregistered stimulus variant with a
+recorded reason (the canonical 2-bar recipe cannot reach the byte boundary). Target: **user track 8
+slot 4**, the S1.3 dense-probe target, verified empty and **authorized for this session only**; channel
+8. No other slot is written, and no clear/delete/rename is issued.
+
+Preconditions: pinned capture-serial image `b289af534577e25b57c52146b27f66c245c97f43a5028fc10a37b9a8a9bbd208`
+(`captures/s13-controlled-01/firmware.hex`), re-uploaded for a fresh boot; read-only `!LIB_OBSERVE`
+pre-flight proving **N = 56** loaded, **(8,4) empty**, and the boot roles/focus unchanged (stopped,
+focus track 6 slot 3).
+
+Transition oracle:
+- **Pre:** 56 loaded slots; `(8,4)` has no committed content.
+- **Record phase:** `record loop length (final ticks): 18432/18432` for the 24-bar request.
+- **Overdub admission:** count `Overdubbing started` against `op=overdub_start` denials.
+  `Overdubbing started` present with **0** denials → **ADMITTED at that N**; any `op=overdub_start`
+  denial, `#MEM_DENIED`, `#MEM_EXT_REFUSED` or the fatal allocator-exhaustion line → **REFUSED**,
+  classified at its named boundary.
+- **Memory terms:** `#MEM_OWNERS` (`chunks_free` / `live` / slab-used / snapshot) at the settled
+  pre-take and post-take checkpoints, `DIAG,capture_prewarm` reservation walk, and peak `live` during
+  the overdub against 191 chunks.
+- **Boundary discrimination (required):** a failure in the **record** phase (snapshot-publication
+  denial or allocator refusal before any overdub) is S1.3's hard-failure class, **not** the overdub
+  reserve refusal, and must not be reported as S1.5's refusal point.
+- **Content follow-up:** if the take commits, run the `hitl-content-verification` pipeline
+  (`dump_and_capture.py` + `verify_playback_content.py`); the verdict is read from
+  `content-review.json` (`storage_matches_effective`, `inventory_equal`, `max_bar_refs`, classified
+  residuals), never from the base report's setup oracle. `INCONCLUSIVE_CAPTURE` is not a pass.
+- **Entry point:** `host_midi_hitl.py run --preset base …`; a captured `command.json` is never
+  executed directly.
+
+Evidence: one directory per step with upload identity, command logs, the session log and raw
+observations; `metadata.json` `git_commit` / `firmware_hex_sha256` are the run identity. Bounded run
+360 s. Stop at the first classified refusal or fixture failure, preserve evidence before any recovery,
+and leave the library otherwise untouched.
+
+## S1.5 — device refusal-point result: the 24-bar scenario is refused in its RECORD phase at N = 56 (2026-09-25)
+
+**Run identity.** Pinned capture-serial image `b289af534577e25b57c52146b27f66c245c97f43a5028fc10a37b9a8a9bbd208`
+(recorded as `firmware_hex_sha256` in `metadata.json`), git `1ccff16a`, device
+`/dev/cu.usbmodem154944801`. Target **user track 8 slot 4**, verified empty and authorized for this
+session only. Fixture `STIM-BASE-2-2-01-TEMP-S15-24BAR` (canonical base shape with
+`--record-bars 24 --overdub-bars 24`, `--no-clear-before-record`, managed capture) — the same
+RWSO-24CAP shape used on 2026-09-23, now on the S1.3 library. Evidence:
+`captures/s15-24bar-t8s4-01/` (session log, `refusal-analysis.json`, run report), pre-flight
+`captures/s15-preflight-01/`, recovery `captures/s15-recovery-02/`.
+
+**Pre-flight (read-only, fresh boot).** All readiness fields attested, `reconcile=0`, `chunks_free 403`,
+`live 6846 KB`, `slab_used 4774 KB`, `snap 4196 KB`, `heap_free 84 KB`, `heap_min 72 KB`; library
+observation complete 64/64 — payload inventory 59, initial playback 8, committed at checkpoint 56
+(pass-backed 56, root-backed 53); target `(8,4)` empty.
+
+**The take.** The device entered RECORDING at 89.169 s (`Recording started @ tick 172`, `Loop 1: Start
+Recording`). From **91.961 s** the `snapshot_reserve` admission was denied every ~1 s (`need=40960B`,
+`reason=heap_low`); `heap_free` decayed **68 → 64 → 60 → 56 → 52 → 40 → 32 → 0 KB** over **39** denials.
+At **130.538 s** the allocator refused the 8,192-byte unnamed request with `heap_free=0KB`, `tag=0`,
+`live=8527KB`, `chunks_free=391`, `snap=4196KB`, and `[ExternalMemoryFirstAllocator] FATAL: both
+external memory and internal heap are exhausted!` fired. The log ends there — **no crash report and no
+reboot**. The host aborted with `record_stop_unobserved` / `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)`;
+that is the setup oracle, not the capacity verdict.
+
+**Classification (per this section's execution packet) — record-phase refusal.** `Overdubbing started`
+= **0** and `op=overdub_start` denials = **0**, so the **overdub reserve admission was never reached**.
+The refusal is the **S1.3 hard-failure class** (internal-heap `snapshot_reserve` → `MEM_EXT_REFUSED`
+8,192 B, `tag=0`, `heap_free=0`), here reproduced with the **canonical 24-bar base workload** rather than
+only the dense 1-note-per-clock probe. It is **not** the S1.5 overdub-reserve refusal and must not be
+reported as it. The boundary is the **internal heap**, not the chunk pool (`chunks_free` 391 of 512) and
+not the snapshot arena (`snap` did not grow from its boot 4,196 KB).
+
+**Reading.** At N = 56 the 24-bar **record prerequisite** is refused, so *"the smallest N at which a
+24-bar overdub is refused"* is **not isolated** at N = 56 — the device refuses the scenario earlier, in
+the record. **S1.5 clause 3's device half stays open.** The bracket is now **(2, 56]**: the scenario was
+**admitted** at the 2-slot library of RWSO-24CAP (2026-09-23) and **refused** at the 56-slot library
+here; the S1.3 2-bar slope additionally recorded its first named `snapshot_reserve` denial at **N = 55**
+(a 2-bar take, which persisted anyway).
+
+**Peak figures (S2b.3 input, not an S1.5 checkoff).** Boot `live` **6846 KB** / `chunks_free` **403**;
+peak at the refusal `live` **8527 KB** / `chunks_free` **391** / `heap_free` **0**. The ~191-chunk peak
+*reservation* figure still has no telemetry: no `capture_prewarm` rows are emitted during a take, and
+the reserve admission was not reached.
+
+**Library integrity.** A fresh recovery boot (banner, `reconcile=0`, all readiness fields,
+`checkpoint_reached`) reports the **identical** observation — payload 59, initial playback 8, committed
+56 (pass-backed 56 / root-backed 53) — with **0 content-field differences across all 64 slots**, target
+`(8,4)` still empty, `free_chunks 403`, `live 6842 KB`. Nothing was cleared, deleted or renamed; only
+the authorized target was addressed.
+
+**Next bounded step (not started).** Isolate the **overdub** reserve admission, which needs a 24-bar loop
+present at an N with internal-heap headroom — either an authorized empty target at a **lower** library N
+(record the 24-bar loop, then overdub it), or an explicit decision to treat the N = 56 record-phase
+refusal as the S1.5 / S2b.3 capacity boundary. No firmware change, no new owner, policy or exception —
+so no `DEC-###` entry is owed.
+
+## S1.6 — heap accounting and allocation-failure attribution (2026-09-25)
+
+User priority: repair heap logic before further capacity sweeps. This packet supersedes the
+lower-N-or-reclassify next-step recommendation; S1.5 and S2b.3 remain open.
+
+G0 discovery: VERIFIED: Teensy extmem_malloc includes an internal malloc fallback; wrapper
+accounting currently shadows that pointer but allocator deallocation can call free directly.
+Same-address replacement also fails to retire its old tag. getInternalHeapFreeBytes measures
+_heap_end minus __brkval (unused arena tail), not reusable malloc free blocks. The shadow
+metadata is 8192 * 12 = 98,304 bytes in RAM2, sharing the internal malloc address space.
+UNKNOWN: owner of the fatal 8192-byte request, actual fragmentation and retained fallback
+bytes. Snapshot live bytes unchanged does not exclude backing allocation pressure.
+G0 PASS for accounting repair and attribution only; owner-lifetime repair awaits attribution.
+
+G1 contract: extend ExternalPoolAccounting only. Shadow physical external addresses only,
+using the core's external-address classification; internal fallback is not pool occupancy.
+Keep allocation routing, capacity, admission thresholds and MemoryMonitor's conservative
+heap-tail metric unchanged. Retire old size/class/tag on address replacement; reuse tombstones
+when the table has no never-used entry. Report wrapper caller PC on capture-build refusals,
+without stack unwinding, extra allocation, pool walk, or per-call-site instrumentation.
+Existing refusal output is reused; caller PC requires the exact flashed ELF to resolve and
+may identify an allocator instantiation rather than a unique domain owner.
+
+G2 review PASS with tightening applied: fallback free bypass is covered by exclusion from
+physical accounting; address reuse and full-table tombstones require real implementation tests;
+reset must reset tag scope as well as counters. Async completion, undo/load/save, switching,
+publication and transport retain existing ownership and policy. No new owner, reserve, SD
+operation or snapshot lifetime. All callers pass through the same linker wrapper; direct core
+calloc/realloc are outside its coverage, so this is wrapped live payload, not pool free space.
+No heap free-list walk or allocation probe added on the MIDI path. Existing table bound remains
+8192 probes and RAM2 footprint is held fixed. DEC-018 current-heap admission and DEC-073 snapshot
+publication admission remain in force; no new architectural decision is required for this repair.
+
+Oracle fixed before edits: external allocation adds size once; free removes original tag even
+under a different current tag; internal fallback followed by direct free contributes zero;
+same pointer reallocation retires the old tag; a saturated then entirely freed table accepts
+another allocation with no new untracked count. Native fixture includes the production cpp
+and linker wrapper with fake underlying extmem endpoints, not a copied accounting model.
+Failure PC is supplemental and must not alter allocation/refusal return values.
+
+Verification: focused test_external_pool_accounting, full pio test -e native, capture-serial
+build and RAM1 pins. Device follow-up reuses the canonical temporary 24-bar stimulus at N=56,
+only the existing authorized empty target, with exact ELF/hex identity and recovery observation.
+No capacity gate closes from native checks. No broad sweep or SD clear/delete/rename.
+Status at packet creation: specified; native/build/device NOT RUN.
+
+### S1.6 completion record — accounting implemented; physical exhaustion persists
+
+Three discriminating failures before repair: fallback live bytes 8192 instead of 0; old tag
+1024 instead of 0 after address reuse; full-table free/reuse increments untracked 1→2.
+After repair: focused 5/5; full native 2,389 passed / 1 skipped / 0 failures; observation classifier
+18/18; OpenSpec valid. Capture-serial SUCCESS: code 391,304 + padding 1,912, variables 96,160,
+locals 34,912; RAM2 static 155,200, malloc arena 369,088. No budget rebase or table-size change.
+
+Flashed image SHA256 `c7684714c75587a933beeb226584b47089ff18bafeda48c61f14ce789bcdb57d`;
+ELF SHA256 `50c49bdc05a5798d0a56b365e34c0a29d3d7d11df8d3b2c7e6f322773de6e584`.
+HEAD remains 1ccff16a with pre-existing dirty work; patch and image identity saved in
+`captures/heap-accounting-image/`. New preflight: N=56, payload59, target user8/4 empty,
+403 free chunks, all readiness fields, no reconcile warning, untracked=unknown=0.
+
+Reused temporary canonical 24-bar stimulus via host_midi_hitl.py run --preset base,
+no-clear-before-record, user8/4. Recording began97.930s; at138.642338s a 5,216-byte request
+failed (different from historical 8,192). Caller0x6000949b resolves to DisplayManager's
+resolveDisplayNotesByDrawSource; disassembly confirms a call to __wrap_extmem_malloc at
+0x60009496. Symbols are present but source line DWARF is absent. This function uses a
+frame-local candidate, committed-prefix copies and pending-paint copy; exact expression and
+retained/fragmented attribution remain open. Do not infer a leak just from this symbol.
+Corrected external wrapped live8142KB, blocks1165, untracked0/unknown0, heap-tail4KB;
+snapshot4196KB, chunks391. Allocation exhaustion persists after accounting repair.
+Host verdict SERIAL_INCOMPLETE due to record stop never reaching PLAYING: not a content PASS,
+not S1.5 overdub refusal. Caller evidence in `captures/heap-attribution-24bar-01/`.
+
+S1.6a checked; S1.6b partial; S1.6c remains open. Existing snapshot admission and allocator
+routing unchanged. No new ownership decision, migration, or lowered gate. Further owner
+fix needs a production display allocation/lifetime fixture, including pending overlays and
+handoff preservation, before any claim of improved capacity. No library clearing authorized.
+
+Recovery: `captures/heap-accounting-recovery-01/` reaches the timestamped readiness
+checkpoint, N=56 / payload59 / 403 free chunks. `recovery-comparison.json` compares ten
+observed content fields across all64 slots: zero differences; target user8/4 remains empty.
+No clear/delete/rename was issued. This proves unchanged observed fields, not no writes.
+The boot-census helper still prints a cold-credit S2b.3 substitution; that output is explicitly
+NOT used for checkoff. Board recovered on the same new image; no further growth attempt.
+
+Remaining implementation boundary: the caller evidence identifies a display allocation, but
+not whether its required capacity, duplicate frame lifetime, fragmentation, or cold-library
+retention is the defect. A pressure-based skip of display work would hide rather than resolve
+that question and could violate overlay/handoff correctness. S1.6c is not implemented or
+claimed complete. Resume with a production display memory-lifetime fixture, not another sweep.
+
+## S1.6d — explicit stopped heap diagnostics
+
+User authorizes direct allocator inspection only while stopped. G0: existing internal metric
+is unused arena tail; pinned newlib has 258-word malloc bin array, top at word2, 127 bin
+sentinels starting word2; mallinfo updater walks these bins. Core smalloc uses 12-byte
+headers/trailers and scans free space in header increments. Both allocators are single-owner
+in this firmware (newlib lock functions are no-ops). Existing external wrappers remain the
+live bookkeeping; no additional allocation hook, shadow table or automatic scan is introduced.
+
+G1/G2: MemoryMonitor owns explicit !HEAP_STATS report. Reject transport, external clock,
+active tracks/capture/stop work, save/load/restore work before touching allocator metadata.
+Collectors allocate nothing, never probe with malloc/free, never mutate allocator lists,
+and have bounded visits (4096 internal free nodes; pool_size/12 external steps). Internal
+scan validates addresses/sizes/links; incomplete means invalid/unsupported or visit bound,
+not a capacity result. Report raw free chunks (including allocator overhead), largest raw
+chunk, top chunk and unextended tail separately; external reports physical free gaps and
+largest request under pinned smalloc geometry. No admission policy consumes these values.
+Live logging stays existing bookkeeping only. No scan on rejection, no periodic scan, no
+scan on record/stop transition. Stopped is necessary but not sufficient: active external MIDI
+clock is rejected. User request explicitly permits this guarded diagnostic exception to the
+setup-only pool-walk rule; automatic logStatus(true) stays setup-only.
+
+Oracle: denied request invokes neither scanner; valid synthetic bins/gaps return exact totals
+and largest sizes; cycles/out-of-range metadata terminate incomplete; known split holes can
+have enough aggregate free but insufficient contiguous space. Device: explicit command at
+settled boot emits complete report, active transport refuses; no SD mutation/stimulus take.
+No leak claimed by one snapshot; compare matching settled states/content and account for
+intentional retained owners. Allocation provenance remains the existing refusal PC, not a
+complete malloc live-allocation ledger. Tests/native/build/HITL required before checkoff.
+
+S1.6d device falsification: `stopped-heap-02/heap-refusal.json` failed: clock pulses while stopped do not select the external clock source (`onMidiClockPulse` returns early), so `isExternalClockPresent()` alone admitted inspection. Corrected with capture-only raw pulse timestamp/seen bookkeeping before that early return; explicit setup initialization, one-second quiet interval and wrap-safe subtraction. No malloc hooks or live allocator reads. Native clock-quiet/wrap test added; `stopped-heap-03` is the revalidation fixture. The first two captures are pre-correction evidence, not the final refusal gate.
+
+Verification: focused diagnostic 5/5; full native 2,395 cases = 2,394 passed / 1 skipped; capture-serial SUCCESS. RAM1 variables 96,160 / code 391,368 / padding 1,848 / locals 34,912; RAM2 static extent remains 155,200 (the capture-only timestamp fields fit existing alignment space). No budget baseline changed. Initial stopped samples have internal arena 283,072, used chunk bytes 177,288, free chunk bytes 105,784, largest/top 105,768, tail 86,016; external payload 7,006,576, occupied 7,035,612, free 1,343,676, largest request 1,326,876, blocks 1,025. These are settled N=56 baseline readings, not failure-time measurements. No capacity threshold or leak claim is inferred.
+
+Final device gate **PASS**: `captures/stopped-heap-03/heap-stats.json` both complete; `heap-refusal.json` returns exactly `#HEAP_STATS,refused=external_clock` for the clock-only temporary stimulus. Final image SHA256 `a71b50eb1a8dc4a91f95838891d437335b19a516d9de8aa3218a7e6164faa9ae`, dirty-tree identity/patch/build/native evidence preserved in `captures/stopped-heap-final-image/`. No take, slot selection, CLEAR, SD delete/rename or payload write command was issued. Census N=56 / chunks=403 is context only: the helper's old cold-credit S2b.3 arithmetic is NOT workload-peak proof. Library observation reports consistent_view=false, so it is not used as a new library-stability attestation. S1.6d checked; S1.6b attribution and S1.6c owner correction remain open. Next useful measurement: explicit stopped snapshots before and after the same controlled workload with transient owners retired; do not run inspection during recording to obtain a failure-time sample.
+
+### S1.6b — repeat the original exhaustion workload with stopped diagnostics
+
+User requested the same failing HITL. Reuse baseline preset and temporary HEAP-24BAR stimulus; effective settings are 24-bar record + 24-bar overdub, second overdub 2 bars, user track 8/slot 4/channel 8, 120 BPM, no pre-record CLEAR. Historical metadata/stimulus summaries show 2 bars, but the original host report config shows 24/24 and is the fixture authority. Preflight requires N=56 and the target empty. Use the existing pinned diagnostic image, a fresh boot and explicit stopped heap reading. Never query the heap during recording. Outcome oracle: named allocation refusal/FATAL versus completed record/overdub; a hard failure precludes a same-boot post-stop snapshot, and recovery-boot statistics must not substitute for one. No source or allocator fix in this rerun.
+
+Rerun result: `captures/heap-rerun-24bar-01/result-summary.json`, firmware `a71b50eb1a8dc4a91f95838891d437335b19a516d9de8aa3218a7e6164faa9ae`. Effective host config matches `heap-attribution-24bar-01` exactly except output/log paths (including 24/24 bars and no CLEAR). Recording began 77.652 s; fatal at 109.728275 s (~32.08 s into recording), before record stop or any overdub. 29 `snapshot_reserve` denials; refused 8192 bytes, caller `0x6008c919`, external live 8144 KiB / 1176 blocks, reported internal tail 8 KiB. Pinned disassembly resolves this to the shared out-of-line `vector<DisplayNote, ExternalMemoryFirstAllocator<DisplayNote>>::_M_realloc_insert` helper (512 × 16-byte elements). It does not identify which display vector called the helper. This is the same hard-failure class, not the exact previously observed 5216-byte copy-assignment site. Last live telemetry: chunks=392, snapshot=4215 KiB, slabs=152; one more slab than the preflight, unlike the previous run's flat snapshot. Do not erase that timing-sensitive difference.
+
+The managed harness ends `INCONCLUSIVE_CAPTURE / SERIAL_INCOMPLETE`, exit 3, because record stop never reaches PLAYING. Firmware's explicit refusal/FATAL proves exhaustion independently of that incomplete content verdict. Zero `#HEAP_STATS` during the workload. Preflight stopped scan: free internal chunks 105784 / largest 105768 / untouched tail 86016 bytes; external free 1343676 / largest request 1326876 bytes. Fatal prevents a same-boot stopped after-sample; recovery readings are a new baseline, not leak/fragmentation proof. S1.6b attribution and S1.6c owner correction remain open; S1.5 overdub refusal and S2b.3 workload peak remain unclaimed.
+
+Recovery complete: `heap-rerun-recovery-01` restored N=56, free_chunks=403, target (7,3) empty/payload absent. `recovery-comparison.json`: 64/64 rows both boots, zero differences in the ten compared content fields. Observations have consistent_view=false, so this is a limited field comparison rather than a stability attestation. No CLEAR/delete/rename commands. Recovery stopped heap scan complete and returns the same allocator metrics as preflight (duration aside); this reset baseline is not proof of runtime release. Board recovered, no code or script edits in the rerun, OpenSpec validates.
+
+### S1.6c — known owner repairs execution packet
+
+G0 VERIFIED: releaseWholeTakeViews refuses selected bridges then releases base.storage only; RuntimePlaybackView destructor alone frees origin/rank arrays, retaining 24,576 bytes across two 2048-event bases while fixedExternalBytes drops them. Production native probe reproduces it. Display resolveDrawSource constructs a fresh candidate every frame, then swaps away and destroys the previous compose allocation; pending paint separately copy-assigns. Slide filtering creates another vector. These cause unnecessary allocation churn, not proven malloc leaks. G0 PASS for these concrete repairs; exact shared realloc-insert caller and ultimate capacity sufficiency remain UNKNOWN.
+
+G1 contract: extend existing owners, no new persistent buffer/member. RuntimePlaybackView::release resets metadata, frees event storage and both side arrays, nulls pointers; destructor and whole-take release share it. Selected bridge refusal must precede all mutation. Re-prewarm after release must recreate usable arrays. Draw-source compose borrows the already-owned pending-paint buffer while that prior paint is no longer in use; return old compose storage before copying/transforming the new paint. Guard restores borrowed storage on early exits. No drawing runs reentrantly inside this resolver. Handoff branch retaining liveDisplayNotes must keep its content; paint transforms must never mutate live compose. Slide-filter notes in place with identical predicate/order. No memory scans, policy/threshold change, new reserve or early long-record release.
+
+G2 adversarial review: selected bridge must preserve pointers/metadata (covered test); release/re-prewarm/release and destructor cannot double-free (test); early scope exit returns scratch; retained-handoff branch returns gathered buffer then copies authoritative old compose (test); steady-size repeated frames retain the original two allocations (counting allocator test); slide inclusion parity includes wrapped notes and zero geometry (test). Storage, undo, stop publication and clock paths unchanged; no async callback during buffer borrow. No new RAM1 state, heap footprint should drop; existing display detail/window/content semantics remain authoritative. Historical search: DEC-076 role-owned working sets, existing RC-MEM-2 release policy and DisplayManager derived-view ownership; repair within those owners, no new architecture decision.
+
+Oracles: side arrays null when reported released, selected view unchanged, re-admission usable; display rows identical and no allocator calls over repeated stable-size frames with existing buffers. Full native, capture-serial budget, then same authorized track8/slot4 24/24 no-CLEAR stimulus. A repeated fatal keeps aggregate S1.6c open rather than claiming capacity fixed.
+
+First repair image `15370a07…` retains the N=56 failure: `heap-ownerfix-24bar-01`, 4112-byte request at 123.383424 s (record start 91.013 s), caller 0x600094f9 in draw-source resolver. Pinned disassembly shows replacement allocation then copy then free of the old vector at DisplayManager offset 180, the pending-paint member. This exposes the remaining known allocate-before-release spike at paint copy growth. Tighten the same owner contract: when capacity is insufficient, discard obsolete paint backing before allocating its replacement; live composed source remains untouched. No fallible display fallback, source truncation, reserve policy or geometry change. Add counting-allocator test enforcing peak source+replacement, excluding obsolete paint. This narrows allocation overlap but does not promise global capacity sufficiency.
+
+Paint-copy regression oracle: host libc++ assignment already frees first, so a peak-only host test passed the old implementation and was insufficient. The test now observes whether backing has been retired on entry to the production copy helper, independent of the host STL. It fails red (`Expected TRUE Was FALSE`) under the old helper and passes after explicit obsolete-backing retirement. The target allocate-copy-free order is separately pinned by disassembly. This is not a claimed host reproduction of Teensy malloc internals.
+
+Final known-owner repair verification: focused 301/301; full native 2400 cases = 2399 passed / 1 skipped; capture-serial SUCCESS, RAM1 variables 96160 / code 391368 / padding 1848 / locals 34912; RAM2 static 155200 unchanged. Image `10695e07e73fdcfb9db111b9d61fd7d40815b614e0bbdc3ad5fb8f54a56000da`, exact ELF/patch/red/green/build evidence in `captures/heap-ownerfix-final-image/`. Final HITL `heap-ownerfix-24bar-02` matches the prior effective config exactly except log/output paths, but is NOT a pass: recording starts81.996s, fatal129.615111s (~47.62s), 6096 bytes, caller0x6008cc6b resolves to the shared DisplayNote vector::reserve helper; live8145KiB, blocks1177, internal tail0KiB, chunks390, snapshot4215KiB. No record stop/overdub or same-boot stopped after-sample; no live heap query. Native evidence closes only S1.6c.1's known lifetime defects. Which display reserve caller and whether its failure is fragmentation versus total live demand remain unresolved; do not equate longer survival with a capacity fix. S1.6c, S1.5 and S2b.3 remain open. No allocator/admission policy, full-take admission timing or display horizon was changed.
+
+Final recovery `heap-ownerfix-recovery-02`: N=56, chunks403, target user8/slot4 remains empty; 64/64 slot records, zero differences in ten compared content fields versus `heap-ownerfix-preflight-02`. Observation consistent_view=false remains a limitation, not a stability gate. Both stopped heap completeness flags true and baseline allocator values restored after reboot. No same-boot after-sample, no leak verdict. No CLEAR/delete/rename commands. Final known-owner fixes remain uncommitted; broad capacity gates unchanged.
+
+## S1.6c.2 — snapshot construction reuse (2026-09-25)
+
+User approved implementation after the code/host allocation investigation. Owner remains
+LoopSnapshotConstruction under DEC-048; published graph ownership, slab routing, geometry,
+SD format and publication gates are unchanged. The existing note/event apply workspaces
+retain their private pitch/page/membership edits for one construction, rather than copying
+those pages anew for every change. Workspaces never cross construction boundaries.
+
+Oracle: 128 notes across 12 pitches plus 80 events in one bar require at most 256 snapshot
+nodes after the empty parent (objects + distinct affected directories/pages + freeze), with
+all identities preserved. A parent and interleaved sibling construction remain unchanged
+at every single-unit step. Crossing membership pages preserves all references and the
+4096-reference ceiling; failed candidates cannot publish. Zero-unit steps do no work.
+Baseline host probe: 128 notes alone allocated 517 nodes, retained 4 slabs (128 KiB) with
+167 live nodes; root release freed all slabs. Host sizes are not device byte estimates.
+`slab_used` is bump high-water, not live occupied bytes: old dense-retention claims do not
+exclude retired node holes.
+
+Implementation/review constraints: cached membership tails and page counts must be updated
+when a chain grows, or reuse can overwrite a chain/bypass the ceiling. Only private copies
+may mutate; no use_count heuristic authorizes mutation. Construction completion/freeze must
+ignore retained idle workspace pointers, and further step calls cannot mutate frozen roots.
+Existing per-unit membership copy/removal/sort remains resumable; cache lookup is affected-
+content-sized, not newly claimed constant work. No static RAM1 state or live heap scan.
+
+Verification: red/green production-builder tests in test_loop_event_store; full native;
+teensy41-capture-serial build and RAM1 pins; fresh read-only boot census and the reused N=56
+24-bar base HITL on authorized track 8 slot 4, no clear/delete/rename. Device memory savings
+and capacity success are separate from native allocation proof. Capture ring unchanged.
+Role-specific reservation work follows only with its own call-path/lifetime contract; no
+lease-pool or window-generation dependency is claimed implemented by this slice.
+
+Status: implementation and native/boot-memory verification complete; intended workload acceptance remains open (see result below).
+
+#### S1.6c.2 adversarial review
+
+- COVERED — parent and sibling isolation: construction caches contain only nodes allocated/copied by that construction; interleaved single-unit builds verify the parent after every turn. No uniqueness/refcount mutation of published nodes.
+- COVERED — cached chain growth: cached tail and page count update after append; 4,097 same-bar references fail with MembershipCapacity and cannot freeze. Zero-unit step allocates nothing.
+- TIGHTENING applied — event membership copy state survived workspace reuse. Reset `sourceWasEmpty` when selecting a cached membership so subsequent event appends sort every page through the existing bounded sort state. Regression reverses canonical order within five membership pages.
+- COVERED — terminal lifetime: workspaces can remain allocated after completion without remaining active; subsequent step cannot mutate the frozen root. Destruction returns private references, and the batch regression checks live slabs return to the entry count.
+- LIMIT — workspace lookup vectors now span the construction's affected edits. This reduces snapshot-node/slab allocation, not necessarily peak internal scratch. Device revalidation remains required; no constant-time lookup claim or new allocator authority.
+- Role-specific reservation finding: `Track::prewarmPlaybackForSlot` explicitly guarantees resources for deferred stop and subsequent overdub. `LoopPlaybackRuntime::prewarmViews` admits whole-take views for unknown/short geometry, alongside first-record return-window resources. Removing these based solely on the RECORD state would weaken the current admission contract. This slice leaves that policy unchanged; the role-transition contract and production-path short-take/immediate-overdub fixtures are required before its replacement.
+
+#### S1.6c.2 verification and fixture failure
+
+**2026-09-25 — S1.6c.2 — snapshot construction reuse implemented, device gate open.** Candidate-private pitch/page/membership edits now persist across one construction (DEC-085), with cached tail/count updates and cached-event sort-state reset. Native **2,402 passed / 1 skipped**, focused snapshot **42/42**, target build green; RAM1 unchanged (code391,368 + padding1,848; variables96,160; locals34,912). Image `94b09b51…`. Fresh N=56 census: external payload **7,006,576 → 3,238,256 bytes**, snapshot slabs **151 → 36**; all 64 observed slot records match the earlier census (both lack consistent-view attestation). This saves **3,768,320 bytes (~3.59 MiB)** without deleting content or shrinking the capture ring.
+
+The stress rerun is **INVALID_TARGET_INTERRUPTED**, not acceptance: configured track8/slot4 but the no-clear harness armed selected **track8/slot1**, recorded/overdubbed and persisted `slot:7:0`. Interrupted and explicitly stopped; `STOP_STATUS` confirms STOPPED/pending=0. No clear/delete/rename or cleanup. User reports device85.4BPM, explaining host24-bar timing yielding17devicebars (13,056ticks). No fatal/external refusal, but seven late `snapshot_reserve/heap_low` rows and minimum heap tail12KiB mean overall heap correctness remains open. Host precondition now fails before gestures unless the latest device-time DISP since track selection verifies the configured slot; host tests56/56. No further content runs until the selection fixture is corrected. Role-specific reservations remain unchanged pending their transition/admission contract. Evidence: `captures/snapshot-reuse-preflight/`, `captures/snapshot-reuse-24bar/`, `captures/snapshot-reuse-image/`. Uncommitted.
+
+Red→green: the production-builder node-ceiling test failed before reuse (915 nodes >256) and passes after reuse. Parent/sibling isolation, partial failure, zero-unit work, frozen-root stability and the 4,097-reference refusal pass. Event ordering is adversarial within five pages. Full-native final log `/private/tmp/snapshot-reuse-native-final.log`; firmware build `/private/tmp/snapshot-reuse-build-final.log`. No ABI/budget rebase.
+
+The late low-heap diagnostic is a **tail** observation, not proof of 12KiB aggregate free memory or a malloc leak. It occurs after second overdub, with external live peaking5,123KiB, high-water5,131KiB; do not claim the complete heap hang fixed. A stopped-only allocator read was requested after explicit STOPPED confirmation.
+
+Harness cause verified: `_send_record_arm_press` discards `loop_slot`; selection is performed only by `_run_clear_before_record`, which the authorized no-clear recipe skips. The added `_require_observed_record_slot` guard does not perform selection or clear; it refuses absent/mismatched evidence before any record-arm gesture. Five new host tests include the production call path sending nothing on mismatch. The unintended take is left intact; no cleanup authorization inferred.
+
+Session closeout: decision, scope, behavior/spec delta, task status, current/project state and deliverable record updated. Full capacity, exact24bar fixture, role-specific reservation changes and inactive-root demotion remain unclaimed.
+
+Stopped-only follow-up (`captures/snapshot-reuse-24bar/stopped-heap.log`): internal arena356,800B, allocated chunk bytes199,392B, free chunks157,408B, largest free chunk122,768B, unused tail12,288B; external payload5,246,288B, free3,100,380B, largest request3,046,620B. Both scans complete. This disproves interpreting the *stopped* 12KiB tail as total available heap. It does not retroactively measure free lists at the earlier live refusals; tail-based snapshot admission remains the next hypothesis to verify without live scans. No leak/fragmentation verdict from this one stopped reading.

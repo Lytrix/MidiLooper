@@ -591,3 +591,86 @@ assertion before implementing the target behaviour.
 - **WHEN** a slot retains a lease or whole-loop derived state while inactive
 - **THEN** the instrumentation reports the slot, role and owner kind
 - **AND** the condition is testable without a device run
+
+### Requirement: Residency evidence distinguishes physical pool accounting from heap admission
+Wrapped external-pool live payload accounting SHALL exclude internal fallback allocations,
+retain the allocation's original tag until retirement, and reuse available shadow entries.
+Heap-tail headroom SHALL NOT be reported as total reusable malloc capacity. Allocation failure
+attribution SHALL preserve allocation routing and avoid pool walks on the interval path.
+
+#### Scenario: Core fallback is freed directly
+- **WHEN** extmem_malloc returns an internal pointer and its owner later uses free
+- **THEN** the pointer contributes no physical external-pool live bytes or tag bytes
+
+#### Scenario: Shadow address is reused
+- **WHEN** an address is replaced under a different tag or reused after table saturation
+- **THEN** old class and tag attribution are retired and available tombstones remain reusable
+
+#### Scenario: Capture build exhausts an allocation
+- **WHEN** the wrapped allocation returns null
+- **THEN** the refusal includes a caller address resolvable against the exact firmware ELF
+- **AND** this diagnostic does not alter admission thresholds or infer an overdub refusal from a recording failure
+
+### Requirement: Allocator inspection is explicit and stopped-only
+Session-capture heap inspection SHALL run only on explicit request when transport, track
+capture/playback/finalization, external clock and storage work are inactive. It SHALL not
+allocate or change allocator state, SHALL bound traversal, and SHALL distinguish incomplete
+inspection from measured free space. Live telemetry SHALL continue using bookkeeping only.
+
+#### Scenario: Active request refuses without reading allocator metadata
+- **WHEN** heap inspection is requested while transport or another guarded activity is active
+- **THEN** it returns a named refusal without calling either allocator scanner
+
+#### Scenario: Settled stopped inspection exposes fragmented space
+- **WHEN** an explicit request is admitted at a settled stopped checkpoint
+- **THEN** total free space and largest free extent are reported separately per allocator
+- **AND** unused internal arena tail and allocator top chunk are reported separately
+- **AND** no single observation is reported as proof of a leak
+
+### Requirement: Released view reservations retire owned side arrays
+When an unselected whole-take playback reservation is released, the implementation SHALL release its origin and canonical-rank arrays along with event storage and SHALL permit later re-admission. Selected authoritative bridges SHALL prevent release without mutation.
+
+#### Scenario: Release and re-admit whole-take views
+- **WHEN** an unselected whole-take reservation is released and later admitted again
+- **THEN** released storage and side-array pointers are null before re-admission, and newly admitted side arrays support the full declared capacity
+
+### Requirement: Display compose reuses owned frame storage
+Draw-source composition SHALL reuse the existing pending-paint backing for synchronous scratch while retaining the live composed frame until its replacement is ready. Paint transforms SHALL remain isolated from the composed representation.
+
+#### Scenario: Stable-size repeated paint
+- **WHEN** repeated draw-source frames fit the two existing frame capacities
+- **THEN** compose scratch and paint copy require no new frame allocation, and paint transforms leave composed rows unchanged
+
+#### Scenario: Retained publication handoff
+- **WHEN** a gather is not adopted because the existing handoff frame remains authoritative
+- **THEN** that live frame remains unchanged and scratch storage returns to the paint owner
+
+#### Scenario: Pending paint needs larger backing
+- **WHEN** the composed frame exceeds pending-paint capacity
+- **THEN** obsolete paint backing is retired before allocating its replacement, while the composed source remains intact
+
+### Requirement: Snapshot construction reuses private index nodes
+A snapshot construction SHALL reuse index nodes it has privately copied or created across changes in that construction. Reuse SHALL preserve published parents, independent sibling constructions, membership limits and transactional failure. Completed constructions SHALL NOT mutate their frozen result on further step calls.
+
+#### Scenario: Batched changes share an affected membership
+- **WHEN** multiple changes affect the same private pitch/bar membership
+- **THEN** subsequent changes reuse its directory, page and membership chain, preserving all references and the chain's tail and page count
+
+#### Scenario: Failure or capacity exhaustion during reuse
+- **WHEN** a construction fails after partial private edits or exceeds the membership capacity
+- **THEN** it cannot freeze a result and the published parent remains unchanged
+
+#### Scenario: Concurrent private constructions
+- **WHEN** two constructions from one published parent advance in interleaved bounded steps
+- **THEN** neither construction changes the parent or the other's result
+
+### Requirement: No-clear capacity fixtures verify the selected slot
+A capacity fixture with an explicit slot and clearing disabled SHALL refuse record arm when post-track-selection device evidence is absent or identifies another slot. Configured target metadata SHALL NOT substitute for observed selection.
+
+#### Scenario: No-clear recipe leaves another slot selected
+- **WHEN** the latest device-time display observation identifies a slot different from the configured target
+- **THEN** the fixture fails before sending record-arm or note gestures
+
+#### Scenario: Slot evidence is unavailable
+- **WHEN** no valid display observation exists after selecting the track
+- **THEN** the no-clear fixture fails before record arm
