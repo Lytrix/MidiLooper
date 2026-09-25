@@ -173,6 +173,39 @@ def stop_transport_cleanly(out, session: Session, *, drain_s: float = 3.0) -> No
     drain(session, drain_s)
 
 
+# S1.1 owner census: the pool and snapshot owners, separate from the capture reservation.
+MEM_OWNERS_RE = re.compile(r"#MEM_OWNERS,(?P<uptime>\d+),(?P<fields>.*)$")
+MEM_KV_RE = re.compile(r"([a-z_]+)=(\d+)(?:KB)?")
+
+
+def parse_mem_owners(lines) -> list[dict[str, object]]:
+    """The `#MEM_OWNERS` progression, as numeric rows.
+
+    S1.1 — owner census and S1.3 — the shipped-fixture slope both need the pool/snapshot owners
+    **separately** from the capture reservation: `slab_live`/`slab_used_kb` (snapshot slabs), `snap_kb`
+    (snapshot arena), `chunks_free` (the canonical pool) and `tag_total_kb` (the per-owner tag census).
+    The last row of a settled boot is the step's figure; the whole progression is kept so "flat after
+    settle" is visible rather than asserted.
+    """
+    rows: list[dict[str, object]] = []
+    for line in lines:
+        match = MEM_OWNERS_RE.search(line)
+        if not match:
+            continue
+        fields: dict[str, int] = {}
+        for kv in MEM_KV_RE.finditer(match.group("fields")):
+            # A `_kb` suffix is added by the parser, not present on the wire.
+            fields[f"{kv.group(1)}_kb" if "KB" in kv.group(0) else kv.group(1)] = int(kv.group(2))
+        row: dict[str, object] = {"uptime_us": int(match.group("uptime"))}
+        for key in ("chunks_free", "slab_live", "slabs_at_most_one", "slabs_two_to_four",
+                    "heap_free_kb", "untracked", "unknown", "live_kb", "tag_total_kb",
+                    "slab_used_kb", "slab_unused_kb", "snap_kb"):
+            if key in fields:
+                row[key] = fields[key]
+        rows.append(row)
+    return rows
+
+
 def boot_census(session: Session) -> dict[str, object]:
     """Read the boot census: phase lines, the per-(track,slot) library walk, and the checkpoint marker.
 
@@ -210,9 +243,12 @@ def boot_census(session: Session) -> dict[str, object]:
     pre = next((p["free_chunks"] for p in phases if p["phase"] == "before"), None)
     post = next((p["free_chunks"] for p in phases if p["phase"] == "after"), None)
     observation = parse_capture_lines(session.lines)
+    mem_owners = parse_mem_owners(session.lines)
     return {"phase_before_free": pre, "phase_after_free": post,
             "post_restore_free_chunks": marker.get("free_chunks") if marker else None,
             "census_marker": marker,
+            "mem_owners": mem_owners,
+            "mem_owners_settled": mem_owners[-1] if mem_owners else None,
             "library_rows": rows, "phases": phases,
             "library_observation": observation}
 
@@ -315,6 +351,10 @@ def main() -> int:
                # window is stated as such rather than presented as the settled library state.
                "n_committed_slots_window_scoped": committed_slots,
                "library_observation": census["library_observation"],
+               # S1.1 — owner census: the pool and snapshot owners **separately** from the capture
+               # reservation (`free_before`/`free_after` are that reservation walk).
+               "mem_owners": census["mem_owners"],
+               "mem_owners_settled": census["mem_owners_settled"],
                "post_restore_free_chunks": census["post_restore_free_chunks"],
                "census_marker": census["census_marker"],
                "library_rows": census["library_rows"],

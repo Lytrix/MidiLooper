@@ -4812,6 +4812,64 @@ void test_record_arm_admission_is_repeatable() {
   TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true), "third arm admission must also succeed");
 }
 
+/// S1.3 save/restore-survival: the **persist target follows the recorded slot**, not the initially
+/// active one, even when the adjacent slot already holds content.
+///
+/// The device failure this guards against: a take on track 6 loop 2 logged its record stop on the
+/// right slot (`Record pass undo reset for slot 1`) while the persistence admission named `slot:5:0` —
+/// the *adjacent* slot — and no `LoopPersist` item ran. The growing fixture cannot tell a lost payload
+/// from a wrong target, so the production expression that resolves the target is asserted directly
+/// here (`resolveRecordStopPersistTarget`, the one both record-stop persist sites call).
+///
+/// The full `Track::stopRecording` route is an off-path boundary in this suite
+/// (`off_path_deps.h` fails closed on it), so the record/stop transition itself is exercised on
+/// device; this locks the resolution the transition feeds.
+void test_record_stop_persist_target_follows_the_recorded_slot() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  const uint8_t selectedTrack = trackManager.getSelectedTrackIndex();
+
+  // Adjacent slot 1 already holds a committed pass, so "the other slot is empty" cannot be the reason
+  // a mis-targeted persist looks harmless.
+  Loop& adjacent = track.getLoop(1);
+  adjacent.loopLengthTicks = 768;
+  adjacent.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(adjacent.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
+  TEST_ASSERT_TRUE(adjacent.appendCaptureEvent(MidiEvent::NoteOff(48, 1, 48, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, adjacent.sealCapture(768, CommitReason::RecordStop));
+  adjacent.commitPendingCapturePass();
+  TEST_ASSERT_TRUE(adjacent.hasCommittedPasses());
+
+  // The take records into a non-zero slot while the track's initially active slot is the adjacent one.
+  constexpr uint8_t kRecordedSlot = 2;
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  track.prewarmPlaybackForSlot(kRecordedSlot, true);
+  TrackCaptureStopTestAccess::selectSlot(track, kRecordedSlot);
+  track.forceSetState(TRACK_ARMED);
+  track.startRecording(0);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(TRACK_RECORDING), static_cast<int>(track.getState()),
+                            "the take must be admitted on the non-zero slot for this fixture");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(adjacent.passes.overdubPasses.size()),
+                                   "no take may land in the adjacent slot");
+
+  // The take identity names the recorded slot, so the stop has something to follow.
+  const uint32_t identity = recordStartSlotIdentityPacked();
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kRecordedSlot, static_cast<uint8_t>(identity >> 24),
+                                  "the take identity must name the recorded slot");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(0xFF, static_cast<uint8_t>(identity >> 24),
+                                "a recorded take must not read as 'no start slot'");
+
+  // The production resolution the persist sites use follows the recorded slot, on the owning track.
+  const RecordStopPersistTarget target = resolveRecordStopPersistTarget(track, kRecordedSlot);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kRecordedSlot, target.slotIndex,
+                                  "the persist target must be the recorded slot");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(selectedTrack, target.trackIndex,
+                                  "the persist target must be the track that owns the interval");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(target.slotIndex, static_cast<uint8_t>(0),
+                                "a non-zero recorded slot must not resolve to slot 0");
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4931,5 +4989,7 @@ int main() {
   // reason a dense construction used to fail its seal at all.
   RUN_TEST(test_s1_5_the_supported_dense_library_still_admits_the_24_bar_reserve);
   RUN_TEST(test_s1_5_a_pair_below_the_min_length_empties_the_store_and_fails_the_seal);
+  // S1.3 save/restore-survival: the record-stop persistence target follows the recorded slot.
+  RUN_TEST(test_record_stop_persist_target_follows_the_recorded_slot);
   return UNITY_END();
 }

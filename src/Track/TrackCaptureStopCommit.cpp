@@ -504,10 +504,19 @@ void Track::stopRecording(uint32_t currentTick) {
                      sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
                      &stopPathStats);
   if (sideEffectResult == CommitResult::Committed) {
-    const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-    const uint8_t persistSlotIndex = recordedSlotIndex;
-    StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-    StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
+    const RecordStopPersistTarget target =
+        resolveRecordStopPersistTarget(*this, recordedSlotIndex);
+    // S1.3 save/restore-survival: correlate the take's start slot with the slot this stop persists.
+    // Capture-gated, one bounded line per take; a mismatch here is the fixture's stop condition.
+    {
+      const uint32_t identity = recordStartSlotIdentityPacked();
+      const uint8_t startSlot = static_cast<uint8_t>(identity >> 24);
+      SC_REC_SLOT_IDENTITY("admit", identity & 0x00FFFFFFu, target.trackIndex, startSlot,
+                           recordedSlotIndex, recordedSlotIndex, target.trackIndex, target.slotIndex,
+                           'r', 'L', (startSlot != 0xFF && startSlot != target.slotIndex) ? 1 : 0);
+    }
+    StorageManager::markLoopSlotMaterialDirty(target.trackIndex, target.slotIndex);
+    StorageManager::admitLoopSlotPersist(target.trackIndex, target.slotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState(),
                                              MemoryMonitor::getInternalHeapFreeBytes(), true);
   }
@@ -596,10 +605,19 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
                      sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
                      &stopPathStats);
   if (sideEffectResult == CommitResult::Committed) {
-    const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-    const uint8_t persistSlotIndex = recordedSlotIndex;
-    StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-    StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
+    const RecordStopPersistTarget target =
+        resolveRecordStopPersistTarget(*this, recordedSlotIndex);
+    // S1.3 save/restore-survival: correlate the take's start slot with the slot this stop persists.
+    // Capture-gated, one bounded line per take; a mismatch here is the fixture's stop condition.
+    {
+      const uint32_t identity = recordStartSlotIdentityPacked();
+      const uint8_t startSlot = static_cast<uint8_t>(identity >> 24);
+      SC_REC_SLOT_IDENTITY("admit", identity & 0x00FFFFFFu, target.trackIndex, startSlot,
+                           recordedSlotIndex, recordedSlotIndex, target.trackIndex, target.slotIndex,
+                           'S', 'L', (startSlot != 0xFF && startSlot != target.slotIndex) ? 1 : 0);
+    }
+    StorageManager::markLoopSlotMaterialDirty(target.trackIndex, target.slotIndex);
+    StorageManager::admitLoopSlotPersist(target.trackIndex, target.slotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState(),
                                              MemoryMonitor::getInternalHeapFreeBytes(), true);
   }

@@ -460,12 +460,49 @@ void Track::startRecording(uint32_t currentTick) {
 
   invalidateCaches();
   SC_REC_START(activeLoopIndex, currentTick);
+  // S1.3 save/restore-survival: pin the take's start slot so the record stop's persistence target can
+  // be correlated with it (`recSlotIdentity`). One bounded line per take; FLASH-resident state.
+  noteRecordStartSlotForIdentity(activeLoopIndex);
+  {
+    const uint32_t identity = recordStartSlotIdentityPacked();
+    SC_REC_SLOT_IDENTITY("start", identity & 0x00FFFFFFu, resolveTrackIndexForPersistence(*this),
+                         static_cast<uint8_t>(identity >> 24), activeLoopIndex, 0xFF, 0xFF, 0xFF, '-',
+                         '-', 0);
+  }
   logger.logTrackEvent("Recording started", currentTick, "startLoopTick=%lu loopStart=0",
                        static_cast<unsigned long>(loop.startLoopTick));
 }
 
 uint32_t Track::quantizeStart(uint32_t original) const {
   return (original / TICKS_PER_BAR) * TICKS_PER_BAR;
+}
+
+// S1.3 save/restore-survival: transport is single, so one take is active system-wide and the take
+// identity lives in FLASH-resident storage rather than on `Track` (whose `sizeof` is pinned at 384 by
+// the S3.0 guard). Layout: [31:24] the take's start slot (0xFF = none recorded), [23:0] take id.
+namespace {
+constexpr uint8_t kNoRecordStartSlot = 0xFF;
+uint32_t g_recordStartSlotIdentity = static_cast<uint32_t>(kNoRecordStartSlot) << 24;
+uint32_t g_nextTakeId = 0;
+}  // namespace
+
+TRACK_INTERNAL_MEM void noteRecordStartSlotForIdentity(uint8_t slotIndex) {
+  ++g_nextTakeId;
+  g_recordStartSlotIdentity =
+      ((static_cast<uint32_t>(slotIndex) & 0xFFu) << 24) | (g_nextTakeId & 0x00FFFFFFu);
+}
+
+TRACK_INTERNAL_MEM uint32_t recordStartSlotIdentityPacked() { return g_recordStartSlotIdentity; }
+
+TRACK_INTERNAL_MEM RecordStopPersistTarget resolveRecordStopPersistTarget(const Track& track,
+                                                                          uint8_t recordedSlotIndex) {
+  // S1.3 save/restore-survival: the persist target is the interval's own slot on the track that owns
+  // it. The recorded slot is passed in and never re-read from `activeLoopIndex`, so a take that
+  // started on one slot and stopped on another persists the slot it recorded into.
+  RecordStopPersistTarget target;
+  target.trackIndex = resolveTrackIndexForPersistence(track);
+  target.slotIndex = recordedSlotIndex;
+  return target;
 }
 
 void Track::shiftMidiEvents(int32_t offset) {

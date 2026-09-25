@@ -326,6 +326,25 @@ void test_library_observation_lines_fit_capture_text_budget() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,500,LIBOBS,E,a=100,b=200,t=64,r=0,s=64,p=36,i=8,c=0,m=8,n=1,e=1,v=0,x=1"));
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,500,LIBOBSX,S,t=0"));
+
+  // S1.3 save/restore-survival: the record-stop slot-identity chain is Tier-A evidence, not optional
+  // diagnostics. It is bounded (at most two lines per take), and a full ring dropping it is exactly
+  // how the `slot:5:0` admission went unexplained on a run whose `PERS` rows survived.
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,500,RID,start,take=1,t=5,ss=1,sp=1,cs=255,pt=255,ps=255,r=-,w=-,chg=0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,600,RID,admit,take=1,t=5,ss=1,sp=1,cs=1,pt=5,ps=1,r=r,w=L,chg=0"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,500,RIDX,start,take=1"));
+
+  // The slot-identity record is the root-cause evidence for a wrong persistence target, so it is
+  // critical: a Tier-A ring displaced it on the run that admitted `slot:5:0`. At most two lines per
+  // take, so it cannot flood.
+  TEST_ASSERT_TRUE(CaptureLineTier::isCriticalLine(
+      "#CAP,600,RID,admit,take=1,t=5,ss=1,sp=1,cs=1,pt=5,ps=1,r=r,w=L,chg=0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isCriticalLine(
+      "#CAP,500,RID,start,take=1,t=5,ss=1,sp=1,cs=255,pt=255,ps=255,r=-,w=-,chg=0"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isCriticalLine("#CAP,500,RIDX,admit,take=1"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isCriticalLine("#CAP,500,RECS,stage,x"));
 }
 
 void test_transport_and_persistence_lines_are_tier_a() {

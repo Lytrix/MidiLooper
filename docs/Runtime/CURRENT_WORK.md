@@ -32,8 +32,13 @@ Three facts define what may be implemented right now:
    distinguishes **catalog omission / restore refusal / intentional eviction / content loss**, and needed
    per-slot authorization before any CLEAR.
    **S1.3 — slope-fixture definition (2026-09-24, sixteenth session, read-only):** the "28 unloaded" premise
-   is **falsified** — all 36 payload slots are restored, 8 pass-backed and 28 published-root-backed and
-   resident; the controlled increasing-population fixture is defined, and the sweep is **not yet run**.
+   is **falsified** — all 36 payload slots are restored, 8 pass-backed and **28 published-root-backed** and
+   resident; the controlled increasing-population fixture is defined.
+   **S1.3 — representation correction (2026-09-24, seventeenth session):** the observation now reports the
+   two representations separately and counts loaded slots as their **union**; "28 unloaded" is durably
+   corrected to **28 root-backed**, and the three-boot gate's `committed_at_checkpoint=8` is recorded as the
+   pass-backed subset it was. The existing library was revalidated once with the corrected telemetry (task 3)
+   and the pinned residency measurements (task 4) follow. The sweep remains the unmeasured part.
 3. **The restore-liveness change is ARCHIVED, not proposed.** `deferred-slot-restore-liveness` was archived
    2026-09-24 as `2026-09-24-deferred-slot-restore-liveness` with a reduced, accurately described scope. It
    delivered diagnosable preparation and named waits under transport, request identity with four terminals,
@@ -2925,6 +2930,115 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 
+**2026-09-24 (seventeenth session) — `runtime-working-set-ownership` S1.3 — the content-representation correction: the on-demand library observation now reports pass-backed and published-root content separately and counts loaded slots as their union. The corrected telemetry then CONTRADICTS the "28 root-backed" premise: only 9 of the 36 verified payload slots hold content.**
+
+Owner direction: **fix the observation's representation gap first, then run the residency measurements** — the
+restore trace already removed the presumed restore-instability blocker, so no restore investigation was
+repeated. **S2b.7 — drain hardware confirmation stays separate.** One thing at a time; the immediate
+implementation is the small observation fix, not the lease pool and not another sub-change.
+
+- **Landed (firmware + host, native green, firmware build SUCCESS, device-flashed).** `LibraryObservation::SlotInput` /
+  `SlotResult` carry `hasPassContent` and `hasRootContent` separately; `hasCommittedContent` is their
+  **union**, and both `stateIsPopulated` and the observed-absence rule read the union. `observeSlot`
+  observes `hasRootContent` as "a published root **is installed**" (`Loop::publishedSnapshot() != nullptr`)
+  with `rootIsCurrent` (`Loop::publishedSnapshotIsCurrent()`) reported **beside** it — an installed-but-stale
+  root is still content because playback reads it through the stale-root overlay, so currency never defines
+  the content bit. **Invalidation now includes the root publication identity** — a per-slot FNV-1a
+  hash of the root object's identity, its publication revision, the committed-pass revision and the currency
+  bit, re-checked before emission, because `contentRevisionIdentity` reads the pass side only and a replaced
+  root was previously invisible. The check is **guarded by `loopsAllocated()`**: `Track::getLoop` calls
+  `ensureLoopsAllocated()` on its const overload, so an unguarded check would allocate a track between
+  slices and invalidate records for the observation's own side effect (the O01 regression that caught it).
+- **Wire.** Slot record `k` (union) + `kp`/`kr` (representations) + `kc` (root current); `LIBOBS,E`
+  `m` (union) + `P`/`R`. Still inside `kMaxCaptureTextBytes` (192 B), with the tier test's width copies
+  updated to match the emitter. Host `scripts/hitl/library_observation.py` decodes all of them and exposes
+  `content_representation_observed` (a pre-correction capture reports the two subsets as **absent**, never
+  as two false flags); `library_manifest.py` compares both representations and both counts, so a
+  representation change fails the manifest even when the union is unchanged.
+- **Tests.** Classifier: pass-only / root-only / both / empty plus the union counts and
+  invalidation-clears-both-bits. Session **O09**: a current root is content without passes, and **replacing
+  the root between slices invalidates the record** under an unchanged request identity and an unchanged pass
+  identity. Session **O10**: the end record reports the union with one of each representation beside it.
+  Host: 3 parser cases and 1 comparator case. **Full native 2,378 / 1 skipped / 0 failures** (baseline
+  2,374); `teensy41-capture-serial` **SUCCESS** at `variables 96,192 / code 391,160 / padding 2,056 /
+  locals 34,880` (the +384 B of per-slot root-identity state lands in `padding`, above the 840 B floor).
+- **Durable corrections.** "28 unloaded" is withdrawn. The **device measurement then went further**: the
+  corrected telemetry shows **9** content-bearing slots, not 28 root-backed ones, so the
+  "28 root-backed" reading recorded at the sixteenth session is **CONTRADICTED** (evidence in the
+  Measurements block below). The three-boot `restored-library-stability` gate stands as **repeatability of
+  the fields it measured only** — it never covered whether a *new* payload survives a reboot, and the slope
+  attempt below shows one that did not. Durable prose repeating the old wording is corrected in this same
+  session (this file, `PROJECT_STATE.md`, `DELIVERABLE_TRACKING.md`, `tasks.md` and
+  `ARCHITECTURE-REVIEW.md`). The two representations are also now distinguished on the wire (`k`/`kp`/`kr`/
+  `kc`), and an installed-but-not-current root counts as content rather than as empty.
+- **Pinned before measuring (task 4).** Authorized slots to empty/populate: **track 5 slot 1 and track 6
+  slots 1–8 only**, each *selected and enabled* so boot loads it; **fixed enabled/selected roles** (transport
+  stopped, no record/overdub, one active role held constant); **equal content per added slot** (same recipe,
+  same bar count); **one payload format per series** (legacy *or* LSV1, never mixed); and
+  **separate cost classes** — canonical reservation, canonical payload/pool chunks, snapshot roots, runtime
+  directory. Failure point = the first refusal **inside the authorized population**; reaching the range's end
+  with no refusal is **not** a capacity failure — report the measured range and leave **S1.5 — refusal point**
+  open. Full pin: [`runtime-working-set-ownership/ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+  § *Pinned fixture parameters*.
+- **Measurements (task 3, then task 4) — LANDED, and they change the picture.** Firmware flashed after a
+  re-plug (the first upload lost the board off the USB bus).
+  - **Task 3 — revalidation, two independent read-only boots** (`captures/s13-corrected-02/`,
+    `captures/s13-corrected-03/`; `complete=1`, `turns=64`, `representation_observed=true`, both identical):
+    **payload 36, initial-playback 8, restore-completions 0 (window-scoped), `committed_at_checkpoint` 9
+    (`pass_backed` 9, `root_backed` 7)**. The content-bearing set is the same in both boots — `(0,0) (1,0)
+    (1,1) (1,2) (2,0) (3,0) (4,0) (5,0) (5,1)` — and **every other payload slot has `passes=0`,
+    `loop_length_ticks=0`, `committed_event_count=0` and no published root at all** (`kr=0` and `kc=0`; the
+    currency instrumentation was added precisely to separate an absent root from a stale one).
+  - **This contradicts the trace's per-slot premise** ("8 pass-backed, 28 published-root-backed"). The
+    publish path installs a root whenever it adopts, so the correction falsifies the inference: **27 of the
+    36 token-verified payload slots hydrate nothing**, and the corrected loaded count is **9, not 36** —
+    `has_committed_content` is now the accurate count of a 9-slot working set, not an under-count of a
+    36-slot one.
+  - **Owner census (S1.1) on the same boot**: settled `chunks_free 450`, `slab_live 78`, `slab_used
+    2,455 KB`, `slab_unused 40 KB`, `snap 2,155 KB`, `tag_total 404 KB` — flat 173→209 s, the same owners
+    the trace recorded. The **owner total** holds; the **per-slot** attribution does not.
+  - **S2b.3 — post-restore budget**: `post_restore_census free_chunks=450` vs required
+    `peak_capture_reservation + 16 = 16` → **met**; reservation walk `512 → 480` (enabled) then `480 → 480`
+    (library), `credits=0` on all 16 rows.
+  - **Task 4 — S1.3 slope: BLOCKED at the first step, no refusal.** `--track 6 --slots 8 --first-slot 1
+    --record-bars 4` (`captures/s13-slope-01/`) saved (6,1) (×4 `saved successfully`), rebooted, and the
+    boot reports `Track 6 loaded state: EMPTY`, **N=36 (no new payload)**, with the owner census **identical
+    to before the save**. The next reset did not take. So the saved scratch payload did not survive the
+    reboot — the obstacle the sixteenth-session handoff recorded as removed, which repeatability of an
+    untouched manifest never covered. **No `#MEM_EXT_REFUSED`, no `refused` terminal, `chunks_free` never
+    near the reserve**: **S1.5 — refusal point stays open and the measured range is 0 added slots.** This is
+    a fixture-path blocker, **not** a capacity failure.
+  - **Recommended next step (not taken here):** resolve the save/restore survival of a *new* scratch
+    payload; that is a state-changing investigation (write + reboot), not another read-only trace, so it is
+    recorded as the blocker rather than started under the observation fix. Full evidence:
+    [`ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+    § *S1.3 — observability correction* → *Task 3* / *Task 4*.
+- **Recorded-slot → persistence-target correctness (eighteenth session, second round) — bounded to that
+  question only; no sub-change, no wider sweep, no clearing.** The record stop **admits a `LoopPersist` for
+  the adjacent slot**: `captures/s13-target-02/` gates a take on track 6 loop 2 and the deferred worker's
+  telemetry names `slot:5:0` (track 6, slot 1) with 7 payload slices; `captures/s13-survival-01/` shows the
+  same key on the earlier run. **Instrumented and gated.** A capture-gated `RID` record carries the whole
+  chain (start slot → stop slot → slot passed to `finalizeCommitSideEffects` → admitted persist key) once
+  per take and is **critical-tier** because a Tier-A ring displaced it; one production resolver
+  (`resolveRecordStopPersistTarget`) is now shared by both persist sites and the native regression;
+  `scripts/hitl/record_stop_persist_target.py` (10/10) + `scripts/hitl_record_stop_target.py` **withhold the
+  reboot** on a mismatch, and the native case
+  `test_record_stop_persist_target_follows_the_recorded_slot` covers recording into a non-zero slot with the
+  adjacent slot already holding content. Native **2,379 / 1 skipped / 0 failures**.
+  **Open blocker:** the `RID` rows (and the pre-existing Tier-A `RECS` rows) do not reach the host even
+  though `nm`/`objdump` confirm both call sites in the flashed image and an explicit `!TRACE_DRAIN` was
+  issued; record-stop capture rows are being displaced. That capture-visibility defect is separate from the
+  persist-target defect and is the next thing to fix — the identity was **not** routed through a blocking
+  serial print to work around it. **The reboot stays withheld** until the target correlates.
+- **S2b.3 — post-restore budget stays open with its full arithmetic.** A settled boot's `capture_prewarm`
+  walk is the **cold** reservation count, not peak capture reservation, so `450 ≥ peak + 16` was never
+  actually evaluated; the term is the peak reservation **during the specified capture workload**, on a
+  verified growing fixture. No checkoff from a boot marker.
+
+**2026-09-24 — UNRESOLVED OBSERVATION recorded under `runtime-working-set-ownership` S4f (accepted interactions): the ordinary Playing stop route under repeated press. No firmware edit, no device run, no solution adopted.**
+
+Full record: [`runtime-working-set-ownership/tasks.md`](../../openspec/changes/runtime-working-set-ownership/tasks.md) § S4f — *unresolved observation*. Short form: five `Overdub stop refused: stop_job_pending` rows in `captures/session_20260924_183229.log` (**CompanionBridge** ×3, **CanonicalTail** ×1, **CanonicalPrefix** ×1, all `dest=0` **Playing**); the row is emitted **after** `Track::latchAcceptedStop`, so it is not a denial verdict; the flashed revision is unidentified (no banner or `firmware_hex_sha256`); the 1,279-row telemetry tail to ~2255 s is continued execution, not evidence of a freeze; and `!STOP_STATUS` could not have answered the window at all (transport-gated twice, ring-head only, **no latch field**). Next: S4f.11 / S4f.13 on identified firmware with acceptance, job identity, worker progress and scheduler-service evidence. **Do not generalize the DEC-070 retarget fallback on this evidence** — its raw-only commit drops the display representation and the protected undo.
+
 **2026-09-24 (sixteenth session) — `runtime-working-set-ownership` S1.3 — slope-fixture definition: the read-only trace FALSIFIES the "28 unloaded" premise and defines the controlled increasing-population fixture. No device run, no firmware edit, no sweep.**
 
 Owner direction: continue directly in `runtime-working-set-ownership` (no new sub-change), start read-only,
@@ -2982,16 +3096,21 @@ four complete-manifest boots share the *observed* manifest sha256 `4e451a07d0a94
 observed fields; no destructive commands issued** — an identical field record (or an identical file hash)
 does not prove unchanged bytes or the absence of a write, so the write statement rests on the command log
 and the manifest statement on the observed fields. The **36-vs-8 gap is dispositioned** (36 payload-present
-/ 8 in-RAM committed / 8 initial-playback-required; the two 8-sets differ, overlap 4; the remaining 28 are
-payload-present but unloaded, distinct from the other 28 payload-absent slots), and the runtime slope
-fixture must vary the committed/loaded population and explain the unloaded 28. Report
+/ 8 in the **pass** representation / 8 initial-playback-required; the two 8-sets differ, overlap 4; the
+remaining 28 are payload-present and **published-root-backed**, distinct from the other 28 payload-absent
+slots), and the runtime slope
+fixture varies the **loaded** population and reports the two representations separately. Report
 `captures/s13-libobs-stability-3boot.json`, identity `captures/s13-libobs-stability-3boot.identity.json`
 (`git_commit 74cadc7b`, `firmware_hex_sha256 ede704b614b7e9cd…`). No firmware edit → no G2 packet; recipe is
 `hitl-content-verification` § 9. **2.1 is closed as not required for the reused fixture** (nothing cleared);
 **2.3 (S2b.7 condition), Packet C and 4.2 are TRANSFERRED to `runtime-working-set-ownership` S2b.7** (recorded
 there unchecked), so the closeout checklist has no remaining mandatory library task and the change is
-**archived**. **[Answered 2026-09-24 (sixteenth session): the "28 unloaded" premise is falsified — they are
-published-root-backed and resident; the S1.3 fixture is defined and the sweep not yet run.]** Full record:
+**archived**. **[Answered 2026-09-24 (sixteenth session, inferred): the "28 unloaded" premise was said to be
+falsified — they were read as published-root-backed and resident; the S1.3 fixture is defined. CONTRADICTED
+2026-09-24 (seventeenth session, on device): the corrected per-slot telemetry reports 9 content-bearing
+slots of 36 verified payloads, so this gate's `committed_at_checkpoint=8` was a subset only of those and its
+three-boot
+result is repeatability of the fields measured, not validation of that count.]** Full record:
 [`restored-library-stability` (archived)](../openspec/changes/archive/2026-09-24-restored-library-stability/ARCHITECTURE-REVIEW.md)
 § Packet B and `docs/Runtime/PROJECT_STATE.md` (fifteenth session).
 

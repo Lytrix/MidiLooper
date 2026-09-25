@@ -96,24 +96,35 @@ read-only boots were captured (`captures/s13-libobs-stab-01/02/03`, upload reset
 manifest / lifecycle / settled-count differences over 64/64 slots, observed manifest sha256
 `4e451a07d0a94c18…`, five complete-manifest observations agreeing. **Recorded precisely: no differences in
 the observed fields; no destructive commands issued** — this does **not** prove unchanged payload bytes or
-the absence of a write. **36 / 8 / 8 disposition:** 36 payload-present / 8 in-RAM committed / 8
-initial-playback-required are three populations (the two 8-sets overlap in only 4 slots), and the 28
-remaining payload-present slots are unloaded — distinct from the other 28 payload-absent slots; the runtime
-slope fixture must vary the committed/loaded population and explain the unloaded 28. **Task 2.1 is closed
+the absence of a write. **36 / 8 / 8 disposition:** 36 payload-present / 8 in the **pass** representation /
+8 initial-playback-required are three populations (the two 8-sets overlap in only 4 slots), and the 28
+remaining payload-present slots are **published-root-backed** — distinct from the other 28 payload-absent
+slots; the runtime
+slope fixture varies the **loaded** population and reports the two representations separately.
+**Corrected 2026-09-24 (seventeenth session, on device): that reading is CONTRADICTED — the corrected
+per-slot telemetry reports 9 content-bearing slots of 36 verified payloads, and this gate's
+`committed_at_checkpoint=8` was a subset only of those. Its repeatability is repeatability of the fields
+measured, never of a new payload surviving a reboot.** **Task 2.1 is closed
 as not required for the reused fixture** (nothing was cleared). New read-only tooling
-`scripts/hitl/library_manifest.py` + `scripts/hitl_library_manifest_stability.py` (tests **14/14**). The
+`scripts/hitl/library_manifest.py` + `scripts/hitl_library_manifest_stability.py` (tests **14/14**; **15/15**
+after the representation comparator case). The
 evidence is handed to `runtime-working-set-ownership` (task 4.1), and this change's two requirements are
 synced into `openspec/specs/lazy-slot-hydration/spec.md`. **2.3 — drain fixture, Packet C — drain hardware
 confirmation and 4.2 — drain-spec correction were TRANSFERRED to `runtime-working-set-ownership`
 S2b.7 — drain-driven restore advancement** (recorded there unchecked, independently reportable), so the
 library closeout checklist has **no remaining mandatory task**; the change is **ARCHIVED** through the normal
-workflow (2026-09-24). **Next runtime work (recorded, not started): S1.3 — slope-fixture definition**, which
-must explain why 28 verified payloads remain unloaded and why only four initial-playback slots overlap the
-committed set — repeatability does not establish correct hydration or a usable increasing-population fixture.
+workflow (2026-09-24). **Next runtime work (recorded, not started at handoff): S1.3 — slope-fixture
+definition**, which had to explain why 28 verified payloads read as unloaded and why only four
+initial-playback slots overlap the pass-backed set — **answered 2026-09-24 (sixteenth session, inferred):
+the 28 were read as published-root-backed and resident; CONTRADICTED on device in the seventeenth session**;
+repeatability does not establish correct hydration or a usable
+increasing-population fixture.
 
 **`runtime-working-set-ownership` S1.3 — slope-fixture definition (2026-09-24, read-only; the "28 unloaded"
 premise is FALSIFIED).** All 36 payload slots are restored (8 pass-backed via `Loop::adoptPersistedSnapshot`,
-28 **published-root-backed** via `Loop::storePublishedSnapshot`); the 28 are resident — snapshot arena
+28 read as **published-root-backed** via `Loop::storePublishedSnapshot` — *this per-slot attribution is an
+inference and is **CONTRADICTED** by the seventeenth-session corrected telemetry below; the owner totals it
+cites reproduce exactly*); the 28 were read as resident — snapshot arena
 0 → **2,155 KB / 78 slabs** and `chunks_free` 480 → **453**, flat after settle — and playback reads the root
 (`Loop::tryGatherPublishedSnapshotEventsInWindow`). The observation's `committed_at_checkpoint` is therefore
 a **pass-backed subset**, not the loaded population (and is not spec-conformant for root-backed slots). The
@@ -122,6 +133,22 @@ four required-but-not-pass-backed slots are `(2,1)`/`(4,0)` (root-backed) and `(
 role; add one payload per boot inside the approved scratch range; report `N_payload`/`N_pass`/`N_root` and
 reservation/payload/root/directory residency separately). **The slope run and the failure point are not yet
 measured.** No device run, no firmware edit.
+
+**`runtime-working-set-ownership` S1.3 — content-representation correction and revalidation (2026-09-24,
+seventeenth session; firmware + host, native green, device-flashed).** The observation's
+`has_committed_content` / `committed_at_checkpoint` reported only the **pass** representation; it now reports
+pass-backed and published-root content **separately** (`kp`/`kr`, plus `kc` for currency) with the union as
+the loaded count (`k`/`m`), and invalidation includes the **published-root publication identity**. Full
+native **2,378 / 1 skipped / 0 failures**; `teensy41-capture-serial` **SUCCESS** (padding 2,056, above the
+840 floor) and flashed; host parser/comparator tests **18/18** and **15/15**. **The revalidation then
+contradicts the "28 root-backed" reading:** two independent read-only boots report payload **36**,
+initial-playback 8, `committed_at_checkpoint` **9** (`pass_backed` 9, `root_backed` 7), with the other 27
+payload slots adopting zero passes and installing no root. The **slope attempt is blocked** at its first
+step (a saved scratch payload did not survive reboot; no refusal), so **S1.5 — refusal point stays open with
+0 added slots measured**, while S1.1's owner census and S2b.3's post-restore budget landed. Full evidence:
+[`Runtime/CURRENT_WORK.md`](Runtime/CURRENT_WORK.md) § Now implementing and
+[`runtime-working-set-ownership/ARCHITECTURE-REVIEW.md`](../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ *S1.3 — observability correction*.
 
 The instrumented observable is protected and documented: `LIBOBS` is **Tier-A** (worst-case records ≤ 191
 bytes, locked by `test_capture_line_tier` 15/15), the contract is recorded as **DEC-083**, and the behavior
