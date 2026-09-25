@@ -29,6 +29,14 @@ from hitl.control_constants import (  # noqa: E402
 
 TEMPO_CC = 102
 TEMPO_CHANNEL_1BASED = 16
+TEMPO_MIN_BPM = 60.0
+TEMPO_MAX_BPM = 187.0
+
+
+def _cc_for_bpm(tempo_bpm: float) -> int:
+    """One CC step is one BPM; round to the nearest reachable whole BPM."""
+    clamped = min(max(tempo_bpm, TEMPO_MIN_BPM), TEMPO_MAX_BPM)
+    return round(clamped - TEMPO_MIN_BPM)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -38,6 +46,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--loop-slot", type=int, default=4)
     parser.add_argument("--press-ms", type=int, default=120)
     parser.add_argument("--out", type=Path, default=Path("captures/tempo-fader-01"))
+    parser.add_argument(
+        "--set-tempo",
+        type=float,
+        default=None,
+        help="Pin the device tempo to this BPM via CC102 (read-only elsewhere).",
+    )
     return parser.parse_args()
 
 
@@ -100,12 +114,13 @@ def main() -> int:
     _drain(6.0)
 
     results: list[tuple[int, float | None]] = []
-    for cc_value in (32, 100, 64):
-        expected = 72.0 + (cc_value / 127.0) * (200.0 - 72.0)
+    cc_values = (32, 100, 64) if args.set_tempo is None else (_cc_for_bpm(args.set_tempo),)
+    for cc_value in cc_values:
+        expected = TEMPO_MIN_BPM + cc_value
         print(f"[tempo] CC{TEMPO_CC}={cc_value} (expect {expected:.1f} BPM)")
         out_port.send(mido.Message("control_change", channel=channel, control=TEMPO_CC, value=cc_value))
         before = len(lines)
-        _drain(3.0)
+        _drain(4.0)
         observed: float | None = None
         for line in lines[before:]:
             match = re.search(r"TEMPO: CC=(\d+) -> ([\d.]+) BPM", line)
@@ -113,6 +128,13 @@ def main() -> int:
                 observed = float(match.group(2))
                 break
         results.append((cc_value, observed))
+
+    if args.set_tempo is not None:
+        pinned = results[0][1]
+        print(
+            f"[tempo] pinned device tempo: {pinned if pinned is not None else 'unobserved'} BPM "
+            f"(requested {args.set_tempo:.1f})"
+        )
 
     # Outgoing feedback: the session-entry tap should park the motor.
     feedback = [line for line in lines if "Sent tempo CC feedback" in line]
@@ -128,7 +150,7 @@ def main() -> int:
     else:
         print("[tempo] PASS: CC102 ignored before this probe selected a track")
     for cc_value, observed in results:
-        expected = 72.0 + (cc_value / 127.0) * (200.0 - 72.0)
+        expected = TEMPO_MIN_BPM + cc_value
         if observed is None:
             print(f"[tempo] FAIL: no device TEMPO line for CC={cc_value}")
             ok = False

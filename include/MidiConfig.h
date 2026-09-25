@@ -113,9 +113,9 @@ namespace LoopEdit {
   constexpr uint8_t LENGTH_CC_NUMBER = 101;
   constexpr uint8_t START_PITCHBEND_CHANNEL = 16;
   /**
-   * Tempo fader on the loop-edit control channel: CC 0..127 maps to
-   * TempoMapping::TEMPO_MIN_BPM..TEMPO_MAX_BPM exactly as CC 101 maps bars.
-   * Session-entry feedback parks the motor at the current tempo.
+   * Tempo fader on the loop-edit control channel: CC 0..127 maps one BPM per
+   * step to TempoMapping::TEMPO_MIN_BPM..TEMPO_MAX_BPM exactly as CC 101 maps
+   * bars. Session-entry feedback parks the motor at the whole-BPM tempo.
    */
   constexpr uint8_t TEMPO_CC_NUMBER = 102;
   constexpr float TEMPO_MIN_BPM = TempoMapping::TEMPO_MIN_BPM;
