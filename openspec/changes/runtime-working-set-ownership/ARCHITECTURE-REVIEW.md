@@ -4792,3 +4792,82 @@ therefore found slot 4 **populated** — the select tap logged `Loop 4: Toggle P
 fail-closed and correct. No clear was issued: the library is user data and the firmware has no
 restore path. The 24-bar capacity revalidation resumes only after the owner clears or re-verifies an
 empty target slot, and it must pin the tempo (DEC-086) rather than inherit the persisted value.
+
+## S3.1 — `WorkingSetLease` identity and declared pool (2026-09-25, G2 execution packet)
+
+### Identity and scope
+
+Owner stays `TrackPlaybackRuntime`; S3.1 adds **vocabulary and bookkeeping only** and does not move a
+resource. Today the only per-slot working-set identity is the `LoopPlaybackRuntimePtr` array
+(`TrackPlaybackRuntime.h:659`), created by `trySlot` with no generation and no role: `trySlot` cannot say
+*which* role holds a slot, so a late cleanup cannot be distinguished from a live one (invariant 6, S4.2)
+and release has no identity to reject against (S4.1).
+
+Slice boundary: an identity type (`slot + generation + role`), a composable role set, and a **declared
+per-role pool with a cap that reports rather than allocates**. Routing today's prewarm call sites through
+it is in scope only as bookkeeping — the resource calls themselves stay where they are, in the same order,
+with the same admission answers. Releasing, recycling, stale-owner rejection and window sizing are S4/S4f/
+phase F and are **not** implemented here; the types must merely be able to express them.
+
+### Audit of the existing prewarm call sites (read, not changed)
+
+| Site | Role it establishes | Cardinality source |
+|---|---|---|
+| `Track::prewarmPlaybackForSlot(slot, false)` at boot/load | none (runtime index only, S2b.1) | `TrackManager::prewarmPlaybackRuntime` skip predicate |
+| `Track::prewarmPlaybackForSlot(slot, true)` (record arm) | `PlaybackWindow` + `LiveCapture` | 1 per track (handoff §2) |
+| `Track::admitOverdubStartWorkingSet` (overdub on a boot-cold slot) | `PlaybackWindow` + `LiveCapture` | 1 per track |
+| accepted stop's park (S2b.6) | `DeferredFinalization` | 1 per admitted interval (DEC-078) |
+| edit/undo/redo/display | `Interactive` | 1 |
+
+The pool's declared caps are the design's: `PlaybackWindowLease` **N derived (8 today)**,
+`LiveCaptureLease` **1 per track**, `DeferredFinalizationLease` **per admitted interval**,
+`InteractiveLease` **1**, `TransferOverlap` **measured/budgeted**. S3.1 declares them as the measured
+envelope; it does not provision new memory for them.
+
+### Oracle fixed before behavior edits
+
+- Identity equality is `slot + generation + role`; a role set is a bitmask so one slot can hold
+  `PlaybackWindow | LiveCapture` at once (invariant: classes are composable).
+- A release carrying a stale generation is a **rejected, reported no-op** — the vocabulary must return a
+  distinguishable outcome, whether or not S4 calls it yet.
+- Acquisition beyond a declared cap is **reported** (refused or queued per the S4.4 policy decision); it
+  never grows a container on the action edge.
+- The pool reports holders per role class, so S4.5's "holder count rising and falling with
+  activation/deactivation" is measurable without new instrumentation.
+
+### Controls and coverage
+
+Dependency-free header (`include/Utils/WorkingSetLease.h`) + native suite
+(`test/test_working_set_lease`) so the contract is enforced on the host with no device or
+`runtimeBySlot_` dependency. Cases: generation-qualified identity mismatch; composable roles on one
+slot; independent generations per role class; cap refusal reported without mutation; release of an
+unheld identity; total-holder census per class.
+
+Behavior preservation is structural: no resource call moves in this slice, so
+`test_playback_prewarm` and the full native suite are the regression gate.
+
+### Completion record (2026-09-25)
+
+Landed `include/Utils/WorkingSetLease.h` — `WorkingSetRole` bitmask (composable), `WorkingSetLease`
+identity (`slot + generation + role`), declared `WorkingSetLeaseCaps`, and `WorkingSetLeasePool`
+(`acquire` / `release` / `releaseAllRoles` / `isHeld` / `holderCount` / `rolesHeldAtSlot`). The pool
+holds counts only: acquisition and release are O(1), allocate nothing, and report `CapReached`,
+`InvalidRole`, `NotHeld` or `StaleGeneration` instead of growing or asserting.
+
+Two contract facts the first fixtures corrected, both now enforced by tests: a **composite** role set
+(`PlaybackWindow | LiveCapture`) is valid and must not be mistaken for an undeclared role — the first
+implementation tested `workingSetCapFor(role) == 0`, which is true for any composite set and refused it;
+and `holderCount` counts **distinct identities per class**, so one composite lease is one playback
+holder and one capture holder, not two of either.
+
+`test/test_working_set_lease` — 11 cases green; full native **2,434 passed / 1 skipped** (the
+vocabulary adds a suite without touching a production TU): composable roles on one identity, generation-qualified
+identity, invalid role, generation-mismatched release as a reported no-op, unheld release, total release
+(all roles at an identity; another generation untouched), cap breach reported without growth, composite
+lease refused when any named class is full, per-class census, and the default caps matching the measured
+envelope (8 / 1 / 1 / 1).
+
+**Not converted:** no production call site routes through the pool yet. `prewarmPlaybackForSlot`,
+`admitOverdubStartWorkingSet` and the accepted stop's park still own their resources directly, so no
+behavior changed and `test_playback_prewarm` is untouched. That routing — and the S3.2 liveness
+predicates whose fixtures it needs — is S3.1's open remainder.
