@@ -324,7 +324,7 @@ class LoopSnapshotConstruction {
 
   bool step(size_t maximumUnits, uint32_t playheadPhaseTick = 0);
   bool complete() const {
-    return nextChangeIndex_ == totalChangeCount() && !noteApply_ && !eventApply_;
+    return nextChangeIndex_ == totalChangeCount() && !noteApplyActive_ && !eventApplyActive_;
   }
   bool failed() const { return failed_; }
   LoopSnapshotFailureReason failureReason() const { return failureReason_; }
@@ -364,6 +364,10 @@ class LoopSnapshotConstruction {
   std::shared_ptr<SnapshotEventRoot> constructionEventRoot_;
   std::unique_ptr<LoopSnapshotNoteBarApply> noteApply_;
   std::unique_ptr<LoopSnapshotEventBarApply> eventApply_;
+  // Workspaces retain candidate-private edits until construction destruction.
+  // An idle workspace is not pending work and never authorizes parent mutation.
+  bool noteApplyActive_ = false;
+  bool eventApplyActive_ = false;
   size_t nextChangeIndex_ = 0;
   size_t completedUnits_ = 0;
   size_t failAfterUnits_ = static_cast<size_t>(-1);
