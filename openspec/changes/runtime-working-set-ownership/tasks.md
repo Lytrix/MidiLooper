@@ -1091,6 +1091,9 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 > reproduces across three consecutive boots (`captures/s13-libobs-stability-3boot.json`). S3 is **not
 > started here** and the stage order is not bypassed; evidence link and the 36/8/8 disposition:
 > [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *Handoff from `restored-library-stability`*.
+>
+> **Started 2026-09-25.** G2 execution packet and completion record:
+> [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3.1.
 
 - [x] S3.0 **Placement and size pins (B11, invariant 36).** (**PINS + POST-LINK ENFORCEMENT DONE 2026-09-23; task open only for later members' pins.** `Track::placementPins()` in `include/Track.h` and a pin block in `src/Track/TrackPlaybackRuntime.cpp` now pin the latch layout platform-independently and the device sizes of `LoopPlaybackRuntime` 6,344 / `Loop` 984 / `TrackPlaybackRuntime` 32 / `Track` 384 / `CaptureStopJobs` 2,736 / `PendingInteractionLatch` 40. Effectiveness verified: a deliberately wrong pin failed the device build in all 8 TUs that include `Track.h`. The pins emit no code (`code`/`padding` unchanged). **RESOLVED by architect decision 2026-09-23:** accept the 32 B and re-base the floor **872 -> 840**,
       keeping the manager entries in ITCM. The earlier claim that the pins alone close the placement gate is
@@ -1127,6 +1130,15 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 - [ ] S3.1 `WorkingSetLease` with owner = slot + generation + role, and a pool provisioned for the
       measured active envelope. Route today's prewarm through it so behaviour is unchanged but ownership
       is expressible.
+      **PARTIAL 2026-09-25 — vocabulary landed, no call site converted.** `include/Utils/WorkingSetLease.h`
+      carries the composable role set, the generation-qualified identity and a declared-cap pool that
+      reports (`CapReached` / `InvalidRole` / `NotHeld` / `StaleGeneration`) instead of growing or
+      asserting; `test/test_working_set_lease` 11 cases green; full native 2,434 passed / 1 skipped. Two contract facts the fixtures corrected:
+      a composite role set is valid (the first cut refused it), and `holderCount` counts distinct
+      identities per class. **Still open:** routing `prewarmPlaybackForSlot`, `admitOverdubStartWorkingSet`
+      and the accepted stop's park through the pool with unchanged behavior and answers, plus the S3.2
+      liveness predicates those fixtures need. No production call site or resource call moved, so no
+      behavior changed.
 - [ ] S3.2 Explicit liveness predicates per owner kind: capture stop job, deferred stop commit, undo/redo
       root, prepared playback handover. Native fixture per kind.
 - [ ] S3.3 Selection acquires nothing: assert the SELECTED tier and browsing cause no lease churn.
