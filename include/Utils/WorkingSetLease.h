@@ -4,6 +4,7 @@
 #ifndef WORKING_SET_LEASE_H
 #define WORKING_SET_LEASE_H
 
+#include <array>
 #include <cstdint>
 
 /**
@@ -105,117 +106,197 @@ inline uint8_t workingSetCapFor(const WorkingSetLeaseCaps& caps, WorkingSetRole 
 }
 
 /**
- * @brief Fixed-capacity lease bookkeeping. Holds counts, never resources.
+ * @brief Lease bookkeeping for one slot's working set (one `LoopPlaybackRuntime`).
  *
- * Acquire/release are O(1) and allocate nothing, so they are safe on the action edge; a
- * cap breach is *reported* (`CapReached`), never resolved by growing.
+ * A slot runtime *is* the working set, so it carries exactly one lease identity. Putting this on
+ * the per-slot runtime rather than on the per-track container is deliberate: the per-track
+ * container is a measured by-value member of an 8-way `Track` array, so a byte there costs eight,
+ * while `LoopPlaybackRuntime` is externally allocated.
  */
-class WorkingSetLeasePool {
+class WorkingSetLeaseSlot {
  public:
-  static constexpr uint8_t kMaxLeases = 32;
-
-  explicit WorkingSetLeasePool(const WorkingSetLeaseCaps& caps = WorkingSetLeaseCaps{})
-      : caps_(caps) {}
-
-  WorkingSetOutcome acquire(const WorkingSetLease& lease) {
-    if (!isDeclaredRoleSet(lease.role)) {
+  WorkingSetOutcome acquire(WorkingSetRole role) {
+    if (!isDeclaredRoleSet(role)) {
       return WorkingSetOutcome::InvalidRole;
     }
-    if (count_ >= kMaxLeases || !hasCapacityFor(lease.role)) {
-      return WorkingSetOutcome::CapReached;
-    }
-    leases_[count_++] = lease;
+    roles_ = roles_ | role;
     return WorkingSetOutcome::Acquired;
   }
 
-  /// Total release: removes every role held at this slot + generation.
-  uint8_t releaseAllRoles(const WorkingSetLease& identity) {
-    uint8_t released = 0;
-    for (uint8_t i = 0; i < count_;) {
-      if (sameWorkingSetIdentity(leases_[i], identity)) {
-        leases_[i] = leases_[--count_];
-        ++released;
-      } else {
-        ++i;
-      }
+  /// Release the exact identity. A generation mismatch is the reported no-op of S4.2.
+  WorkingSetOutcome release(uint16_t generation, WorkingSetRole role) {
+    // Generation first: after a total release the slot is empty *and* its generation moved on, so
+    // an empty check first would misreport the previous holder's late release as simply NotHeld.
+    if (generation_ != generation) {
+      return WorkingSetOutcome::StaleGeneration;
     }
-    return released;
+    if (roles_ == WorkingSetRole::None) {
+      return WorkingSetOutcome::NotHeld;
+    }
+    if (!hasRole(roles_, role)) {
+      return WorkingSetOutcome::NotHeld;
+    }
+    roles_ = roles_ & static_cast<WorkingSetRole>(~static_cast<uint8_t>(role));
+    return WorkingSetOutcome::Released;
   }
 
-  /// Release by exact identity. A generation mismatch is the reported no-op of S4.2.
-  WorkingSetOutcome release(const WorkingSetLease& lease) {
-    for (uint8_t i = 0; i < count_; ++i) {
-      if (leases_[i].slot != lease.slot) {
-        continue;
-      }
-      if (leases_[i].generation != lease.generation) {
-        return WorkingSetOutcome::StaleGeneration;
-      }
-      if (leases_[i].role == lease.role) {
-        leases_[i] = leases_[--count_];
-        return WorkingSetOutcome::Released;
-      }
+  /// The slot runtime left the active set: clear every role and bump the generation so a late
+  /// release carrying the previous generation is rejected (S4.2).
+  WorkingSetOutcome releaseAll(uint16_t generation) {
+    if (generation_ != generation) {
+      return WorkingSetOutcome::StaleGeneration;
     }
-    return WorkingSetOutcome::NotHeld;
+    if (roles_ == WorkingSetRole::None) {
+      return WorkingSetOutcome::NotHeld;
+    }
+    roles_ = WorkingSetRole::None;
+    ++generation_;
+    return WorkingSetOutcome::Released;
   }
 
-  bool isHeld(const WorkingSetLease& lease) const {
-    for (uint8_t i = 0; i < count_; ++i) {
-      if (leases_[i].slot == lease.slot && leases_[i].generation == lease.generation &&
-          hasRole(leases_[i].role, lease.role)) {
-        return true;
-      }
-    }
-    return false;
+  bool isHeld(uint16_t generation, WorkingSetRole role) const {
+    return generation_ == generation && hasRole(roles_, role);
   }
+  WorkingSetRole roles() const { return roles_; }
+  uint16_t generation() const { return generation_; }
 
-  /// Roles currently held at this slot regardless of generation (diagnostic/census use).
-  WorkingSetRole rolesHeldAtSlot(uint8_t slot) const {
+ private:
+  WorkingSetRole roles_ = WorkingSetRole::None;
+  uint16_t generation_ = 0;
+};
+
+/**
+ * @brief Fixed, slot-indexed lease bookkeeping for one `TrackPlaybackRuntime`.
+ *
+ * The runtime authorises working sets by slot index and its per-track container is a measured
+ * member of an 8-way `Track` array, so this variant is sized by `MAX_LOOPS_PER_TRACK` instead of
+ * carrying a record array: two bytes per slot (generation + role set), 16 B today. It exposes the
+ * same identity and outcome vocabulary as the pool; `acquire`/`release` allocate nothing, and a
+ * cap breach or generation mismatch is reported rather than resolved.
+ *
+ * The generation is the slot runtime generation: it stays 0 until S4.1 releases and reuses a slot,
+ * which is also when S4.2 needs it to reject a late cleanup.
+ */
+template <uint8_t MaxSlots = 8>
+class WorkingSetLeaseTable {
+ public:
+  static constexpr uint8_t kMaxSlots = MaxSlots;
+
+  struct SlotState {
+    uint8_t generation = 0;
     WorkingSetRole roles = WorkingSetRole::None;
-    for (uint8_t i = 0; i < count_; ++i) {
-      if (leases_[i].slot == slot) {
-        roles |= leases_[i].role;
-      }
+  };
+
+  WorkingSetLeaseTable() = default;
+
+  WorkingSetOutcome acquire(uint8_t slot, WorkingSetRole role) {
+    if (slot >= kMaxSlots) {
+      return WorkingSetOutcome::InvalidRole;
     }
-    return roles;
+    if (!isDeclaredRoleSet(role)) {
+      return WorkingSetOutcome::InvalidRole;
+    }
+    SlotState& state = slots_[slot];
+    const WorkingSetRole combined = state.roles | role;
+    if (!hasCapacityFor(slot, combined)) {
+      return WorkingSetOutcome::CapReached;
+    }
+    state.roles = combined;
+    return WorkingSetOutcome::Acquired;
+  }
+
+  /// Release the exact identity. A generation mismatch is the reported no-op of S4.2.
+  WorkingSetOutcome release(uint8_t slot, uint16_t generation, WorkingSetRole role) {
+    if (slot >= kMaxSlots) {
+      return WorkingSetOutcome::NotHeld;
+    }
+    SlotState& state = slots_[slot];
+    if (state.roles == WorkingSetRole::None) {
+      return WorkingSetOutcome::NotHeld;
+    }
+    if (state.generation != generation) {
+      return WorkingSetOutcome::StaleGeneration;
+    }
+    if (!hasRole(state.roles, role)) {
+      return WorkingSetOutcome::NotHeld;
+    }
+    state.roles = state.roles & static_cast<WorkingSetRole>(~static_cast<uint8_t>(role));
+    return WorkingSetOutcome::Released;
+  }
+
+  /// Total release at this slot: the slot leaves the active set. Bumps the runtime generation so a
+  /// later release carrying the previous generation is rejected (S4.2).
+  WorkingSetOutcome releaseAllRoles(uint8_t slot, uint16_t generation) {
+    if (slot >= kMaxSlots) {
+      return WorkingSetOutcome::NotHeld;
+    }
+    SlotState& state = slots_[slot];
+    if (state.roles == WorkingSetRole::None) {
+      return WorkingSetOutcome::NotHeld;
+    }
+    if (state.generation != generation) {
+      return WorkingSetOutcome::StaleGeneration;
+    }
+    state.roles = WorkingSetRole::None;
+    ++state.generation;
+    return WorkingSetOutcome::Released;
+  }
+
+  bool isHeld(uint8_t slot, uint16_t generation, WorkingSetRole role) const {
+    if (slot >= kMaxSlots) {
+      return false;
+    }
+    const SlotState& state = slots_[slot];
+    return state.generation == generation && hasRole(state.roles, role);
+  }
+
+  WorkingSetRole rolesHeldAtSlot(uint8_t slot) const {
+    return slot < kMaxSlots ? slots_[slot].roles : WorkingSetRole::None;
+  }
+
+  uint16_t generationAtSlot(uint8_t slot) const {
+    return slot < kMaxSlots ? slots_[slot].generation : 0;
   }
 
   uint8_t holderCount(WorkingSetRole role) const {
-    // Distinct (slot, generation) identities holding this class: a composite lease is one
-    // holder of each class it names, not one per lease record.
-    uint16_t seen[kMaxLeases] = {};
-    uint8_t identities = 0;
     uint8_t n = 0;
-    for (uint8_t i = 0; i < count_; ++i) {
-      if (!hasRole(leases_[i].role, role)) {
-        continue;
-      }
-      const uint16_t key = static_cast<uint16_t>(leases_[i].slot) | (leases_[i].generation << 8);
-      bool known = false;
-      for (uint8_t k = 0; k < identities; ++k) {
-        if (seen[k] == key) {
-          known = true;
-          break;
-        }
-      }
-      if (!known) {
-        seen[identities++] = key;
+    for (uint8_t slot = 0; slot < kMaxSlots; ++slot) {
+      if (hasRole(slots_[slot].roles, role)) {
         ++n;
       }
     }
     return n;
   }
 
-  uint8_t totalHolders() const { return count_; }
-
-  const WorkingSetLeaseCaps& caps() const { return caps_; }
+  uint8_t totalHolders() const {
+    uint8_t n = 0;
+    for (uint8_t slot = 0; slot < kMaxSlots; ++slot) {
+      if (slots_[slot].roles != WorkingSetRole::None) {
+        ++n;
+      }
+    }
+    return n;
+  }
 
  private:
-  bool hasCapacityFor(WorkingSetRole role) const {
-    // A leased role set may name several classes; every named class must have room.
+  bool hasCapacityFor(uint8_t slot, WorkingSetRole role) const {
     for (uint8_t bit = 0; bit < 4; ++bit) {
       const WorkingSetRole single = static_cast<WorkingSetRole>(1u << bit);
-      if (hasRole(role, single) && holderCount(single) >= workingSetCapFor(caps_, single)) {
+      if (!hasRole(role, single)) {
+        continue;
+      }
+      const uint8_t cap = workingSetCapFor(caps_, single);
+      if (cap == 0) {
+        return false;
+      }
+      // Count distinct slot identities holding the class, excluding this slot's existing hold.
+      uint8_t held = 0;
+      for (uint8_t other = 0; other < kMaxSlots; ++other) {
+        if (other != slot && hasRole(slots_[other].roles, single)) {
+          ++held;
+        }
+      }
+      if (held >= cap) {
         return false;
       }
     }
@@ -223,8 +304,7 @@ class WorkingSetLeasePool {
   }
 
   WorkingSetLeaseCaps caps_{};
-  WorkingSetLease leases_[kMaxLeases]{};
-  uint8_t count_ = 0;
+  std::array<SlotState, kMaxSlots> slots_{};
 };
 
 #endif  // WORKING_SET_LEASE_H

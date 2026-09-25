@@ -64,15 +64,9 @@ void TrackManager::prewarmPlaybackRuntime() {
 #endif
   for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
     Track& track = tracks[t];
-    track.ensureLoopsAllocated();
-    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
-      if (!isSlotEnabled(t, s) && !track.loopForSlot(s).hasCommittedPasses()) {
-        continue;
-      }
-      // Boot reserves staging, not eight full view/bridge/companion bundles
-      // before SD load. Explicit full prewarm remains separate.
-      track.prewarmPlaybackForSlot(s, false);
-    }
+    // S3.1: the admission predicate and the lease live with the slot's owner, so the boot pass
+    // cannot disagree with the record arm about which slots hold a working set.
+    track.prewarmBootPlaybackRuntimeSlots();
   }
 #if defined(SESSION_CAPTURE)
   DebugSessionCapture::capturePrewarmMemory("after");

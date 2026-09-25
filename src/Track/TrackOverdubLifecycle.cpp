@@ -265,6 +265,10 @@ TRACK_COLD_MEM bool Track::admitOverdubStartWorkingSet() {
     ExternalPoolAccounting::endTag();
     if (!prepared) { denial.ok = false; return false; }
   }
+  // S3.1: the loaded slot now holds the same working set the record arm establishes, so record the
+  // same ownership. This path is why a boot-cold slot can stop without the boot reservation
+  // (S2b.1/S2b.2), and it must not diverge from the record arm about who owns the slot.
+  runtime.acquireWorkingSetLease(WorkingSetRole::PlaybackWindow | WorkingSetRole::LiveCapture);
   return true;
 }
 

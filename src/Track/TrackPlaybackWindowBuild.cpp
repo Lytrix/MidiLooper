@@ -483,6 +483,19 @@ TRACK_COLD_MEM void Track::invalidatePlaybackMergedMidiEvents(bool preserveLedge
   bumpPlaybackGeneration();
   playbackRuntime.resetAll(preserveLedger);
 }
+TRACK_COLD_MEM void Track::prewarmBootPlaybackRuntimeSlots() {
+  ensureLoopsAllocated();
+  const uint8_t trackIndex = resolveTrackIndexForPersistence(*this);
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (!trackManager.isSlotEnabled(trackIndex, s) && !loopForSlot(s).hasCommittedPasses()) {
+      continue;
+    }
+    // Boot reserves staging, not eight full view/bridge/companion bundles before SD load.
+    // Explicit full prewarm remains separate.
+    prewarmPlaybackForSlot(s, false);
+  }
+}
+
 TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture) {
   ensureLoopsAllocated();
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
@@ -579,6 +592,13 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagPlaybackOrder);
   (void)loop.getPlaybackOrder();
   ExternalPoolAccounting::endTag();
+  // S3.1: express the ownership this admission just established. `ok` is the admission answer, so
+  // a lease is recorded only when the working set is actually usable; the record arm is the
+  // admission caller and must act on a false answer. No resource moves, and the same reserves are
+  // established exactly as before.
+  if (ok && runtime != nullptr && prepareCapture) {
+    runtime->acquireWorkingSetLease(WorkingSetRole::PlaybackWindow | WorkingSetRole::LiveCapture);
+  }
   return ok;
 }
 
