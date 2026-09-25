@@ -196,6 +196,9 @@ public:
   void maybeLogStoredNoteCount();
   /// Arm sliced `#CAP,DIAG,lcr` on the selected track when idle (Stage 9 device gate). SESSION_CAPTURE only.
   void maybeQueueContentResolutionDeviceGate();
+  /// S3.1: the boot/load pass over this track's admitted slots, so the admission predicate and
+  /// the working-set lease share one owner. Establishes descriptors only (`prepareCapture=false`).
+  void prewarmBootPlaybackRuntimeSlots();
   /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
   /// Establish every reserve that keeps the later deferred stop grains allocation-free.
   /// Returns false when any required reserve failed, which is capture-admission denial:

@@ -21,6 +21,7 @@
 #include "RuntimeCompanionPasses.h"
 #include "RuntimeCanonicalPassInputs.h"
 #include "RuntimeNotePairLookup.h"
+#include "Utils/WorkingSetLease.h"
 
 class Loop;
 
@@ -237,6 +238,25 @@ struct PreparedPlaybackPair {
 };
 
 struct LoopPlaybackRuntime {
+  // --- S3.1 working-set lease -------------------------------------------------------------
+  // This object *is* the per-slot working set, so it carries its own lease: the slot cannot hold
+  // one without this runtime, and the runtime is externally allocated, so the bookkeeping costs
+  // no DTCM (a field in the 8-way `Track` array would cost 8x).
+  WorkingSetOutcome acquireWorkingSetLease(WorkingSetRole role) { return lease_.acquire(role); }
+  WorkingSetOutcome releaseWorkingSetLease(WorkingSetRole role) {
+    return lease_.release(lease_.generation(), role);
+  }
+  /// The slot runtime leaves the active set: bump the generation so a late release carrying the
+  /// previous generation is reported as `StaleGeneration` (S4.2) instead of clearing a successor.
+  WorkingSetOutcome releaseAllWorkingSetLeases() { return lease_.releaseAll(lease_.generation()); }
+  bool holdsWorkingSetRole(WorkingSetRole role) const {
+    return lease_.isHeld(lease_.generation(), role);
+  }
+  WorkingSetRole workingSetRoles() const { return lease_.roles(); }
+  uint16_t workingSetGeneration() const { return lease_.generation(); }
+
+  /// S3.1 lease bookkeeping for this slot (roles + generation). No resource ownership.
+  WorkingSetLeaseSlot lease_;
   uint32_t cachedLoopRevision = 0;
   uint32_t cachedTrackGeneration = 0;
   ActiveNoteLedger ledger;
