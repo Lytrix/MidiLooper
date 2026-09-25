@@ -50,6 +50,21 @@ TRACK_INTERNAL_MEM void emitOverdubStopDisplaySnapshot(Track& track, uint8_t dis
 TRACK_INTERNAL_MEM void logMemoryAfterOverdubStop(uint32_t overdubNoteOns, const Loop& loop);
 
 TRACK_INTERNAL_MEM uint8_t resolveTrackIndexForPersistence(const Track& track);
+/// S1.3 save/restore-survival: the single production expression that turns a recorded slot into the
+/// persistence target. Both record-stop persist sites and the native regression use it, so a future
+/// edit cannot resolve the target differently from the identity the take was pinned with.
+struct RecordStopPersistTarget {
+  uint8_t trackIndex = 0;
+  uint8_t slotIndex = 0;
+};
+TRACK_INTERNAL_MEM RecordStopPersistTarget resolveRecordStopPersistTarget(const Track& track,
+                                                                          uint8_t recordedSlotIndex);
+/// S1.3 save/restore-survival: the take identity for the record-stop slot-identity diagnostic.
+/// Packed into one 32-bit word (take id in the low 24 bits, the take's start slot in the high byte)
+/// held in FLASH-resident storage, deliberately **not** a `Track` member: `Track` is the eight-way
+/// DTCM array and carries a pinned `sizeof` guard (S3.0). Transport is single, so one active take.
+TRACK_INTERNAL_MEM void noteRecordStartSlotForIdentity(uint8_t slotIndex);
+TRACK_INTERNAL_MEM uint32_t recordStartSlotIdentityPacked();
 
 #if defined(SESSION_CAPTURE)
 #define TRACK_SC_RECORD_STOP_STAGE(...) logRecordStopStage(__VA_ARGS__)

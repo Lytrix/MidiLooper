@@ -37,8 +37,11 @@ inline bool tagStartsWith(const char* line, const char* prefix) {
 
 // A one-shot root-cause record must outlive a prolonged Tier-A timing stream.
 // Keep this deliberately narrow: normal stop telemetry remains Tier-A.
+// `RID,` (record-stop slot identity) is here because it is the one-shot evidence that explains a wrong
+// persistence target, and a Tier-A ring dropped it on the run that admitted `slot:5:0` — at most two
+// lines per take, so it cannot flood.
 inline bool isCriticalLine(const char* line) {
-  return tagStartsWith(line, "ODUB,stop,bridge_begin,");
+  return tagStartsWith(line, "ODUB,stop,bridge_begin,") || tagStartsWith(line, "RID,");
 }
 
 /// What a full capture ring must displace.
@@ -86,7 +89,8 @@ inline bool isTierALine(const char* line) {
     return false;
   }
   return strncmp(tag, "ST,", 3) == 0 || strncmp(tag, "PERS,", 5) == 0 ||
-         strncmp(tag, "RECS,", 5) == 0 || strncmp(tag, "HDR,", 4) == 0 ||
+         strncmp(tag, "RECS,", 5) == 0 || strncmp(tag, "RID,", 4) == 0 ||
+         strncmp(tag, "HDR,", 4) == 0 ||
          strncmp(tag, "ODUB,stop,", 10) == 0 ||
          strncmp(tag, "VCACHE,", 7) == 0 ||
          strncmp(tag, "DIAG,timing_max,", 16) == 0 || strncmp(tag, "DIAG,midi_gap,", 14) == 0 ||

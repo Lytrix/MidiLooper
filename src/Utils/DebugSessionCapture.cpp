@@ -645,6 +645,23 @@ SC_MEM_ATTR void recStopStage(const char* stage, uint32_t elapsedUs, uint32_t du
                 (unsigned long)chunkRefCount, outcome);
 }
 
+// S1.3 save/restore-survival: the record-stop slot-identity chain. `ev=start` fires once at record
+// start and `ev=admit` once at the persistence admission; both carry the same `take` id, so a host
+// can assert that the slot the take started on is the slot that was persisted. `commit` is the slot
+// passed to `finalizeCommitSideEffects`, `pt/ps` the admitted persistence key, `chg` whether the
+// slot changed between start and admission, `r` the commit reason and `w` the work-item kind.
+SC_MEM_ATTR void recSlotIdentity(const char* event, uint32_t takeId, uint8_t trackIndex,
+                                 uint8_t startSlot, uint8_t stopSlot, uint8_t commitSlot,
+                                 uint8_t persistTrack, uint8_t persistSlot, char reason, char work,
+                                 uint8_t slotChanged) {
+  emitCapPrintf(
+      SC_FMT("#CAP,%lu,RID,%s,take=%lu,t=%u,ss=%u,sp=%u,cs=%u,pt=%u,ps=%u,r=%c,w=%c,chg=%u\r\n"),
+      (unsigned long)micros(), event, (unsigned long)takeId, static_cast<unsigned>(trackIndex),
+      static_cast<unsigned>(startSlot), static_cast<unsigned>(stopSlot),
+      static_cast<unsigned>(commitSlot), static_cast<unsigned>(persistTrack),
+      static_cast<unsigned>(persistSlot), reason, work, static_cast<unsigned>(slotChanged));
+}
+
 SC_MEM_ATTR void architectureCounter(const char* name, uint32_t value) {
   emitCapPrintf("#CAP,%lu,DIAG,counter,%s,%lu\r\n", (unsigned long)micros(), name,
                 (unsigned long)value);

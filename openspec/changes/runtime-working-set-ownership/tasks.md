@@ -313,8 +313,9 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       **Handoff 2026-09-24 — the stability obstacle is removed:** `restored-library-stability` **2.2** proves
       the observed per-slot manifest reproduces across three consecutive boots
       (`captures/s13-libobs-stability-3boot.json`; five complete-manifest observations agree). The slope
-      fixture above **must vary the committed/loaded population** (select/enable each scratch slot so boot
-      loads it), not merely create an SD payload, and must explain the 28 unloaded slots; see
+      fixture above **must vary the loaded population** (select/enable each scratch slot so boot
+      loads it), not merely create an SD payload, and must explain the 28 payload-present slots that read as
+      unloaded; see
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *Handoff from `restored-library-stability`* for the
       evidence link and the 36/8/8 disposition. The *slope and failure point remain unmeasured here.*
       **READ-ONLY DEFINITION DONE 2026-09-24 (no sweep, no firmware): the "28 unloaded" premise is
@@ -323,13 +324,45 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       (LSV1 payloads → `storePublishedSnapshot`, `passes` left empty) and are resident — boot restore costs
       **27 pool chunks (480 → 453)** and **2,155 KB / 78 slabs** of snapshot arena, flat after settle, and
       playback reads the root (`tryGatherPublishedSnapshotEventsInWindow`). The observation's
-      `committed_at_checkpoint` is therefore a **pass-backed subset**, not the loaded population, and is not
-      spec-conformant for root-backed slots. The four required-but-not-pass-backed slots are `(2,1)`/`(4,0)`
+      `committed_at_checkpoint` was therefore a **pass-backed subset**, not the loaded population, and was
+      not spec-conformant for root-backed slots. The four required-but-not-pass-backed slots are `(2,1)`/`(4,0)`
       (root-backed) and `(6,0)`/`(7,0)` (payload-absent enabled slots; `Track 6/7 loaded state: EMPTY`).
       **Controlled fixture defined:** fix one active role, add one payload per boot inside the approved
       scratch range, and report `N_payload` / `N_pass` / `N_root` plus reservation, payload, root and
       directory residency separately. **The slope run and the failure point remain unmeasured.** Full trace
       and definition: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *S1.3 — slope-fixture definition*.
+      **OBSERVABILITY CORRECTION LANDED 2026-09-24 (seventeenth session) — and the corrected telemetry
+      CONTRADICTS the per-slot attribution above.** The observation now reports `hasPassContent` and
+      `hasRootContent` **separately** with `hasCommittedContent` as their **union** (`kp`/`kr`/`kc` on the
+      slot record; `P`/`R` beside `m` on the end frame), where `hasRootContent` means a root **is installed**
+      (`Loop::publishedSnapshot()`) and `kc` reports whether it is current; invalidation includes the
+      **published-root publication identity**, so a root replaced between slices can no longer be missed.
+      Tests: classifier pass-only/root-only/both/empty, session O09 (root content + root replacement
+      invalidates) and O10 (union with both subsets beside it), three host parser cases and one comparator
+      case; full native **2,378 / 1 skipped / 0 failures**, firmware build **SUCCESS and flashed**.
+      **Two independent read-only revalidation boots agree exactly: payload 36, initial-playback 8,
+      `committed_at_checkpoint` 9 (`pass_backed` 9, `root_backed` 7); the content set is `(0,0) (1,0) (1,1)
+      (1,2) (2,0) (3,0) (4,0) (5,0) (5,1)` and every other payload slot has 0 passes, 0 length, 0 events and
+      NO published root at all.** The publish path installs a root whenever it adopts
+      (`applyLoadedLoopSlotBodyCommit`), so **the "8 pass-backed / 28 published-root-backed" reading is
+      contradicted: 27 of the 36 token-verified payload slots hydrate nothing**, and the corrected loaded
+      count is **9, not 36**. The three-boot repeatability result is repeatability of the fields it measured
+      only — never of a *new* payload surviving a reboot. `#MEM_OWNERS` on the same boot reproduces the
+      trace's owner totals exactly (78 slabs / 2,455 KB used / 2,155 KB snap / `chunks_free` 450), so the
+      owner total holds while the per-slot attribution does not. The pinned fixture parameters (authorized
+      slots, fixed roles, equal content, one payload format per series, separate cost classes,
+      refusal-inside-the-authorized-population) are in
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *Pinned fixture parameters*. **The scratch-range
+      limit is not a capacity failure:** if no refusal occurs inside the authorized population, report the
+      measured range and leave **S1.5 — refusal point** open.
+      **SLOPE ATTEMPTED, BLOCKED AT THE FIRST STEP (0 added slots, no refusal).** Recording (6,1) saved (×4)
+      and rebooted; the boot reports `Track 6 loaded state: EMPTY`, N=36 (no new payload) and an unchanged
+      owner census, so the saved scratch payload did not survive the reboot. **No `#MEM_EXT_REFUSED`, no
+      `refused` terminal** — a fixture-path blocker, **not** a capacity failure, and **not** an S1.5 result.
+      The slope is therefore **still unmeasured**, S1.1's owner census and S2b.3's post-restore budget are
+      measured on the revalidation boot (`free_chunks=450` vs required 16 → met; reservation 512→480 then
+      480→480, `credits=0` on 16 rows), and the next step is to resolve the save/restore survival of a new
+      scratch payload — a state-changing investigation, not another read-only trace.
 - [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
       many canonical chunks those roots pin** via `SlotPassReferences` (the B10 baseline).
       **Clause 1 MEASURED 2026-09-23** (dense PASS run, no new telemetry): the undo root retains essentially the
@@ -1400,6 +1433,40 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
         `overflow_free` / `call_site_gate_ok`; transport never stops.
       This is the case that distinguishes "one device-wide finalizer" from "one finalizer per **track+slot**" — a
       device-wide singleton would fail it. Evidence: session log + per-track holder census.
+- **UNRESOLVED OBSERVATION (2026-09-24, user capture `captures/session_20260924_183229.log`) — the ordinary
+  Playing stop route under repeated press; acceptance and progress UNPROVEN.** Recorded, not diagnosed: no
+  firmware edit, no device run, no solution adopted.
+  - **What the capture shows.** Five `Overdub stop refused: stop_job_pending` rows across 1215.093–1228.231 s:
+    `phase=9 dest=0` ×3 (**CompanionBridge**, **Playing**), `phase=5 dest=0` ×1 (**CanonicalTail**),
+    `phase=1 dest=0` ×1 (**CanonicalPrefix**). Three overdub sessions opened; `Reentry window open` ×3 and
+    `Reentry released` ×2. Separately 16 `Capture admission rejected: unmatched NoteOff` rows — a held-note
+    reservation signal, **not** a stop-resource denial.
+  - **The row is not a denial verdict.** `Track::stopOverdubbing` calls `Track::latchAcceptedStop` in the same
+    branch that emits `Overdub stop refused` (`src/Track/TrackOverdubLifecycle.cpp:1721-1748`), so the wording
+    survives the acceptance implementation (DEC-078 item 1) and this row alone cannot establish that a second
+    press was required.
+  - **No job identity, no worker progress.** Two `phase=9` rows 2.312 s apart (1216.836 / 1219.148) are repeated
+    observation of the *phase*, not proof that worker progress was unchanged; a `Denied` return, a restart and
+    insufficient service all remain consistent. The flashed revision is unidentified — the log opens mid-session
+    on a `[Memory]` row and carries no banner or `firmware_hex_sha256`.
+  - **No terminal wedge.** `MIDI clock lost` is at 1229.981 s, followed by `CurrentSet saved successfully (v6
+    deferred slices)` and then **1,023 `[Memory]` + 256 `#MEM_OWNERS` rows and nothing else** to ~2255 s. That is
+    continued execution, not a freeze — and it does not establish stop completion either.
+  - **Probe limitation to resolve before the follow-up run.** `!STOP_STATUS` cannot serve this window as it
+    stands: it is transport-gated twice (`src/StorageManager/StorageManagerHitlSerial.cpp:672`, re-checked in
+    `Track::printStoppedServiceStatusForHitl`, `src/Track/TrackOverdubLifecycle.cpp:385`) and reports only the
+    **selected track's ring head** (`captureStopJob()`) — it prints **no latch field**, and `Track::acceptedStopWaitCount()`
+    is emitted by no probe. The window under test is transport-running with `dest=0` (**Playing**), so the probe
+    would have refused; even stopped it could not show acceptance.
+  - **Code-gap candidate — hypothesis only, causal role NOT established.** The bounded per-phase stall fallback is
+    restricted to `retargetedFromPlaying` (DEC-070, `src/Track/TrackOverdubLifecycle.cpp:1013`), and the
+    non-retargeted **Playing** branches for `CanonicalTail` / `CompanionHistory` / **CompanionBridge** can return
+    on `Denied` with no branch-specific diagnostic. **Do not generalize that fallback on this evidence**: its
+    raw-only recovery drops the display representation and the protected undo (DEC-070), so generalizing it is a
+    behaviour decision, not a timeout fix.
+  - **Resolved by:** S4f.11 (acceptance → execution latency per interaction class) and S4f.13 (accepted-sequence
+    device verification), once a run on identified firmware supplies stop acceptance, job identity, worker
+    progress and scheduler-service evidence.
 - [ ] S4f gates: the latency from acceptance to execution is bounded and reported; no capacity-driven
       user-visible denial remains in the diagnostic vocabulary; a registered HITL stimulus exists for the
       single-press shape (see Closeout).

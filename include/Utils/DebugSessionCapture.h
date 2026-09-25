@@ -139,6 +139,15 @@ SC_MEM_ATTR void clockSource(const char* from, const char* to);
 SC_MEM_ATTR void recStart(uint8_t slot, uint32_t tick);
 SC_MEM_ATTR void recStop(const char* kind, uint8_t slot, uint32_t tick, uint32_t startTick,
                          uint32_t rawLength, uint32_t finalLength, bool align);
+/// Record-stop **slot-identity** diagnostic (S1.3 save/restore-survival investigation). One line per
+/// record start and one per persistence admission, so a recording's slot can be followed from capture
+/// through the commit side effects to the admitted persistence key. Emitted under session capture only;
+/// it exists because the observed failure was a *targeting* mismatch (recorded slot vs persisted slot),
+/// which no existing record correlates.
+SC_MEM_ATTR void recSlotIdentity(const char* event, uint32_t takeId, uint8_t trackIndex,
+                                 uint8_t startSlot, uint8_t stopSlot, uint8_t commitSlot,
+                                 uint8_t persistTrack, uint8_t persistSlot, char reason, char work,
+                                 uint8_t slotChanged);
 SC_MEM_ATTR void recStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                               uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
                               size_t chunkRefCount, const char* outcome);
@@ -390,6 +399,10 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_REC_START(slot, tick)           DebugSessionCapture::recStart(slot, tick)
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) \
                                            DebugSessionCapture::recStop(kind, slot, tick, start, raw, final, align)
+#define SC_REC_SLOT_IDENTITY(event, takeId, trackIndex, startSlot, stopSlot, commitSlot, persistTrack, \
+                             persistSlot, reason, work, slotChanged)                                \
+  DebugSessionCapture::recSlotIdentity(event, takeId, trackIndex, startSlot, stopSlot, commitSlot,   \
+                                       persistTrack, persistSlot, reason, work, slotChanged)
 #define SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) \
                                            DebugSessionCapture::recStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
 #define SC_ODUB_STAGE(stage, durationUs, heapBefore, heapAfter, outcome) \
@@ -537,6 +550,8 @@ inline void restartCaptureBootGrace() {}
 #define SC_CLOCK_SOURCE(from, to)          ((void)0)
 #define SC_REC_START(slot, tick)           ((void)0)
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) ((void)0)
+#define SC_REC_SLOT_IDENTITY(event, takeId, trackIndex, startSlot, stopSlot, commitSlot, persistTrack, \
+                             persistSlot, reason, work, slotChanged) ((void)0)
 #define SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_ODUB_STAGE(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_ODUB_WRAP_TICK(totalUs, sealUs, passApplyUs, srcAppendUs, commitUs, sealPendUs, \
