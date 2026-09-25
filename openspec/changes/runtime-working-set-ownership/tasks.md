@@ -1145,8 +1145,21 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       lease is write-only and the generation never advances. S4.1's release calls
       `releaseAllWorkingSetLeases()`; S4.2 reads `workingSetGeneration()` for `captureStopOwner`. S3.2's
       liveness predicates are the other half of this task.
-- [ ] S3.2 Explicit liveness predicates per owner kind: capture stop job, deferred stop commit, undo/redo
+- [x] S3.2 Explicit liveness predicates per owner kind: capture stop job, deferred stop commit, undo/redo
       root, prepared playback handover. Native fixture per kind.
+      **DONE 2026-09-25 (naming + discriminating matrix).** `Track::noLiveOwnerForSlot` is now a list of
+      named terms — `hasLiveCaptureStopJobForSlot` (ring live window only, B6), `hasAcceptedInteractionForSlot`
+      (S4f.1 latch), `ownsLiveFinalization` (`captureStopOwner`) and `ownsInFlightPreparedHandover`
+      (`preparedPairRequestPending`) — with identical meaning, order and callers, so nothing widened or
+      narrowed. The two terms that **cannot be expressed yet** are recorded in place with their owning
+      stages instead of being dropped: the job-owned undo root arrives with **S5.2a** and pending deferred
+      reconstruction with **S5.2e**. The published prepared pair stays deliberately **not** a term (it is the
+      slot's playback authority while it sounds, so counting it would make release unreachable).
+      Fixture `test_s3_2_liveness_predicates_are_discriminating_per_owner_kind` in `test_continuous_capture`
+      holds each kind alone and asserts the composite refuses only for it, plus two inverse controls (an
+      unowned slot allows release; a slot holding only a published pair and an admitted working set allows
+      release). Suite 101/101; full native **2,520 passed / 1 skipped**; RAM1 flat; capture-serial builds.
+      Packet and record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3.2.
 - [ ] S3.3 Selection acquires nothing: assert the SELECTED tier and browsing cause no lease churn.
 - [ ] S3 gates: S2b gates plus S2.2/S2.3 current-root budget (no phase-F behavior prerequisite), plus `test_runtime_working_set_ownership`; `test_playback_prewarm` unchanged.
 
