@@ -132,3 +132,69 @@ Each entry is the actual command, context and result. NOT RUN is stated explicit
   `SSD1322_HW_drive_CS_high()` in the completion branch) and **5.1**. **1.3** stays open for the fault
   run; **2.1–2.3, 3.3, 4.1, 4.2, 5.2, 5.3** stay open — their verification needs the fault-injection
   seam and/or hardware.
+
+## Slice B — deterministic transport-health seam (task 2.3)
+
+### Identity and scope
+
+- **Task:** **2.3 — host-testable health seam**, which unblocks **1.3** (targeted fault run), **2.2**
+  (injected abort path), **3.3** (recovery transitions) and **5.2** (forced device fault run).
+- **Status:** seam implemented and native-verified; device fault runs NOT RUN.
+- **Owner path:** `SSD1322_API` decides with `SSD1322_DMA_HEALTH`; the host test drives the same object
+  the firmware uses, so no decision is duplicated in test code.
+- **Primary files:** new `lib/SSD1322_OLED/include/SSD1322_DMA_HEALTH.h` (dependency-free policy),
+  `lib/SSD1322_OLED/include/SSD1322_API.h` + `src/SSD1322_API.cpp` (delegate to it),
+  `platformio.ini` (native include path + `lib_ignore`), new
+  `test/test_display_dma_health/`.
+- **Mutation / postconditions:** `SSD1322_API` keeps only hardware state (`dmaBuffer`, `dmaActive_`,
+  `dmaStartedAtMs_`); the retry cooldown, degraded limit and census live in the policy object.
+  Behaviour is unchanged — same transitions, same bounds, same log lines.
+- **Non-goals:** no bus, ISR or DMA-channel change; no new scheduling; no change to the bounds.
+
+### Oracle fixed before the behavior edits
+
+| Case | Initial state | Action | Expected |
+|---|---|---|---|
+| B1 uninitialized | `markInitialized(false)` | `canSubmitDma` | false at any time |
+| B2 rejected submission | initialized, no failures | `onSubmissionRejected(t)` | `rejections=1`, `failureRun=1`, not degraded, `canSubmitDma(t+delay-1)` false, `canSubmitDma(t+delay)` true |
+| B3 timeout recovery | active transfer past the bound | `hasTimedOut` then `onTimeout(t)` | `timeouts=1`, cooldown armed, not degraded |
+| B4 successful retry | `failureRun>0` | `onTransferComplete()` | `failureRun=0`, `recoveries=1`, DMA re-admitted |
+| B5 finite degraded mode | `failureLimit` consecutive failures | third failure | degraded, `canSubmitDma` false for the rest of the boot |
+| B6 partial-run reset | two failures then a success | then two more failures | still not degraded (not three *consecutive*) |
+| B7 census separation | — | completions + blocking frames | counted independently |
+
+**Counterexample:** the pre-slice tree had no seam at all, so B2–B5 were unreachable off-device; the
+"rejected submission" branch is additionally unreachable through the real wrapper, because
+`TsyDMASPI0.queue()` rejects only an invalid size, which a full frame never is.
+
+### Controls and coverage
+
+- **Seam:** `SSD1322_DMA_HEALTH` — a dependency-free policy object. The production `SSD1322_API` calls
+  it for every decision, so the fixture exercises the asserted path rather than a copy.
+- **Production paths exercised:** the same object instance type the firmware instantiates; the firmware
+  build is unchanged in RAM1.
+- **Device fault injection (for 5.2, compiled out at 0):** `MIDILOOPER_DISPLAY_DMA_FAULT=1` forces every
+  submission to be rejected; `=2` forces an active transfer to never report completion. Both builds
+  verified to compile; the device runs themselves are 5.2.
+- **Untestable before link:** the wrapper's `abortAndReset()` and the LPSPI register effects still need
+  hardware; the seam covers the decision, not the bus.
+
+### Verification recipe
+
+- Focused: `pio test -e native -f test_display_dma_health`.
+- Broad: `pio test -e native`.
+- Builds: `pio run -e teensy41-capture-serial`, plus `MIDILOOPER_DISPLAY_DMA_FAULT=1` and `=2`.
+
+### Completion record
+
+- **Seam landed:** `SSD1322_DMA_HEALTH` (policy) with `SSD1322_API` delegating; no decision duplicated in
+  the test.
+- **Focused native:** `pio test -e native -f test_display_dma_health` — **9 cases, 9 succeeded**.
+- **Broad native:** `pio test -e native` — **2412 cases, 1 skipped, 2411 succeeded, 0 failures** (exit 0);
+  the +9 over the previous 2403 is exactly the new `test_display_dma_health` suite.
+- **Builds:** `teensy41-capture-serial` SUCCESS with `RAM1 variables 96,160 / code 391,448 / padding 1,768 /
+  locals 34,912` — **byte-identical to the pre-refactor figures**, i.e. the extraction cost no ITCM or
+  RAM1. `MIDILOOPER_DISPLAY_DMA_FAULT=1` and `=2` both SUCCESS.
+- **Device fault runs:** NOT RUN (task 5.2).
+- **Task IDs eligible for checkoff:** **2.3**; **2.1**/**2.2** still need their own verification, and
+  **1.3**/**3.3** now have a seam to run against.

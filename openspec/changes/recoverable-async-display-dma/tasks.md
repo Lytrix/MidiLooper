@@ -8,7 +8,7 @@
 
 - [ ] 2.1 Add a public `abortAndReset()` operation to `lib/SSD1322_OLED/lib/TsyDMASPI/TsyDMASPI/MasterBase.h` and the Teensy 4.x master implementation; verify it disables both DMA paths, clears transaction state and LPSPI DMA/FIFO state, and leaves the wrapper idle without reinitializing channel lifetime.
 - [ ] 2.2 Preserve normal wrapper completion behavior and caller-owned-CS semantics after adding recovery; verify by compiling the Teensy environment and exercising both normal completion and an injected abort path.
-- [ ] 2.3 Add a small deterministic test seam or host-testable state helper for rejected submission, timeout recovery, successful retry, and finite degraded mode; verify the relevant native test covers all four transitions.
+- [x] 2.3 Add a small deterministic test seam or host-testable state helper for rejected submission, timeout recovery, successful retry, and finite degraded mode; verify the relevant native test covers all four transitions. **Done (2026-09-24):** the seam is `SSD1322_DMA_HEALTH` (dependency-free policy in `lib/SSD1322_OLED/include/`); `SSD1322_API` delegates every health decision to it, so the fixture drives the production path, not a copy. `test_display_dma_health` covers all four transitions plus the uninitialized case, the partial-run reset, the census split and `millis()` wraparound — **9/9**. Device-only fault injection for task 5.2 ships compiled-out at `MIDILOOPER_DISPLAY_DMA_FAULT=1` (force rejection) / `=2` (force timeout), both verified to build. Evidence: [EXECUTION_PACKET.md](EXECUTION_PACKET.md) Slice B.
 
 ## 3. SSD1322 asynchronous transport and recovery
 
@@ -19,7 +19,7 @@
 ## 4. Display transfer integration
 
 - [ ] 4.1 Update `DisplayManager` transfer-phase state so a busy OLED transfer is polled on later updates and completed redraws coalesce to one newest pending frame; verify a focused native test or deterministic harness proves no concurrent/stale transfer is started.
-- [ ] 4.2 Preserve existing rendering, boot-screen, and load/save overlay behavior while the transport is busy; verify a firmware build and manual on-device smoke flow show a complete first frame, normal overlay refresh, and no partial-row artifact. **Partial (2026-09-24):** flashed and booted cleanly, and the paint loop keeps running while the transport is busy (`dma_frames` 36 → 655 with `blocking_frames=0`). The visual clauses — complete first frame, overlay refresh, no partial-row artifact — still need a human look at the OLED.
+- [x] 4.2 Preserve existing rendering, boot-screen, and load/save overlay behavior while the transport is busy; verify a firmware build and manual on-device smoke flow show a complete first frame, normal overlay refresh, and no partial-row artifact. **Done (2026-09-24):** flashed and booted cleanly; the paint loop keeps running while the transport is busy (`dma_frames` 36 → 655 with `blocking_frames=0`), and the user confirmed the panel on hardware — complete frame, normal refresh, no partial-row artifact.
 
 ## 5. Verification and closeout
 
