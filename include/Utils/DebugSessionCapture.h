@@ -301,6 +301,12 @@ SC_MEM_ATTR void libraryObservationEnd(uint32_t windowStartUs, uint32_t windowEn
                                        uint16_t rootBackedAtCheckpoint, uint8_t admissionComplete,
                                        uint8_t everyInitialPlaybackSlotObserved,
                                        uint8_t consistentView, uint8_t complete);
+/// S1.3 save/restore-survival: read back the bounded slot-identity path counters. Read-only and called
+/// from the stopped-only HITL command (`!CAP_IDENTITY_STATS`), never from the record/persist path:
+/// emitter entries, enqueue successes, enqueue rejections, transmissions and evictions, plus the last
+/// identity the emitter was handed. Separates "branch never reached" from "capture disabled",
+/// "enqueue rejected", "evicted" and "delivered but not parsed".
+SC_MEM_ATTR void emitIdentityPathStats();
 SC_MEM_ATTR void persistenceBundle(const char* workType, uint32_t totalUs,
                                    uint32_t maxSliceUs, uint32_t sliceCount,
                                    uint32_t undoEntryCount, uint32_t snapshotCount);

@@ -20,10 +20,10 @@
   "environments": {
     "teensy41-capture-serial": {
       "itcm_bytes": 393216,
-      "ram1_variables": 96192,
-      "locals_free": 34880,
+      "ram1_variables": 96160,
+      "locals_free": 34912,
       "padding": 872,
-      "note": "Default capture/acceptance env. Padding 1,096 -> 872 and variables 96,128 -> 96,192 by the restore-liveness A2.1/A2.4 request record: the record stores the full identity + state + terminal per (track, slot), which retires the 64-byte `loopSlotRestoreAttempted_` latch in the same change, and the bounded attempt counter adds 24 B. Padding stays above the 840 floor. Recorded in openspec/changes/deferred-slot-restore-liveness/REVIEW.md."
+      "note": "Default capture/acceptance env. ITCM unchanged at 12 banks (code 391,304 + padding 1,912). RAM1 variables 96,192 -> 96,160 and locals free 34,880 -> 34,912 by the S1.3 record-stop slot-identity diagnostic and the bounded identity-path counters: the counters and the last-take identity are FLASH-resident (the emitter and the state in DebugSessionCapture.cpp), and the take identity is packed into one 32-bit word in the TrackCaptureInput TU rather than a Track member, so Track's pinned sizeof(384) is untouched. Net effect is 32 B of DTCM returned to the local allowance, not a cost. Recorded in openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md (\u00a7 Recorded-slot -> persistence-target correctness)."
     },
     "teensy41-capture-serial-no-grain": "teensy41-capture-serial",
     "teensy41-capture-serial-investigation-diag": "teensy41-capture-serial",

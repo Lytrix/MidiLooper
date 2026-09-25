@@ -3025,11 +3025,18 @@ implementation is the small observation fix, not the lease pool and not another 
   reboot** on a mismatch, and the native case
   `test_record_stop_persist_target_follows_the_recorded_slot` covers recording into a non-zero slot with the
   adjacent slot already holding content. Native **2,379 / 1 skipped / 0 failures**.
-  **Open blocker:** the `RID` rows (and the pre-existing Tier-A `RECS` rows) do not reach the host even
-  though `nm`/`objdump` confirm both call sites in the flashed image and an explicit `!TRACE_DRAIN` was
-  issued; record-stop capture rows are being displaced. That capture-visibility defect is separate from the
-  persist-target defect and is the next thing to fix — the identity was **not** routed through a blocking
-  serial print to work around it. **The reboot stays withheld** until the target correlates.
+  **Open blocker:** record-stop capture rows do not reach the host. The bounded counters now localise it:
+  on a **fresh boot with no take** `!CAP_IDENTITY_STATS` reads `entered=0 enq=0 rej=0 tx=0 evict=0` (so the
+  counters and the command are live), but after a capture session closes the **command channel stops
+  answering** (`!CAP_IDENTITY_STATS`, `!STOP_STATUS`, `!CRASH_LOG` all silent) while telemetry streams, and
+  it only recovers on re-upload — which clears the counters. The device is **not crashed** (`!CRASH_LOG`
+  after the next upload shows a normal boot, no crash record); three runs reproduce it. So the after-take
+  reading needs either a command path that survives a run or a next-boot report; until then the identity
+  question stays open and the after-reading is unavailable. **Careful reading of what the device showed:**
+  `LoopPersist slot:5:0` is **suspicious but not attributed** — without take correlation it could be
+  unrelated pending work (the device autosaves across runs and metadata items outlive the take); and zero
+  payload-read errors support **"no reported read failures"**, not "every empty payload was intentional".
+  **Native/build gates are green; device identity verification remains open.**
 - **S2b.3 — post-restore budget stays open with its full arithmetic.** A settled boot's `capture_prewarm`
   walk is the **cold** reservation count, not peak capture reservation, so `450 ≥ peak + 16` was never
   actually evaluated; the term is the peak reservation **during the specified capture workload**, on a
