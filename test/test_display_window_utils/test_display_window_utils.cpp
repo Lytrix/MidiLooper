@@ -14,6 +14,98 @@
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/Utils/DisplayWindowUtils.cpp"
 
+static size_t composeAllocations = 0;
+static size_t composeLiveElements = 0, composePeakElements = 0;
+template<class T> struct ComposeCountingAllocator {
+  using value_type = T;
+  using is_always_equal = std::true_type;
+  ComposeCountingAllocator() = default;
+  template<class U> ComposeCountingAllocator(const ComposeCountingAllocator<U>&) {}
+  T* allocate(size_t n) { ++composeAllocations; composeLiveElements += n; composePeakElements = std::max(composePeakElements, composeLiveElements); return std::allocator<T>{}.allocate(n); }
+  void deallocate(T* p, size_t n) { composeLiveElements -= n; std::allocator<T>{}.deallocate(p, n); }
+  template<class U> bool operator==(const ComposeCountingAllocator<U>&) const { return true; }
+  template<class U> bool operator!=(const ComposeCountingAllocator<U>&) const { return false; }
+};
+
+struct PaintCopyProbe : std::vector<int, ComposeCountingAllocator<int>> {
+  using Base = std::vector<int, ComposeCountingAllocator<int>>;
+  using Base::Base;
+  inline static bool retiredAtCopy = false;
+  PaintCopyProbe& operator=(const PaintCopyProbe& source) {
+    retiredAtCopy = capacity() == 0;
+    Base::operator=(source);
+    return *this;
+  }
+};
+void test_paint_growth_retires_obsolete_frame_before_allocating_replacement() {
+  // Host libc++ already releases before copy allocation, whereas target libstdc++
+  // allocates first. Check the production helper's explicit retirement boundary.
+  using Vec = PaintCopyProbe;
+  Vec live(257, 7), paint(256, 2);
+  composePeakElements = composeLiveElements;
+  DisplayWindowUtils::replacePaintFromCompose(paint, live);
+  TEST_ASSERT_TRUE(PaintCopyProbe::retiredAtCopy);
+  TEST_ASSERT_EQUAL(257, paint.size());
+  TEST_ASSERT_EQUAL(7, live[0]);
+  TEST_ASSERT_EQUAL(7, paint[256]);
+  TEST_ASSERT_LESS_OR_EQUAL(514, composePeakElements);
+}
+
+void test_draw_source_reuses_two_buffers_without_paint_mutating_compose() {
+  using Vec = std::vector<int, ComposeCountingAllocator<int>>;
+  Vec live, paint;
+  live.reserve(512); paint.reserve(512);
+  composeAllocations = 0;
+  for (int frame = 1; frame <= 64; ++frame) {
+    DisplayWindowUtils::DrawSourceComposeScratch<Vec> scratch(paint);
+    for (int i = 0; i < 320; ++i) scratch.notes.push_back(frame);
+    live.swap(scratch.notes);
+    scratch.restorePaintStorage();
+    DisplayWindowUtils::replacePaintFromCompose(paint, live);
+    paint[0] = -1;
+    TEST_ASSERT_EQUAL(frame, live[0]);
+  }
+  TEST_ASSERT_EQUAL(0, composeAllocations);
+}
+
+void test_draw_source_handoff_and_early_exit_return_scratch() {
+  using Vec = std::vector<int, ComposeCountingAllocator<int>>;
+  Vec live(20, 7), paint;
+  paint.reserve(64); auto* original = paint.data();
+  {
+    DisplayWindowUtils::DrawSourceComposeScratch<Vec> scratch(paint);
+    scratch.notes.assign(10, 3); // Gather rejected: keep authoritative handoff frame.
+  }
+  TEST_ASSERT_EQUAL_PTR(original, paint.data());
+  TEST_ASSERT_EQUAL(7, live[0]);
+  const size_t before = composeAllocations;
+  paint = live; paint[0] = 9;
+  TEST_ASSERT_EQUAL(before, composeAllocations);
+  TEST_ASSERT_EQUAL(7, live[0]);
+}
+
+void test_in_place_window_filter_matches_existing_wrap_and_zero_semantics() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back({kInvalidNoteId, 60, 100, 1400, 40});
+  notes.push_back({kInvalidNoteId, 61, 100, 200, 250});
+  notes.push_back({kInvalidNoteId, 62, 100, 0, 60});
+  for (uint32_t length : {0u, 100u, 768u, 1536u}) {
+    for (uint32_t loop : {0u, 1536u}) {
+      auto actual = notes;
+      const auto* storage = actual.data();
+      auto expected = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(notes, 0, length, loop);
+      DisplayWindowUtils::filterDisplayNotesByWindowInclusionInPlace(actual, 0, length, loop);
+      TEST_ASSERT_EQUAL_PTR(storage, actual.data());
+      TEST_ASSERT_EQUAL(expected.size(), actual.size());
+      for (size_t i = 0; i < actual.size(); ++i) {
+        TEST_ASSERT_EQUAL(expected[i].note, actual[i].note);
+        TEST_ASSERT_EQUAL(expected[i].startTick, actual[i].startTick);
+        TEST_ASSERT_EQUAL(expected[i].endTick, actual[i].endTick);
+      }
+    }
+  }
+}
+
 void test_make_viewport_interval() {
   const TickInterval viewport = DisplayWindowUtils::makeViewportInterval(16u * Config::TICKS_PER_BAR,
                                                                          4u * Config::TICKS_PER_BAR);
@@ -2189,6 +2281,10 @@ void test_display_frame_invalidate_during_draw_coalesces() {
 
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_draw_source_reuses_two_buffers_without_paint_mutating_compose);
+  RUN_TEST(test_paint_growth_retires_obsolete_frame_before_allocating_replacement);
+  RUN_TEST(test_draw_source_handoff_and_early_exit_return_scratch);
+  RUN_TEST(test_in_place_window_filter_matches_existing_wrap_and_zero_semantics);
   RUN_TEST(test_make_viewport_interval);
   RUN_TEST(test_note_intersects_window_tick_interval);
   RUN_TEST(test_filter_display_notes_by_window_inclusion_tick_interval);

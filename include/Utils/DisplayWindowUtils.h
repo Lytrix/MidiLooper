@@ -13,6 +13,42 @@
 
 namespace DisplayWindowUtils {
 
+template <class Vector>
+void replacePaintFromCompose(Vector& paint, const Vector& compose) {
+  if (&paint == &compose) return;
+  if (compose.size() > paint.capacity()) {
+    // Previous paint is obsolete; target libstdc++ assignment otherwise allocates
+    // its replacement before freeing this backing, adding a third live frame.
+    Vector{}.swap(paint);
+  }
+  paint = compose;
+}
+
+// Borrow the previous paint allocation for this synchronous compose. Once compose
+// swaps into the live frame, return its old allocation for the next paint copy.
+// No new persistent scratch and no mutation of the retained live frame on handoff.
+template <class Vector>
+class DrawSourceComposeScratch {
+ public:
+  explicit DrawSourceComposeScratch(Vector& paint) : paint_(paint) {
+    notes.swap(paint_);
+    notes.clear();
+  }
+  ~DrawSourceComposeScratch() { restorePaintStorage(); }
+  DrawSourceComposeScratch(const DrawSourceComposeScratch&) = delete;
+  DrawSourceComposeScratch& operator=(const DrawSourceComposeScratch&) = delete;
+  void restorePaintStorage() {
+    if (!restored_) { paint_.swap(notes); restored_ = true; }
+  }
+  Vector notes;
+ private:
+  Vector& paint_;
+  bool restored_ = false;
+};
+
+void filterDisplayNotesByWindowInclusionInPlace(NoteUtils::DisplayNoteVec& notes,
+    uint32_t windowStart, uint32_t windowLength, uint32_t loopLength);
+
 constexpr uint32_t kMaxDetailedWindowBars = 16;
 
 /// Extra bar past the paint window that must already be in the committed filter

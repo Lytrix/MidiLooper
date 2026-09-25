@@ -123,6 +123,7 @@ struct RuntimePlaybackView {
   PlaybackViewSourceIdentity passOriginSource;
   bool passOriginsReady = false;
   ~RuntimePlaybackView();
+  void release();
   PlaybackViewSourceIdentity source;
   EmissionCursor cursorAnchor;
   PlaybackCoverageInterval coverage;

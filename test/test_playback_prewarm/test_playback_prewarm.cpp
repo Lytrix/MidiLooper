@@ -174,6 +174,8 @@ void test_whole_take_reservation_is_released_once_the_loop_is_known_long() {
   for (uint8_t i = 0; i < RuntimePlaybackViewConfig::kBridgeCount; ++i) {
     TEST_ASSERT_EQUAL_UINT32(0, set.bridges[i].capacity);
     TEST_ASSERT_EQUAL_UINT32(0, set.bridgeBases[i].storage.capacity);
+    TEST_ASSERT_NULL(set.bridgeBases[i].passOrigins);
+    TEST_ASSERT_NULL(set.bridgeBases[i].canonicalRanks);
   }
   TEST_ASSERT_FALSE(runtime.preparedPairStorage.isPrewarmed());
   TEST_ASSERT_FALSE(set.beginCandidateBridge());
@@ -185,6 +187,27 @@ void test_whole_take_reservation_is_released_once_the_loop_is_known_long() {
   TEST_ASSERT_TRUE(set.captureStagingsPrewarmed());
 }
 
+void test_whole_take_release_reprewarm_recreates_side_arrays() {
+  RuntimePlaybackViewSet set;
+  TEST_ASSERT_TRUE(set.prewarm(true));
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    TEST_ASSERT_TRUE(set.releaseWholeTakeViews());
+    for (const auto& base : set.bridgeBases) {
+      TEST_ASSERT_NULL(base.passOrigins);
+      TEST_ASSERT_NULL(base.canonicalRanks);
+      TEST_ASSERT_FALSE(base.passOriginsReady);
+      TEST_ASSERT_FALSE(base.canonicalRanksReady);
+    }
+    TEST_ASSERT_TRUE(set.prewarm(true));
+    for (auto& base : set.bridgeBases) {
+      TEST_ASSERT_NOT_NULL(base.passOrigins);
+      TEST_ASSERT_NOT_NULL(base.canonicalRanks);
+      base.passOrigins[RuntimePlaybackViewConfig::kEventsPerView - 1] = {1, 2};
+      base.canonicalRanks[RuntimePlaybackViewConfig::kEventsPerView - 1] = 3;
+    }
+  }
+}
+
 void test_release_refuses_while_a_bridge_is_selected() {
   // The selected bridge is the live authoritative representation; releasing its backing
   // would be a use-after-free, so the release must be refused until it is deselected.
@@ -192,7 +215,11 @@ void test_release_refuses_while_a_bridge_is_selected() {
   TEST_ASSERT_TRUE(runtime.prewarmViews());
   RuntimePlaybackViewSet& set = *runtime.viewSetIfPrewarmed();
   set.bridgeLifecycle.selected = 0;
+  const auto* origins = set.bridgeBases[0].passOrigins;
+  const auto* ranks = set.bridgeBases[0].canonicalRanks;
   TEST_ASSERT_FALSE(set.releaseWholeTakeViews());
+  TEST_ASSERT_EQUAL_PTR(origins, set.bridgeBases[0].passOrigins);
+  TEST_ASSERT_EQUAL_PTR(ranks, set.bridgeBases[0].canonicalRanks);
   TEST_ASSERT_TRUE(set.wholeTakeViewsReserved());
   set.bridgeLifecycle.reset();
   TEST_ASSERT_TRUE(set.releaseWholeTakeViews());
@@ -6699,6 +6726,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_full_take_admissibility_follows_the_windowed_policy);
   RUN_TEST(test_whole_take_reservation_is_released_once_the_loop_is_known_long);
   RUN_TEST(test_release_refuses_while_a_bridge_is_selected);
+  RUN_TEST(test_whole_take_release_reprewarm_recreates_side_arrays);
   RUN_TEST(test_windowed_only_slot_reserves_no_whole_take_representation);
   RUN_TEST(test_windowed_only_slot_refuses_the_whole_take_publishers);
   RUN_TEST(test_windowed_slot_upgrades_to_whole_take_at_a_cold_admission);

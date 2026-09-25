@@ -6,6 +6,7 @@
 #include "Utils/IntervalProjection.h"
 
 #include <cstdio>
+#include <algorithm>
 
 #if defined(__IMXRT1062__)
 #define DWU_COLD FLASHMEM
@@ -197,6 +198,15 @@ DisplayNoteVec filterDisplayNotesByWindowInclusion(const DisplayNoteVec& notes,
                                                    uint32_t loopLength) {
   return filterDisplayNotesByWindowInclusion(notes, makeViewportInterval(windowStart, windowLength),
                                              loopLength);
+}
+
+DWU_COLD void filterDisplayNotesByWindowInclusionInPlace(DisplayNoteVec& notes,
+    uint32_t windowStart, uint32_t windowLength, uint32_t loopLength) {
+  const auto viewport = makeViewportInterval(windowStart, windowLength);
+  if (loopLength == 0 || viewport.length() <= 0) { notes.clear(); return; }
+  notes.erase(std::remove_if(notes.begin(), notes.end(), [&](const NoteUtils::DisplayNote& note) {
+    return !noteIntersectsWindow(displayNoteSpanInLoop(note, loopLength), viewport, loopLength);
+  }), notes.end());
 }
 
 uint32_t resolveCenteredWindowStart(uint32_t playheadTick, uint32_t windowLength,
