@@ -367,6 +367,11 @@ private:
     /// strings so it stays off the RAM1 stack budget.
     void checkDmaStagingDiagnostics();
 
+    /// Diagnostic: bounded OLED transport census (DMA vs blocking SPI), reported at
+    /// most once a second and only when a counter moved. Flash-resident and out of
+    /// line, like the canary reporter above.
+    void reportDisplayDmaTransport();
+
     static constexpr float PULSE_SPEED = 1.0f; // Pulses per second (slowed by 40%)
     // Track status rendering
     void drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis);

@@ -2,7 +2,7 @@
 
 - [x] 1.1 Complete `docs/Templates/DECISION_REVIEW.md` and the project preflight for this change, including searches for display, DMA, SPI, LPSPI, and existing timeout/retry decisions; verify the result identifies `DisplayManager` and SSD1322 as the extended owners.
 - [x] 1.2 Capture a repeatable blocking-SPI baseline at the driver's 20 MHz display clock during a rapid-redraw, dense-MIDI scenario; record frame payload/submission timing and MIDI-service gap evidence in the change notes. The 2026-09-12 pre-DMA capture has 91 transfer samples: 4,495–4,670 µs (median 4,496 µs); it is transport-cost evidence only because the record/overdub assertions remained inconclusive.
-- [ ] 1.3 Derive and record the initial DMA completion bound, retry delay, and consecutive-failure limit from the baseline and a targeted fault run; verify each is finite and covers one full-frame transfer with measured margin.
+- [ ] 1.3 Derive and record the initial DMA completion bound, retry delay, and consecutive-failure limit from the baseline and a targeted fault run; verify each is finite and covers one full-frame transfer with measured margin. **Partially done (2026-09-24):** the three values are derived from the PREFLIGHT baseline and recorded beside the constants in `SSD1322_API.h` (3.28 ms of wire time for 8,192 bytes at 20 MHz; 4,495–4,670 µs measured; 20 ms / 100 ms / 3). The targeted fault run that proves the timeout actually trips is still owed — see [EXECUTION_PACKET.md](EXECUTION_PACKET.md) case A3.
 
 ## 2. Recoverable DMA-SPI wrapper
 
@@ -12,17 +12,17 @@
 
 ## 3. SSD1322 asynchronous transport and recovery
 
-- [ ] 3.1 Initialize the bundled DMA-SPI wrapper for the SSD1322 with the existing SPI settings and caller-owned CS; add fixed, aligned DMA snapshot-buffer validation and cache maintenance; verify the firmware build succeeds and a submitted frame never DMA-reads the mutable renderer framebuffer.
-- [ ] 3.2 Replace the blocking DMA wait in `SSD1322_API` with non-blocking start and poll operations that hold CS for exactly one active frame; verify a healthy start returns before the 8,192-byte wire transfer completes and completion raises CS once.
+- [x] 3.1 Initialize the bundled DMA-SPI wrapper for the SSD1322 with the existing SPI settings and caller-owned CS; add fixed, aligned DMA snapshot-buffer validation and cache maintenance; verify the firmware build succeeds and a submitted frame never DMA-reads the mutable renderer framebuffer. **Done (2026-09-24):** `SSD1322.cpp` calls `api.beginDMA(config.SPI_CLOCK)` (20 MHz `SPISettings`, caller-owned CS `255`) behind `MIDILOOPER_DISPLAY_DMA`; the snapshot is the `aligned(32)` `DMAMEM` buffer, flushed on both sides; the only `TsyDMASPI0.queue` call site sources `dmaBuffer`, never the renderer framebuffer. Both builds SUCCESS — DMA on `RAM1 variables 96,160 / code 391,448 / padding 1,768 / locals 34,912`, off `code 391,432 / padding 1,784`. Evidence: [EXECUTION_PACKET.md](EXECUTION_PACKET.md).
+- [x] 3.2 Replace the blocking DMA wait in `SSD1322_API` with non-blocking start and poll operations that hold CS for exactly one active frame; verify a healthy start returns before the 8,192-byte wire transfer completes and completion raises CS once. **Done (2026-09-24):** `SSD1322_API_send_buffer_DMA` queues and returns; `pollDisplayTransfer` raises CS in the completion branch, the only CS raise on the DMA path. Device at the same 20 MHz setting: `#CAP …,DFRAME,…` transfer time **44–53 µs** against the 4,495–4,670 µs blocking baseline, with `dma_frames=655 / blocking_frames=0`. Evidence: [EXECUTION_PACKET.md](EXECUTION_PACKET.md).
 - [ ] 3.3 Implement the rejected-submission and timeout recovery paths: recover the wrapper before blocking SPI on timeout, send a full resynchronization frame, retry after the configured delay, and enter boot-local SPI degraded mode after the limit; verify diagnostics distinguish each state and a transient injected failure returns to DMA.
 
 ## 4. Display transfer integration
 
 - [ ] 4.1 Update `DisplayManager` transfer-phase state so a busy OLED transfer is polled on later updates and completed redraws coalesce to one newest pending frame; verify a focused native test or deterministic harness proves no concurrent/stale transfer is started.
-- [ ] 4.2 Preserve existing rendering, boot-screen, and load/save overlay behavior while the transport is busy; verify a firmware build and manual on-device smoke flow show a complete first frame, normal overlay refresh, and no partial-row artifact.
+- [ ] 4.2 Preserve existing rendering, boot-screen, and load/save overlay behavior while the transport is busy; verify a firmware build and manual on-device smoke flow show a complete first frame, normal overlay refresh, and no partial-row artifact. **Partial (2026-09-24):** flashed and booted cleanly, and the paint loop keeps running while the transport is busy (`dma_frames` 36 → 655 with `blocking_frames=0`). The visual clauses — complete first frame, overlay refresh, no partial-row artifact — still need a human look at the OLED.
 
 ## 5. Verification and closeout
 
-- [ ] 5.1 Run `pio test -e native` and `pio run -e teensy41-capture-serial`; verify results are recorded, with failures triaged before proceeding.
+- [x] 5.1 Run `pio test -e native` and `pio run -e teensy41-capture-serial`; verify results are recorded, with failures triaged before proceeding. **Done (2026-09-24):** `pio test -e native` **2403 cases, 1 skipped, 2402 succeeded, 0 failures** (exit 0); `pio run -e teensy41-capture-serial` SUCCESS with DMA enabled and again with `-DMIDILOOPER_DISPLAY_DMA=0`. Only the two pre-existing frozen warnings remain.
 - [ ] 5.2 With explicit user confirmation before upload, run the rapid-redraw/dense-MIDI HITL baseline and DMA comparison, then force queue rejection and timeout recovery; verify complete frames, safe SPI fallback, DMA retry, bounded degraded mode, and captured MIDI-service-gap evidence.
 - [ ] 5.3 Compare the same-scenario baseline and DMA captures, document whether the reduced blocking claim is supported or falsified, and update the change tasks plus runtime/delivery documentation before requesting archive.
