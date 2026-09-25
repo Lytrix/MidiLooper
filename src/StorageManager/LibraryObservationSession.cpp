@@ -46,6 +46,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include <Arduino.h>
 #include <SD.h>
+#include <cstdint>
 #include <cstring>
 
 namespace StorageManagerInternal {
@@ -86,6 +87,13 @@ struct LibraryObservationState {
     LibraryObservation::SlotResult results[kSlotCount];
     uint32_t observedContentRevision[kSlotCount]{};
     uint32_t observedGeneration[kSlotCount]{};
+    /// The published-root **publication identity** observed for each slot: validity plus a hash of the
+    /// non-owning root identity, its publication revision and the committed-pass revision it covers.
+    /// `contentRevisionIdentity` reads the pass side, so a root replaced under an unchanged pass
+    /// identity would otherwise be invisible.
+    uint8_t observedRootValid[kSlotCount]{};
+    uint8_t observedRootCurrent[kSlotCount]{};
+    uint32_t observedRootIdentityHash[kSlotCount]{};
 };
 
 STORAGE_PERSIST_DATA LibraryObservationState libraryObservationState_{};
@@ -160,6 +168,10 @@ STORAGE_PERSIST_MEM uint32_t highestCommittedPassIdFor(const Loop& loop) {
 /// count, highest committed pass id, loop length and committed event count. `Loop::nextPassId_` alone is
 /// rejected (it is reset by `SlotReset`, the boot load and the edit-pass restore), and a new per-slot
 /// monotonic counter is rejected against the RAM1 floor.
+///
+/// This reads the **pass** side only. A published-root-backed slot has none of these fields, so its root
+/// publication identity is tracked separately (`rootIdentityHashFor`) — otherwise a root replaced
+/// between two slices would leave an unchanged revision hash behind it.
 STORAGE_PERSIST_MEM uint32_t contentRevisionIdentity(uint8_t trackIndex, uint8_t slot) {
     const Track& track = trackManager.getTrack(trackIndex);
     if (!track.loopsAllocated()) {
@@ -176,6 +188,40 @@ STORAGE_PERSIST_MEM uint32_t contentRevisionIdentity(uint8_t trackIndex, uint8_t
     mix(loop.loopLengthTicks);
     mix(committedEventCountFor(loop));
     return hash;
+}
+
+/// True when a published root is **installed** on the loop, regardless of whether it currently covers
+/// the live committed-pass state. This is the LSV1 restore's content representation (it leaves
+/// `Loop::passes` empty), and an installed-but-not-current root is still read by playback through the
+/// stale-root overlay path, so it is content. Currency is reported separately (`rootIsCurrent`).
+STORAGE_PERSIST_MEM bool rootContentInstalled(const Loop& loop) {
+    return static_cast<bool>(loop.publishedSnapshot());
+}
+
+/// True when the installed root currently represents the live committed-pass state (DEC-073).
+STORAGE_PERSIST_MEM bool rootContentIsCurrent(const Loop& loop) {
+    return loop.publishedSnapshotIsCurrent();
+}
+
+/// A stable per-slot identity for the published root actually installed, over the presence, the root
+/// object's non-owning identity and its publication revision. Zero means "no root". The revision is
+/// mixed in beside the pointer because a freed root's address can be reused by a replacement. An
+/// installed root is fingerprinted whether or not it is current: replacing a stale root is still a
+/// change to the observed content.
+STORAGE_PERSIST_MEM uint32_t rootIdentityHashFor(const Loop& loop) {
+    if (!rootContentInstalled(loop)) {
+        return 0;
+    }
+    uint32_t hash = 2166136261u;  // FNV-1a
+    const auto mix = [&hash](uint32_t value) {
+        hash ^= value;
+        hash *= 16777619u;
+    };
+    mix(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(loop.publishedSnapshot().get())));
+    mix(loop.publishedSnapshotRevision());
+    mix(loop.committedPassRevision());
+    mix(rootContentIsCurrent(loop) ? 1u : 0u);
+    return hash != 0 ? hash : 1u;
 }
 
 STORAGE_PERSIST_MEM LibraryObservation::Terminal mapTerminal(RestoreRequestTerminal terminal) {
@@ -269,16 +315,24 @@ STORAGE_PERSIST_MEM void observeSlot(uint8_t trackIndex, uint8_t slot, bool sdAd
         input.terminal == LibraryObservation::Terminal::Committed &&
         (libraryObservationState_.committedAtWindowStart & windowBit) == 0;
 
-    // Committed content lives in RAM, so it is observable even when SD admission is denied.
+    // Committed content lives in RAM, so it is observable even when SD admission is denied. It is
+    // reported as two separate representations and one union: the pass-backed identity below, and the
+    // valid published root installed by the LSV1 restore path (`publishedSnapshotIsCurrent()`).
     input.contentObserved = true;
     const Track& track = trackManager.getTrack(trackIndex);
+    uint32_t observedRootIdentity = 0;
     if (track.loopsAllocated()) {
         const Loop& loop = track.getLoop(slot);
-        input.hasCommittedContent = loop.passes.hasRecordPass() || !loop.passes.overdubPasses.empty();
+        input.hasPassContent = loop.passes.hasRecordPass() || !loop.passes.overdubPasses.empty();
+        input.hasRootContent = rootContentInstalled(loop);
+        input.rootIsCurrent = input.hasRootContent && rootContentIsCurrent(loop);
+        input.hasCommittedContent = input.hasPassContent || input.hasRootContent;
         input.committedPassCount = static_cast<uint16_t>(loop.passes.capturePassCount());
         input.highestCommittedPassId = highestCommittedPassIdFor(loop);
         input.loopLengthTicks = loop.loopLengthTicks;
         input.committedEventCount = committedEventCountFor(loop);
+        // Taken in the same observation as the content fields, from the same loop reference.
+        observedRootIdentity = rootIdentityHashFor(loop);
     }
 
     input.selectionObserved = true;
@@ -287,6 +341,9 @@ STORAGE_PERSIST_MEM void observeSlot(uint8_t trackIndex, uint8_t slot, bool sdAd
     libraryObservationState_.results[index] = LibraryObservation::classifySlot(input);
     libraryObservationState_.observedGeneration[index] = input.requestGeneration;
     libraryObservationState_.observedContentRevision[index] = contentRevisionIdentity(trackIndex, slot);
+    libraryObservationState_.observedRootValid[index] = input.hasRootContent ? 1u : 0u;
+    libraryObservationState_.observedRootCurrent[index] = input.rootIsCurrent ? 1u : 0u;
+    libraryObservationState_.observedRootIdentityHash[index] = observedRootIdentity;
     ++libraryObservationState_.collected;
 }
 
@@ -295,6 +352,9 @@ STORAGE_PERSIST_MEM void clearResults() {
         libraryObservationState_.results[i] = LibraryObservation::SlotResult{};
         libraryObservationState_.observedContentRevision[i] = 0;
         libraryObservationState_.observedGeneration[i] = 0;
+        libraryObservationState_.observedRootValid[i] = 0;
+        libraryObservationState_.observedRootCurrent[i] = 0;
+        libraryObservationState_.observedRootIdentityHash[i] = 0;
     }
 }
 
@@ -315,9 +375,12 @@ STORAGE_PERSIST_MEM void beginCollection(uint32_t nowUs) {
     clearResults();
 }
 
-/// Re-check one record immediately before it is emitted. A request-generation advance, a set-epoch change
-/// or a content-revision change (a restore publication under an unchanged request identity, or an ordinary
-/// capture/overdub/edit/clear commit) invalidates it, so no emitted record mixes fields from two versions.
+/// Re-check one record immediately before it is emitted. A request-generation advance, a set-epoch change,
+/// a content-revision change (a restore publication under an unchanged request identity, or an ordinary
+/// capture/overdub/edit/clear commit) or a **published-root publication identity change** invalidates it,
+/// so no emitted record mixes fields from two versions. The root identity is checked in addition to the
+/// pass revision because a root-backed slot has no pass fields: replacing its root leaves
+/// `contentRevisionIdentity` unchanged.
 STORAGE_PERSIST_MEM bool recordStillCurrent(uint16_t index) {
     LibraryObservationState& state = libraryObservationState_;
     LibraryObservation::SlotResult& result = state.results[index];
@@ -330,7 +393,27 @@ STORAGE_PERSIST_MEM bool recordStillCurrent(uint16_t index) {
         restoreRequestGenerationFor(trackIndex, slot) != state.observedGeneration[index];
     const bool contentChanged =
         contentRevisionIdentity(trackIndex, slot) != state.observedContentRevision[index];
-    if (generationChanged || contentChanged) {
+    // The root check must not allocate: `Track::getLoop` calls `ensureLoopsAllocated()` (even on the
+    // const overload), which would itself change the observed content revision of an unallocated track
+    // between slices and invalidate a record for the observation's own side effect.
+    const bool rootChanged = [&]() {
+        if (!trackManager.getTrack(trackIndex).loopsAllocated()) {
+            return state.observedRootIdentityHash[index] != 0;
+        }
+        const Loop& loop = trackManager.getTrack(trackIndex).getLoop(slot);
+        if (rootIdentityHashFor(loop) != state.observedRootIdentityHash[index]) {
+            return true;
+        }
+        const bool rootNow = rootContentInstalled(loop);
+        if ((rootNow ? 1u : 0u) != static_cast<uint32_t>(state.observedRootValid[index])) {
+            return true;
+        }
+        // Currency is a separate observed bit (an installed root can stop covering the live
+        // committed-pass state without being replaced).
+        return rootNow && (rootContentIsCurrent(loop) ? 1u : 0u) !=
+                              static_cast<uint32_t>(state.observedRootCurrent[index]);
+    }();
+    if (generationChanged || contentChanged || rootChanged) {
         LibraryObservation::invalidateSlotResult(result);
         return false;
     }
@@ -357,7 +440,10 @@ STORAGE_PERSIST_MEM void emitSlotRecord(const LibraryObservation::SlotResult& re
         LibraryObservation::offeredCode(result.offered),
         LibraryObservation::requestCode(result.request), result.requestWait,
         LibraryObservation::terminalCode(result.terminal), result.requestGeneration, result.setEpoch,
-        result.contentObserved && result.hasCommittedContent ? 1 : 0, result.committedPassCount,
+        result.contentObserved && result.hasCommittedContent ? 1 : 0,
+        result.contentObserved && result.hasPassContent ? 1 : 0,
+        result.contentObserved && result.hasRootContent ? 1 : 0,
+        result.contentObserved && result.rootIsCurrent ? 1 : 0, result.committedPassCount,
         result.highestCommittedPassId, result.loopLengthTicks, result.committedEventCount,
         result.requiredForInitialPlayback ? 1 : 0, result.committedTerminalInWindow ? 1 : 0,
         result.invalidated ? 1 : 0);
@@ -379,7 +465,10 @@ STORAGE_PERSIST_MEM void finishObservation(uint32_t nowUs) {
                                report.slotsObserved, report.counts.payloadInventory,
                                report.counts.initialPlaybackRequired,
                                report.counts.observedRestoreCompletions,
-                               report.counts.committedAtCheckpoint, window.admissionComplete ? 1 : 0,
+                               report.counts.committedAtCheckpoint,
+                               report.counts.passBackedAtCheckpoint,
+                               report.counts.rootBackedAtCheckpoint,
+                               window.admissionComplete ? 1 : 0,
                                window.everyInitialPlaybackSlotObserved ? 1 : 0,
                                window.consistentView ? 1 : 0, report.complete ? 1 : 0);
     state.phase = LibraryObservationPhase::Done;

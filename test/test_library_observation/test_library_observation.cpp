@@ -39,6 +39,18 @@ bool isLossCause(Cause cause) {
            cause == Cause::IntentionalEviction || cause == Cause::ContentLoss;
 }
 
+/// Describe a slot's content representation as the report counts it: `pass`, `root`, `both` or `none`.
+SlotInput contentSlotInput(bool passBacked, bool rootBacked) {
+    SlotInput input = emptySlotInput();
+    input.offered = Offered::Offered;
+    input.hasPassContent = passBacked;
+    input.hasRootContent = rootBacked;
+    input.hasCommittedContent = passBacked || rootBacked;
+    input.committedPassCount = passBacked ? 1 : 0;
+    input.committedEventCount = passBacked ? 12 : 0;
+    return input;
+}
+
 }  // namespace
 
 /// L01 — the overlapping-input case. One case asserts **both** outputs, and that `empty` is not a cause.
@@ -164,6 +176,70 @@ void test_l07_populated_slot_has_a_nullable_cause() {
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Cause::NotApplicable),
                             static_cast<uint8_t>(contentResult.cause));
     TEST_ASSERT_FALSE((contentResult.currentState & kStateEmpty) != 0);
+}
+
+/// The representation split (S1.3 observability correction). Content is reported as pass-backed and
+/// valid published-root-backed **separately**, with the union as the content signal, so a root-backed
+/// slot is populated and a slot carrying both is never read as two loaded slots.
+void test_content_representation_pass_only_root_only_both_and_empty() {
+    struct Case {
+        bool passBacked;
+        bool rootBacked;
+        const char* name;
+    };
+    const Case cases[] = {
+        {true, false, "pass-only"},
+        {false, true, "root-only"},
+        {true, true, "both"},
+        {false, false, "empty"},
+    };
+    SlotResult results[4];
+    for (size_t i = 0; i < 4; ++i) {
+        const SlotInput input = contentSlotInput(cases[i].passBacked, cases[i].rootBacked);
+        results[i] = classifySlot(input);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(cases[i].passBacked ? 1 : 0,
+                                        results[i].hasPassContent ? 1 : 0, cases[i].name);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(cases[i].rootBacked ? 1 : 0,
+                                        results[i].hasRootContent ? 1 : 0, cases[i].name);
+        const bool anyContent = cases[i].passBacked || cases[i].rootBacked;
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(anyContent ? 1 : 0,
+                                        results[i].hasCommittedContent ? 1 : 0, cases[i].name);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(anyContent ? 1 : 0,
+                                        (results[i].currentState & kStatePopulated) != 0 ? 1 : 0,
+                                        cases[i].name);
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(anyContent ? 0 : 1,
+                                        (results[i].currentState & kStateEmpty) != 0 ? 1 : 0,
+                                        cases[i].name);
+    }
+    // `empty` is observed absence of both representations, so it is `unknown` rather than `empty` only
+    // when a content field could not be observed; here it was observed.
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Cause::Unknown), static_cast<uint8_t>(results[3].cause));
+
+    Window window;
+    const Report report = summarize(results, 4, window);
+    // The union counts each slot once: four slots, three carry content (one of them in both
+    // representations), and each representation count is independent (two each).
+    TEST_ASSERT_EQUAL_UINT16(3, report.counts.committedAtCheckpoint);
+    TEST_ASSERT_EQUAL_UINT16(2, report.counts.passBackedAtCheckpoint);
+    TEST_ASSERT_EQUAL_UINT16(2, report.counts.rootBackedAtCheckpoint);
+}
+
+/// Invalidation clears both representation bits, so an invalidated record is not counted as either.
+void test_invalidation_clears_both_representation_bits() {
+    SlotResult result = classifySlot(contentSlotInput(true, true));
+    TEST_ASSERT_TRUE(result.hasPassContent);
+    TEST_ASSERT_TRUE(result.hasRootContent);
+
+    invalidateSlotResult(result);
+
+    TEST_ASSERT_FALSE(result.hasPassContent);
+    TEST_ASSERT_FALSE(result.hasRootContent);
+    TEST_ASSERT_FALSE(result.hasCommittedContent);
+    const SlotResult slots[] = {result};
+    Window window;
+    const Report report = summarize(slots, 1, window);
+    TEST_ASSERT_EQUAL_UINT16(0, report.counts.passBackedAtCheckpoint);
+    TEST_ASSERT_EQUAL_UINT16(0, report.counts.rootBackedAtCheckpoint);
 }
 
 /// A slot with no observed field at all is **unknown**, not `empty` — the denied-SD degradation shape.
@@ -328,6 +404,8 @@ int main(int, char**) {
     RUN_TEST(test_l05_outstanding_request_is_pending_and_asserts_no_terminal);
     RUN_TEST(test_l06_two_consistent_causes_are_recorded_not_resolved_by_preference);
     RUN_TEST(test_l07_populated_slot_has_a_nullable_cause);
+    RUN_TEST(test_content_representation_pass_only_root_only_both_and_empty);
+    RUN_TEST(test_invalidation_clears_both_representation_bits);
     RUN_TEST(test_unobserved_fields_are_unknown_not_empty);
     RUN_TEST(test_denied_sd_admission_keeps_the_waiting_request_named);
     RUN_TEST(test_invalidation_clears_fields_and_is_excluded_from_counts);

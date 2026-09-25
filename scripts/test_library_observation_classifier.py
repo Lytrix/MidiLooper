@@ -232,21 +232,24 @@ class DeviceObservationTests(unittest.TestCase):
             "#CAP,100,LIBOBS,B,a=100,e=0,s=64",
             # t=0,s=0,state=populated(2),cause=not_applicable(n),payload=present_verified(3),
             # offered=offered(2),request=terminal(5),wait=0,terminal=committed(1),gen=0,epoch=0,
-            # content=1,passes=1,highpass=4,len=1920,events=88,required=1,committed_in_window=0,inv=0
-            "#CAP,110,LIBOBS,S,t=0,s=0,st=2,c=n,p=3,o=2,q=5,w=0,m=1,g=0,e=0,k=1,a=1,h=4,l=1920,"
-            "v=88,n=1,i=0,x=0",
-            "#CAP,120,LIBOBS,S,t=0,s=1,st=1,c=u,p=1,o=1,q=1,w=0,m=0,g=0,e=0,k=0,a=0,h=0,l=0,"
-            "v=0,n=0,i=0,x=0",
-            "#CAP,200,LIBOBS,E,a=100,b=200,t=64,r=0,s=64,p=36,i=8,c=0,m=8,n=1,e=1,v=0,x=1",
+            # content=1,pass=1,root=0,root_current=0,passes=1,highpass=4,len=1920,events=88,req=1,in=0,inv=0
+            "#CAP,110,LIBOBS,S,t=0,s=0,st=2,c=n,p=3,o=2,q=5,w=0,m=1,g=0,e=0,k=1,kp=1,kr=0,kc=0,a=1,"
+            "h=4,l=1920,v=88,n=1,i=0,x=0",
+            "#CAP,120,LIBOBS,S,t=0,s=1,st=1,c=u,p=1,o=1,q=1,w=0,m=0,g=0,e=0,k=0,kp=0,kr=0,kc=0,"
+            "a=0,h=0,l=0,v=0,n=0,i=0,x=0",
+            "#CAP,200,LIBOBS,E,a=100,b=200,t=64,r=0,s=64,p=36,i=8,c=0,m=8,P=8,R=28,n=1,e=1,v=0,x=1",
         ]
         observation = parse_observation_lines(lines)
         self.assertTrue(observation["complete"])
+        self.assertTrue(observation["content_representation_observed"])
         self.assertEqual(
             {
                 "payload_inventory": 36,
                 "initial_playback_required": 8,
                 "observed_restore_completions": 0,
                 "committed_at_checkpoint": 8,
+                "pass_backed_at_checkpoint": 8,
+                "root_backed_at_checkpoint": 28,
             },
             observation["counts"],
         )
@@ -259,10 +262,67 @@ class DeviceObservationTests(unittest.TestCase):
         self.assertEqual("present_verified", first["payload"])
         self.assertEqual("committed", first["terminal"])
         self.assertTrue(first["required_for_initial_playback"])
+        self.assertTrue(first["has_pass_content"])
+        self.assertFalse(first["has_root_content"])
+        self.assertTrue(first["content_representation_observed"])
         second = observation["slots"][1]
         self.assertEqual(["empty"], second["state"])
         self.assertEqual("unknown", second["cause"])
         self.assertEqual("absent", second["payload"])
+
+    def test_root_backed_slot_decodes_as_content_without_passes(self) -> None:
+        """The LSV1 shape: the loaded count covers it and the representation says *why*."""
+        lines = [
+            "#CAP,100,LIBOBS,B,a=100,e=0,s=64",
+            "#CAP,110,LIBOBS,S,t=2,s=1,st=2,c=n,p=3,o=2,q=5,w=0,m=1,g=0,e=0,k=1,kp=0,kr=1,kc=1,a=0,"
+            "h=0,l=0,v=0,n=1,i=0,x=0",
+            "#CAP,120,LIBOBS,S,t=3,s=2,st=2,c=n,p=3,o=2,q=5,w=0,m=1,g=0,e=0,k=1,kp=0,kr=1,kc=0,a=0,"
+            "h=0,l=0,v=0,n=1,i=0,x=0",
+            "#CAP,200,LIBOBS,E,a=100,b=200,t=64,r=0,s=64,p=36,i=8,c=0,m=30,P=8,R=28,n=1,e=1,v=0,x=1",
+        ]
+        observation = parse_observation_lines(lines)
+        current = observation["slots"][0]
+        self.assertTrue(current["has_committed_content"])
+        self.assertFalse(current["has_pass_content"])
+        self.assertTrue(current["has_root_content"])
+        self.assertTrue(current["root_is_current"])
+        # An installed-but-stale root is still content; currency is reported beside it, not instead.
+        stale = observation["slots"][1]
+        self.assertTrue(stale["has_committed_content"])
+        self.assertTrue(stale["has_root_content"])
+        self.assertFalse(stale["root_is_current"])
+        # The union is never presented without its two auditable parts beside it, and it can never
+        # exceed their sum (a slot carrying both is one loaded slot, not two).
+        counts = observation["counts"]
+        self.assertLessEqual(
+            counts["committed_at_checkpoint"],
+            counts["pass_backed_at_checkpoint"] + counts["root_backed_at_checkpoint"],
+        )
+        self.assertGreaterEqual(
+            counts["committed_at_checkpoint"],
+            max(counts["pass_backed_at_checkpoint"], counts["root_backed_at_checkpoint"]),
+        )
+
+    def test_capture_without_representation_keys_reports_not_observed(self) -> None:
+        """A pre-correction capture could not separate the two representations.
+
+        It must not be read as "backed by neither": the representation counts are absent rather than
+        zero, and the flag says the field was not observed.
+        """
+        lines = [
+            "#CAP,100,LIBOBS,B,a=100,e=0,s=64",
+            "#CAP,110,LIBOBS,S,t=0,s=0,st=2,c=n,p=3,o=2,q=5,w=0,m=1,g=0,e=0,k=1,a=1,h=4,l=1920,"
+            "v=88,n=1,i=0,x=0",
+            "#CAP,200,LIBOBS,E,a=100,b=200,t=64,r=0,s=64,p=36,i=8,c=0,m=8,n=1,e=1,v=0,x=1",
+        ]
+        observation = parse_observation_lines(lines)
+        self.assertFalse(observation["content_representation_observed"])
+        self.assertIsNone(observation["counts"]["pass_backed_at_checkpoint"])
+        self.assertIsNone(observation["counts"]["root_backed_at_checkpoint"])
+        self.assertEqual(8, observation["counts"]["committed_at_checkpoint"])
+        slot = observation["slots"][0]
+        self.assertFalse(slot["content_representation_observed"])
+        self.assertTrue(slot["has_committed_content"])
 
     def test_missing_end_record_is_incomplete_with_no_counts(self) -> None:
         lines = ["#CAP,100,LIBOBS,B,a=100,e=0,s=64", "#CAP,110,LIBOBS,S,t=0,s=0,st=2,c=n,p=3,o=2,"

@@ -35,6 +35,9 @@ struct SlotRecord {
   uint32_t generation = 0;
   uint32_t epoch = 0;
   uint8_t hasCommittedContent = 0;
+  uint8_t hasPassContent = 0;
+  uint8_t hasRootContent = 0;
+  uint8_t rootIsCurrent = 0;
   uint8_t requiredForInitialPlayback = 0;
   uint8_t committedTerminalInWindow = 0;
   uint8_t invalidated = 0;
@@ -50,6 +53,8 @@ struct EndRecord {
   uint16_t initialPlaybackRequired = 0;
   uint16_t observedRestoreCompletions = 0;
   uint16_t committedAtCheckpoint = 0;
+  uint16_t passBackedAtCheckpoint = 0;
+  uint16_t rootBackedAtCheckpoint = 0;
   uint8_t admissionComplete = 0;
   uint8_t everyInitialPlaybackSlotObserved = 0;
   uint8_t consistentView = 0;
@@ -82,7 +87,8 @@ inline void begin(uint32_t, uint32_t, uint16_t) { ++beginCount(); }
 inline void slotRecord(uint8_t track, uint8_t slotIndex, uint8_t stateMask, char cause,
                        uint8_t payload, uint8_t offered, uint8_t request, uint8_t wait,
                        uint8_t terminal, uint32_t generation, uint32_t epoch,
-                       uint8_t hasCommittedContent, uint16_t, uint32_t, uint32_t, uint32_t,
+                       uint8_t hasCommittedContent, uint8_t hasPassContent, uint8_t hasRootContent,
+                       uint8_t rootIsCurrent, uint16_t, uint32_t, uint32_t, uint32_t,
                        uint8_t requiredForInitialPlayback, uint8_t committedTerminalInWindow,
                        uint8_t invalidated) {
   SlotRecord record;
@@ -98,6 +104,9 @@ inline void slotRecord(uint8_t track, uint8_t slotIndex, uint8_t stateMask, char
   record.generation = generation;
   record.epoch = epoch;
   record.hasCommittedContent = hasCommittedContent;
+  record.hasPassContent = hasPassContent;
+  record.hasRootContent = hasRootContent;
+  record.rootIsCurrent = rootIsCurrent;
   record.requiredForInitialPlayback = requiredForInitialPlayback;
   record.committedTerminalInWindow = committedTerminalInWindow;
   record.invalidated = invalidated;
@@ -107,6 +116,7 @@ inline void slotRecord(uint8_t track, uint8_t slotIndex, uint8_t stateMask, char
 inline void end(uint32_t startUs, uint32_t endUs, uint16_t turns, uint16_t restarts,
                 uint16_t slotsObserved, uint16_t payloadInventory, uint16_t initialPlaybackRequired,
                 uint16_t observedRestoreCompletions, uint16_t committedAtCheckpoint,
+                uint16_t passBackedAtCheckpoint, uint16_t rootBackedAtCheckpoint,
                 uint8_t admissionComplete, uint8_t everyInitialPlaybackSlotObserved,
                 uint8_t consistentView, uint8_t complete) {
   EndRecord record;
@@ -119,6 +129,8 @@ inline void end(uint32_t startUs, uint32_t endUs, uint16_t turns, uint16_t resta
   record.initialPlaybackRequired = initialPlaybackRequired;
   record.observedRestoreCompletions = observedRestoreCompletions;
   record.committedAtCheckpoint = committedAtCheckpoint;
+  record.passBackedAtCheckpoint = passBackedAtCheckpoint;
+  record.rootBackedAtCheckpoint = rootBackedAtCheckpoint;
   record.admissionComplete = admissionComplete;
   record.everyInitialPlaybackSlotObserved = everyInitialPlaybackSlotObserved;
   record.consistentView = consistentView;
@@ -142,21 +154,25 @@ inline const SlotRecord* findSlot(uint8_t track, uint8_t slotIndex) {
   LibObsCapture::begin(windowStartUs, setEpoch, slotCount)
 #define SC_LIBRARY_OBSERVATION_SLOT(track, slot, state, cause, payload, offered, request, wait, \
                                     terminal, requestGeneration, setEpoch, hasCommittedContent, \
-                                    committedPassCount, highestCommittedPassId, loopLengthTicks, \
-                                    committedEventCount, requiredForInitialPlayback, \
-                                    committedTerminalInWindow, invalidated) \
-  LibObsCapture::slotRecord(track, slot, state, cause, payload, offered, request, wait, terminal, \
-                            requestGeneration, setEpoch, hasCommittedContent, committedPassCount, \
-                            highestCommittedPassId, loopLengthTicks, committedEventCount, \
+                                    hasPassContent, hasRootContent, rootIsCurrent,                 \
+                                    committedPassCount, highestCommittedPassId, loopLengthTicks,  \
+                                    committedEventCount, requiredForInitialPlayback,              \
+                                    committedTerminalInWindow, invalidated)                       \
+  LibObsCapture::slotRecord(track, slot, state, cause, payload, offered, request, wait, terminal,  \
+                            requestGeneration, setEpoch, hasCommittedContent, hasPassContent,     \
+                            hasRootContent, rootIsCurrent, committedPassCount,                     \
+                            highestCommittedPassId, loopLengthTicks, committedEventCount,          \
                             requiredForInitialPlayback, committedTerminalInWindow, invalidated)
 #define SC_LIBRARY_OBSERVATION_END(windowStartUs, windowEndUs, turns, restarts, slotsObserved, \
                                    payloadInventory, initialPlaybackRequired,                  \
                                    observedRestoreCompletions, committedAtCheckpoint,          \
+                                   passBackedAtCheckpoint, rootBackedAtCheckpoint,             \
                                    admissionComplete, everyInitialPlaybackSlotObserved,        \
                                    consistentView, complete)                                   \
   LibObsCapture::end(windowStartUs, windowEndUs, turns, restarts, slotsObserved, payloadInventory, \
-                     initialPlaybackRequired, observedRestoreCompletions, committedAtCheckpoint, \
-                     admissionComplete, everyInitialPlaybackSlotObserved, consistentView, complete)
+                     initialPlaybackRequired, observedRestoreCompletions, committedAtCheckpoint,   \
+                     passBackedAtCheckpoint, rootBackedAtCheckpoint, admissionComplete,           \
+                     everyInitialPlaybackSlotObserved, consistentView, complete)
 
 #include "../test_support/firmware/Arduino.h"
 #include "../test_support/firmware/SD.h"
@@ -234,6 +250,41 @@ bool reachCommitPendingLoadJob(uint8_t trackIndex, uint8_t slotIndex, uint8_t no
     }
   }
   return false;
+}
+
+/// Step a snapshot construction to completion. Local to this suite so the fixture depends only on the
+/// production construction API (the same loop `test_loop_event_store` uses).
+bool drainSnapshotConstruction(LoopSnapshotConstruction& construction) {
+  size_t steps = 0;
+  while (!construction.complete() && !construction.failed() && steps < 10000) {
+    if (!construction.step(1, 0)) {
+      break;
+    }
+    ++steps;
+  }
+  return construction.complete() && !construction.failed();
+}
+
+/// Build a one-note immutable root for a loop, the shape the LSV1 restore installs. Uses the same
+/// production construction pipeline the other Loop snapshot suites use (`LoopSnapshotConstruction` +
+/// `drainSnapshotConstruction`), not a hand-built object.
+ImmutableLoopSnapshotRef buildRootWithOneNote(LoopId loopId, uint32_t loopLength, uint8_t pitch) {
+  auto empty = std::make_shared<const LoopSnapshot>(LoopSnapshot(loopId, loopLength, 0, 100, 100));
+  LoopSnapshotChangeSet changes;
+  SnapshotNoteChange add{};
+  add.kind = SnapshotChangeKind::Add;
+  add.next.loopId = loopId;
+  add.next.noteId = 1;
+  add.next.pitch = pitch;
+  add.next.velocity = 100;
+  add.next.startTick = 0;
+  add.next.endTick = 100;
+  changes.notes.push_back(add);
+  LoopSnapshotConstruction construction(empty, changes);
+  TEST_ASSERT_TRUE(drainSnapshotConstruction(construction));
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_TRUE(static_cast<bool>(snapshot));
+  return snapshot;
 }
 
 }  // namespace
@@ -492,6 +543,140 @@ void test_o08_observation_is_not_the_settled_census() {
                                   "an incomplete window is reported incomplete, never settled");
 }
 
+/// O09 — a **published-root-backed** slot is content, and replacing that root between slices
+/// invalidates the record under an unchanged request identity **and** an unchanged pass identity.
+///
+/// This is the representation gap's own case: the LSV1 restore installs the content as a published root
+/// and leaves `Loop::passes` empty, so before the correction the slot reported `has_committed_content=0`
+/// and a root replacement was invisible to the pass-derived content revision.
+void test_o09_root_content_and_root_replacement_between_slices() {
+  RestoreHarness::setRuntimeTransportIdle();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  Loop& loop = track.getLoop(0);
+
+  const ImmutableLoopSnapshotRef firstRoot =
+      buildRootWithOneNote(loop.loopId, 7680, 60);
+  loop.storePublishedSnapshotForTest(firstRoot, 0);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                           "the fixture needs a current published root");
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasCommittedPasses(),
+                            "an LSV1 root leaves the pass representation empty");
+
+  StorageManager::requestLibraryObservation();
+  StorageManager::serviceLibraryObservation();  // observes (0,0) and (0,1)
+
+  const LibraryObservation::SlotResult observed =
+      StorageManagerInternal::libraryObservationResultAt(0, 0);
+  TEST_ASSERT_FALSE_MESSAGE(observed.invalidated, "the observation was clean at this slice");
+  TEST_ASSERT_TRUE_MESSAGE(observed.hasRootContent,
+                           "a current published root is content and is reported as root-backed");
+  TEST_ASSERT_TRUE_MESSAGE(observed.rootIsCurrent, "the fixture's root covers the live pass state");
+  TEST_ASSERT_FALSE(observed.hasPassContent);
+  TEST_ASSERT_TRUE_MESSAGE(observed.hasCommittedContent,
+                           "the union content signal includes the root representation");
+  TEST_ASSERT_TRUE_MESSAGE((observed.currentState & LibraryObservation::kStatePopulated) != 0,
+                           "a root-backed slot is populated, not empty");
+
+  // Replace the root without touching the pass representation or the request identity.
+  const ImmutableLoopSnapshotRef secondRoot =
+      buildRootWithOneNote(loop.loopId, 7680, 67);
+  loop.storePublishedSnapshotForTest(secondRoot, loop.playbackRevision);
+  TEST_ASSERT_NOT_EQUAL(firstRoot.get(), secondRoot.get());
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasCommittedPasses(), "the pass identity is still empty");
+
+  runObservationToCompletion();
+
+  const LibraryObservation::SlotResult& after =
+      StorageManagerInternal::libraryObservationResultAt(0, 0);
+  TEST_ASSERT_TRUE_MESSAGE(after.invalidated,
+                           "the published-root identity changed, so the record is invalidated");
+  TEST_ASSERT_FALSE_MESSAGE(after.hasCommittedContent,
+                            "no record combines the pre-replacement fields with the new root");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, after.currentState,
+                                  "an invalidated record claims no observed state");
+  const LibObsCapture::SlotRecord* emitted = LibObsCapture::findSlot(0, 0);
+  TEST_ASSERT_NOT_NULL(emitted);
+  TEST_ASSERT_EQUAL_UINT8(1, emitted->invalidated);
+  TEST_ASSERT_EQUAL_UINT8(0, emitted->hasRootContent);
+}
+
+/// O10 — the end record reports the loaded population as the **union** of the two representations,
+/// beside both of them separately. One pass-backed slot and one root-backed slot yield a union of two
+/// and one of each representation, so the union is the loaded count and neither representation is
+/// mistaken for it.
+void test_o10_end_record_reports_union_and_both_representations() {
+  RestoreHarness::setRuntimeTransportIdle();
+  trackManager.getTrack(0).ensureLoopsAllocated();
+
+  // (0,0): pass-backed, through the production load path.
+  TEST_ASSERT_TRUE(RestoreHarness::writePayloadWithOneNoteToSd(0, 0, 60));
+  StorageManager::refreshLoopSlotPayloadOnSdInRam(0, 0);
+  StorageManager::requestLoopSlotRestoreFromSd(0, 0);
+  for (int turn = 0; turn < 64; ++turn) {
+    RestoreHarness::runLoadServiceTurn();
+    if (trackManager.getTrack(0).getLoop(0).hasCommittedPasses()) {
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.getTrack(0).getLoop(0).hasCommittedPasses(),
+                           "the fixture needs the legacy payload to publish passes");
+
+  // (0,1): root-backed, the LSV1 representation.
+  Loop& rootOnly = trackManager.getTrack(0).getLoop(1);
+  rootOnly.storePublishedSnapshotForTest(buildRootWithOneNote(rootOnly.loopId, 3072, 62), 0);
+  TEST_ASSERT_TRUE(rootOnly.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE(rootOnly.hasCommittedPasses());
+
+  // (0,2): an **installed but not current** root — a stale root is still content (playback reads it
+  // through the stale-root overlay), and it must still make the slot populated.
+  Loop& staleRoot = trackManager.getTrack(0).getLoop(2);
+  staleRoot.storePublishedSnapshotForTest(buildRootWithOneNote(staleRoot.loopId, 3072, 65), 0,
+                                          kSnapshotCoverageUnset);
+  TEST_ASSERT_FALSE_MESSAGE(staleRoot.publishedSnapshotIsCurrent(),
+                            "the fixture needs a root that does not cover the live pass state");
+  TEST_ASSERT_TRUE(static_cast<bool>(staleRoot.publishedSnapshot()));
+
+  StorageManager::requestLibraryObservation();
+  runObservationToCompletion();
+
+  // Read the three slots the fixture controls by name, so the expected union is exact.
+  const LibraryObservation::SlotResult& passBacked =
+      StorageManagerInternal::libraryObservationResultAt(0, 0);
+  const LibraryObservation::SlotResult& currentRoot =
+      StorageManagerInternal::libraryObservationResultAt(0, 1);
+  const LibraryObservation::SlotResult& staleRootResult =
+      StorageManagerInternal::libraryObservationResultAt(0, 2);
+
+  TEST_ASSERT_TRUE(passBacked.hasPassContent);
+  TEST_ASSERT_FALSE(passBacked.hasRootContent);
+
+  TEST_ASSERT_TRUE_MESSAGE(currentRoot.hasRootContent, "an installed root is root-backed content");
+  TEST_ASSERT_TRUE_MESSAGE(currentRoot.rootIsCurrent, "this root covers the live pass state");
+  TEST_ASSERT_FALSE(currentRoot.hasPassContent);
+
+  TEST_ASSERT_TRUE_MESSAGE(staleRootResult.hasRootContent,
+                           "an installed-but-stale root is still content, not an empty slot");
+  TEST_ASSERT_FALSE_MESSAGE(staleRootResult.rootIsCurrent,
+                            "the stale root is reported as not current, beside the content bit");
+  TEST_ASSERT_TRUE_MESSAGE(
+      (staleRootResult.currentState & LibraryObservation::kStatePopulated) != 0,
+      "a stale-root slot is populated, not empty");
+
+  TEST_ASSERT_EQUAL_UINT32(1, LibObsCapture::ends().size());
+  const LibObsCapture::EndRecord& end = LibObsCapture::ends()[0];
+  // This fixture produces exactly three content-bearing slots: one pass-backed, two root-backed
+  // (one of which overlaps nothing), so the union is three and each representation is one/two.
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(3, end.committedAtCheckpoint,
+                                   "the loaded count is the union of the two representations");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, end.passBackedAtCheckpoint,
+                                   "the pass-backed representation is reported separately");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(2, end.rootBackedAtCheckpoint,
+                                   "the published-root representation is reported separately");
+  TEST_ASSERT_EQUAL_UINT16(end.committedAtCheckpoint,
+                           end.passBackedAtCheckpoint + end.rootBackedAtCheckpoint);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_o02_observation_advances_while_load_admission_is_blocked);
@@ -502,5 +687,7 @@ int main(int, char**) {
   RUN_TEST(test_o06_publication_between_slices_invalidates_without_a_generation_change);
   RUN_TEST(test_o07_denied_sd_admission_degrades_fields_not_the_report);
   RUN_TEST(test_o08_observation_is_not_the_settled_census);
+  RUN_TEST(test_o09_root_content_and_root_replacement_between_slices);
+  RUN_TEST(test_o10_end_record_reports_union_and_both_representations);
   return UNITY_END();
 }

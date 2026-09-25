@@ -277,12 +277,18 @@ def main() -> int:
     if library_observation is not None:
         counts = library_observation["counts"]
         window = library_observation["window"]
+        # Content is the **union** of the pass-backed and valid published-root representations; the two
+        # subsets are printed beside it so the union is auditable (`committed_at_checkpoint` alone was
+        # read as a pass-backed subset before the S1.3 observability correction).
         print(f"[census] LIBRARY OBSERVATION slots={len(library_observation['slots'])} "
               f"complete={library_observation['complete']} "
               f"payload_inventory={counts['payload_inventory']} "
               f"initial_playback={counts['initial_playback_required']} "
               f"restore_completions={counts['observed_restore_completions']} "
-              f"committed_at_checkpoint={counts['committed_at_checkpoint']}")
+              f"committed_at_checkpoint={counts['committed_at_checkpoint']} "
+              f"(pass_backed={counts.get('pass_backed_at_checkpoint')} "
+              f"root_backed={counts.get('root_backed_at_checkpoint')} "
+              f"representation_observed={library_observation['content_representation_observed']})")
         if window:
             print(f"[census]    window=[{window['start_us']},{window['end_us']}] turns={window['turns']} "
                   f"restarts={window['restarts']} admission_complete={window['admission_complete']} "

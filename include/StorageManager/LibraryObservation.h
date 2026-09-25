@@ -81,7 +81,19 @@ struct SlotInput {
 
     /// `false` when the committed-content fields could not be observed (SD admission denied).
     bool contentObserved = false;
+    /// The **union** content signal: the slot holds content in *some* representation.
+    /// `hasCommittedContent` is the union of the two class bits below, not the pass-backed subset.
     bool hasCommittedContent = false;
+    /// Pass-backed content (`Loop::passes`: a record pass or any committed overdub pass).
+    bool hasPassContent = false;
+    /// Published-root content: a root **is installed** on the slot. This is the LSV1 restore's
+    /// representation and it leaves `passes` empty, so it is the only content signal for those slots.
+    bool hasRootContent = false;
+    /// Whether that installed root currently represents the live committed-pass state
+    /// (`Loop::publishedSnapshotIsCurrent()`). An installed-but-not-current root is still content —
+    /// playback reads it through the stale-root overlay path — so this is reported **beside**
+    /// `hasRootContent`, never used to define it.
+    bool rootIsCurrent = false;
     uint16_t committedPassCount = 0;
     uint32_t highestCommittedPassId = 0;
     uint32_t loopLengthTicks = 0;
@@ -117,6 +129,9 @@ struct SlotResult {
     uint32_t setEpoch = 0;
     bool contentObserved = false;
     bool hasCommittedContent = false;
+    bool hasPassContent = false;
+    bool hasRootContent = false;
+    bool rootIsCurrent = false;
     uint16_t committedPassCount = 0;
     uint32_t highestCommittedPassId = 0;
     uint32_t loopLengthTicks = 0;
@@ -154,7 +169,13 @@ struct Counts {
     uint16_t payloadInventory = 0;
     uint16_t initialPlaybackRequired = 0;
     uint16_t observedRestoreCompletions = 0;
+    /// The loaded population: every slot with content in **any** representation (pass-backed,
+    /// published-root-backed, or both). A slot with both is counted **once**.
     uint16_t committedAtCheckpoint = 0;
+    /// The two content representations, reported separately so the union above is auditable and a
+    /// pass-backed-only count can never be read as the loaded population.
+    uint16_t passBackedAtCheckpoint = 0;
+    uint16_t rootBackedAtCheckpoint = 0;
 };
 
 struct Report {

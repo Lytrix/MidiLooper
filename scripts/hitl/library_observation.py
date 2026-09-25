@@ -16,6 +16,14 @@ Two rules make the mirror honest:
 The four D4 quantities are reported per boot. ``payload_inventory`` and ``committed_at_checkpoint`` are
 ``None`` offline because the captures record no payload token or committed-content dump; the analysis
 says so instead of printing a zero.
+
+**Content representation (S1.3 observability correction).** A slot's loaded content has two forms and
+the device reports them separately: **pass-backed** (``Loop::passes``) and **valid published-root-backed**
+(``Loop::publishedSnapshotIsCurrent()``). ``committed_at_checkpoint`` is their **union** — a slot carrying
+both is one loaded slot — and ``pass_backed_at_checkpoint`` / ``root_backed_at_checkpoint`` are reported
+beside it so the union is always auditable. A capture written before the correction has no
+representation keys; ``content_representation_observed`` is then ``False`` and both representation
+counts are ``None``, because that wire could not separate them.
 """
 from __future__ import annotations
 
@@ -460,7 +468,9 @@ def analyze_capture_file(path: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------------------------------
 
 LIBOBS_RE = re.compile(r"LIBOBS,(?P<kind>[BSE]),(?P<fields>.*)$")
-KV_RE = re.compile(r"([a-z_]+)=([^,]*)")
+# Uppercase is allowed because the end record's representation counts are `P=`/`R=`; the slot record's
+# representation flags are the lowercase `kp`/`kr`.
+KV_RE = re.compile(r"([A-Za-z_]+)=([^,]*)")
 
 
 def _fields(payload: str) -> dict[str, str]:
@@ -516,6 +526,11 @@ def parse_observation_lines(lines: Iterable[str]) -> dict[str, Any]:
         kind = match.group("kind")
         if kind == "S":
             mask = int(fields.get("st", "0"))
+            # The two content representations are decoded when the capture carries them. A capture
+            # written before the representation correction has neither key; it is reported as
+            # **not observed** rather than as two false flags, so no reader can mistake "the old wire
+            # could not separate them" for "this slot is backed by neither".
+            representation_observed = "kp" in fields or "kr" in fields
             slots.append(
                 {
                     "track": int(fields.get("t", "0")),
@@ -530,7 +545,16 @@ def parse_observation_lines(lines: Iterable[str]) -> dict[str, Any]:
                     "terminal": TERMINAL_CODES.get(int(fields.get("m", "0")), "none"),
                     "generation": int(fields.get("g", "0")),
                     "epoch": int(fields.get("e", "0")),
+                    # `has_committed_content` is the **union** content signal (pass-backed, published
+                    # root-backed, or both); the two representations are reported beside it. `kc` says
+                    # whether the installed root currently covers the live committed-pass state — an
+                    # installed-but-stale root is still content (playback reads it through the
+                    # stale-root overlay), so it never defines `has_root_content`.
                     "has_committed_content": fields.get("k", "0") == "1",
+                    "has_pass_content": fields.get("kp", "0") == "1",
+                    "has_root_content": fields.get("kr", "0") == "1",
+                    "root_is_current": fields.get("kc", "0") == "1",
+                    "content_representation_observed": representation_observed,
                     "committed_pass_count": int(fields.get("a", "0")),
                     "highest_committed_pass_id": int(fields.get("h", "0")),
                     "loop_length_ticks": int(fields.get("l", "0")),
@@ -550,13 +574,23 @@ def parse_observation_lines(lines: Iterable[str]) -> dict[str, Any]:
         "observed_restore_completions": None,
         "committed_at_checkpoint": None,
     }
+    content_representation_observed = False
     window: dict[str, Any] = {}
     if end is not None:
+        content_representation_observed = "P" in end or "R" in end
         counts = {
             "payload_inventory": int(end.get("p", "0")),
             "initial_playback_required": int(end.get("i", "0")),
             "observed_restore_completions": int(end.get("c", "0")),
+            # The loaded population: the union of the two representations. The representation counts
+            # are separate fields, so the union can always be audited against them.
             "committed_at_checkpoint": int(end.get("m", "0")),
+            "pass_backed_at_checkpoint": (
+                int(end["P"]) if content_representation_observed else None
+            ),
+            "root_backed_at_checkpoint": (
+                int(end["R"]) if content_representation_observed else None
+            ),
         }
         window = {
             "start_us": int(end.get("a", "0")),
@@ -575,6 +609,7 @@ def parse_observation_lines(lines: Iterable[str]) -> dict[str, Any]:
         "end_fields": end,
         "slots": slots,
         "counts": counts,
+        "content_representation_observed": content_representation_observed,
         "window": window,
         "complete": bool(window.get("complete")),
         "incomplete_window": not bool(window.get("complete")),

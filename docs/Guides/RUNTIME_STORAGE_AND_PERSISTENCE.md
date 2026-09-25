@@ -407,24 +407,36 @@ requested.
 | Bound per invocation | 2 slots observed, at most 2 SD token probes, 2 records emitted |
 | Total | 64 slots (`NUM_TRACKS × MAX_LOOPS_PER_TRACK`): at most 32 collection + 32 emission invocations |
 | SD admission | the existing SD-session exclusion — never opens SD while capture, a load job or a persistence write holds the session |
-| Invalidation | a record is scoped to `(requestGeneration, setEpoch)` **and a content revision identity** and is re-checked immediately before it is emitted; a set-epoch change restarts the whole observation (at most 2 restarts) |
+| Invalidation | a record is scoped to `(requestGeneration, setEpoch)`, a content revision identity **and the published-root publication identity** and is re-checked immediately before it is emitted; a set-epoch change restarts the whole observation (at most 2 restarts) |
 | Records | the `LIBOBS` family (Tier-A), compact enum codes because `kMaxCaptureTextBytes` is 192 |
 | Degradation | a field that cannot be observed stays `unknown`; the report is still produced |
 
 **What it reports.** Per slot: payload (absent / invalid-token / verified / unknown), whether the slot was
 offered to the restore path, the request state with its named wait or terminal and full identity
-`(track, slot, requestGeneration, setEpoch)`, committed content, and whether the slot is required for
-initial playback. From those it derives a **current state set** over `empty` / `populated` / `pending`
-and, separately, a **nullable cause** (`catalog omission` / `restore refusal` / `intentional eviction` /
-`content loss` / `ambiguous` / `unknown`) with its evidence. `empty` is a state, never a cause, and it
-requires the absence to be *observed*. The `LIBOBS,E` frame carries the four window-scoped quantities:
+`(track, slot, requestGeneration, setEpoch)`, committed content **in both of its representations**, and
+whether the slot is required for initial playback. From those it derives a **current state set** over
+`empty` / `populated` / `pending` and, separately, a **nullable cause** (`catalog omission` / `restore
+refusal` / `intentional eviction` / `content loss` / `ambiguous` / `unknown`) with its evidence. `empty` is
+a state, never a cause, and it requires the absence to be *observed*. The `LIBOBS,E` frame carries the four
+window-scoped quantities:
 
 | Quantity | Meaning |
 |---|---|
 | `payload_inventory` | slots with a payload present and its token verified |
 | `initial_playback_required` | slots the boot requires committed before interactive ready |
 | `observed_restore_completions` | distinct slots whose `committed` terminal was observed **within this window** (background admission included) |
-| `committed_at_checkpoint` | slots holding committed content at the observation |
+| `committed_at_checkpoint` | slots holding committed content at the observation, in **either** representation (the union) |
+| `pass_backed_at_checkpoint` | the pass-backed subset (`Loop::passes`: a record pass or a committed overdub pass) |
+| `root_backed_at_checkpoint` | the published-root subset (a root **is installed**: `Loop::publishedSnapshot()` is non-null; `kc` reports whether it is currently coverage-current) |
+
+**Content is a union of two representations, and both are reported.** A slot is loaded when it holds
+content in *either* form; a slot holding both is **one** loaded slot, so `committed_at_checkpoint` is the
+union and never the sum of the two subset counts. The slot record carries `k` (the union) with `kp`/`kr`
+beside it, plus `kc` (root currency), so a pass-backed-only count can never be read as the loaded
+population and an installed-but-stale root still counts as content — playback reads it through the
+stale-root overlay. A capture written before this correction has no representation keys:
+`scripts/hitl/library_observation.py` then reports `content_representation_observed: false` and both subset
+counts as absent rather than zero.
 
 **`observed_restore_completions` is window-scoped and is not the library size** — background admission
 visits every slot, so it counts observed completions in the window, not the boot playback set and not the
