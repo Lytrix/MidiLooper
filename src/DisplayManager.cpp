@@ -172,7 +172,21 @@ void DisplayManager::runPaintTransferPhase() {
 #if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
     const uint32_t phaseStartUs = micros();
 #endif
+    paintTransferDeferred_ = false;
+#ifdef __IMXRT1062__
+    // Bank a frame that finished since the last update, then hand this one over only if
+    // nothing is on the wire. A busy transport refuses the hand-off and the frame stays
+    // pending (advanceDisplayFramePhase) instead of being consumed, so the newest
+    // completed framebuffer is what the next admitted transfer sends.
+    _display.api.pollDisplayTransfer();
+    if (DisplayWindowUtils::admitDisplayTransfer(_display.api.isDisplayTransferActive())) {
+        _display.api.display();
+    } else {
+        paintTransferDeferred_ = true;
+    }
+#else
     _display.api.display();
+#endif
 #if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
     paintTransferUs_ = micros() - phaseStartUs;
 #endif
@@ -341,7 +355,7 @@ void DisplayManager::update() {
             break;
     }
     const DisplayWindowUtils::DisplayFramePhaseAdvance advanced =
-        DisplayWindowUtils::advanceDisplayFramePhase(ran);
+        DisplayWindowUtils::advanceDisplayFramePhase(ran, paintTransferDeferred_);
     pendingPaintPhase_ = advanced.pending;
     if (advanced.frameComplete) {
         applyCoalescedPaintInvalidation();

@@ -294,3 +294,59 @@ verdict stays open even though every transport clause of 5.2 is verified.
 - **Device left on:** the production DMA-on build (`init=1`, `dma_frames` climbing, `blocking_frames=0`).
 - **Task IDs eligible for checkoff:** none for 5.2/5.3 yet — recommend the owner decide whether the
   transport-level evidence closes them or whether a clean managed run is required.
+
+## Slice E — transfer-phase admission and coalescing (task 4.1)
+
+### Identity and scope
+
+- **Task:** **4.1** — a busy transfer is polled on later updates and completed redraws coalesce to one
+  newest pending frame, with no concurrent or stale transfer started.
+- **The gap this closes.** The phase machine advanced `Transfer → Idle` and set `frameComplete`
+  unconditionally. Once the transport became asynchronous, `SSD1322_API::display()` could refuse the
+  hand-off because a frame was still on the wire — and the paint was then acknowledged with nothing
+  transferred, so the newest completed framebuffer could wait for an unrelated invalidation.
+- **Owner path:** `DisplayManager::update()` → `runPaintTransferPhase()` → `DisplayManager::paintTransferDeferred_`
+  → `DisplayWindowUtils::advanceDisplayFramePhase`. The library is untouched.
+- **Mutation / postconditions:** the Transfer phase polls first and hands the frame over only when the
+  transport is idle; a refusal leaves the frame pending in `Transfer`. **Non-goals:** no second renderer
+  framebuffer, no frame queue, no change to resolve/draw content, no change to the invalidation machinery.
+
+### Oracle fixed before the behavior edits
+
+| Case | Initial state | Action | Expected |
+|---|---|---|---|
+| E1 busy transport | phase `Transfer`, transport active | `admitDisplayTransfer(true)` then advance deferred | hand-off refused; phase stays `Transfer`; `frameComplete` false |
+| E2 free transport | phase `Transfer`, transport idle | `admitDisplayTransfer(false)` then advance | hand-off accepted; phase `Idle`; `frameComplete` true |
+| E3 redraw while deferred | phase `Transfer` (deferred) | `noteDisplayFrameInvalidate` | coalesce flag set; phase stays `Transfer`; resolved notes stay live |
+| E4 deferred resolves | pending `Transfer` | advance with `transferDeferred=false` | completes exactly once; nothing left pending |
+
+**Counterexample that must fail:** advancing a deferred transfer to `Idle`/`frameComplete` — the pre-slice
+behaviour, which consumed a frame that never reached the panel.
+
+### Controls and coverage
+
+- **Seam:** the phase machine is already header-inline and host-testable; `admitDisplayTransfer` puts the
+  "one frame at a time" decision in the same tested unit rather than only in the firmware.
+- **Production path exercised:** `DisplayManager` calls `admitDisplayTransfer` and passes
+  `paintTransferDeferred_` into the same `advanceDisplayFramePhase` the test drives.
+- **Not host-testable:** `SSD1322_API::isDisplayTransferActive()` is `__IMXRT1062__`-guarded, so the
+  firmware wiring (poll, then hand over or defer) is device-verified only.
+
+### Verification recipe
+
+- Focused: `pio test -e native -f test_display_window_utils`.
+- Broad: `pio test -e native`.
+- Build: `pio run -e teensy41-capture-serial`.
+
+### Completion record
+
+- **Focused native:** `pio test -e native -f test_display_window_utils` — **123 cases, 123 succeeded**,
+  including both new cases.
+- **Broad native:** `pio test -e native` — **2414 cases, 1 skipped, 2413 succeeded, 0 failures** (exit 0);
+  the +2 over the previous 2412 is exactly the two new cases.
+- **Build:** `pio run -e teensy41-capture-serial` SUCCESS with `RAM1 variables 96,160 / code 391,512 /
+  padding 1,704 / locals 34,912` — **+64 bytes of ITCM code**, `padding` down from 1,768 to 1,704 but still
+  864 B above the 840 floor (the change adds one branch and one phase-advance call, not data).
+- **Device:** NOT re-flashed for this slice; the paint admission path changes, so a device smoke is the
+  next check if the owner wants one.
+- **Task IDs eligible for checkoff:** **4.1**.
