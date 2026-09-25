@@ -91,6 +91,27 @@ struct CaptureRing {
   uint32_t tierAFirstEvictedUs = 0;
   uint32_t tierAEvictedCount = 0;
   uint32_t timingShedPending = 0;
+
+  // S1.3 save/restore-survival: bounded identity-path counters. They separate "the branch was never
+  // reached" from "capture disabled", "enqueue rejected", "evicted" and "delivered but not parsed",
+  // which linked call sites alone cannot. Fixed size, bumped once per event, never printed on a
+  // timing-critical path (read back through `!CAP_IDENTITY_STATS` while stopped).
+  uint32_t identityEmitEntered = 0;
+  uint32_t identityEmitEnqueued = 0;
+  uint32_t identityEmitRejected = 0;
+  uint32_t identityTransmitted = 0;
+  uint32_t identityEvicted = 0;
+  // The last identity the emitter was handed (track, start slot, stop slot, commit slot, persist
+  // track, persist slot, event char, take id) plus the enqueue outcome.
+  uint8_t identityLastTrack = 0xFF;
+  uint8_t identityLastStartSlot = 0xFF;
+  uint8_t identityLastStopSlot = 0xFF;
+  uint8_t identityLastCommitSlot = 0xFF;
+  uint8_t identityLastPersistTrack = 0xFF;
+  uint8_t identityLastPersistSlot = 0xFF;
+  char identityLastEvent = '-';
+  uint8_t identityLastEnqueued = 0;
+  uint32_t identityLastTakeId = 0;
 };
 
 CaptureRing sCaptureRing;
@@ -148,8 +169,27 @@ SC_MEM_ATTR bool headRecordIsCriticalText() {
   return isCriticalTextLine(line);
 }
 
-SC_MEM_ATTR bool shouldSampleMidiOutCapture() {
-  if (!captureRingPressureHigh()) {
+/// Whether the ring head is a slot-identity (`RID,`) text record, so an eviction of one can be
+/// counted. Same shape as the tier/critical head probes; header-only classification, no allocation.
+SC_MEM_ATTR bool headRecordIsIdentityText() {
+  if (sCaptureRing.used < sizeof(CaptureRecordHeader)) {
+    return false;
+  }
+  CaptureRecordHeader header{};
+  if (!readHeaderAt(sCaptureRing.head, header) ||
+      header.type != static_cast<uint8_t>(CaptureRecordType::Text) || header.payloadLen == 0) {
+    return false;
+  }
+  char line[48] = {};
+  const size_t copyLen = static_cast<size_t>(header.payloadLen) < sizeof(line) - 1
+                             ? static_cast<size_t>(header.payloadLen)
+                             : sizeof(line) - 1;
+  readBytesAt(sCaptureRing.head + sizeof(header), line, copyLen);
+  line[sizeof(line) - 1] = '\0';
+  return CaptureLineTier::tagStartsWith(line, "RID,");
+}
+
+SC_MEM_ATTR bool shouldSampleMidiOutCapture() {  if (!captureRingPressureHigh()) {
     return false;
   }
   static uint8_t sampleCounter = 0;
@@ -347,6 +387,12 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
       type == CaptureRecordType::Text && isTierATextLine(static_cast<const char*>(payload));
   const bool incomingCritical =
       type == CaptureRecordType::Text && isCriticalTextLine(static_cast<const char*>(payload));
+  const bool incomingIdentity =
+      type == CaptureRecordType::Text &&
+      CaptureLineTier::tagStartsWith(static_cast<const char*>(payload), "RID,");
+  if (incomingIdentity) {
+    ++sCaptureRing.identityEmitEnqueued;  // provisional; decremented below if the append is refused
+  }
   while (sCaptureRing.used + total > sCaptureRing.capacity) {
     const bool headTierA = headRecordIsTierAText();
     const bool headCritical = headRecordIsCriticalText();
@@ -354,7 +400,16 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
                                               headCritical)) {
       // Preserve an actionable denial over ordinary timing telemetry.
       noteTimingShed();
+      if (incomingIdentity) {
+        --sCaptureRing.identityEmitEnqueued;
+        ++sCaptureRing.identityEmitRejected;
+      }
       return false;
+    }
+    // An identity record at the head is being displaced by this append: count it, so "the row was
+    // written and then evicted" is distinguishable from "the row was never written".
+    if (headRecordIsIdentityText()) {
+      ++sCaptureRing.identityEvicted;
     }
     const size_t usedBefore = sCaptureRing.used;
     // A full ring may replace a non-Tier-A record without invalidating the
@@ -363,6 +418,10 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
     // invalidates the capture.
     discardOldestRecord(CaptureLineTier::evictionKindFor(headTierA, headCritical));
     if (sCaptureRing.used == usedBefore) {
+      if (incomingIdentity) {
+        --sCaptureRing.identityEmitEnqueued;
+        ++sCaptureRing.identityEmitRejected;
+      }
       return false;
     }
   }
@@ -654,12 +713,54 @@ SC_MEM_ATTR void recSlotIdentity(const char* event, uint32_t takeId, uint8_t tra
                                  uint8_t startSlot, uint8_t stopSlot, uint8_t commitSlot,
                                  uint8_t persistTrack, uint8_t persistSlot, char reason, char work,
                                  uint8_t slotChanged) {
+  // S1.3 save/restore-survival: count entry and outcome here, where the branch is actually reached,
+  // so "the emit never ran" is distinguishable from "the row was enqueued and then lost". Fixed-size
+  // bumps only; no extra output on this path.
+  ++sCaptureRing.identityEmitEntered;
+  sCaptureRing.identityLastTrack = trackIndex;
+  sCaptureRing.identityLastStartSlot = startSlot;
+  sCaptureRing.identityLastStopSlot = stopSlot;
+  sCaptureRing.identityLastCommitSlot = commitSlot;
+  sCaptureRing.identityLastPersistTrack = persistTrack;
+  sCaptureRing.identityLastPersistSlot = persistSlot;
+  sCaptureRing.identityLastEvent = (event != nullptr && event[0] != '\0') ? event[0] : '-';
+  sCaptureRing.identityLastTakeId = takeId;
+  const uint32_t enqueuedBefore = sCaptureRing.identityEmitEnqueued;
+  const uint32_t rejectedBefore = sCaptureRing.identityEmitRejected;
   emitCapPrintf(
       SC_FMT("#CAP,%lu,RID,%s,take=%lu,t=%u,ss=%u,sp=%u,cs=%u,pt=%u,ps=%u,r=%c,w=%c,chg=%u\r\n"),
       (unsigned long)micros(), event, (unsigned long)takeId, static_cast<unsigned>(trackIndex),
       static_cast<unsigned>(startSlot), static_cast<unsigned>(stopSlot),
       static_cast<unsigned>(commitSlot), static_cast<unsigned>(persistTrack),
       static_cast<unsigned>(persistSlot), reason, work, static_cast<unsigned>(slotChanged));
+  sCaptureRing.identityLastEnqueued =
+      (sCaptureRing.identityEmitEnqueued > enqueuedBefore &&
+       sCaptureRing.identityEmitRejected == rejectedBefore)
+          ? 1u
+          : 0u;
+}
+
+// S1.3 save/restore-survival: the read-back for the bounded identity-path counters. One fixed-size
+// record, emitted only from the stopped-only HITL command, so the record/persist path never prints.
+SC_MEM_ATTR void emitIdentityPathStats() {
+  // Emitted **directly**, not through the capture ring: the ring may reject or displace the row (that is
+  // exactly the visibility problem these counters exist to diagnose), and this path is stopped-only,
+  // host-requested and never on a timing-critical budget, so blocking USB output is safe here.
+  Serial.printf(
+      SC_FMT("#CAP,%lu,RID,stats,entered=%lu,enq=%lu,rej=%lu,tx=%lu,evict=%lu,lastEnq=%u,"
+             "take=%lu,t=%u,ss=%u,sp=%u,cs=%u,pt=%u,ps=%u,ev=%c\r\n"),
+      (unsigned long)micros(), (unsigned long)sCaptureRing.identityEmitEntered,
+      (unsigned long)sCaptureRing.identityEmitEnqueued, (unsigned long)sCaptureRing.identityEmitRejected,
+      (unsigned long)sCaptureRing.identityTransmitted, (unsigned long)sCaptureRing.identityEvicted,
+      static_cast<unsigned>(sCaptureRing.identityLastEnqueued),
+      (unsigned long)sCaptureRing.identityLastTakeId,
+      static_cast<unsigned>(sCaptureRing.identityLastTrack),
+      static_cast<unsigned>(sCaptureRing.identityLastStartSlot),
+      static_cast<unsigned>(sCaptureRing.identityLastStopSlot),
+      static_cast<unsigned>(sCaptureRing.identityLastCommitSlot),
+      static_cast<unsigned>(sCaptureRing.identityLastPersistTrack),
+      static_cast<unsigned>(sCaptureRing.identityLastPersistSlot),
+      sCaptureRing.identityLastEvent);
 }
 
 SC_MEM_ATTR void architectureCounter(const char* name, uint32_t value) {
@@ -1226,6 +1327,11 @@ void flushCaptureBuffer(size_t maxRecords) {
                                  : sizeof(line);
       readBytesAt(sCaptureRing.head + sizeof(header), line, copyLen);
       line[sizeof(line) - 1] = '\0';
+      // S1.3: count identity rows that actually leave the ring for the host, so "delivered but not
+      // parsed" is distinguishable from "never delivered".
+      if (CaptureLineTier::tagStartsWith(line, "RID,")) {
+        ++sCaptureRing.identityTransmitted;
+      }
       Serial.println(line);
     } else if (header.type == static_cast<uint8_t>(CaptureRecordType::DiagTrace)) {
       if (header.payloadLen == sizeof(Diagnostics::DiagTraceRecord)) {

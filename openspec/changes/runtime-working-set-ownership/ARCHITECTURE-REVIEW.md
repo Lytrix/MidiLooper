@@ -3754,16 +3754,46 @@ recorded on track 6 loop 2. On the earlier `captures/s13-survival-01/` run the s
 take having logged `Record pass undo reset for slot 1`. The wrong-target admission is therefore
 **demonstrated and reproducible**, and it is what the fixture gate now refuses to reboot past.
 
-**Open blocker (recorded, not worked around).** The `RID` rows do not reach the host: `nm`/`objdump`
-confirm the emitter and both call sites are real machine calls in the flashed image
-(`recSlotIdentity` at `0x6007208c`, called from `stopRecording` and `stopRecordingToStopped`), yet the
-captured stream carries neither `RID` nor the **pre-existing Tier-A `RECS`** record-stop rows, while
-`PERS`/`ST`/`VCACHE` rows from the same window do arrive. `!TRACE_DRAIN` was then issued explicitly (it is
-stopped-only and no host tool was calling it) and returned no `RID`/`RECS` rows either. So the record-stop
-capture rows are being displaced or lost before the host sees them — a **capture-visibility** defect that is
-independent of the persist-target defect and is the next thing to fix. I did **not** route the identity
-through a blocking `Serial.print` in the record/persist path to work around it: that path is
-timing-sensitive and the capture gate exists to keep it non-blocking.
+**Open blocker (recorded, not worked around).** The `RID` rows do not reach the host, and the bounded
+counters now localise **where** that happens rather than assuming it.
+
+**Counters added (capture-gated, fixed size, no blocking output in the record/persist path).** The emitter
+counts its own entry and its enqueue outcome (`entered` / `enq` / `rej`, plus the last take's identity);
+the ring counts identity evictions and identity transmissions (`evict` / `tx`). They are read back through a
+**read-only, stopped-only** command, `!CAP_IDENTITY_STATS`, which emits its one row **directly** rather than
+through the capture ring — because the ring is the thing under suspicion and a host-requested, stopped-only
+read-back has no reason to be buffered. That single design point was itself informative: when the row went
+through the ring it never arrived.
+
+**What the counters have established so far.** On a **fresh boot with no take**, the read-back works and
+reads `entered=0 enq=0 rej=0 tx=0 evict=0` — so the counters and the command are both live, and any
+non-zero value after a take would attribute the loss. That before-reading is now the fixture's baseline.
+The **after-reading is blocked by a device-state defect, not by the counters**: after a capture session
+closes, the command channel stops answering (`!CAP_IDENTITY_STATS`, `!STOP_STATUS` and `!CRASH_LOG` all go
+silent) while telemetry keeps streaming, and it only recovers on re-upload — which clears the counters.
+The device is **not** crashed: `!CRASH_LOG` after the next upload shows a normal boot and no crash record,
+so this is a stalled command path, reproducible across three runs. **Ordinarily this read-back is exactly
+the kind of measurement that must not require a reboot, and here a reboot is what destroys it** — so the
+identity question stays open until the command path survives a run (or the counters are reported at the
+next boot).
+
+**Status, stated precisely (per owner direction).**
+
+- **Native/build gates are green; device identity verification remains open.** Full native 2,379 /
+  1 skipped / 0 failures; `teensy41-capture-serial` SUCCESS with RAM1 `variables 96,160 (was 96,192) /
+  ITCM 393,216 (code 391,304 + padding 1,912) / locals 34,912 (was 34,880)`. The RAM1 baseline was
+  re-based deliberately (`scripts/ram1_budget.json`) because the change **returns 32 B of DTCM to the
+  local allowance** — the counters and last-take identity are FLASH-resident and the take identity is
+  packed into one 32-bit word in the `TrackCaptureInput` TU, so `Track`'s pinned `sizeof(384)` is untouched.
+- **Adjacent-slot persistence work is suspicious, not attributed.** `LoopPersist slot:5:0` (track 6,
+  slot 1) is admitted while the take records on track 6 loop 2, reproducibly. But without take correlation
+  it **could be unrelated pending work** — the device autosaves across runs, and every run shows
+  `GlobalMeta`/`SlotMeta`/`TrackMeta` items that outlive the take. So this is a lead to attribute, not a
+  proven wrong-target admission for *this* recording.
+- **Zero payload-read errors supports "no reported read failures".** It does not establish that every empty
+  payload was intentionally empty: a body could be written with metadata and no events, or written by a
+  path that never emits a read failure. The 27 content-less slots are an inventory fact, not a loss and
+  not proof of intent.
 These are the parameters the measurements must hold fixed. They are **pinned here before any sweep**; a run
 that departs from them is not the pinned measurement.
 

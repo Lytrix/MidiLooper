@@ -31,10 +31,53 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+
+def read_identity_path_stats(port: str, *, attempts: int = 3) -> list[str]:
+    """Read the bounded identity-path counters over the stopped-only HITL command.
+
+    Read-only: `!CAP_IDENTITY_STATS` neither records nor writes, and the device ignores it while the
+    transport runs. It is issued after the record run (which ends stopped), so the counters describe
+    the take that just finished. This is what separates "the emit branch was never reached" from
+    "capture disabled", "enqueue rejected", "evicted" and "delivered but not parsed".
+    """
+    if not port:
+        return []
+    import serial  # third-party, imported after `types`/`serial` shadowing is moot here
+
+    lines: list[str] = []
+    # The device's command channel can stop answering after a capture session closes while still
+    # streaming telemetry (a documented wedge). Retry across a re-enumeration instead of concluding
+    # "no counters" from one silent read.
+    for wait_attempt in range(10):
+        if not Path(port).exists():
+            time.sleep(1.0)
+            continue
+        try:
+            with serial.Serial(port, 115200, timeout=0.3) as handle:
+                time.sleep(0.8)
+                for _ in range(attempts):
+                    handle.write(b"!CAP_IDENTITY_STATS\n")
+                    handle.flush()
+                    deadline = time.monotonic() + 2.5
+                    while time.monotonic() < deadline:
+                        raw = handle.readline()
+                        if not raw:
+                            continue
+                        text = raw.decode("utf-8", errors="replace").strip()
+                        if text:
+                            lines.append(text)
+                        if "RID,stats," in text:
+                            return lines
+        except Exception as exc:  # noqa: BLE001 - recorded, not fatal
+            print(f"[rid] identity-path stats probe attempt {wait_attempt}: {exc}")
+        time.sleep(1.0)
+    return lines
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -92,6 +135,15 @@ def main() -> int:
     if serial_log.exists():
         lines = serial_log.read_text(encoding="utf-8", errors="replace").splitlines()
 
+    # Read the bounded identity-path counters before deciding anything: they say whether the emit
+    # branch ran at all, whether the row was enqueued, rejected, transmitted or evicted.
+    stats_lines = read_identity_path_stats(args.serial_port)
+    stats = next((line for line in stats_lines if "RID,stats," in line), None)
+    if stats:
+        print(f"[rid] identity-path counters: {stats[stats.index('RID,stats,'):]}")
+    else:
+        print("[rid] identity-path counters: NOT READ (the probe returned no RID,stats row)")
+
     # The pinned target is zero-based: user track N -> index N-1, loop slot M -> index M-1.
     expected_track = args.track - 1
     expected_slot = args.loop_slot - 1
@@ -110,6 +162,8 @@ def main() -> int:
               "separately (file size and a boot that reads the events back).")
 
     report = {
+        "identity_path_stats_line": stats,
+        "identity_path_stats_probe_lines": stats_lines,
         "track_user": args.track,
         "loop_slot_user": args.loop_slot,
         "expected_track_index": expected_track,
