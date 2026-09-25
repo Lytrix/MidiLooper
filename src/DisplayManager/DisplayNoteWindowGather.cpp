@@ -720,7 +720,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
             loop.isPlaybackSessionExitPublicationGap());
 
     size_t committedDisplayEnd = liveDisplayCommittedPrefix_.size();
-    DisplayNoteVec candidate;
+    DisplayWindowUtils::DrawSourceComposeScratch<DisplayNoteVec> composeScratch(
+        liveDisplayPendingPaintNotes_);
+    DisplayNoteVec& candidate = composeScratch.notes;
     const uint32_t gatherStartUs = micros();
     if (reuseKind == DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource &&
         canReuseCommittedPrefix) {
@@ -735,7 +737,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     } else if (canSlideCommittedPrefix) {
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
         reuseCommittedDrawSourcePrefix(liveDisplayCommittedPrefix_, candidate);
-        candidate = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
+        DisplayWindowUtils::filterDisplayNotesByWindowInclusionInPlace(
             candidate, windowStart, windowLength, loopLength);
         const uint32_t enteringBar =
             windowStart > liveDrawSourceKey_.windowStart ? lastBar : firstBar;
@@ -835,9 +837,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         !loop.capturePreviewView().openNoteIndices.empty());
     const bool havePendingPaint = DisplayWindowUtils::shouldPaintPendingDrawSourceRepresentation(
         track.isOverdubbing(), loop.hasPendingNoteChanges(), loop.hasSealedCompanionOverlay());
+    composeScratch.restorePaintStorage();
     const DisplayNoteVec* paintedNotes = &liveDisplayNotes;
     if (applyLiveCaptureTails || havePendingPaint) {
-        liveDisplayPendingPaintNotes_ = liveDisplayNotes;
+        DisplayWindowUtils::replacePaintFromCompose(liveDisplayPendingPaintNotes_, liveDisplayNotes);
         if (havePendingPaint) {
             // Match live resolve ordering: apply pending first, then grow tails.
             // This keeps incoming open holds from being swallowed by a same-start

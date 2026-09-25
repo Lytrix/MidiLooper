@@ -176,9 +176,15 @@ bool FixedPlaybackEventStorage::append(const MidiEvent& event) {
   return true;
 }
 
-RUNTIME_PLAYBACK_VIEW_COLD_MEM RuntimePlaybackView::~RuntimePlaybackView() {
+RUNTIME_PLAYBACK_VIEW_COLD_MEM RuntimePlaybackView::~RuntimePlaybackView() { release(); }
+
+RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackView::release() {
+  resetMetadata();
+  storage.release();
   releaseExternalMemoryFirst(passOrigins);
   releaseExternalMemoryFirst(canonicalRanks);
+  passOrigins = nullptr;
+  canonicalRanks = nullptr;
 }
 RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::prewarm(size_t eventCapacity) {
   if (!storage.prewarm(eventCapacity)) return false;
@@ -693,8 +699,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::releaseWholeTakeView
     return false;
   }
   for (RuntimePlaybackView& base : bridgeBases) {
-    base.resetMetadata();
-    base.storage.release();
+    base.release();
   }
   for (FixedPlaybackBridgeStorage& bridge : bridges) {
     bridge.resetMetadata();
