@@ -350,3 +350,46 @@ behaviour, which consumed a frame that never reached the panel.
 - **Device:** NOT re-flashed for this slice; the paint admission path changes, so a device smoke is the
   next check if the owner wants one.
 - **Task IDs eligible for checkoff:** **4.1**.
+
+## Slice F — wrapper abort/reset and caller-owned CS (tasks 2.1, 2.2)
+
+### Identity and scope
+
+- **Tasks:** **2.1** (`abortAndReset()` exists, is public, and leaves the wrapper idle and reusable) and
+  **2.2** (normal completion and caller-owned-CS semantics survive the recovery path).
+- **Status:** device-verified. The abort path cannot be host-tested — it touches DMAChannel, LPSPI and the
+  Arduino SPI object — so the verification is device behaviour plus a cited reading of the register writes.
+- **Primary files:** `lib/SSD1322_OLED/lib/TsyDMASPI/TsyDMASPI/MasterBase.h` (the operation),
+  `MasterT40.h` (`clearTransaction()` per LPSPI instance).
+
+### Evidence
+
+**2.1 — the operation.** `abortAndReset()` is public (`MasterBase.h:35` `public:`, declared at `:67`).
+Inside one `ATOMIC_BLOCK` it: disables both DMA paths (`dmatx()->disable()`, `dmarx()->disable()`, `:71-72`),
+clears the RX DMA interrupt (`dmarx()->clearInterrupt()`, `:73`), ends an in-flight SPI transaction
+(`spi->endTransaction()` under the `b_in_transaction` guard, `:74-79`), discards the queued transaction
+records (`transactions.clear()`, `:80`), clears the in-flight flag (`:81`) and calls the per-instance
+`clearTransaction()` (`:82`). For `Master0` (LPSPI4, the display port) `clearTransaction()` sets
+`DER = 0` (DMA off for both TX and RX), restores `FCR`, resets both FIFOs (`CR = MEN | RRF | RTF`) and
+clears the status register (`SR = 0x3f00`) — `MasterT40.h:102-109`.
+
+It never calls `end()`/`destroy()`, never constructs a new `DMAChannel` and never re-runs `initDmaTx()`/
+`initDmaRx()`, so channel lifetime is untouched. The device proves the wrapper is genuinely reusable
+afterwards: with two injected timeouts, **two `abortAndReset()` calls are followed by
+`DMA recovered; transfers resumed` and `dma_frames` climbing 13 → 119 with `blocking_frames=0`** — a real
+transfer completed on the same channels, with no re-initialisation (`captures/dma-abort-path-2.1`).
+
+**2.2 — completion and caller-owned CS.** The Teensy environment compiles (every gate in this packet), and
+normal completion is unchanged: the production run keeps `dma_frames` climbing at ~13–18 frames/s with
+`blocking_frames=0` and `DFRAME` transfer time 40–47 µs. The injected abort path is the run above. CS
+stays caller-owned throughout: `begin()` uses `kCallerOwnsCsPin = 255` (`MasterBase.h:37`, `:50`), and
+`abortAndReset()`'s CS branch is guarded by `pin_cs != kCallerOwnsCsPin`, so the wrapper never drives the
+pin — the SSD1322 raises it (`pollDisplayTransfer`) and the panel kept painting across the aborts.
+
+### Completion record
+
+- **Device runs:** `captures/dma-abort-path-2.1` (two injected timeouts, then recovery);
+  paint smoke on the 4.1 build recorded in the Slice E follow-up.
+- **Compile:** `teensy41-capture-serial` SUCCESS for the production, fault `=1`, `=2` and `=0` variants.
+- **FATAL / `#MEM_EXT_REFUSED`:** 0 in every run.
+- **Task IDs eligible for checkoff:** **2.1**, **2.2** — the change reaches 14/14.
