@@ -789,6 +789,68 @@ def _stop_empty_slot_select_recording_before_clear(
     return True
 
 
+def _select_loop_slot_before_record_arm(
+    out_port: mido.ports.BaseOutput,
+    in_port: Optional[mido.ports.BaseInput],
+    serial_collector: Optional[Any],
+    args: Any,
+    *,
+    loop_slot: int,
+    abort: RunAbort,
+) -> int:
+    """Select ``loop_slot`` and prove it empty before a no-clear record arm.
+
+    ``--no-clear-before-record`` authorises skipping the clear, not skipping the
+    selection. The clear path selects the Loops row itself
+    (:func:`_run_clear_before_record`), so without this step the arm acts on
+    whatever slot was already selected — the 2026-09-25 target mismatch
+    (configured track 8 slot 4, armed slot 1). Returns the serial baseline index
+    taken before the select press, so the caller can prove the target slot from
+    device-time evidence emitted after selection.
+
+    Transport is stopped *before* the tap deliberately. Selecting while the
+    transport runs starts an empty-slot capture immediately
+    ([`session_20260909_112010`]); the later stop then leaves the track ARMED,
+    the arm step sees ARMED as satisfied and skips its press, and the resumed
+    transport produces a short take that never returns to PLAYING. With the
+    transport stopped the tap only arms, and the empty proof plus the S1.6c.2a
+    guard keep a stale DISP row from passing for a moved slot.
+    """
+    if loop_slot <= 0:
+        return 0
+    should_clear = bool(getattr(args, "clear_before_record", True))
+    if not should_clear:
+        _ensure_transport_stopped_before_record_arm(
+            out_port,
+            in_port,
+            serial_collector,
+            args,
+            press_ms=args.press_ms,
+            phase_wait_ms=args.phase_wait_ms,
+            after_index=0,
+        )
+    baseline = len(serial_collector.snapshot()) if serial_collector is not None else 0
+    print(f"[info] select loop slot {loop_slot} before no-clear record arm")
+    _send_loop_slot_select_press(out_port, loop_slot=loop_slot, press_ms=args.press_ms)
+    if serial_collector is None:
+        time.sleep(max(args.phase_wait_ms, TRANSPORT_SHORT_DEBOUNCE_MS) / 1000.0)
+        return baseline
+    _stop_empty_slot_select_recording_before_clear(
+        out_port,
+        serial_collector,
+        args,
+        after_index=baseline,
+        abort=abort,
+    )
+    settle_s = max(args.phase_wait_ms, TRANSPORT_SHORT_DEBOUNCE_MS) / 1000.0
+    time.sleep(settle_s)
+    # Slot identity is the oracle, not an EMPTY state: selecting a stopped slot arms
+    # it (ARMED/EMPTY are both non-recording), and a DISP row for the target slot can
+    # only be emitted once the device's display slot has actually moved. The caller's
+    # `_require_observed_record_slot` re-checks this window and fails closed.
+    return baseline
+
+
 def _send_record_clear_long_press(out_port: mido.ports.BaseOutput, *, clear_press_ms: int) -> None:
     """Long-press Record/Overdub (note 36) to clear the selected loop slot."""
     _send_long_press(
@@ -1532,8 +1594,8 @@ def _confirm_recording_after_transport_start(
     )
 
 
-def _require_observed_record_slot(lines: list[str], loop_slot: int, after_index: int) -> None:
-    """No-clear arm acts on the selected slot; configuration is not selection."""
+def _latest_observed_record_slot(lines: list[str], after_index: int) -> Optional[int]:
+    """Latest device-selected slot (1-based) from its device-time DISP rows."""
     latest = None
     for line in lines[after_index:]:
         parts = line.strip().split(",")
@@ -1545,12 +1607,42 @@ def _require_observed_record_slot(lines: list[str], loop_slot: int, after_index:
             continue
         if latest is None or observed[0] >= latest[0]:
             latest = observed
-    if latest is None or latest[1] != loop_slot - 1:
-        actual = "unobserved" if latest is None else str(latest[1] + 1)
+    return None if latest is None else latest[1] + 1
+
+
+def _require_observed_record_slot(lines: list[str], loop_slot: int, after_index: int) -> None:
+    """No-clear arm acts on the selected slot; configuration is not selection."""
+    observed = _latest_observed_record_slot(lines, after_index)
+    if observed != loop_slot:
+        actual = "unobserved" if observed is None else str(observed)
         raise RuntimeError(
             f"No-clear record target not verified: requested slot {loop_slot}, "
             f"latest observed slot {actual}. No record arm or notes sent."
         )
+
+
+def _await_observed_record_slot(
+    serial_collector: Any,
+    *,
+    loop_slot: int,
+    after_index: int,
+    timeout_s: float,
+    abort: RunAbort,
+) -> None:
+    """Bounded wait for the target slot's DISP row, then fail closed.
+
+    The stopped display emits on change, so a fresh DISP row for the selected slot
+    is not guaranteed in the same poll as the tap. Wait for it rather than treating
+    a quiet display as a mismatch — an unobserved slot still refuses.
+    """
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while True:
+        if _latest_observed_record_slot(serial_collector.snapshot(), after_index) == loop_slot:
+            return
+        if abort.check() is not None or time.monotonic() >= deadline:
+            break
+        time.sleep(0.02)
+    _require_observed_record_slot(serial_collector.snapshot(), loop_slot, after_index)
 
 
 def _run_record_arm_until_capturing(
@@ -1563,6 +1655,7 @@ def _run_record_arm_until_capturing(
     record_loop_slot: Optional[int],
     abort: RunAbort,
     wait_for_recording_confirm: bool = True,
+    select_loop_slot: Optional[bool] = None,
 ) -> tuple[bool, Optional[float]]:
     """Stop transport, arm, start transport; optionally confirm RECORDING before note stream.
 
@@ -1570,13 +1663,29 @@ def _run_record_arm_until_capturing(
     ``record_schedule_start_mono`` is the wall-time anchor for fixture grid scheduling
     (transport short-press debounce model). Callers that stream fixture notes immediately
     should pass ``wait_for_recording_confirm=False`` so the grid is not delayed by serial sync.
+
+    ``select_loop_slot=None`` (default) selects and proves the target slot on a no-clear
+    arm; callers that already selected it pass ``False`` to avoid a second Loops-row tap.
     """
     from hitl.serial_tick_anchor import transport_record_start_monotonic
 
     if record_loop_slot and not getattr(args, "clear_before_record", True):
-        _require_observed_record_slot(
-            serial_collector.snapshot() if serial_collector else [],
-            record_loop_slot, track_baseline_len,
+        target_baseline_len = track_baseline_len
+        if select_loop_slot is not False:
+            target_baseline_len = _select_loop_slot_before_record_arm(
+                out_port,
+                in_port,
+                serial_collector,
+                args,
+                loop_slot=record_loop_slot,
+                abort=abort,
+            )
+        _await_observed_record_slot(
+            serial_collector,
+            loop_slot=record_loop_slot,
+            after_index=target_baseline_len,
+            timeout_s=args.state_sync_timeout_ms / 1000.0,
+            abort=abort,
         )
 
     _stop_live_capture_if_active_before_arm(
