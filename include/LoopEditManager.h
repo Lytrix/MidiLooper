@@ -47,9 +47,9 @@ public:
     void sendCurrentLoopStartPitchbend(Track& track);
 
     // Tempo editing (global BPM; loop-edit control channel CC102)
-    /// CC 0..127 maps to Config MIDI tempo bounds; applies immediately, no settle.
+    /// CC 0..127 maps one BPM per step to 60..187 BPM; applies immediately, no settle.
     void handleTempoInput(uint8_t ccValue);
-    /// Park the tempo motor at the current BPM on loop-edit session entry.
+    /// Park the tempo motor at the whole-BPM tempo on loop-edit session entry.
     void sendCurrentTempoCC();
 
     /** Cancel pending loop-start grace work and ignore motor feedback briefly. */
