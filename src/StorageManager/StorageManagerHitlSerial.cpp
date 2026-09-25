@@ -20,6 +20,7 @@
 #include "SetRevisionCatalog.h"
 #include "StorageManagerInternal.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/StoppedHeapDiagnostics.h"
 #include "Utils/InvestigationCaptureLog.h"
 
 #if defined(__IMXRT1062__)
@@ -665,6 +666,40 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
             } else if (std::strcmp(sHitlSerialLineBuffer, "!CRASH_LOG") == 0 &&
                        !clockManager.isTransportRunning()) {
                 printCrashLogTailForHitl();
+            } else if (std::strncmp(sHitlSerialLineBuffer, "!SLOT_BYTES ", 12) == 0) {
+                uint32_t values[3]{};
+                const char* cursor = sHitlSerialLineBuffer + 12;
+                bool valid = true;
+                for (uint8_t field = 0; field < 3 && valid; ++field) {
+                    while (*cursor == ' ') ++cursor;
+                    if (*cursor < '0' || *cursor > '9') { valid = false; break; }
+                    while (*cursor >= '0' && *cursor <= '9') {
+                        const uint32_t digit = static_cast<uint32_t>(*cursor++ - '0');
+                        if (values[field] > (UINT32_MAX - digit) / 10u) { valid = false; break; }
+                        values[field] = values[field] * 10u + digit;
+                    }
+                    if (*cursor != ' ' && *cursor != '\0') valid = false;
+                }
+                while (*cursor == ' ') ++cursor;
+                const unsigned track = values[0], slot = values[1];
+                const unsigned long offset = values[2];
+                if (!valid || *cursor != '\0' || track >= Config::NUM_TRACKS ||
+                    slot >= Config::MAX_LOOPS_PER_TRACK) {
+                    Serial.println(F("SLOT_BYTES,error,invalid_request"));
+                } else if (Serial.availableForWrite() >= 256) {
+                    SlotPayloadPage page{};
+                    const char* status = readSlotPayloadPageForHitl(track, slot, offset, page);
+                    // Maximum successful response <256 bytes. One host request at a time.
+                    Serial.printf_P(PSTR("SLOT_BYTES,%u,%u,%lu,%s,%lu,%lu,%lu,%lu,%lu,%u,"),
+                                  track, slot, offset, status,
+                                  static_cast<unsigned long>(page.fileSize),
+                                  static_cast<unsigned long>(page.bodyOffset),
+                                  static_cast<unsigned long>(page.setEpoch),
+                                  static_cast<unsigned long>(page.contentIdentity),
+                                  static_cast<unsigned long>(page.rootIdentity), page.count);
+                    for (uint8_t i = 0; i < page.count; ++i) Serial.printf_P(PSTR("%02x"), page.bytes[i]);
+                    Serial.println();
+                }
             } else if (std::strcmp(sHitlSerialLineBuffer, "!CAPTURE_CONTENT") == 0 &&
                        !clockManager.isTransportRunning()) {
                 trackManager.getTrack(trackManager.getSelectedTrackIndex())
@@ -691,6 +726,23 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 // counters (emitter entry, enqueue, rejection, transmission, eviction, last identity).
                 // Stopped-only and outside the record-stop path: it neither records nor writes.
                 DebugSessionCapture::emitIdentityPathStats();
+#if defined(__IMXRT1062__)
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!HEAP_STATS") == 0) {
+                StoppedHeapDiagnostics::Gate gate;
+                gate.transport = clockManager.isTransportRunning();
+                gate.clock = clockManager.isExternalClockPresent() || StoppedHeapDiagnostics::recentClock(
+                    micros(), MemoryMonitor::heapDiagnosticLastClockUs, MemoryMonitor::heapDiagnosticClockSeen);
+                for (size_t i = 0; i < Config::NUM_TRACKS; ++i) {
+                    const auto& track = trackManager.getTrack(i);
+                    gate.tracks |= track.isPlaying() || track.hasLiveCaptureInterval() || track.hasStopInFlight();
+                }
+                gate.storage = StorageManager::isDeferredSaveActive() ||
+                    StorageManager::hasPendingLoopSlotRestore() ||
+                    StorageManager::hasPendingUndoSnapshotHydrate() ||
+                    StorageManager::isRevisionCommitActive() || StorageManager::isRevisionLoadActive() ||
+                    trackManager.hasPendingDeferredPlaybackPrewarm();
+                MemoryMonitor::emitStoppedHeapStats(gate);
+#endif
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_COMMIT") == 0) {
                 requestCommitRevisionForHitl();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_CLEANUP") == 0) {

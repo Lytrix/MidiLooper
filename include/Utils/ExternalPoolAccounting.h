@@ -8,7 +8,7 @@
 
 /**
  * @file ExternalPoolAccounting.h
- * @brief O(1) accounting for external-pool allocations. Never walks the pool.
+ * @brief Fixed-table bounded accounting for external-pool allocations. Never walks the pool.
  *
  * The PSRAM pool cannot be queried from the transport thread: the free/used walk
  * (`sm_malloc_stats_pool`) measured 593 ms on an 8 MiB pool in
@@ -49,14 +49,13 @@ struct Counters {
   uint32_t untrackedBlocks = 0;
   /// Frees with no shadow entry (never counted as live).
   uint32_t unknownFrees = 0;
-  /// Pool requests the pool refused (the caller then fell back to the heap).
-  /// This is the exhaustion signal: it goes non-zero before `abort()` does.
+  /// Wrapped requests refused after the core tried both external and internal memory.
   uint32_t poolRefusedCount = 0;
   /// Largest single pool request that was refused, in bytes.
   uint32_t poolRefusedLargestBytes = 0;
   /// `millis()` of the most recent refusal, or 0 when none. Lets an admission gate
   /// ask "is the pool refusing right now?" without walking it — an exact signal,
-  /// unlike the live-byte counter, which over-reports.
+  /// not a physical-pool-only refusal signal.
   uint32_t poolLastRefusalMs = 0;
 
   /// Number of size classes used by `liveBytesByClass` / `liveBlocksByClass`.
@@ -117,20 +116,26 @@ constexpr size_t sizeClassFor(size_t bytes) {
 /// Read-only view of the counters. O(1).
 const Counters& counters();
 
-/// Shadow one pool allocation and add it to the live totals.
+/// Match Teensy core IS_EXTMEM without dereferencing the pointer. Internal fallback
+/// allocations can be freed via plain free and must never enter this shadow table.
+inline bool isExternalPoolAddress(const void* pointer) {
+  return (reinterpret_cast<uintptr_t>(pointer) >> 28) == 7;
+}
+
+/// Shadow one physical external allocation; ignore internal fallback pointers.
 void recordPoolAllocation(void* pointer, size_t bytes);
 
-/// Retire one pool allocation, subtracting its shadowed size from the live totals.
+/// Retire a physical external allocation; ignore internal fallback pointers.
 void recordPoolFree(void* pointer);
 
 /// Record that the pool refused a request of `bytes`. Emits a bounded diagnostic so
 /// the refused size and the denial context survive on serial; never allocates.
-void recordPoolRefusal(size_t bytes);
+void recordPoolRefusal(size_t bytes, uintptr_t caller = 0);
 
 /// Zero the counters and the shadow table. Cold path only.
 void reset();
 
-#if defined(__IMXRT1062__)
+#if defined(__IMXRT1062__) || defined(EXTERNAL_POOL_ACCOUNTING_NATIVE_TEST)
 /// Enter/leave an attribution bracket. Nesting is supported to depth 4; the tag is
 /// recorded on each allocation made while it is current. Device-only by design, so
 /// a native build inlines the no-ops below and never needs the definitions.

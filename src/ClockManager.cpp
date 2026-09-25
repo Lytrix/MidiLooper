@@ -1,3 +1,4 @@
+#include "Utils/StoppedHeapDiagnostics.h"
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
@@ -89,6 +90,10 @@ ClockSource ClockManager::getClockSource() const {
 }
 
 void ClockManager::setup() {
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+  MemoryMonitor::heapDiagnosticClockSeen = false;
+  MemoryMonitor::heapDiagnosticLastClockUs = 0;
+#endif
   microsPerTick = 60000000UL / (bpm * Config::INTERNAL_PPQN);
   clockTimer.begin([] { clockManager.updateInternalClock(); }, microsPerTick);
 }
@@ -177,6 +182,11 @@ void ClockManager::updateInternalClock() {
 }
 
 void ClockManager::onMidiClockPulse() {
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+  // Observe even stopped pulses; selected clock source alone cannot guard inspection.
+  MemoryMonitor::heapDiagnosticLastClockUs = micros();
+  MemoryMonitor::heapDiagnosticClockSeen = true;
+#endif
 #if RUNTIME_TIMING_ENABLED
   const uint32_t clockDispatchStartUs = micros();
   RUNTIME_TIMING_NOTE_EXTERNAL_CLOCK_DISPATCH_ENTER(clockDispatchStartUs);

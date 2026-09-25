@@ -86,7 +86,13 @@ def main() -> int:
     ap.add_argument("--observe-early-close-s", type=float, default=0.0,
                     help="Close the observation window this many seconds after requesting it, to "
                          "exercise the incomplete-window case (0 = wait for the end record).")
+    ap.add_argument("--heap-stats", action="store_true",
+                    help="Request explicit stopped/clock-quiet allocator inspection after boot; no take or SD write.")
+    ap.add_argument("--heap-clock-refusal", action="store_true",
+                    help="With --heap-stats, send clock only (no start/notes) and verify inspection refusal.")
     args = ap.parse_args()
+    if args.heap_clock_refusal and not args.heap_stats:
+        ap.error("--heap-clock-refusal requires --heap-stats")
 
     out_dir: Path = args.out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=False)
@@ -150,6 +156,43 @@ def main() -> int:
                 break
             time.sleep(0.1)
         observation_lines = [line for line in lines[request_index:] if "LIBOBS," in line]
+
+    heap_rows = []
+    if args.heap_stats:
+        request_index = len(lines)
+        ser.write(b"!HEAP_STATS\n")
+        ser.flush()
+        heap_deadline = time.monotonic() + 10.0
+        while time.monotonic() < heap_deadline:
+            heap_rows = [line for line in lines[request_index:] if line.startswith("#HEAP_STATS,")]
+            if heap_rows:
+                break
+            time.sleep(0.1)
+        (out_dir / "heap-stats.json").write_text(json.dumps({
+            "command": "!HEAP_STATS", "rows": heap_rows,
+            "complete": any("internal_complete=1" in row and "external_complete=1" in row for row in heap_rows),
+        }, indent=2))
+
+    if args.heap_clock_refusal:
+        import mido
+        from hitl.stimuli.stopped_heap import STIMULUS_ID, CLOCK_REFUSAL
+        ports = [name for name in mido.get_output_names() if "Teensy" in name]
+        if len(ports) != 1:
+            raise RuntimeError(f"Expected one Teensy MIDI output, found {ports}")
+        request_index = len(lines)
+        with mido.open_output(ports[0]) as midi:
+            for i in range(24):
+                midi.send(mido.Message("clock"))
+                if i == 8:
+                    ser.write(b"!HEAP_STATS\n")
+                    ser.flush()
+                time.sleep(0.02)
+        time.sleep(1.0)
+        refusal_rows = [line for line in lines[request_index:] if line.startswith("#HEAP_STATS,")]
+        (out_dir / "heap-refusal.json").write_text(json.dumps({
+            "stimulus": STIMULUS_ID, "recipe": CLOCK_REFUSAL, "rows": refusal_rows,
+            "pass": refusal_rows == ["#HEAP_STATS,refused=external_clock"],
+        }, indent=2))
 
     stop = True
     time.sleep(0.3)
@@ -296,6 +339,10 @@ def main() -> int:
                   f"consistent_view={window['consistent_view']}")
         if library_observation["incomplete_window"]:
             print("[census]    INCOMPLETE window: these counts are NOT the settled library state.")
+    if args.heap_stats and not any("internal_complete=1" in row and "external_complete=1" in row for row in heap_rows):
+        return 2
+    if args.heap_clock_refusal and refusal_rows != ["#HEAP_STATS,refused=external_clock"]:
+        return 2
     return 0
 
 

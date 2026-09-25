@@ -207,6 +207,7 @@ bool sequencerRunning = false;
 #include "../../src/StorageManager/Internal.cpp"
 #include "../../src/StorageManager/PersistenceDrainGuard.cpp"
 #include "../../src/StorageManager/LibraryObservation.cpp"
+#include "../../src/StorageManager/PersistenceWorkQueue.cpp"
 #include "../../src/StorageManager/LibraryObservationSession.cpp"
 
 namespace {
@@ -677,8 +678,45 @@ void test_o10_end_record_reports_union_and_both_representations() {
                            end.passBackedAtCheckpoint + end.rootBackedAtCheckpoint);
 }
 
+void test_slot_payload_pages_are_bounded_read_only_and_admitted() {
+  nativeTransportRunning = false;
+  TEST_ASSERT_TRUE(RestoreHarness::writePayloadWithOneNoteToSd(0, 0, 60));
+  char path[64];
+  TEST_ASSERT_TRUE(CurrentSetStorage::formatLoopSlotPath(path, sizeof(path), 0, 0));
+  const auto original = SD.files[path];
+  const size_t chunksBefore = LoopEventStore::freeChunkCount();
+  StorageManager::SlotPayloadPage page;
+  std::vector<uint8_t> bytes;
+  for (uint32_t offset = 0; offset < original.size();) {
+    TEST_ASSERT_EQUAL_STRING("ok", StorageManager::readSlotPayloadPageForHitl(0, 0, offset, page));
+    TEST_ASSERT_TRUE(page.count > 0 && page.count <= 64);
+    TEST_ASSERT_EQUAL(original.size(), page.fileSize);
+    bytes.insert(bytes.end(), page.bytes, page.bytes + page.count);
+    offset += page.count;
+  }
+  TEST_ASSERT_EQUAL_MEMORY(original.data(), bytes.data(), original.size());
+  TEST_ASSERT_EQUAL_MEMORY(original.data(), SD.files[path].data(), original.size());
+  TEST_ASSERT_EQUAL(chunksBefore, LoopEventStore::freeChunkCount());
+  TEST_ASSERT_FALSE(trackManager.getTrack(0).getLoop(0).hasCommittedPasses());
+  TEST_ASSERT_EQUAL_STRING("range", StorageManager::readSlotPayloadPageForHitl(0, 0, 0xffffffffu, page));
+  TEST_ASSERT_EQUAL_STRING("invalid_slot", StorageManager::readSlotPayloadPageForHitl(8, 0, 0, page));
+  TEST_ASSERT_EQUAL_STRING("missing", StorageManager::readSlotPayloadPageForHitl(0, 7, 0, page));
+  nativeTransportRunning = true;
+  TEST_ASSERT_EQUAL_STRING("transport_active", StorageManager::readSlotPayloadPageForHitl(0, 0, 0, page));
+  nativeTransportRunning = false;
+  { SlotLoadSession load(0, 1);
+    TEST_ASSERT_EQUAL_STRING("busy", StorageManager::readSlotPayloadPageForHitl(0, 0, 0, page)); }
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist, persistKeyForSlot(0, 0)));
+  TEST_ASSERT_EQUAL_STRING("busy", StorageManager::readSlotPayloadPageForHitl(0, 0, 0, page));
+  PersistenceWorkQueue::resetForTests();
+  SD.files[path].back() ^= 1;
+  TEST_ASSERT_EQUAL_STRING("bad_token", StorageManager::readSlotPayloadPageForHitl(0, 0, 0, page));
+  TEST_ASSERT_FALSE(trackManager.getTrack(0).getLoop(0).hasCommittedPasses());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_slot_payload_pages_are_bounded_read_only_and_admitted);
   RUN_TEST(test_o02_observation_advances_while_load_admission_is_blocked);
   RUN_TEST(test_o01_permanently_waiting_request_still_yields_a_diagnostic);
   RUN_TEST(test_o03_collection_is_incremental_and_bounded);

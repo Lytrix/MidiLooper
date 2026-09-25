@@ -63,6 +63,8 @@ void getPsramStats(size_t* totalUsed, size_t* totalFree) {
 
 }  // namespace
 
+// Conservative unused arena tail, not malloc free-list capacity. Do not interpret
+// zero as proof that all previously allocated blocks remain live.
 uint32_t getInternalHeapFreeBytes() {
   int32_t freeBytes = reinterpret_cast<char*>(&_heap_end) - __brkval;
   const uint32_t free = freeBytes > 0 ? static_cast<uint32_t>(freeBytes) : 0;
@@ -332,7 +334,7 @@ FLASHMEM void logExternalPoolAccounting(const char* phase) {
            "cls=%lu/%lu/%lu/%lu/%lu/%luKB,clsn=%lu/%lu/%lu/%lu/%lu/%lu,"
            "tags=%lu/%lu/%lu/%lu/%lu/%lu/%luKB,chunks_free=%lu,snap=%luKB,"
            "slab_live=%lu,slab_used=%luKB,slab_unused=%luKB,pin1=%lu,pin24=%lu,"
-           "heap_free=%luKB,heap_min=%luKB\n"),
+           "heap_free=%luKB,heap_min=%luKB,accounting=2\n"),
       static_cast<unsigned long>(micros()), phase != nullptr ? phase : "-",
       static_cast<unsigned long>(c.liveBytes / 1024),
       static_cast<unsigned long>(c.highWaterLiveBytes / 1024),
