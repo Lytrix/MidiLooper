@@ -4889,3 +4889,54 @@ yet — release belongs to S4.1, which is why the generation never advances in t
 is currently write-only. S4.1's release should call `releaseAllWorkingSetLeases()` on the slot runtime,
 and S4.2's `captureStopOwner` generation should read `workingSetGeneration()`. The S3.2 liveness
 predicates are the other half of this task.
+
+## S3.2 — explicit liveness predicates per owner kind (2026-09-25, G2 execution packet)
+
+### Identity and scope
+
+`noLiveOwnerForSlot` was one function with four inline clauses. S3.2 makes each owner kind a **named
+term** so a fixture can hold exactly one kind and prove the composite guard is discriminating rather
+than merely true, and so a new owner kind is added by name. No term's *meaning* changes: this slice
+must not widen or narrow release.
+
+### The owner-kind matrix, audited (read, then named)
+
+| Owner kind | Term | Status |
+|---|---|---|
+| Admitted / in-flight capture stop job | `Track::hasLiveCaptureStopJobForSlot` — ring live window only | named in S3.2 |
+| Slot finalization owner (`captureStopOwner`) | `LoopPlaybackRuntime::ownsLiveFinalization` | named in S3.2 |
+| Prepared playback handover **being built** | `LoopPlaybackRuntime::ownsInFlightPreparedHandover` | named in S3.2 |
+| Accepted interaction (S4f.1 latch) | `Track::hasAcceptedInteractionForSlot` | named in S3.2 |
+| Job-owned undo root outliving its ring entry | — | **cannot be expressed yet**: the protected undo publication is track-level and has no per-slot identity. Arrives with **S5.2a**. |
+| Pending deferred reconstruction | — | arrives with **S5.2e**. |
+| **Published** prepared pair | deliberately **not** a term | it is the slot's playback authority and stays valid while the slot sounds; counting it would make release unreachable for every sounding slot |
+
+The ring scan stays over the **live window only** (`[head, head + count)`): a retired entry outside it
+keeps a stale `slot` (retirement clears `owner`/`loopId`, not `slot`) and must not block release (B6).
+
+### Oracle fixed before behavior edits
+
+Holding exactly one owner kind SHALL make `noLiveOwnerForSlot` false for that slot and true for
+another; retiring that kind SHALL make it true again. Two inverse controls are required, because a
+predicate that always returns false would pass every positive case: an unowned slot must allow release,
+and a slot holding only a **published** pair plus an admitted working set must allow release.
+
+### Controls and coverage
+
+`test_continuous_capture` — `test_s3_2_liveness_predicates_are_discriminating_per_owner_kind`, driving
+production state for each kind: the latch through `latchAcceptedStop` + `consumeAcceptedStopObligation`,
+the finalization owner through the real record/overdub/stop route, the ring through the admitted stop,
+and the in-flight handover through the state that consume path sets (there is no production API that
+requests a replacement without a consume miss). Control (b) retires the job through the production
+grain drive and asserts release while the working set stays admitted.
+
+### Completion record (2026-09-25)
+
+`Track::noLiveOwnerForSlot` now reads as a list of four named terms
+(`hasLiveCaptureStopJobForSlot`, `hasAcceptedInteractionForSlot`,
+`ownsLiveFinalization`, `ownsInFlightPreparedHandover`), with the two inexpressible terms recorded
+in place with their owning stages rather than dropped. Behavior is unchanged — same terms, same
+order of refusal, no resource or release call moved — and the new fixture is `PASSED` in the
+continuous-capture suite (101 cases). Full native suite **2,520 passed / 1 skipped** — no regressions
+from the rename. RAM1 `variables` flat (`code 391,912 / padding 1,304`, unchanged from the S3.1
+routing); capture-serial builds.
