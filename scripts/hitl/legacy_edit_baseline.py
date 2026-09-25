@@ -5535,15 +5535,16 @@ def run_edit_baseline(
             if not (1 <= loop_slot <= 8):
                 print(f"[error] --loop-slot must be in [1, 8], got {loop_slot}")
                 return 1
-            from hitl.legacy_record_baseline import _send_loop_slot_select_press
+            from hitl.legacy_record_baseline import _select_loop_slot_before_record_arm
 
-            print(f"[edit-hitl] select loop slot {loop_slot}")
-            _send_loop_slot_select_press(
+            _select_loop_slot_before_record_arm(
                 out_port,
+                in_port,
+                serial_collector,
+                args,
                 loop_slot=loop_slot,
-                press_ms=args.press_ms,
+                abort=abort,
             )
-            time.sleep(args.phase_wait_ms / 1000.0)
 
         if args.clear_before_record:
             if serial_collector is not None:
@@ -5590,6 +5591,7 @@ def run_edit_baseline(
                 record_loop_slot=loop_slot if loop_slot > 0 else None,
                 abort=abort,
                 wait_for_recording_confirm=False,
+                select_loop_slot=False,
             )
             if not reached_recording or record_schedule_start is None:
                 latest = _latest_track_state(serial_collector.snapshot())
