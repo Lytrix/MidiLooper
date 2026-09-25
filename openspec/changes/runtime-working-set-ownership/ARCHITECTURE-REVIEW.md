@@ -3765,7 +3765,51 @@ through the capture ring — because the ring is the thing under suspicion and a
 read-back has no reason to be buffered. That single design point was itself informative: when the row went
 through the ring it never arrived.
 
-**What the counters have established so far.** On a **fresh boot with no take**, the read-back works and
+**RESOLVED — the single-session route recovered the evidence (2026-09-24, same day).**
+`scripts/hitl_identity_one_session.py` holds **one** serial connection with one reader for the whole run:
+baseline counters → take → transport stop + stopped confirmation → second request, all before the close.
+It answers the question the counters existed for, and it does so **without** a retained-counter design
+(which is therefore not justified) and without touching capture buffering:
+
+| reading | value |
+|---|---|
+| baseline (no take), same connection | `entered=0 enq=0 rej=0 tx=0 evict=0` |
+| after the take, same connection | `entered=2 enq=2 rej=0 tx=1 evict=0` |
+| last identity (from the stats row) | `take=1 t=5 ss=1 sp=1 cs=1 pt=5 ps=1 ev=a` |
+
+- **The emitter does execute.** `entered=2` for one take = record start + persistence admission.
+- **Nothing is gated, disabled or rejected**: `rej=0` and neither row was dropped at the enqueue
+  (`enq=2`), so capture was enabled and admission open.
+- **One of the two rows is transmitted, one is not** (`enq=2`, `tx=1`). The stats row is the one that
+  arrives; the `start` row is enqueued and then never drained. That is the capture-visibility defect,
+  now localised to the ring's drain rather than to emission, gating or rejection — and it **no longer
+  blocks the identity question**, because the stats read-back carries the identity.
+
+**The chain correlates, so the "wrong target" attribution is withdrawn for this take.** The take
+recorded into `t=5, ss=1`; the stop passed `cs=1`; the admitted persistence key was `pt=5, ps=1`; and the
+counters' last identity reports the same slot. **The persist target followed the recorded slot
+exactly** — there is no off-by-one in the take's own identity chain. Combined with the single-session
+log showing **no `LoopPersist` work item at all** for the take (its only `PERS` rows are
+`GlobalMeta`/`SlotMeta`/`TrackMeta`), the earlier `LoopPersist slot:5:0` observation is
+**unattributed pending work from an earlier deferred save, not this take's admission** — exactly the
+alternative the owner flagged. Also note `slot` is **zero-based** in these records while the harness
+names the slot 1-based, so `ps=1` is the *same* slot the pinned, user-facing "loop 2" targets; the
+mismatch was in my labelling, not in the firmware.
+
+**What remains open from this chain:** the pinned oracle also wants the *payload path* and the payload
+write verified before a reboot is evidence. The take's `LoopPersist` did not run in the single-session
+run (its `PERS` coverage is worker-only, one of five write paths), so the payload file for `(5,1)` is
+still unverified, and the reboot stays withheld until that is established.
+
+**Historical note on the route that failed.** Before the single-session fixture, the read-back through
+the record harness could not be taken: the command channel stops answering once a capture session closes
+(`!CAP_IDENTITY_STATS`, `!STOP_STATUS`, `!CRASH_LOG` all silent) while telemetry keeps streaming, and
+only a re-upload recovers it — which clears the counters. `!CRASH_LOG` after the next upload shows a
+normal boot and no crash record, so that was a stalled command path, not a crash. **Keeping the
+connection open for the whole run sidesteps it entirely**, which is why the single-session fixture is the
+supported route and no retained-counter design is needed.
+
+**Superseded wording.** On a **fresh boot with no take**, the read-back works and
 reads `entered=0 enq=0 rej=0 tx=0 evict=0` — so the counters and the command are both live, and any
 non-zero value after a take would attribute the loss. That before-reading is now the fixture's baseline.
 The **after-reading is blocked by a device-state defect, not by the counters**: after a capture session
@@ -3783,8 +3827,10 @@ next boot).
   1 skipped / 0 failures; `teensy41-capture-serial` SUCCESS with RAM1 `variables 96,160 (was 96,192) /
   ITCM 393,216 (code 391,304 + padding 1,912) / locals 34,912 (was 34,880)`. The RAM1 baseline was
   re-based deliberately (`scripts/ram1_budget.json`) because the change **returns 32 B of DTCM to the
-  local allowance** — the counters and last-take identity are FLASH-resident and the take identity is
-  packed into one 32-bit word in the `TrackCaptureInput` TU, so `Track`'s pinned `sizeof(384)` is untouched.
+  local allowance** — the mutable counters and last-take identity live with the capture-ring
+  state in DTCM (`sCaptureRing`) while only the counter-handling functions (`recSlotIdentity`,
+  `emitIdentityPathStats`) are FLASH-placed, and the take identity is packed into one 32-bit word in the
+  `TrackCaptureInput` TU, so `Track`'s pinned `sizeof(384)` is untouched.
 - **Adjacent-slot persistence work is suspicious, not attributed.** `LoopPersist slot:5:0` (track 6,
   slot 1) is admitted while the take records on track 6 loop 2, reproducibly. But without take correlation
   it **could be unrelated pending work** — the device autosaves across runs, and every run shows

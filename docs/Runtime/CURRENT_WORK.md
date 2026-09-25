@@ -3025,18 +3025,24 @@ implementation is the small observation fix, not the lease pool and not another 
   reboot** on a mismatch, and the native case
   `test_record_stop_persist_target_follows_the_recorded_slot` covers recording into a non-zero slot with the
   adjacent slot already holding content. Native **2,379 / 1 skipped / 0 failures**.
-  **Open blocker:** record-stop capture rows do not reach the host. The bounded counters now localise it:
-  on a **fresh boot with no take** `!CAP_IDENTITY_STATS` reads `entered=0 enq=0 rej=0 tx=0 evict=0` (so the
-  counters and the command are live), but after a capture session closes the **command channel stops
-  answering** (`!CAP_IDENTITY_STATS`, `!STOP_STATUS`, `!CRASH_LOG` all silent) while telemetry streams, and
-  it only recovers on re-upload — which clears the counters. The device is **not crashed** (`!CRASH_LOG`
-  after the next upload shows a normal boot, no crash record); three runs reproduce it. So the after-take
-  reading needs either a command path that survives a run or a next-boot report; until then the identity
-  question stays open and the after-reading is unavailable. **Careful reading of what the device showed:**
-  `LoopPersist slot:5:0` is **suspicious but not attributed** — without take correlation it could be
-  unrelated pending work (the device autosaves across runs and metadata items outlive the take); and zero
-  payload-read errors support **"no reported read failures"**, not "every empty payload was intentional".
-  **Native/build gates are green; device identity verification remains open.**
+  **RESOLVED by one uninterrupted serial session** (`scripts/hitl_identity_one_session.py`): baseline
+  counters → take → transport stop + stopped confirmation → second request, all on one connection before
+  the close. Baseline `entered=0 enq=0 rej=0 tx=0 evict=0`; after the take `entered=2 enq=2 rej=0 tx=1
+  evict=0`, last identity `take=1 t=5 ss=1 sp=1 cs=1 pt=5 ps=1 ev=a`. So **the emitter executes** (two
+  entries = start + admission), **nothing was gated, disabled or rejected** (`rej=0`), and one of the two
+  rows is enqueued but never drained (`enq=2 tx=1`) — the capture-visibility defect, localised to the
+  ring's drain, which no longer blocks the identity question. **The chain correlates, so the
+  "wrong target" attribution is withdrawn for this take:** the take recorded on `t=5 ss=1`, the stop
+  passed `cs=1`, the admitted key was `pt=5 ps=1`, and the counters report the same slot — the persist
+  target followed the recorded slot exactly. Combined with the same log showing **no `LoopPersist` for
+  the take**, the earlier `LoopPersist slot:5:0` is **unattributed pending work from an earlier deferred
+  save, not this take's admission**. (`slot` is zero-based in these records while the harness names slots
+  1-based, so `ps=1` is the pinned user-facing "loop 2" — the mismatch was in my labelling.) Keeping the
+  connection open sidesteps the command-channel stall, so **no retained-counter design is needed**.
+  **Still open:** the payload path and the payload write are unverified for `(5,1)` (the take's
+  `LoopPersist` did not run; `PERS` covers the deferred worker only), so the reboot stays withheld.
+  Zero payload-read errors still only support **"no reported read failures"**, not "every empty payload
+  was intentional". **Native/build gates are green; device identity verification remains open.**
 - **S2b.3 — post-restore budget stays open with its full arithmetic.** A settled boot's `capture_prewarm`
   walk is the **cold** reservation count, not peak capture reservation, so `450 ≥ peak + 16` was never
   actually evaluated; the term is the peak reservation **during the specified capture workload**, on a
