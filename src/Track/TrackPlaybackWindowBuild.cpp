@@ -817,35 +817,39 @@ TRACK_COLD_MEM void Track::releasePlaybackMergedMidiEventsMemory() {
   playbackRuntime.resetAll(false);
 }
 
-TRACK_COLD_MEM bool Track::noLiveOwnerForSlot(uint8_t slot) const {
-  // (1) The live ring window only. An entry inside `[head, head + count)` names an admitted or
-  // in-flight stop job for this slot, including a non-pending one; a retired entry outside the
-  // window keeps its stale `slot` and must not count (B6).
-  if (captureStopJobs_ != nullptr) {
-    for (size_t index = 0; index < captureStopJobs_->count; ++index) {
-      const size_t at = (captureStopJobs_->head + index) % CaptureStopJobs::kCapacity;
-      if (captureStopJobs_->entries[at].slot == slot) return false;
+TRACK_COLD_MEM bool Track::hasLiveCaptureStopJobForSlot(uint8_t slot) const {
+  if (captureStopJobs_ == nullptr) {
+    return false;
+  }
+  for (size_t index = 0; index < captureStopJobs_->count; ++index) {
+    const size_t at = (captureStopJobs_->head + index) % CaptureStopJobs::kCapacity;
+    if (captureStopJobs_->entries[at].slot == slot) {
+      return true;
     }
   }
-  // (2) The slot's finalization owner, defensively: it can be set without a ring entry (the
-  // unfixable case the park reports), and releasing underneath it would strand a live job.
+  return false;
+}
+
+TRACK_COLD_MEM bool Track::hasAcceptedInteractionForSlot(uint8_t slot) const {
+  const PendingInteractionLatch* latch = interactionLatch();
+  return latch != nullptr && latch->isSet() && latch->slot == slot;
+}
+
+TRACK_COLD_MEM bool Track::noLiveOwnerForSlot(uint8_t slot) const {
+  // S3.2: the composite is a list of named owner kinds, so each term is testable on its own and a
+  // new owner kind is added here by name rather than as another inline clause.
+  if (hasLiveCaptureStopJobForSlot(slot)) return false;
+  if (hasAcceptedInteractionForSlot(slot)) return false;
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
   if (runtime != nullptr) {
-    if (runtime->captureStopOwner != nullptr) return false;
-    // (3) A prepared handover still being *built* is an owner of this slot's scratch. The published
-    // pair is deliberately not a term here: it is the slot's playback authority and stays valid
-    // while the slot sounds, so counting it would make release unreachable for every sounding slot.
-    // The S4b.2 switch handover adds its own term when it exists.
-    if (runtime->preparedPairRequestPending) return false;
+    if (runtime->ownsLiveFinalization()) return false;
+    if (runtime->ownsInFlightPreparedHandover()) return false;
   }
-  // (4) An accepted interaction targeting this slot (S4f.1). Its interval identity is the slot, so
-  // a stop latched for it must block release until it is admitted or superseded.
-  const PendingInteractionLatch* latch = interactionLatch();
-  if (latch != nullptr && latch->isSet() && latch->slot == slot) return false;
   // Not a term yet, and recorded rather than assumed: a job-owned undo root that outlives its ring
   // entry. The ring scan covers the job-owned roots while the entry lives; the protected undo
   // publication is track-level today and has no per-slot identity to test. S5.2a gives cold undo its
-  // per-slot descriptor, which is where this term becomes expressible.
+  // per-slot descriptor, which is where this term becomes expressible. Likewise the
+  // deferred-reconstruction term arrives with S5.2e.
   return true;
 }
 

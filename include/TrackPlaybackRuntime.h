@@ -249,6 +249,18 @@ struct LoopPlaybackRuntime {
   /// The slot runtime leaves the active set: bump the generation so a late release carrying the
   /// previous generation is reported as `StaleGeneration` (S4.2) instead of clearing a successor.
   WorkingSetOutcome releaseAllWorkingSetLeases() { return lease_.releaseAll(lease_.generation()); }
+
+  // --- S3.2 liveness predicates, one per owner kind this runtime can hold -------------------
+  // `Track::noLiveOwnerForSlot` is the composite; these are the terms, so a fixture can hold one
+  // owner kind and prove exactly that term refuses release.
+  /// The slot's finalization owner: a capture interval whose stop this runtime is finalizing.
+  /// Defensively independent of the ring, because it can be set without a ring entry.
+  bool ownsLiveFinalization() const { return captureStopOwner != nullptr; }
+  /// A prepared playback handover still being *built* owns this slot's scratch. The published pair
+  /// is deliberately not a term: it is the slot's playback authority and stays valid while the slot
+  /// sounds, so counting it would make release unreachable for every sounding slot. S4b.2's switch
+  /// handover adds its own term when it exists.
+  bool ownsInFlightPreparedHandover() const { return preparedPairRequestPending; }
   bool holdsWorkingSetRole(WorkingSetRole role) const {
     return lease_.isHeld(lease_.generation(), role);
   }
