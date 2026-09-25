@@ -4718,3 +4718,77 @@ Harness cause verified: `_send_record_arm_press` discards `loop_slot`; selection
 Session closeout: decision, scope, behavior/spec delta, task status, current/project state and deliverable record updated. Full capacity, exact24bar fixture, role-specific reservation changes and inactive-root demotion remain unclaimed.
 
 Stopped-only follow-up (`captures/snapshot-reuse-24bar/stopped-heap.log`): internal arena356,800B, allocated chunk bytes199,392B, free chunks157,408B, largest free chunk122,768B, unused tail12,288B; external payload5,246,288B, free3,100,380B, largest request3,046,620B. Both scans complete. This disproves interpreting the *stopped* 12KiB tail as total available heap. It does not retroactively measure free lists at the earlier live refusals; tail-based snapshot admission remains the next hypothesis to verify without live scans. No leak/fragmentation verdict from this one stopped reading.
+
+### S1.6c.2 fixture repair — no-clear arm selects the target slot (2026-09-25; host-only)
+
+G0 VERIFIED (read + recorded evidence): `--no-clear-before-record` skipped the clear **and the
+selection**. Slot selection exists only inside `_run_clear_before_record`, so the no-clear arm acted
+on whatever slot was already selected — the recorded `INVALID_TARGET_INTERRUPTED`
+(`captures/snapshot-reuse-24bar/review.json`: configured track 8 slot 4, armed slot 1,
+`slot:7:0` persisted). `_send_record_arm_press` deliberately does not select (a Loops-row tap starts
+an empty-slot capture and would skip ARMED→play, `session_20260910_122343`), so the selection is a
+separate pre-arm step, not an arm-press parameter. The S1.6c.2a guard correctly failed closed, but a
+guard cannot run a fixture.
+
+Implementation (`scripts/hitl/legacy_record_baseline.py`, `scripts/hitl/legacy_edit_baseline.py`):
+`_select_loop_slot_before_record_arm` stops the transport first when it is selecting on the no-clear
+path, sends the Loops-row select, and reuses `_stop_empty_slot_select_recording_before_clear` to
+retire a select-started ghost capture. The proof is **slot identity, not an EMPTY state**: selecting a
+stopped slot arms it, so `_await_observed_record_slot` waits (bounded) for a device-time DISP row for
+the target slot and then falls through to the existing fail-closed guard. `_run_record_arm_until_capturing`
+calls it on the no-clear path, baselined at the select, so slot proof and arm-timing proof come from the
+same window. `select_loop_slot=False` suppresses a second tap for callers that already selected; the edit
+path shares the helper instead of its inline tap + sleep.
+
+The transport stop is not cosmetic. Device evidence from the first corrected run
+(`captures/rwso-select-24bar-20260925_230706`): the clear path selected Loop 4 while the transport was
+still running, so the empty-slot tap started capture immediately (`Loop 4: Start Recording`); the
+subsequent stop left the track `ARMED`, the arm step reported `ACTION ALREADY_SATISFIED … state=ARMED`
+and skipped its press, and the resumed transport produced a 376-tick take whose stop never returned to
+PLAYING (`record stop did not reach PLAYING`, other slot left empty). With the transport stopped before
+the tap the same selection only arms; the proof then succeeds and the arm sequence runs on a known
+state. This is a harness-ordering defect, not firmware.
+
+A later probe run exposed the second half of the same class: the bounded wait exists because the
+stopped display emits on change, so a quiet display must be waited out rather than read once as a
+mismatch. Oracles: the select note is `LOOP_SELECT_NOTE_BASE + slot - 1`; the no-clear path requests
+the transport stop before the select press and the clear path does not (it already owns that stop); a
+slot that does not move still refuses and sends no arm press; the baseline is taken before the select
+press. `scripts/test_record_target_precondition.py` — 17 tests green. Full host script suite unchanged
+from baseline: 48 files green, the same 8 pre-existing failures
+(`test_clear_before_record_precondition` and 7 unrelated) fail identically with this slice stashed.
+
+Also recorded: the 2026-09-25 stress rerun's `metadata.json` shows `record_bars=2`/`overdub_bars=2`
+(the base preset default) even though the run was read as a 24-bar workload, and the device recorded
+13,056 ticks (17 bars) because the fixture streamed 24 bars of notes at the host's 120 BPM while the device ran
+its internal clock at **85.4 BPM** (`#CAP,…,DIAG,clockrate,0` — no external clock; the reported
+length matches 24 × 85.4/120 = 17.08 bars). Tempo and slot are therefore independent fixture
+parameters; the corrected run pins both.
+
+### S1.6c.2 fixture support — loop-edit tempo fader (DEC-086)
+
+The tempo defect above had no workaround: nothing in the firmware could set the device BPM, so a HITL
+could only guess it. Added loop-edit fader 4 on the loop-edit control channel — **ch16 CC102, CC
+0..127 → 72..200 BPM** — because ch16/CC101 already establishes that pattern for loop length and CC102
+was free on that channel. `LoopEditManager::handleTempoInput` owns the mapping and endpoint
+(`ClockManager::setBpmFloat`, which already maintains the global `bpm`); the law lives in the
+dependency-free `TempoMapping` header so the host tests and firmware cannot drift; session entry sends
+the current tempo back so the motor parks at the live value. `MidiFaderConfig` carries the binding
+(`FADER_TEMPO` / `SET_TEMPO`) and `MidiHandler` keeps the CC out of the fader feedback-only path.
+
+Device-verified on image `870f2948f0676d60…` with `scripts/hitl_tempo_fader_probe.py`
+(`captures/tempo-fader-01/`): CC32 → 104.3, CC100 → 172.8, CC64 → 136.5 BPM, each within 0.1 BPM of
+the linear law and applied live, plus `Sent tempo CC feedback: 172.8 BPM -> CC=100` on session entry.
+Native `test_tempo_mapping` 8/8, full native **2,421 passed / 1 skipped**; RAM1 unchanged
+(`variables 96,160 / code 392,024 / padding 1,192 / locals 34,912`), 352 B over the approved floor.
+The probe is a read-only control-surface check: no record/overdub, no clear, no content writes.
+
+### S1.6c.2 remaining gate — the target slot must be empty again
+
+The failed runs left takes in the authorized witness: the 20260925_231212 run committed a 768-tick
+take in track 8 slot 4, and the 20260925_230706 run persisted one to `slot:7:0`. The last probe
+therefore found slot 4 **populated** — the select tap logged `Loop 4: Toggle Play/Stop`, not
+`Loop 4: Start Recording` — and the guard refused with `latest observed slot unobserved`, which is
+fail-closed and correct. No clear was issued: the library is user data and the firmware has no
+restore path. The 24-bar capacity revalidation resumes only after the owner clears or re-verifies an
+empty target slot, and it must pin the tempo (DEC-086) rather than inherit the persisted value.
