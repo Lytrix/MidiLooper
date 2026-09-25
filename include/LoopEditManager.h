@@ -46,6 +46,12 @@ public:
     void sendCurrentLoopLengthCC(Track& track);
     void sendCurrentLoopStartPitchbend(Track& track);
 
+    // Tempo editing (global BPM; loop-edit control channel CC102)
+    /// CC 0..127 maps to Config MIDI tempo bounds; applies immediately, no settle.
+    void handleTempoInput(uint8_t ccValue);
+    /// Park the tempo motor at the current BPM on loop-edit session entry.
+    void sendCurrentTempoCC();
+
     /** Cancel pending loop-start grace work and ignore motor feedback briefly. */
     void onLeaveLoopEditSession();
     /** Ignore inbound loop-start/length faders for LOOP_EDIT_FEEDBACK_IGNORE_MS. */
@@ -88,6 +94,8 @@ private:
     uint32_t calculateLoopStartTick(int16_t pitchValue, Track& track);
     uint32_t calculateLoopLengthFromCC(uint8_t ccValue);
     uint8_t calculateCCFromLoopLength(uint32_t loopLength);
+    float calculateTempoFromCC(uint8_t ccValue);
+    uint8_t calculateCCFromTempo(float tempoBpm);
     
     // Movement filtering
     bool isSignificantMovement(uint32_t currentStart, uint32_t newStart);

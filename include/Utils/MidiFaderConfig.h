@@ -26,6 +26,7 @@ namespace MidiFaderConfig {
         MOVE_NOTE_COARSE,      // Move note position coarsely (fader 2)
         MOVE_NOTE_FINE,        // Move note position finely (fader 3)
         CHANGE_NOTE_VALUE,     // Change note pitch value (fader 4)
+        SET_TEMPO,             // Set global BPM (loop-edit tempo fader, ch16 CC102)
         CUSTOM_ACTION
     };
 

@@ -59,6 +59,19 @@ void Config::loadBasicConfiguration() {
           .withCenters(0, 64)
           .withGroup(MidiConfig::Fader::NOTE_VALUE_CHANNEL);
     faderConfigs.push_back(fader4);
+
+    // Tempo fader: global BPM on the loop-edit control channel (ch16 CC102).
+    // CC 0..127 maps to 72..200 BPM; the loop-edit session sends the current
+    // tempo back so the motor parks at the live value.
+    FaderConfig tempoFader(MidiMapping::FaderType::FADER_TEMPO,
+                           MidiConfig::LoopEdit::LENGTH_CC_CHANNEL,
+                           MidiConfig::LoopEdit::TEMPO_CC_NUMBER, "Tempo");
+    tempoFader.withAction(ActionType::SET_TEMPO)
+          .withFeedbackIgnore(100)
+          .withDeadbands(23, 1)
+          .withCenters(0, 64)
+          .withGroup(MidiConfig::LoopEdit::LENGTH_CC_CHANNEL);
+    faderConfigs.push_back(tempoFader);
     
     logger.info("Loaded basic fader configuration: %d faders", faderConfigs.size());
 }
@@ -135,6 +148,7 @@ void Config::printConfiguration() {
             case ActionType::MOVE_NOTE_COARSE: actionStr = "Move Coarse"; break;
             case ActionType::MOVE_NOTE_FINE: actionStr = "Move Fine"; break;
             case ActionType::CHANGE_NOTE_VALUE: actionStr = "Change Value"; break;
+            case ActionType::SET_TEMPO: actionStr = "Set Tempo"; break;
             case ActionType::CUSTOM_ACTION: actionStr = "Custom"; break;
             default: actionStr = "None"; break;
         }

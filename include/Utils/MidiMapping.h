@@ -25,7 +25,8 @@ enum class FaderType {
     FADER_SELECT = 1,     // Fader 1: Note selection (channel 16, pitchbend)
     FADER_COARSE = 2,     // Fader 2: Coarse positioning (channel 14, pitchbend)
     FADER_FINE = 3,       // Fader 3: Fine positioning (channel 15, CC2)
-    FADER_NOTE_VALUE = 4  // Fader 4: Note value editing (channel 15, CC3)
+    FADER_NOTE_VALUE = 4, // Fader 4: Note value editing (channel 15, CC3)
+    FADER_TEMPO = 5       // Tempo fader: global BPM in loop edit (channel 16, CC102)
 };
 
 // Button configuration
