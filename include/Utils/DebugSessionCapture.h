@@ -277,7 +277,9 @@ SC_MEM_ATTR void libraryObservationBegin(uint32_t windowStartUs, uint32_t setEpo
 SC_MEM_ATTR void libraryObservationSlot(uint8_t track, uint8_t slot, uint8_t stateMask, char cause,
                                         uint8_t payload, uint8_t offered, uint8_t request, uint8_t wait,
                                         uint8_t terminal, uint32_t requestGeneration, uint32_t setEpoch,
-                                        uint8_t hasCommittedContent, uint16_t committedPassCount,
+                                        uint8_t hasCommittedContent, uint8_t hasPassContent,
+                                        uint8_t hasRootContent, uint8_t rootIsCurrent,
+                                        uint16_t committedPassCount,
                                         uint32_t highestCommittedPassId, uint32_t loopLengthTicks,
                                         uint32_t committedEventCount, uint8_t requiredForInitialPlayback,
                                         uint8_t committedTerminalInWindow, uint8_t invalidated);
@@ -285,7 +287,9 @@ SC_MEM_ATTR void libraryObservationEnd(uint32_t windowStartUs, uint32_t windowEn
                                        uint16_t restarts, uint16_t slotsObserved,
                                        uint16_t payloadInventory, uint16_t initialPlaybackRequired,
                                        uint16_t observedRestoreCompletions,
-                                       uint16_t committedAtCheckpoint, uint8_t admissionComplete,
+                                       uint16_t committedAtCheckpoint,
+                                       uint16_t passBackedAtCheckpoint,
+                                       uint16_t rootBackedAtCheckpoint, uint8_t admissionComplete,
                                        uint8_t everyInitialPlaybackSlotObserved,
                                        uint8_t consistentView, uint8_t complete);
 SC_MEM_ATTR void persistenceBundle(const char* workType, uint32_t totalUs,
@@ -413,24 +417,28 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #ifndef SC_LIBRARY_OBSERVATION_SLOT
 #define SC_LIBRARY_OBSERVATION_SLOT(track, slot, state, cause, payload, offered, request, wait, \
                                     terminal, requestGeneration, setEpoch, hasCommittedContent, \
-                                    committedPassCount, highestCommittedPassId, loopLengthTicks, \
-                                    committedEventCount, requiredForInitialPlayback, \
-                                    committedTerminalInWindow, invalidated) \
-  DebugSessionCapture::libraryObservationSlot(                                            \
-      track, slot, state, cause, payload, offered, request, wait, terminal, requestGeneration, \
-      setEpoch, hasCommittedContent, committedPassCount, highestCommittedPassId, loopLengthTicks, \
-      committedEventCount, requiredForInitialPlayback, committedTerminalInWindow, invalidated)
+                                    hasPassContent, hasRootContent, rootIsCurrent,                 \
+                                    committedPassCount, highestCommittedPassId, loopLengthTicks,  \
+                                    committedEventCount, requiredForInitialPlayback,              \
+                                    committedTerminalInWindow, invalidated)                       \
+  DebugSessionCapture::libraryObservationSlot(                                                     \
+      track, slot, state, cause, payload, offered, request, wait, terminal, requestGeneration,      \
+      setEpoch, hasCommittedContent, hasPassContent, hasRootContent, rootIsCurrent,                 \
+      committedPassCount, highestCommittedPassId, loopLengthTicks, committedEventCount,             \
+      requiredForInitialPlayback, committedTerminalInWindow, invalidated)
 #endif
 #ifndef SC_LIBRARY_OBSERVATION_END
 #define SC_LIBRARY_OBSERVATION_END(windowStartUs, windowEndUs, turns, restarts, slotsObserved, \
                                    payloadInventory, initialPlaybackRequired,                  \
                                    observedRestoreCompletions, committedAtCheckpoint,          \
+                                   passBackedAtCheckpoint, rootBackedAtCheckpoint,             \
                                    admissionComplete, everyInitialPlaybackSlotObserved,        \
                                    consistentView, complete)                                   \
   DebugSessionCapture::libraryObservationEnd(                                                  \
       windowStartUs, windowEndUs, turns, restarts, slotsObserved, payloadInventory,            \
       initialPlaybackRequired, observedRestoreCompletions, committedAtCheckpoint,              \
-      admissionComplete, everyInitialPlaybackSlotObserved, consistentView, complete)
+      passBackedAtCheckpoint, rootBackedAtCheckpoint, admissionComplete,                       \
+      everyInitialPlaybackSlotObserved, consistentView, complete)
 #endif
 #define SC_PERSIST_BUNDLE(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount) \
   DebugSessionCapture::persistenceBundle(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount)

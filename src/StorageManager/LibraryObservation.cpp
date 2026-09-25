@@ -19,9 +19,15 @@ bool requestIsOutstanding(Request request) {
     return request == Request::Queued || request == Request::Running || request == Request::Waiting;
 }
 
+bool contentInAnyRepresentation(const SlotInput& input) {
+    // The **union** of the two content representations: pass-backed and valid published-root. A slot
+    // carrying both is one loaded slot, not two.
+    return input.contentObserved &&
+           (input.hasCommittedContent || input.hasPassContent || input.hasRootContent);
+}
+
 bool stateIsPopulated(const SlotInput& input) {
-    return input.payload == Payload::PresentVerified ||
-           (input.contentObserved && input.hasCommittedContent);
+    return input.payload == Payload::PresentVerified || contentInAnyRepresentation(input);
 }
 
 }  // namespace
@@ -40,7 +46,14 @@ TRACK_COLD_MEM SlotResult classifySlot(const SlotInput& input) {
     result.requestGeneration = input.requestGeneration;
     result.setEpoch = input.setEpoch;
     result.contentObserved = input.contentObserved;
-    result.hasCommittedContent = input.contentObserved && input.hasCommittedContent;
+    // The union is `hasCommittedContent` by contract; the two class bits are reported beside it. A
+    // caller that supplies only the union (the pure-classifier fixtures) still classifies the same way.
+    result.hasPassContent = input.contentObserved && input.hasPassContent;
+    result.hasRootContent = input.contentObserved && input.hasRootContent;
+    result.rootIsCurrent = result.hasRootContent && input.rootIsCurrent;
+    result.hasCommittedContent =
+        input.contentObserved &&
+        (input.hasCommittedContent || input.hasPassContent || input.hasRootContent);
     result.committedPassCount = input.contentObserved ? input.committedPassCount : 0;
     result.highestCommittedPassId = input.contentObserved ? input.highestCommittedPassId : 0;
     result.loopLengthTicks = input.contentObserved ? input.loopLengthTicks : 0;
@@ -55,11 +68,12 @@ TRACK_COLD_MEM SlotResult classifySlot(const SlotInput& input) {
     // positive completion, not a loss: it keeps a nullable cause rather than being attributed `unknown`.
     const bool committedButContentUnobserved =
         !input.contentObserved && result.terminal == Terminal::Committed;
-    // `empty` requires the absence to be **observed**: no payload, no committed content, no outstanding
-    // request. If the payload or content field is `Unknown`, absence is not established and the state set
-    // stays empty (unknown).
-    const bool absenceEstablished = input.payload == Payload::Absent && input.contentObserved &&
-                                    !input.hasCommittedContent;
+    // `empty` requires the absence to be **observed**: no payload, no committed content in either
+    // representation, no outstanding request. If the payload or content field is `Unknown`, absence is
+    // not established and the state set stays empty (unknown).
+    const bool absenceEstablished =
+        input.payload == Payload::Absent && input.contentObserved &&
+        !contentInAnyRepresentation(input);
     uint8_t state = 0;
     if (populated) {
         state |= kStatePopulated;
@@ -130,6 +144,9 @@ TRACK_COLD_MEM void invalidateSlotResult(SlotResult& result) {
     result.terminal = Terminal::None;
     result.contentObserved = false;
     result.hasCommittedContent = false;
+    result.hasPassContent = false;
+    result.hasRootContent = false;
+    result.rootIsCurrent = false;
     result.committedPassCount = 0;
     result.highestCommittedPassId = 0;
     result.loopLengthTicks = 0;
@@ -166,6 +183,12 @@ TRACK_COLD_MEM Report summarize(const SlotResult* slots, uint16_t count, const W
             }
             if (slot.contentObserved && slot.hasCommittedContent) {
                 ++report.counts.committedAtCheckpoint;
+            }
+            if (slot.contentObserved && slot.hasPassContent) {
+                ++report.counts.passBackedAtCheckpoint;
+            }
+            if (slot.contentObserved && slot.hasRootContent) {
+                ++report.counts.rootBackedAtCheckpoint;
             }
         }
     }

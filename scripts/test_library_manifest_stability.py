@@ -31,6 +31,8 @@ def slot(
     *,
     payload: str = "present_verified",
     has_committed_content: bool = True,
+    has_pass_content: bool = True,
+    has_root_content: bool = False,
     pass_count: int = 2,
     highest_pass_id: int = 2,
     loop_length: int = 15360,
@@ -54,6 +56,9 @@ def slot(
         "generation": 0,
         "epoch": 0,
         "has_committed_content": has_committed_content,
+        "has_pass_content": has_pass_content,
+        "has_root_content": has_root_content,
+        "content_representation_observed": True,
         "committed_pass_count": pass_count,
         "highest_committed_pass_id": highest_pass_id,
         "loop_length_ticks": loop_length,
@@ -79,7 +84,15 @@ def manifest(slots: dict[tuple[int, int], dict[str, object]], name: str) -> Boot
                 1 for record in slots.values() if record["required_for_initial_playback"]
             ),
             "observed_restore_completions": 0,
-            "committed_at_checkpoint": len(slots),
+            "committed_at_checkpoint": sum(
+                1 for record in slots.values() if record["has_committed_content"]
+            ),
+            "pass_backed_at_checkpoint": sum(
+                1 for record in slots.values() if record["has_pass_content"]
+            ),
+            "root_backed_at_checkpoint": sum(
+                1 for record in slots.values() if record["has_root_content"]
+            ),
         },
     )
     boot.slots = dict(slots)
@@ -117,6 +130,19 @@ class ComparisonTests(unittest.TestCase):
         result = compare_manifests(expected, observed)
         self.assertFalse(result["pass"])
         self.assertIn("payload", result["unexplained_manifest_differences"][0]["field_differences"])
+
+    def test_representation_change_fails_even_when_the_union_is_unchanged(self) -> None:
+        """The loaded union alone is not the manifest: which representation carries it is compared too."""
+        expected = manifest({(2, 1): slot(has_pass_content=True, has_root_content=False)}, "expected")
+        observed = manifest({(2, 1): slot(has_pass_content=False, has_root_content=True)}, "observed")
+        result = compare_manifests(expected, observed)
+        self.assertFalse(result["pass"])
+        differences = result["unexplained_manifest_differences"][0]["field_differences"]
+        self.assertIn("has_pass_content", differences)
+        self.assertIn("has_root_content", differences)
+        self.assertNotIn("has_committed_content", differences)
+        self.assertIn("pass_backed_at_checkpoint", result["count_differences"])
+        self.assertIn("root_backed_at_checkpoint", result["count_differences"])
 
     def test_window_scoped_completion_difference_does_not_fail(self) -> None:
         expected = manifest({(0, 0): slot(completion_in_window=False)}, "expected")

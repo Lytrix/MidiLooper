@@ -289,21 +289,25 @@ void test_library_observation_lines_fit_capture_text_budget() {
   // Worst case is a 10-digit micros field and every numeric field at its type maximum.
   constexpr size_t kMaxCaptureTextPayload = 191;
   char slot[256];
+  // The format must match `DebugSessionCapture::libraryObservationSlot` exactly, including the S1.3
+  // representation keys (`kp`/`kr` beside the union `k`); a stale copy here would test the wrong width.
   const int slotLen = snprintf(
       slot, sizeof(slot),
-      "#CAP,%lu,LIBOBS,S,t=%u,s=%u,st=%u,c=%c,p=%u,o=%u,q=%u,w=%u,m=%u,g=%lu,e=%lu,k=%u,a=%u,"
-      "h=%lu,l=%lu,v=%lu,n=%u,i=%u,x=%u",
-      4294967295ul, 255u, 255u, 7u, 'a', 3u, 2u, 5u, 5u, 4u, 4294967295ul, 4294967295ul, 1u, 65535u,
-      4294967295ul, 4294967295ul, 4294967295ul, 1u, 1u, 1u);
+      "#CAP,%lu,LIBOBS,S,t=%u,s=%u,st=%u,c=%c,p=%u,o=%u,q=%u,w=%u,m=%u,g=%lu,e=%lu,k=%u,kp=%u,"
+      "kr=%u,kc=%u,a=%u,h=%lu,l=%lu,v=%lu,n=%u,i=%u,x=%u",
+      4294967295ul, 255u, 255u, 7u, 'a', 3u, 2u, 5u, 5u, 4u, 4294967295ul, 4294967295ul, 1u, 1u, 1u,
+      1u, 65535u, 4294967295ul, 4294967295ul, 4294967295ul, 1u, 1u, 1u);
   TEST_ASSERT_GREATER_THAN(0, slotLen);
   TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), slotLen);
 
   char end[256];
+  // The end frame adds the two representation counts (`P`/`R`) beside the union (`m`).
   const int endLen = snprintf(
       end, sizeof(end),
-      "#CAP,%lu,LIBOBS,E,a=%lu,b=%lu,t=%u,r=%u,s=%u,p=%u,i=%u,c=%u,m=%u,n=%u,e=%u,v=%u,x=%u",
+      "#CAP,%lu,LIBOBS,E,a=%lu,b=%lu,t=%u,r=%u,s=%u,p=%u,i=%u,c=%u,m=%u,P=%u,R=%u,n=%u,e=%u,v=%u,"
+      "x=%u",
       4294967295ul, 4294967295ul, 4294967295ul, 65535u, 65535u, 65535u, 65535u, 65535u, 65535u,
-      65535u, 1u, 1u, 1u, 1u);
+      65535u, 65535u, 65535u, 1u, 1u, 1u, 1u);
   TEST_ASSERT_GREATER_THAN(0, endLen);
   TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), endLen);
 

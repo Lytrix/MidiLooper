@@ -51,9 +51,15 @@ __all__ = [
 
 #: Task 2.2's manifest core: payload presence/token, committed content identity and counts, and the
 #: initial playback-required set. A difference in any of these in any slot is a failure.
+#:
+#: `has_committed_content` is the **union** content signal; the two representations that make it up are
+#: separate fields, so a boot that moves a slot from pass-backed to root-backed (or drops one of the two)
+#: is a manifest difference rather than an invisible change.
 REQUIRED_FIELDS = (
     "payload",
     "has_committed_content",
+    "has_pass_content",
+    "has_root_content",
     "committed_pass_count",
     "highest_committed_pass_id",
     "loop_length_ticks",
@@ -82,7 +88,14 @@ WINDOW_SCOPED_FIELDS = ("committed_terminal_in_window",)
 MANIFEST_FINGERPRINT_FIELDS = REQUIRED_FIELDS + LIFECYCLE_FIELDS
 
 #: The three settled D4 quantities. ``observed_restore_completions`` is window-scoped and is excluded.
-REQUIRED_COUNTS = ("payload_inventory", "initial_playback_required", "committed_at_checkpoint")
+#: The loaded count is the **union** of the two representations, whose counts are compared beside it.
+REQUIRED_COUNTS = (
+    "payload_inventory",
+    "initial_playback_required",
+    "committed_at_checkpoint",
+    "pass_backed_at_checkpoint",
+    "root_backed_at_checkpoint",
+)
 WINDOW_SCOPED_COUNTS = ("observed_restore_completions",)
 
 BOOT_RESET_RE = re.compile(r"#CAP,(\d+),DIAG,boot_reset,")
@@ -391,7 +404,9 @@ def format_report(report: dict[str, Any]) -> str:
             f"complete={boot['complete']} slots={boot['slot_count']} "
             f"payload={counts.get('payload_inventory')} "
             f"initial_playback={counts.get('initial_playback_required')} "
-            f"committed={counts.get('committed_at_checkpoint')} "
+            f"loaded={counts.get('committed_at_checkpoint')} "
+            f"(pass={counts.get('pass_backed_at_checkpoint')} "
+            f"root={counts.get('root_backed_at_checkpoint')}) "
             f"completions(window)={counts.get('observed_restore_completions')} "
             f"sha256={boot['manifest_sha256'][:16]}…"
         )
