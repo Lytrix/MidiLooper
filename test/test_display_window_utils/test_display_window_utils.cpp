@@ -2279,6 +2279,50 @@ void test_display_frame_invalidate_during_draw_coalesces() {
   TEST_ASSERT_TRUE(shouldClearResolvedPaintNotesNow(pending));
 }
 
+void test_display_frame_transfer_deferred_keeps_the_frame_pending() {
+  using namespace DisplayWindowUtils;
+
+  // A busy transport refuses the hand-off: no second frame is started over a live one.
+  TEST_ASSERT_FALSE(admitDisplayTransfer(true));
+  TEST_ASSERT_TRUE(admitDisplayTransfer(false));
+
+  // The refused frame is NOT complete. It stays in Transfer, so the next admitted turn
+  // retries it instead of starting a fresh resolve/draw (which would be a stale redraw
+  // into a snapshot still on the wire).
+  DisplayFramePhaseAdvance deferred = advanceDisplayFramePhase(DisplayFramePhase::Transfer, true);
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Transfer),
+                    static_cast<int>(deferred.pending));
+  TEST_ASSERT_FALSE(deferred.frameComplete);
+  TEST_ASSERT_TRUE(admitDisplayFrameTurn(deferred.pending, false, false));
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Transfer),
+                    static_cast<int>(displayFramePhaseToRun(deferred.pending)));
+  TEST_ASSERT_FALSE(shouldClearResolvedPaintNotesNow(deferred.pending));
+
+  // Once the transport frees, the same pending frame completes and nothing is left open.
+  DisplayFramePhaseAdvance done = advanceDisplayFramePhase(deferred.pending, false);
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Idle), static_cast<int>(done.pending));
+  TEST_ASSERT_TRUE(done.frameComplete);
+  TEST_ASSERT_TRUE(shouldClearResolvedPaintNotesNow(done.pending));
+}
+
+void test_display_frame_invalidate_while_transfer_deferred_coalesces() {
+  using namespace DisplayWindowUtils;
+
+  // A redraw arriving while the transfer is deferred is coalesced, not queued: the phase
+  // stays Transfer and the newest completed framebuffer is what transfers next.
+  DisplayFramePhase pending = DisplayFramePhase::Transfer;
+  bool coalesce = false;
+  noteDisplayFrameInvalidate(pending, coalesce);
+  TEST_ASSERT_TRUE(coalesce);
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Transfer), static_cast<int>(pending));
+  TEST_ASSERT_FALSE(shouldClearResolvedPaintNotesNow(pending));
+
+  // The deferred frame then completes exactly once.
+  DisplayFramePhaseAdvance done = advanceDisplayFramePhase(pending, false);
+  TEST_ASSERT_TRUE(done.frameComplete);
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Idle), static_cast<int>(done.pending));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_draw_source_reuses_two_buffers_without_paint_mutating_compose);
@@ -2402,5 +2446,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_display_frame_admission_sequences);
   RUN_TEST(test_display_frame_note_edit_request_uses_same_phases);
   RUN_TEST(test_display_frame_invalidate_during_draw_coalesces);
+  RUN_TEST(test_display_frame_transfer_deferred_keeps_the_frame_pending);
+  RUN_TEST(test_display_frame_invalidate_while_transfer_deferred_coalesces);
   return UNITY_END();
 }

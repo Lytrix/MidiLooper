@@ -284,6 +284,9 @@ private:
     bool resolvedPaintUsesPending_ = false;
     bool paintLoadSaveActive_ = false;
     bool paintInvalidateCoalesced_ = false;
+    /// Set when the Transfer phase refused the hand-off because a frame was still on the
+    /// wire. The phase stays pending and the frame is not consumed.
+    bool paintTransferDeferred_ = false;
     bool paintDeferredClearNotes_ = false;
     uint8_t paintTrackIndex_ = 0;
     uint8_t paintSlot_ = 0;

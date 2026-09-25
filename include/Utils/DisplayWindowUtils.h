@@ -1365,8 +1365,27 @@ struct DisplayFramePhaseAdvance {
     bool frameComplete = false;
 };
 
-inline DisplayFramePhaseAdvance advanceDisplayFramePhase(DisplayFramePhase ran) {
+/// The transport carries at most one frame. Handing it a second while the first is still
+/// on the wire would either be dropped or overwrite a snapshot the DMA is reading, so a
+/// busy transport refuses the hand-off.
+inline bool admitDisplayTransfer(bool transportActive) {
+    return !transportActive;
+}
+
+/// `transferDeferred` means the Transfer phase could not hand the frame to the transport
+/// because one is still active. The frame is then NOT complete: it stays pending so the
+/// next admitted turn retries with the newest completed framebuffer, and any redraw that
+/// arrives meanwhile coalesces through `noteDisplayFrameInvalidate` rather than starting a
+/// concurrent or stale transfer. Resolved notes stay live for the same reason
+/// (`shouldClearResolvedPaintNotesNow` is false while the phase is pending).
+inline DisplayFramePhaseAdvance advanceDisplayFramePhase(DisplayFramePhase ran,
+                                                        bool transferDeferred) {
     DisplayFramePhaseAdvance out;
+    if (ran == DisplayFramePhase::Transfer && transferDeferred) {
+        out.pending = DisplayFramePhase::Transfer;
+        out.frameComplete = false;
+        return out;
+    }
     switch (ran) {
         case DisplayFramePhase::Resolve:
             out.pending = DisplayFramePhase::Draw;
@@ -1382,6 +1401,10 @@ inline DisplayFramePhaseAdvance advanceDisplayFramePhase(DisplayFramePhase ran) 
             break;
     }
     return out;
+}
+
+inline DisplayFramePhaseAdvance advanceDisplayFramePhase(DisplayFramePhase ran) {
+    return advanceDisplayFramePhase(ran, false);
 }
 
 /// Resolved notes stay live until the in-progress frame finishes transfer.
