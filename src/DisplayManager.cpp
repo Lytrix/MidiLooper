@@ -259,6 +259,50 @@ DISP_COLD_MEM __attribute__((noinline)) void DisplayManager::checkDmaStagingDiag
 }
 #endif
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && defined(__IMXRT1062__)
+// Bounded transport census. The library logs transitions (ready / timeout / rejected /
+// degraded / recovered); this is the aggregate that answers "is DMA running, or has it
+// fallen back to blocking SPI?" at a point in time, at most once a second and only when
+// a counter moved. Kept out of line and flash-resident for the same RAM1 reason as the
+// canary reporter above.
+DISP_COLD_MEM __attribute__((noinline)) void DisplayManager::reportDisplayDmaTransport() {
+    static uint32_t lastReportMs = 0;
+    static uint32_t lastCompleted = 0;
+    static uint32_t lastBlocking = 0;
+    static uint32_t lastTimeouts = 0;
+    static uint32_t lastRejections = 0;
+    static uint32_t lastRecoveries = 0;
+    const uint32_t nowMs = millis();
+    if (nowMs - lastReportMs < 1000u) {
+        return;
+    }
+    const uint32_t completed = _display.api.dmaCompletedFrameCount();
+    const uint32_t blocking = _display.api.dmaBlockingFrameCount();
+    const uint32_t timeouts = _display.api.dmaTimeoutCount();
+    const uint32_t rejections = _display.api.dmaRejectionCount();
+    const uint32_t recoveries = _display.api.dmaRecoveryCount();
+    if (completed == lastCompleted && blocking == lastBlocking && timeouts == lastTimeouts &&
+        rejections == lastRejections && recoveries == lastRecoveries) {
+        return;
+    }
+    lastReportMs = nowMs;
+    lastCompleted = completed;
+    lastBlocking = blocking;
+    lastTimeouts = timeouts;
+    lastRejections = rejections;
+    lastRecoveries = recoveries;
+    Serial.printf_P(
+        PSTR("#DMA_XFER,%lu,init=%u,degraded=%u,active=%u,dma_frames=%lu,blocking_frames=%lu,"
+             "timeouts=%lu,rejections=%lu,recoveries=%lu\r\n"),
+        static_cast<unsigned long>(nowMs), _display.api.isDmaInitialized() ? 1u : 0u,
+        _display.api.isDmaDegraded() ? 1u : 0u,
+        _display.api.isDisplayTransferActive() ? 1u : 0u,
+        static_cast<unsigned long>(completed), static_cast<unsigned long>(blocking),
+        static_cast<unsigned long>(timeouts), static_cast<unsigned long>(rejections),
+        static_cast<unsigned long>(recoveries));
+}
+#endif
+
 void DisplayManager::update() {
 #ifdef __IMXRT1062__
     // Complete a DMA frame promptly even when the next paint has not yet been admitted.
@@ -266,6 +310,9 @@ void DisplayManager::update() {
 #endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
     checkDmaStagingDiagnostics();
+#endif
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && defined(__IMXRT1062__)
+    reportDisplayDmaTransport();
 #endif
 #if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
     const uint32_t telemetryStartUs = micros();
