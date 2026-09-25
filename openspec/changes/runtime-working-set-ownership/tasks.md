@@ -1130,15 +1130,21 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 - [ ] S3.1 `WorkingSetLease` with owner = slot + generation + role, and a pool provisioned for the
       measured active envelope. Route today's prewarm through it so behaviour is unchanged but ownership
       is expressible.
-      **PARTIAL 2026-09-25 — vocabulary landed, no call site converted.** `include/Utils/WorkingSetLease.h`
-      carries the composable role set, the generation-qualified identity and a declared-cap pool that
-      reports (`CapReached` / `InvalidRole` / `NotHeld` / `StaleGeneration`) instead of growing or
-      asserting; `test/test_working_set_lease` 11 cases green; full native 2,434 passed / 1 skipped. Two contract facts the fixtures corrected:
-      a composite role set is valid (the first cut refused it), and `holderCount` counts distinct
-      identities per class. **Still open:** routing `prewarmPlaybackForSlot`, `admitOverdubStartWorkingSet`
-      and the accepted stop's park through the pool with unchanged behavior and answers, plus the S3.2
-      liveness predicates those fixtures need. No production call site or resource call moved, so no
-      behavior changed.
+      **PARTIAL 2026-09-25 — vocabulary landed and routed; release is S4.1's.** `WorkingSetLeaseSlot`
+      (per-slot, on the externally allocated `LoopPlaybackRuntime`) and `WorkingSetLeaseTable<MaxSlots>`
+      (multi-slot census) carry one identity vocabulary over a declared cap: O(1), allocation-free, and
+      reporting `CapReached` / `InvalidRole` / `NotHeld` / `StaleGeneration` instead of growing or
+      asserting. Both cold admission points record `PlaybackWindow | LiveCapture` — the record arm's
+      `prewarmPlaybackForSlot` and `admitOverdubStartWorkingSet` — and the boot pass moved into
+      `Track::prewarmBootPlaybackRuntimeSlots()` so the slot's owner holds the admission predicate. No
+      resource call moved and capture admission is not newly gated, so behavior is unchanged
+      (`test_playback_prewarm` and full native 2,434 passed / 1 skipped). RAM1: `variables` flat,
+      `code 391,960 → 391,912`, `padding 1,256 → 1,304`; `sizeof(Track) 384` and
+      `sizeof(LoopPlaybackRuntime) 6,344` unchanged (the per-track `TrackPlaybackRuntime` placement was
+      rejected by its pin — 16 B there costs 128 B of DTCM). **Still open:** nothing releases yet, so the
+      lease is write-only and the generation never advances. S4.1's release calls
+      `releaseAllWorkingSetLeases()`; S4.2 reads `workingSetGeneration()` for `captureStopOwner`. S3.2's
+      liveness predicates are the other half of this task.
 - [ ] S3.2 Explicit liveness predicates per owner kind: capture stop job, deferred stop commit, undo/redo
       root, prepared playback handover. Native fixture per kind.
 - [ ] S3.3 Selection acquires nothing: assert the SELECTED tier and browsing cause no lease churn.
