@@ -33,6 +33,7 @@
 #define MIDI_CONFIG_H
 
 #include <cstdint>
+#include "Utils/TempoMapping.h"
 
 namespace MidiConfig {
 
@@ -111,6 +112,14 @@ namespace LoopEdit {
   constexpr uint8_t LENGTH_CC_CHANNEL = 16;
   constexpr uint8_t LENGTH_CC_NUMBER = 101;
   constexpr uint8_t START_PITCHBEND_CHANNEL = 16;
+  /**
+   * Tempo fader on the loop-edit control channel: CC 0..127 maps to
+   * TempoMapping::TEMPO_MIN_BPM..TEMPO_MAX_BPM exactly as CC 101 maps bars.
+   * Session-entry feedback parks the motor at the current tempo.
+   */
+  constexpr uint8_t TEMPO_CC_NUMBER = 102;
+  constexpr float TEMPO_MIN_BPM = TempoMapping::TEMPO_MIN_BPM;
+  constexpr float TEMPO_MAX_BPM = TempoMapping::TEMPO_MAX_BPM;
 }
 
 // --- Program change (edit session on ch16 → DROID _EDIT_NOTE_STATE) ---

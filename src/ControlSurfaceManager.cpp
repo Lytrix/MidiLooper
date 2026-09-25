@@ -145,6 +145,12 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleMidiCC(uint8_t channel, uint8_t 
         return;
     }
 
+    // Tempo fader shares the loop-edit control channel (CC102 -> 72..200 BPM).
+    if (channel == MidiConfig::LoopEdit::LENGTH_CC_CHANNEL && ccNumber == MidiConfig::LoopEdit::TEMPO_CC_NUMBER) {
+        loopEditManager.handleTempoInput(value);
+        return;
+    }
+
     if (editManager.getEditSessionType() == EditSessionType::Loop &&
         channel == FINE_CC_CHANNEL && ccNumber == FINE_CC_NUMBER) {
         loopEditManager.handleLoopLengthInput(value, trackManager.getSelectedTrack());

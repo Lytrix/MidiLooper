@@ -269,8 +269,9 @@ void LoopEditManager::onEnterLoopEditSession(Track& track) {
     captureSessionBaseline(track);
     sendCurrentLoopStartPitchbend(track);
     sendCurrentLoopLengthCC(track);
+    sendCurrentTempoCC();
     logger.log(CAT_MIDI, LOG_DEBUG,
-               "Loop edit session entered — sent loop start/length fader feedback");
+               "Loop edit session entered — sent loop start/length/tempo fader feedback");
 }
 
 void LoopEditManager::flushAllPendingGeometry(Track& track) {
@@ -322,6 +323,7 @@ void LoopEditManager::onGlobalGeometryRestored(Track& track) {
     armLoopFaderFeedbackIgnore();
     sendCurrentLoopStartPitchbend(track);
     sendCurrentLoopLengthCC(track);
+    sendCurrentTempoCC();
     logger.log(CAT_MIDI, LOG_DEBUG,
                "Loop geometry baseline synced to live loop — fader feedback updated");
 }
@@ -572,6 +574,41 @@ uint8_t LoopEditManager::calculateCCFromLoopLength(uint32_t loopLength) {
     if (currentBars < 1) currentBars = 1;
     if (currentBars > 128) currentBars = 128;
     return map(currentBars, 1, 128, 0, 127);
+}
+
+float LoopEditManager::calculateTempoFromCC(uint8_t ccValue) {
+    return TempoMapping::tempoFromCC(ccValue);
+}
+
+uint8_t LoopEditManager::calculateCCFromTempo(float tempoBpm) {
+    return TempoMapping::ccFromTempo(tempoBpm);
+}
+
+void LoopEditManager::handleTempoInput(uint8_t ccValue) {
+    if (!isLoopEditMode()) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Tempo input ignored: not in LOOP_EDIT mode");
+        return;
+    }
+    if (shouldIgnoreLoopFaderInput()) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Tempo input ignored: session feedback settle");
+        return;
+    }
+    const float newBpm = calculateTempoFromCC(ccValue);
+    if (fabsf(newBpm - bpm) < 0.05f) {
+        logger.log(CAT_MIDI, LOG_DEBUG, "Tempo unchanged: CC=%d maps to current %.1f BPM",
+                   ccValue, (double)bpm);
+        return;
+    }
+    clockManager.setBpmFloat(newBpm);
+    logger.log(CAT_MIDI, LOG_INFO, "TEMPO: CC=%d -> %.1f BPM", ccValue, (double)bpm);
+}
+
+void LoopEditManager::sendCurrentTempoCC() {
+    const uint8_t ccValue = calculateCCFromTempo(bpm);
+    midiHandler.sendControlChange(MidiConfig::LoopEdit::LENGTH_CC_CHANNEL,
+                                  MidiConfig::LoopEdit::TEMPO_CC_NUMBER, ccValue);
+    logger.log(CAT_MIDI, LOG_DEBUG, "Sent tempo CC feedback: %.1f BPM -> CC=%d", (double)bpm,
+               ccValue);
 }
 
 void LoopEditManager::onTrackChanged(Track& newTrack) {

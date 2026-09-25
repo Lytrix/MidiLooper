@@ -81,7 +81,8 @@ bool isDroidFaderFeedbackOnlyControlChange(uint8_t channel, uint8_t cc) {
     return cc == MidiConfig::Fader::FINE_CC || cc == MidiConfig::Fader::NOTE_VALUE_CC;
   }
   if (channel == MidiConfig::LoopEdit::LENGTH_CC_CHANNEL) {
-    return cc == MidiConfig::LoopEdit::LENGTH_CC_NUMBER;
+    return cc == MidiConfig::LoopEdit::LENGTH_CC_NUMBER ||
+           cc == MidiConfig::LoopEdit::TEMPO_CC_NUMBER;
   }
   return false;
 }
