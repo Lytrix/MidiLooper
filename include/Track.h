@@ -243,6 +243,12 @@ public:
   /// **live window only**: retirement clears `owner`/`loopId` but not `slot`, so a whole-array scan
   /// would report a retired entry as an owner forever and block release and load admission.
   bool noLiveOwnerForSlot(uint8_t slot) const;
+  /// S3.2 owner kind: an admitted or in-flight capture stop job for `slot`. Scans the ring's
+  /// **live window only** — a retired entry outside `[head, head + count)` keeps its stale `slot`
+  /// and must not block release (B6). Named so a fixture can hold exactly this owner kind.
+  bool hasLiveCaptureStopJobForSlot(uint8_t slot) const;
+  /// S3.2 owner kind: an accepted-but-not-yet-executed interaction latched for `slot` (S4f.1).
+  bool hasAcceptedInteractionForSlot(uint8_t slot) const;
   /// S2b.4: the release entry point. It enforces `noLiveOwnerForSlot` itself so a production caller
   /// cannot release underneath a live owner: the guard must not be merely a convention at call sites.
   bool tryReleaseCanonicalCaptureReservation(uint8_t slot);

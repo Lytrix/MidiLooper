@@ -194,6 +194,28 @@ struct TrackCaptureStopTestAccess {
   /// S4.0/S2b.4 access: the per-slot liveness predicate, the reservation release and re-reserve, and a
   /// raw ring entry's slot by storage index (including entries outside the live window).
   static bool noLiveOwner(Track& track, uint8_t slot) { return track.noLiveOwnerForSlot(slot); }
+  // ---- S3.2 per-owner-kind predicates -----------------------------------------------------
+  static bool ownsLiveFinalization(Track& track, uint8_t slot) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr && rt->ownsLiveFinalization();
+  }
+  static bool ownsInFlightPreparedHandover(Track& track, uint8_t slot) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr && rt->ownsInFlightPreparedHandover();
+  }
+  /// Hold the *state the term reads*: there is no production API that requests a pair replacement
+  /// without a consume miss, so the fixture sets the flag the consume path sets.
+  static void setInFlightPreparedHandover(Track& track, uint8_t slot, bool pending) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    if (rt != nullptr) rt->preparedPairRequestPending = pending;
+  }
+  /// The production consumption entry for the accepted interaction (S4f.1/S4f.2).
+  static void consumeAcceptedStop(Track& track) { track.consumeAcceptedStopObligation(); }
+  static bool ringEntrySlotIs(const Track& track, size_t index, uint8_t slot) {
+    return track.captureStopJobs_ != nullptr && index < track.captureStopJobs_->count &&
+           track.captureStopJobs_->entries[(track.captureStopJobs_->head + index) %
+                                           Track::CaptureStopJobs::kCapacity].slot == slot;
+  }
   /// The production release entry point, which enforces the liveness predicate itself.
   static bool releaseCanonicalReservation(Track& track, uint8_t slot) {
     return track.tryReleaseCanonicalCaptureReservation(slot);
@@ -4938,6 +4960,89 @@ void test_record_stop_persist_target_follows_the_recorded_slot() {
                                 "a non-zero recorded slot must not resolve to slot 0");
 }
 
+
+/// **S3.2 — one liveness predicate per owner kind.** `Track::noLiveOwnerForSlot` is the composite
+/// release guard; each owner kind must refuse release *on its own*, so a fixture can hold exactly one
+/// kind and prove the guard is discriminating rather than merely true. Two positive controls pin the
+/// inverse errors: a free slot must allow release, and the **published** prepared pair must not count
+/// as an owner (it is the slot's playback authority and stays valid while the slot sounds, so
+/// counting it would make release unreachable for every sounding slot).
+void test_s3_2_liveness_predicates_are_discriminating_per_owner_kind() {
+  Track& track = preparePlayingTrack();
+  constexpr uint8_t kOwned = 0;
+  constexpr uint8_t kFree = 1;
+
+  // Control (a): nothing owns the slot.
+  TEST_ASSERT_TRUE_MESSAGE(track.noLiveOwnerForSlot(kOwned),
+                           "an unowned slot must allow release");
+  TEST_ASSERT_FALSE(track.hasLiveCaptureStopJobForSlot(kOwned));
+  TEST_ASSERT_FALSE(track.hasAcceptedInteractionForSlot(kOwned));
+
+  // Owner kind 1: an accepted interaction latched for the slot (S4f.1).
+  TrackCaptureStopTestAccess::latchAcceptedStop(track, kOwned);
+  TEST_ASSERT_TRUE_MESSAGE(track.hasAcceptedInteractionForSlot(kOwned),
+                           "the latch must report as the accepted-interaction owner");
+  TEST_ASSERT_FALSE_MESSAGE(track.noLiveOwnerForSlot(kOwned),
+                            "an accepted interaction for the slot must refuse release");
+  TEST_ASSERT_TRUE_MESSAGE(track.noLiveOwnerForSlot(kFree),
+                           "the latch must not block a different slot");
+  TrackCaptureStopTestAccess::consumeAcceptedStop(track);
+  TEST_ASSERT_FALSE(track.hasAcceptedInteractionForSlot(kOwned));
+  TEST_ASSERT_TRUE_MESSAGE(track.noLiveOwnerForSlot(kOwned),
+                           "consuming the obligation must free the slot");
+
+  // Owner kind 2: the slot's finalization owner (`captureStopOwner`).
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kOwned, true));
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(), "the fixture needs a live interval");
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(), "the fixture needs a stop job");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOwned),
+                           "the live interval must report as the finalization owner");
+  TEST_ASSERT_FALSE_MESSAGE(track.noLiveOwnerForSlot(kOwned),
+                            "a live finalization owner must refuse release");
+
+  // Owner kind 3: an admitted/in-flight capture stop job in the ring's live window. This is a second
+  // term on the composite while the same stop is in flight, so it is asserted directly.
+  TEST_ASSERT_TRUE_MESSAGE(track.hasLiveCaptureStopJobForSlot(kOwned),
+                           "the admitted stop must appear in the ring's live window");
+  TEST_ASSERT_FALSE_MESSAGE(track.hasLiveCaptureStopJobForSlot(kFree),
+                            "the ring scan must be per slot");
+
+  // Owner kind 4: a prepared handover still being built. Independent of the ring and of the
+  // finalization owner, so the fixture holds the state that term reads -- but the slot needs a
+  // runtime first, which is the record arm's own admission.
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(kFree, true),
+                           "the fixture needs a runtime on the second slot");
+  TrackCaptureStopTestAccess::setInFlightPreparedHandover(track, kFree, true);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ownsInFlightPreparedHandover(track, kFree),
+                           "the runtime must report the in-flight handover owner");
+  TEST_ASSERT_FALSE_MESSAGE(track.noLiveOwnerForSlot(kFree),
+                            "an in-flight prepared handover must refuse release");
+  TrackCaptureStopTestAccess::setInFlightPreparedHandover(track, kFree, false);
+  TEST_ASSERT_TRUE_MESSAGE(track.noLiveOwnerForSlot(kFree),
+                           "retiring the handover must free the slot");
+
+  // Control (b): a **published** prepared pair is the slot's playback authority, not an owner. Retire
+  // the stop job first, then assert the slot releases while it still holds a prepared working set.
+  for (int turn = 0; turn < 4096 && track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                            "the fixture must retire the stop job before control (b)");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOwned),
+                            "a retired job must not stay the finalization owner");
+  TEST_ASSERT_FALSE_MESSAGE(track.hasLiveCaptureStopJobForSlot(kOwned),
+                            "a retired job must leave the ring's live window");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsInFlightPreparedHandover(track, kOwned));
+  TEST_ASSERT_TRUE_MESSAGE(track.noLiveOwnerForSlot(kOwned),
+                           "a published pair and an admitted working set are not owners");
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4946,6 +5051,7 @@ int main() {
     RUN_TEST(test_adversarial_reentry_at_a_companion_checkpoint);
     return UNITY_END();
   }
+  RUN_TEST(test_s3_2_liveness_predicates_are_discriminating_per_owner_kind);
   RUN_TEST(test_first_interval_uses_production_routes_and_freezes_at_punch_out);
   RUN_TEST(test_stop_descriptor_rotation_preserves_worker_borrow_and_reuses_retired_slots);
   RUN_TEST(test_missing_stop_descriptors_rejects_before_opening_capture);
