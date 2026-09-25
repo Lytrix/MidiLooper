@@ -17,9 +17,9 @@ the slot it means to grow. No device access, no SD access, no writes here.
 Caveat this module states rather than hides: the `RID`/`PERS` telemetry covers the **deferred persistence
 worker**. Four other paths can write a current-set slot payload (revision load/commit, boot recovery,
 saved-set copy, and the persisted-set writer) and emit no `PERS` work record. So a *missing* `LoopPersist`
-line is not proof that no payload write happened; a **wrong-target admission** is the demonstrated fact,
-and the payload write itself must be verified separately (byte/size check on the slot file, or a boot that
-reads the events back).
+line is not proof that no payload write happened. Adjacent-slot work without take correlation is not
+proof of a wrong-target admission. Stored event parity must be verified separately before reboot,
+followed by restored event parity; file existence or size alone does not establish either.
 """
 from __future__ import annotations
 

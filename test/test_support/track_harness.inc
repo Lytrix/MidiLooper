@@ -101,4 +101,5 @@ bool nativeTransportRunning = true;
 /// later). Declared here so `setUp` can reset it.
 unsigned g_nativeSilenceTrackCalls = 0;
 bool ClockManager::isTransportRunning() const { return nativeTransportRunning; }
-bool ClockManager::shouldQuantizeRecordStart() const { return true; }
+// Match production: a stopped clock arms; a running clock quantizes the start.
+bool ClockManager::shouldQuantizeRecordStart() const { return isTransportRunning(); }

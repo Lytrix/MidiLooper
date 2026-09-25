@@ -3,11 +3,17 @@
 
 #include "Utils/ExternalPoolAccounting.h"
 
-#include "Utils/MemoryMonitor.h"
-
 #if defined(__IMXRT1062__)
-
+#include "Utils/MemoryMonitor.h"
 #include <Arduino.h>
+#endif
+
+#if defined(__IMXRT1062__) || defined(EXTERNAL_POOL_ACCOUNTING_NATIVE_TEST)
+
+#if defined(EXTERNAL_POOL_ACCOUNTING_NATIVE_TEST)
+#define FLASHMEM
+#define DMAMEM
+#endif
 
 #include <cstdio>
 #include <cstring>
@@ -17,7 +23,7 @@ namespace {
 /// Power-of-two shadow table capacity. The first run at 512 saturated immediately
 /// (`blocks` pinned at the ceiling with `untracked`/`unknown` in the thousands), so the
 /// pool holds far more blocks than "a few large buffers" — mostly small event rows and
-/// node entries. 8192 entries is 64 KB of RAM2, which is free; overflow is still
+/// node entries. 8192 entries occupy 96 KiB of RAM2, reducing internal heap capacity; overflow is still
 /// counted rather than ignored, so a second saturation is visible, not silent.
 constexpr size_t kShadowCapacity = 8192;
 constexpr size_t kShadowMask = kShadowCapacity - 1;
@@ -41,8 +47,7 @@ uint8_t gTagStack[kTagStackDepth] = {};
 uint8_t gCurrentTag = 0;
 size_t gTagDepth = 0;
 
-/// RAM2. Four kilobytes of shadow metadata must not touch the ~700 bytes of ITCM
-/// headroom or the DTCM budget. `.bss.dma` is NOLOAD and not zeroed at startup, so
+/// RAM2. Shadow metadata must not consume ITCM/DTCM headroom. `.bss.dma` is NOLOAD and not zeroed at startup, so
 /// the table is cleared lazily on first use, keyed off a normal `.bss` flag.
 DMAMEM ShadowEntry gShadow[kShadowCapacity];
 bool gShadowReady = false;
@@ -97,7 +102,7 @@ FLASHMEM void endTag() {
 }
 
 FLASHMEM void recordPoolAllocation(void* pointer, size_t bytes) {
-  if (pointer == nullptr) {
+  if (!isExternalPoolAddress(pointer)) {
     return;
   }
   ensureShadowReady();
@@ -118,6 +123,10 @@ FLASHMEM void recordPoolAllocation(void* pointer, size_t bytes) {
         gCounters.liveBlocksByClass[staleClass] -= 1;
       }
       gCounters.liveBytes -= entry.bytes < gCounters.liveBytes ? entry.bytes : gCounters.liveBytes;
+      gCounters.tagBytes[entry.tag] -= entry.bytes < gCounters.tagBytes[entry.tag]
+          ? entry.bytes : gCounters.tagBytes[entry.tag];
+      if (gCounters.tagBlocks[entry.tag] > 0) --gCounters.tagBlocks[entry.tag];
+      entry.tag = gCurrentTag;
       entry.bytes = clamped;
       gCounters.liveBytes += clamped;
       const size_t freshClass = sizeClassFor(clamped);
@@ -134,26 +143,30 @@ FLASHMEM void recordPoolAllocation(void* pointer, size_t bytes) {
       reusable = (start + probe) & kShadowMask;
     }
     if (entry.pointer == nullptr) {
-      const size_t slot = reusable != kShadowCapacity ? reusable : ((start + probe) & kShadowMask);
-      gShadow[slot].pointer = pointer;
-      gShadow[slot].bytes = clamped;
-      gShadow[slot].tag = gCurrentTag;
-      gCounters.liveBytes += clamped;
-      gCounters.liveBlocks += 1;
-      gCounters.trackedBlocks += 1;
-      const size_t freshClass = sizeClassFor(clamped);
-      gCounters.liveBytesByClass[freshClass] += clamped;
-      gCounters.liveBlocksByClass[freshClass] += 1;
-      gCounters.tagBytes[gCurrentTag] += clamped;
-      gCounters.tagBlocks[gCurrentTag] += 1;
-      if (gCounters.liveBytes > gCounters.highWaterLiveBytes) {
-        gCounters.highWaterLiveBytes = gCounters.liveBytes;
-      }
-      if (gCounters.liveBlocks > gCounters.highWaterLiveBlocks) {
-        gCounters.highWaterLiveBlocks = gCounters.liveBlocks;
-      }
-      return;
+      if (reusable == kShadowCapacity) reusable = (start + probe) & kShadowMask;
+      break;
     }
+  }
+  if (reusable != kShadowCapacity) {
+    const size_t slot = reusable;
+    gShadow[slot].pointer = pointer;
+    gShadow[slot].bytes = clamped;
+    gShadow[slot].tag = gCurrentTag;
+    gCounters.liveBytes += clamped;
+    gCounters.liveBlocks += 1;
+    gCounters.trackedBlocks += 1;
+    const size_t freshClass = sizeClassFor(clamped);
+    gCounters.liveBytesByClass[freshClass] += clamped;
+    gCounters.liveBlocksByClass[freshClass] += 1;
+    gCounters.tagBytes[gCurrentTag] += clamped;
+    gCounters.tagBlocks[gCurrentTag] += 1;
+    if (gCounters.liveBytes > gCounters.highWaterLiveBytes) {
+      gCounters.highWaterLiveBytes = gCounters.liveBytes;
+    }
+    if (gCounters.liveBlocks > gCounters.highWaterLiveBlocks) {
+      gCounters.highWaterLiveBlocks = gCounters.liveBlocks;
+    }
+    return;
   }
   // Table full: the allocation is real but unshadowed, so it is deliberately kept
   // out of `liveBytes` and reported instead.
@@ -161,7 +174,7 @@ FLASHMEM void recordPoolAllocation(void* pointer, size_t bytes) {
 }
 
 FLASHMEM void recordPoolFree(void* pointer) {
-  if (pointer == nullptr) {
+  if (!isExternalPoolAddress(pointer)) {
     return;
   }
   ensureShadowReady();
@@ -199,13 +212,16 @@ FLASHMEM void recordPoolFree(void* pointer) {
   gCounters.unknownFrees += 1;
 }
 
-FLASHMEM void recordPoolRefusal(size_t bytes) {
+FLASHMEM void recordPoolRefusal(size_t bytes, uintptr_t caller) {
   const uint32_t clamped = static_cast<uint32_t>(bytes);
   gCounters.poolRefusedCount += 1;
+#if defined(__IMXRT1062__)
   gCounters.poolLastRefusalMs = millis();
+#endif
   if (clamped > gCounters.poolRefusedLargestBytes) {
     gCounters.poolRefusedLargestBytes = clamped;
   }
+#if defined(__IMXRT1062__)
   // Bounded so a refusal storm cannot flood the transport, but a blanket cap hid the
   // *fatal* request behind a tolerated retry storm (the first run logged twelve 32 KB
   // refusals from mid-record and never showed the one that aborted at overdub start).
@@ -224,18 +240,22 @@ FLASHMEM void recordPoolRefusal(size_t bytes) {
   formatTagVector(tagVector, sizeof(tagVector));
   Serial.printf_P(
       PSTR("#MEM_EXT_REFUSED,%lu,bytes=%lu,count=%lu,live=%luKB,blocks=%lu,heap_free=%luKB,"
-           "tag=%u,tag_live=%luKB,tags=%s\n"),
+           "tag=%u,tag_live=%luKB,tags=%s,accounting=2,caller=0x%lx\n"),
       static_cast<unsigned long>(micros()), static_cast<unsigned long>(clamped),
       static_cast<unsigned long>(gCounters.poolRefusedCount),
       static_cast<unsigned long>(gCounters.liveBytes / 1024),
       static_cast<unsigned long>(gCounters.liveBlocks),
       static_cast<unsigned long>(MemoryMonitor::getInternalHeapFreeBytes() / 1024),
       static_cast<unsigned>(gCurrentTag),
-      static_cast<unsigned long>(gCounters.tagBytes[gCurrentTag] / 1024), tagVector);
+      static_cast<unsigned long>(gCounters.tagBytes[gCurrentTag] / 1024), tagVector,
+      static_cast<unsigned long>(caller));
+#endif
 }
 
 FLASHMEM void reset() {
   gCounters = Counters{};
+  gCurrentTag = 0;
+  gTagDepth = 0;
   std::memset(gShadow, 0, sizeof(gShadow));
   gShadowReady = true;
 }
@@ -256,9 +276,14 @@ FLASHMEM void* __wrap_extmem_malloc(size_t size) {
     ExternalPoolAccounting::recordPoolAllocation(pointer, size);
     return pointer;
   }
-  // The pool refused. The C++ allocator will now try the internal heap and only
-  // abort if that also fails, so this is the earliest honest exhaustion signal.
-  ExternalPoolAccounting::recordPoolRefusal(size);
+  // The core has already tried its internal fallback. Capture the wrapper's
+  // return site, not a stack walk; resolve with the exact flashed ELF.
+#if defined(SESSION_CAPTURE)
+  const uintptr_t caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+#else
+  const uintptr_t caller = 0;
+#endif
+  ExternalPoolAccounting::recordPoolRefusal(size, caller);
   return nullptr;
 }
 

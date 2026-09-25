@@ -4796,10 +4796,10 @@ void test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution() {
                            "the boundary must be recomputed in the new tick domain");
 }
 
-/// The record-arm admission is **repeatable**: three successive grants on an otherwise idle slot all succeed.
-/// This was written to test whether the S1.5 capacity sweep's early refusal (N=2, with ~480 of 512 chunk ids
-/// still free) was a non-idempotent arm rather than capacity -- it is not, so the arm is exonerated and the
-/// guard is kept. It also rules out re-granting as a source of the per-slot slope the change removes.
+/// Three grants on one otherwise idle slot succeed in this native fixture.
+/// This checks repeatable admission only: it does not measure retained bytes, failed-grant
+/// rollback, cross-slot warming, or the device's external-pool/heap pressure. It cannot
+/// exonerate arm/cancel residency as a cause of a hardware capacity refusal.
 void test_record_arm_admission_is_repeatable() {
   trackManager.~TrackManager();
   LoopEventStore::resetPoolForTests();
@@ -4812,14 +4812,82 @@ void test_record_arm_admission_is_repeatable() {
   TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true), "third arm admission must also succeed");
 }
 
+// S1.3 characterization, not the eventual lease-law acceptance test. These counts are
+// allocated event-capacity units, not native sizeof values presented as device bytes.
+struct CancelledArmResidence {
+  size_t eventCapacity = 0;
+  size_t canonicalCredits = 0;
+  const MidiEvent* liveStorage = nullptr;
+};
+
+CancelledArmResidence cancelledArmResidence(Track& track, uint8_t slot) {
+  CancelledArmResidence result;
+  auto* rt = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot);
+  if (!rt) return result;
+  result.canonicalCredits = rt->canonicalCaptureChunks.availableChunks();
+  if (rt->viewSet) {
+    for (const auto& view : rt->viewSet->views) result.eventCapacity += view.storage.capacity;
+    for (const auto& view : rt->viewSet->bridgeBases) result.eventCapacity += view.storage.capacity;
+    for (const auto& staging : rt->viewSet->captureStagings)
+      result.eventCapacity += staging.storage.capacity;
+    result.liveStorage = rt->viewSet->liveCaptureStaging().storage.events;
+  }
+  result.eventCapacity += rt->preparedPairStorage.capacity;
+  return result;
+}
+
+void test_s13_failed_arm_cancel_retains_distinct_slot_capacity() {
+  nativeTransportRunning = false;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  size_t total = 0;
+  for (uint8_t slot = 0; slot < 3; ++slot) {
+    TrackCaptureStopTestAccess::selectSlot(track, slot);
+    TEST_ASSERT_EQUAL_UINT32(0, cancelledArmResidence(track, slot).eventCapacity);
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+      const auto before = cancelledArmResidence(track, slot);
+      trackManager.startRecordingTrack(trackManager.getSelectedTrackIndex(), 0);
+      TEST_ASSERT_TRUE(track.isArmed());
+      MemoryMonitor::setNativeForcedReserveDenied(true);
+      track.startRecording(0);
+      MemoryMonitor::setNativeForcedReserveDenied(false);
+      TEST_ASSERT_TRUE(track.isArmed());
+      TEST_ASSERT_FALSE(track.getActiveLoop().captureActive());
+      TEST_ASSERT_FALSE(track.getActiveLoop().hasCommittedPasses());
+      const auto denied = cancelledArmResidence(track, slot);
+      TEST_ASSERT_GREATER_THAN_UINT32(0, denied.eventCapacity);
+      trackManager.cancelPendingRecordArm(trackManager.getSelectedTrackIndex());
+      TEST_ASSERT_FALSE(track.isArmed());
+      TEST_ASSERT_FALSE(trackManager.hasQueuedRecordingTrack(trackManager.getSelectedTrackIndex()));
+      const auto cancelled = cancelledArmResidence(track, slot);
+      TEST_ASSERT_EQUAL_UINT32(denied.eventCapacity, cancelled.eventCapacity);
+      TEST_ASSERT_EQUAL_UINT32(denied.canonicalCredits, cancelled.canonicalCredits);
+      TEST_ASSERT_EQUAL_PTR(denied.liveStorage, cancelled.liveStorage);
+      if (attempt) {
+        TEST_ASSERT_EQUAL_UINT32(before.eventCapacity, cancelled.eventCapacity);
+        TEST_ASSERT_EQUAL_PTR(before.liveStorage, cancelled.liveStorage);
+      }
+      printf("S13_CANCEL slot=%u attempt=%u event_capacity=%lu credits=%lu\n",
+             slot, attempt, static_cast<unsigned long>(cancelled.eventCapacity),
+             static_cast<unsigned long>(cancelled.canonicalCredits));
+    }
+    total += cancelledArmResidence(track, slot).eventCapacity;
+    size_t observed = 0;
+    for (uint8_t previous = 0; previous <= slot; ++previous)
+      observed += cancelledArmResidence(track, previous).eventCapacity;
+    TEST_ASSERT_EQUAL_UINT32(total, observed);
+    printf("S13_CANCEL_TOTAL slots=%u event_capacity=%lu\n", slot + 1,
+           static_cast<unsigned long>(observed));
+  }
+}
+
 /// S1.3 save/restore-survival: the **persist target follows the recorded slot**, not the initially
 /// active one, even when the adjacent slot already holds content.
 ///
-/// The device failure this guards against: a take on track 6 loop 2 logged its record stop on the
-/// right slot (`Record pass undo reset for slot 1`) while the persistence admission named `slot:5:0` —
-/// the *adjacent* slot — and no `LoopPersist` item ran. The growing fixture cannot tell a lost payload
-/// from a wrong target, so the production expression that resolves the target is asserted directly
-/// here (`resolveRecordStopPersistTarget`, the one both record-stop persist sites call).
+/// Earlier adjacent-slot telemetry was not correlated to the take and did not prove a
+/// wrong-target admission. This regression independently pins the production resolver
+/// for a non-zero recorded slot; device take correlation remains separate evidence.
 ///
 /// The full `Track::stopRecording` route is an off-path boundary in this suite
 /// (`off_path_deps.h` fails closed on it), so the record/stop transition itself is exercised on
@@ -4973,6 +5041,7 @@ int main() {
   RUN_TEST(test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound);
   RUN_TEST(test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution);
   RUN_TEST(test_record_arm_admission_is_repeatable);
+  RUN_TEST(test_s13_failed_arm_cancel_retains_distinct_slot_capacity);
   RUN_TEST(test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it);
   // S2b.1 landed on 2026-09-23, so the residence law and B01 are green and the former
   // `WORKING_SET_RED` gate is gone: they are part of the default gate now (RECIPE R, "remove a known

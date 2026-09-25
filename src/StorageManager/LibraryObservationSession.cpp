@@ -35,6 +35,8 @@
 #include "StorageManagerInternal.h"
 
 #include "CurrentSetStorage.h"
+#include "CurrentWorkspaceStorage.h"
+#include "ClockManager.h"
 #include "Globals.h"
 #include "Loop.h"
 #include "LoopEventStore.h"
@@ -602,3 +604,43 @@ STORAGE_PERSIST_MEM void StorageManager::requestLibraryObservation() {
 STORAGE_PERSIST_MEM void StorageManager::serviceLibraryObservation() {
     StorageManagerInternal::serviceLibraryObservationImpl();
 }
+
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+STORAGE_PERSIST_MEM const char* StorageManager::readSlotPayloadPageForHitl(
+    uint8_t track, uint8_t slot, uint32_t offset, SlotPayloadPage& page) {
+    using namespace StorageManagerInternal;
+    page = SlotPayloadPage{};
+    if (track >= Config::NUM_TRACKS || slot >= Config::MAX_LOOPS_PER_TRACK) return PSTR("invalid_slot");
+    if (clockManager.isTransportRunning()) return PSTR("transport_active");
+    if (!sdAdmissionGranted() || hasDeferredSaveWork()) return PSTR("busy");
+    for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
+        const Track& candidate = trackManager.getTrack(t);
+        if (candidate.isArmed() || candidate.isOverdubbing() || candidate.hasStopInFlight()) return PSTR("busy");
+    }
+    char path[64];
+    if (!CurrentSetStorage::formatLoopSlotPath(path, sizeof(path), track, slot)) return PSTR("invalid_slot");
+    if (!SD.exists(path)) return PSTR("missing");
+    if (!CurrentSetStorage::verifySaveFileTokenAtPath(path)) return PSTR("bad_token");
+    File file = SD.open(path, FILE_READ);
+    if (!file) return PSTR("io_error");
+    page.fileSize = file.size();
+    if (offset >= page.fileSize) { file.close(); return PSTR("range"); }
+    if (CurrentWorkspaceStorage::fileStartsWithEpochHeader(file)) {
+        CurrentWorkspaceStorage::EpochFileHeader header{};
+        if (!CurrentWorkspaceStorage::readEpochFileHeader(storageIoFromFileRead(file), header)) {
+            file.close(); return PSTR("bad_header");
+        }
+        page.bodyOffset = CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
+    }
+    page.setEpoch = restoreSetEpoch();
+    const Track& owner = trackManager.getTrack(track);
+    page.contentIdentity = owner.loopsAllocated() ? owner.getLoop(slot).committedPassRevision() : 0;
+    page.rootIdentity = owner.loopsAllocated() ? rootIdentityHashFor(owner.getLoop(slot)) : 0;
+    const size_t count = std::min(sizeof(page.bytes), static_cast<size_t>(page.fileSize - offset));
+    const bool ok = file.seek(offset) && file.read(page.bytes, count) == static_cast<int>(count);
+    file.close();
+    if (!ok) return PSTR("io_error");
+    page.count = static_cast<uint8_t>(count);
+    return PSTR("ok");
+}
+#endif

@@ -2130,8 +2130,103 @@ void test_undo_publication_precommit_restore_preserves_resources_and_entry_buffe
   }
 }
 
-int main(int /*argc*/, char** /*argv*/) {
+#include "../../scripts/native_slot_payload_decode.inc"
+
+void test_diagnostic_decoder_uses_production_lsv1_root() {
+  const auto root = buildLsv1RoundTripSnapshotFixture();
+  PersistedLoopSnapshot metadata{};
+  metadata.loopLengthTicks = root->loopLengthTicks();
+  PersistedLoopSnapshot oracle{};
+  std::vector<uint8_t> bytes;
+  MemoryStorageIo io(&bytes);
+  TEST_ASSERT_TRUE(writeLoopSnapshotBodyFormatV1(io.io(), metadata, oracle, *root));
+  DecodedSlotBody decoded;
+  TEST_ASSERT_TRUE(decodeSlotBody(bytes, decoded));
+  TEST_ASSERT_TRUE(decoded.lsv1);
+  DecodedSlotBody targetDecoded;
+  TEST_ASSERT_FALSE(decodeSlotBody(bytes, targetDecoded, true));
+  SessionMidiEventVec expected;
+  LoopContentResolution::resolveWindow(*root, 0, root->loopLengthTicks(), expected);
+  TEST_ASSERT_EQUAL(expected.size(), decoded.events.size());
+  TEST_ASSERT_GREATER_THAN_UINT32(0, decoded.events.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    TEST_ASSERT_EQUAL(expected[i].tick, decoded.events[i].tick);
+    TEST_ASSERT_EQUAL(expected[i].noteId, decoded.events[i].noteId);
+    TEST_ASSERT_EQUAL(expected[i].type, decoded.events[i].type);
+    TEST_ASSERT_EQUAL(expected[i].data.noteData.note, decoded.events[i].data.noteData.note);
+  }
+  bytes.resize(8);
+  TEST_ASSERT_FALSE(decodeSlotBody(bytes, decoded));
+}
+
+void test_diagnostic_decoder_uses_production_legacy_passes() {
+  PersistedLoopSnapshot snapshot{};
+  snapshot.loopLengthTicks = 768;
+  snapshot.passes.recordPass = makeRecordPassWithEvents(7, 0, CapturePassState::Active, 0, 10);
+  std::vector<uint8_t> bytes;
+  MemoryStorageIo io(&bytes);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(io.io(), snapshot));
+  DecodedSlotBody decoded;
+  TEST_ASSERT_TRUE(decodeSlotBody(bytes, decoded));
+  TEST_ASSERT_FALSE(decoded.lsv1);
+  TEST_ASSERT_EQUAL(768, decoded.length);
+  TEST_ASSERT_EQUAL(1, decoded.events.size());
+  bytes.resize(1);
+  TEST_ASSERT_FALSE(decodeSlotBody(bytes, decoded));
+  releasePersistedLoopSnapshotChunks(snapshot);
+}
+
+void test_diagnostic_decoder_reads_teensy_legacy_wire_events() {
+  LoopEventStore::initPool();
+  std::vector<uint8_t> bytes;
+  for (uint32_t value : {2u, 0u, 768u, 0u, 2u, 8u, 1u, 1u, 1u, 1u, 0u})
+    appendRaw(bytes, value);
+  appendRaw(bytes, uint8_t{0}); // pass state
+  appendRaw(bytes, uint8_t{0}); // record pass
+  appendRaw(bytes, uint32_t{768});
+  appendRaw(bytes, uint32_t{1});
+  const uint8_t event[20] = {16,0,0,0, 0x90,6,0,0, 7,0,0,0, 60,100,0,0, 0,0,0,0};
+  bytes.insert(bytes.end(), event, event + sizeof(event));
+  MemoryStorageIo tail(&bytes);
+  TEST_ASSERT_TRUE(writePersistedEditsTail(tail.io(), 2, EditPassVec{}, LoopGeometryVec{}, CommittedOverdubPassVec{}));
+  DecodedSlotBody decoded;
+  TEST_ASSERT_TRUE(decodeSlotBody(bytes, decoded, true));
+  TEST_ASSERT_EQUAL(1, decoded.events.size());
+  TEST_ASSERT_EQUAL(16, decoded.events[0].tick);
+  TEST_ASSERT_EQUAL(7, decoded.events[0].noteId);
+  TEST_ASSERT_EQUAL(6, decoded.events[0].channel);
+  TEST_ASSERT_EQUAL(60, decoded.events[0].data.noteData.note);
+  bytes.pop_back();
+  TEST_ASSERT_FALSE(decodeSlotBody(bytes, decoded, true));
+}
+
+void test_diagnostic_decoder_reads_captured_teensy_lsv1() {
+  const std::string source=__FILE__;
+  std::ifstream file(source.substr(0,source.find_last_of("/\\")+1)+"fixtures/s13_teensy_lsv1.bin",std::ios::binary);
+  TEST_ASSERT_TRUE(file.good());
+  std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)),std::istreambuf_iterator<char>());
+  LoopEventStore::initPool();
+  DecodedSlotBody decoded;
+  TEST_ASSERT_TRUE(decodeSlotBody(bytes,decoded,true));
+  TEST_ASSERT_TRUE(decoded.lsv1);
+  TEST_ASSERT_EQUAL(1536,decoded.length);
+  TEST_ASSERT_EQUAL(62,decoded.events.size());
+  TEST_ASSERT_EQUAL(8,decoded.events[0].tick);
+  TEST_ASSERT_EQUAL(54,decoded.events[0].data.noteData.note);
+  TEST_ASSERT_EQUAL(31,decoded.events[0].noteId);
+  bytes.pop_back();
+  TEST_ASSERT_FALSE(decodeSlotBody(bytes,decoded,true));
+}
+
+int main(int argc, char** argv) {
+  if (argc == 3 && std::strcmp(argv[1], "--decode-slot-body") == 0)
+    return decodeSlotBodyFile(argv[2]);
+
   UNITY_BEGIN();
+  RUN_TEST(test_diagnostic_decoder_reads_captured_teensy_lsv1);
+  RUN_TEST(test_diagnostic_decoder_reads_teensy_legacy_wire_events);
+  RUN_TEST(test_diagnostic_decoder_uses_production_lsv1_root);
+  RUN_TEST(test_diagnostic_decoder_uses_production_legacy_passes);
   RUN_TEST(test_undo_publication_retains_redo_until_commit_and_defers_latest_command);
   RUN_TEST(test_undo_publication_precommit_restore_preserves_resources_and_entry_buffers);
   RUN_TEST(test_bounded_undo_trim_rechecks_pressure_after_final_root_release);

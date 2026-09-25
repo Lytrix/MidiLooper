@@ -200,6 +200,17 @@ public:
     /// `restored-library-stability` 1.3: request the bounded on-demand library observation. Raised only
     /// from the session-capture HITL surface (`!LIB_OBSERVE`); without a request the observation never
     /// advances and emits nothing.
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+    struct SlotPayloadPage {
+        uint32_t fileSize = 0, bodyOffset = 0, setEpoch = 0;
+        uint32_t contentIdentity = 0, rootIdentity = 0;
+        uint8_t count = 0;
+        uint8_t bytes[64]{};
+    };
+    /// Stateless bounded SD read; never loads/publishes a Loop or mutates the card.
+    static const char* readSlotPayloadPageForHitl(uint8_t track, uint8_t slot,
+                                                uint32_t offset, SlotPayloadPage& page);
+#endif
     static void requestLibraryObservation();
     /// `restored-library-stability` 1.3: service the on-demand observation at the **unconditional
     /// observation tail** in `main` — the idle-owner position that already calls

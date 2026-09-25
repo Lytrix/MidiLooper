@@ -1,26 +1,10 @@
 #!/usr/bin/env python3
-"""S1.3 save/restore-survival — one take and its identity counters in a single serial session.
+"""Read one take's identity and optional stored-payload parity in one session.
 
-The bounded fixture the owner asked for. It deliberately does **not** use the record harness's
-collector lifecycle, because that closes and reopens the port around the take and has twice left the
-device's command channel stalled — which is the transition under suspicion, not just a nuisance.
-
-One connection, one reader thread, for the whole run:
-
-  1. open the serial port and keep one reader attached;
-  2. read the baseline identity counters (`!CAP_IDENTITY_STATS`);
-  3. perform the take on the pinned slot (track/loop select, arm, stream, record stop);
-  4. stop the transport, confirm the stopped state, then request `!CAP_IDENTITY_STATS` again
-     **before closing**;
-  5. save the response and keep the reboot withheld.
-
-If the second request fails on this same connection, the script says so and prints the reception
-evidence (baseline request answered, stopped-state confirmation, telemetry continuing) so command
-reception, parsing and stopped-state admission can be separated next. **A retained-counter design is
-only justified if this route cannot recover the evidence**, and it would have to establish survival
-across re-upload rather than a software reset.
-
-Read-only apart from the authorized take itself: no clearing, no quarantine, no rename, and no reboot.
+Identity alone never authorizes a reboot. With --decoder, two identical SD reads
+must match the stopped RAM events first. An unanswered command or an outstanding
+ring row has no inferred cause. The native decoder adapts Teensy event storage in
+legacy and LSV1 files; pointer-bearing SysEx is rejected.
 """
 from __future__ import annotations
 
@@ -37,9 +21,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 IDENTITY_STATS_MARKER = "RID,stats,"
 
-# The device's own statements that the take is under way and finished.
-RECORDING_MARKERS = ("Recording started", "Loop ", "RECA,")
-STOPPED_MARKERS = ("STOPPED_RECORDING", "Transport stopped", "STOPPED,PLAYING")
 
 
 class Session:
@@ -123,6 +104,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--serial-port", required=True)
     parser.add_argument("--track", type=int, required=True, help="User-facing track 1-8 (approved slot).")
     parser.add_argument("--loop-slot", type=int, required=True, help="User-facing loop slot 1-8.")
+    parser.add_argument("--boot-settle-s", type=float, default=0, help="Keep reader open during boot settling.")
+    parser.add_argument("--decoder", type=Path, help="Production native slot-body decoder executable.")
+    parser.add_argument("--stop-before-baseline", action="store_true",
+                        help="Send MIDI Stop before reading the stopped-only baseline; never toggle.")
     parser.add_argument("--record-bars", type=int, default=2)
     parser.add_argument("--bpm", type=float, default=120.0)
     parser.add_argument("--settle-ms", type=int, default=1200)
@@ -132,142 +117,245 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
-    out_dir: Path = args.out_dir.resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
+def growth_slot_obstacle(observation, track, slot):
+    """Require a fully observed, settled empty target; existing empty payloads are allowed.
 
-    import mido
-    import serial  # noqa: F401  (import before sys.path shadowing matters)
+    consistent_view=false means multi-turn collection in the firmware; invalidated rows and
+    pending requests are the relevant exclusions, not that non-atomic-window flag alone.
+    """
+    if not observation.get("complete") or len(observation.get("slots", [])) != 64:
+        return "library_observation_incomplete"
+    rows = observation["slots"]
+    if len({(r["track"], r["slot"]) for r in rows}) != 64:
+        return "library_observation_duplicate_slots"
+    if not observation.get("window", {}).get("admission_complete"):
+        return "restore_admission_pending"
+    if any(r.get("invalidated") or r.get("request") in ("queued", "running", "waiting") for r in rows):
+        return "restore_or_observation_unsettled"
+    target = next((r for r in rows if (r["track"], r["slot"]) == (track, slot)), None)
+    if target is None or not target.get("content_representation_observed"):
+        return "target_content_unobservable"
+    if target["payload"] not in ("absent", "present_verified"):
+        return "target_payload_unverified"
+    if (target["has_committed_content"] or target["loop_length_ticks"]
+            or target["committed_event_count"] or target["committed_pass_count"]):
+        return "target_already_populated"
+    return None
+
+
+def run_fixture(args, session, press, stream, *, stop_transport=None, start_transport=None, pulse_clock=None,
+                sleep=time.sleep, monotonic=time.monotonic):
+    """Production orchestration, with injected I/O for device-free transition tests."""
     from hitl.control_constants import (
-        CONTROL_CHANNEL_1BASED,
+        TRACK_SELECT_NOTE_BASE, LOOP_SELECT_NOTE_BASE, RECORD_BUTTON_NOTE,
         GLOBAL_TRANSPORT_NOTE,
-        LOOP_SELECT_NOTE_BASE,
-        MIDI_CLOCKS_PER_BAR,
-        RECORD_BUTTON_NOTE,
-        TRACK_SELECT_NOTE_BASE,
     )
-    from hitl.midi_io import _send_short_press
-
-    session = Session(args.serial_port, out_dir / "session.log")
-    out = mido.open_output("Teensy MIDI")
-    result: dict[str, object] = {
-        "pinned_track_user": args.track,
-        "pinned_slot_user": args.loop_slot,
-        "pinned_track_index": args.track - 1,
-        "pinned_slot_index": args.loop_slot - 1,
-        "reboot_allowed": False,
-    }
-
-    def press(note: int, ms: int | None = None) -> None:
-        _send_short_press(
-            out, note=note, channel_1based=CONTROL_CHANNEL_1BASED, press_ms=ms or args.press_ms
-        )
-
-    def wait_for(markers: tuple[str, ...], timeout_s: float, start: int) -> bool:
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
+    result = {"pinned_track_index": args.track - 1, "pinned_slot_index": args.loop_slot - 1,
+              "reboot_allowed": False, "stored_payload_verified": False, "verdict": "inconclusive"}
+    controls_started = False
+    def fail(reason):
+        if controls_started and stop_transport is not None:
+            stop_transport()
+            result["failure_stop_sent"] = True
+            result["failure_identity_stats"] = stats()
+        result["reason"] = reason
+        return result
+    def stats():
+        lines, ok = session.request_line("!CAP_IDENTITY_STATS", marker=IDENTITY_STATS_MARKER,
+                                         timeout_s=args.stats_timeout_s)
+        return next((parse_identity_stats(l) for l in lines if IDENTITY_STATS_MARKER in l), {}) if ok else {}
+    def wait(predicate, start, timeout, clock=False):
+        deadline = monotonic() + timeout
+        next_clock = monotonic()
+        while monotonic() < deadline:
+            if clock and pulse_clock is not None and monotonic() >= next_clock:
+                pulse_clock()
+                next_clock = monotonic() + 60.0 / (args.bpm * 24)
             for line in session.snapshot()[start:]:
-                if any(marker in line for marker in markers):
-                    return True
-            time.sleep(0.05)
-        return False
-
-    try:
-        time.sleep(1.0)
-
-        # (2) Baseline counters, first thing, on the connection we will keep.
-        base_lines, base_ok = session.request_line(
-            "!CAP_IDENTITY_STATS", marker=IDENTITY_STATS_MARKER, timeout_s=args.stats_timeout_s
-        )
-        base_stats = next(
-            (parse_identity_stats(l) for l in base_lines if IDENTITY_STATS_MARKER in l), {}
-        )
-        result["baseline_stats_answered"] = base_ok
-        result["baseline_stats"] = base_stats
-        print(f"[one-shot] baseline counters answered={base_ok} {base_stats}")
-
-        # (3) The take, on the pinned slot.
-        press(TRACK_SELECT_NOTE_BASE + (args.track - 1))
-        time.sleep(args.settle_ms / 1000.0)
-        press(LOOP_SELECT_NOTE_BASE + (args.loop_slot - 1))
-        time.sleep(args.settle_ms / 1000.0)
-        arm_index = len(session.snapshot())
+                value = predicate(line)
+                if value:
+                    return value
+            sleep(0.01)
+        return None
+    if getattr(args, "stop_before_baseline", False):
+        if stop_transport is None:
+            return fail("explicit_stop_unavailable")
+        stop_transport()
+        sleep(args.settle_ms / 1000)
+    base = stats()
+    result["baseline_stats"] = base
+    required = ("entered", "enq", "rej", "tx", "evict", "take")
+    if not all(isinstance(base.get(k), int) for k in required):
+        return fail("baseline_identity_unavailable")
+    from hitl.library_observation import parse_observation_lines
+    lines, complete = session.request_line("!LIB_OBSERVE", marker="LIBOBS,E,", timeout_s=30)
+    observation = parse_observation_lines(lines)
+    result["preflight_observation"] = observation
+    reason = growth_slot_obstacle(observation, args.track - 1, args.loop_slot - 1)
+    if not complete or reason:
+        return fail(reason or "library_observation_incomplete")
+    controls_started = True
+    press(TRACK_SELECT_NOTE_BASE + args.track - 1)
+    sleep(args.settle_ms / 1000)
+    edge = len(session.snapshot())
+    press(LOOP_SELECT_NOTE_BASE + args.loop_slot - 1)
+    sleep(args.settle_ms / 1000)
+    def fresh_start(line):
+        if "RID,start," not in line:
+            return None
+        fields = parse_identity_stats(line.replace("RID,start,", "RID,stats,", 1))
+        return fields if isinstance(fields.get("take"), int) and fields["take"] == (base["take"] + 1) & 0xffffffff else None
+    def recording_start(line):
+        if "#MEM_DENIED," in line and "op=record_start," in line:
+            return {"record_start_refusal": line}
+        identity = fresh_start(line)
+        if identity:
+            return identity
+        if "Recording started @ tick" in line:
+            # Provisional only. The stopped read-back must later attest the exact next take.
+            return {"take": (base["take"] + 1) & 0xffffffff,
+                    "t": args.track - 1, "ss": args.loop_slot - 1, "provisional": True}
+        return None
+    from hitl.serial.protocol import parse_track_transition
+    def arm_or_start(line):
+        start = recording_start(line)
+        if start:
+            return start
+        transition = parse_track_transition(line)
+        return "armed" if transition and transition[1] == "ARMED" else None
+    # Empty-slot selection can arm or start recording itself. Do not cancel that arm.
+    observed = [arm_or_start(l) for l in session.snapshot()[edge:]]
+    start = next((value for value in reversed(observed) if value), None)
+    if start is None and any("Overdubbing started" in l for l in session.snapshot()[edge:]):
+        return fail("selection_started_overdub")
+    if start is None:
+        edge = len(session.snapshot())
         press(RECORD_BUTTON_NOTE)
-        result["take_started"] = wait_for(RECORDING_MARKERS, 3.0, arm_index)
-        print(f"[one-shot] take started={result['take_started']}")
-
-        period = 60.0 / (args.bpm * 24.0)
-        clocks = int(args.record_bars * MIDI_CLOCKS_PER_BAR)
-        for i in range(clocks):
-            out.send(mido.Message.from_bytes([0xF8]))  # MIDI clock
-            if i % 6 == 0:
-                note = 48 + ((i // 6) % 12)
-                out.send(mido.Message("note_on", channel=5, note=note, velocity=100))
-                time.sleep(0.02)
-                out.send(mido.Message("note_off", channel=5, note=note, velocity=0))
-            time.sleep(period)
-
-        press(RECORD_BUTTON_NOTE)
-        result["record_stop_markers"] = wait_for(STOPPED_MARKERS, 4.0, arm_index)
-
-        # (4) Stop the transport, confirm stopped, then read the counters again on the SAME connection.
-        press(GLOBAL_TRANSPORT_NOTE)
-        stopped_index = len(session.snapshot())
-        result["transport_stopped_confirmed"] = wait_for(
-            ("Transport stopped", "ST,Track,PLAYING,STOPPED", "STOPPED"), args.stopped_timeout_s,
-            stopped_index,
-        )
-        print(f"[one-shot] transport stopped confirmed={result['transport_stopped_confirmed']}")
-
-        after_lines, after_ok = session.request_line(
-            "!CAP_IDENTITY_STATS", marker=IDENTITY_STATS_MARKER, timeout_s=args.stats_timeout_s
-        )
-        after_stats = next(
-            (parse_identity_stats(l) for l in after_lines if IDENTITY_STATS_MARKER in l), {}
-        )
-        result["after_stats_answered"] = after_ok
-        result["after_stats"] = after_stats
-        print(f"[one-shot] after-take counters answered={after_ok} {after_stats}")
-
-        if after_ok and base_stats and after_stats:
-            delta = {
-                key: after_stats.get(key, 0) - base_stats.get(key, 0)
-                for key in ("entered", "enq", "rej", "tx", "evict")
-            }
-            result["counter_delta"] = delta
-            print(f"[one-shot] counter delta: {delta}")
-            print(
-                "[one-shot] reading: "
-                + (
-                    "the emit branch RAN (entered > 0)"
-                    if delta.get("entered", 0) > 0
-                    else "the emit branch was NOT reached (entered == 0) on this take"
-                )
-            )
+        start = wait(arm_or_start, edge, args.stopped_timeout_s)
+    if start == "armed":
+        edge = len(session.snapshot())
+        if start_transport is not None:
+            start_transport()
         else:
-            telemetry_continues = any("[Memory] ext" in l for l in session.snapshot()[stopped_index:])
-            result["reception_evidence"] = {
-                "baseline_request_answered": base_ok,
-                "transport_stopped_confirmed": result["transport_stopped_confirmed"],
-                "telemetry_continuing_after_stop": telemetry_continues,
-            }
-            print(
-                "[one-shot] second request FAILED on the same connection. Reception evidence: "
-                f"{result['reception_evidence']}. Next: separate command reception, parsing and "
-                "stopped-state admission."
-            )
-    finally:
-        # (5) Reboot stays withheld: nothing here reboots, clears or renames.
-        result["session_line_count"] = len(session.snapshot())
-        (out_dir / "one-session-result.json").write_text(
-            json.dumps(result, indent=2), encoding="utf-8"
-        )
-        print(f"[one-shot] wrote {out_dir / 'one-session-result.json'}")
-        out.close()
-        session.close()
+            press(GLOBAL_TRANSPORT_NOTE)
+        start = wait(recording_start, edge, args.stopped_timeout_s, clock=True)
+    if start is None:
+        return fail("fresh_record_start_unobserved")
+    if "record_start_refusal" in start:
+        result["record_start_refusal"] = start["record_start_refusal"]
+        return fail("record_start_refused")
+    result["start_identity"] = start
+    if (start.get("t"), start.get("ss")) != (args.track - 1, args.loop_slot - 1):
+        return fail("record_start_wrong_slot")
+    result["note_stream_started"] = True
+    stream()
+    result["note_stream_completed"] = True
+    edge = len(session.snapshot())
+    press(RECORD_BUTTON_NOTE)
+    if not wait(lambda l: "Recording stopped @ tick" in l, edge, args.stopped_timeout_s, clock=True):
+        return fail("record_stop_unobserved")
+    edge = len(session.snapshot())
+    if stop_transport is not None:
+        stop_transport()
+    else:
+        press(GLOBAL_TRANSPORT_NOTE)
+    # A Track STOPPED transition is not global transport confirmation.
+    result["transport_stop_log_observed"] = bool(wait(
+        lambda l: "Transport stopped" in l, edge, args.stopped_timeout_s))
+    after = stats()  # Firmware admits this read-back only while global transport is stopped.
+    result["after_stats"] = after
+    if not all(isinstance(after.get(k), int) for k in required):
+        return fail("stopped_after_identity_unavailable")
+    result["transport_stopped_confirmed"] = True
+    result["counter_delta"] = {k: after[k] - base[k] for k in required if k != "take"}
+    expected = {"take": start["take"], "t": args.track - 1, "ss": args.loop_slot - 1,
+                "sp": args.loop_slot - 1, "cs": args.loop_slot - 1,
+                "pt": args.track - 1, "ps": args.loop_slot - 1, "ev": "a"}
+    if any(after.get(k) != v for k, v in expected.items()):
+        return fail("take_admission_identity_mismatch_or_missing")
+    if result["counter_delta"]["entered"] < 2 or any(v < 0 for v in result["counter_delta"].values()):
+        return fail("counter_episode_inconsistent")
+    result["untransmitted_or_evicted_total"] = after["enq"] - after["tx"]
+    lines, complete = session.request_line("!CAPTURE_CONTENT", marker="CAPTURE_CONTENT,end", timeout_s=15)
+    result["ram_content_dump_complete"] = complete
+    result["ram_content_dump"] = [l for l in lines if "CAPTURE_CONTENT," in l]
+    # This dump reads RAM passes, not the SD payload. It cannot authorize a reboot.
+    result["verdict"] = "identity_pass"
+    return result
 
-    return 0
+
+def stream_take(args, out, message, *, sleep=time.sleep, monotonic=time.monotonic):
+    from hitl.control_constants import MIDI_CLOCKS_PER_BAR
+    period = 60.0 / (args.bpm * 24)
+    deadline = monotonic()
+    total = args.record_bars * MIDI_CLOCKS_PER_BAR
+    step = getattr(args, 'note_step_clocks', 6)
+    gate = getattr(args, 'note_gate_clocks', 2)
+    low = getattr(args, 'note_low', 48)
+    count = getattr(args, 'note_count', 12)
+    if not (0 < gate <= step and 0 <= low < 128 and 0 < count <= 128-low):
+        raise ValueError('invalid_note_workload')
+    for i in range(total):
+        out.send(message("clock"))
+        if i >= gate and (i-gate) % step == 0:
+            note = low + ((i-gate) // step) % count
+            out.send(message("note_off", channel=args.track - 1, note=note, velocity=0))
+        if i % step == 0 and i + gate < total:
+            note = low + (i // step) % count
+            out.send(message("note_on", channel=args.track - 1, note=note, velocity=100))
+        deadline += period
+        sleep(max(0, deadline - monotonic()))
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    if not (1 <= args.track <= 8 and 1 <= args.loop_slot <= 8 and args.record_bars > 0
+            and 0 < args.bpm <= 300 and args.settle_ms >= 0 and args.press_ms > 0
+            and args.stats_timeout_s > 0 and args.stopped_timeout_s > 0 and 0 <= args.boot_settle_s <= 60):
+        parser.error("invalid track, slot or timing bounds")
+    import mido
+    from hitl.control_constants import CONTROL_CHANNEL_1BASED
+    from hitl.midi_io import _send_short_press
+    out_dir = args.out_dir.resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result = {"verdict": "inconclusive", "reboot_allowed": False}
+    session = Session(args.serial_port, out_dir / "session.log")
+    try:
+        time.sleep(args.boot_settle_s)
+        with mido.open_output("Teensy MIDI") as out:
+            def press(note):
+                _send_short_press(out, note=note, channel_1based=CONTROL_CHANNEL_1BASED,
+                                  press_ms=args.press_ms)
+            try:
+                result = run_fixture(args, session, press, lambda: stream_take(args, out, mido.Message),
+                                     stop_transport=lambda: out.send(mido.Message("stop")),
+                                     start_transport=lambda: out.send(mido.Message("start")),
+                                     pulse_clock=lambda: out.send(mido.Message("clock")))
+                if result["verdict"] == "identity_pass" and args.decoder:
+                    from hitl.slot_payload_readback import verify_saved_slot, ReadbackError
+                    try:
+                        verification = verify_saved_slot(session, args.track-1, args.loop_slot-1,
+                                                         result["ram_content_dump"], args.decoder, out_dir)
+                        result["stored_payload"] = verification
+                        result["stored_payload_verified"] = True
+                        result["reboot_allowed"] = True
+                    except ReadbackError as exc:
+                        result["verdict"] = "inconclusive"
+                        result["reason"] = str(exc)
+            except BaseException as exc:
+                # Never leave a take running because host I/O or interruption escaped orchestration.
+                out.send(mido.Message("stop"))
+                result["reason"] = "host_exception"
+                result["error"] = str(exc)
+                result["failure_stop_sent"] = True
+                raise
+    finally:
+        result["session_line_count"] = len(session.snapshot())
+        session.close()
+        (out_dir / "one-session-result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+        print(json.dumps(result, indent=2))
+    return 0 if result["verdict"] == "identity_pass" else 2
 
 
 if __name__ == "__main__":
