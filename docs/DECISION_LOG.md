@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-086](#dec-086--loop-edit-tempo-fader-is-a-global-bpm-control-on-cc102) | 2026-09-25 | Loop-edit fader 4: a global BPM control on ch16 CC102 (72–200 BPM) | Accepted — implemented, native + device verified |
 | [DEC-084](#dec-084--explicit-stopped-heap-inspection) | 2026-09-25 | Explicit stopped/clock-quiet heap inspection | Accepted |
 | [DEC-083](#dec-083--the-restored-library-inventory-is-a-bounded-on-demand-observation-separate-from-the-settled-census) | 2026-09-24 | The restored-library inventory is a **bounded on-demand observation**, separate from the settled census; it reports a state set and a nullable cause | Accepted — implemented, native-verified and **device-verified read-only** (Packet A of `restored-library-stability`); Packets B/C open |
 | [DEC-082](#dec-082--the-restore-request-is-the-unit-identity-named-waits-preparation-under-transport-and-a-three-way-drain) | 2026-09-24 | The restore **request** is the unit: identity, named waits, preparation under transport, three-way drain | Accepted — implemented; native + Packet B device gate + content PASS; **the drain-advance device integration (A3.7 shape b) is not yet verified**, so `deferred-slot-restore-liveness` stays open |
@@ -96,7 +97,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-084 -->
+<!-- Append new entries below (newest first). Next ID: DEC-086 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -4960,3 +4961,28 @@ Node allocation scales with affected private index nodes plus new content. Paren
 
 ### Related OpenSpec / migration
 Runtime-working-set-ownership S1.6c.2, coordinated with immutable-loop-snapshot-passes. No SD migration. Fresh N=56 boot saves 3,768,320 external payload bytes (151→36 slabs); intended workload acceptance remains open due to the no-clear fixture target mismatch, with late heap-low separately recorded.
+
+
+## DEC-086 — Loop-edit tempo fader is a global BPM control on CC102
+
+**Date:** 2026-09-25
+**Owner:** LoopEditManager (fader binding), ClockManager (tempo owner)
+**Status:** Accepted (user request: fader 4 in loop edit mode sets BPM directly)
+
+### Problem
+The device tempo could only be changed by external MIDI clock or by whatever the restored set carried. A HITL run cannot pin its own pacing, and a user has no direct BPM control; the 2026-09-25 fixture ran at the device's persisted 85.4 BPM while the host streamed 120 BPM, so every bar-count expectation was ambiguous.
+
+### Decision
+Add loop-edit fader 4 as a global tempo control on the loop-edit control channel: **channel 16, CC 102**, with CC `0..127` mapping linearly to **72–200 BPM**. Owner is `LoopEditManager::handleTempoInput` (gated to `isLoopEditMode()` and the existing session feedback-ignore); the conversion lives in the dependency-free `TempoMapping` header; the endpoint is `ClockManager::setBpmFloat`, which already maintains the global `bpm` used by display and persistence. Session entry sends the current tempo back on the same CC so the motor parks at the live value, alongside the existing loop start/length feedback.
+
+### Rationale and alternatives
+The tempo endpoint and `bpm` global already exist, and the loop-length fader (ch16 CC101) already establishes the pattern of a loop-edit CC mapped to a musical range with session-entry feedback. Sending MIDI clock from the host was rejected: the host has no clock output path and it would change the clock *source* rather than set the tempo. A new configuration surface or fader owner was rejected — the ladder found reusable extension points.
+
+### Constraints created
+Applied in LOOP_EDIT only; `ClockManager` remains the only tempo owner; no persistence change (the existing saved BPM already covers it). The CC→BPM law, clamping and feedback round-trip are fixed by `test/test_tempo_mapping` (8 cases) so firmware and tests cannot drift.
+
+### Related OpenSpec / migration
+Fixture support for `runtime-working-set-ownership` (S1.6c.2 capacity revalidation): the HITL can now pin the device tempo instead of guessing it. No SD migration; the tempo persists through the existing saved-BPM path.
+
+### Verification
+Device-verified 2026-09-25 on image `870f2948f0676d60…` (`scripts/hitl_tempo_fader_probe.py`, `captures/tempo-fader-01/`): CC 32 → 104.3 BPM, CC 100 → 172.8 BPM, CC 64 → 136.5 BPM, each matching the linear law to 0.1 BPM and applying live; session-entry feedback `Sent tempo CC feedback: 172.8 BPM -> CC=100`. Full native 2,421 passed / 1 skipped. RAM1 unchanged (`variables 96,160 / code 392,024 / padding 1,192 / locals 34,912`), 352 B over the approved floor.
