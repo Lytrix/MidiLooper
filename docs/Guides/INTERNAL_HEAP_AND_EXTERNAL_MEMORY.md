@@ -12,7 +12,7 @@ Agent-oriented rules for **where** allocations live on Teensy 4.1 and **how** ad
 
 | Tier | API | Hardware | Role |
 |------|-----|----------|------|
-| **Internal heap** | `malloc` / `free`, `MemoryMonitor::getInternalHeapFreeBytes()` | ~512 KiB RAM1 (fast) | Hot path, small fixed state, admission reserves |
+| **Internal heap** | `malloc` / `free`, `MemoryMonitor::getInternalHeapFreeBytes()` | 512 KiB RAM2 shared with static DMA buffers | Hot path, small fixed state, admission reserves |
 | **External memory pool** | `extmem_malloc` / `extmem_free`, `MemoryMonitor::getExternalMemoryPoolFreeBytes()` | 8 MiB PSRAM (when fitted) | Length-scaling and cold buffers |
 
 **Naming (code):** use **internal heap** and **external memory pool** — not “RAM2” or “PSRAM” in new identifiers. Platform symbols (`extmem_malloc`, `external_psram_size`) stay as-is behind allocators.
@@ -98,7 +98,7 @@ Gates consult **internal heap free** plus tier-specific estimates. They do **not
 4. If PSRAM **unavailable**: add external estimate to internal requirement (native tests / no chip).
 5. If PSRAM **available**: **do not** call `getExternalMemoryPoolFreeBytes()` or `getExternalMemoryPoolUsedBytes()` anywhere in `loop()` — `sm_malloc_stats_pool` walks the full pool (measured **593 ms** on 8 MiB in [`141815`](../../captures/session_20260812_141815.log)). Same rule as `LoopEventStore::hasHeadroomForCommittedChunkIdList`: optimistic extmem admit; `push_back` is the real alloc gate.
 
-**The walk belongs to `setup()` only** — pass `logStatus(true)` there. Runtime callers report `getExternalMemoryPoolTotalBytes()` (`pool_size`, O(1)) instead.
+**Automatic allocator walks belong to `setup()` only** — pass `logStatus(true)` there. Runtime callers report `getExternalMemoryPoolTotalBytes()` (`pool_size`, O(1)) instead.
 
 An earlier version of this rule allowed the walk in "idle / stopped diagnostics (`logStatus`, 60 s main-loop interval)". That exemption was wrong. The `main.cpp` gate is `!timingCriticalTrackActive`, derived from track state (`isRecording() || isOverdubbing() || isPlaying()`), which says nothing about whether an **external clock is still streaming**. In `141815` the gate opened 152 ms after `PLAYING → STOPPED`, the walk blocked the loop 593 ms, and `ClockManager` reported `MIDI clock lost, switching to internal at 118.4 BPM`. There is no track-state predicate that makes this call safe; do not reintroduce one.
 
@@ -172,3 +172,44 @@ PSRAM pool totals are **not** comparable across arbitrary sessions (SD load, chu
 - [`openspec/specs/long-record-memory-headroom/spec.md`](../../openspec/specs/long-record-memory-headroom/spec.md)  
 - [`openspec/specs/note-edit-session-undo/spec.md`](../../openspec/specs/note-edit-session-undo/spec.md)
 - [`memory_diagnostics_optimization_enhancement.md`](../Plans/memory_diagnostics_optimization_enhancement.md) — diagnostics platform + Phase 1–5 order
+
+## Accounting semantics (S1.6 heap-correctness slice)
+
+`getInternalHeapFreeBytes()` and serial `heap_free` measure unused arena tail
+(`_heap_end - __brkval`), excluding reusable malloc free-list blocks. They remain a
+conservative admission input; zero alone does not prove every internal block is live.
+The core's `extmem_malloc` already falls back to internal malloc. Wrapped live/class/tag
+counters now include only physical external pointers; internal fallback is excluded because
+owners may free it directly. They measure wrapped payload bytes, not allocator overhead,
+fragmentation or physical free space. Historical wrapper totals included internal fallback
+and stale tag attribution, so do not compare old and corrected live totals as reclaimed memory.
+The fixed 8192-entry shadow table itself consumes 96 KiB of RAM2 (12 bytes per device entry).
+It is not a free diagnostic: it reduces the internal malloc arena. Its size is unchanged.
+Capture-build refusal lines add `accounting=2,caller=0x...`; resolve the return address against
+the exact flashed ELF (Thumb return address, inspect the preceding instruction). A template
+allocator symbol may require further bounded owner attribution. Null means both the external
+pool and the core's internal fallback failed, not the earliest external-only refusal.
+
+### Explicit stopped heap inspection
+
+`!HEAP_STATS` is a session-capture-only, user-requested exception: MemoryMonitor inspects allocator metadata only after transport, external clock, active tracks/capture/stop work and deferred storage/prewarm are quiescent. It never runs periodically or from allocation/admission paths. Keep external MIDI clock off throughout the request; this synchronous diagnostic intentionally blocks main-loop service while it scans. Refusal returns a reason without reading either allocator.
+
+Version 1 reports bytes. Internal `free_chunk_bytes`, `largest_chunk`, `top_chunk` include allocator chunk overhead; `heap_tail` is unused sbrk address space, separate from free chunks. `used_chunk_bytes` includes allocated chunk overhead. External `free`, `largest_gap`, `largest_request`, `occupied` and `payload` describe the actual smalloc pool, including allocations outside the wrapper. `largest_request` subtracts the 24-byte header/trailer cost. Do not combine internal largest-chunk and heap-tail values as a promised allocation size.
+
+Only use readings with both completeness flags set. Incomplete fields are partial, and `used_chunk_bytes=0` on incomplete internal inspection is unavailable, not zero usage. The internal walk caps at 4096 nodes; the external scan follows the pinned 12-byte smalloc layout. Toolchain/core allocator changes require revalidation. No test allocation or allocator metadata mutation occurs.
+
+For retention/leak investigation compare repeated snapshots at the same settled workload after all transient owners retire. Growth establishes retained allocation, not automatically an unreachable malloc leak. Fragmentation is evidenced by sufficient aggregate free bytes but insufficient largest eligible extent for a specified request; distinguish pool capacity and internal uncommitted tail. This command adds no pointer/callsite allocation ledger.
+
+The diagnostic clock guard also requires one second without a received MIDI clock pulse, tracked before ClockManager’s stopped-transport early return. This capture-only timestamp bookkeeping performs no allocation or heap inspection. Diagnostic timestamps are initialized during ClockManager setup.
+
+### Known owner lifetime repairs
+
+Whole-take view release now retires the origin/rank side arrays together with event storage through `RuntimePlaybackView::release`. The selected-bridge refusal still precedes mutation; no earlier mid-record demotion is introduced. For two 2048-event bases, this corrects 24,576 bytes of retained side-array payload omitted by the released reservation report.
+
+The draw-source resolver borrows the existing pending-paint vector as synchronous compose scratch instead of allocating a third vector every frame. Before painting transforms, it returns old compose storage to the paint owner. Compose and paint remain distinct, and handoff frames retain authority. Slide inclusion filtering is in-place and preserves ordering and note geometry. Neither repair changes allocation routing, detail horizon or admission thresholds; reducing churn is not proof that the N=56 capacity failure is eliminated.
+
+Pending-paint growth explicitly retires obsolete backing before copy assignment when the composed source exceeds capacity. This avoids target libstdc++'s allocate-copy-free overlap; compose remains intact and capacity-fitting frames retain reuse. No record/display rows are dropped to fit memory.
+
+### Snapshot construction allocation (DEC-085)
+
+One unpublished construction retains its private index-edit workspaces across changes. Notes/events still have distinct immutable objects, but repeated edits of the same pitch/bar reuse private directories and membership pages instead of leaving retired intermediate copies in bump slabs. Published roots remain immutable. Slab `usedBytes` is bump high-water, including retired nodes; it is not the byte total of currently live objects. A slab with many live nodes and high bump usage can still contain substantial retired allocation. Only whole-slab release returns that backing to the allocator.

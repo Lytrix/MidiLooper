@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-084](#dec-084--explicit-stopped-heap-inspection) | 2026-09-25 | Explicit stopped/clock-quiet heap inspection | Accepted |
 | [DEC-083](#dec-083--the-restored-library-inventory-is-a-bounded-on-demand-observation-separate-from-the-settled-census) | 2026-09-24 | The restored-library inventory is a **bounded on-demand observation**, separate from the settled census; it reports a state set and a nullable cause | Accepted — implemented, native-verified and **device-verified read-only** (Packet A of `restored-library-stability`); Packets B/C open |
 | [DEC-082](#dec-082--the-restore-request-is-the-unit-identity-named-waits-preparation-under-transport-and-a-three-way-drain) | 2026-09-24 | The restore **request** is the unit: identity, named waits, preparation under transport, three-way drain | Accepted — implemented; native + Packet B device gate + content PASS; **the drain-advance device integration (A3.7 shape b) is not yet verified**, so `deferred-slot-restore-liveness` stays open |
 | [DEC-081](#dec-081--audible-playback-never-gates-persistence-and-never-stops-for-it) | 2026-09-23 | Audible playback never gates persistence and never stops for it (supersedes the all-tracks-silent gate) | Accepted — implemented, built and **device-verified on the discriminating case** (five tracks audibly playing + a genuinely owed save → the clear's blocking drain completed in <833 ms, 0 `Clear aborted`/`drain stuck`) |
@@ -4905,3 +4906,57 @@ has 14 pass / the same three failures. Stored dense content verification on the
 prior fixture passed its scoped input comparison; audible timing and restored
 playback remain open. Device reconnection is required to continue hardware
 investigation. No capture reader is running. See active FOCUSED-STOP-HITL.md.
+
+## DEC-084 — Explicit stopped heap inspection
+
+**Date:** 2026-09-25
+**Owner:** MemoryMonitor
+**Status:** Accepted
+
+### Problem
+The sbrk tail and external wrapper counters cannot distinguish reusable free blocks, fragmentation and physical allocator occupancy. Automatic allocator walks can stall MIDI service even after tracks stop if external clock is streaming.
+
+### Decision
+Expose `!HEAP_STATS` only in session-capture firmware, on explicit request, after rejecting transport, external clock, live track/capture/stop work and deferred storage/prewarm. The caller keeps the clock quiet throughout the synchronous inspection. MemoryMonitor reports bounded allocator metadata scans, completeness and duration. No periodic/live scan, allocation probe, malloc routing change or new owner is introduced.
+
+### Rationale
+The user explicitly requested stopped-only diagnostics. This narrowly extends the existing MemoryMonitor owner and HITL serial entry point. Automatic `logStatus(true)` remains setup-only. Internal raw chunk extent and untouched sbrk tail are distinct; external gaps account for smalloc overhead. Repeated same-state occupancy is retention evidence, not an automatic leak verdict.
+
+### Alternatives considered
+Periodic stopped-track scans were rejected because track state alone does not exclude incoming clock. Test allocations were rejected because they perturb the heap under investigation. A new malloc pointer ledger is outside this diagnostic slice and would consume memory and instrument live allocation paths.
+
+### Affected modules
+MemoryMonitor, capture serial commands, read-only boot census harness, internal/external memory guide.
+
+### Constraints created
+Reject before allocator access; keep main-loop diagnostics explicit and clock-quiet. Pin/revalidate the newlib/smalloc metadata layout on toolchain changes. Partial scans are unavailable, never valid zero usage. No SD writes or content changes are required by the diagnostic fixture.
+
+### Related OpenSpec
+`runtime-working-set-ownership` S1.6d — stopped heap diagnostics.
+
+### Migration notes
+No persistence format or library migration. Native refusal/fragmentation/bounds tests and device stopped/refused replies verify this addition; existing capacity gates remain open.
+
+The diagnostic clock guard also requires one second without a received MIDI clock pulse, tracked before ClockManager’s stopped-transport early return. This capture-only timestamp bookkeeping performs no allocation or heap inspection. Diagnostic timestamps are initialized during ClockManager setup.
+
+
+## DEC-085 — Reuse private snapshot construction pages
+
+**Date:** 2026-09-25
+**Owner:** LoopSnapshotConstruction
+**Status:** Accepted (user implementation approval)
+
+### Problem
+Per-change apply objects discard private edit lookup state. Later changes copy index pages again, leaving dead nodes inside slabs pinned by final content. Bump high-water is not live occupancy.
+
+### Decision
+Extend DEC-048's construction-local root reuse to private pitch directories, bar pages and membership chains. The existing note/event apply workspaces persist until construction destruction; only their active cursors reset between changes. Preserve and update tail/page-count metadata. No parent/shared page mutation, cross-construction scratch, new allocator or persistence representation. Existing chunked step/freeze/failure semantics remain.
+
+### Rationale and alternatives
+Avoiding redundant construction allocations precedes changing the slab allocator. Generic per-node malloc would reverse DEC-048 and increase allocator traffic. Inactive-root demotion remains S5 work and is not a substitute for correcting construction amplification.
+
+### Constraints and validation
+Node allocation scales with affected private index nodes plus new content. Parent, sibling, failed and frozen candidate isolation; multi-page append/removal and capacity ceiling; full native, target memory budget and the existing device workload. Caches are construction-owned, internal heap scratch as before, and released on destruction; no static RAM1 member or new persistent owner.
+
+### Related OpenSpec / migration
+Runtime-working-set-ownership S1.6c.2, coordinated with immutable-loop-snapshot-passes. No SD migration. Fresh N=56 boot saves 3,768,320 external payload bytes (151→36 slabs); intended workload acceptance remains open due to the no-clear fixture target mismatch, with late heap-low separately recorded.

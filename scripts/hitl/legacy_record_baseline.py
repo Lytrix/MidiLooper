@@ -1532,6 +1532,27 @@ def _confirm_recording_after_transport_start(
     )
 
 
+def _require_observed_record_slot(lines: list[str], loop_slot: int, after_index: int) -> None:
+    """No-clear arm acts on the selected slot; configuration is not selection."""
+    latest = None
+    for line in lines[after_index:]:
+        parts = line.strip().split(",")
+        if len(parts) < 5 or parts[0] != "#CAP" or parts[2] != "DISP":
+            continue
+        try:
+            observed = (int(parts[1]), int(parts[3]))
+        except ValueError:
+            continue
+        if latest is None or observed[0] >= latest[0]:
+            latest = observed
+    if latest is None or latest[1] != loop_slot - 1:
+        actual = "unobserved" if latest is None else str(latest[1] + 1)
+        raise RuntimeError(
+            f"No-clear record target not verified: requested slot {loop_slot}, "
+            f"latest observed slot {actual}. No record arm or notes sent."
+        )
+
+
 def _run_record_arm_until_capturing(
     out_port: mido.ports.BaseOutput,
     in_port: mido.ports.BaseInput,
@@ -1551,6 +1572,12 @@ def _run_record_arm_until_capturing(
     should pass ``wait_for_recording_confirm=False`` so the grid is not delayed by serial sync.
     """
     from hitl.serial_tick_anchor import transport_record_start_monotonic
+
+    if record_loop_slot and not getattr(args, "clear_before_record", True):
+        _require_observed_record_slot(
+            serial_collector.snapshot() if serial_collector else [],
+            record_loop_slot, track_baseline_len,
+        )
 
     _stop_live_capture_if_active_before_arm(
         out_port,

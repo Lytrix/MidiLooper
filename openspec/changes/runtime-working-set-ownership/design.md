@@ -1269,3 +1269,23 @@ mandatory continuous device session (item 6). Design revisions stop here per ite
    interactions, 0 second presses, 0 lost capture, 0 wrong-slot publication, 0 stale-generation release, 0
    playback interruption, bounded MIDI gap, pool residency returning after owners retire, and steady-state RAM
    independent of the number of cold recorded slots**.
+
+## Heap-correctness prerequisite
+
+The S1.6 execution packet in [ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md) defines the accounting repair, failure attribution and subsequent owner-fix gate. Capacity sweeps pause until allocation failure is attributed and corrected; accounting repair alone is not a capacity fix.
+
+### S1.6d — stopped heap diagnostics
+
+DEC-084 extends MemoryMonitor with explicit session-capture `!HEAP_STATS`. Reject transport, external clock, track work and deferred storage/prewarm before reading allocator metadata. The command performs bounded, non-mutating scans of pinned newlib free lists and smalloc gaps, reports completeness/duration and distinguishes free chunks, sbrk tail, payload and allocator occupancy. No live scan, allocation probe or malloc pointer ledger. This is diagnostic evidence for S1.6b attribution; it neither changes allocator admission nor closes S1.6c owner correction. See the execution packet in ARCHITECTURE-REVIEW.md and the internal/external memory guide for units and limitations.
+
+### S1.6c.1 — known owner lifetime fixes
+
+RuntimePlaybackView releases origin and rank arrays alongside its event storage at the existing whole-take release boundary. The selected-bridge refusal remains unchanged. DisplayManager borrows its previous pending-paint allocation as synchronous compose scratch and returns the old compose allocation before painting transforms; a scope guard returns borrowed storage on early exits. This eliminates the fresh candidate allocation without adding a persistent scratch or merging compose/paint authority. Slide-window filtering preserves note identity, geometry and order in place. No shortened display horizon or admission/routing change. Aggregate capacity revalidation remains a separate oracle.
+
+Pending-paint growth explicitly retires obsolete backing before copy assignment when the composed source exceeds capacity. This avoids target libstdc++'s allocate-copy-free overlap; compose remains intact and capacity-fitting frames retain reuse. No record/display rows are dropped to fit memory.
+
+### S1.6c.2 — snapshot construction reuse
+
+DEC-085 retains the existing note/event apply workspaces for one construction. Their mutable pitch, bar-page and membership directories identify candidate-private nodes; subsequent changes reuse those nodes, updating chain tails and page counts on append. Active-work flags separate cursor completion from workspace lifetime. Published parents and sibling constructions remain immutable, and completed constructions cannot resume mutation. No allocator replacement, published-node refcount heuristic, membership-capacity change or playback-policy change. Lookup work remains proportional to affected private edits; each membership copy/remove/sort grain retains its existing page bound.
+
+Role-specific first-record reservations are not removed by this change: current capture admission also guarantees deferred-stop and immediate-overdub resources. A replacement role transition/admission contract must preserve those guarantees before the 500 KiB whole-take reservation can be omitted safely.
