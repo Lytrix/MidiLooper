@@ -334,13 +334,26 @@ def main(argv: Optional[list[str]] = None) -> int:
         note_channel = t0  # 0-based MIDI channel for note input on this track
         cc_value = int(round(args.tempo_bpm - 60.0))
         cc_value = max(0, min(127, cc_value))
-        tempo_routes = (
+        # If the device already reports the requested tempo in its own boot output, take that as the
+        # read-back and send nothing. The device enters LOOP_EDIT at boot and logs its tempo there
+        # ("Sent tempo CC feedback: 120.0 BPM"), and *pressing* track/slot to reach the mode is a side effect
+        # this step should not cause: a run whose seed presses were silently consumed (no state transitions at
+        # all after the clears) is consistent with those presses having left the UI somewhere the loop buttons
+        # do not reach the record path.
+        already = _wait_for_any(capture_log, after=0,
+                               markers=(f"Sent tempo CC feedback: {args.tempo_bpm:.1f} BPM",
+                                        f"maps to current {args.tempo_bpm:.1f} BPM"),
+                               timeout_s=0.1)
+        pinned = bool(already)
+        tempo_route = "boot_readback" if already else None
+        if already:
+            events.append({"event": "tempo_already_pinned", "requested_bpm": args.tempo_bpm,
+                           "confirmed": True, "route": "boot_readback"})
+        tempo_routes = (() if already else (
             ("boot_state", ()),
             ("track_selected", ("track",)),
             ("track_and_slot_selected", ("track", "slot")),
-        )
-        pinned = False
-        tempo_route = None
+        ))
         for route_name, presses in tempo_routes:
             before_tempo = len(_lines(capture_log))
             for kind in presses:
