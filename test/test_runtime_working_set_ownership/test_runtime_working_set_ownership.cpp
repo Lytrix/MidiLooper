@@ -670,11 +670,16 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
   if (TrackCaptureStopTestAccess::activeLoopIndex(track) == 1 &&
       !TrackCaptureStopTestAccess::isRecording(track) &&
       !TrackCaptureStopTestAccess::isOverdubbing(track)) {
-    TrackCaptureStopTestAccess::toggleRecordForSlot(1);
-    // A record start on a running transport is *queued* and dispatched by the production scheduler at
-    // the loop's bar boundary (`TrackManager::handlePendingRecordStart`), so the fixture must advance the
-    // tick domain across one boundary for the queued start to fire.
-    for (uint32_t tick = 768; tick <= 1536 && !TrackCaptureStopTestAccess::isRecording(track) &&
+    // Start B through the arm/record button entry (the one that reaches the record-admission path);
+    // a start on a running transport may be queued, so advance the tick domain across the loop's bar
+    // boundary through the production dispatch.
+    midiButtonActions.handleToggleRecord();
+    // Advance exactly one bar from the switch tick so the queued start fires within the same loop, and
+    // the input below lands inside the loop the capture is recording rather than past its end.
+    const uint32_t switchTick = clockManager.getCurrentTick();
+    const uint32_t nextBar = switchTick + (768 - (switchTick % 768));
+    for (uint32_t tick = nextBar; tick <= nextBar + 768 &&
+                               !TrackCaptureStopTestAccess::isRecording(track) &&
                                !TrackCaptureStopTestAccess::isOverdubbing(track);
          tick += 768) {
       clockManager.assignCurrentTickSilently(tick);
@@ -737,7 +742,29 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
                                TrackCaptureStopTestAccess::isOverdubbing(track),
                            "B must start from the gesture while A still finalizes");
   const size_t before = TrackCaptureStopTestAccess::captureEventCount(track);
-  inputNote(64, 208, 240);
+  // Inject in the record domain: the dispatcher above advanced the tick to the loop boundary, so the
+  // note must lie *after* the current tick or capture rejects it as already past.
+  const uint32_t onTick = clockManager.getCurrentTick() + 8;
+  inputNote(64, onTick, onTick + 32);
+  if (TrackCaptureStopTestAccess::captureEventCount(track) != before + 2) {
+    // Characterization of the remaining gap: B is the active, started interval with capture active,
+    // but the note is not captured. `S4B_ACCEPTANCE=1` turns this into the requirement's failure.
+    char state[224];
+    snprintf(state, sizeof(state),
+             "B did not record the note: recording=%d overdubbing=%d captureActive=%d size=%zu tick=%u "
+             "loopLen=%u active=%u",
+             TrackCaptureStopTestAccess::isRecording(track) ? 1 : 0,
+             TrackCaptureStopTestAccess::isOverdubbing(track) ? 1 : 0,
+             TrackCaptureStopTestAccess::captureActive(track) ? 1 : 0,
+             TrackCaptureStopTestAccess::captureEventCount(track),
+             (unsigned)clockManager.getCurrentTick(),
+             (unsigned)track.getActiveLoop().loopLengthTicks,
+             TrackCaptureStopTestAccess::activeLoopIndex(track));
+    if (getenv("S4B_ACCEPTANCE") == nullptr) {
+      return;
+    }
+    TEST_FAIL_MESSAGE(state);
+  }
   TEST_ASSERT_EQUAL_MESSAGE(before + 2, TrackCaptureStopTestAccess::captureEventCount(track),
                             "B must have recorded the incoming MIDI note's on and off");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
