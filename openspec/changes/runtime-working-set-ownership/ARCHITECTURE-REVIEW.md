@@ -5233,3 +5233,47 @@ explicit sweep on a same-track slot switch — recorded here as S4.3's remaining
 implied done.
 
 Full native `2,445 passed / 1 skipped`; capture-serial builds with RAM1 byte-identical.
+
+## S4.4 — declared cap policy: reported, not enforced stricter than the model (2026-09-25)
+
+### What I built first, and why it was wrong
+
+The first cut enforced the declared caps at the activation entry: `Track::admitsEnvelopeRole` refused
+once a class was held at its declared cardinality. It was red-proven and it broke the suite —
+**two fixtures failed, and the shared `preparePlayingTrack()` change then failed nine more**. The gate
+was refusing a second `LiveCapture` role on a track, which the declared envelope (design.md) says is one
+per track.
+
+That is the useful finding: **the declared envelope is stricter than the resource model.** The
+implementation supports per-slot capture roles, and 85 fixtures in the continuous-capture harness arm a
+second slot. Enforcing the declaration would reject supported flows, so the enforcement was wrong — not
+the fixtures. The fixtures were reverted; only the observation stayed.
+
+### What is in place now
+
+- `Track::reportEnvelopeBreachIfAny(slot, role)` — read-only, **no storage**, driven from the activation
+  entry before resources are taken. When a class is already held at its declared cap it reports
+  `#MEM_DENIED,op=…,reason=cap_reached,class=N` through the new
+  `MemoryMonitor::reportDeclaredCapDenied`, which is deliberately a **separate reason from an allocation
+  failure** (`prewarm_failed`): "we exceeded a declared cardinality" and "the pool ran out" are different
+  facts and must not be read as each other.
+- The activation **proceeds**. The enforcing caps remain the lease's own (`WorkingSetLeaseTable`), which
+  refuse at the point of custody and are covered by `test_working_set_lease`.
+- `class=N` is a role-class index, not a name: the device `printf` path takes no `%s`.
+
+Fixture `test_a_declared_envelope_breach_is_reported_and_does_not_block_activation`: the first activation
+is admitted with no breach; a second live-capture role on the track is admitted **and** both slots really
+do hold the class, so the state the envelope calls a breach is established rather than asserted away.
+
+**Honest limit:** the report itself is serial output, so the fixture cannot assert the emitted line on
+the host — it asserts the policy path is taken and does not block, and the emitted reason is a device
+observation.
+
+### What S4.4 has not settled
+
+The refuse-vs-queue question is **not** answered by this slice: nothing is refused, so nothing is queued.
+Deciding it requires either a declared cap the resource model also enforces (which today it does not) or
+a change to the per-track cardinality, and both are architecture decisions rather than implementation.
+Recorded as the task's open remainder instead of being implied resolved.
+
+Full native `2,446 passed / 1 skipped`; capture-serial builds with RAM1 byte-identical.
