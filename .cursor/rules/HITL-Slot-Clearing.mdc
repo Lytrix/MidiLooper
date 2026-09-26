@@ -1,0 +1,39 @@
+# HITL slot clearing on the development set
+
+**Standing authorization (owner, 2026-09-26).** Agents may clear loop slots on any
+track, on any device, whenever a test needs it. This is a development set:
+breaking and clearing content is allowed, and no per-slot permission needs to be
+requested first.
+
+## Scope of the authorization
+
+Clearing a **loop slot** — the firmware's own clear (long-press the record button
+with the slot selected, or `CLEAR_TRACK_FOR_SLOT`), and the recording/overdubbing
+of a slot that a test needs — is authorized for every track and slot, including
+populated ones.
+
+## What is *not* covered
+
+The SD **workspace** operations keep their own rules in
+[`Destructive-SD-Operations.mdc`](Destructive-SD-Operations.mdc): quarantining,
+renaming or deleting the workspace (current/recovery checkpoints, set library) is a
+different action from clearing a loop slot, and it stays a quarantining operation.
+When a test only needs slots, clear slots; do not reach for workspace operations.
+
+## Why this matters for HITL staging
+
+A slot with `has_committed_content: false` is **not** automatically a usable record
+target. Every slot on the current device retains an SD payload
+(`payload_inventory=64` of 64), and the per-slot gesture consults SD-aware content
+before the record path, so an uncleared slot takes the playback-switch branch
+("Queued playback switch") instead of arming a recording. Staging a record target
+therefore means **clearing it first**.
+
+Two practical notes learned from device runs:
+
+- The clear can be **refused while deferred persistence is busy**
+  (`Clear refused: deferred save temporarily blocked by waiting_commit_gate; slot
+  left untouched`). Settle a few seconds and retry; do not treat the first refusal
+  as failure.
+- `Clear ignored — selected slot is empty` is a **success**, not an error: the slot
+  is already clear, which is the state the test wanted.
