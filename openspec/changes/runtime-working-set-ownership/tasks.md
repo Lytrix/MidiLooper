@@ -1291,7 +1291,25 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       sequence in this run does not produce it, because the successor's `startRecordingTrack` sweeps *other*
       tracks while A's retired lease lives on the **same** track. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.1's lease-release device row: the cross-track
-      route is a structural dead end". **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
+      route is a structural dead end".
+      **DEVICE PROBE BUILT AND RUN 2026-09-27 — the row is still unobserved, and the run corrected one step of
+      the protocol.** `scripts/hitl_s41_lease_release_probe.py` is the dedicated entry point for route (c): it
+      selects the track, arms and records a take into an empty target while **stopped**, stops it, waits for the
+      finalizer's own edges, then switches to a second slot so the switch's playback reset releases the retired
+      one, and it gates on `DIAG,ws_release,<A>,<generation>,released` **inside a device-time window** (the
+      newest timestamp at attach is the anchor, because the ring had been running long enough to matter). It
+      performs **no upload** and clears nothing.
+      **What the run did** (`captures/s41-lease-20260927_012917`, track 8, A=4, B=5, shutdown `complete`):
+      the take recorded and committed (`RECA,3,0`, `RECS,stopToStopped,3,1965,0,1965,2304,0`), so the record
+      arm and the take itself are fine — but **the finalizer never retired** (no `reentry_window_open` for the
+      slot, no `canonical_release`) and **no `ws_release` row appeared**. The switch did not do what the
+      protocol needs: it logged `Loop 5: Queued playback switch`, i.e. it took the **filled-slot playback
+      path** rather than a playback reset that frees the incumbent. The probe's own `slot_a_finalizer_retired`
+      check was `confirmed: False`, which is exactly the signal that the run was not staged — the oracle did
+      its job and refused to read a release out of an unretired take.
+      **So the next attempt must first establish *why* the switch queued and whether a release needs the
+      switch to commit immediately rather than quantize.** Note the take itself now occupies slot 4 (track 8
+      slots 5 and 8 remain empty), so a repeat needs an empty target chosen from the pre-run census. **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
       memory-pressure and `(slot, generation)` conversions remain.** `Track::clearStoppingIntervalLedger()`
       now clears only the stopping interval's slot ledger, and both converted stop routes call it
       (`handleNoteEditFold`'s `endInPlaying` branch, `stopOverdubbing`'s fallback);
