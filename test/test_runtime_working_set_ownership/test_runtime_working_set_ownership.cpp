@@ -674,16 +674,16 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
     // a start on a running transport may be queued, so advance the tick domain across the loop's bar
     // boundary through the production dispatch.
     midiButtonActions.handleToggleRecord();
-    // Advance exactly one bar from the switch tick so the queued start fires within the same loop, and
-    // the input below lands inside the loop the capture is recording rather than past its end.
+    // A start on a running transport is **queued** at the loop's bar boundary
+    // (`TrackManager::handlePendingRecordStart`), so drive that production dispatch across the boundary
+    // first, and only fall back to a further press if no queued start existed.
     const uint32_t switchTick = clockManager.getCurrentTick();
     const uint32_t nextBar = switchTick + (768 - (switchTick % 768));
-    for (uint32_t tick = nextBar; tick <= nextBar + 768 &&
-                               !TrackCaptureStopTestAccess::isRecording(track) &&
-                               !TrackCaptureStopTestAccess::isOverdubbing(track);
-         tick += 768) {
-      clockManager.assignCurrentTickSilently(tick);
-      TrackCaptureStopTestAccess::startPendingRecord(tick);
+    clockManager.assignCurrentTickSilently(nextBar);
+    TrackCaptureStopTestAccess::startPendingRecord(nextBar);
+    if (!TrackCaptureStopTestAccess::isRecording(track) &&
+        !TrackCaptureStopTestAccess::isOverdubbing(track)) {
+      midiButtonActions.handleToggleRecord();
     }
   }
 
@@ -744,7 +744,9 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
   const size_t before = TrackCaptureStopTestAccess::captureEventCount(track);
   // Inject in the record domain: the dispatcher above advanced the tick to the loop boundary, so the
   // note must lie *after* the current tick or capture rejects it as already past.
-  const uint32_t onTick = clockManager.getCurrentTick() + 8;
+  const uint32_t tickBeforeInput = clockManager.getCurrentTick();
+  const uint32_t loopLenBeforeInput = track.getActiveLoop().loopLengthTicks;
+  const uint32_t onTick = tickBeforeInput + 8;
   inputNote(64, onTick, onTick + 32);
   if (TrackCaptureStopTestAccess::captureEventCount(track) != before + 2) {
     // Characterization of the remaining gap: B is the active, started interval with capture active,
@@ -752,14 +754,15 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
     char state[224];
     snprintf(state, sizeof(state),
              "B did not record the note: recording=%d overdubbing=%d captureActive=%d size=%zu tick=%u "
-             "loopLen=%u active=%u",
+             "loopLen=%u active=%u beforeTick=%u beforeLoopLen=%u onTick=%u",
              TrackCaptureStopTestAccess::isRecording(track) ? 1 : 0,
              TrackCaptureStopTestAccess::isOverdubbing(track) ? 1 : 0,
              TrackCaptureStopTestAccess::captureActive(track) ? 1 : 0,
              TrackCaptureStopTestAccess::captureEventCount(track),
              (unsigned)clockManager.getCurrentTick(),
              (unsigned)track.getActiveLoop().loopLengthTicks,
-             TrackCaptureStopTestAccess::activeLoopIndex(track));
+             TrackCaptureStopTestAccess::activeLoopIndex(track),
+             (unsigned)tickBeforeInput, (unsigned)loopLenBeforeInput, (unsigned)onTick);
     if (getenv("S4B_ACCEPTANCE") == nullptr) {
       return;
     }
