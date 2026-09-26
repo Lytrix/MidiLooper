@@ -17,7 +17,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hitl.control_constants import LOOP_SELECT_NOTE_BASE, TRACK_SELECT_NOTE_BASE  # noqa: E402
-from hitl_retention_handoff import Gesture, _emit, critical_window_gestures  # noqa: E402
+from hitl_retention_handoff import (  # noqa: E402
+    Gesture,
+    _emit,
+    critical_window_gestures,
+    target_precondition,
+)
 
 
 class FakePort:
@@ -134,6 +139,50 @@ class RetentionGesturePlanTests(unittest.TestCase):
             _emit(port, Gesture("x", "slot_record", 9), press_ms=120, gap_ms=0)
         with self.assertRaises(ValueError):
             _emit(port, Gesture("x", "track", 0), press_ms=120, gap_ms=0)
+
+    # --- the staging precondition: a populated successor must be refused, not silently cleared ---
+    @staticmethod
+    def census(*, track: int, committed: dict[int, bool]) -> dict:
+        rows = []
+        for t in range(1, 9):
+            for sl in range(1, 9):
+                rows.append({"track": t - 1, "slot": sl - 1,
+                             "has_committed_content": bool(committed.get(sl, False)) if t == track else False})
+        return {"library_observation": {"slots": rows}}
+
+    def test_empty_targets_satisfy_the_precondition(self):
+        ok, detail = target_precondition(self.census(track=8, committed={}), track=8, slots=(5, 6, 7))
+        self.assertTrue(ok, detail)
+
+    def test_a_populated_successor_is_refused_and_named(self):
+        """The rerun's hypothesis, encoded: if C holds committed content, the run must stop as setup --
+        a populated successor belongs to the populated-slot/overdub scenario, not this one."""
+        ok, detail = target_precondition(self.census(track=8, committed={5: False, 6: False, 7: True}),
+                                         track=8, slots=(5, 6, 7))
+        self.assertFalse(ok)
+        self.assertIn("slot(s) [7]", detail)
+        self.assertIn("populated-slot/overdub acceptance scenario", detail)
+
+    def test_a_populated_predecessor_is_also_refused(self):
+        ok, detail = target_precondition(self.census(track=8, committed={5: True, 6: False, 7: False}),
+                                         track=8, slots=(5, 6, 7))
+        self.assertFalse(ok)
+        self.assertIn("slot(s) [5]", detail)
+
+    def test_an_unreported_target_is_refused_rather_than_assumed_empty(self):
+        ok, detail = target_precondition({"library_observation": {"slots": []}}, track=8, slots=(5, 6, 7))
+        self.assertFalse(ok)
+        self.assertIn("unknown, which is not the same as empty", detail)
+
+    def test_the_precondition_reads_the_named_track_not_any_slot_with_that_index(self):
+        """A slot index is only meaningful with its track: another track's populated slot 5 must not fail
+        track 8's slots 5/6/7."""
+        data = self.census(track=8, committed={})
+        for r in data["library_observation"]["slots"]:
+            if r["track"] == 2 and r["slot"] == 4:      # track 3 slot 5 populated
+                r["has_committed_content"] = True
+        ok, detail = target_precondition(data, track=8, slots=(5, 6, 7))
+        self.assertTrue(ok, detail)
 
     def test_transport_gesture_uses_the_global_transport_note(self):
         from hitl.control_constants import GLOBAL_TRANSPORT_NOTE

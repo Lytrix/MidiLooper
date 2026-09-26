@@ -200,6 +200,36 @@ def _ensure_transport(out_port, capture_log: Path, *, running: bool, press_ms: i
     return ok
 
 
+def target_precondition(census: dict, *, track: int, slots: tuple[int, ...]) -> tuple[bool, str]:
+    """Whether `track`'s named `slots` are empty record targets, per a read-only library census.
+
+    The scenario needs **empty** targets: A and B are seeded by recording into them and C stays empty as the
+    record target. An intentionally populated successor is a supported use case, but it belongs to the
+    populated-slot/overdub acceptance scenario -- it cannot satisfy this empty-target record-start scenario by
+    receiving the same gesture. So a populated target here is a *staging* failure (SETUP_INCOMPLETE), not
+    something to clear again in passing.
+
+    Factored out of `main` so a host test can prove the refusal without a device.
+    """
+    rows = (census.get("library_observation") or {}).get("slots") or []
+    state = {}
+    for r in rows:
+        if isinstance(r, dict):
+            state[(r.get("track", -1) + 1, r.get("slot", -1) + 1)] = bool(r.get("has_committed_content"))
+    missing = [s for s in slots if (track, s) not in state]
+    if missing:
+        return False, (f"the census has no record for track {track} slot(s) {missing}: the target state is "
+                       "unknown, which is not the same as empty")
+    occupied = [s for s in slots if state[(track, s)]]
+    if occupied:
+        return False, (
+            f"track {track} slot(s) {occupied} hold committed content and are not empty record targets. This "
+            "scenario needs all three empty (A and B are seeded by recording, C stays empty as the record "
+            "target); a populated successor is a supported case but belongs to the populated-slot/overdub "
+            "acceptance scenario, not this one.")
+    return True, f"track {track} slots {list(slots)} are all empty record targets"
+
+
 def _write_metadata(out_dir: Path, *, args, result: str, session_log: Optional[Path]) -> dict:
     """Write the run identity the oracle requires: a pinned commit and firmware hash.
 
@@ -428,7 +458,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     # leaves C empty as the record target, so all three must be empty. Recording is refused by the firmware on
     # a slot with committed passes, which is why the read-only library observation is required first. This
     # script never clears a slot: clearing an occupied target is a separate, explicitly authorized action.
-    if args.census is not None and args.no_clear:
+    if False:  # superseded: the census is now a pre-window precondition for every run
         data = json.loads(args.census.read_text())
         rows = (data.get("library_observation") or {}).get("slots") or []
         occupied = [(r.get("track", -1) + 1, r.get("slot", -1) + 1) for r in rows
@@ -523,6 +553,24 @@ def main(argv: Optional[list[str]] = None) -> int:
                 f"{cc_value} on any of {[r for r, _ in tempo_routes]}. LOOP_EDIT must be reachable for the pin "
                 "(CC102 is mode-gated); without it every timing below is wrong, so the flow refuses to "
                 "continue rather than produce a bad run.")
+
+        # --- the target precondition, BEFORE A's finalization window is opened ---
+        # Verified from the read-only census, by track and slot: "Track cleared" alone neither identifies the
+        # cleared target nor proves its final state, so the state comes from the device's own per-slot report.
+        # A failure stops the run as SETUP_INCOMPLETE; it does not clear again in passing.
+        if args.census is not None:
+            ok, detail = target_precondition(json.loads(args.census.read_text()), track=args.track,
+                                             slots=(args.slot_a, args.slot_b, args.slot_c))
+            events.append({"event": "target_precondition", "ok": ok, "detail": detail})
+            if not ok:
+                report["result"] = "SETUP_INCOMPLETE_TARGET_NOT_EMPTY"
+                report["events"] = events
+                report["session_log"] = str(capture_log)
+                _write_metadata(out_dir, args=args, result=report["result"], session_log=capture_log)
+                (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
+                print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
+                print(f"[retention] SETUP_INCOMPLETE: {detail}")
+                return 3
 
         # --- optional in-run clear; the normal flow is `--prepare-only` first, then run as normal ---
         if args.clear_targets and not args.no_clear:
