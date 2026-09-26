@@ -37,6 +37,26 @@ void EditManager::bumpSessionPreviewRevision() { OFF_PATH(); }
 void EditManager::bumpSessionPlaybackPreviewRevision() { OFF_PATH(); }
 void EditManager::scheduleDeferredNoteEditDisplayRefresh() { OFF_PATH(); }
 MidiEventVec& EditManager::editMidiEvents(Track&) { OFF_PATH(); static MidiEventVec empty; return empty; }
+// `TrackManager::setSelectedTrack` (the production track-select route) departs the note-edit session before
+// it moves focus. Note-edit departure is the edit suites' subject, but a **cross-track** successor fixture
+// has to select the successor's track through the same route a user does, so these two neighbours are
+// observable for it instead of failing closed. Neither is asserted on; the edit-session semantics stay in
+// the edit suites.
+#if defined(HARNESS_OBSERVABLE_TRACK_SELECT)
+void EditManager::beforeSelectedTrackChange(Track&) {}
+void EditManager::onTrackChanged(Track&) {}
+#else
+void EditManager::beforeSelectedTrackChange(Track&) { OFF_PATH(); }
+void EditManager::onTrackChanged(Track&) { OFF_PATH(); }
+#endif
+// `Track::clear()` reverts any in-flight note-edit session for the loop it clears. A fixture that clears a
+// slot through the production pass removal reaches this; it is a note-edit neighbour, so it is observable
+// here (no-op) rather than failing closed. The note-edit suites remain its subject.
+#if defined(HARNESS_OBSERVABLE_SLOT_CLEAR)
+void EditManager::revertNoteEditSessionForLoopClear(Track&) {}
+#else
+void EditManager::revertNoteEditSessionForLoopClear(Track&) { OFF_PATH(); }
+#endif
 const MidiEventVec& EditManager::editMidiEvents(const Track&) const { OFF_PATH(); static MidiEventVec empty; return empty; }
 CommitResult Track::commitCaptureForStop(CommitReason, uint32_t, uint32_t, uint8_t) { OFF_PATH(); return {}; }
 // A physical output boundary, not an unrelated domain route: silencing is reachable from both stop
