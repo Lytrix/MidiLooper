@@ -5336,3 +5336,57 @@ The fixture carries both modes:
 Full native `2,447 passed / 1 skipped`; capture-serial builds with RAM1 byte-identical. No production
 behavior changed in this slice (the switch-guard edit was reverted); the deliverable is the executable
 requirement plus the corrected S4.4 attribution.
+
+## S4b.1 — fixture tightened after review (2026-09-25, second pass)
+
+The review found the first fixture overstated what it proved. Three qualifications were correct and are
+fixed:
+
+1. **It did not prove A had an *admitted* finalizer.** Its precondition accepted an
+   accepted-but-unexecuted stop. The acceptance case now asserts
+   `hasPendingDeferredOverdubStop` **and** asserts `!hasAcceptedUnexecutedInteraction`, and the
+   unadmitted stop is **separate coverage** — waiting for admission is a different requirement from
+   admitted-and-paused.
+2. **B bypassed the user-facing routes.** The fixture called `startOverdubbing` and
+   `loop.appendCaptureEvent` directly. It now drives `MidiButtonActions::handleToggleRecordForSlot`
+   (the normal per-slot gesture, which finalizes A's capture, commits the switch and starts an empty
+   target) and sends input through `midiHandler.handleMidiMessage`, so the claim is that the **gesture
+   and incoming MIDI reach B**, not that a buffer accepts an append. The target is the requested
+   **empty slot**.
+3. **"Flips automatically" was not a durable gate.** The characterization branch is documented as
+   something to be **deleted** when S4f.3 lands, not made conditional again, so a later regression to
+   refusing the switch cannot pass by returning early.
+
+### What the tightened fixtures now establish
+
+- **Admitted-and-paused finalizer (`test_switching_starts_the_new_take_while_the_previous_take_still_finalizes`):**
+  still **red** under `S4B_ACCEPTANCE=1` — the switch holds the active slot while the stop is in flight,
+  so B never starts. The requirement is unmet and blocked on **S4f.3**.
+- **Unadmitted stop (`test_an_unadmitted_stop_retains_the_switch_and_start_requests`):** **PASSES**, and
+  that is a real result rather than a skip: with the stop merely accepted-and-unexecuted, the switch and
+  start are **retained** and execute once admission becomes possible, **without a second gesture**. The
+  user's requirement for that case already holds; it is now pinned by a fixture instead of assumed.
+
+### Cost of driving the production route
+
+Reaching B through the gesture crosses four boundaries the harness kept fail-closed. They are storage
+and display boundaries, not the role handoff, so they are observable for suites that drive the switch:
+`StorageManager` persistence requests (`markLoopSlotMaterialDirty`, `admitLoopSlotPersist`,
+`requestDeferredSaveState`, `requestWorkspaceFooterPersistWhenSafe`), SD payload visibility/refresh
+(`hasLoopSlotPayloadOnSdInRam`, `refreshLoopSlotPayloadOnSdInRam`), the restore-focus hook, and
+`EditManager`'s selected-slot hooks. The edit-**depart** closure was tried as a real link and rejected:
+it pulls the whole note-edit machinery (reopen/persist/display-refresh) for a no-op when no session is
+open, so the observable stub is the honest choice and is documented as such.
+
+### Still open, unchanged
+
+- **S4f.3** — the accepted-interaction carrier. It is the blocker for the admitted-finalizer acceptance
+  and therefore for S4b.1.
+- **Cross-track switch** — not covered.
+- **Repeated B → C while A finalizes** — the user's correction is recorded: `Omax` (inbound preparation
+  overlap) does **not** by itself solve this; it also depends on **finalizer capacity**. Kept explicitly
+  open rather than folded into the overlap policy.
+
+Full native `2,448 passed / 1 skipped`; capture-serial builds with RAM1 byte-identical. No production
+behavior changed: the deliverable is the tightened, honest fixture plus the finding that the unadmitted
+case already holds.
