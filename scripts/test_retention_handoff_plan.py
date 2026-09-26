@@ -203,18 +203,30 @@ class ClearVerificationTests(unittest.TestCase):
     """
 
     def test_the_intended_slot_clearing_is_a_pass(self):
+        """Target 8 (1-based) is `active_slot=7` (0-based): the conversion is the whole point here."""
         self.assertTrue(cleared_slot_from_lines(
-            ["[1885.0] [DEBUG] [TRACK] Track cleared @ tick 1885 (active_slot=7)"], slot_number=7))
+            ["[1885.0] [DEBUG] [TRACK] Track cleared @ tick 1885 (active_slot=7)"], slot_number=8))
 
     def test_a_clear_line_naming_another_slot_is_a_failure(self):
         """The defect: a bare marker match must not pass when the clear hit a different slot."""
         self.assertFalse(cleared_slot_from_lines(
-            ["[1885.0] [DEBUG] [TRACK] Track cleared @ tick 1885 (active_slot=5)"], slot_number=7))
+            ["[1885.0] [DEBUG] [TRACK] Track cleared @ tick 1885 (active_slot=5)"], slot_number=8))
+
+    def test_the_base_conversion_is_not_off_by_one(self):
+        """Regression from the device run: the firmware emits `active_slot=4` for target slot 5.
+
+        Comparing the raw values judged every real clear a mismatch (`clear_5_wrong_slot`) while the device
+        had cleared exactly the intended slot. Both directions are pinned so the base can never drift again.
+        """
+        line = ["[26.336] [DEBUG] [TRACK] Track cleared @ tick 0 (active_slot=4)"]
+        self.assertTrue(cleared_slot_from_lines(line, slot_number=5), "target 5 must match active_slot=4")
+        self.assertFalse(cleared_slot_from_lines(line, slot_number=4), "target 4 must not match active_slot=4")
+        self.assertFalse(cleared_slot_from_lines(line, slot_number=6), "target 6 must not match active_slot=4")
 
     def test_the_intended_slot_already_empty_is_acceptable_for_a_preparation(self):
         self.assertTrue(cleared_slot_from_lines(
-            ["[1.0] [DEBUG] Clear ignored \u2014 selected slot is empty (track 8 slot 7)"],
-            slot_number=7))
+            ["[32.898] [DEBUG] Clear ignored \u2014 selected slot is empty (track 7 slot 5)"],
+            slot_number=6))
 
     def test_a_missing_identity_line_is_unknown_not_a_pass(self):
         """An older firmware emits the legacy marker only; that must not be claimed as identity-grade."""
@@ -231,11 +243,11 @@ class ClearVerificationTests(unittest.TestCase):
             "[1.0] [DEBUG] [TRACK] Track cleared @ tick 100 (active_slot=5)",
             "[2.0] [DEBUG] [TRACK] Track cleared @ tick 200 (active_slot=7)",
         ]
-        self.assertTrue(cleared_slot_from_lines(lines, slot_number=7))
+        self.assertTrue(cleared_slot_from_lines(lines, slot_number=8))
 
     def test_the_whole_track_empty_form_names_the_slot_too(self):
         self.assertTrue(cleared_slot_from_lines(
-            ["[1.0] [DEBUG] Clear ignored \u2014 track is empty (track 8 slot 6)"], slot_number=6))
+            ["[1.0] [DEBUG] Clear ignored \u2014 track is empty (track 7 slot 5)"], slot_number=6))
 
 
 if __name__ == "__main__":

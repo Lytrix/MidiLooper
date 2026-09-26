@@ -154,15 +154,22 @@ CLEAR_IGNORED_SLOT_RE = re.compile(r"Clear ignored \u2014 [^(]*\(track \d+ slot 
 def cleared_slot_from_lines(lines: list[str], *, slot_number: int) -> Optional[bool]:
     """Did these lines show the intended slot being cleared (or found already empty)?
 
+    `slot_number` is the **1-based** number the CLI and the action layer use (loop button N is
+    `LOOP_SELECT_NOTE_BASE + N - 1`). The firmware's `active_slot=` / `Clear ignored` `slot` fields are
+    **0-based**, matching `#CAP` identity and the census, so the conversion happens here and only here.
+    Mixing the two bases is not hypothetical: comparing the raw values judged every clear a mismatch while
+    the device had in fact cleared the right slot.
+
     Returns True/False on an identity-grade answer, or None when no identity line is present (an older
     firmware, or a clear that emitted nothing) -- the caller records that distinction instead of counting a
     bare marker match as proof.
     """
+    slot0 = slot_number - 1
     for line in lines:
-        if (m := TRACK_CLEARED_SLOT_RE.search(line)) and int(m.group(1)) == slot_number:
+        if (m := TRACK_CLEARED_SLOT_RE.search(line)) and int(m.group(1)) == slot0:
             return True
         # Already empty is the desired end state for a preparation, but only if it is THIS slot.
-        if (m := CLEAR_IGNORED_SLOT_RE.search(line)) and int(m.group(1)) == slot_number:
+        if (m := CLEAR_IGNORED_SLOT_RE.search(line)) and int(m.group(1)) == slot0:
             return True
     for line in lines:
         if TRACK_CLEARED_SLOT_RE.search(line) or CLEAR_IGNORED_SLOT_RE.search(line):
