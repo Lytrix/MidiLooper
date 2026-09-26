@@ -7428,3 +7428,73 @@ Capturing only the footer at admission would make the persisted image internally
 describing a moment the loop bodies were not written at — which is worse than the status quo. Making the whole
 save snapshot-at-admission is a persistence-semantics change beyond S4.1 and would owe its own `DEC`. Recorded
 rather than implemented, per the entry's own note that it "needs the persistence fixture".
+
+---
+
+## Workspace-load failure on the device, and the host shutdown defect behind it (2026-09-26)
+
+**The device's current workspace no longer loads and the runtime comes up empty.** Post-loss boot:
+
+    [StorageManager] ERROR: CurrentSet meta missing /MidiLooper/current/temp/runtime.bundle.bin
+    [StorageManager] Current workspace load failed.
+    [StorageManager] Boot recovery chain exhausted; starting empty.
+    BOOT,load,fail
+
+with `post_restore_census ... free_chunks=480` (of 512). The read-only library observation agrees: all 64
+slots empty, `committed_at_checkpoint=0`, `payload_inventory=0`, and the observation is **complete**
+(`incomplete_window: false`, 64/64 slots observed). Minutes earlier the same library read **58 committed /
+~386-403 free**. This is not an observation artifact -- the chunk pool corroborates it independently.
+
+**Cause: the host closed the port while a workspace save was writing.** The deliberate clear of the
+authorized target (track 8 slot 4, `identity_grade: True`) marked the slot dirty and admitted a deferred
+workspace save; `--prepare-only` in `hitl_retention_handoff.py` then **returned immediately**, closing the
+capture session and the serial port mid-write. That session's last line is
+`PERS,work,...,TrackMeta,track:7,start,ok` with no completion. The next run's `--upload` reset the board on
+top of it; boot hygiene discarded the incomplete temp; the manifest the loader needs was then absent. The HITL
+skill documents this exact failure mode and prescribes stop -> drain -> stop -> drain with the port held open.
+The driver implemented none of it -- **a defect in this session's own tooling**, not a firmware fault.
+
+**What is established vs not.** Established: the load failure and the empty runtime. **Not** established:
+that the slot payloads are erased (a *load* failure is not an erasure -- the card may hold every payload and
+every saved set), or the exact failure chain (the interrupted save is the leading suspect, not a proven
+cause). The SD card has not been touched and **no further boot was induced**, because boot hygiene is itself
+evidence-modifying -- it has already discarded an incomplete runtime bundle temp.
+
+**Fix (host-only, committed).** `scripts/hitl/device_shutdown.py`:
+
+- `shutdown_device` performs the canonical two stop+drain cycles and delegates the idle decision to the
+  existing owner, `deferred_save_idle_in_tail` -- completion is **verified, never slept**.
+- The decision is taken from the log **tail**, not from "lines since I last looked". A new-lines-only window
+  is empty at the instant it is opened, and the idle owner correctly calls an empty suffix idle, so anchoring
+  at "now" reported success *before the save was admitted*. That vacuous pass was a real defect in the first
+  cut of this module, caught by `test_the_incident_log_is_never_reported_complete`.
+- A raising press or a reported disconnection is `incomplete_disconnected`; a drain that never settles is
+  `incomplete_timeout`. An incomplete shutdown is **latched**, and `refuse_reset_if_latched` blocks the
+  follow-up upload/reset in both the driver and `hitl_boot_census`.
+- `DeviceSession` is a context manager, so the drain runs on **every** exit -- normal return, early return,
+  and exception -- instead of at each `return`, which is how `--prepare-only` was missed. A structural test
+  asserts every `return` inside the capture session sits inside a `DeviceSession`.
+
+**A false green in that structural test, found by red-proving it.** An earlier visitor returned early from
+`visit_FunctionDef`, so `main`'s body was never traversed and the assertion passed even against a planted
+`return` that bypassed the drain. Fixed, and re-red-proved (the planted return is now flagged at its line).
+
+**Oracle: 15 host tests, using the incident's own preserved bytes as the decisive fixture.** The clear-run log
+reads active/not-idle while the clean retention-run log reads idle, so the check discriminates rather than
+self-confirms -- and a fixed sleep provably could not tell those two logs apart. The reset-gate test proves
+`hitl_boot_census.main` returns 4 **without** invoking the upload when latched.
+
+**The hold is enforced, not merely stated:** the latch is set with the incident context, so any upload/reset
+now refuses until it is deliberately cleared once the device is known good.
+
+**Recovery path (a), preservation first -- awaiting authorization.** The decisive artifacts are preserved
+under [`evidence/2026-09-26-workspace-loss/`](evidence/2026-09-26-workspace-loss/MANIFEST.md) (copied out of
+gitignored `captures/`, with per-file sha256, the exact commands, build identities, and the driver verbatim at
+the faulty revision; `.gitattributes` keeps them byte-exact so the hashes stay valid). The read-only SD
+imaging and inspection procedure -- full image from the raw device, verify, then inspect **the copy** for the
+current-workspace payloads, manifests, saved sets and revisions -- is written up and **not executed**:
+[`SD-IMAGING-PROCEDURE.md`](evidence/2026-09-26-workspace-loss/SD-IMAGING-PROCEDURE.md). No quarantine, no
+saved-set load, no rebuild.
+
+**S1.6c.2 -- capacity revalidation is BLOCKED.** It requires the loaded N=56 library, and an empty-library
+run cannot replace that experiment. This is a hard block, not a delay.
