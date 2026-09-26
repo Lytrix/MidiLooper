@@ -6605,3 +6605,56 @@ path the S4f.3 carrier already uses for an empty target. The change would be fou
 question is not re-litigated: the bar-grid route stays available to internal callers (the retention carrier)
 and is deliberately **not** wired to the loop button. Nothing in `test/` or the HITL fixtures asserts the
 punch-in line; only that archived plan and two doc comments reference it.
+
+### Step 3: the complete chain fired on the device (2026-09-26)
+
+First hardware run in which every link of the requirement actually happened. From the run's own log
+(`captures/s4f3-retention-20260926_170052/session_20260926_170145.log`), targets track 8 slots 5/6/7:
+
+```
+[93.269] Reentry window open slot=4                          L1  A's finalizer outstanding
+[93.357] Loop 6: Switched from slot 5 (capture finalized)        capture-switch commits
+[93.442] Overdubbing started @ tick 1187                         B overdubs
+[93.767] Loop 6: Stop Overdub
+[93.767] Overdub stop refused: stop_job_pending phase=7 ...  L2  B's stop DENIED on capacity
+[94.015] Loop 7: Switched from slot 6 (capture finalized)         C's switch
+[94.663] Reentry window open slot=5                          L5  B's stop BOUND after release
+#CAP,96851911,RECA,6,2304                                    L6  C's capture started, once
+```
+
+**What made it work, after a long sequence of marker-level dead ends:**
+
+- **A's overdub must capture content.** Measured: an empty overdub logs `Overdub session opened: events=0` and
+  finalizes in ~0.5 s, leaving no window to stage a denied stop in. Injecting notes into the overdub is what
+  gives the finalizer work -- this, not loop length or seed density, is what determines the window.
+- **The window is not tunable by length or density.** Measured across 4/8/16-bar seeds and a 48-note dense seed:
+  1.48 / 1.77 / 1.72 / 1.76 s -- a fixed cost dominates; the one lever that moved it was giving the overdub
+  events to finalize.
+- **No multi-tap presses anywhere.** A loop button's double press has a triple action, so the firmware holds the
+  second tap and any press on that button inside the wait merges into a triple (measured: `Triple press
+  detected ... Loop 6 (triple)`, i.e. REDO instead of an overdub). The record button toggles overdub/stop on
+  the active slot in a **single** press, so the whole window is single presses, and B's stop uses B's own loop
+  button so no two consecutive presses share a button.
+- **A must be the active slot** when the window opens, so the driver seeds B *before* A -- pressing A's loop
+  button to move the active slot would fade through a LoopEnd-quantized playback switch.
+- **The transport must be running** before the window's first press: the seeds end by stopping it, and on a
+  stopped transport the record button arms instead of overdubbing.
+
+**The oracle refuses this run, correctly**, and the reasons are evidence plumbing rather than chain failures:
+
+| Setup failure | Cause |
+|---|---|
+| `fresh_boot` | the main run did not re-upload (only `--prepare-only` did), so its log has no boot banner |
+| `identity_pinned` | the driver does not write `metadata.json`, so the run is not pinned to a build |
+| `seed_content_on_a` | the check wants `RECS,stop`, but a seed stopped by the **transport** ends `RECORDING -> STOPPED_RECORDING -> STOPPED` and emits no stage record |
+| `L4_capacity_released` | `DIAG,canonical_release` is deferred in the capture stream, like the window rows |
+
+Also recorded: the driver's in-run `successor_started` check reported False even though C started, because the
+`#CAP RECA` row is deferred in the same way (it appears at device time 96.85 s). The oracle scans the complete
+log and finds it; the live check does not. Both deferrals are the firmware's own documented behaviour ("`#CAP`
+DIAG rows queue behind the deferred stop's flood and arrive seconds late").
+
+So the remaining work is to align the driver's identity/metadata and the oracle's seed and release markers with
+what the device actually emits, then re-run with `--upload` and the content pipeline. The device gate's real
+question -- whether the natural finalization window suffices -- is now answered **yes** on this evidence: the
+window held long enough for the switch, B's overdub, and the denied stop, all inside it.
