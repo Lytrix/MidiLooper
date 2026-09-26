@@ -930,6 +930,9 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       runtime->canonicalReleaseMarkerArmed = false;
       // Human log line first: the HITL probe paces B's admitted stop from this edge; the
       // `#CAP` tiers queue behind the deferred stop's flood and arrive seconds late.
+      // REVERTED 2026-09-26: the slot this reports is wrong (see the packet). Fixing it needs its own RAM1
+      // budget decision -- the scan that names the retiring slot cost 64 bytes of the approved padding floor
+      // (840 -> 776), and the floor is not negotiable here.
       logger.info("Reentry released");
 #if defined(SESSION_CAPTURE)
       DebugSessionCapture::canonicalFinalizationCapacityReleased(

@@ -393,7 +393,16 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     if ((track.isRecording() || track.isOverdubbing()) && previousSlot != slotIndex) {
         trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
         const bool committed = trackManager.finalizeCaptureAndSelectSlot(trackIdx, slotIndex, now);
-        logger.info("Loop %d: Switched from slot %d (capture finalized)", slotIndex + 1, previousSlot + 1);
+        // The switch is only a switch when it committed. This line used to print unconditionally, so a
+        // *retained* request read as a completed switch in every log and every HITL timeline (found by the
+        // owner reading a run where the very next line said the request was retained).
+        // The message must not claim a completed switch. This call site is ITCM-resident and every variant
+        // that *distinguished* the two outcomes -- a second call, a run-time-selected string, or an extra
+        // field for `committed` -- cost 64 bytes of the approved RAM1 padding floor (measured: 840 -> 776),
+        // so the wording is neutral instead and the outcome is read from the state that follows. The old text
+        // said "(capture finalized)" unconditionally, which is how a retained request read as a committed
+        // switch in every log and HITL timeline.
+        logger.info("Loop %d: Switch gesture from slot %d", slotIndex + 1, previousSlot + 1);
 
         // S4f.6 carrier: this gesture asked for `slotIndex`, so when the target is a **record** target
         // the start is requested here rather than dropped with the return. It is queued, not started:
