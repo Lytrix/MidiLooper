@@ -63,7 +63,10 @@ from typing import Any, Optional
 
 CAP_RE = re.compile(r"^#CAP,(\d+),(.*)$")
 WINDOW_OPEN_RE = re.compile(r"^DIAG,reentry_window_open,(\d+),(\d+),(\d+)$")
-CANONICAL_RELEASE_RE = re.compile(r"^DIAG,canonical_release,(\d+),(\d+),(\d+)$")
+# Wire form: DIAG,canonical_release,<slot>,<generation>,<loopLengthTicks>,<availableChunks>. The slot and
+# generation name the RETIRING owner -- not the currently active slot -- so this is the record that ties a
+# successor's admission back to the predecessor that freed the capacity.
+CANONICAL_RELEASE_RE = re.compile(r"^DIAG,canonical_release,(\d+),(\d+),(\d+),(\d+)$")
 REENTRY_RE = re.compile(r"^DIAG,reentry,([a-z_]+),(\d+),(\d+),(\d+),(\d+)$")
 RECA_RE = re.compile(r"^RECA,(\d+),(\d+)$")
 # Exactly the documented successful stop kinds, not an open `stop*` pattern: `TrackCaptureStopCommit` emits
@@ -374,6 +377,11 @@ def analyse(
             f"no DIAG,canonical_release,{slot_a} after A's window opened: A never retired", "setup", "L4")
         return Analysis("SETUP_INCOMPLETE", checks, None, evidence, limitations, concessions)
     evidence["canonical_release"].append(f"{release.us}: {release.body}")
+    m_rel = CANONICAL_RELEASE_RE.match(release.body)
+    if m_rel is not None:
+        add("L4_release_names_the_retiring_owner", OK,
+            f"slot {m_rel.group(1)}, generation {m_rel.group(2)}, loop {m_rel.group(3)} ticks, "
+            f"{m_rel.group(4)} chunks free", "retention", "L4")
     window_us = release.us - window_open.us
     episode = Episode(slot_a, window_open.us, int(m_open.group(3)), release.us, window_us)
     wide = window_us >= min_window_us

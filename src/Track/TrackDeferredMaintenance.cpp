@@ -924,19 +924,30 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   // the successor's own stop may be admitted. Report it once per job so the HITL
   // probe can drive the STOP retry from an edge instead of a delay.
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache) {
-    auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
-    if (runtime != nullptr && runtime->canonicalReleaseMarkerArmed &&
-        runtime->captureStopOwner == nullptr && runtime->canonicalCaptureOutputAdmitted()) {
+    // DEC-067: the marker belongs to the runtime of the job that **retired**
+    // (`TrackPreparedStopCommit` arms it on `runtime` for `stop.slot`). This read `activeLoopIndex`, which is
+    // the slot active *now* -- and by the time this maintenance turn runs the active slot has usually moved,
+    // so the edge was reported against the wrong slot, the retiring slot's marker stayed armed forever, and
+    // this turn's record was whatever *other* slot happened to be armed. Measured on device: the only release
+    // row was `canonical_release,5,...` (B's slot) while A's slot 4 never appeared, even though A's retirement
+    // is what freed the capacity B's own stop then used. Scanning names the slot that actually retired, and
+    // it also fixes the *latency*: previously the record could not fire until the armed slot happened to be
+    // the active one.
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+      auto* runtime = playbackRuntime.slotIfAllocated(slot);
+      if (runtime == nullptr || !runtime->canonicalReleaseMarkerArmed) continue;
+      if (runtime->captureStopOwner != nullptr || !runtime->canonicalCaptureOutputAdmitted()) continue;
+      const uint32_t generation = runtime->canonicalReleaseMarkerGeneration;
       runtime->canonicalReleaseMarkerArmed = false;
-      // Human log line first: the HITL probe paces B's admitted stop from this edge; the
-      // `#CAP` tiers queue behind the deferred stop's flood and arrive seconds late.
-      // REVERTED 2026-09-26: the slot this reports is wrong (see the packet). Fixing it needs its own RAM1
-      // budget decision -- the scan that names the retiring slot cost 64 bytes of the approved padding floor
-      // (840 -> 776), and the floor is not negotiable here.
-      logger.info("Reentry released");
+      runtime->canonicalReleaseMarkerGeneration = 0;
+      // Human log line first: the HITL probe paces an admitted stop from this edge; the `#CAP` tiers queue
+      // behind the deferred stop's flood and arrive seconds late. Slot *and* identity are named so the edge
+      // is attributable to the owner that retired.
+      logger.info("Reentry released slot=%u generation=%lu", static_cast<unsigned>(slot),
+                  static_cast<unsigned long>(generation));
 #if defined(SESSION_CAPTURE)
       DebugSessionCapture::canonicalFinalizationCapacityReleased(
-          activeLoopIndex, getActiveLoop().loopLengthTicks,
+          slot, generation, getLoop(slot).loopLengthTicks,
           runtime->canonicalCaptureChunks.availableChunks());
 #endif
     }

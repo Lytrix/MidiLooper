@@ -6833,3 +6833,49 @@ incomplete.** The oracle continues to report `SETUP_INCOMPLETE`, and the separat
 take is recorded above rather than being hidden behind that first setup failure. Still open: the discriminating
 native regression, the release attribution fix, and a re-run verifying A, B and C content -- with the raw-only
 companion fallback treated as unresolved until its content consequences are established.
+
+### Release attribution fixed: the retiring owner's slot *and* identity (2026-09-26)
+
+The defect and its fix, with a correction to this packet's own earlier claim.
+
+**Correction first.** The previous section said the slot-scanning version "cost 64 bytes of ITCM and was
+reverted". That attribution was **wrong** -- it came from a confounded measurement taken while the switch-log
+change was also in the tree. Re-applied and measured cleanly: `code 392,376 / padding 840`, SUCCESS. The
+64 bytes were the switch log's distinguishing form all along; the release path is `TRACK_COLD_MEM` =
+`FLASHMEM`, so it does not touch the ITCM segment the floor measures. There was never a RAM1 obstacle to this
+fix.
+
+**What the fix does**
+
+- The marker's owner is remembered: `LoopPlaybackRuntime::canonicalReleaseMarkerGeneration`, set where the
+  marker is armed (`TrackPreparedStopCommit`, from `stop.frozenGeneration`) because
+  `clearCaptureStopOwner` zeroes `captureStopOwnerGeneration` and the identity is otherwise gone by the
+  maintenance turn. It lives in the externally allocated runtime, so it costs no DTCM; the
+  `static_assert(sizeof(LoopPlaybackRuntime) == 6344)` in `TrackPlaybackRuntime.cpp` still compiles, so the
+  field fitted existing padding.
+- The maintenance turn now **scans the allocated runtimes** for the armed marker and reports **that** slot,
+  instead of reading `activeLoopIndex`. The human line names both: `"Reentry released slot=%u generation=%lu"`.
+- The record carries the identity: `DIAG,canonical_release,<slot>,<generation>,<loopLengthTicks>,<availableChunks>`.
+  The header documents that the slot and generation name the **retiring owner**, not the active slot.
+
+**On the timing question the owner raised** ("correcting the slot does not establish that the timestamp
+represents capacity becoming available rather than later cleanup"): the old behaviour was worse than a wrong
+slot -- because it only tested `activeLoopIndex`, the record could not fire until the armed slot happened to be
+the active one, so its timestamp was bounded by *that* coincidence rather than by the release. The scan fixes
+the slot and removes that arbitrary lateness. What the record still is not, and is now documented as not
+being: the exact instant. It is the **first maintenance turn at which the resources were observed free**
+(`captureStopOwner == nullptr && canonicalCaptureOutputAdmitted()`), so it is bounded by the maintenance
+period. In the run above, B's stop bound at 63.864 s while the release was reported at 63.902 s; with this fix
+the record names A's slot and generation at the first turn the condition held.
+
+**Oracle updated** for the new wire form, and it now reports the identity as its own check:
+`L4_release_names_the_retiring_owner: slot 0, generation 4242, loop 1536 ticks, 8 chunks free`. 36 tests green.
+
+### Status
+
+Unchanged and kept as directed: **request retention is demonstrated on hardware; end-to-end capture/content
+acceptance has failed or is incomplete.** The release fix removes the oracle's L4 blocker for the *next* run;
+it does not retroactively make the previous run a pass, and the empty successor take and the raw-only fallback
+both remain open. A discriminating native regression for the successor take (start → MIDI → transport stop,
+asserting identity, nonzero duration, committed notes and survival -- never a start marker alone) is in flight
+separately.

@@ -208,6 +208,7 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
   // DEC-067: the successor's stop may be admitted again once this job's
   // finalization resources are back; the maintenance turn reports that edge.
   runtime.canonicalReleaseMarkerArmed = true;
+  runtime.canonicalReleaseMarkerGeneration = stop.frozenGeneration;
   stop.reset();
   return true;
 }

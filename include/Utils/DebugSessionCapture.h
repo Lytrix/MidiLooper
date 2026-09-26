@@ -244,8 +244,13 @@ SC_MEM_ATTR void successorStartWindowOpen(uint8_t slot, uint32_t stopTick, uint3
 /** The deferred stop's finalization resources are free again -- canonical copy target empty,
  *  transfer chunks admitted, no stop owner -- so a successor's stop may be admitted
  *  (DEC-067, the `canonical_finalization_capacity_released` edge). One shot per retired stop.
- *  Wire form: DIAG,canonical_release,<slot>,<loopLengthTicks>,<availableChunks>. */
-SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t loopLengthTicks,
+ *  Wire form: DIAG,canonical_release,<slot>,<generation>,<loopLengthTicks>,<availableChunks>.
+ *  `<slot>` and `<generation>` name the **retiring owner**, not the currently active slot: the marker is
+ *  armed on the retiring job's runtime, and the active slot has usually moved by the time this fires.
+ *  The timestamp is the first maintenance turn at which the resources were observed free, so it is bounded
+ *  by the maintenance period rather than being the exact instant. */
+SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t generation,
+                                                      uint32_t loopLengthTicks,
                                                       size_t availableChunks);
 /** First-record return window selected as the audible source:
  *  DIAG,first_record_adopt,<loopLengthTicks>,<retainedEvents> (Tier-A). One line

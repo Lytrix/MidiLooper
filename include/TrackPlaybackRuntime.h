@@ -421,6 +421,10 @@ struct LoopPlaybackRuntime {
   // DEC-067 acceptance edge: armed when a deferred stop retires, emitted once the
   // finalization resources (canonical copy target + transfer chunks) are admitted again.
   bool canonicalReleaseMarkerArmed = false;
+  // S4f.3 evidence: the identity of the owner whose retirement armed the marker. Held here because
+  // `clearCaptureStopOwner` zeroes `captureStopOwnerGeneration`, so by the maintenance turn the identity is
+  // otherwise gone. Externally allocated, so this costs the DTCM budget nothing -- only the struct pin.
+  uint32_t canonicalReleaseMarkerGeneration = 0;
   // Diagnostics only: why the last first-record bar-1 preparation was denied.
   const char* firstRecordingBarDenial_ = "none";
   enum class CanonicalPrefixPhase : uint8_t { Idle, Preparing, Ready, Denied };
