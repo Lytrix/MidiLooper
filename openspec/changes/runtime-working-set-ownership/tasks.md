@@ -1174,6 +1174,17 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `2,436 passed / 1 skipped` (clean build); firmware RAM1 byte-identical to S3.1. Packet and record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3.3.
 - [ ] S3 gates: S2b gates plus S2.2/S2.3 current-root budget (no phase-F behavior prerequisite), plus `test_runtime_working_set_ownership`; `test_playback_prewarm` unchanged.
+      **NATIVE HALF DONE 2026-09-25; the gate stays OPEN on its device items.**
+      `test_runtime_working_set_ownership` now exists and is linked as a firmware-boundary suite: boot/load
+      is an admission boundary (a committed slot leaves boot with no working set; the record arm on the same
+      slot establishes `PlaybackWindow | LiveCapture`), a repeated admission does not churn the held set or
+      the generation, release is refused by each owner kind and allowed once it retires (latch, in-flight
+      handover, and a stop admitted through the production entry on an interval opened by
+      `startOverdubbing`), and selection acquires nothing. 4 cases green; full native `2,440 passed /
+      1 skipped` (98 suites); `test_playback_prewarm` unchanged; firmware RAM1 byte-identical (test-only).
+      **Still open, and not native work:** the S2b device gates (S2b.3 post-restore half, S2b.5, the
+      transferred S2b.7 legs) and the S2.2/S2.3 current-root per-class budget. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3 gate.
 
 ## S4 — release, recycle and stale-owner protection
 
