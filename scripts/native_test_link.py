@@ -4,6 +4,10 @@ Import("env")
 # Suites that link production code pulling in the Arduino/SD hardware boundaries.
 _FIRMWARE_BOUNDARY_SUITES = {
     "test_continuous_capture",
+    # S3 gate: the runtime working-set acceptance suite drives the production admission paths
+    # (boot/load, the record arm, the stop admission and the selection mechanism), so it needs the
+    # same hardware boundaries as the continuous-capture harness it shares.
+    "test_runtime_working_set_ownership",
     "test_storage_manager_load",
     # Packet A (A1.7) / Packet C: the real blocking persistence drain, which pulls the persistence
     # owners the load suite does not link.
