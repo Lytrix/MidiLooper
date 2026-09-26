@@ -50,11 +50,12 @@ from hitl.control_constants import (  # noqa: E402
     CONTROL_CHANNEL_1BASED,
     GLOBAL_TRANSPORT_NOTE,
     LOOP_SELECT_NOTE_BASE,
+    RECORD_BUTTON_NOTE,
     TRACK_SELECT_NOTE_BASE,
 )
 from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT  # noqa: E402
 from hitl.managed_capture import ManagedCaptureSession  # noqa: E402
-from hitl.midi_io import _find_midi_port, _send_short_press  # noqa: E402
+from hitl.midi_io import _find_midi_port, _send_long_press, _send_short_press  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,54 @@ def _confirm(capture_log: Path, *, label: str, markers: tuple[str, ...], timeout
     ok = _wait_for_any(capture_log, after=before, markers=markers, timeout_s=timeout_s)
     events.append({"event": label, "confirmed": ok})
     return ok
+
+
+def _clear_slot(out_port, capture_log: Path, *, track: int, slot_number: int, press_ms: int,
+                events: list[dict], clear_press_ms: int = 900) -> bool:
+    """Clear one slot, following the proven recipe: select the slot, then long-press the record button.
+
+    `CLEAR_TRACK_FOR_SLOT` only clears when the slot is the **selected** one (`slot == selectedSlot`); on any
+    other slot the same gesture queues playback instead. The clear targets the selected slot, which is why the
+    selection and the long press are a pair. Clearing is standing-authorized for the development set, and it is
+    what makes a slot a genuine record target: every slot on this device retains an SD payload, and the
+    per-slot gesture consults SD-aware content, so a slot with no committed passes still is not armable until
+    it is cleared.
+    """
+    # Stop and let deferred persistence settle: a live capture owns persistence and cannot be cleared.
+    _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
+                      channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
+    time.sleep(1.0)
+    slots.press_track(_Ctx(out_port), track, press_ms=press_ms)
+    slots.press_slot_record(_Ctx(out_port), slot_number, press_ms=press_ms)
+    time.sleep(1.0)
+    # If that selection armed a capture, commit it before clearing.
+    if _wait_for_any(capture_log, after=len(_lines(capture_log)) - 1,
+                     markers=("Recording started", ",RECA,"), timeout_s=1.0):
+        _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
+                          channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
+        time.sleep(1.5)
+    # The clear is refused while deferred persistence is busy -- measured on device: the first target logged
+    # "Clear refused: deferred save temporarily blocked by waiting_commit_gate; slot left untouched" while a
+    # later target cleared fine. So settle, retry, and treat "Clear ignored ... empty" as success too.
+    cleared = False
+    for attempt in range(4):
+        time.sleep(3.0)
+        before = len(_lines(capture_log))
+        _send_long_press(out_port, note=RECORD_BUTTON_NOTE,
+                         channel_1based=CONTROL_CHANNEL_1BASED, press_ms=clear_press_ms)
+        _wait_for_any(capture_log, after=before,
+                      markers=("Track cleared", "Clear selected slot", "Clear ignored",
+                               "Clear refused", "slot cleared"),
+                      timeout_s=6.0)
+        tail = " ".join(_lines(capture_log)[before:])
+        if ("Track cleared" in tail or "Clear selected slot" in tail
+                or "Clear ignored" in tail or "slot cleared" in tail):
+            cleared = True
+            break
+        events.append({"event": f"clear_slot_{slot_number}_retry", "attempt": attempt + 1})
+    events.append({"event": f"clear_slot_{slot_number}", "confirmed": cleared})
+    time.sleep(1.0)
+    return cleared
 
 
 def _seed_slot(out_port, capture_log: Path, *, track: int, slot_number: int, channel: int,
@@ -213,6 +262,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--phase-timeout-s", type=float, default=12.0)
     p.add_argument("--window-timeout-s", type=float, default=6.0)
     p.add_argument("--successor-note", type=int, default=67)
+    p.add_argument("--no-clear", action="store_true",
+                   help="skip the target clear. By default the three targets are cleared before seeding, "
+                        "which is standing-authorized for the development set and is what makes them genuine "
+                        "record targets (every slot here retains an SD payload).")
     p.add_argument("--seed-note-a", type=int, default=60)
     p.add_argument("--seed-note-b", type=int, default=62)
     p.add_argument("--seed-bars", type=int, default=2)
@@ -239,7 +292,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     # leaves C empty as the record target, so all three must be empty. Recording is refused by the firmware on
     # a slot with committed passes, which is why the read-only library observation is required first. This
     # script never clears a slot: clearing an occupied target is a separate, explicitly authorized action.
-    if args.census is not None:
+    if args.census is not None and args.no_clear:
         data = json.loads(args.census.read_text())
         rows = (data.get("library_observation") or {}).get("slots") or []
         occupied = [(r.get("track", -1) + 1, r.get("slot", -1) + 1) for r in rows
@@ -321,6 +374,12 @@ def main(argv: Optional[list[str]] = None) -> int:
                 f"{cc_value} on any of {[r for r, _ in tempo_routes]}. LOOP_EDIT must be reachable for the pin "
                 "(CC102 is mode-gated); without it every timing below is wrong, so the flow refuses to "
                 "continue rather than produce a bad run.")
+
+        # --- clear the targets, so they are genuine record targets rather than payload-carrying slots ---
+        if not args.no_clear:
+            for slot_number in (args.slot_a, args.slot_b, args.slot_c):
+                _clear_slot(out_port, capture_log, track=args.track, slot_number=slot_number,
+                            press_ms=args.press_ms, events=events)
 
         # --- setup: seed A and B, confirming each transition before the next gesture ---
         _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_a, channel=t0,
