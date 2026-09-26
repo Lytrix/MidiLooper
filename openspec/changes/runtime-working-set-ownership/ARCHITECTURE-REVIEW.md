@@ -6658,3 +6658,62 @@ So the remaining work is to align the driver's identity/metadata and the oracle'
 what the device actually emits, then re-run with `--upload` and the content pipeline. The device gate's real
 question -- whether the natural finalization window suffices -- is now answered **yes** on this evidence: the
 window held long enough for the switch, B's overdub, and the denied stop, all inside it.
+
+### Corrections to the device run above (owner review, 2026-09-26)
+
+The previous section claimed "every link before L7 happened on hardware". That was **too strong**. Two
+substantive issues, plus a warning I had skipped.
+
+**1. The reported C switch was not a committed switch.** `handleToggleRecordForSlot` printed
+
+```cpp
+logger.info("Loop %d: Switched from slot %d (capture finalized)", ...);   // printed unconditionally
+```
+
+**unconditionally**, ignoring the `committed` result of `finalizeCaptureAndSelectSlot`. So
+`[94.015] Loop 7: Switched from slot 6 (capture finalized)` is *the gesture's branch being taken*, not a
+switch that committed -- and the very next line in the log is the carrier saying the request was retained
+because the stop was not admitted. **Corrected timeline entry: "C switch/start requested and retained."**
+
+**Fixed** (`src/MidiButtonActions.cpp`): the message is now neutral -- `"Loop %d: Switch gesture from slot
+%d"` -- so it asserts nothing false, and the outcome is read from the state that follows. The wording is
+neutral rather than conditional for a measured RAM1 reason: this call site is ITCM-resident and **every**
+variant that distinguished the two outcomes (a second `logger.info` call, a run-time-selected string, or an
+extra `committed` field) cost **64 bytes** of the approved padding floor (840 -> 776). The neutral form keeps
+`code 392,376 / padding 840`, SUCCESS.
+
+**2. A's capacity-release evidence is genuinely missing, and the row that exists is mislabelled.** The log has
+`canonical_release,5` -- **B's** slot -- and never `canonical_release,4` for A. Traced:
+
+- the marker is **armed on the retiring job's runtime** (`TrackPreparedStopCommit`: for `stop.slot`,
+  `runtime.canonicalReleaseMarkerArmed = true`), but
+- it is **consumed via `activeLoopIndex`** in `Track::processDeferredIdleMaintenance`, and by the time that
+  maintenance turn runs the switch has moved the active slot to B.
+
+So A's marker is never consumed (it stays armed), and B's marker -- armed when B's *own* stop was admitted --
+is consumed at that moment and reported with B's slot. The edge is real (B's stop then bound, which requires
+the capacity), but the record names the wrong slot. Fixing it by scanning the allocated runtimes for the armed
+marker cost 64 bytes of ITCM and dropped padding to 776, so it is **reverted with the diagnosis recorded** and
+needs its own budget decision or a 64-byte recovery elsewhere. This is not something to paper over by
+substituting another event: the oracle's `L4_capacity_released` check simply cannot pass on a run where the
+active slot moved, and that is a finding about the telemetry, not about the retention behaviour.
+
+**3. `Overdub stop retarget: companion path stalled; raw pass only` (94.646 s) is a content-affecting
+fallback, not evidence plumbing.** Traced to `TrackOverdubLifecycle.cpp`: for a stop that was retargeted from
+PLAYING, if the companion preparation makes **no progress for `kRetargetStallGrainLimit` = 512 grains**, the
+job must not park, so it retires the companion estimates, drops the horizon, discards the prepared companion
+history and **commits the staged pass alone**. The consequence is that the predecessor interval is committed
+as a *raw pass only* -- without the companion representation the display resolves overdubbed notes from.
+Whether its **content** is nevertheless correct is exactly what content verification must decide, so the
+acceptance must verify **A, B and C's content**, including the fallback-affected predecessor -- not just C's
+notes.
+
+**The strongest supported result from that run**, stated no more strongly than the evidence allows: **B's
+identified stop was capacity-denied; C's request was retained; that same B interval later bound; and C emitted
+a start record.** That is useful hardware evidence. It is not full acceptance, and the oracle correctly refuses
+the run.
+
+**Still to do, restated:** (a) add build metadata and capture the fresh boot in the *same* managed session as
+the run; (b) run the content pipeline over A, B and C; (c) re-run when authorized. The natural workload did
+successfully expose the denied state, so the pause hook stays **unimplemented** unless repeatability requires
+it, and the oracle is **not** to be weakened to turn this run into a pass.
