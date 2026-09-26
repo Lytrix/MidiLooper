@@ -134,30 +134,67 @@ def _confirm(capture_log: Path, *, label: str, markers: tuple[str, ...], timeout
     return ok
 
 
-def _seed_slot(out_port, capture_log: Path, *, track: int, slot_number: int, note: int,
-               bars: int, press_ms: int, phase_timeout_s: float, events: list[dict]) -> None:
-    """Select the slot, record `bars` bars of a single note, stop, and confirm the take committed."""
-    before = len(_lines(capture_log))
+def _seed_slot(out_port, capture_log: Path, *, track: int, slot_number: int, channel: int,
+               note: int, bars: int, press_ms: int, phase_timeout_s: float,
+               events: list[dict]) -> None:
+    """Select the slot, record `bars` bars containing one note, stop, and confirm the take committed.
+
+    Two things this must get right, both learned by running it:
+
+    * **The take needs a note.** A seed that records silence produces no committed pass, and the whole design
+      depends on A and B holding committed content (they must be overdub targets) while C stays empty. The
+      first version took a `note` argument and never sent it.
+    * **The commit confirmation must accept the state the device actually reaches.** Stopping with the global
+      transport ends `RECORDING -> STOPPED_RECORDING -> STOPPED`, not `-> PLAYING`, and the transport-stop path
+      emits no `RECS,stop` stage record. Waiting only for the PLAYING form refused a take that had in fact
+      committed.
+    """
     slots.press_track(_Ctx(out_port), track, press_ms=press_ms)
-    slots.press_slot_record(_Ctx(out_port), slot_number, press_ms=press_ms)
-    events.append({"event": f"seed_slot_{slot_number}_selected"})
-    _wait_for_any(capture_log, after=before,
-                  markers=("Recording started", ",RECA,", ",ST,Track,STOPPED,PLAYING"),
-                  timeout_s=1.5)
-    if not _wait_for_any(capture_log, after=before, markers=("Recording started", ",RECA,"),
-                         timeout_s=1.0):
-        # An empty slot under a stopped transport needs the transport to start.
-        _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
-                          channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
-        if not _wait_for_any(capture_log, after=len(_lines(capture_log)) - 1,
-                             markers=("Recording started", ",RECA,"), timeout_s=phase_timeout_s):
-            raise RuntimeError(f"slot {slot_number} never started recording")
-    time.sleep(max(bars, 1) * 2.0)  # 2 s per bar at 120 BPM, generous for the streamed note
+    time.sleep(0.5)
+
+    # Ensure the transport is RUNNING before the slot press. The firmware's documented per-slot flow is
+    # "empty + playing: queue next-wrap record, second press = immediate punch-in"; on a stopped transport the
+    # press instead arms and waits, which is how the first version stalled here after seeding A.
+    transport_before = len(_lines(capture_log))
     _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
-                      channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)  # stop -> commit
-    if not _confirm(capture_log, label=f"seed_slot_{slot_number}_committed",
-                    markers=(",RECS,stop,", "Playback started", ",ST,Track,STOPPED,PLAYING"),
-                    timeout_s=phase_timeout_s, events=events):
+                      channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
+    running = _wait_for_any(capture_log, after=transport_before,
+                            markers=("Transport started",), timeout_s=3.0)
+    events.append({"event": f"seed_{slot_number}_transport", "running": running})
+
+    before = len(_lines(capture_log))
+    slots.press_slot_record(_Ctx(out_port), slot_number, press_ms=press_ms)
+    events.append({"event": f"seed_{slot_number}_selected"})
+    recording = _wait_for_any(capture_log, after=before,
+                              markers=("Recording started", ",RECA,", ",ST,Track,ARMED,RECORDING"),
+                              timeout_s=3.0)
+    if not recording:
+        # Second press: the queued record becomes an immediate punch-in (documented short-press flow).
+        slots.press_slot_record(_Ctx(out_port), slot_number, press_ms=press_ms)
+        events.append({"event": f"seed_{slot_number}_punch_in"})
+        recording = _wait_for_any(capture_log, after=before,
+                                  markers=("Recording started", ",RECA,"),
+                                  timeout_s=phase_timeout_s)
+    if not recording:
+        raise RuntimeError(f"slot {slot_number} never started recording")
+    events.append({"event": f"seed_{slot_number}_recording", "confirmed": True})
+
+    # Inject the take's content on the track's input channel (mido channels are 0-based).
+    out_port.send(mido.Message("note_on", note=note, velocity=100, channel=channel))
+    time.sleep(0.3)
+    out_port.send(mido.Message("note_off", note=note, velocity=0, channel=channel))
+    time.sleep(max(bars, 1) * 2.0)
+
+    stopped = len(_lines(capture_log))
+    _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
+                      channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
+    committed = _wait_for_any(
+        capture_log, after=stopped,
+        markers=(",ST,Track,RECORDING,STOPPED_RECORDING", ",RECS,stop,", "Playback started",
+                 ",ST,Track,RECORDING,STOPPED", ",ST,Track,STOPPED_RECORDING,PLAYING"),
+        timeout_s=phase_timeout_s)
+    events.append({"event": f"seed_{slot_number}_committed", "confirmed": committed})
+    if not committed:
         raise RuntimeError(f"slot {slot_number} seed did not commit")
 
 
@@ -174,6 +211,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--phase-timeout-s", type=float, default=12.0)
     p.add_argument("--window-timeout-s", type=float, default=6.0)
     p.add_argument("--successor-note", type=int, default=67)
+    p.add_argument("--seed-note-a", type=int, default=60)
+    p.add_argument("--seed-note-b", type=int, default=62)
     p.add_argument("--seed-bars", type=int, default=2)
     p.add_argument("--census", type=Path, default=None,
                    help="census.json from a read-only --library-observe run; when given, every target must "
@@ -282,11 +321,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                 "continue rather than produce a bad run.")
 
         # --- setup: seed A and B, confirming each transition before the next gesture ---
-        _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_a, note=60,
-                   bars=args.seed_bars, press_ms=args.press_ms,
+        _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_a, channel=t0,
+                   note=args.seed_note_a, bars=args.seed_bars, press_ms=args.press_ms,
                    phase_timeout_s=args.phase_timeout_s, events=events)
-        _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_b, note=62,
-                   bars=args.seed_bars, press_ms=args.press_ms,
+        _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_b, channel=t0,
+                   note=args.seed_note_b, bars=args.seed_bars, press_ms=args.press_ms,
                    phase_timeout_s=args.phase_timeout_s, events=events)
 
         # --- the critical window: presses ordered by the chain, with no confirmation inside it ---
