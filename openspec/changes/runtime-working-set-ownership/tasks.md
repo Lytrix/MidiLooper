@@ -1630,6 +1630,24 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       carrying the target in two owners contradicts "avoid another target owner". The pending-start owner is
       the single home; the switch is still executed by the existing switch path. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3 (retention).
+      **HITL (2026-09-26) — the registered entry points were run and produced no pass; the new path is
+      uncovered.** Firmware flashed from the verified tree (`firmware_hex_sha256 14a1aea7…`,
+      `git_commit e743b97c…`), device prep per the hitl-content-verification skill (fresh upload, documented
+      scratch slot **track 5 / slot 1**). Stop-interruption wrapper: reached the fixture properly
+      (`PLAYING->OVERDUBBING: 1`, record on/off `32/32`, persist `ok=True`, `OVERDUB_STOPPING: 1`,
+      intervention sent) but the focused verdict is `INCONCLUSIVE_CAPTURE` /
+      `no_device_stop_inside_stopping`, and the session log shows why it **cannot** be hit: the
+      `OVERDUBBING -> OVERDUB_STOPPING -> PLAYING` window is **21 µs** because the admitted stop defers
+      finalization (DEC-078), so the fixture's premise is architecturally mismatched, not flaky. Base leg
+      `FAIL (FIRMWARE_CONTRADICTION)` on `overdub_unmatched_open_notes` / `overdub_out_of_range_notes` — the
+      skill's documented **setup** verdicts. Baseline preset (`STIM-BASE-2-2-01`):
+      `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)`, `RECORDING: 0`, the known **base-preset setup race**
+      already attributed to the still-open selection fixture, with tempo correct
+      (`record loop length 1536/1536`). **Tempo must be re-pinned per run** (found at 160.0 BPM; pinned to
+      120.0 via DEC-086) because the pin does not survive the serial-open reset. **No registered stimulus
+      exercises this slice's behaviour**, so these runs are regression context only; the owner declined a
+      temporary variant this session, so the retention path is **host-verified only**. Full record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3 (HITL attempt).
 - [x] S4f.4 **Transport/clock timing validity (B2, T2).** (**REVISED 2026-09-23 by architect decision --
       `design.md` Revision 24; the stored-epoch requirement is WITHDRAWN.** The latch's `transportEpoch`
       field is **removed** (latch 40 -> 32 bytes, `CaptureStopJobs` 2,736 -> 2,728, both pins updated and
