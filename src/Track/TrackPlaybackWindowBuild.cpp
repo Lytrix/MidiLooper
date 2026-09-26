@@ -498,6 +498,25 @@ TRACK_COLD_MEM void Track::reportEnvelopeBreachIfAny(uint8_t slot, WorkingSetRol
   }
 }
 
+namespace {
+/// S4.1: a stable literal for the release outcome, so the capture row is readable and matchable rather
+/// than a bare enum ordinal. Kept as literals for the same reason `reentryDecision` uses them.
+const char* workingSetOutcomeLabel(WorkingSetOutcome outcome) {
+  switch (outcome) {
+    case WorkingSetOutcome::Released:
+      return "released";
+    case WorkingSetOutcome::RefusedBusy:
+      return "refused_busy";
+    case WorkingSetOutcome::StaleGeneration:
+      return "stale_generation";
+    case WorkingSetOutcome::NotHeld:
+      return "not_held";
+    default:
+      return "other";
+  }
+}
+}  // namespace
+
 TRACK_COLD_MEM void Track::releaseEligiblePlaybackRuntimeSlots(bool preserveLedger) {
   // S4.1: the (slot, generation) release entry, evaluated through the liveness predicate. This
   // replaces the track-global `TrackPlaybackRuntime::resetAll`, which was predicate-free and
@@ -506,7 +525,16 @@ TRACK_COLD_MEM void Track::releaseEligiblePlaybackRuntimeSlots(bool preserveLedg
     if (!noLiveOwnerForSlot(slot)) {
       continue;
     }
-    (void)playbackRuntime.releaseSlot(slot, playbackRuntime.slotGeneration(slot), preserveLedger);
+    const uint16_t generation = playbackRuntime.slotGeneration(slot);
+    const WorkingSetOutcome outcome = playbackRuntime.releaseSlot(slot, generation, preserveLedger);
+    // The refusal is reported, not discarded: the pre-S4.1 sweep dropped it, which is how a release
+    // refused by a live owner became invisible. `NotHeld` is the ordinary "nothing here" answer and is
+    // deliberately silent, so a sweep over 56 mostly-idle slots does not flood the ring.
+    if (outcome != WorkingSetOutcome::NotHeld) {
+#if defined(SESSION_CAPTURE)
+      DebugSessionCapture::workingSetLeaseReleased(slot, generation, workingSetOutcomeLabel(outcome));
+#endif
+    }
   }
 }
 

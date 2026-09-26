@@ -1127,7 +1127,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       cursor rule still cites 1,256; the recorded line is 872). Evidence: the RAM1 line stays `padding >= 840` (re-based from 872 on 2026-09-23 by the reviewed
       32-byte allowance; enforced post-link),
       12 banks, `locals free` unchanged (a bank cross costs 32,768 B and the documented silent boot hang).
-- [ ] S3.1 `WorkingSetLease` with owner = slot + generation + role, and a pool provisioned for the
+- [x] S3.1 `WorkingSetLease` with owner = slot + generation + role, and a pool provisioned for the
       measured active envelope. Route today's prewarm through it so behaviour is unchanged but ownership
       is expressible.
       **PARTIAL 2026-09-25 — vocabulary landed and routed; release is S4.1's.** `WorkingSetLeaseSlot`
@@ -1145,6 +1145,17 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       lease is write-only and the generation never advances. S4.1's release calls
       `releaseAllWorkingSetLeases()`; S4.2 reads `workingSetGeneration()` for `captureStopOwner`. S3.2's
       liveness predicates are the other half of this task.
+      **CHECKED 2026-09-26 (checkbox reconciliation).** The remainder named above is discharged or assigned
+      elsewhere, which is the rule this file already applies (§ Checkbox reconciliation): **S3.2**, named here
+      as "the other half of this task", is **done** (its own entry, `CHECKED` 2026-09-25), and the **release**
+      is built and *called* — `TrackPlaybackRuntime::releaseSlot(slot, generation, preserveLedger)` checks
+      `rt->workingSetGeneration() != generation` (S4.2's discrimination) and then calls
+      `rt->releaseAllWorkingSetLeases()`, which is what advances the generation; `slotGeneration(slot)` exposes
+      the identity a caller must present. So the lease is no longer write-only, which was this task's stated
+      blocker. Verified in the tree, not inferred. The task's own deliverable — the identity vocabulary, the
+      declared-cap pool that reports instead of allocating, and routing today's prewarm through it with
+      unchanged behaviour — landed with 11 lease fixtures and `test_playback_prewarm` green. Nothing was checked
+      because a nearby task finished; the blocker this entry names is gone.
 - [x] S3.2 Explicit liveness predicates per owner kind: capture stop job, deferred stop commit, undo/redo
       root, prepared playback handover. Native fixture per kind.
       **DONE 2026-09-25 (naming + discriminating matrix).** `Track::noLiveOwnerForSlot` is now a list of
@@ -1265,10 +1276,12 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `persistSlotIndex = slot`). **Device evidence:** the accepted-switch retention run
       (`captures/s4f3-retention-20260926_181732`) exercises the release path end-to-end — the release
       marker fires only with `captureStopOwner == nullptr` (the `ownsLiveFinalization` term), names the
-      retiring owner's slot **and generation** (`canonical_release,4,40,6144,8`), and C's start drives
-      `startRecordingTrack` -> `releaseBackgroundPlaybackMergedMidiEventsMemory` ->
-      `releaseEligiblePlaybackRuntimeSlots`, i.e. the guarded working-set release, followed by C's reuse
-      (S4.3). **Fixed here:** the mid-pass journal resolver still read `getActiveLoopIndex()` for a stop in
+      retiring owner's slot **and generation** (`canonical_release,4,40,6144,8`), and C's start follows it.
+      **Correction (same day):** an earlier draft of this note said C's start drives the guarded
+      working-set release. It does not, for this run: `releaseBackgroundPlaybackMergedMidiEventsMemory`
+      sweeps `if (i != captureTrackIndex)`, so a same-track sequence on track 8 excludes track 8 and A's own
+      working set is not released by it. The lease release for a same-track slot is therefore **not**
+      evidenced by this run — only the occupancy release (L4) is. **Fixed here:** the mid-pass journal resolver still read `getActiveLoopIndex()` for a stop in
       flight, journalling an interval pinned to slot 5 under whichever slot was active; the rule now lives
       on the owner as `Track::captureWorkSlot()` (with `Track::pinnedStopSlot()`), returns false rather than
       guessing, and the selected-track fallback is removed — fixture

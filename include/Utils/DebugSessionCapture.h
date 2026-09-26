@@ -255,6 +255,13 @@ SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t ge
 /** First-record return window selected as the audible source:
  *  DIAG,first_record_adopt,<loopLengthTicks>,<retainedEvents> (Tier-A). One line
  *  per adoption; the retained count shows how much of bar 1 the window held. */
+/** The slot's **working-set lease** was released, by identity: the `(slot, generation)` release entry
+ *  accepted that identity and the lease generation advanced (S4.1/S4.2). One shot per released slot.
+ *  Wire form: DIAG,ws_release,<slot>,<generation>,<outcome>.
+ *  `canonical_release` reports the retiring **occupancy** -- a different resource -- so without this row
+ *  the working-set lease release could only be *inferred* from whichever sweep happened to run it. The
+ *  `outcome` literal keeps the refusal visible: the pre-S4.1 sweep discarded it. */
+SC_MEM_ATTR void workingSetLeaseReleased(uint8_t slot, uint16_t generation, const char* outcome);
 SC_MEM_ATTR void firstRecordReturnWindowAdopted(uint32_t loopLengthTicks, size_t retainedEvents);
 /** Compact reentry admission/denial record (OpenSpec successor-capture-reentry-unguarding 5.6).
  *  One shot per reentry decision, from the decision owner itself -- never a per-event line.
