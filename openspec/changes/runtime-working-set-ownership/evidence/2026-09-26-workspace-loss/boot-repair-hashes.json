@@ -1,0 +1,39 @@
+{
+  "git_head": "335c3c219b7078cc9407764f8b0d651c52406bff",
+  "dirty_worktree": true,
+  "firmware_hex_sha256": "4b13749ab9d97b0699fb02f813a3a9a26b7475a60391e19ffa784c21cec93255",
+  "firmware_path": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+  "source_sha256": {
+    "include/GlobalUndoStack.h": "7ba56507db7ae7e4192958617ac236426ac8efe5b643a01e5b2f5b7949374029",
+    "include/StorageLoopIo.h": "39a0cbc5d7ed594b1abcef97bdcf83c4e5acf033306233a56db4e76cfdc45a8d",
+    "include/StorageManager.h": "8259880ed96a528eb91b0b1a128b2139e7add1d4ba522467efb94922beb2330f",
+    "include/StorageSession.h": "1e6ff778f6d8d4b38d78e17772dac46ae11749d14bf2f5c2dc511befea7c76ba",
+    "src/StorageLoopIo.cpp": "a40758c7c878dd74f8e587ec6e5f2388207d87b4566d9419bcab7de9816672fa",
+    "src/StorageManager/BootRecovery.cpp": "8051ddf44cb1394979a7e1e2d2df48e6bd7757d856261ab1b3a99afc0d2c88db",
+    "src/StorageManager/DeferredSaveScheduler.cpp": "5cdd9f03a0ce6883fe9ed57f2c84a86271a698464312a09f17c3e3be968e93f7",
+    "src/StorageManager/Internal.cpp": "8ce1aa7459efa57ea3fcc7d011871ac63d0be135261dd9e52543fae7904c59bf",
+    "src/StorageManager/PersistenceAdmit.cpp": "d6ab472c1ef1898e4a285a17e28dbee252dbc89c3bc9498bb1e991fa79489373",
+    "src/StorageManager/SyncDrainSaveState.cpp": "6ff31cc8525f7706e24f8a25122fe2e5f909237677f00870d16a6c0eeb9f559e",
+    "src/TrackUndo.cpp": "861efc674e4fdc67537b5b3cdb6e895f5234d30b0d13ba4fac1aa3e5808b50b9",
+    "src/main.cpp": "754d37328e4aa8d438bd7d87cd975467589b94968f6b6873e7aaa4de866f05dd",
+    "include/RuntimeBundleRecovery.h": "fe0bb975fbfbe50bc80750a977ad72dbe8503011a8e9a07d13d6fd79c455eaf0",
+    "src/StorageManager/RuntimeBundleRecovery.cpp": "e510042c2e25a1879035ccf193f3267b0062c70ae9a02c36d8edb8e735a06af2"
+  },
+  "artifacts_sha256": {
+    "boot-repair-acceptance.json": "626980d5a7fd92feb4084a6a49238c703e19fca7d3306b88e54a7e338d4fa00a",
+    "boot-repair-python.log": "636fdf8e8b1b82fa23b7d970c801f08afebf970a680bffd93ae1b0c09a53e77b",
+    "boot-repair-host-logs.tar.gz": "a98eaab820b77db6e615058e0860a79934eb7f91d9f2ade927ea9617f56fc1f4",
+    "boot-repair-red.log": "9524cbbb1f1bd1af25ca178ce6dcdebe57e5bfbbedce2d8352f5b5feeaa83b09",
+    "boot-repair-full-native.log": "d60137fb45e27693245389609d6dfcf41ae7178042d71cc3698766f10c0b7370",
+    "boot-repair-openspec.log": "be6a73c64f49f564ed727566e4ebbe2dcf8be8fcc579530bcc43db760a1d0a01",
+    "boot-repair-firmware.log": "f44a845fb2813c78bd159e2aae56da7dbaff7412b029d17c07f9c32329b0b9c0"
+  },
+  "harness_sha256": {
+    "test/test_offline_boot_recovery/test_offline_boot_recovery.cpp": "519951314403d41df809786a385c67094646edadd15d99f0c7a65ff836f3d66c",
+    "test/test_offline_workspace_recovery/test_offline_workspace_recovery.cpp": "4bed7aa79780e42c2ff1743ef428f08f6de78796a3835601eee20af6495010db",
+    "test/test_offline_undo_recovery/test_offline_undo_recovery.cpp": "e51345be795df0fff33bb921339abc832efbdb957ab1c1277349a47c5cd3237e",
+    "test/test_support/firmware/SD.h": "8da75bdb1571d4a136177bb7ba7b6e028024003fbf6ed5902d61410f4a9df172",
+    "tools/midilooper-reader/reconstruct_undo.py": "a447a120acba187a6a2e546ad8b90e16fdff5a69f2e5414140b8d30415744695",
+    "tools/midilooper-reader/prepare_native_decode_headers.py": "2b18dfdb5376593b4f2968f2385b24a16f71db23040b5fac7f07eda26a7bd520"
+  }
+}

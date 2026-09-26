@@ -1,0 +1,978 @@
+[
+  {
+    "track": 0,
+    "slot": 1,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 1,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 2,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 2,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 3,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 3,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 4,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 4,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 5,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 5,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 6,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 6,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 7,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 7,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 0,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 0,
+    "slot": 0,
+    "kind": 1,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 3
+  },
+  {
+    "track": 0,
+    "slot": 0,
+    "kind": 3,
+    "pass": 6,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 1,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 1,
+    "kind": 1,
+    "pass": 2,
+    "group_passes": 2,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 1,
+    "kind": 1,
+    "pass": 4,
+    "group_passes": 2,
+    "companion_edits": 2
+  },
+  {
+    "track": 1,
+    "slot": 1,
+    "kind": 3,
+    "pass": 8,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 2,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 2,
+    "kind": 1,
+    "pass": 2,
+    "group_passes": 2,
+    "companion_edits": 3
+  },
+  {
+    "track": 1,
+    "slot": 2,
+    "kind": 1,
+    "pass": 7,
+    "group_passes": 2,
+    "companion_edits": 5
+  },
+  {
+    "track": 1,
+    "slot": 2,
+    "kind": 3,
+    "pass": 14,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 3,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 3,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 4,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 4,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 5,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 5,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 6,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 6,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 7,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 7,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 0,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 0,
+    "kind": 1,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 1,
+    "slot": 0,
+    "kind": 3,
+    "pass": 3,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 2,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 2,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 3,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 3,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 4,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 4,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 5,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 5,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 6,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 6,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 7,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 7,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 2,
+    "slot": 0,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 1,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 1,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 2,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 2,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 3,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 3,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 4,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 4,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 5,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 5,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 6,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 6,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 7,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 7,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 0,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 0,
+    "kind": 1,
+    "pass": 2,
+    "group_passes": 2,
+    "companion_edits": 0
+  },
+  {
+    "track": 3,
+    "slot": 0,
+    "kind": 1,
+    "pass": 4,
+    "group_passes": 2,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 1,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 1,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 2,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 2,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 3,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 3,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 4,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 4,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 5,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 5,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 6,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 6,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 7,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 7,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 0,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 4,
+    "slot": 0,
+    "kind": 1,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 1,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 2,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 3,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 3,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 4,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 4,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 5,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 5,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 6,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 6,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 7,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 7,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 5,
+    "slot": 0,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 2,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 2,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 3,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 3,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 4,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 4,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 5,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 5,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 6,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 6,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 7,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 7,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 1,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 6,
+    "slot": 1,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 7,
+    "slot": 1,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 7,
+    "slot": 1,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 7,
+    "slot": 2,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 7,
+    "slot": 2,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 7,
+    "slot": 4,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 7,
+    "slot": 5,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 7,
+    "slot": 5,
+    "kind": 3,
+    "pass": 2,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 7,
+    "slot": 6,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 7,
+    "slot": 0,
+    "kind": 0,
+    "pass": 1,
+    "group_passes": 0,
+    "companion_edits": 0
+  },
+  {
+    "track": 7,
+    "slot": 0,
+    "kind": 1,
+    "pass": 2,
+    "group_passes": 2,
+    "companion_edits": 0
+  },
+  {
+    "track": 7,
+    "slot": 0,
+    "kind": 1,
+    "pass": 4,
+    "group_passes": 0,
+    "companion_edits": 0
+  }
+]

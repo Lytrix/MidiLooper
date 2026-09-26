@@ -600,7 +600,7 @@ closed for `DisplayResolveLiveCapture`.
       Native **1822/1**; device smoke
       [`175309`](../../../captures/session_20260911_175309.log). Plan:
       [`immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md).
-- [x] 5.4 Verify save/load round trips, selected-snapshot equivalence, clear-slot restore, and old-format migration with existing persistence gates plus invariant-protecting checks. After load, undo depth is 0 and redo is empty.
+- [x] 5.4 Verify save/load round trips, selected-snapshot equivalence, clear-slot restore, and old-format migration with existing persistence gates plus invariant-protecting checks. Originally: after load, undo depth is 0 and redo is empty. **Amended 2026-09-26 by DEC-088 — load-time undo reconstruction:** retained active passes derive undo; redo starts empty and arises from runtime Undo.
       (2026-09-11) Native matrix + HITL `base` PASS [`181945`](../../../captures/session_20260911_181945.log);
       post-save reboot `LoadLoopJob done 4/0` [`182529`](../../../captures/session_20260911_182529.log).
       SD `LSV1` byte probe: advisory (`scripts/probe_lsv1_slot_body.py`). Plan:

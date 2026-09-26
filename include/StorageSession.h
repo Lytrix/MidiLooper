@@ -297,6 +297,7 @@ struct RevisionLoadJob {
 
 struct BootRecoveryJob {
   bool pending = false;
+  bool writesBlocked = false;  // cold boot recovery fault; reset only at next boot
   uint16_t setId = 0;
   uint16_t revisionId = 0;
 };

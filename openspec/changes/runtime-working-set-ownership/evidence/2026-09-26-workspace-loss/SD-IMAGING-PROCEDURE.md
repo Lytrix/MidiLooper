@@ -1,3 +1,8 @@
+> Superseded scope, 2026-09-26: user explicitly chose a folder-only USB copy of
+> `/MidiLooper`, leaving the card in place and unrelated data excluded. That copy
+> is complete. This raw-image proposal is historical, not a prerequisite for the
+> approved offline recovery analysis. Recovery writes still require approval.
+
 # SD imaging and recovery inspection — PROCEDURE FOR APPROVAL
 
 **Status: PROPOSED, NOT EXECUTED. No card access, no device access, no boot.**

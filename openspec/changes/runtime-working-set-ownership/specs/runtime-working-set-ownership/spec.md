@@ -535,7 +535,9 @@ declared ClearSlot cap eviction, which is reported.
 
 #### Scenario: Undo history is not persisted
 - **WHEN** the device is saved and rebooted
-- **THEN** the restored slot has undo depth zero
+- **THEN** the restored slot derives undo units from its saved active pass records
+- **AND** redo starts empty; in-session Undo makes its action available for Redo
+- **AND** another slot loading does not erase that runtime Redo
 - **AND** cold descriptors are not part of the persisted contract
 
 ### Requirement: Inactive slots do not retain whole-loop derived state
@@ -674,3 +676,28 @@ A capacity fixture with an explicit slot and clearing disabled SHALL refuse reco
 #### Scenario: Slot evidence is unavailable
 - **WHEN** no valid display observation exists after selecting the track
 - **THEN** the no-clear fixture fails before record arm
+
+### Requirement: Boot repair preserves the current library
+Before boot cleanup, StorageManager SHALL inspect current runtime metadata. Missing
+or corrupt metadata SHALL be reconstructed only after workspace metadata and the
+complete 64-slot matrix pass epoch, checksum, format and slot-identity validation.
+Repair SHALL preserve existing loop/workspace bytes and unrelated files, use unique
+candidate/backup paths, validate before promotion, and use the normal loader after
+publication. Replacement runtime settings SHALL use the documented recovery defaults.
+Failure with current-workspace evidence SHALL block normal operation and persistence
+for the boot rather than saving an empty fallback. Absent workspace evidence SHALL
+retain the existing fresh/legacy boot policy.
+
+#### Scenario: Missing metadata with intact saved passes
+- **WHEN** runtime metadata is missing and all workspace recovery prerequisites hold
+- **THEN** boot publishes a checked metadata candidate, loads the original slots,
+  and derives undo from their passes without changing those source files
+
+#### Scenario: Interrupted repair or invalid source
+- **WHEN** validation, writing or publication fails
+- **THEN** originals remain preserved, persistence is blocked, and a later boot can
+  retry from preserved sources without overwriting earlier repair evidence
+
+#### Scenario: Healthy second boot
+- **WHEN** the repaired runtime bundle is valid on the next boot
+- **THEN** the normal load path retains its settings without reconstructing metadata

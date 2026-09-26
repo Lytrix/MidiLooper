@@ -197,33 +197,35 @@ inline size_t countRedoEntriesForSlot(const GlobalUndoStack& stack, uint8_t slot
   return count;
 }
 
-/// Move one slot's entries to the stack tip so `canUndoForLoop` works after content rebuild.
+/// Focus a slot's applied/redo tips without changing which actions are undone.
 inline void repositionGlobalUndoStackTipForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
-  if (stack.entries.empty()) {
-    stack.cursor = 0;
-    return;
-  }
   UndoEntryVec otherEntries;
   UndoEntryVec slotEntries;
   otherEntries.reserve(stack.entries.size());
   slotEntries.reserve(stack.entries.size());
-  for (UndoEntry& entry : stack.entries) {
+  const size_t applied = std::min(stack.cursor, stack.entries.size());
+  size_t otherApplied = 0;
+  size_t slotApplied = 0;
+  for (size_t i = 0; i < stack.entries.size(); ++i) {
+    UndoEntry& entry = stack.entries[i];
     if (entry.slotIndex == slotIndex) {
       slotEntries.push_back(std::move(entry));
+      if (i < applied) ++slotApplied;
     } else {
       otherEntries.push_back(std::move(entry));
+      if (i < applied) ++otherApplied;
     }
   }
-  if (slotEntries.empty()) {
-    stack.cursor = stack.entries.size();
-    return;
-  }
+  // Applied focus entries last (Undo); focus redo entries first (Redo).
+  // Rebuild even when focus is absent: the vectors now own the moved payloads.
   stack.entries.clear();
-  for (UndoEntry& entry : otherEntries) {
-    stack.entries.push_back(std::move(entry));
-  }
-  for (UndoEntry& entry : slotEntries) {
-    stack.entries.push_back(std::move(entry));
-  }
+  for (size_t i = 0; i < otherApplied; ++i)
+    stack.entries.push_back(std::move(otherEntries[i]));
+  for (size_t i = 0; i < slotApplied; ++i)
+    stack.entries.push_back(std::move(slotEntries[i]));
   stack.cursor = stack.entries.size();
+  for (size_t i = slotApplied; i < slotEntries.size(); ++i)
+    stack.entries.push_back(std::move(slotEntries[i]));
+  for (size_t i = otherApplied; i < otherEntries.size(); ++i)
+    stack.entries.push_back(std::move(otherEntries[i]));
 }

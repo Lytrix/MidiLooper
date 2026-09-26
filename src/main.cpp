@@ -700,6 +700,7 @@ FLASHMEM void setup() {
   // was still false, so title drain never reached boot_commit.
   StorageManager::setBootTitleLoadDrain(true);
   looper.setup();  // SD + loadState; USB + piano roll deferred until full slot drain
+  if (StorageManager::bootRecoveryBlocked()) return;
 
   // Startup policy: enter LOOP_EDIT deterministically and sync DROID explicitly.
   editManager.sendEditSessionChange(EditSessionType::Loop, true);
@@ -741,6 +742,7 @@ FLASHMEM void setup() {
 }
 
 void loop() {
+  if (StorageManager::bootRecoveryBlocked()) return;
   // Start performance monitoring for this loop iteration
   // PerformanceMonitor::globalPerformanceMonitor.beginLoop();
   

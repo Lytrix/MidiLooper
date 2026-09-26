@@ -1,0 +1,6 @@
+{
+  "complete": true,
+  "mode": "passive boot observation; no transport/content gestures",
+  "transport_stopped_at_ready_checkpoint": true,
+  "persistence_idle": true
+}

@@ -377,6 +377,16 @@ NOTE_EDIT **32nd** hide floor (D16) applies to overlap **edit** only. Capture **
 
 ### Global undo (`Track::undoStack` / `GlobalUndoStack`)
 
+**Load policy (DEC-088 — load-time undo reconstruction):** successful legacy or LSV1
+slot load derives undo units from saved active passes and their grouping. LSV1 keeps
+its installed snapshot authoritative; deriving history does not replay or replace
+that root. The loaded slot starts at its content tip with redo empty. An in-session
+Undo creates Redo; committing a different background slot preserves that partition
+and selected-slot focus. Runtime stacks/old redo branches are not written to disk.
+Snapshot-only files cannot manufacture missing historical actions. This supersedes
+the earlier zero-undo-after-LSV1-load policy.
+
+
 | `UndoEntryKind` | Push | Undo action |
 |-----------------|------|-------------|
 | **RecordPassAdded** / **OverdubPassAdded** | `commitCapturePass` publish | `setCapturePassState(Disabled)` |
@@ -601,3 +611,10 @@ Run: `pio test -e native` from project root.
 6. **Healing incomplete current `LoopSnapshot` membership in consumers** — do not restore `mergeOmitted` / NoteId heal on `from=snapshot` source-view, draw-source gather, or visual/idle/adopt. Fix publish hand-off (`handoffLiveRecordProgressToCommittedPass`) instead. Sealed `applyPendingNoteChangesToDisplayNotes` after a seed is still required.
 6. **Confusing `reconstructNotes` with storage validation** — UI wrapping ≠ committed event cleanup.
 7. **Reintroducing Take / `takes[]` / `commitTake()` names** — use **passes**, `commitCapturePass()`, **RecordPassAdded** / **OverdubPassAdded**.
+
+## Boot metadata recovery
+
+See [automatic runtime metadata repair](../Authority/Architecture/Storage.md#automatic-runtime-metadata-repair-at-boot)
+for DEC-089 — boot metadata repair: prerequisites, preserved files, replacement
+settings, failure hold and host/device verification boundary. This does not repair
+corrupt note content or recover original global undo chronology.

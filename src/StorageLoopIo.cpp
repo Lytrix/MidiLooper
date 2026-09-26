@@ -1361,11 +1361,9 @@ void STORAGE_LOOP_IO_MEM applyLoadedLoopSlotBodyCommit(
     // DEC-073: the restored passes and the installed root are the same committed state, so the
     // loaded root's coverage is the current committed-pass revision.
     loop.storePublishedSnapshot(std::move(loadedLoopSnapshot), 0, kSnapshotCoverageCurrent);
-#if !defined(PIO_UNIT_TEST_NATIVE)
-    TrackUndo::clearUndoHistoryForSlot(track, slotIndex);
-#endif
-    return;
   }
+  // DEC-088: saved active pass records reconstruct per-slot undo for both formats.
+  // The installed LSV1 root remains the content authority; no history roots are replayed here.
 #if defined(PIO_UNIT_TEST_NATIVE)
   testRecordRebuildSlotFromLoopContentCall();
 #else

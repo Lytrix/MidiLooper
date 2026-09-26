@@ -1,0 +1,6 @@
+{
+  "request": "upload the firmware",
+  "time": "2026-09-26T22:30:39.256494+02:00",
+  "reader_confirmed": "MLREADER2 READ_ONLY /MidiLooper",
+  "scope": "Install teensy41-capture-serial recovery firmware; automatic boot metadata repair; observe startup. No clears or content stimuli."
+}

@@ -282,7 +282,7 @@ LoopSnapshotBodyFormatV1LoadStepResult stepLoopSnapshotBodyFormatV1LoadParse(
     uint32_t maxGrains = 0);
 
 class Track;
-/// LoadLoopJob publish: legacy rebuilds GUS from passes; LSV1 stores published snapshot only.
+/// LoadLoopJob publish: both formats derive undo from passes; LSV1 retains its published snapshot.
 void applyLoadedLoopSlotBodyCommit(Loop& loop, Track& track, uint8_t slotIndex,
                                    bool usesLoopSnapshotBodyFormatV1,
                                    PersistedLoopSnapshot& persistedOracle,

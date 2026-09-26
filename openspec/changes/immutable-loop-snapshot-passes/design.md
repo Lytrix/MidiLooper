@@ -1,3 +1,8 @@
+> 2026-09-26 amendment: DEC-088 — load-time undo reconstruction supersedes the
+> zero-undo-after-load/no-reconstructed-units clauses below. Saved active passes
+> now derive per-slot undo; redo begins empty and arises from in-session Undo.
+> Snapshot authority, no persisted runtime lineage and file shape are unchanged.
+
 ## Context
 
 At the selected base commit, `LoopPasses` stores chunk-backed capture passes and edit rows, and `LoopPasses::materializeToEventVector()` derives effective MIDI. `PersistedLoopSnapshot` exists, but `Loop::sharePassesSnapshot()` uses `deepClonePasses()`; it is not a structurally shared immutable effective-state snapshot. The maintained-LCR lifecycle added after this base is deliberately not carried into this feature branch.
@@ -546,13 +551,14 @@ After load or unplanned reboot:
 
 ```text
 load latest saved complete snapshot
-runtime undo depth = 0
-redo = empty
+runtime undo depth = units derived from saved active pass records (DEC-088)
+redo = empty until an in-session Undo
 unsaved session tails and unresolved candidates are discarded
 ```
 
-This change does not promise post-reboot undo. If a later storage design wants
-persisted snapshot lineage, that is a separate decision.
+DEC-088 — load-time undo reconstruction enables post-reboot undo from retained
+active pass records. It does not persist snapshot lineage or restore a previous
+redo branch; an in-session Undo creates runtime Redo.
 
 `StorageManager` serializes and loads this content; `Loop` rebuilds local
 handles and owns runtime snapshot selection.
@@ -905,7 +911,8 @@ reserve.
 - ~~What exact storage version/layout and compatibility migration are required?~~
   **Closed 2026-09-11 — [DEC-057](../../../docs/DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write):**
   LoopSnapshot body format version 1; wire discriminator `LSV1` + `formatVersion == 1`;
-  dual-write `PersistedLoopSnapshot` + `LoopSnapshot` during migration; load undo depth 0;
+  dual-write `PersistedLoopSnapshot` + `LoopSnapshot` during migration; load derives
+  undo from retained active passes under DEC-088 (superseding the original zero-depth clause);
   absence of `LSV1` = legacy; wrong `formatVersion` = unsupported reject.
   Firmware reader/writer and deferred migration remain task **5.3**.
 - Which optional indexes are justified without becoming a second authority?

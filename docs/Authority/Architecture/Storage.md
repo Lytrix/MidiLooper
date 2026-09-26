@@ -89,7 +89,10 @@ pitch/bar directory that provides structural sharing remains a Phase 1
 measurement decision.
 
 Loading rebuilds loop-local handles and selects the latest saved complete
-snapshot. Runtime undo depth starts at 0 and redo is empty. The loaded snapshot
+snapshot. Under DEC-088 — load-time undo reconstruction, retained active pass
+records and their grouping derive runtime undo units; redo starts empty. Undo
+creates runtime Redo, and another slot loading preserves it. This changes neither
+the persisted snapshot authority nor the content-only file shape. The loaded snapshot
 is self-contained; a consumer does not traverse older snapshots to obtain
 missing content. `Loop` remains the runtime publication and selection owner.
 
@@ -110,6 +113,40 @@ Deferred persistence does not authorize a new persistence owner or a full-loop
 catch-up at STOP.
 
 ---
+
+## Automatic runtime metadata repair at boot
+
+DEC-089 — boot metadata repair runs in `StorageManager::loadState` before temp
+cleanup. A valid runtime bundle takes the normal load path. Missing/corrupt metadata
+is reconstructed only when `workspace.bin` and all 64 epoch-qualified slot files
+validate through their production parsers. Missing/invalid slots, unsupported bodies,
+wrong slot identities and epochs newer than the workspace cause refusal before any
+write. This deliberately conservative recovery does not salvage partial libraries or
+legacy slot bodies without the current epoch header.
+
+Repair writes a separately named candidate in `current/temp`, verifies it, preserves
+the corrupt original under a unique backup name, and promotes the checked candidate.
+It leaves slot files, workspace metadata, unrelated folders and existing temp evidence
+unchanged. Existing repair/backup names are never overwritten; exhaustion of the 64
+names in either namespace blocks recovery. Normal current-workspace boot also skips
+old temp cleanup so a later boot cannot silently discard repair evidence.
+
+Replacement settings are stopped transport, 120 BPM, unmuted tracks, track 1 and
+the first nonempty slot per track selected/enabled (slot 1 for an empty track).
+Original performance settings are not recovered. Undo derives from saved passes
+under DEC-088 — load-time undo reconstruction; redo starts empty. Repaired metadata
+then enters the existing deferred slot loader.
+
+Failed recovery latches `BootRecoveryJob::writesBlocked` for the boot. Main setup/loop,
+save admission, deferred saves and synchronous save drain refuse normal operation;
+an empty fallback is not saved over this workspace. A new boot re-evaluates sources.
+The existing no-workspace legacy/fresh path remains available. Repair parses one slot
+at a time during cold setup before normal MIDI/clock service, using existing parser
+allocations; no realtime or arbitrary-size allocation guarantee is claimed.
+
+Host SD fault injection verifies interrupted firmware operations, not the SD card's
+physical power-loss durability or FAT atomicity. Device acceptance remains open;
+the incident hold and standalone folder reader remain in place.
 
 ## Non-goals
 

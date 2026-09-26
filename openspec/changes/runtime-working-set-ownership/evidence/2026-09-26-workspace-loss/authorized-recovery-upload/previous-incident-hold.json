@@ -1,0 +1,7 @@
+{
+  "status": "incomplete_timeout",
+  "drains": 0,
+  "detail": "incident hold: the 2026-09-26 workspace save was interrupted when the clear run closed the port. No reset until the SD image is taken read-only and recovery is chosen -- every boot can run boot hygiene, which has already discarded an incomplete runtime bundle temp.",
+  "context": "2026-09-26 workspace-loss incident hold",
+  "recorded_at": 1790442992.901098
+}

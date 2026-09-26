@@ -1,5 +1,114 @@
 # Current work (implementation scope)
 
+**2026-09-26 — approved load-time undo implemented; host recovery passes.**
+DEC-088 — load-time undo reconstruction supersedes the earlier zero-after-load
+policy. All 122 actions derive from saved passes on load/reload with empty undo
+headers; all 60 nonempty slots pass Undo/Redo, and background commits preserve
+runtime Redo. Redo starts empty and is created by Undo. The isolated runner verifies
+hydration before/during/after restore. Candidate reconstructed-undo-04 preserves all
+65 original files plus a 628-byte bundle (443,431 bytes total). Capture-serial build
+passes with RAM1 padding 840, unchanged. No upload/device/card action; standalone
+reader and incident hold remain. Hardware recovery is still unverified. Evidence:
+active-change `evidence/2026-09-26-workspace-loss/UNDO-LOAD-FIX.md`.
+
+**Verification complete:** full native 2,461 passed / 5 skipped; focused native 68
+passed; recovery load/reload 122 actions and all 60 nonempty slot roundtrips;
+Python 16 passed; OpenSpec validation passes. Capture-serial firmware SUCCESS,
+RAM1 padding 840. No device actions. See UNDO-LOAD-FIX.md and preserved logs.
+
+
+**2026-09-26 — correction: reconstructed undo after reload needs a policy change.**
+The prior “next fix” diagnosis missed DEC-057 — snapshot body format and the active
+working-set spec: LSV1 load deliberately starts with undo depth zero. The older
+content-history reconstruction spec has a newer snapshot delta that changes it.
+The 122-action host recovery remains valid; it is not authorization to reverse the
+load contract. Proposed change: derive per-slot undo from sufficient saved passes,
+redo empty, saved snapshot authoritative, no persisted undo stack. Approval is
+required before that normal-load behavior changes. No firmware/device action.
+See active-change `evidence/2026-09-26-workspace-loss/UNDO-LOAD-POLICY-REVIEW.md`.
+
+
+**2026-09-26 — undo reconstructed and host-tested; reload blocks installation.**
+Existing C++ content-history owner derives 122 actions (60 record, 11 overdub,
+51 boundary changes) across all 60 nonempty loops. Full Undo → Redo preserves
+materialized MIDI bytes, loop lengths and published note identities/content on all
+60; four empty slots have no actions. Diagnostic bundle: 8,846 bytes. Production
+load/hydration fixture retains only 9 actions after reload, so the wrapper exits 2
+and the candidate is not safe to install. Original files byte-identical; firmware
+unchanged; no device access; hold remains. Original cross-slot chronology, clear
+snapshots and old redo branch remain unrecovered. Evidence: active-change
+`evidence/2026-09-26-workspace-loss/UNDO-RECONSTRUCTION.md`.
+
+
+**2026-09-26 — workspace reconstruction passes host load/restore acceptance.**
+Candidate `captures/midilooper-folder-copy-20260926-195228/reconstructed-03/candidate/`
+preserves 65 original files and adds a 628-byte runtime bundle (total 443,431 bytes).
+All 64 slots restore; 7,840 capture-event records match source byte-for-byte, 57 snapshot
+inventories match. Explicit replacement settings: stopped/120 BPM, first nonempty
+slot per track selected/enabled, unmuted, fresh global undo. Source decode 3/3;
+reconstruction 2/2; affected ordinary-native regression 12 passed/2 explicit skips;
+Python 16 passed. Reusable C++ writer is host-tested only; automatic device recovery
+is not implemented. No SD-card writes/upload/device access. Hold remains latched.
+Evidence: active-change `evidence/2026-09-26-workspace-loss/WORKSPACE-RECONSTRUCTION.md`.
+S1.6c.2 — capacity revalidation remains blocked on actual hardware recovery/measurement.
+
+
+**2026-09-26 — host production decoder audit complete.** All 64 copied current
+slots decode using an isolated Teensy-compatible event-layout adapter: 7,840 raw
+MIDI events; 57 effective snapshots with 2,766 note identities. Three nonempty slots
+use raw pass format; four slots empty. Direct Mac decoding was invalid because
+MidiEvent is 32 bytes on Mac versus 20 on Teensy. Firmware unchanged. Three focused
+native tests pass through the repeatable host wrapper; no device access. Evidence:
+active change `evidence/2026-09-26-workspace-loss/PRODUCTION-DECODE-AUDIT.md`.
+Runtime metadata reconstruction/load validation remains next; no restore candidate
+approved, normal firmware hold unchanged, S1.6c.2 — capacity revalidation blocked.
+
+
+**2026-09-26 — offline recovery audit complete; no device access.** All 64 current
+slot files pass the firmware checksum/footer checks; 60 have nonzero loop lengths.
+60/64 lengths match the preserved pre-loss census; differences are track 8 slots
+4–7. Saved revisions hold at most 22 nonzero-length slots, so current files remain
+the primary recovery candidate. Full note decoding and compatible workspace metadata
+are not yet validated; no restore candidate is approved. S1.6c.2 — capacity
+revalidation remains blocked. Evidence: active change's
+`evidence/2026-09-26-workspace-loss/OFFLINE-RECOVERY-AUDIT.md`. 16 host tests pass.
+Normal firmware/recovery hold stays latched; standalone reader remains installed.
+
+
+**2026-09-26 — USB folder copy COMPLETE, authorized reader installed.**
+Copied only `/MidiLooper` through the standalone read-only reader with the card left in place:
+**1,007 file entries / 6,837,184 bytes**, transfer CRC32 and independent local SHA-256/length/CRC
+verification all pass. Output: `captures/midilooper-folder-copy-20260926-195228/download-05/`;
+report: `captures/midilooper-folder-copy-20260926-195228/verification.json`.
+Contains 65 current files (64 slots plus workspace metadata), 73 saved-set files, and historical
+`current.bad.*` trees. This proves surviving files, not their semantic validity or recoverability.
+One duplicate path, `current.bad.211210/workspace.bin`, has distinct 154-byte and 77-byte entries;
+both are preserved (second under `duplicate_entries/000854.bin`), not overwritten. Initial transfers
+are retained as incomplete evidence; USB per-line acknowledgements fixed unreliable bulk sending.
+Reader firmware SHA256 `a915b18c5a12175ef7c25dddcc8932840418fd61018ca4201ade467e78cacce2`;
+9 host tests pass. No SD writes, normal-looper boot, recovery or restore occurred. Reader remains
+installed; normal-looper upload/recovery hold stays latched. User's explicit approval covered this
+reader installation and folder copy only. Recovery analysis can now use the host copy.
+
+**2026-09-26 — standalone USB reader installed with explicit user approval; copy pending USB port.**
+User approved replacing/resetting the running firmware solely to read `/MidiLooper`. Standalone
+`pio run -d tools/midilooper-reader -e teensy41-capture-serial -t upload` succeeded. macOS
+sees USB Serial `16c0:0483`, serial `15494480`, but has not exposed a `/dev/cu.usbmodem*`
+port. No export command was sent and no SD access occurred through the reader. Asked the user
+to allow the accessory if macOS prompts. Installation evidence:
+`captures/midilooper-folder-copy-20260926-195228/installation.json`. The normal-looper
+upload/recovery hold remains latched; do not restore the normal firmware automatically.
+
+**2026-09-26 — USB folder reader prepared locally; no device access.** User requests only
+`/MidiLooper` over USB, leaving the card in place and unrelated data excluded. Added
+`tools/midilooper-reader/`: separate read-only utility firmware (no looper boot recovery/save
+code) plus a streaming Mac downloader with file CRC32, SHA-256 manifest, path checks and
+incomplete-transfer handling. Seven host tests and the standalone Teensy build pass.
+NOT uploaded or device-verified; incident hold remains set. Installing the reader replaces
+and resets the running firmware and needs explicit approval. Folder-only copying supersedes
+full-card imaging as the requested approach, without authorizing upload, repair or device access.
+Contract and commands: `tools/midilooper-reader/README.md`.
+
 **2026-09-26 — INCIDENT: the device workspace no longer loads; host shutdown defect fixed (host-only; no device access).** The device comes up empty: `CurrentSet meta missing .../current/temp/runtime.bundle.bin`, `Current workspace load failed`, `Boot recovery chain exhausted; starting empty`, `BOOT,load,fail`, `free_chunks=480/512`, all 64 slots empty — where the same library read **58 committed / ~386-403 free** minutes earlier, and the post-loss observation is *complete* (64/64 slots, `incomplete_window: false`), so it is not an artifact. **Cause, and it is this session's tooling:** the deliberate clear of the authorized target admitted a deferred workspace save, and `--prepare-only` returned immediately, closing the serial port mid-write (that session's last line is `PERS,work,...,TrackMeta,track:7,start,ok` with no completion); the next run's upload then reset the board on top of it. **Established:** the load failure and the empty runtime. **NOT established:** that the slot payloads are erased, or the exact failure chain — a load failure is not an erasure, and the card may still hold every payload and saved set. **Fixed (host-only):** `scripts/hitl/device_shutdown.py` — canonical stop → drain → stop → drain, completion **verified** through the existing idle owner (never slept), judged from the log **tail** (anchoring at "now" reads an empty suffix as idle and reported success before the save was admitted — a real defect in the first cut, caught by its own test), disconnection/timeout named apart, incomplete shutdowns **latched**, and `DeviceSession` draining on *every* exit (normal, early return, exception) rather than per-`return`. The driver and `hitl_boot_census` both refuse an upload/reset while latched; the hold is currently set with the incident context. 15 host tests use the incident's own preserved logs as the decisive fixture (clear-run reads active, clean run reads idle — a fixed sleep could not tell them apart); a false green in the structural test was found by red-proving it and fixed. Evidence preserved with per-file sha256, commands and build identities under `openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/` (byte-exact via `.gitattributes`), and the read-only SD imaging procedure awaits authorization. **Device validation of the shutdown fix is PENDING** — it is host-tested only and cannot be device-validated while the hold is latched; its tests support the correction, they do not demonstrate it on hardware. **S1.6c.2 — capacity revalidation is BLOCKED (hard):** it needs the loaded N=56 library; an empty-library run cannot replace that experiment. No boot, no card access, no quarantine, no load, no rebuild.
 
 
@@ -3021,6 +3130,123 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ---
 
 ## Now implementing
+
+### Recovered-library OLED freeze — diagnostic build only (2026-09-26)
+
+User sees the normal first piano-roll frame frozen while MIDI remains responsive.
+Capture confirms changing DISP state/length and advancing DMA completion counters.
+G0: boot-screen gate is passed; actual updated pixel delivery is UNKNOWN. No source
+change justified yet. Build the existing `MIDILOOPER_DISPLAY_DMA=0` comparator in
+an isolated capture-serial configuration, preserving recovery firmware and settings.
+No automatic upload or recording/clear stimulus. This is a temporary transport
+discriminator, not approval to ship blocking SPI as a timing fix.
+
+
+### Automatic runtime-bundle boot repair (2026-09-26; approved)
+
+**2026-09-26 — recovery firmware uploaded with explicit user authorization.**
+`teensy41-capture-serial` upload SUCCESS; SHA256
+`4b13749ab9d97b0699fb02f813a3a9a26b7475a60391e19ffa784c21cec93255`
+matches the host-verified image. Confirmed standalone read-only reader before upload;
+archived and cleared the incident hold for this approved recovery installation.
+Device reports runtime metadata repaired, `BOOT,load,ok`, and a settled checkpoint:
+`admission_complete=1`, `interactive_ready=1`, `undo_hydrated=1`,
+`transport_stopped=1`, `deferred_prewarm_idle=1`, `free_chunks=391`.
+Serial held open through verified persistence idle, then closed. No content/clear
+stimuli. This establishes successful recovery boot, not per-loop content parity,
+hardware Undo/Redo roundtrips or second-boot acceptance; those remain open.
+Evidence: active-change workspace-loss `authorized-recovery-upload/`.
+
+
+**2026-09-26 — automatic boot metadata repair implemented and host-verified.**
+DEC-089 — boot metadata repair validates the complete workspace before generating
+runtime metadata; preserves source files and corrupt originals; blocks saves after
+refusal. Actual boot owner restores the copied 64-slot library and derives 122 undo
+actions; healthy reboot retains them. Six isolated cases include 276 interruption
+cuts. Full native 2,461 passed / 7 skipped; Python 16; capture-serial SUCCESS with
+RAM1 padding 856 (floor 840). No upload/device action; hardware acceptance and the
+incident hold remain open. Evidence: active-change
+`evidence/2026-09-26-workspace-loss/BOOT-REPAIR.md`.
+
+
+User approved the proposed inspect → validate slots → separate candidate → checked
+publication → normal deferred load sequence. Implement in StorageManager, before
+cleanup. Preserve original slot/workspace bytes and broken metadata; failure blocks
+normal operation/persistence rather than saving an empty workspace. Test interruption
+at write/rename boundaries using native SD injection and the preserved folder copy.
+No actual device actions/upload; host acceptance plus capture-serial build only.
+DEC-089 and the execution packet specify the conservative recovery prerequisites.
+
+
+### Approved load-time undo reconstruction (2026-09-26)
+
+User approved changing the zero-after-load contract: derive undo from saved passes,
+redo empty on load; an in-session Undo creates Redo. Implement in existing load
+commit/TrackUndo owners, preserve loaded root authority, and protect already-loaded
+slots' redo during later background slot commits. No persisted undo payload or new
+format. Native recovery/interleaving acceptance plus full native and capture-serial
+build; no hardware action, incident hold remains. DEC-088 and packet in
+ARCHITECTURE-REVIEW.md supersede the prior pending-policy status below.
+
+
+### Undo load policy review (2026-09-26)
+
+User requested the next load/undo fix. Evidence is now pinned in
+UNDO-LOAD-POLICY-REVIEW.md. Existing zero-after-load requirements conflict with
+preserving derived history; production implementation waits for explicit approval
+of the proposed changed behavior. Host review and correction only; device hold stays.
+
+
+### Offline undo reconstruction acceptance (2026-09-26)
+
+**Host testing complete; persistent recovery blocked:** 122 actions roundtrip across
+60 nonempty slots, but reload retains 9. Follow-up is the deferred load/undo-history
+publication boundary; no device installation or firmware change in this slice.
+
+User requests testing and reconstruction where possible. Reuse copied current files
+and host-only candidate; exercise target load undo hooks (native normally bypasses
+them), deferred undo hydration, derive history using existing content-history owner,
+and prove undo/redo state/content restoration. Report original cross-slot chronology,
+clear snapshots or old redo branch as unknown unless independently recoverable.
+No production firmware or device writes authorized by this slice. Do not present
+an in-memory rebuilt history as boot-persistent without a reload test.
+
+
+### Host workspace reconstruction and load acceptance (2026-09-26)
+
+User explicitly requests reconstruction and testing. Preserve every copied slot and
+workspace.bin byte-for-byte; add missing runtime.bundle.bin to a new host candidate.
+C++ writer uses existing serialization owners. Defaults are explicit: idle/stopped,
+120 BPM, first nonempty slot selected/enabled on each track, unmuted, fresh undo.
+Test missing/corrupt bundle refusal and candidate acceptance through production
+load path on in-memory SD, including bounded restore completion/content counts.
+No device access or recovery writes. Firmware recovery is feasibility/design only.
+
+
+### Offline production decoder audit (2026-09-26)
+
+Next authorized host-only slice: feed the 64 verified current slot bodies through
+production StorageLoopIo decoders; record success, pass counts and snapshot note
+identities. Reject truncated controls. Inspect required runtime metadata without
+constructing or installing guessed settings. No device access.
+
+### Offline recovery audit (2026-09-26)
+
+Incident-support prerequisite for S1.6c.2 — capacity revalidation. Inspect only the
+verified `download-05` host copy; verify transfer hashes, stored checksums and
+container boundaries, and report candidate metadata without claiming loadability.
+No device access, source-backup mutation, recovery write or normal firmware upload.
+Oracle: reject corrupt/truncated containers; distinguish structural integrity from
+semantic restore validation. Focused host tests and a reproducible JSON report.
+
+### USB folder reader — local preparation only (2026-09-26)
+
+User requests a simple program reading only `/MidiLooper` over USB, with the SD card left in
+the Teensy and unrelated card data excluded. Prepare a separate read-only utility firmware and
+host downloader under `tools/midilooper-reader/`; no looper runtime changes, upload, reset or device
+access in this slice. Existing USB firmware has no general file export command. The standalone
+utility deliberately omits looper startup/recovery/persistence code. Keep the incident hold set.
+Contract, verification and pending deployment: `tools/midilooper-reader/README.md`.
 
 **2026-09-25: authorized S1.6c.2 — snapshot construction reuse.** Implement candidate-private index-page reuse and prove allocation scaling, immutable parent/sibling isolation, failure cleanup and device memory reduction. Then assess role-specific capture reservations under the existing phase dependencies. Packet in the active runtime ARCHITECTURE-REVIEW.md. No inactive-root demotion, ring resizing or allocator replacement in this slice.
 
@@ -8793,3 +9019,37 @@ bounds, evidence and limitations. No firmware upload or device action occurred.
 **DEC-070 probe-driven fix implemented:** release the retained tail cache at the retarget, keep the companion/undo estimates, walk to `commitStoppedWithUndo`, bounded fallback as a safety net only. Native 2,213 / 1 skipped / 0 failures; RAM1 locals 6,400; `captures/successor-wrap-44` overflowed the capture ring so the 5.9 display/save/undo acceptance still needs one clean run.
 **DEC-070 second attempt (both caches released) still falls short** (`captures/successor-wrap-45`: `companions=kept` then `companion path stalled; raw pass only` 0.76 s later). The remaining denier is `beginFrozenCanonicalTail`'s `captureAttached()` guard against the predecessor's retained canonical inputs; clearing it invalidates the canonical prefix, which needs playback turns. The fix belongs at retention time: skip `retainCommittedCanonicalTail` in `completeDeferredCleanup` when a successor interval is already live (`job.interval != captureInterval_`). 5.9 stays open.
 **DEC-070 retention guard (5.11) implemented** (`3079d8d9`): `completeDeferredCleanup` retains the committed canonical tail only while the job is still the live interval. Native green; `captures/successor-wrap-46` shows the save completing (`persistence handoff result=ok`) but the retarget still stalls (`companion path stalled; raw pass only`, `overdub_ok=False`), so the blocking `captureAttached()` belongs to the live interval's own canonical inputs, not to the predecessor's retention. Next: instrument where that attachment is set. 5.9 open.
+
+### OLED frozen-first-frame investigation (2026-09-26)
+
+User confirms the normal piano roll with the initial 20-bar track-1 content remains
+frozen while MIDI responds. Live serial attached at 115200 without reboot (uptime
+continues). Original `DISP` length 15360; later display records length 768 and
+STOPPED → PLAYING → OVERDUBBING → STOPPED while DMA frames continue increasing,
+with no reported timeout/rejection. These counters prove software progress, not
+updated pixels on the panel. Root cause remains UNKNOWN. Existing snapshot
+preconditions and recovery are not patched on this evidence.
+
+Built the existing blocking-SPI comparator (`MIDILOOPER_DISPLAY_DMA=0`) using the
+same capture-serial environment and unchanged source in an isolated build directory.
+Build SUCCESS; not uploaded. Configuration, log and image hash:
+`captures/display-blocking-diagnostic-20260926/`. Serial capture remains open in
+`captures/recovery-display-hang-20260926/`; latest user-triggered save completed.
+Hardware comparison requires explicit upload approval per repository rule; this is
+a diagnostic variant, not a production scheduling fix or a closed display gate.
+
+**2026-09-26 — blocking-SPI diagnostic uploaded with explicit user approval.**
+Persistence idle verified before reset. Capture-serial upload SUCCESS using
+`captures/display-blocking-diagnostic-20260926/platformio.ini`; actual device
+`#DMA_XFER` shows init=0, dma_frames=0, increasing blocking_frames. Serial capture
+remains open. Visual outcome awaiting user; no display fix or timing gate claimed.
+Recovery source unchanged. Image/config identity is pinned in that capture directory.
+
+**2026-09-26 — blocking-SPI visual comparison PASS (user observed).**
+User confirms “Yes, the screen updates now.” Same recovery/renderer source, existing
+`MIDILOOPER_DISPLAY_DMA=0` switch only. Device reached load=ok, restore admission
+complete, undo hydrated and transport stopped. This isolates the frozen-screen
+behavior to the DMA display route; it does not establish the precise DMA defect.
+Blocking SPI remains installed as a diagnostic workaround; no real-time timing
+acceptance or permanent DMA fix claimed. Serial capture remains open.
+Evidence: `captures/display-blocking-diagnostic-20260926/metadata.json` and session log.

@@ -42,6 +42,7 @@ STORAGE_PERSIST_MEM void flushOneQueuedCaptureChunkDuringTransport() {
 }  // namespace
 
 void StorageManager::processDeferredSaveState(const LooperState& state) {
+    if (bootRecoveryBlocked()) return;
 #if BYPASS_STOP_UNDO_SAVE
     (void)state;
     storageSession.currentWorkspaceSave.pending = false;

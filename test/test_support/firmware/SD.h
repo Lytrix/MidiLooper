@@ -10,6 +10,14 @@
 #include <map>
 #include <string>
 #include <vector>
+#include <functional>
+
+// Optional physical-I/O fault/cut boundary; inactive in ordinary native suites.
+inline int nativeSdWriteBudget = -1;
+inline int nativeSdRenameBudget = -1;
+inline bool nativeSdPartialWrite = false;
+inline bool nativeSdFailWriteOpen = false;
+inline std::function<void()> nativeSdAfterMutation;
 
 #ifndef FILE_READ
 #define FILE_READ 0
@@ -67,9 +75,15 @@ class File {
   }
   size_t write(const uint8_t* src, size_t count) {
     if (bytes == nullptr || !isOpen || !writable) return 0;
+    if (nativeSdWriteBudget==0) {
+      if (!nativeSdPartialWrite) return 0;
+      count/=2;
+    }
+    if (nativeSdWriteBudget>0) --nativeSdWriteBudget;
     if (pos + count > bytes->size()) bytes->resize(pos + count);
     std::memcpy(bytes->data() + pos, src, count);
     pos += count;
+    if (nativeSdAfterMutation) nativeSdAfterMutation();
     return count;
   }
   size_t write(uint8_t value) { return write(&value, 1); }
@@ -119,6 +133,7 @@ class SDClass {
     const bool appendMode = (mode & O_AT_END) != 0;
     const bool createMode = !appendMode && (mode & O_CREAT) != 0;
     if (appendMode || createMode || mode == FILE_WRITE || mode == FILE_WRITE_BEGIN) {
+      if (nativeSdFailWriteOpen) return File{};
       // Device-faithful write modes, and the reason this emulation exists.
       //
       // The Teensy SD class maps `FILE_WRITE` to `O_RDWR | O_CREAT | O_AT_END` (SD.h) -- it
@@ -132,6 +147,7 @@ class SDClass {
       // `docs/Plans/sd_temp_write_truncation_refinement.md`), so the modes are modelled here.
       if (found == files.end()) {
         found = files.insert_or_assign(path, std::vector<uint8_t>{}).first;
+        if (nativeSdAfterMutation) nativeSdAfterMutation();
       }
       File handle;
       handle.bytes = &found->second;
@@ -149,10 +165,13 @@ class SDClass {
   }
 
   bool rename(const char* from, const char* to) {
+    if (nativeSdRenameBudget==0) return false;
+    if (nativeSdRenameBudget>0) --nativeSdRenameBudget;
     auto found = files.find(from);
     if (found == files.end()) return false;
     files[to] = std::move(found->second);
     files.erase(found);
+    if (nativeSdAfterMutation) nativeSdAfterMutation();
     return true;
   }
 

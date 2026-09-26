@@ -1,0 +1,101 @@
+diff --git a/include/GlobalUndoStack.h b/include/GlobalUndoStack.h
+index e384dff2..ee4b2f21 100644
+--- a/include/GlobalUndoStack.h
++++ b/include/GlobalUndoStack.h
+@@ -197,33 +197,35 @@ inline size_t countRedoEntriesForSlot(const GlobalUndoStack& stack, uint8_t slot
+   return count;
+ }
+ 
+-/// Move one slot's entries to the stack tip so `canUndoForLoop` works after content rebuild.
++/// Focus a slot's applied/redo tips without changing which actions are undone.
+ inline void repositionGlobalUndoStackTipForSlot(GlobalUndoStack& stack, uint8_t slotIndex) {
+-  if (stack.entries.empty()) {
+-    stack.cursor = 0;
+-    return;
+-  }
+   UndoEntryVec otherEntries;
+   UndoEntryVec slotEntries;
+   otherEntries.reserve(stack.entries.size());
+   slotEntries.reserve(stack.entries.size());
+-  for (UndoEntry& entry : stack.entries) {
++  const size_t applied = std::min(stack.cursor, stack.entries.size());
++  size_t otherApplied = 0;
++  size_t slotApplied = 0;
++  for (size_t i = 0; i < stack.entries.size(); ++i) {
++    UndoEntry& entry = stack.entries[i];
+     if (entry.slotIndex == slotIndex) {
+       slotEntries.push_back(std::move(entry));
++      if (i < applied) ++slotApplied;
+     } else {
+       otherEntries.push_back(std::move(entry));
++      if (i < applied) ++otherApplied;
+     }
+   }
+-  if (slotEntries.empty()) {
+-    stack.cursor = stack.entries.size();
+-    return;
+-  }
++  // Applied focus entries last (Undo); focus redo entries first (Redo).
++  // Rebuild even when focus is absent: the vectors now own the moved payloads.
+   stack.entries.clear();
+-  for (UndoEntry& entry : otherEntries) {
+-    stack.entries.push_back(std::move(entry));
+-  }
+-  for (UndoEntry& entry : slotEntries) {
+-    stack.entries.push_back(std::move(entry));
+-  }
++  for (size_t i = 0; i < otherApplied; ++i)
++    stack.entries.push_back(std::move(otherEntries[i]));
++  for (size_t i = 0; i < slotApplied; ++i)
++    stack.entries.push_back(std::move(slotEntries[i]));
+   stack.cursor = stack.entries.size();
++  for (size_t i = slotApplied; i < slotEntries.size(); ++i)
++    stack.entries.push_back(std::move(slotEntries[i]));
++  for (size_t i = otherApplied; i < otherEntries.size(); ++i)
++    stack.entries.push_back(std::move(otherEntries[i]));
+ }
+diff --git a/src/StorageLoopIo.cpp b/src/StorageLoopIo.cpp
+index aba8eab4..c721443b 100644
+--- a/src/StorageLoopIo.cpp
++++ b/src/StorageLoopIo.cpp
+@@ -1361,11 +1361,9 @@ void STORAGE_LOOP_IO_MEM applyLoadedLoopSlotBodyCommit(
+     // DEC-073: the restored passes and the installed root are the same committed state, so the
+     // loaded root's coverage is the current committed-pass revision.
+     loop.storePublishedSnapshot(std::move(loadedLoopSnapshot), 0, kSnapshotCoverageCurrent);
+-#if !defined(PIO_UNIT_TEST_NATIVE)
+-    TrackUndo::clearUndoHistoryForSlot(track, slotIndex);
+-#endif
+-    return;
+   }
++  // DEC-088: saved active pass records reconstruct per-slot undo for both formats.
++  // The installed LSV1 root remains the content authority; no history roots are replayed here.
+ #if defined(PIO_UNIT_TEST_NATIVE)
+   testRecordRebuildSlotFromLoopContentCall();
+ #else
+diff --git a/src/TrackUndo.cpp b/src/TrackUndo.cpp
+index 9ccdaf17..e4231bc9 100644
+--- a/src/TrackUndo.cpp
++++ b/src/TrackUndo.cpp
+@@ -583,8 +583,13 @@ TRACK_COLD_MEM void appendContentUndoEntriesForSlot(Track& track, uint8_t slotIn
+     buildContentUndoEntries(loop.passes, slotIndex, loop.loopId, built);
+     for (UndoEntry& entry : built) {
+         entry.id = stack.nextEntryId++;
+-        stack.entries.push_back(std::move(entry));
+     }
++    // A restored slot starts at its content tip. Other loaded slots may already
++    // have runtime redo: insert the new applied units before that partition.
++    stack.entries.insert(stack.entries.begin() + stack.cursor,
++                         std::make_move_iterator(built.begin()),
++                         std::make_move_iterator(built.end()));
++    stack.cursor += built.size();
+ }
+ 
+ }  // namespace
+@@ -1223,7 +1228,6 @@ TRACK_COLD_MEM void TrackUndo::pushLoopGeometryDepartSnapshot(Track& track, uint
+ TRACK_COLD_MEM void TrackUndo::rebuildSlotFromLoopContent(Track& track, uint8_t slotIndex) {
+     appendContentUndoEntriesForSlot(track, slotIndex);
+     GlobalUndoStack& stack = track.getGlobalUndoStack();
+-    stack.cursor = stack.entries.size();
+     // LoadLoopJob rebuilds every restored slot. Undo routes through the selected slot, so
+     // keep the tip there — do not leave it on the last background slot that loaded
+     // (session_20260814_024004: selected=5, entries=17, tip after later slot loads).

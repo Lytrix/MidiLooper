@@ -7503,3 +7503,419 @@ saved-set load, no rebuild.
 
 **S1.6c.2 -- capacity revalidation is BLOCKED.** It requires the loaded N=56 library, and an empty-library
 run cannot replace that experiment. This is a hard block, not a delay.
+
+## USB folder reader — local incident-support preparation (2026-09-26)
+
+**2026-09-26 — USB folder reader prepared locally; no device access.** User requests only
+`/MidiLooper` over USB, leaving the card in place and unrelated data excluded. Added
+`tools/midilooper-reader/`: separate read-only utility firmware (no looper boot recovery/save
+code) plus a streaming Mac downloader with file CRC32, SHA-256 manifest, path checks and
+incomplete-transfer handling. Seven host tests and the standalone Teensy build pass.
+NOT uploaded or device-verified; incident hold remains set. Installing the reader replaces
+and resets the running firmware and needs explicit approval. Folder-only copying supersedes
+full-card imaging as the requested approach, without authorizing upload, repair or device access.
+Contract and commands: `tools/midilooper-reader/README.md`.
+
+Execution packet and decision review are in `tools/midilooper-reader/README.md`. No production
+firmware stage or device recovery gate is closed by this tool. No upload/reset command was issued.
+
+## USB folder reader — authorized hardware copy completed (2026-09-26)
+
+**2026-09-26 — USB folder copy COMPLETE, authorized reader installed.**
+Copied only `/MidiLooper` through the standalone read-only reader with the card left in place:
+**1,007 file entries / 6,837,184 bytes**, transfer CRC32 and independent local SHA-256/length/CRC
+verification all pass. Output: `captures/midilooper-folder-copy-20260926-195228/download-05/`;
+report: `captures/midilooper-folder-copy-20260926-195228/verification.json`.
+Contains 65 current files (64 slots plus workspace metadata), 73 saved-set files, and historical
+`current.bad.*` trees. This proves surviving files, not their semantic validity or recoverability.
+One duplicate path, `current.bad.211210/workspace.bin`, has distinct 154-byte and 77-byte entries;
+both are preserved (second under `duplicate_entries/000854.bin`), not overwritten. Initial transfers
+are retained as incomplete evidence; USB per-line acknowledgements fixed unreliable bulk sending.
+Reader firmware SHA256 `a915b18c5a12175ef7c25dddcc8932840418fd61018ca4201ade467e78cacce2`;
+9 host tests pass. No SD writes, normal-looper boot, recovery or restore occurred. Reader remains
+installed; normal-looper upload/recovery hold stays latched. User's explicit approval covered this
+reader installation and folder copy only. Recovery analysis can now use the host copy.
+
+## Offline recovery audit — 2026-09-26
+
+
+
+- Current workspace has 64 slot files and `workspace.bin`, but no runtime bundle.
+- All 64 current slot files pass the on-device 256-byte incremental body checksum
+  and SAVE footer checks. Metadata identifies 60 nonzero loop lengths and four zero lengths.
+  These are **not** decoded-note or successful-load counts.
+- Current workspace metadata passes its checksum, epoch 930.
+- 60/64 slot loop lengths agree with the preserved pre-loss census. Differences
+  (human one-based track/slot): 8/4: 19200→0; 8/5: 0→6144;
+  8/6: 0→6144; 8/7: 0→1536. This comparison does not prove note preservation
+  or attribute any change to a specific command.
+- 69 revision containers pass their header and firmware payload checksums.
+  54 also pass this audit's current-format chunk walk; 15 older S0001 revisions
+  fail that walk. Treat those as unsupported/rejected by this audit, not proof
+  of corruption: historical layout compatibility has not been investigated.
+- The largest revision candidates have only 22 nonzero-length slot chunks
+  (S0003/v0017); latest S0003/v0018 has 21. Saved sets are not a replacement
+  for the current large library.
+- Seven historical runtime-bundle files pass the chosen epoch/footer checksum
+  checks, including two `.bad.*` files. This does not make any of them compatible
+  with the current slots. No bundle was selected for transplantation.
+
+## Checksum compatibility finding
+
+`PersistenceSchema::crc32Continue` complements its input before a helper that
+also complements its input; it is not standard incremental CRC32. The audit
+reproduces current device algorithms: epoch finalizer 256-byte chunks seeded via
+Continue(0); revision file reader 512-byte chunks with first chunk via crc32.
+A direct compile of the production PersistenceSchema.cpp confirms
+Continue(0, "123456789") = d202d277. Standard CRC rejection is therefore not
+sufficient to label these files corrupt. No firmware checksum behavior changed.
+
+## Execution packet / limits
+
+Oracle: manifest mismatch aborts audit; bad footer/checksum, truncated section or
+chunk, duplicate slot chunk and count mismatch fail the relevant structural check.
+No source files are rewritten. Seven focused audit tests plus nine reader tests
+pass (16 total). Report is reproducible with:
+
+`python3 tools/midilooper-reader/audit_backup.py captures/midilooper-folder-copy-20260926-195228/download-05`
+
+Report: `offline-audit.json`, SHA256 `3031219a40c92e0800a4491f3d5b28197a08b9651d47fcea6d6fd694d4ae6536`.
+The report explicitly excludes full note/pass decoding, revision directory/body
+agreement, runtime-bundle semantic compatibility and restore readiness.
+
+## Next bounded slice
+
+Use the production slot decoder against the 64 current host files, validate notes,
+passes and effective roots, and establish exactly which runtime metadata a recovered
+workspace needs. Prepare and validate a candidate **on the host only** before
+requesting any recovery write. Do not combine a historical bundle with current
+slots merely because both have valid checksums. Normal upload/recovery hold remains.
+Capacity acceptance stays blocked until a recovered library is loaded and measured.
+
+## Offline production decoder — 2026-09-26
+
+
+All 64 copied current slot bodies decode; 60 nonempty and four empty.
+Capture passes contain 7,840 raw MIDI events. 57 slots contain effective snapshots,
+with 2,766 distinct-per-slot snapshot note identities. Three nonempty slots use
+raw pass format instead (human identities 6/3, 8/1, 8/3); absence of a serialized
+snapshot in that format is not evidence of content loss. No SysEx content passed
+through the audit: it explicitly rejects SysEx in passes or snapshots.
+These counts do not prove original-note preservation or audible playback parity.
+
+## Host ABI trap, resolved in isolated tooling
+
+Initial direct-native decoder: four empty bodies accepted, 60 nonempty rejected.
+Initializing the event pool did not change that. Production StorageLoopIo serializes
+`sizeof(MidiEvent)` bytes, and its union contains a pointer. Mac compile measured
+size=32/data offset=16; an ARM Cortex-M7 compile of the same header confirmed
+size=20/data offset=12 with static assertions. This explains why host round-trip
+fixtures can pass while device files fail on a native build.
+
+`prepare_native_decode_headers.py` copies headers to a new temporary directory,
+replaces only the SysEx pointer representation with an opaque 32-bit token, and
+copies StorageLoopIoBodyFormatV1.cpp changing its pointer-to-integer check to read
+that token. Its parser algorithm is otherwise unchanged. Layout assertions pin
+20/12. SysEx bytes cannot be dereferenced and SysEx content is rejected by the
+harness. This is an explicit ABI adapter, not an unmodified native binary.
+Production `src/` and `include/` are unchanged.
+
+## Execution packet and verification
+
+Owner/path: host reader → production raw/LSV1 decoding → scoped candidate destruction.
+No runtime publication, device session, SD access or firmware build/upload.
+Input: verified download-05; wrapper verifies every manifest hash before parsing.
+Every raw parse must consume the whole body. LSV1 uses its production parser,
+validates stored object/membership data and constructs the snapshot. Per-slot
+results plus native log are preserved beside this report. Decoder objects are
+released between slots: this is not an all-library memory/capacity measurement.
+
+Oracle: known one-note record round-trip yields two events and length 1536;
+truncated raw/LSV1 headers are refused; all 64 device identities must be reported
+exactly once, with matching 20/12 ABI, a successful native exit and all decoded.
+Native test has an explicit skip if real files or the target-layout adapter are
+absent; the wrapper will not mistake such a skip for successful decoding.
+Final repeatable wrapper run: three tests passed, zero skips in selected suite.
+Ordinary native control run: two tests passed and copied-files test skipped.
+16 existing Python audit/reader tests remain passing.
+
+Command:
+`python3 tools/midilooper-reader/decode_backup.py captures/midilooper-folder-copy-20260926-195228/download-05 <new-output-directory>`
+
+Evidence: `production-decode.json` includes source SHA256s and manifest identity;
+`production-decode-native.log` contains the 64 results and controls.
+
+## Missing runtime metadata (verified from CurrentSetBootLoad.cpp)
+
+`readCurrentSetFilePreamble` requires the container/anchor header, tempo, transport
+state, master length, and track count. `readCurrentSetTrackSlotMetadata` reads each
+track state/mute and every slot enabled/mute/loop-id. `readCurrentSetFileEpilogue`
+requires selected track, active and selected slots, undo stacks and completion
+markers (plus optional metadata trailer). Those settings are not recoverable merely
+by decoding the current slot files; the current runtime bundle is absent.
+
+Next: prepare a host-only reconstruction candidate and test it through the real
+bundle/load path. Keep every slot byte-for-byte; make replacement transport,
+selection/mute/enable and undo choices explicit. Do not transplant a historical
+bundle's undo references without validating compatibility. No candidate was built
+or approved in this slice; no restore write is authorized. S1.6c.2 — capacity
+revalidation remains blocked until a loaded library can be measured.
+
+## Host reconstruction accepted — 2026-09-26
+
+
+`captures/midilooper-folder-copy-20260926-195228/reconstructed-03/candidate/MidiLooper/current/`
+
+All 65 original current-workspace files (64 slots and workspace.bin) are byte-identical
+to verified download-05: 442,803 bytes. Only runtime.bundle.bin was added: 628 bytes.
+Total candidate: 443,431 bytes (about 433 KiB). Epoch 930 matches current workspace metadata.
+Bundle SHA256: `6302d6e7428b87fb566a98ccba9e06f27c9c4e0bd5c1a7c7fd87e3f5a0acbdaf`.
+A byte-exact copy is `candidate-runtime.bundle.bin` beside this report; originals
+and per-file SHA256s are listed in `reconstruction.json`.
+
+Explicit replacement settings, not recovered originals:
+- Transport idle/stopped, tempo 120 BPM, master length 0 (derive during use).
+- First nonzero-length slot on each track selected and enabled; other slots disabled.
+- Tracks and slots unmuted; selected track 1.
+- Fresh global undo stack, default anchor fields/timestamps. Original global undo
+  history and performance mix/selection are not recovered. Serialized pass/edit
+  history in each untouched slot remains present; runtime may rebuild local history.
+
+## Production-path test
+
+`RecoveryRuntimeBundle.h` writes through existing CurrentSetStorage,
+CurrentWorkspaceStorage and RuntimeBundleFooter serializers. It owns no filename,
+scan, deletion, rename or installation step. Caller supplies an isolated File.
+`test_offline_workspace_recovery` reuses the real persistence/load harness with
+an in-memory SD boundary. A temporary header wrapper exposes only the private
+production directory loader; no production header was edited. The previously
+validated Teensy ABI adapter is used (20-byte MIDI event, opaque SysEx token).
+
+Checks completed:
+- Missing bundle refused; truncated bundle refused.
+- Invalid selected-slot defaults refused before writing, and closed output refused.
+- Reconstructed bundle accepted by `loadCurrentSetFromDirectory`.
+- Loaded tempo/transport, enabled/muted flags and active slot indices match defaults.
+- Production background-admission and restore jobs drain in 2,863 simulated turns,
+  with a 100,000-turn bound. This is not a device performance measurement.
+- All 64 restored lengths match. All **7,840 capture-pass MIDI event records** match
+  source-decoded event bytes, with matching record/overdub pass identities/counts.
+- All 57 serialized snapshot note inventories match source counts (2,766 note identities).
+- All original in-memory SD files remain identical after restore.
+- Output epoch checksum and SAVE footer pass; host copy rehashed after testing.
+
+The first harness cut stopped after one admission slice; the second drove admission
+but left nativeMillis frozen, so the production 2-second holdoff never expired.
+Both were corrected in the test, not bypassed in production. No target timing claim.
+
+Final repeatable wrapper run: source decode **3/3**, reconstruction **2/2**.
+Ordinary-build affected-suite regression: **12 passed / 2 explicit skips** (real-file
+recovery fixtures require isolated ABI configuration), including the existing drain
+suite. Python audit/reader tests: **16 passed**. No full native run, firmware build,
+device run, power-loss test or original-vs-current audible parity claim.
+Evidence: reconstruction-native.log, reconstruction-regression.log, reconstruction.json
+(source hashes), and the candidate bundle. Production src/ and include/ unchanged.
+
+Run:
+`python3 tools/midilooper-reader/reconstruct_backup.py <verified-download-directory> <new-output-directory>`
+
+## C++ recovery on the Teensy: feasible, not shipped
+
+The reusable writer is C++ with existing File/serialization dependencies and no Mac
+API. Its host acceptance supports reusing this work on Teensy, but does not establish
+firmware fit, device timing, SD durability or safe automatic recovery.
+
+A device implementation belongs to StorageManager, as a metadata-salvage fallback
+when intact current slot files survive but the runtime bundle is missing/unreadable.
+It must validate the slot generation/format/content first, state the replacement
+settings, write a separate candidate, close/drain/reopen/validate it, then install
+with a crash-safe commit retaining recoverable previous state. Interrupted candidate
+writes must never replace valid workspace data. Power interruption at each commit
+boundary, repeated boot, malformed slots, no surviving content, firmware RAM1 floor,
+and bounded stopped-only work need device acceptance. Do not modify the deployed
+checksum algorithm incidentally: historical files use its existing continuation semantics.
+
+This procedure does not recreate erased or corrupt notes. Do not infer that every
+`.bad.*` bundle is usable, or transplant its undo references into current slots.
+Normal boot cleanup removes named `.tmp` files, not the completed runtime bundle;
+the present test exercises directory load and deferred restore, not the entire
+RTC/index-reconcile/hardware boot chain.
+
+Recovery installation and normal firmware upload remain unperformed and outside
+this host-only authorization. The hold stays latched. S1.6c.2 — capacity revalidation
+remains blocked until the library is loaded and measured on hardware.
+
+## 2026-09-26 — host undo reconstruction acceptance
+
+**2026-09-26 — undo reconstructed and host-tested; reload blocks installation.**
+Existing C++ content-history owner derives 122 actions (60 record, 11 overdub,
+51 boundary changes) across all 60 nonempty loops. Full Undo → Redo preserves
+materialized MIDI bytes, loop lengths and published note identities/content on all
+60; four empty slots have no actions. Diagnostic bundle: 8,846 bytes. Production
+load/hydration fixture retains only 9 actions after reload, so the wrapper exits 2
+and the candidate is not safe to install. Original files byte-identical; firmware
+unchanged; no device access; hold remains. Original cross-slot chronology, clear
+snapshots and old redo branch remain unrecovered. Evidence: active-change
+`evidence/2026-09-26-workspace-loss/UNDO-RECONSTRUCTION.md`.
+
+**2026-09-26 — correction: reconstructed undo after reload needs a policy change.**
+The prior “next fix” diagnosis missed DEC-057 — snapshot body format and the active
+working-set spec: LSV1 load deliberately starts with undo depth zero. The older
+content-history reconstruction spec has a newer snapshot delta that changes it.
+The 122-action host recovery remains valid; it is not authorization to reverse the
+load contract. Proposed change: derive per-slot undo from sufficient saved passes,
+redo empty, saved snapshot authoritative, no persisted undo stack. Approval is
+required before that normal-load behavior changes. No firmware/device action.
+See active-change `evidence/2026-09-26-workspace-loss/UNDO-LOAD-POLICY-REVIEW.md`.
+
+## Approved undo load fix — G0/G1/G2 execution packet (2026-09-26)
+
+**Authority:** user approval; DEC-088 — load-time undo reconstruction. Prior
+UNDO-LOAD-POLICY-REVIEW.md conflict resolved. Owners unchanged: deferred load commit
+installs Loop content; TrackUndo derives runtime history. No device operations.
+
+**G0 verified:** LoadLoopJob Commit is STOPPED-only, validates token/request identity
+before applyLoadedLoopSlotBodyCommit. That function clears LSV1 undo but derives raw
+undo. Deferred hydration reads legacy stacks then derives loaded track content;
+public Undo completes hydration before mutation. Rebuild currently resets all-track
+cursor; reposition also resets cursor and moves entries even for an absent slot.
+These must not turn another slot's undone entries into applied entries.
+
+**G1 contract:** common successful slot commit derives that slot's units after root
+installation; no history on failed/missing-root commit. No new root reconstruction
+on ordinary LSV1 load. Existing TrackUndo append inserts new loaded units before the
+redo partition; focus reordering preserves applied/redo classification and identities.
+No new allocations beyond metadata vectors used by existing cold rebuild/reorder;
+no new runtime state, persistent format or full-library scan at slot commit.
+
+**G2 red-team:** COVERED stale/token failure (existing load gate before commit);
+COVERED saved-root authority (root unchanged); TIGHTENING background load after Undo
+(requires dedicated red proof and cursor-preserving owner helpers); COVERED public
+Undo-before-hydration (existing gate); COVERED redo invalidation on new musical commit
+(existing dropRedoBranch unchanged). Timing/RAM1 require build and remain device-
+unverified; no hardware claim. PASS with these test requirements incorporated.
+
+**Oracle:** pin existing recovered action inventory independently; load a bundle
+with empty undo headers, step production background restore/hydration before/during/
+after, compare complete action identities, require redo empty, then Undo/Redo all
+slots without calling rebuild in the test. Reload same empty-header bundle and
+repeat. While focus slot has a runtime redo entry, commit another slot; focus,
+content, entry identity and redo remain. Repeated same-content rebuild has no duplicate
+units. Public load fault regressions remain in storage suites.
+
+**Sequence:** first make current firmware fail the no-test-rebuild acceptance and
+background-redo assertions; then implement common slot reconstruction and partition
+preservation. Run isolated recovery runner, native affected suites, full native,
+capture-serial build (RAM1 floor >=840). No upload. Completion recorded below.
+
+**2026-09-26 — approved load-time undo implemented; host recovery passes.**
+DEC-088 — load-time undo reconstruction supersedes the earlier zero-after-load
+policy. All 122 actions derive from saved passes on load/reload with empty undo
+headers; all 60 nonempty slots pass Undo/Redo, and background commits preserve
+runtime Redo. Redo starts empty and is created by Undo. The isolated runner verifies
+hydration before/during/after restore. Candidate reconstructed-undo-04 preserves all
+65 original files plus a 628-byte bundle (443,431 bytes total). Capture-serial build
+passes with RAM1 padding 840, unchanged. No upload/device/card action; standalone
+reader and incident hold remain. Hardware recovery is still unverified. Evidence:
+active-change `evidence/2026-09-26-workspace-loss/UNDO-LOAD-FIX.md`.
+
+**Verification complete:** full native 2,461 passed / 5 skipped; focused native 68
+passed; recovery load/reload 122 actions and all 60 nonempty slot roundtrips;
+Python 16 passed; OpenSpec validation passes. Capture-serial firmware SUCCESS,
+RAM1 padding 840. No device actions. See UNDO-LOAD-FIX.md and preserved logs.
+
+## Automatic boot repair — execution packet (2026-09-26)
+
+G0 verified: loadState currently cleans temp files before validation; directory load
+can quarantine a malformed bundle, and revision/checkpoint fallbacks admit a save.
+SD open modes do not truncate; atomicRenameTempFile deletes destination. None is
+appropriate before preserving the corrupt workspace. Existing serializers and slot
+parsers provide reusable format authority; runtime bundle host writer is validated.
+G0 PASS. Read authority/storage guide; DEC-087 host defaults, DEC-088 reconstructed
+undo, DEC-021 deferred restore. User approved automatic boot repair (DEC-089).
+
+G1: existing StorageManager owns boot inspection and repair. No new Manager or format.
+BootRecoveryJob holds a per-boot block; main and save owners consult it. Recovery writes
+only unique metadata candidates/backups, preserves all source payloads, and requires
+complete validated matrix to avoid silent partial restoration. Normal deferred loader
+and undo owner publish content after metadata repair. No full-library resident graph.
+
+G2 adversarial review: covered interrupted candidate write (original remains), crash
+between renames (slots/workspace and backup remain), failed promotion (blocked, retry),
+namespace collision (choose unused bounded names, never overwrite), save-on-empty
+(fail-closed latch across main and save entry/worker), bad epoch/unsupported slot
+(reject before first write). Cold boot timing unbounded by content size but outside
+active service; no runtime scheduling extension. Physical SD/FAT corruption remains
+hardware verification, not an asserted power-loss guarantee. PASS with fault tests.
+
+Oracle: run production loadState against in-memory SD populated from preserved bytes;
+assert no cleanup before refusal; candidate CRC/grammar validated before any final
+replacement; normal deferred restore gives all source event bytes and undo depth.
+Inject SD write/rename faults (physical I/O boundary only), snapshot card after each
+mutating operation, reset runtime and replay each snapshot as a fresh boot. Blocked
+save requests/drains/worker must leave file map unchanged. Healthy boot no repair
+writes; no modification outside MidiLooper. Run native, full native, firmware build
+without upload; preserve logs, source/artifact hashes and exact tests below.
+
+### Boot repair verification and closeout
+
+**2026-09-26 — automatic boot metadata repair implemented and host-verified.**
+DEC-089 — boot metadata repair validates the complete workspace before generating
+runtime metadata; preserves source files and corrupt originals; blocks saves after
+refusal. Actual boot owner restores the copied 64-slot library and derives 122 undo
+actions; healthy reboot retains them. Six isolated cases include 276 interruption
+cuts. Full native 2,461 passed / 7 skipped; Python 16; capture-serial SUCCESS with
+RAM1 padding 856 (floor 840). No upload/device action; hardware acceptance and the
+incident hold remain open. Evidence: active-change
+`evidence/2026-09-26-workspace-loss/BOOT-REPAIR.md`.
+
+
+Session closeout: decision, authoritative storage behavior, OpenSpec delta/design/tasks,
+runtime state/current scope and deliverables updated. No archive or device checkoff.
+
+**2026-09-26 — recovery firmware uploaded with explicit user authorization.**
+`teensy41-capture-serial` upload SUCCESS; SHA256
+`4b13749ab9d97b0699fb02f813a3a9a26b7475a60391e19ffa784c21cec93255`
+matches the host-verified image. Confirmed standalone read-only reader before upload;
+archived and cleared the incident hold for this approved recovery installation.
+Device reports runtime metadata repaired, `BOOT,load,ok`, and a settled checkpoint:
+`admission_complete=1`, `interactive_ready=1`, `undo_hydrated=1`,
+`transport_stopped=1`, `deferred_prewarm_idle=1`, `free_chunks=391`.
+Serial held open through verified persistence idle, then closed. No content/clear
+stimuli. This establishes successful recovery boot, not per-loop content parity,
+hardware Undo/Redo roundtrips or second-boot acceptance; those remain open.
+Evidence: active-change workspace-loss `authorized-recovery-upload/`.
+
+### OLED frozen-first-frame investigation (2026-09-26)
+
+User confirms the normal piano roll with the initial 20-bar track-1 content remains
+frozen while MIDI responds. Live serial attached at 115200 without reboot (uptime
+continues). Original `DISP` length 15360; later display records length 768 and
+STOPPED → PLAYING → OVERDUBBING → STOPPED while DMA frames continue increasing,
+with no reported timeout/rejection. These counters prove software progress, not
+updated pixels on the panel. Root cause remains UNKNOWN. Existing snapshot
+preconditions and recovery are not patched on this evidence.
+
+Built the existing blocking-SPI comparator (`MIDILOOPER_DISPLAY_DMA=0`) using the
+same capture-serial environment and unchanged source in an isolated build directory.
+Build SUCCESS; not uploaded. Configuration, log and image hash:
+`captures/display-blocking-diagnostic-20260926/`. Serial capture remains open in
+`captures/recovery-display-hang-20260926/`; latest user-triggered save completed.
+Hardware comparison requires explicit upload approval per repository rule; this is
+a diagnostic variant, not a production scheduling fix or a closed display gate.
+
+**2026-09-26 — blocking-SPI diagnostic uploaded with explicit user approval.**
+Persistence idle verified before reset. Capture-serial upload SUCCESS using
+`captures/display-blocking-diagnostic-20260926/platformio.ini`; actual device
+`#DMA_XFER` shows init=0, dma_frames=0, increasing blocking_frames. Serial capture
+remains open. Visual outcome awaiting user; no display fix or timing gate claimed.
+Recovery source unchanged. Image/config identity is pinned in that capture directory.
+
+**2026-09-26 — blocking-SPI visual comparison PASS (user observed).**
+User confirms “Yes, the screen updates now.” Same recovery/renderer source, existing
+`MIDILOOPER_DISPLAY_DMA=0` switch only. Device reached load=ok, restore admission
+complete, undo hydrated and transport stopped. This isolates the frozen-screen
+behavior to the DMA display route; it does not establish the precise DMA defect.
+Blocking SPI remains installed as a diagnostic workaround; no real-time timing
+acceptance or permanent DMA fix claimed. Serial capture remains open.
+Evidence: `captures/display-blocking-diagnostic-20260926/metadata.json` and session log.

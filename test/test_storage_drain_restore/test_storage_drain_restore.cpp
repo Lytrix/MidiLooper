@@ -50,6 +50,7 @@ bool sequencerRunning = false;
 #include "../../src/StorageManager/DeferredSaveJobStages.cpp"
 #include "../../src/StorageManager/WorkspaceSave.cpp"
 #include "../../src/StorageManager/RuntimeBundleFooter.cpp"
+#include "../../src/StorageManager/RuntimeBundleRecovery.cpp"
 #include "../../src/StorageManager/CurrentSetBootLoad.cpp"
 #include "../../src/StorageManager/LegacyMonolithLoad.cpp"
 #include "../../src/StorageManager/SavedSetIo.cpp"
@@ -73,8 +74,16 @@ bool sequencerRunning = false;
 #include "../../src/StorageManager/FileIo.cpp"
 #include "../../src/StorageManager/SlotReset.cpp"
 #include "../../src/StorageManager/LoadLoopBudget.cpp"
+#ifdef RECOVERY_TEENSY_ABI
+#include "RecoveryStorageLoopIo.cpp"
+#else
 #include "../../src/StorageLoopIo.cpp"
+#endif
+#ifdef RECOVERY_TEENSY_ABI
+#include "RecoveryStorageLoopIoBodyFormatV1.cpp"
+#else
 #include "../../src/StorageLoopIoBodyFormatV1.cpp"
+#endif
 #include "../../src/StorageManager/CurrentWorkspaceStorage.cpp"
 #include "../../src/StorageManager/LoadLoopSelectionPolicy.cpp"
 #include "../../src/StorageManager/SlotLoadAdmission.cpp"

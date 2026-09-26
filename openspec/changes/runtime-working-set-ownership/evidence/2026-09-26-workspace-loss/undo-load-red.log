@@ -1,0 +1,197 @@
+********************************************************************************
+Obsolete PIO Core v6.1.18 is used (previous was 6.2.0)
+Please remove multiple PIO Cores from a system:
+https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+********************************************************************************
+Collected 104 tests (test_apply_edit_session_actions, test_capture_append_deny, test_capture_chunk_reservation, test_capture_incremental_sanity, test_capture_line_tier, test_capture_note_min_length, test_capture_note_off_rules, test_capture_range, test_capture_state_guards, test_chunk_lifecycle, test_clock_transport_master, test_committed_event_range, test_continuous_capture, test_current_set_storage, test_deferred_validate_policy, test_diagnostics, test_display_dma_health, test_display_note_count, test_display_window_utils, test_drain_reentry_callback_safety, test_edit_apply, test_edit_session_action_builder, test_edit_session_interaction, test_effective_event_store, test_external_pool_accounting, test_extmem_allocator, test_extmem_teensy_dealloc, test_faders, test_global_undo_slot_scope, test_global_undo_stack_persistence, test_interval_projection, test_library_observation, test_library_observation_session, test_load_loop_budget, test_load_loop_selection_policy, test_loop_content_history, test_loop_content_resolution, test_loop_event_store, test_loop_event_validation, test_loop_pool, test_loop_size_probe, test_loop_stop_finalize, test_loop_take_survival, test_loop_tick_normalize, test_memory_pressure_policy, test_midi_button_gesture_policy, test_midi_dispatch_order, test_midi_hash_sync, test_midi_service_drain, test_midivec_allocator_stress, test_note_edit_current_state, test_note_edit_fader_feedback, test_note_edit_focus, test_note_edit_participating_note, test_note_edit_session_state, test_note_edit_session_undo, test_note_edit_track_switch, test_noteutils_reconstruct, test_offline_recovery_decode, test_offline_undo_recovery, test_offline_workspace_recovery, test_overdub_source_view, test_overlap_candidate_lookup, test_overlap_hold_candidates, test_overlap_note_id_observation, test_pending_note_change, test_persistence_failure_policy, test_persistence_queue, test_persistence_sync_drain_budget, test_persistence_work_queue, test_playback_cursor_advance, test_playback_midi_output, test_playback_prewarm, test_pool_budget, test_record_stop_length, test_redo_functionality, test_resolve_constrained_geometry, test_runtime_bundle_boot_load, test_runtime_timing_telemetry, test_runtime_working_set_ownership, test_save_status_display, test_saved_set_catalog, test_sd_load_adopt, test_select_navigation, test_serial_midi_input_read, test_set_revision_persistence, test_slot_clear_state, test_slot_focus_policy, test_slot_load_session, test_slot_switch_edit_sessions, test_stopped_heap_diagnostics, test_storage_drain_restore, test_storage_loop_io, test_storage_manager_load, test_storage_reconcile_index, test_support, test_take_capture, test_tempo_mapping, test_tick_phase, test_track_display_state, test_track_state_machine, test_v5_migration, test_working_set_lease, test_wrap_logic)
+
+Processing test_offline_undo_recovery in native environment
+--------------------------------------------------------------------------------
+Building...
+
+
+Testing...
+RECOVERY_RESTORE,turns=2863,pending=0
+RESTORED_SLOT,track=0,slot=0,expected=15360,length=15360,events=729,snapshot=1,notes=359
+RESTORED_SLOT,track=0,slot=1,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=0,slot=2,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=0,slot=3,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=0,slot=4,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=0,slot=5,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=0,slot=6,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=0,slot=7,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=1,slot=0,expected=3840,length=3840,events=202,snapshot=1,notes=98
+RESTORED_SLOT,track=1,slot=1,expected=3072,length=3072,events=222,snapshot=1,notes=105
+RESTORED_SLOT,track=1,slot=2,expected=13824,length=13824,events=989,snapshot=1,notes=486
+RESTORED_SLOT,track=1,slot=3,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=1,slot=4,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=1,slot=5,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=1,slot=6,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=1,slot=7,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=2,slot=0,expected=6912,length=6912,events=196,snapshot=1,notes=98
+RESTORED_SLOT,track=2,slot=1,expected=0,length=0,events=0,snapshot=0,notes=0
+RESTORED_SLOT,track=2,slot=2,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=2,slot=3,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=2,slot=4,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=2,slot=5,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=2,slot=6,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=2,slot=7,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=3,slot=0,expected=13056,length=13056,events=600,snapshot=1,notes=200
+RESTORED_SLOT,track=3,slot=1,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=3,slot=2,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=3,slot=3,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=3,slot=4,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=3,slot=5,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=3,slot=6,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=3,slot=7,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=4,slot=0,expected=1536,length=1536,events=115,snapshot=1,notes=37
+RESTORED_SLOT,track=4,slot=1,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=4,slot=2,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=4,slot=3,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=4,slot=4,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=4,slot=5,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=4,slot=6,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=4,slot=7,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=5,slot=0,expected=768,length=768,events=2,snapshot=1,notes=0
+RESTORED_SLOT,track=5,slot=1,expected=1536,length=1536,events=63,snapshot=1,notes=0
+RESTORED_SLOT,track=5,slot=2,expected=1536,length=1536,events=62,snapshot=0,notes=0
+RESTORED_SLOT,track=5,slot=3,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=5,slot=4,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=5,slot=5,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=5,slot=6,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=5,slot=7,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=6,slot=0,expected=0,length=0,events=0,snapshot=0,notes=0
+RESTORED_SLOT,track=6,slot=1,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=6,slot=2,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=6,slot=3,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=6,slot=4,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=6,slot=5,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=6,slot=6,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=6,slot=7,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=7,slot=0,expected=13056,length=13056,events=1742,snapshot=0,notes=0
+RESTORED_SLOT,track=7,slot=1,expected=1536,length=1536,events=62,snapshot=1,notes=30
+RESTORED_SLOT,track=7,slot=2,expected=1536,length=1536,events=62,snapshot=0,notes=0
+RESTORED_SLOT,track=7,slot=3,expected=0,length=0,events=0,snapshot=0,notes=0
+RESTORED_SLOT,track=7,slot=4,expected=6144,length=6144,events=32,snapshot=1,notes=16
+RESTORED_SLOT,track=7,slot=5,expected=6144,length=6144,events=32,snapshot=1,notes=16
+RESTORED_SLOT,track=7,slot=6,expected=1536,length=1536,events=2,snapshot=1,notes=1
+RESTORED_SLOT,track=7,slot=7,expected=0,length=0,events=0,snapshot=0,notes=0
+RECOVERY_BUNDLE,bytes=628,epoch=930,load=accepted
+test/test_offline_undo_recovery/test_offline_undo_recovery.cpp:148:test_reconstructed_workspace_loads:PASS
+test/test_offline_undo_recovery/test_offline_undo_recovery.cpp:51:test_reconstructed_history_roundtrips:FAIL: Expected 2 Was 0
+
+-----------------------
+2 Tests 1 Failures 0 Ignored 
+FAIL
+
+
+Program received signal SIGHUP (Hangup: 1)
+-------- native:test_offline_undo_recovery [ERRORED] Took 7.78 seconds --------
+=================================== SUMMARY ===================================
+Environment    Test                                Status    Duration
+-------------  ----------------------------------  --------  ------------
+native         test_loop_content_resolution        SKIPPED
+native         test_note_edit_focus                SKIPPED
+native         test_pending_note_change            SKIPPED
+native         test_faders                         SKIPPED
+native         test_library_observation            SKIPPED
+native         test_runtime_working_set_ownership  SKIPPED
+native         test_loop_stop_finalize             SKIPPED
+native         test_runtime_bundle_boot_load       SKIPPED
+native         test_persistence_work_queue         SKIPPED
+native         test_playback_midi_output           SKIPPED
+native         test_capture_note_off_rules         SKIPPED
+native         test_loop_tick_normalize            SKIPPED
+native         test_midi_button_gesture_policy     SKIPPED
+native         test_midivec_allocator_stress       SKIPPED
+native         test_storage_reconcile_index        SKIPPED
+native         test_display_window_utils           SKIPPED
+native         test_redo_functionality             SKIPPED
+native         test_capture_range                  SKIPPED
+native         test_drain_reentry_callback_safety  SKIPPED
+native         test_persistence_queue              SKIPPED
+native         test_serial_midi_input_read         SKIPPED
+native         test_extmem_allocator               SKIPPED
+native         test_display_note_count             SKIPPED
+native         test_effective_event_store          SKIPPED
+native         test_loop_event_store               SKIPPED
+native         test_midi_hash_sync                 SKIPPED
+native         test_edit_session_action_builder    SKIPPED
+native         test_interval_projection            SKIPPED
+native         test_slot_focus_policy              SKIPPED
+native         test_storage_loop_io                SKIPPED
+native         test_loop_size_probe                SKIPPED
+native         test_global_undo_slot_scope         SKIPPED
+native         test_v5_migration                   SKIPPED
+native         test_storage_drain_restore          SKIPPED
+native         test_record_stop_length             SKIPPED
+native         test_edit_session_interaction       SKIPPED
+native         test_save_status_display            SKIPPED
+native         test_load_loop_budget               SKIPPED
+native         test_tempo_mapping                  SKIPPED
+native         test_persistence_sync_drain_budget  SKIPPED
+native         test_pool_budget                    SKIPPED
+native         test_committed_event_range          SKIPPED
+native         test_storage_manager_load           SKIPPED
+native         test_slot_switch_edit_sessions      SKIPPED
+native         test_resolve_constrained_geometry   SKIPPED
+native         test_note_edit_current_state        SKIPPED
+native         test_track_display_state            SKIPPED
+native         test_working_set_lease              SKIPPED
+native         test_playback_prewarm               SKIPPED
+native         test_loop_pool                      SKIPPED
+native         test_memory_pressure_policy         SKIPPED
+native         test_apply_edit_session_actions     SKIPPED
+native         test_midi_dispatch_order            SKIPPED
+native         test_capture_state_guards           SKIPPED
+native         test_loop_take_survival             SKIPPED
+native         test_capture_chunk_reservation      SKIPPED
+native         test_select_navigation              SKIPPED
+native         test_note_edit_session_undo         SKIPPED
+native         test_chunk_lifecycle                SKIPPED
+native         test_note_edit_participating_note   SKIPPED
+native         test_sd_load_adopt                  SKIPPED
+native         test_offline_undo_recovery          ERRORED   00:00:07.781
+native         test_continuous_capture             SKIPPED
+native         test_load_loop_selection_policy     SKIPPED
+native         test_deferred_validate_policy       SKIPPED
+native         test_overlap_hold_candidates        SKIPPED
+native         test_take_capture                   SKIPPED
+native         test_loop_event_validation          SKIPPED
+native         test_tick_phase                     SKIPPED
+native         test_offline_workspace_recovery     SKIPPED
+native         test_capture_incremental_sanity     SKIPPED
+native         test_extmem_teensy_dealloc          SKIPPED
+native         test_capture_note_min_length        SKIPPED
+native         test_support                        SKIPPED
+native         test_note_edit_track_switch         SKIPPED
+native         test_playback_cursor_advance        SKIPPED
+native         test_loop_content_history           SKIPPED
+native         test_note_edit_session_state        SKIPPED
+native         test_current_set_storage            SKIPPED
+native         test_overdub_source_view            SKIPPED
+native         test_overlap_note_id_observation    SKIPPED
+native         test_noteutils_reconstruct          SKIPPED
+native         test_capture_line_tier              SKIPPED
+native         test_offline_recovery_decode        SKIPPED
+native         test_saved_set_catalog              SKIPPED
+native         test_external_pool_accounting       SKIPPED
+native         test_wrap_logic                     SKIPPED
+native         test_stopped_heap_diagnostics       SKIPPED
+native         test_global_undo_stack_persistence  SKIPPED
+native         test_persistence_failure_policy     SKIPPED
+native         test_midi_service_drain             SKIPPED
+native         test_diagnostics                    SKIPPED
+native         test_clock_transport_master         SKIPPED
+native         test_runtime_timing_telemetry       SKIPPED
+native         test_note_edit_fader_feedback       SKIPPED
+native         test_set_revision_persistence       SKIPPED
+native         test_overlap_candidate_lookup       SKIPPED
+native         test_slot_load_session              SKIPPED
+native         test_library_observation_session    SKIPPED
+native         test_track_state_machine            SKIPPED
+native         test_display_dma_health             SKIPPED
+native         test_edit_apply                     SKIPPED
+native         test_slot_clear_state               SKIPPED
+native         test_capture_append_deny            SKIPPED
+============= 3 test cases: 1 failed, 1 succeeded in 00:00:07.781 =============

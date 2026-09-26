@@ -1,0 +1,46 @@
+********************************************************************************
+Obsolete PIO Core v6.1.18 is used (previous was 6.2.0)
+Please remove multiple PIO Cores from a system:
+https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+********************************************************************************
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 103 tests
+
+Processing test_storage_drain_restore in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:535: test_drain_suite_links_the_closed_import_set	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:536: test_a35_drain_reports_the_holdoff_by_name_instead_of_waiting_it_out	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:537: test_a35_holdoff_remaining_reader_does_not_clear_the_holdoff	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:539: test_a36_audible_playback_is_not_a_persistence_gate	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:540: test_a36_a_recording_track_parks_the_multi_frame_writers	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:541: test_a36_the_mid_pass_one_chunk_flush_runs_during_a_take	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:543: test_s2b7_the_drain_advances_a_session_holding_restore_and_names_the_commit_gate	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:544: test_s2b7_the_drain_advances_the_restore_to_completion_where_the_gate_admits	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:545: test_s2b7_the_drain_services_a_parked_instance_holding_the_session	[PASSED]
+test/test_storage_drain_restore/test_storage_drain_restore.cpp:546: test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session	[PASSED]
+--------- native:test_storage_drain_restore [PASSED] Took 6.88 seconds ---------
+
+Processing test_offline_workspace_recovery in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_offline_workspace_recovery/test_offline_workspace_recovery.cpp:166: test_reconstructed_workspace_loads: Isolated recovery ABI build required	[SKIPPED]
+------ native:test_offline_workspace_recovery [PASSED] Took 6.87 seconds ------
+
+Processing test_offline_recovery_decode in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_offline_recovery_decode/test_offline_recovery_decode.cpp:148: test_known_record_round_trip	[PASSED]
+test/test_offline_recovery_decode/test_offline_recovery_decode.cpp:149: test_truncated_header_refused	[PASSED]
+test/test_offline_recovery_decode/test_offline_recovery_decode.cpp:120: test_copied_slots_decode: Set MIDILOOPER_RECOVERY_SLOTS to verified host-copy current/slots	[SKIPPED]
+-------- native:test_offline_recovery_decode [PASSED] Took 5.10 seconds --------
+
+=================================== SUMMARY ===================================
+Environment    Test                          Status    Duration
+-------------  ----------------------------  --------  ------------
+native         test_storage_drain_restore    PASSED    00:00:06.882
+native         test_offline_recovery_decode  PASSED    00:00:05.102
+============ 14 test cases: 2 skipped, 12 succeeded in 00:00:18.853 ============
