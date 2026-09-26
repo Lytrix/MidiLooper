@@ -1454,6 +1454,16 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   return true;
 }
 
+TRACK_COLD_MEM void Track::clearStoppingIntervalLedger() {
+  // S4.1: an interval's stop clears **its own** slot's ledger. The track-global
+  // `TrackPlaybackRuntime::clearAllLedgers()` is reserved for the deliberate whole-track sweep
+  // (`Track::sendAllNotesOff`); using it here erased a sibling slot's ledger while that sibling was
+  // still finalizing, which is the S4.1 rerun blocker.
+  if (LoopPlaybackRuntime* stopRuntime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {
+    stopRuntime->clearLedger();
+  }
+}
+
 bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,
                                uint32_t stopStartUs) {
   (void)closeTick;
@@ -1477,7 +1487,7 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
   if (endInPlaying) {
     const uint32_t stateStartUs = micros();
     silenceTrackMidiOutput();
-    playbackRuntime.clearAllLedgers();
+      clearStoppingIntervalLedger();
     pendingNotes.clear();
     resetPlaybackState(currentTick);
     setState(TRACK_PLAYING);
@@ -1791,7 +1801,7 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   // Silence this track only, then resume loop playback. Do not CC123 every channel —
   // that mutes other playing tracks. Transport stop still uses sendAllNotesOff().
   silenceTrackMidiOutput();
-  playbackRuntime.clearAllLedgers();
+    clearStoppingIntervalLedger();
   pendingNotes.clear();
   reanchorPlaybackCycle(currentTick);
   setState(TRACK_PLAYING);

@@ -250,6 +250,11 @@ struct LoopPlaybackRuntime {
   /// previous generation is reported as `StaleGeneration` (S4.2) instead of clearing a successor.
   WorkingSetOutcome releaseAllWorkingSetLeases() { return lease_.releaseAll(lease_.generation()); }
 
+  /// S4.1: clear **this slot's** open-note ledger. The per-slot form of
+  /// `TrackPlaybackRuntime::clearAllLedgers()`; an interval's stop must not clear a sibling slot's
+  /// ledger while that sibling is still finalizing.
+  void clearLedger() { ledger.clear(); }
+
   // --- S3.2 liveness predicates, one per owner kind this runtime can hold -------------------
   // `Track::noLiveOwnerForSlot` is the composite; these are the terms, so a fixture can hold one
   // owner kind and prove exactly that term refuses release.

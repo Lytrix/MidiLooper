@@ -249,6 +249,9 @@ public:
   bool hasLiveCaptureStopJobForSlot(uint8_t slot) const;
   /// S3.2 owner kind: an accepted-but-not-yet-executed interaction latched for `slot` (S4f.1).
   bool hasAcceptedInteractionForSlot(uint8_t slot) const;
+  /// S4.1: clear **only the stopping interval's** slot ledger. Never the track-global sweep — while a
+  /// predecessor finalizes on a sibling slot, sweeping would erase its open-note suppression state.
+  void clearStoppingIntervalLedger();
   /// S2b.4: the release entry point. It enforces `noLiveOwnerForSlot` itself so a production caller
   /// cannot release underneath a live owner: the guard must not be merely a convention at call sites.
   bool tryReleaseCanonicalCaptureReservation(uint8_t slot);
