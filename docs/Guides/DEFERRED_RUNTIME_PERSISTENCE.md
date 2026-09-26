@@ -149,6 +149,16 @@ flowchart TB
 3. **One logical step per call** — each invocation advances at most one sub-step (header field, one chunk batch, one undo entry fragment, etc.).
 4. **Display** — `isDeferredSaveActive()` reflects active SD-I/O windows in the current slice, not whole-job queued/in-progress state.
 5. **Dirty flags** — edit/loop dirty state clears only after **`PERS,result,...,ok`**. Failed or incomplete saves leave dirty set for retry.
+5b. **A failed workspace completion is discharged, not retried in place (DEC-091).** The completion sub-steps
+   (`PatchLastActiveUnix`, the bundle CRC refresh, `workspace.bin`) are deterministic, so re-queueing the
+   `FinalizeWorkspace` item **at the queue head** could never succeed: it blocked every other persistence item
+   and kept `hasDeferredSaveWork()` true for the rest of the boot, which refuses the save-new-set pre-flight
+   and makes the read-only slot-payload observation answer `busy`. A failure there now reports once
+   (`PERS,result,...,failed`, `failedAtMs`, the `ERROR:` line) and discharges the item into the queue's
+   terminal tombstone; the per-slot dirty set is left as the failure found it, so the next save trigger
+   re-writes everything owed. Body/bundle item failures (`LoopPersist`, `TrackMeta`/`SlotMeta`/
+   `WorkspaceFooter`) keep the front-requeue: there the retry is the content-durability intent, and bounding
+   it is a separate decision.
 
 Placement in `src/main.cpp`:
 

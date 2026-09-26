@@ -7925,3 +7925,386 @@ Evidence: `captures/display-blocking-diagnostic-20260926/metadata.json` and sess
 DMA repair is parked until after this OpenSpec. No architecture/timing gate is waived.
 Current device profile, evidence, resolved stale task clauses and source-backed next
 S4.1 — persistence identity investigation are in [NEXT-STEPS.md](NEXT-STEPS.md).
+
+---
+
+## S4.1 — persistence identity during handoff (2026-09-26, G2 execution packet + record)
+
+### Identity and scope
+
+S4.1's remainder named one persistence site: `DeferredSaveJobStages`' footer stage writes each track's
+`activeLoopIndex` / `selectedSlotIndex` from **live** `trackManager` reads at footer-write time, while the
+loop bodies are written under the **interval's** slot identity. The question (raised in
+[NEXT-STEPS.md](NEXT-STEPS.md), which also warns that the read is *not* proven wrong) is whether a capture
+handoff during a save makes the persisted image internally inconsistent, or loses a focus change.
+
+- Owner and production entry → deferred worker → commit point: `Track::requestLoopSlotPersistAndSaveState`
+  (slot-keyed admission) → `StorageManager::processDeferredSaveState` slices → the runtime-bundle rename in
+  `finalizeDeferredMetaTempFile()` and the epoch anchor in `writeWorkspaceMetaAfterDeferredSave()`.
+- Status: **native verified; no production behavior changed.** The live read is the contract; the
+  alternative (snapshot-at-admission, or the interval's slot substituted for the focus) is rejected with a
+  fixture that red-proves it. Recorded as **DEC-090**.
+- Files: `test/test_storage_drain_restore/test_storage_drain_restore.cpp` (fixture),
+  `test/test_storage_drain_restore/drain_harness_stubs.h`,
+  `test/test_storage_manager_load/load_harness_stubs.h` (harness seam). No `src/` change.
+- Explicit non-goals: no SD format change, no new admission rule, no attempt to make the whole save a
+  snapshot; the device legs of the S4.1 release acceptance are untouched by this slice.
+
+### G0 trace — the five links, read from the code
+
+1. **Stop A → slot-keyed persistence admission.** `Track::requestLoopSlotPersist` is
+   `markLoopSlotMaterialDirty` + `admitLoopSlotPersist`; the latter admits **`SlotMeta(track, slot)` then
+   `LoopPersist(track, slot)`** (FIFO, coalesced by `(type, key)`), and
+   `requestLoopSlotPersistAndSaveState` adds `requestDeferredSaveState` (the owed full save).
+2. **The workspace header/footer write is the bundle work item.** A `SlotMeta`/`TrackMeta`/`GlobalMeta`/
+   `WorkspaceFooter` item is a *runtime-bundle* write: `beginDeferredRuntimeBundleWrite()` opens the meta
+   temp, and the FSM walks `CurrentSetMeta` → `TrackHeaderAndSlots` → (loop bodies are **skipped** for bundle
+   items) → `Footer`. The footer is emitted one field per slice: `SelectedTrack`, then one
+   `activeLoopIndex` per track, the selected-slot extension token, one `selectedSlotIndex` per track, the
+   GUS token.
+3. **The loop body is the `LoopPersist` item**, keyed by `(track, slot)`, and it clears
+   `currentSetLoopSlotDirty[track][slot]` **only** after a token-verified write + rename. Content identity
+   and workspace focus therefore advance on separate work items; neither can silently stand in for the other.
+4. **The commit point.** `finalizeDeferredMetaTempFile()` writes the SAVE token, stamps the epoch CRC into
+   the bundle's own header and renames temp→final: that rename is when a footer becomes durable. The owed
+   full save adds `FinalizeWorkspace`, which only *completes* the epoch (patch `lastActiveUnix`, CRC,
+   `workspace.bin`) — it does not re-read or re-write the footer.
+5. **Handoff → load.** `readCurrentSetFileEpilogue` reads the footer; `applyLoadedTransportFooter` applies
+   it through `TrackManager::loadTransportSlotIndices` (while stopped, `active := selected`), and
+   `isBootPlaybackSlot` = **union(file active, file selected)** decides which slots are prewarmed at boot,
+   while `TrackUndo::rebuildTrackFromLoopContent(track, selectedSlotIndex[t])` keys undo reconstruction to
+   the **selected** slot. So the footer is not only a display preference: it selects the restored working
+   set and the undo-reconstruction subject.
+
+### The consistency point, and whether later selection requeues
+
+The deferred save is **not** an admitted-image snapshot: every stage reads live state in its own slice (loop
+bodies from `track.getLoop(poolCursor)`, the footer from live indices). The footer is therefore always at
+least as new as the bodies beside it, and capturing only the footer at admission would make the image
+internally inconsistent — which is why the alternative was rejected rather than implemented.
+
+A later focus change is **not** lost:
+
+| Route | What it does |
+|---|---|
+| `TrackManager::setSelectedSlotIndex` (selected track) | `requestWorkspaceFooterPersistWhenSafe()` **and** `requestDeferredSaveState()` |
+| `TrackManager::setSelectedTrack` (track change) | same pair |
+| `maybeAdmitDeferredWorkspaceFooter()` | admits the deferred footer only when no capture and **no stop in flight**, so a footer cannot be written mid-handoff |
+
+The queue is FIFO, so a requeued footer lands *after* an in-flight write. A bare `activeLoopIndex` move that
+does not go through a selection change does not itself request persistence; that is consistent with the load
+contract, which derives the playing slot from the **selection** while stopped (link 5), and the next save's
+footer reads live state regardless. Recorded as an observation, not a defect.
+
+### Oracle fixed before the fixture ran
+
+With the worker paused with the footer **due and unwritten** (`stage == Footer`,
+`footerWriteStage == SelectedTrack`, `footerTrackCursor == 0`), the A→B handoff performed through the
+production manager route, then the worker resumed and the workspace reloaded from the card:
+
+- **content identity** — A's body lands under A's own loop identity and note, B's under B's, and neither
+  carries the other's content; A's dirty flag clears only through its own body write;
+- **workspace focus** — the restored focus is **B**, the selection when the footer was written;
+- **no-switch control** — the same sequence without the handoff restores **A** (so "B" cannot pass by
+  construction);
+- **failure** — a footer write refused by the card publishes nothing (the previously durable bundle stays
+  byte-identical) and the retry lands the post-handoff focus.
+
+### Controls and coverage
+
+- Fixture: four cases in `test_storage_drain_restore`, driving the **real** deferred worker
+  (`StorageManager::processDeferredSaveState`) and the **real** loader
+  (`StorageManager::loadCurrentWorkspaceFromSd`), with two committed slots seeded through the production
+  payload writer and the production restore service. The worker is paused by the *driver* simply not calling
+  the next slice — no hook, gate or test-only owner was added to production code.
+- The handoff uses the production gesture route `TrackManager::setSelectedSlotIndex(..., SyncPlayback::Yes)`,
+  so the case exercises the selection route's own persist requests rather than restating them.
+- Harness seams, recorded rather than silent: the suite now links `TrackStopTelemetryColdHelpers.cpp`
+  (so the slot-keyed admission is the production composite, and `resolveTrackIndexForPersistence` is the
+  real one — `load_harness_stubs.h`'s copy is behind `HARNESS_LINKS_REAL_STOP_TELEMETRY`); the nine
+  capture-finalization neighbours that `setActiveLoopIndex` references but a **stopped-track** move never
+  runs are fail-closed (`TEST_FAIL_MESSAGE`) in `drain_harness_stubs.h`; the slot-change note-edit session
+  lifecycle is counted, matching the existing track-change pair.
+- **Found while building the fixture (worth keeping):** a case must **drop** the persistence work queue
+  (`PersistenceWorkQueue::resetForTests()`), not merely drain it. A leftover `FinalizeWorkspace` entry
+  outlives the image it was admitted against and sits at the queue head failing forever — its first step
+  patches `runtime.bundle.bin`, which creates the file empty and then fails the seek (`queue=2`,
+  `stage=CurrentSetCompletion`, bundle size 0). That was the first false lead of this slice.
+
+### Verification recipe
+
+- Focused: `pio test -e native -f test_storage_drain_restore` — 14/14 (10 pre-existing + 4 new).
+- Broad: full `pio test -e native`; build: `pio run -e teensy41-capture-serial` with the RAM1 padding read
+  (floor 840). No device claim: this slice changes no firmware behavior and needs no stimulus.
+
+### Completion record (2026-09-26)
+
+- **No production code changed.** `git diff` on `src/` is empty; the only changes are the two test files and
+  the harness seam. The footer's live read is confirmed correct by evidence, so the S4.1 remainder item
+  "`DeferredSaveJobStages`' footer read" is **closed as verified**, and the snapshot-at-admission variant is
+  rejected (DEC-090).
+- **Fixture implemented and discriminating.** Focused suite 14/14; the four cases assert the pause point
+  itself (stage, footer stage, cursor) before the handoff, so a fixture that never reached the footer cannot
+  pass.
+- **Red proof (run, then reverted).** With the footer's two live reads temporarily replaced by the
+  interval's slot — pinned across *every* bundle write of the sequence, which is what a mechanical
+  "replace it with the outgoing capture slot" change means:
+
+  ```
+  test_s4_1_the_footer_records_the_focus_at_footer_write_time_not_the_interval_slot:
+      focus after a handoff before footer emission: restored selectedTrack=0 active=1 selected=1
+      (expected track 0 slot 3)                                            [FAILED]
+  test_s4_1_control_the_no_switch_sequence_restores_the_unmoved_focus     [PASSED]
+  test_s4_1_a_handoff_after_the_footer_was_written_is_requeued_and_lands:
+      focus after a handoff past the footer: restored active=1 selected=1 (expected 3)  [FAILED]
+  test_s4_1_a_failed_footer_write_never_publishes_and_the_retry_lands_the_handoff:
+      focus after the retry: restored active=1 selected=1 (expected 3)     [FAILED]
+  ```
+
+  The control passing in the same run is what makes the three failures a discrimination rather than a
+  constant. **A first red-proof attempt was a false green and is recorded rather than replaced:** pinning
+  only the `Slot`-keyed writes left the handoff's own requeued `WorkspaceFooter` write reading live state, so
+  it repaired the footer and the case passed. That is a real robustness property of the route, and it is why
+  the proof has to pin every write.
+- **Red proof also corrected the fixture.** The original `establishDurableFocusOnA` asserted only
+  `workerIsIdle()`, which a *failed* save satisfies after it drops its obligation (`pending = false`,
+  `lastCompletedOk = false`). It now asserts the completion and the presence of the bundle, and parks the
+  focus first so the selection route really changes it (the route returns early when the target is already
+  selected, which would have owed no save at all).
+- **Native verification:** focused `test_storage_drain_restore` 14/14; full native run and capture-serial
+  build recorded in the session closeout (see `docs/Runtime/CURRENT_WORK.md`).
+- **Task state:** S4.1 stays **unchecked**. Its release acceptance is still partial (the working-set *lease*
+  release on a same-track slot switch is not asserted by name anywhere; the S3 gate's device legs remain),
+  and this slice closed only its persistence-identity remainder.
+
+---
+
+## S4.1 — working-set lease release on a same-track slot switch (2026-09-26, G2 execution packet)
+
+### Identity and scope
+
+The remaining leg of S4.1 after the persistence-identity slice: the A/B/C device run evidences the
+**finalization-capacity** release (`canonical_release,4,40,6144,8`) and C's reuse, but nothing asserts that
+the **working-set lease** of a retired slot is released on a **same-track** switch. For a same-track
+sequence the take-start sweep excludes the capturing track, so this packet establishes which production
+route actually can release it, and pins that route with a fixture.
+
+- Owner and production entry → release → observable: `TrackManager::finalizeCaptureAndSelectSlot` (the
+  switch commit) → `Track::resetPlaybackStateForSlot` → `Track::invalidatePlaybackMergedMidiEvents` →
+  `Track::releaseEligiblePlaybackRuntimeSlots` → `TrackPlaybackRuntime::releaseSlot(slot, generation)`.
+- Status: **packet fixed before the fixture ran.** No behavior edit is authorized by this packet unless the
+  fixture exposes a defect; the expected outcome is "no change, contract pinned".
+- Files: `test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp` (fixtures only).
+
+### G0 trace — the release surface and the same-track routes
+
+1. **The entry.** `TrackPlaybackRuntime::releaseSlot(slot, generation, preserveLedger)` answers `NotHeld`
+   (no runtime object / out of range), `StaleGeneration` (identity first), `RefusedBusy`
+   (`LoopPlaybackRuntime::reset()` refused, which happens only while `captureStopOwner` is **pending**), or
+   `Released` (`releaseAllWorkingSetLeases()` bumps the lease generation).
+2. **The gate.** `Track::releaseEligiblePlaybackRuntimeSlots` skips every slot whose
+   `noLiveOwnerForSlot(slot)` is false (ring job, accepted-interaction latch, live finalization, in-flight
+   prepared handover), and reports non-`NotHeld` outcomes through the SESSION_CAPTURE telemetry only.
+3. **The routes that reach it on one track.** The **slot-switch commit**
+   (`finalizeCaptureAndSelectSlot` → `setActiveLoopIndex(newSlot)` → `resetPlaybackStateForSlot(newSlot)`),
+   the mute/unmute and transport-tick playback resets, the memory-pressure lane
+   (`tryReleasePlaybackMergedMidiEventsMemory`), and the undo/redo lane
+   (`TrackUndo.cpp` → `invalidatePlaybackMergedMidiEvents(false)`). `releasePlaybackMergedMidiEventsMemory`
+   is **cross-track only**: `TrackManager::releaseBackgroundPlaybackMergedMidiEventsMemory` takes
+   `captureTrackIndex` and sweeps `i != captureTrackIndex`.
+4. **A live finalization suppresses the whole sweep, track-wide.** `invalidatePlaybackMergedMidiEvents`
+   early-returns while `hasPendingDeferredOverdubStop()` (a track-level predicate) and merely requests a
+   stop-to-stopped; the per-slot predicate is not even consulted on that pass.
+   `TrackPreparedStopCommit::completeDeferredCleanup` then clears `captureStopOwner` and arms
+   `canonicalReleaseMarker*` — but it does **not** release the working set, and the maintenance edge that
+   consumes the marker only reports the **capacity** release. So on a same-track sequence the retired slot's
+   lease is released by the *next* playback-reset/switch (or memory pressure / undo), never by retirement
+   itself.
+5. **Device boundary, restated.** The retention run's `canonical_release,<slot>,…` row is that capacity
+   marker (`captureStopOwner == nullptr` **and** `canonicalCaptureOutputAdmitted()`), not a lease release,
+   and no lease-release emission exists on the device path — which is why this leg is native-only and why
+   the emission would be its own decision.
+
+### Oracle fixed before behavior edits
+
+- **A — the switch releases the retired slot, per slot.** With A (retired) and B (incoming) both holding an
+  admitted working set, and a live owner latched on **B**, the production switch A→B SHALL release **A**
+  (`leaseHoldsWorkingSet(A)` false, `slotGeneration(A)` advanced, the pre-switch identity answering
+  `StaleGeneration`, the new identity `NotHeld`) and SHALL leave **B** untouched (lease still held,
+  generation equal). Control: with B's owner retired, the switch back B→A releases **B** the same way.
+  A track-global release that ignored the predicate would release B in the first half and must fail.
+- **B — refusal while a live owner needs the slot.** With a live finalization on A, `noLiveOwnerForSlot(A)`
+  SHALL be false; `releaseSlot(A, genA)` SHALL return `RefusedBusy` with the lease held and the generation
+  unchanged; and the production switch A→B SHALL still commit while leaving A's lease held. A release that
+  ran under the finalizer must fail.
+- **C — released once the finalization retires.** After the production grain retires A's stop, the next
+  same-track switch (B→A) SHALL release A (unheld, generation advanced, pre-switch identity stale).
+- Preserved invariants: `src/` unchanged unless a case fails; the release remains identity-qualified and
+  per-slot; no new owner, state or emission is introduced by the fixture.
+
+### Completion record (2026-09-26)
+
+**No production code changed; the contract held.** Three fixtures in `test_runtime_working_set_ownership`
+(23/23 in the suite), all three covering exactly the routes the G0 trace names:
+
+| Case | Route exercised | Asserted |
+|---|---|---|
+| `test_s4_1_a_same_track_switch_releases_the_retired_slots_lease` | the switch commit (`finalizeCaptureAndSelectSlot` → `resetPlaybackStateForSlot` → the sweep) with a live owner latched on the **incoming** slot | the retired slot is released, its generation advances, its pre-switch identity answers `StaleGeneration` and the current one `NotHeld`; the owned sibling is **untouched** (lease held, generation equal). Control: retire the owner and switch back → the same route releases the other slot |
+| `test_s4_1_a_live_finalization_refuses_the_retired_slots_lease_release` | a live finalization on the retired slot; the entry called directly, then the switch | `noLiveOwnerForSlot` false; `releaseSlot(A, genA)` → **`RefusedBusy`** with the lease held and the generation unchanged; the switch still **commits** (an admitted stop does not hold the active slot, S4f.3) and the lease survives it |
+| `test_s4_1_the_retired_slots_lease_is_released_once_its_finalization_retires` | the production grain retires the stop, then the next same-track switch | the predecessor keeps its lease **through** the handoff, `noLiveOwnerForSlot` is true after retirement, and the next switch releases it (unheld, generation advanced, old identity stale) |
+
+**Which route actually releases it — recorded because it is not the retirement.** The release is *not* a
+consequence of `TrackPreparedStopCommit::completeDeferredCleanup` (it clears `captureStopOwner` and arms the
+capacity marker, and releases no working set). The route that reaches the retired slot on one track is the
+**next playback reset**, i.e. the next slot switch's `resetPlaybackStateForSlot` — or the memory-pressure /
+undo lanes. That is what case C drives.
+
+**Red proofs (run, then reverted; `src/` ends clean).** Each guard the fixtures rely on was removed
+temporarily, in two steps, to attribute the failures:
+
+- **R1 — `releaseEligiblePlaybackRuntimeSlots` without its `noLiveOwnerForSlot` gate** (the predicate-free
+  sweep the pre-S4.1 `resetAll` was):
+  `test_the_release_sweep_skips_a_slot_with_a_live_owner` and case **A** fail
+  (*"a slot with a live owner must survive the switch"*). Cases B and C still pass — the *finalization* kind
+  is protected a second time by `reset()`'s own refusal, so the predicate is not the only layer there.
+- **R1 + R2 — also dropping `LoopPlaybackRuntime::reset()`'s pending-finalizer refusal**: case **B** fails,
+  *"Expected 6 Was 1. a live finalization must answer RefusedBusy"* (6 = `RefusedBusy`, 1 = `Released`), and
+  four pre-existing fixtures fail — the guards are load-bearing beyond this packet.
+- **R1 + R2 + R3 — also removing `invalidatePlaybackMergedMidiEvents`' track-level early return on
+  `hasPendingDeferredOverdubStop()`**: case **C** fails, *"the predecessor must keep its lease while it
+  finalizes"*.
+
+  So the live-finalization protection at a switch is **triple-layered** (track-level early return →
+  per-slot predicate → the runtime's own `reset()` refusal), and each layer is independently observable in
+  the fixture set. That is a stronger statement than the packet assumed, and it is why R1 alone is green for
+  B and C.
+
+**The reconciliation's "needs an emission" clause was stale.** `DIAG,ws_release,<slot>,<generation>,<outcome>`
+already exists — added in `bbedfeac` *("make the working-set lease release observable by name")*, emitted
+from the sweep with the refusal reported instead of discarded (`NotHeld` stays silent), and already **Tier-A**
+(`include/Utils/CaptureLineTier.h`), so the timing-critical shed cannot remove it. What remains for S4.1's
+device leg is therefore only a **run** in which the path fires for the slot under test (a cross-track take
+start, memory pressure, or a same-track switch after retirement), and an oracle that reads the row — not new
+instrumentation.
+
+**Verification:** focused `test_runtime_working_set_ownership` 23/23; full native and the capture-serial
+build recorded in the session closeout (`docs/Runtime/CURRENT_WORK.md`). No device action, no upload, no
+stimulus: no firmware behavior changed.
+
+
+---
+
+## F4 — a failed workspace completion is discharged, not retried at the queue head (2026-09-26, G2 packet)
+
+### Identity and scope
+
+Found while building the S4.1 persistence fixture: a persistently failing `FinalizeWorkspace` step retries
+**at the queue head** and blocks everything behind it. This slice fixes that failure policy; it is a
+deliberate firmware change with its own decision (**DEC-091**), unlike the two verification slices above.
+
+- Owner and entry: `StorageManager::processDeferredSaveState` → `stepPersistenceWorkItem` →
+  `stepFinalizeWorkspaceWorkItem` → the `CurrentSetCompletion` sub-stages (`patchLastActiveUnix`, the bundle
+  CRC refresh, `workspace.bin`).
+- Status: **packet fixed before the behavior edit.**
+- Files expected: `include/StorageManagerInternal/PersistenceWorkQueue.h`,
+  `src/StorageManager/PersistenceWorkQueue.cpp`, `src/StorageManager/PersistenceWorkItemPersist.cpp`, plus
+  the fixture in `test/test_storage_drain_restore`.
+
+### G0 trace — what a completion failure does today
+
+1. **The obligation is dropped but the item is not.** `stepFinalizeWorkspaceWorkItem`'s failure branch sets
+   `pending = false`, `lastCompletedOk = false`, `failedAtMs = millis()`, emits `PERS,result,…,failed`, and
+   then calls `completePersistenceWorkItem(job, "finalize", false)`, whose `ok == false` arm is
+   `PersistenceWorkQueue::requeueWritingItem(job.item)` — a **`queuePushFront`**, so the same item is the
+   head again on the very next slice.
+2. **Every retry re-enters the same sub-stage.** `stepDeferredWorkspaceFinalizeSlice` only calls
+   `beginCurrentSetCompletion()` when the stage is *not* already `CurrentSetCompletion`, so the retry resumes
+   the failed step deterministically. Nothing else in the queue can run: `beginWriteQueuedItem` peeks the
+   head, and the head is this item.
+3. **The consequence is not confined to persistence.** `hasDeferredSaveWork()` is
+   `hasPersistenceWorkPending()` = `pending || queueDepth > 0 || writing > 0 || itemActive`. With `pending`
+   cleared but the item still queued, the predicate stays **true forever**, and two unrelated operations read
+   it: the save-new-set pre-flight (`SavedSetIo.cpp`, refuses while it is true) and the read-only slot-payload
+   observation (`readSlotPayloadPageForHitl` → `PSTR("busy")`, `LibraryObservationSession.cpp`). So one SD
+   error at completion disables save and the `!SLOT_PAYLOAD` observation for the rest of the boot.
+4. **What the contract already says.** `docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md` scheduler rule 5:
+   *"Dirty flags — edit/loop dirty state clears only after `PERS,result,…,ok`. Failed or incomplete saves
+   leave dirty set for retry."* The retry the contract names is the **dirty set** driving the next save
+   trigger, not an unbounded same-turn re-run of a deterministic step.
+
+### Oracle fixed before behavior edits
+
+With the completion's first write refused by the card while a slot-keyed save is in flight:
+
+- the `FinalizeWorkspace` item SHALL **not** be requeued: within a bounded number of worker turns
+  `queueDepth() == 0`, `writingWorkItemCount() == 0` and no item is active;
+- `StorageManager::hasDeferredSaveWork()` SHALL be **false** afterwards, and the read-only observation
+  entry SHALL answer `"ok"` rather than `"busy"` (the user-facing consequence being fixed);
+- the failure SHALL be **reported, not silent**: `lastCompletedOk == false`, `failedAtMs != 0`;
+- the **dirty set SHALL be preserved**, and a later slot-keyed save SHALL complete
+  (`lastCompletedOk == true`) once the card is healthy — the documented retry;
+- the same card fault must **not** be able to hold a later-admitted item behind it.
+
+Counterexample that must fail: the current `queuePushFront` requeue (the item keeps the head, and
+`hasDeferredSaveWork()` never clears). Boundary kept deliberately out of scope and recorded: the same
+front-requeue shape exists for the body/bundle slice failures (`LoopPersist`, `TrackMeta`/`SlotMeta`/
+`WorkspaceFooter`), where retrying is the *durability* intent for content; whether those should be bounded
+is a separate decision, not silently folded into this one.
+
+### Completion record (2026-09-26)
+
+**Implemented (DEC-091).** `abandonPersistenceWorkItem` (FLASH-resident) reports the failure once
+(`PERS,result,…,failed` + the `emitPersistenceWorkTelemetry` row) and lands the writing entry in the queue's
+existing terminal tombstone via `markItemPersisted` — not Queued, not Writing, reclaimable by a later
+admission — instead of `completePersistenceWorkItem(…, false)`'s front-requeue. The completion failure branch
+calls it; nothing else changed. The dirty set is untouched, so the retry the contract names — the next save
+trigger — still runs.
+
+**RAM1, measured rather than assumed.** The first cut added a *named* queue entry point
+(`abandonWritingItem`) so the call site would read "abandoned" rather than "persisted". It cost **256 B of
+ITCM** — the queue TU is ITCM-resident, unlike the `STORAGE_PERSIST_MEM` persistence TUs — and the budget
+check refused it (`padding 856 → 600`, floor 840). The API was **withdrawn** rather than the floor widened:
+the terminal state it wrote is exactly `markItemPersisted`'s, and the naming is served by DEC-091 plus a
+call-site comment. Final build: `code 392,360 / padding 856`, byte-identical to the pre-slice firmware.
+
+**Fixture** `test_f4_a_failed_completion_is_discharged_and_releases_the_queue` (in
+`test_storage_drain_restore`, reusing the S4.1 harness): it pauses when the owed save is down to its
+completion, holds the card in write-refusal from the completion's first sub-step, and asserts the failure is
+**reported** (`lastCompletedOk` false, `failedAtMs` set), the item is **discharged** (queue depth, writing
+count and active item all zero), the guard the unrelated consumers read is false and **stays** false
+(`hasDeferredSaveWork()`), the dirty set is **preserved**, and a later save trigger **completes** once the
+card is healthy.
+
+**Red proof (run, then reverted; `src/` ends with only the DEC-091 change).** Restoring the front-requeue
+fails the fixture exactly on the defect:
+
+```
+test_f4_a_failed_completion_is_discharged_and_releases_the_queue:
+    Expected 0 Was 1. the failed completion must be discharged, not left holding the queue
+    (stage=6 … queue=1 writing=0 itemActive=0 … completedOk=0)                          [FAILED]
+```
+
+**A false green in the first cut of the fixture is recorded rather than quietly replaced.** The fault was
+originally injected for a single turn, and the requeued item then *succeeded* on its retry — which is exactly
+what a front-requeue is for — so the reverted policy passed. The fault is now held for the whole assertion
+window; the case under test is a **persistent** failure.
+
+**One pre-existing acceptance fixture was re-premised, and this is the interaction to review.**
+`test_s2b7_the_drain_services_a_parked_instance_holding_the_session` asserted the restore-progress counter
+advancing, which the drain could only achieve by looping — and it looped only because the failed completion
+was re-queued at the head. Two things changed with DEC-091, and both are asserted directly now:
+
+1. the drain services the parked instance for the single frame its episode has, and that frame performs the
+   **ownership transfer** the case is about — probe-verified: before `parked=1 3/2`, after `active=1 3/2
+   ph=2 parked=0`. The counter form is gone because the spin that produced a second frame is gone;
+2. the verdict for this fixture's shape (a save whose completion **fails** at the same time as a commit-gated
+   restore) is now `Failed` with no named wait, where it used to be
+   `TemporarilyBlocked/waiting_commit_gate`. The old verdict was the spin breaking out on the gate before the
+   completion was ever stepped; a failed save must be reported as failed rather than masked by the restore's
+   wait. The **purely blocked** shape keeps `waiting_commit_gate` — its sibling case
+   (`…_advances_a_session_holding_restore_and_names_the_commit_gate`) still passes unchanged.
+
+**Verification:** focused `test_storage_drain_restore` 15/15; full native and the capture-serial build
+recorded in the session closeout. No device action: this is an SD **fault** path, and no device fault
+injection exists for it, so device evidence is owed rather than claimed (recorded in the task entry).
+

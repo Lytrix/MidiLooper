@@ -190,6 +190,27 @@ STORAGE_PERSIST_MEM bool completePersistenceWorkItem(PersistenceWorkItemJob& job
   return ok;
 }
 
+/// DEC-091: abandon a work item whose step **cannot** succeed on a retry in the same turn sequence, and
+/// report that at the call site. `completePersistenceWorkItem(job, phase, false)` requeues to the queue
+/// **head**, which is right for a transient SD write that the next slice may complete, and wrong for the
+/// workspace completion: its sub-steps (`patchLastActiveUnix`, the bundle CRC refresh, `workspace.bin`) are
+/// deterministic, so the retry re-enters the same step forever and every other item waits behind it while
+/// `hasDeferredSaveWork()` stays true -- which refuses the save pre-flight and the read-only slot-payload
+/// observation for the rest of the boot. The owed work is not lost: the per-slot dirty set is left exactly
+/// as the failure found it, which is the retry the persistence contract names.
+STORAGE_PERSIST_MEM bool abandonPersistenceWorkItem(PersistenceWorkItemJob& job, const char* phase) {
+  emitPersistenceWorkTelemetry(job.item, phase, "failed");
+  // The queue's terminal state is the tombstone `markItemPersisted` writes: not Queued, not Writing, and
+  // reclaimable by a later admission of the same key. It is reached here for an **abandoned** item rather
+  // than a persisted one, and no production code reads `workState()`, so the name is the only mismatch --
+  // which is why this decision is recorded (DEC-091) instead of resting on the call site.
+  PersistenceWorkQueue::markItemPersisted(job.item);
+  resetActivePersistenceWorkItem(job);
+  // True: the turn did what it owed (record the failure, release the queue). The failure itself is
+  // reported through `PERS,result,...,failed` and the job's `failedAtMs`, not as a slice error.
+  return true;
+}
+
 STORAGE_PERSIST_MEM bool isRuntimeBundleWorkType(PersistWorkType type) {
   switch (type) {
     case PersistWorkType::GlobalMeta:
@@ -367,7 +388,9 @@ STORAGE_PERSIST_MEM bool stepFinalizeWorkspaceWorkItem(PersistenceWorkItemJob& j
     storageSession.currentWorkspaceSave.completedAtMs = 0;
     const uint32_t saveDurationUs = micros() - job.flushStartedAtUs;
     SC_PERSIST("result", saveDurationUs, job.flushHeapBefore, job.flushHeapBefore, "failed");
-    return completePersistenceWorkItem(job, "finalize", false);
+    // DEC-091: discharge, do not requeue. The dirty set is untouched, so the next save trigger re-writes
+    // everything owed.
+    return abandonPersistenceWorkItem(job, "finalize");
   }
   if (!finalizeDone) {
     emitPersistenceWorkTelemetry(job.item, "finalize_slice", "ok");

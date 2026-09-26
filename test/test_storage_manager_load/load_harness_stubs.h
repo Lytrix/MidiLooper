@@ -45,9 +45,15 @@ void EditManager::foldLiveCaptureIntoNoteEditSession(Track&) { LOAD_HARNESS_OFF_
 /// itself is one of the shared harness globals in track_harness.inc.
 void Track::silenceTrackMidiOutput() { ++g_nativeSilenceTrackCalls; }
 
+#ifndef HARNESS_LINKS_REAL_STOP_TELEMETRY
+/// Supplied here because the load suite's linked set never resolves the stop-telemetry TU. A suite that
+/// **does** link it (the S4.1 persistence-identity fixture drives the production slot-keyed persistence
+/// admission, which lives there) defines `HARNESS_LINKS_REAL_STOP_TELEMETRY` and gets the real identity
+/// resolution instead of this pointer comparison.
 inline uint8_t resolveTrackIndexForPersistence(const Track& track) {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
     if (&trackManager.getTrack(i) == &track) return i;
   }
   return 0;
 }
+#endif

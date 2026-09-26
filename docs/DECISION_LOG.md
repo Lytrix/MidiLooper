@@ -15,6 +15,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
 | [DEC-086](#dec-086--loop-edit-tempo-fader-is-a-global-bpm-control-on-cc102) | 2026-09-25 | Loop-edit fader 4: a global BPM control on ch16 CC102 (60–187 BPM, one BPM per step) | Accepted — implemented, native + device verified |
+| [DEC-091](#dec-091--a-failed-workspace-completion-is-discharged-and-reported-not-retried-at-the-queue-head) | 2026-09-26 | A failed workspace completion is **discharged and reported**, not re-queued at the head (it blocked every other item and kept the owed-save guard true) | Accepted — implemented, native verified (fixture red-proved); device fault path has no injection, evidence owed |
+| [DEC-090](#dec-090--the-deferred-save-records-workspace-focus-at-footer-write-time-not-at-admission) | 2026-09-26 | The deferred save records workspace **focus** at footer-write time; content identity stays the interval's slot (snapshot-at-admission rejected) | Accepted — implemented behavior, **native verified** (`test_storage_drain_restore`, red-proved); no firmware change |
 | [DEC-084](#dec-084--explicit-stopped-heap-inspection) | 2026-09-25 | Explicit stopped/clock-quiet heap inspection | Accepted |
 | [DEC-083](#dec-083--the-restored-library-inventory-is-a-bounded-on-demand-observation-separate-from-the-settled-census) | 2026-09-24 | The restored-library inventory is a **bounded on-demand observation**, separate from the settled census; it reports a state set and a nullable cause | Accepted — implemented, native-verified and **device-verified read-only** (Packet A of `restored-library-stability`); Packets B/C open |
 | [DEC-082](#dec-082--the-restore-request-is-the-unit-identity-named-waits-preparation-under-transport-and-a-three-way-drain) | 2026-09-24 | The restore **request** is the unit: identity, named waits, preparation under transport, three-way drain | Accepted — implemented; native + Packet B device gate + content PASS; **the drain-advance device integration (A3.7 shape b) is not yet verified**, so `deferred-slot-restore-liveness` stays open |
@@ -98,7 +100,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-086 -->
+<!-- Append new entries below (newest first). Next ID: DEC-092 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -5156,3 +5158,109 @@ missing/corrupt bundle, healthy no-op, invalid workspace/slot, short writes, fai
 backup/promotion, existing leftovers and simulated reboot after interrupted work.
 Original hashes unchanged, no overwrite, no writes on preflight refusal, no save while
 blocked. Full native and capture-serial RAM1/build; no device access in this slice.
+
+## DEC-090 — The deferred save records workspace focus at footer-write time, not at admission
+
+**Date:** 2026-09-26
+**Status:** Accepted: verified behavior; no firmware change (S4.1's persistence-identity remainder closed)
+**Owner:** `StorageManager` deferred save (`DeferredSaveJobStages` footer stage); `TrackManager` selection route
+
+### Decision and context
+The workspace footer (`selectedTrack`, per-track `activeLoopIndex`, per-track `selectedSlotIndex`) is
+written from **live** runtime state in the footer's own slice, not captured when the save was admitted and
+not keyed to the slot whose capture stop owed the save. The two identities stay separate: **content
+identity** is the interval's slot (its body is a `LoopPersist` item keyed by `(track, slot)`, and only a
+token-verified write clears that slot's dirty flag), while **workspace focus** is the selection at
+footer-write time. A save whose footer is due when a capture handoff happens persists the **post-handoff**
+focus, and the slot the handoff left keeps its own content on the card.
+
+### Why the alternatives are rejected
+- **Substituting the interval's slot for the live read** (a mechanical "key the footer to the outgoing
+  capture slot" change) is rejected and red-proved: the reload then restores the *old* focus, so a focus
+  change made during a save silently reverts on reboot.
+- **Capturing the whole save at admission** is rejected as a persistence-semantics change: every other stage
+  (loop bodies from `track.getLoop(poolCursor)`, slot metadata) already reads live state in its own slice, so
+  a footer captured at admission would describe a moment the bodies beside it were not written at — an image
+  that is internally inconsistent rather than merely older.
+
+### Consequences
+- A focus change during an in-flight save is durable: it is written by the in-flight footer if it lands
+  before that slice, and otherwise requeued by the selection route (`setSelectedSlotIndex` /
+  `setSelectedTrack` → `requestWorkspaceFooterPersistWhenSafe` + `requestDeferredSaveState`), whose admission
+  is refused while a capture or a stop is in flight. The queue is FIFO, so the requeued write lands after the
+  in-flight one — a single mis-keyed footer write is therefore repaired by the route itself.
+- A refused footer write publishes nothing: the bundle rename is the commit point, so a failed write leaves
+  the previously durable image byte-identical and the retry re-reads live focus.
+- The footer is not only display state: `isBootPlaybackSlot` (union of the footer's active and selected
+  slots) selects the slots prewarmed at boot, and `TrackUndo::rebuildTrackFromLoopContent(track,
+  selectedSlotIndex[t])` keys undo reconstruction to the footer's **selected** slot.
+
+### Validation
+Four cases in `test_storage_drain_restore` drive the real deferred worker and the real loader: pause with the
+footer due and unwritten, an A→B handoff through `TrackManager::setSelectedSlotIndex`, then a reload of the
+persisted image (content, loop identities and restored focus asserted per slot); a no-switch control that
+restores the unmoved focus; a handoff after the footer was written (requeue); and an SD write fault at the
+footer (nothing published, retry lands the handoff). Red-proved by pinning the footer's two reads to the
+interval's slot: the three handoff cases fail on the restored focus while the control passes. No device
+claim: no firmware behavior changed and no stimulus is needed.
+
+## DEC-091 — A failed workspace completion is discharged and reported, not retried at the queue head
+
+**Date:** 2026-09-26
+**Status:** Accepted — implemented and native-verified (fixture red-proved); device evidence owed (see below)
+**Owner:** `StorageManager` deferred save (`stepFinalizeWorkspaceWorkItem`); `PersistenceWorkQueue`
+
+### Problem
+A persistent failure in the workspace **completion** (`PatchLastActiveUnix`, the bundle CRC refresh,
+`workspace.bin`) set `pending = false`, `lastCompletedOk = false`, `failedAtMs`, emitted
+`PERS,result,…,failed` — and then requeued the `FinalizeWorkspace` item **at the queue head**
+(`requeueWritingItem` is a `queuePushFront`). Every retry re-entered the same deterministic sub-step, so the
+item could never finish, no other persistence item could run, and `hasDeferredSaveWork()` stayed **true for
+the rest of the boot**. Two unrelated operations read that predicate: the save-new-set pre-flight
+(`SavedSetIo`) and the read-only slot-payload observation, whose entry answers `PSTR("busy")`
+(`LibraryObservationSession`). So one SD error at completion disabled save and the `!SLOT_PAYLOAD`
+observation until reboot.
+
+### Decision
+The completion failure is **terminal**. The item is discharged into the queue's existing terminal
+tombstone (`PersistenceWorkQueue::markItemPersisted`, whose written state *is* "not Queued, not Writing,
+reclaimable by a later admission"; no re-queue), the failure is reported (`PERS,result,…,failed`, `failedAtMs`, the existing `[StorageManager] ERROR:` line), and
+the per-slot dirty set is left exactly as the failure found it. The retry the persistence contract names
+(`DEFERRED_RUNTIME_PERSISTENCE.md` scheduler rule 5: *"Failed or incomplete saves leave dirty set for
+retry"*) is the dirty set driving the **next save trigger**.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Keep the front-requeue (status quo) | The head-of-line block and the permanently-true owed-save guard are the defect; a step that is deterministic cannot be retried into success. |
+| Keep `pending = true` and re-admit after the drain | `shouldDeferMidPassForWorkspaceSave` would then defer the one-chunk-per-turn capture flush while the failing save spins — defeating the take durability the mid-pass writer exists for (DEC-081). |
+| Re-queue at the **tail** with a retry counter and cooldown | New per-job state against the RAM1 floor for a deterministic step, and the same flush-starvation argument applies while `pending` is held; the dirty set already carries the retry. |
+| Bounded immediate retries | The sub-steps that fail here are file/FS conditions (missing or unreadable bundle, rename failure), so a retry inside the same sequence re-runs the identical step. |
+| A **new** queue API (`abandonWritingItem`) naming the abandonment | Built and withdrawn: it added 256 B of ITCM (`padding 856 → 600`, below the 840 floor) because the queue TU is ITCM-resident, while the terminal state it wrote is exactly `markItemPersisted`'s. The naming is served by this entry plus a call-site comment, at zero RAM1 cost. |
+
+### Consequences
+- A failed completion no longer holds the queue; `hasDeferredSaveWork()` clears, so the save pre-flight and the
+  read-only observation work again — and report the real condition instead of `busy`.
+- The persisted anchor (`lastActiveUnix`, `workspace.bin`) stays **stale** until the next save. The bundle
+  carries its own epoch-header CRC and boot validation reads that, so a discharged completion does not make
+  the workspace unloadable.
+- **The blocking drain's verdict changes in one mixed shape.** Where an owed save's completion fails *and* a
+  restore is commit-gated, the drain now reports `Failed` instead of `TemporarilyBlocked/waiting_commit_gate`:
+  it no longer spins long enough to break out on the gate before stepping the completion. A failed save
+  reported as failed is the correct priority; the purely **blocked** shape keeps its named wait.
+- **Boundary kept deliberately:** the same front-requeue shape remains for the body/bundle item failures
+  (`LoopPersist`, `TrackMeta`/`SlotMeta`/`WorkspaceFooter`), where retrying is the *content-durability*
+  intent. Bounding those is a separate decision, not folded into this one.
+
+### Validation
+Fixture `test_f4_a_failed_completion_is_discharged_and_releases_the_queue` (`test_storage_drain_restore`):
+pauses when the owed save is down to its completion, holds the card in write-refusal from the completion's
+first sub-step, and asserts the failure is reported, the item is discharged, `hasDeferredSaveWork()` is false
+and stays false, the dirty set survives, and a later save trigger completes once the card is healthy.
+**Red-proved:** restoring the front-requeue fails it with *"Expected 0 Was 1. the failed completion must be
+discharged, not left holding the queue (… queue=1 …)"*. **RAM1:** `code 392,360 / padding 856`, byte-identical to the
+pre-slice build — the discharge helper is `STORAGE_PERSIST_MEM` (FLASH), so the policy costs no ITCM.
+**A false green in the first cut is recorded:** a single-turn fault self-heals on the retry — which is what the front-requeue is for — so the fault is now held
+for the whole assertion window. The S2b.7 parked-instance drain fixture was re-premised on the drain's
+**ownership transfer** (its progress-counter oracle needed the removed spin) and pins the corrected `Failed`
+verdict. No device evidence: this is an SD fault path and no device fault injection exists for it.

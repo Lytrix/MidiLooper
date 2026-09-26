@@ -1,15 +1,53 @@
 # Deliverable Tracking (Main vs Refinement)
 
-**Current handoff — recovery committed; DMA deferred (2026-09-26).**
+**Current handoff — S4.1 verified; F4 completion-failure policy shipped (2026-09-26).**
+**F4 / DEC-091 (firmware):** a persistently failing workspace completion is now **discharged and reported**
+instead of re-queued at the queue head, where it blocked every other persistence item and kept
+`hasDeferredSaveWork()` true for the rest of the boot — refusing the save-new-set pre-flight and making the
+read-only slot-payload observation answer `busy`. The per-slot dirty set stays for the next save trigger.
+Focused `test_storage_drain_restore` 15/15, red-proved (with a false green in the fixture's first cut
+recorded); full native **2,469 passed / 7 skipped**; capture-serial SUCCESS with `padding 856`
+(byte-identical — the named queue API the first cut added cost 256 B of ITCM and was withdrawn). Two
+consequences recorded: the blocking drain reports `Failed` in the mixed failed-save/gated-restore shape (the
+S2b.7 parked-instance fixture re-premised and pinning it), and body/bundle item failures keep the retry.
+**Device evidence owed** (SD fault path, no fault injection). **S4.1 is checked** with its device row owed as
+evidence. See
+[continuation packet](../openspec/changes/runtime-working-set-ownership/NEXT-STEPS.md).
+
+
+**Previous handoff — S4.1 lease release verified and S4.1 checked (2026-09-26).**
+**S4.1 — working-set lease release on a same-track slot switch is verified with no firmware change.** Three
+fixtures in `test_runtime_working_set_ownership` (23/23) drive the production switch commit: the retired
+slot is released (generation advanced, pre-switch identity consumed) while a live-owner-protected sibling is
+untouched; a live finalization refuses with `RefusedBusy` and the lease survives the switch that still
+commits; and after retirement the **next** same-track switch releases it (retirement itself releases no
+working set — it arms the capacity marker). The live-finalization protection is triple-layered and each
+layer was red-proved by staged guard removal. Full native 2,468 passed / 7 skipped; capture-serial SUCCESS
+with `padding 856`; `src/` untouched. S4.1's device leg is now an **evidence obligation only**: the
+`DIAG,ws_release,<slot>,<generation>,<outcome>` row exists and is Tier-A, so what is owed is a run in which
+that path fires plus an oracle that reads it. Next recommended native work: the `FinalizeWorkspace` retry
+policy. See
+[continuation packet](../openspec/changes/runtime-working-set-ownership/NEXT-STEPS.md).
+
+
+**Previous handoff — S4.1 persistence identity verified; recovery/DMA unchanged (2026-09-26).**
+**S4.1 — persistence identity during handoff is verified and closed with no firmware change:** the
+deferred save's footer records the workspace **focus** at footer-write time while the interval's slot
+remains the **content** identity; four new cases in `test_storage_drain_restore` (paused worker at the
+footer, A→B handoff through the production selection route, reload, no-switch control, post-footer handoff,
+SD write fault) assert it, and the substitution the packet warned against red-proves as a reverted focus.
+Full native 2,465 passed / 7 skipped; capture-serial SUCCESS with `padding 856` (floor 840); `src/`
+untouched. **DEC-090**. Next recommended native work: S4.1's remaining working-set **lease** release on a
+same-track slot switch, then the `FinalizeWorkspace` retry-policy question found while building the
+fixture. See
+[continuation packet](../openspec/changes/runtime-working-set-ownership/NEXT-STEPS.md).
+
 Recovery/loaded undo is committed in `f29539e3`. Automatic repair and healthy boot
 completed on hardware; full device content/Undo/Redo acceptance remains open.
 Blocking-SPI display update is user-confirmed. **User parks DMA repair until after
 `runtime-working-set-ownership` completes.** Default firmware still enables DMA;
 use the preserved comparator profile when an explicitly approved upload must retain
-the working display. No timing gate is waived. Next recommended native work:
-**S4.1 — persistence identity during handoff**, starting with a paused-worker
-contract fixture, not an assumed active-slot replacement. See
-[continuation packet](../openspec/changes/runtime-working-set-ownership/NEXT-STEPS.md).
+the working display. No timing gate is waived.
 
 ## Earlier session checkpoints
 

@@ -25,6 +25,7 @@
 #include "DisplayManager.h"
 #include "LooperState.h"
 #include "Track.h"
+#include "TrackManager.h"
 
 namespace DrainHarness {
 
@@ -41,6 +42,14 @@ inline uint32_t& slotChangeInvalidations() {
   return count;
 }
 inline uint32_t& trackChangeNotifications() {
+  static uint32_t count = 0;
+  return count;
+}
+/// S4.1 persistence-identity fixture: a slot move reaches the same note-edit session lifecycle as the
+/// track-change pair above (`TrackManager::setSelectedSlotIndex` departs/re-enters the session around the
+/// move). Counted, not fail-closed, for the same reason: the fixture moves focus through the production
+/// route and asserts the **persisted footer**, and the edit session is a neighbour of that move.
+inline uint32_t& slotChangeNotifications() {
   static uint32_t count = 0;
   return count;
 }
@@ -72,5 +81,43 @@ void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) {
 
 void EditManager::beforeSelectedTrackChange(Track&) { ++DrainHarness::trackChangeNotifications(); }
 void EditManager::onTrackChanged(Track&) { ++DrainHarness::trackChangeNotifications(); }
+void EditManager::beforeSelectedSlotChange(Track&) { ++DrainHarness::slotChangeNotifications(); }
+void EditManager::onSelectedSlotChanged(Track&, uint8_t) {
+  ++DrainHarness::slotChangeNotifications();
+}
+
+// ---------------------------------------------------------------------------
+// S4.1 persistence-identity fixture — the capture-finalization neighbours.
+//
+// `TrackManager::setSelectedSlotIndex` (the gesture route the fixture moves focus with) reaches
+// `TrackManager::setActiveLoopIndex`, whose body calls `finalizeCaptureAndSelectSlot` **only while a take
+// is live**. That capture-finalization closure is the stop-commit plus display/edit-refresh stack this
+// suite deliberately does not link (A1.7's recorded scope decision), so each reached symbol fails closed
+// rather than pretending to act. The fixture moves focus on a **stopped** track, so none of these is on
+// its asserted path: if one is ever entered, the fixture says so instead of passing on a no-op.
+// ---------------------------------------------------------------------------
+
+#define CAPTURE_FINALIZATION_OFF_LIMITS() TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__)
+
+void EditManager::bumpSessionPreviewRevision() { CAPTURE_FINALIZATION_OFF_LIMITS(); }
+void EditManager::bumpSessionPlaybackPreviewRevision() { CAPTURE_FINALIZATION_OFF_LIMITS(); }
+void EditManager::scheduleDeferredNoteEditDisplayRefresh() { CAPTURE_FINALIZATION_OFF_LIMITS(); }
+
+void DisplayManager::emitDisplayCaptureSnapshot(const Track&, uint8_t, uint32_t) {
+  CAPTURE_FINALIZATION_OFF_LIMITS();
+}
+void DisplayManager::refreshViewportAfterOverdubStop(Track&, uint8_t, uint32_t) {
+  CAPTURE_FINALIZATION_OFF_LIMITS();
+}
+
+void Track::stopPlaying() { CAPTURE_FINALIZATION_OFF_LIMITS(); }
+void Track::startPlaying(uint32_t, bool) { CAPTURE_FINALIZATION_OFF_LIMITS(); }
+void Track::stopRecordingToStopped(uint32_t) { CAPTURE_FINALIZATION_OFF_LIMITS(); }
+CommitResult Track::commitCaptureForStop(CommitReason, uint32_t, uint32_t, uint8_t) {
+  CAPTURE_FINALIZATION_OFF_LIMITS();
+  return CommitResult::SealFailed;
+}
+
+#undef CAPTURE_FINALIZATION_OFF_LIMITS
 
 void Track::silenceSlotMidiOutput(uint8_t) { ++DrainHarness::slotSilenceCalls(); }
