@@ -194,6 +194,18 @@ struct TrackCaptureStopTestAccess {
   /// S4.0/S2b.4 access: the per-slot liveness predicate, the reservation release and re-reserve, and a
   /// raw ring entry's slot by storage index (including entries outside the live window).
   static bool noLiveOwner(Track& track, uint8_t slot) { return track.noLiveOwnerForSlot(slot); }
+  /// S4f.10(d): the manager's pending-start dispatcher, which owns the same-tick guard.
+  static void handlePendingRecordStart(uint32_t currentTick) {
+    trackManager.handlePendingRecordStart(currentTick);
+  }
+  /// The selection the dispatcher reads when it activates a target.
+  static void selectSlot(uint8_t trackIndex, uint8_t slot) {
+    trackManager.setSelectedSlotIndex(trackIndex, slot, SyncPlayback::No);
+  }
+  /// S4f.10(d) diagnostic: the sentinel the same-tick guard compares against.
+  static uint32_t queuedAtTick(uint8_t trackIndex) {
+    return trackManager.pendingRecordQueuedAtTick[trackIndex];
+  }
   /// S4f.6's slot-scoped in-flight predicate, which the decoy-answer matrix asserts through.
   static bool stopInFlightForSlot(Track& track, uint8_t slot) {
     return track.hasStopInFlightForSlot(slot);
@@ -4842,6 +4854,120 @@ void test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_
       "an accepted interaction must make its track eligible even when the track is idle");
 }
 
+/// S4f.10(e) — an undo that replaces the interval leaves the accepted stop **superseded, not bound**.
+///
+/// Undo is the second way the world moves under an accepted-but-unexecuted stop (a load/replacement is the
+/// first, covered by `test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound`). What both share
+/// is the contract `driveAcceptedInteraction` enforces: the obligation names an **interval identity**, so an
+/// undo that leaves the same *slot number* holding a different interval must neither bind the stop to the
+/// replacement content nor park waiting for an interval that can no longer return. It is superseded --
+/// reported and retired exactly once.
+///
+/// The fixture mutates the identity directly rather than driving the full undo path: `TrackUndo.cpp` is a
+/// deliberate boundary of this suite (it is linked only as a shim TU for other fixtures), and identity
+/// invalidation is the whole of what undo contributes to this decision. The supersession decision itself is
+/// the **real** drive, so the assertion is about production behaviour and not about a stand-in.
+void test_s4f10e_an_undo_replacing_the_interval_supersedes_the_accepted_stop() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+
+  // DEC-078 accept-and-latch: a live canonical owner makes the stop accepted rather than admitted.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::prewarmCanonicalReservation(track, 0));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::appendCanonicalEvent(track, 0));
+
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(track.hasAcceptedUnexecutedInteraction(),
+                           "the stop must be accepted and latched while the owner is live");
+  const uint64_t latchedInterval = TrackCaptureStopTestAccess::interval(track);
+  TEST_ASSERT_EQUAL_UINT64(latchedInterval, TrackCaptureStopTestAccess::acceptedLatchInterval(track));
+  const size_t rowsBefore = track.getActiveLoop().capture.store.size();
+
+  // The undo-equivalent: the same slot now holds a different interval.
+  TrackCaptureStopTestAccess::advanceInterval(track);
+  TEST_ASSERT_NOT_EQUAL(latchedInterval, TrackCaptureStopTestAccess::interval(track));
+
+  // One drive turn: superseded and retired, never bound to the replacement.
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::serviceAcceptedInteraction(track),
+                           "the drive must act on the obligation rather than ignore it");
+  TEST_ASSERT_FALSE_MESSAGE(track.hasAcceptedUnexecutedInteraction(),
+                            "a request whose interval a replacement removed is superseded, not retained");
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                            "a superseded request must not bind a stop to the replacement content");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)),
+                                   "supersession retires the obligation without creating a descriptor");
+  TEST_ASSERT_EQUAL(rowsBefore, track.getActiveLoop().capture.store.size());
+
+  // A second drive has nothing left to do: exactly one supersession.
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::serviceAcceptedInteraction(track),
+                            "the supersession must be consumed exactly once");
+}
+
+/// S4f.10(d) — a request queued **at tick t** must not be dispatched by the same tick's own pass.
+///
+/// `handlePendingRecordStart` records `pendingRecordQueuedAtTick` when a request is queued and skips a
+/// request whose queued tick equals the tick being serviced. That guard is what keeps a start requested at a
+/// bar boundary from starting inside its own tick, because the requester queues at the boundary and the
+/// dispatcher runs again in that same tick.
+///
+/// The fixture drives the **real** dispatcher and the **real** queue owner. Its discriminating assertion is
+/// the same-tick one: the request survives this tick's pass and nothing has started. The companion assertion
+/// is that it is **deferred, not dropped** -- driven across following boundaries it starts exactly once, which
+/// is the behaviour the guard exists to protect. A dispatcher without the guard starts inside the queued
+/// tick; one that discarded the request never starts at all.
+void test_s4f10d_a_request_queued_in_this_tick_is_not_dispatched_in_this_tick() {
+  Track& track = preparePlayingTrack();
+  const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
+
+  // The target must be an armable slot: `queueRecordingTrack` refuses a slot already holding committed
+  // passes, and the preparation above commits slot 0. Slot 1 is empty, which is the production shape for a
+  // queued record start. The direct accessor activates it deliberately -- the manager's routed setter goes
+  // through a slot switch that reaches the storage boundary this suite keeps fail-closed, and that switch is
+  // not what this fixture is about.
+  const uint8_t slot = 1;
+  TEST_ASSERT_FALSE_MESSAGE(track.getLoop(slot).hasCommittedPasses(),
+                            "the fixture needs an empty target slot");
+  TrackCaptureStopTestAccess::selectSlot(track, slot);
+  TEST_ASSERT_EQUAL_UINT8(slot, track.getActiveLoopIndex());
+
+  // A running transport with a live clock, so the dispatcher's start is a real capture start and not an arm.
+  nativeTransportRunning = true;
+  const uint32_t barTicks = Track::getTicksPerBar();
+  TEST_ASSERT_TRUE(barTicks > 0);
+  const uint32_t queuedTick = barTicks * 4;
+  clockManager.assignCurrentTickSilently(queuedTick);
+  TrackCaptureStopTestAccess::selectSlotIndex(trackIdx, slot);
+  trackManager.queueRecordingTrack(trackIdx, slot, Config::INVALID_LOOP_SLOT);
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.hasQueuedRecordingTrack(trackIdx),
+                           "the request must be queued against the track");
+  TEST_ASSERT_FALSE_MESSAGE(track.isRecording(), "queueing alone must not start a capture");
+
+  // This tick's own pass: the guard must skip it, so the request survives and nothing starts.
+  TrackCaptureStopTestAccess::handlePendingRecordStart(queuedTick);
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.hasQueuedRecordingTrack(trackIdx),
+                           "a request queued in this tick must survive this tick's dispatch pass");
+  TEST_ASSERT_FALSE_MESSAGE(track.isRecording(),
+                            "the same-tick pass must not start the capture it just queued");
+
+  // Deferred, not dropped: across the following boundaries the same request starts, exactly once.
+  for (uint32_t tick = queuedTick + 1;
+       tick <= queuedTick + barTicks * 2 &&
+       !trackManager.getTrack(trackIdx).isRecording() &&
+       !trackManager.getTrack(trackIdx).isOverdubbing();
+       ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::handlePendingRecordStart(tick);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.getTrack(trackIdx).isRecording() ||
+                               trackManager.getTrack(trackIdx).isOverdubbing(),
+                           "the deferred request must start once a later boundary is serviced");
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.hasQueuedRecordingTrack(trackIdx),
+                            "and it must be consumed exactly once when it does");
+}
+
 /// S4f.10(c) / DEC-078 — accept-and-latch, then transport stop **before the drive**, supersedes it.
 ///
 /// The obligation under test is DEC-078's: when the finalization resources are still owned, a stop is
@@ -5390,6 +5516,8 @@ int main() {
   RUN_TEST(test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve);
   RUN_TEST(test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes);
   RUN_TEST(test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track);
+  RUN_TEST(test_s4f10d_a_request_queued_in_this_tick_is_not_dispatched_in_this_tick);
+  RUN_TEST(test_s4f10e_an_undo_replacing_the_interval_supersedes_the_accepted_stop);
   RUN_TEST(test_s4f10c_accept_and_latch_then_transport_stop_supersedes_before_the_drive);
   RUN_TEST(test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound);
   RUN_TEST(test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution);

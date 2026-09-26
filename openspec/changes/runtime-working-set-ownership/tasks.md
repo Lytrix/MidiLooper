@@ -2077,7 +2077,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `reentryDecision("deny", ...)`.
 - [ ] S4f.9 Prove no new capacity is implied: the latch is one small state per live interval, not a stored
       stopped interval, so the descriptor-ring finding is unchanged.
-- [ ] S4f.10 Native fixtures: (a) stop while the predecessor finalizes -> accepted -> exactly one request ->
+- [x] S4f.10 Native fixtures: (a) stop while the predecessor finalizes -> accepted -> exactly one request ->
       completes after retirement; (b) the same with a slot switch before the drive, asserting `job.slot`/
       `job.owner` are the interval's; (c) transport stop before the drive -> no `TRACK_PLAYING`; (d) stop +
       record-start in the same tick; (e) stop + undo; (f) MIDI Start/seek between latch and drive;
@@ -2173,6 +2173,34 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       path and the `TrackUndo` closure. Both are bounded and now have a working family to build on.
       Verification: `test_continuous_capture` **102/102**, `test_drain_reentry_callback_safety` 8/8, full
       native **2,470 passed / 7 skipped** (baseline 2,469 + the new fixture), OpenSpec validates.
+      **CHECKED 2026-09-27 — all seven cases (a)-(g) are covered, and (c)/(d)/(e) landed this session.**
+      Each of the three new fixtures was **red-proved** by disabling the exact production guard it asserts on,
+      and `src/` is clean afterwards — this was a harness-and-test slice, no production defect was exposed:
+
+      | case | fixture | red proof |
+      |---|---|---|
+      | (a) | `test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once` (pre-existing) | — |
+      | (b) | `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes` + the S4f.3 carriers | — |
+      | **(c)** | `test_s4f10c_accept_and_latch_then_transport_stop_supersedes_before_the_drive` | commenting out `consumeAcceptedStopObligation()` in `Track::stopOverdubbingToStopped` → fails on *"transport stop must consume the accepted obligation…"* |
+      | **(d)** | `test_s4f10d_a_request_queued_in_this_tick_is_not_dispatched_in_this_tick` | removing the `currentTick == pendingRecordQueuedAtTick` guard in `handlePendingRecordStart` → fails on *"a request queued in this tick must survive this tick's dispatch pass"* |
+      | **(e)** | `test_s4f10e_an_undo_replacing_the_interval_supersedes_the_accepted_stop` | neutralising `request.interval != captureInterval_` in `driveAcceptedInteraction` → fails this fixture **and** the pre-existing S4f.4 supersession fixture |
+      | (f) | `test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution` (with its recorded coverage limit) | — |
+      | (g) | `test_s2b6_park_terminal_never_cancels_an_accepted_stop` (pre-existing) | — |
+
+      **(c)** asserts DEC-078's accept-and-latch obligation **while the canonical owner is still live**
+      (obligation present, no descriptor consumed, the interval still overdubbing, the obligation keyed to the
+      interval's own slot *and* identity, the capture store unchanged), then that the transport stop consumes
+      it and eight further drive turns never re-create it, with the interval resolving to STOPPED and never
+      PLAYING. **(d)** asserts the same-tick guard defers rather than drops: the request survives its own
+      tick's pass with nothing started, and one boundary later it starts exactly once. **(e)** asserts an undo
+      that replaces the interval leaves the obligation **superseded, not bound** — the identity is mutated
+      directly rather than driving `TrackUndo.cpp`, which is a deliberate boundary of this suite, because
+      identity invalidation is the whole of what undo contributes to that decision while the supersession
+      decision itself is the real drive.
+      **Coverage notes recorded rather than hidden:** (e) is `TrackUndo`-equivalent, not a full undo drive;
+      (f)'s production-entry half stays device territory as its own note says. Verification:
+      `test_continuous_capture` **104/104**, `test_drain_reentry_callback_safety` 8/8, full native
+      **2,472 passed / 7 skipped** (baseline 2,469 + the three new fixtures); OpenSpec validates.
 - [ ] S4f.11 Measure acceptance -> execution latency **per interaction class** on device against the declared
       budgets (design Revision 17) and record the numbers: stop overdub, record/overdub start, slot/track switch,
       cold undo/redo, load loop. Exceeding a budget is a reported event, not a silent wait.

@@ -146,8 +146,12 @@ void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) { OFF_PA
 bool StorageManager::hasLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) { OFF_PATH(); return false; }
 void StorageManager::refreshLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) { OFF_PATH(); }
 #endif
-#if !defined(A34A_LINKS_REAL_STORAGE_PERSIST) && !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+#if !defined(A34A_LINKS_REAL_STORAGE_PERSIST) && !defined(A34A_LINKS_REAL_TRACK_TRANSPORT) \
+    && !defined(A34A_LINKS_REAL_TRACK_STOP_COMMIT)
 void StorageManager::prioritizeLoopSlotRestoreForFocus(uint8_t, uint8_t) { OFF_PATH(); }
+#endif
+#if !defined(A34A_LINKS_REAL_STORAGE_PERSIST) && !defined(A34A_LINKS_REAL_TRACK_TRANSPORT) \
+    && !defined(A34A_LINKS_REAL_TRACK_STOP_COMMIT)
 void StorageManager::requestWorkspaceFooterPersistWhenSafe() { OFF_PATH(); }
 #endif
 // The stop-commit route silences the wire through this call. It lives in `TrackPlaybackHotPath.cpp` beside
@@ -176,6 +180,12 @@ void Track::sendAllNotesOff() {}
 void StorageManager::markLoopSlotMaterialDirty(uint8_t, uint8_t) {}
 void StorageManager::admitLoopSlotPersist(uint8_t, uint8_t) {}
 void StorageManager::requestDeferredSaveState(const LooperState&, uint32_t, bool) {}
+// The selection route asks storage to prioritize the focused slot's restore, and the switch path asks for a
+// workspace footer persist. Both are inert here for the same reason as the three above: their owners are not
+// linked in this boundary set, and the fixture is about the dispatcher's same-tick guard, not about restore
+// priority or footer persistence.
+void StorageManager::prioritizeLoopSlotRestoreForFocus(uint8_t, uint8_t) {}
+void StorageManager::requestWorkspaceFooterPersistWhenSafe() {}
 #endif
 #include "BarStepButtonHandler.h"
 BarStepButtonHandler::BarStepButtonHandler() {}
