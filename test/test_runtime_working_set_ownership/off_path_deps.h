@@ -49,7 +49,13 @@ void Track::clearQueuedPlaybackStart() { OFF_PATH(); }
 void Track::queuePlaybackStartAtGrid(int32_t, uint32_t) { OFF_PATH(); }
 void Track::commitQueuedPlaybackStart(uint32_t) { OFF_PATH(); }
 void TrackManager::setMasterLoopLength(uint32_t) { OFF_PATH(); }
+// The record start ends by reclaiming disabled-pass storage. That reclaim is not the handoff under
+// test, so suites that drive a start keep it observable.
+#if defined(HARNESS_OBSERVABLE_START_RECLAIM)
+void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats*, bool) {}
+#else
 void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats*, bool) { OFF_PATH(); }
+#endif
 #endif
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
 // These are the persistence requests a switch/selection makes. Storage behavior belongs to the load

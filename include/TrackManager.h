@@ -69,7 +69,10 @@ public:
   void advanceJamTicks(uint32_t delta);         // Advance jamTick for all jam-active tracks
 
   // --- Recording ---
-  void startRecordingTrack(uint8_t trackIndex, uint32_t currentTick);
+  /// S4f.6: returns whether the record actually started. A refusal (**a live stop obligation, an
+  /// already-committed slot, a refused state change**) returns false so the caller can retain the
+  /// request instead of consuming it; the dispatcher clears a queued start only on success.
+  bool startRecordingTrack(uint8_t trackIndex, uint32_t currentTick);
   /// Free non-capturing tracks' playback merge buffers before capture (multi-track headroom).
   void releaseBackgroundPlaybackMergedMidiEventsMemory(uint8_t captureTrackIndex);
   void stopRecordingTrack(uint8_t trackIndex);

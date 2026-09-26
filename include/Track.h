@@ -404,6 +404,11 @@ public:
   /// this instead. `isRecording()` is deliberately not a term: a record interval with no stop
   /// obligation is not a stop in flight (use `hasLiveCaptureInterval()` alongside).
   bool hasStopInFlight() const;
+  /// S4f.6: whether a live stop obligation targets **`slot`** specifically. The deferred job carries
+  /// `job.slot` and the latch carries `slot`, so a stop that has bound to A must not be read as
+  /// blocking a *different* target: after a switch handoff the successor on another slot must be able
+  /// to start while the predecessor finalizes.
+  bool hasStopInFlightForSlot(uint8_t slot) const;
   /// S4f.8 evidence: waits counted on the accepted stop (0 when none is latched).
   uint32_t acceptedStopWaitCount() const;
   bool isPlaying() const;

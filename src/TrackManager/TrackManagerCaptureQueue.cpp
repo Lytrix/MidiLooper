@@ -21,8 +21,8 @@ void requestLoopSlotPersistAndSaveState(const Track& track, uint8_t trackIndex, 
 
 }  // namespace
 
-void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick) {
-  if (trackIndex >= Config::NUM_TRACKS) return;
+bool TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick) {
+  if (trackIndex >= Config::NUM_TRACKS) return false;
 
   Track& tr = tracks[trackIndex];
   // S4f.5 / intermediate slice: a latched (accepted, not yet executed) stop is in-flight work just
@@ -30,18 +30,18 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
   // `hasPendingDeferredOverdubStop()` left the latch invisible here and admitted the start on top of
   // an unadmitted stop. S4f.6 replaces this refusal with the accepted-start carrier and the
   // stop > switch > start composition.
-  if (tr.hasStopInFlight()) {
+  if (tr.hasStopInFlightForSlot(tr.getActiveLoopIndex())) {
     logger.log(CAT_TRACK, LOG_INFO,
-               "Track %d: record admission deferred while a stop obligation is live",
-               trackIndex);
-    return;
+               "Track %d: record admission deferred while a stop obligation is live for slot %u",
+               trackIndex, static_cast<unsigned>(tr.getActiveLoopIndex()));
+    return false;
   }
   const uint8_t slot = tr.getActiveLoopIndex();
   if (tr.hasCommittedPassesInSlot(slot)) {
     logger.log(CAT_TRACK, LOG_WARNING,
                "Track %d: cannot arm slot %u — slot already has committed passes MIDI",
                trackIndex, static_cast<unsigned>(slot) + 1u);
-    return;
+    return false;
   }
 
   // Captures write into the active slot; ensure the target slot is enabled/unmuted.
@@ -75,14 +75,17 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
       }
       logger.log(CAT_TRACK, LOG_WARNING, "Track %d: could not arm for record (state=%s)",
                  trackIndex, tr.getStateName(tr.getState()));
-      return;
+      return false;
     }
     logger.log(CAT_TRACK, LOG_INFO, "Track %d armed, waiting for clock to start recording", trackIndex);
-    return;
+    // The request was re-queued above, so it is retained, not started: report false so the caller
+    // does not consume it.
+    return false;
   }
   tracks[trackIndex].startRecording(currentTick);
   releaseBackgroundPlaybackMergedMidiEventsMemory(trackIndex);
   reclaimUnreferencedDisabledPasses();
+  return true;
 }
 
 void TrackManager::releaseBackgroundPlaybackMergedMidiEventsMemory(uint8_t captureTrackIndex) {
@@ -294,8 +297,18 @@ void TrackManager::handlePendingRecordStart(uint32_t currentTick) {
 
     if (!shouldStart) continue;
 
+    // S4f.6: consume the request only when the start actually happened. A refusal -- most importantly
+    // a live stop obligation, which is exactly the state a switch handoff leaves -- retains the request
+    // so the next eligible boundary retries it, instead of stranding it (retained, never executed,
+    // never superseded). Until the start succeeds the predecessor's stop is not a reason to discard the
+    // successor's request.
+    // The target becomes active first, as the contract requires; then the start is attempted and the
+    // request is consumed only if it happened.
     tracks[i].setActiveLoopIndex(targetSlot);
-    startRecordingTrack(i, currentTick);
+    const bool started = startRecordingTrack(i, currentTick);
+    if (!started) {
+      continue;
+    }
     pendingRecordSlot[i][targetSlot] = false;
     pendingRecord[i] = false;
     pendingRecordQueuedAtTick[i] = UINT32_MAX;
