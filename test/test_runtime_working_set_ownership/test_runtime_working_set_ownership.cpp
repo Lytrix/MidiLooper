@@ -678,6 +678,10 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
     // Start B through the arm/record button entry (the one that reaches the record-admission path);
     // a start on a running transport may be queued, so advance the tick domain across the loop's bar
     // boundary through the production dispatch.
+    // The arm/record entry and the record-arm branch both act on the **selected** slot, which the
+    // switch deliberately leaves on the predecessor (S4f.5 keeps focus for the piano roll). Select the
+    // active target first, which is what the user does when the switch moved the audio to B.
+    TrackCaptureStopTestAccess::selectSlotIndex(0, 1);
     midiButtonActions.handleToggleRecord();
     // A start on a running transport is **queued** at the loop's bar boundary
     // (`TrackManager::handlePendingRecordStart`), so drive that production dispatch across the boundary
