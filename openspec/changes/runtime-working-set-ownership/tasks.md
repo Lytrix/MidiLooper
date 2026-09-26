@@ -1306,11 +1306,14 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       a class is already held at its declared cap, reports `#MEM_DENIED,reason=cap_reached,class=N` via the
       new `MemoryMonitor::reportDeclaredCapDenied` — a reason deliberately distinct from an allocation
       failure (`prewarm_failed`), so "declared cardinality exceeded" is never read as "the pool ran out".
-      It does **not** refuse, and that is the finding: the first cut *enforced* the declared caps at the
-      activation entry and broke the suite, because **the declared envelope is stricter than the resource
-      model** (the implementation supports per-slot capture roles; 85 continuous-capture fixtures arm a
-      second slot). Enforcing the declaration would reject supported flows, so the enforcement was reverted
-      and only the observation kept. The enforcing caps remain the lease's own (`WorkingSetLeaseTable`,
+      It does **not** refuse. The first cut *enforced* the caps and broke fixtures that arm a second slot;
+      **the original justification for that was wrong and is retracted (2026-09-25, recorded in § S4b.1):**
+      the census counted `PlaybackWindow | LiveCapture` for a slot that was merely *prepared*, so a slot
+      holding an **outgoing finalizer** was labelled `LiveCapture` and counted against a live-capture cap.
+      The mislabel was in the check, not in the envelope: the outgoing role is `DeferredFinalization`
+      (per admitted interval), so two prepared slots never meant two live captures. The cap stays reported
+      rather than enforced because the census cannot yet tell the outgoing role from the incoming one, and
+      correcting that is S4b's role-transfer work. The enforcing caps remain the lease's own (`WorkingSetLeaseTable`,
       covered by `test_working_set_lease`), which refuse at the point of custody. Fixture
       `test_a_declared_envelope_breach_is_reported_and_does_not_block_activation`. **Open:** nothing is
       refused, so the refuse-vs-queue decision is unanswered and needs either a cap the resource model also
@@ -1337,6 +1340,23 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 
 - [ ] S4b.1 Transfer the single complex role (record / overdub / passes / undo/redo / display, resumable
       small-packet logic inside MIDI boundaries) to a newly selected slot or track without a transport stop.
+      **BLOCKED ON S4f.3 (2026-09-25) — the requirement is now executable and proven unmet.** The user's
+      acceptance sequence (A overdubbing → A's stop admitted, finalizer **paused** → switch to B → B starts
+      and records MIDI while A still finalizes) is
+      `test_switching_starts_the_new_take_while_the_previous_take_still_finalizes` in
+      `test_runtime_working_set_ownership`, driven through `TrackManager::finalizeCaptureAndSelectSlot` and
+      the real MIDI input route, asserting B's recorded events rather than a prewarm result.
+      **It fails at the switch**: the path returns early while the stop is accepted-unexecuted or in flight,
+      so the active slot stays on A and B never starts. That guard is deliberate — S4f.5 requires the active
+      slot not to move under an **unadmitted** stop, and the contract keeps it until **S4f.3** supplies the
+      switch's accepted-interaction carrier. Removing the guard was tried, made the acceptance pass, and was
+      **reverted** because it fails
+      `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`. The fixture asserts the current
+      characterization in the default gate and runs the requirement, currently red, under
+      `S4B_ACCEPTANCE=1`. **Also still to prove (not by this slice):** the cross-track switch, and repeated
+      B → C switches while A finalizes, which need the explicit bounded overlap policy (`Omax = NUM_TRACKS`;
+      an outbound finalizing role is counted in C/D and never released to satisfy O). Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4b.1.
 - [ ] S4b.2 Pre-provision the inbound role before releasing the outbound one, with the overlap bounded and
       accounted in the S2 budget; the switch point performs no allocation, and the transfer must not steal
       resources from a still-live capture or deferred-finalization owner.
