@@ -5755,3 +5755,100 @@ Acceptance status against the owner-provided contract:
 | Same-track / cross-track; empty / cleared / populated | same-track empty covered; the rest **open** |
 
 Repeated **B -> C while A finalizes** remains its own capacity acceptance case and is not implied by this.
+
+> **Superseded in part by § S4f.6 (2026-09-25).** The statuses above record the state *before* the carrier
+> landed. One sentence in this path review is **retracted**: the refusal did not "strand" the request by
+> short-circuiting the dispatcher's consumption lines -- it **discarded** it, because `startRecordingTrack`
+> returned `void` and the consumption lines followed unconditionally. See § S4f.6 for the corrected
+> mechanism, the landed carrier, the red-proof and the current statuses.
+
+## S4f.6 — accepted-start carrier: the successor starts while the predecessor finalizes (2026-09-25, landed)
+
+**Scope (pinned).** Make S4b.1's acceptance execute end-to-end: predecessor A's stop is admitted and bound
+to A's interval and held unfinished, the switch moves the active slot to B, and the start request for B
+executes on its eligible boundary and is consumed **exactly once**. Out of scope, and recorded below rather
+than implied: carrying the start on the switch's **own** gesture (S4f.3's remaining half) and repeated
+B -> C finalizer capacity.
+
+**Transition oracle.**
+
+- Given A overdubbing with an **admitted, unfinished** deferred stop, when the target slot is selected, the
+  record gesture is pressed through `MidiButtonActions::handleToggleRecordForSlot`, and the production
+  dispatcher advances to the next bar boundary, then B becomes the active slot, starts capture, records the
+  injected note (on + off), and A's finalizer is still outstanding.
+- Given the same precondition and a live stop obligation on the **target's own** slot, when the start is
+  attempted, then it is refused and the request is **retained** -- not consumed -- so the next eligible
+  boundary retries it.
+- Given A's finalizer then runs to completion, then B's active-slot identity and captured events are
+  unchanged.
+
+**Implementation.**
+
+- `TrackManager::startRecordingTrack` returns `bool`: every refusal (a live stop obligation, an
+  already-committed slot, a refused state change, and the re-queue path) returns `false`.
+- The refusal is **slot-scoped**. `Track::hasStopInFlightForSlot(uint8_t)` reads `captureStopJobHead()->slot`
+  and `interactionLatch()->slot`, so a stop bound to A is no longer read as blocking a start on B. The
+  track-wide `hasStopInFlight()` stays for the unadmitted-stop guard it was written for.
+- `handlePendingRecordStart` sets the target active **first** (the contract requires the target to be active
+  before the start executes), then consumes the request only when the start happened.
+- Native stub: `HARNESS_OBSERVABLE_START_RECLAIM` keeps `reclaimUnreferencedDisabledPasses` observable in
+  suites that drive a start, instead of failing closed on the start's last line.
+
+**Retraction -- the path review's mechanism sentence was wrong.** The sixth-pass review said the refusal
+"short-circuits the dispatcher's consumption lines", leaving the request "retained but never executed and
+never superseded". The committed dispatcher did the opposite: `startRecordingTrack(...)` returned `void` and
+the four consumption lines followed it **unconditionally**
+(`git show HEAD:src/TrackManager/TrackManagerCaptureQueue.cpp`, lines 296-302), so a refusal **discarded**
+the request. The recorded symptom (B never starts) stands; the mechanism sentence did not. This matters
+because "retained" and "discarded" call for different carriers, and it is why the retention probe could be
+green while completion was not.
+
+**Evidence.**
+
+- `test_switching_starts_the_new_take_while_the_previous_take_still_finalizes`: both characterization
+  branches are **deleted** (as this packet's own note required) and the claims are unconditional. The
+  start-dispatch loop no longer has a fallback press, so a start that only happens because the fixture
+  pressed again cannot be mistaken for the requirement. Green in default and `S4B_ACCEPTANCE=1` modes.
+- `test_an_unadmitted_stop_retains_the_switch_request_without_a_second_gesture` (renamed from
+  `..._retains_the_switch_and_start_requests`): the old name **overclaimed** -- the fixture only ever proved
+  the switch, and a temporary probe (turning its refused-branch early return into an unconditional failure)
+  confirmed it takes the retained branch. It now also drives a start after the latch-admitted stop and
+  asserts B starts, while labelling that press as a second gesture rather than counting it as "without
+  another gesture".
+- **Red-proof:** restoring the pre-S4f.6 `hasStopInFlight()` guard fails both fixtures at "B must start ..."
+  (`2 failed, 10 succeeded`). The fix was restored and the tree verified free of the probe.
+- Native regression: **2,448 passed / 1 skipped** (exit 0).
+- Firmware `teensy41-capture-serial`: SUCCESS. RAM1 `variables 96,160 / code 392,040 / padding 1,176 /
+  free for locals 34,912` -- byte-identical to the pre-change build, so the carrier costs no RAM1.
+
+**Acceptance status against the owner-provided contract.**
+
+| Check | Status |
+|---|---|
+| A has an admitted, identified finalizer, held unfinished | **met** (fixture asserts it) |
+| Switch/start and B's MIDI use production routes | **met** |
+| B starts on the specified eligible boundary and records the notes | **met** (unconditional fixture) |
+| Unadmitted A stop retains switch/start requests without another gesture | **switch half met; start half open** |
+| Completing A leaves B unchanged | **met** (fixture step 5) |
+| A failed start retains its request; success cannot execute twice | **retention met** (refusals now return `false` and the dispatcher keeps the request); the "cannot execute twice" leg has no dedicated fixture yet |
+| Coverage: same-track / cross-track; empty / cleared / populated | same-track empty **met**; the rest **open** |
+
+**Remaining, explicitly open.**
+
+1. **S4f.3's carrier, three parts.** (a) A retained **switch** request that identifies its prerequisite stop;
+   `SlotStateMachine`'s pending switch / `TrackManager::requestSlotSwitch` is the existing extension point.
+   (b) **Consumption at successful commit** instead of the unconditional `clearPendingSlotSwitch` in
+   `TrackManagerTransportTick`. (c) Dispatch of the retained **start** at that commit, so the switch's own
+   gesture carries it and one press suffices.
+2. **New finding, recorded not fixed.** `TrackManager::finalizeCaptureAndSelectSlot` clears
+   `pendingRecord[trackIndex]`, `pendingRecordQueuedAtTick[trackIndex]`,
+   `pendingRecordRefSlot[trackIndex]` and every `pendingRecordSlot[trackIndex][*]` at its **top**, before it
+   knows whether the switch will commit (it can still return early on an unadmitted stop at
+   `if (t.hasAcceptedUnexecutedInteraction()) return;`). A switch therefore **discards** a retained start
+   request for any slot. The landed fixture cannot see it because it commits the switch before queuing the
+   start; the carrier in (1) will queue first and must fix this ordering, or the contract's "no request is
+   discarded because a predecessor is finalizing" fails on exactly the path S4b.1 is about.
+3. **Check 7 coverage**: cross-track targets and cleared / populated targets have no fixture yet; the
+   populated-target case is the overdub-on-B's-playback-phase branch of the contract.
+4. **Repeated B -> C while A finalizes** stays its own **capacity** acceptance case (finalizer capacity, not
+   the inbound overlap policy); `Omax` alone does not cover it.

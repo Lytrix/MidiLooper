@@ -1340,30 +1340,31 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 
 - [ ] S4b.1 Transfer the single complex role (record / overdub / passes / undo/redo / display, resumable
       small-packet logic inside MIDI boundaries) to a newly selected slot or track without a transport stop.
-      **BLOCKED ON S4f.3 (2026-09-25) — the requirement is now executable and proven unmet.** The user's
+      **PARTIAL (2026-09-25): the acceptance sequence now passes end-to-end on S4f.6's carrier.** The user's
       acceptance sequence (A overdubbing → A's stop admitted, finalizer **paused** → switch to B → B starts
-      and records MIDI while A still finalizes) is
+      and records MIDI while A still finalizes → A completes without damaging B) is
       `test_switching_starts_the_new_take_while_the_previous_take_still_finalizes` in
       `test_runtime_working_set_ownership`, driven through `TrackManager::finalizeCaptureAndSelectSlot` and
-      the real MIDI input route, asserting B's recorded events rather than a prewarm result.
-      **It fails at the switch**: the path returns early while the stop is accepted-unexecuted or in flight,
-      so the active slot stays on A and B never starts. That guard is deliberate — S4f.5 requires the active
-      slot not to move under an **unadmitted** stop, and the contract keeps it until **S4f.3** supplies the
-      switch's accepted-interaction carrier. Removing the guard was tried, made the acceptance pass, and was
-      **reverted** because it fails
-      `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`. The fixture asserts the current
-      characterization in the default gate and runs the requirement, currently red, under
-      `S4B_ACCEPTANCE=1`. **Tightened after review (2026-09-25):** the acceptance precondition now requires
-      an **admitted** finalizer (`hasPendingDeferredOverdubStop` and *not* accepted-unexecuted); B is reached
-      through `MidiButtonActions::handleToggleRecordForSlot` and the real MIDI handler against an **empty**
-      target, so the gesture and incoming MIDI are proven to reach B; and the characterization branch is to
-      be **deleted** when S4f.3 lands rather than left conditional. **New result:** the separate
-      **unadmitted-stop** case (`test_an_unadmitted_stop_retains_the_switch_and_start_requests`) **passes** —
-      the switch and start *are* retained and execute once admission becomes possible without a second
-      gesture. **Also still to prove (not by this slice):** the cross-track switch, and repeated B → C
-      switches while A finalizes, which depend on **finalizer capacity**, not only on the inbound overlap
-      policy — `Omax` alone does not solve repeated switches (recorded per the review). Record:
-      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4b.1.
+      the real MIDI input route, asserting B's recorded events rather than a prewarm result. B now switches
+      (S4f.3's first half) **and starts** (S4f.6), through production routes. Both characterization branches
+      were **deleted** — not left conditional — when S4f.6 landed, and the fallback press was removed from the
+      dispatch loop, so a regression cannot pass by returning early or by pressing again. Red-proved by
+      restoring the pre-S4f.6 `hasStopInFlight()` guard (`2 failed, 10 succeeded`).
+      **Still open, and named rather than implied:**
+      (a) **check 4's start half** — the switch's own gesture does not yet carry the requested start, so the
+      fixture's start is a *second* press; `test_an_unadmitted_stop_retains_the_switch_request_without_a_second_gesture`
+      was **renamed from `..._retains_the_switch_and_start_requests`, whose name overclaimed** — it only ever
+      proved the switch. The carrier (retained switch identifying its prerequisite stop → consumption at
+      successful commit → dispatch of the retained start) is **S4f.3's remaining half**;
+      (b) **new finding to fix with it:** `finalizeCaptureAndSelectSlot` clears all pending-record state at
+      its top *before* it knows the switch will commit, so a switch discards a retained start request for any
+      slot — the landed fixture cannot see this because it commits the switch before queuing the start;
+      (c) **check 7 coverage** — cross-track targets and cleared / populated targets have no fixture yet;
+      (d) **check 6's** "a successful start cannot execute twice" has no dedicated fixture;
+      (e) the cross-track switch and repeated B → C switches while A finalizes depend on **finalizer
+      capacity**, not only on the inbound overlap policy — `Omax` alone does not solve repeated switches
+      (recorded per the review). Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4b.1, § S4f.6.
 - [ ] S4b.2 Pre-provision the inbound role before releasing the outbound one, with the overlap bounded and
       accounted in the S2 budget; the switch point performs no allocation, and the transfer must not steal
       resources from a still-live capture or deferred-finalization owner.
@@ -1560,8 +1561,15 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       point**, and replacing the unconditional `clearPendingSlotSwitch` with consumption at successful
       commit; plus the "queued switch + undo + stop admission in one window" fixture. Consequence today: the
       per-slot gesture returns after committing the switch, so the requested **start is not dispatched to the
-      target** and `S4b.1`'s acceptance stays red. Record:
-      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3.
+      target** — S4f.6 lets a *later* start execute, but the switch's own gesture still does not carry one, so
+      S4b.1's contract check 4 ("... without another gesture") holds only for the **switch** half.
+      **Sharpened by S4f.6 (2026-09-25, new finding):** `finalizeCaptureAndSelectSlot` clears
+      `pendingRecord` / `pendingRecordQueuedAtTick` / `pendingRecordRefSlot` / every `pendingRecordSlot` at its
+      **top**, before it knows the switch will commit (it can still return early on an unadmitted stop), so a
+      switch currently **discards** a retained start request for any slot. The carrier must queue its start
+      before that commit and scope the clear, or the contract's "no request is discarded because a predecessor
+      is finalizing" fails on the switch path itself. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3, § S4f.6.
 - [x] S4f.4 **Transport/clock timing validity (B2, T2).** (**REVISED 2026-09-23 by architect decision --
       `design.md` Revision 24; the stored-epoch requirement is WITHDRAWN.** The latch's `transportEpoch`
       field is **removed** (latch 40 -> 32 bytes, `CaptureStopJobs` 2,736 -> 2,728, both pins updated and
@@ -1635,22 +1643,33 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `resolveCaptureTrackSlotForMidPass` resolves from the interval with **no** selected/active fallback.
       Audit the remaining `getActiveLoopIndex()`-derived paths for the latch window and record the set.
 - [ ] S4f.6 **Start side too.** Implement all transition/consumption rules in
-      **BLOCKS S4b.1 (2026-09-25).** `TrackManager::startRecordingTrack` refuses while
-      `Track::hasStopInFlight()`, and its own comment assigns the replacement to this task ("S4f.6 replaces
-      this refusal with the accepted-start carrier and the stop > switch > start composition"). After the
-      S4f.3 handoff, A's admitted stop *is* `hasStopInFlight()`, so the successor's start is refused inside
-      the start call -- before the dispatcher's consumption lines -- which strands the request: retained
-      but never executed and never superseded. The timing half is already sound (the dispatcher falls back
-      to the transport bar grid for a zero-length reference), so this carrier is the remaining piece for
-      `S4b.1`'s acceptance. Contract and path review:
-      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4b.1 behavioral contract.
+      **PARTIAL (2026-09-25) — the accepted-start carrier landed and unblocked S4b.1's acceptance.**
+      Landed: `TrackManager::startRecordingTrack` returns `bool` and every refusal returns `false`;
+      the refusal is **slot-scoped** via `Track::hasStopInFlightForSlot(uint8_t)` (reads
+      `captureStopJobHead()->slot` and `interactionLatch()->slot`), so a stop bound to A no longer blocks a
+      start on B; `handlePendingRecordStart` sets the target active **first** and consumes the request
+      **only on success**, so a refusal retains it instead of discarding it.
+      **Retraction:** this task's earlier text (and the § S4b.1 path review) said the refusal "strands the
+      request: retained but never executed". The committed dispatcher consumed **unconditionally** —
+      `startRecordingTrack` returned `void` and the four consumption lines followed it — so a refusal
+      **discarded** the request. Symptom unchanged, mechanism corrected.
+      Evidence: the S4b.1 acceptance fixture now asserts the requirement **unconditionally** (both
+      characterization branches deleted, fallback press removed) and is green in default and
+      `S4B_ACCEPTANCE=1` modes; red-proved by restoring the pre-S4f.6 guard (`2 failed, 10 succeeded`);
+      native regression 2,448 passed / 1 skipped; firmware SUCCESS with RAM1 byte-identical
+      (`padding 1,176`).
+      **Still open:** the combined in-flight query and the manager-owned accepted-**start** carrier with a
+      **named acceptance report** (pass 4C) so the unconditional labels at
+      `TrackManagerCaptureQueue.cpp:221-222,236-237` are never emitted for a start that was not admitted;
+      and the consumption rule on the **switch** path — `finalizeCaptureAndSelectSlot` still clears all
+      pending-record state at its top before it knows the switch will commit (see § S4f.6 remaining item 2).
       `IMPLEMENTATION_CONTRACT.md` §5, including manager-owned requests with no live interval, deferred
-      eligibility and the combined in-flight query. Add paused-worker fixtures for every listed sequence.
+      eligibility. Add paused-worker fixtures for every listed sequence.
       A second Stop supersedes an unexecuted Start explicitly; after Start commits it stops the new interval. `TrackManagerCaptureQueue.cpp:24-29` accepts the record/overdub start and
       schedules it rather than dropping it; `pendingRecord`/`pendingRecordSlot` must not clear their state when
-      the start was refused. **Named acceptance report (pass 4C):** add a counter/diagnostic read from the manager-owned accepted-start carrier so
-      the unconditional label at `TrackManagerCaptureQueue.cpp:221-222,236-237` is never emitted for a start that
-      was not admitted.
+      the start was refused.
+      Contract and path review:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4b.1 behavioral contract, § S4f.6.
 - [ ] S4f.7 **Single write authority (B4).** Covered by S4b.5; record the source gate that
       `Track::setActiveLoopIndex` is reachable only through `TrackManager::setActiveLoopIndex`.
 - [ ] S4f.8 Make the waits observable as **scheduling**, not refusal: `accepted_stop_finalizer_wait` counts
