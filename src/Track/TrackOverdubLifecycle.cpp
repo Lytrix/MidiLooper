@@ -655,6 +655,17 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   job.admission.destination = destination;
   job.owner = &loop;
   runtime->setCaptureStopOwner(job.admission, job.admission.frozenGeneration);
+#if defined(SESSION_CAPTURE)
+  // S4f.3 L5: the accepted stop is **bound** -- the interval the request named is now the job's. The
+  // denial record (`DIAG,reentry,deny,<tick>,<interval>,<slot>,<depth>`) carries the request's interval,
+  // but nothing else on the stop tier does: those records carry `frozenGeneration`, which is
+  // `staging.captureGeneration` and a different identity space. Reusing `reentryDecision` with the
+  // `bound` literal makes the binding edge name the *same* interval identity, so a denied request and its
+  // later binding can be correlated instead of inferred. `interval` here is the parameter the caller
+  // passed (`captureInterval_` via `beginDeferredOverdubStop`, or the latch's stored interval via
+  // `driveAcceptedInteraction`), which is exactly what the denial reports.
+  DebugSessionCapture::reentryDecision("bound", currentTick, interval, slot, captureStopQueueDepth());
+#endif
   // DEC-068: admission is now committed and no fallible step remains, so take this interval's own
   // session-exit tail. The shared session state is still this interval's (the successor's window
   // opens below), and this receipt is the only record of our identities once it swaps them out.
