@@ -168,12 +168,32 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--window-timeout-s", type=float, default=6.0)
     p.add_argument("--successor-note", type=int, default=67)
     p.add_argument("--seed-bars", type=int, default=2)
+    p.add_argument("--census", type=Path, default=None,
+                   help="census.json from a read-only --library-observe run; when given, every target must "
+                        "be empty or the run refuses (this script never clears a slot)")
     p.add_argument("--capture-port", default=None)
     p.add_argument("--boot-wait-s", type=float, default=10.0)
     args = p.parse_args(argv)
 
     out_dir: Path = args.out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=False)
+
+    # Precondition, enforced rather than documented: the design seeds A and B by **recording** into them and
+    # leaves C empty as the record target, so all three must be empty. Recording is refused by the firmware on
+    # a slot with committed passes, which is why the read-only library observation is required first. This
+    # script never clears a slot: clearing an occupied target is a separate, explicitly authorized action.
+    if args.census is not None:
+        data = json.loads(args.census.read_text())
+        rows = (data.get("library_observation") or {}).get("slots") or []
+        occupied = [(r.get("track", -1) + 1, r.get("slot", -1) + 1) for r in rows
+                    if isinstance(r, dict) and r.get("has_committed_content")]
+        for slot_number in (args.slot_a, args.slot_b, args.slot_c):
+            if (args.track, slot_number) in occupied:
+                raise SystemExit(
+                    f"target track {args.track} slot {slot_number} already holds committed content; the "
+                    "design needs all three targets empty (A and B are seeded by recording, C stays empty as "
+                    "the record target). Choose empty targets or clear them under a separate authorization.")
+
     events: list[dict] = []
     report = {"track": args.track, "slot_a": args.slot_a, "slot_b": args.slot_b,
               "slot_c": args.slot_c, "events": events, "result": "INCOMPLETE"}
