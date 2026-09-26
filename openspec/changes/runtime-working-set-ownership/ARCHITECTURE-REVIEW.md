@@ -6879,3 +6879,61 @@ it does not retroactively make the previous run a pass, and the empty successor 
 both remain open. A discriminating native regression for the successor take (start → MIDI → transport stop,
 asserting identity, nonzero duration, committed notes and survival -- never a start marker alone) is in flight
 separately.
+
+### Repeat with the release fix: the whole chain evaluates, C records content (2026-09-26)
+
+Run `captures/s4f3-retention-20260926_172941`, target track 8 slots 5/6/7, driver with the timely start
+detection, firmware with the release attribution fix.
+
+**The release fix is verified on device.** Both release rows now name the retiring owner:
+
+```
+[62.583] Reentry released slot=4 generation=40        <- A, correctly named, with identity
+[62.583] Reentry released slot=5 generation=0         <- B
+#CAP,62583420,DIAG,canonical_release,4,40,6144,8      <- A's slot, generation 40, loop 6144, 8 chunks
+```
+
+and the oracle reports `L4_release_names_the_retiring_owner: slot 4, generation 40, loop 6144 ticks, 8 chunks
+free` plus `L4_capacity_released`. B's generation is **0**, worth noting separately: the retargeted route's
+`frozenGeneration` is zero for B's job, so a consumer cannot treat generation 0 as "no identity".
+
+**C now records content.** The driver's timely detection reported `successor_started: True` and injected the
+note; the dump is `CAPTURE_CONTENT,begin,track=8,slot=6,length=1536` with declared event rows, and the injected
+note 67 is present. Compare the previous run, where the same route gave `length=0` because no note was sent --
+the stimulus fix is confirmed.
+
+**The oracle now evaluates every link**, and all pass except three, two of which are flaws in my *checks*
+rather than in the behaviour:
+
+| Check | Result |
+|---|---|
+| L1, L2, L4, L6, L8, activation invariant | **ok** -- `L2` names slot 5 and interval 2; exactly one `RECA,6` after the release |
+| L3 request retained | `????` -- "the retained-request row for slot 6 is present but not ordered after the denial and before the release" |
+| L5 that same B stop bound | **FAIL** -- "interval 2 on slot 5 bound at 62558117 us, *before* capacity was released at 62583420 us" |
+| L7 successor recorded the expected MIDI | `????` -- the dump contains the expected note, but no content review was supplied |
+
+**Two check-basis flaws, identified and not yet fixed:**
+
+- **L3 orders against deferred rows.** It positions the retained-request row against the `#CAP` denial row,
+  but `#CAP` rows are deferred and flush late, while the retained row is a timely human row -- so their file
+  order does not reflect their order in time. The ordering must be taken against the *timely* human denial line
+  ("Overdub stop refused: ..."), which is emitted at the same latency class.
+- **L5 assumes the release record precedes the bind.** It requires the bind to fall after
+  `canonical_release`, but that record is the first maintenance turn at which the resources were *observed*
+  free -- measured here 25 ms **after** B had already bound (`Reentry window open slot=5` at 62.558 vs
+  `Reentry released slot=4` at 62.583). So the requirement should be "bound after the denial and after A's
+  window opened", with the release record informational. Calling a bind that precedes the release *record* a
+  contradiction inverts the timing the fix documents.
+
+**L7's parity result needs interpreting, not dismissing.** The content review reports `inventory_equal=False`
+with `extra` rows -- notes 60-71, which look like the other enabled slots' content appearing in playback while
+the dump describes only the successor slot. Whether that is expected layering of the enabled set or a real
+content defect is unresolved, and until it is, L7 stays `????` rather than passing on pitch presence alone.
+The raw-only companion fallback remains unresolved as well.
+
+### Status
+
+Kept as directed: **request retention is demonstrated on hardware; end-to-end capture/content acceptance has
+failed or is incomplete.** What changed this round is that the oracle can now evaluate the whole chain -- the
+release blocker is gone, the successor records content, and the remaining gaps are named: the L3/L5 check
+bases, L7's parity interpretation, and the fallback's content consequences.
