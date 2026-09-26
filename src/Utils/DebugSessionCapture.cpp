@@ -957,11 +957,12 @@ SC_MEM_ATTR void successorStartWindowOpen(uint8_t slot, uint32_t stopTick, uint3
                 (unsigned long)slot, (unsigned long)stopTick, (unsigned long)loopLengthTicks);
 }
 
-SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t loopLengthTicks,
+SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t generation,
+                                                      uint32_t loopLengthTicks,
                                                       size_t availableChunks) {
-  emitCapPrintf("#CAP,%lu,DIAG,canonical_release,%lu,%lu,%lu\r\n", (unsigned long)micros(),
-                (unsigned long)slot, (unsigned long)loopLengthTicks,
-                (unsigned long)availableChunks);
+  emitCapPrintf("#CAP,%lu,DIAG,canonical_release,%u,%lu,%lu,%lu\r\n", (unsigned long)micros(),
+                static_cast<unsigned>(slot), (unsigned long)generation,
+                (unsigned long)loopLengthTicks, (unsigned long)availableChunks);
 }
 
 SC_MEM_ATTR void firstRecordReturnWindowAdopted(uint32_t loopLengthTicks, size_t retainedEvents) {

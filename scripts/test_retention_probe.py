@@ -55,7 +55,7 @@ def chain_log(*, retained: bool = True, start_us: int = START_US, seal_events: i
         # A human log row: no #CAP timestamp, ordered by position between the denial and the release.
         lines.append("[INFO] [LOOP] Track 0 loop 3: switch and record start retained "
                      "(stop not yet admitted)")
-    lines.append(f"#CAP,{release_us},DIAG,canonical_release,0,1536,8")
+    lines.append(f"#CAP,{release_us},DIAG,canonical_release,0,4242,1536,8")
     if bind_evidence:
         # The identity-grade binding record: same slot and interval as the denial.
         lines.append(f"#CAP,{release_us + 5_000},DIAG,reentry,bound,17000,7,1,0")
