@@ -2249,7 +2249,38 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       mitigation review shows the budget cannot be met by scheduling, prewarm or windowing.** Rules when taken: it
       presents an *accepted* action (never a denial, never a cue to press again) and never justifies a widened
       budget. Do not start before the gate.
-- [ ] S4f.13 **HITL — record/overdub stop → slot switch → record/overdub stop (the accepted-sequence reproducer).**
+- [~] S4f.13 **HITL — record/overdub stop → slot switch → record/overdub stop (the accepted-sequence reproducer).**
+      **REPRODUCER BUILT 2026-09-27; the first device leg ran and did NOT pass — the oracle found two real
+      gaps rather than a staging problem.** The shape is now executable and its assertions are testable
+      without a device:
+      * `scripts/hitl_accepted_sequence.py` drives one leg (a = record, b = overdub); the gesture plan is
+        **data** (`leg_gestures`) so the order — which is the requirement — is unit-tested, and the presses go
+        through the real per-slot action layer;
+      * `scripts/hitl/accepted_sequence_probe.py` is the oracle: an ordered chain L1 A's stop accepted once →
+        L2 no capacity denial → L3 A's finalization window → L4 A's release → L5 a successor start **after**
+        A's stop → L6 B's stop executes once → L7 one press per stop, plus `overflow_free`/fresh-boot/identity
+        setup gates, with `SETUP_INCOMPLETE` and `INSUFFICIENT_EVIDENCE` kept apart from `ACCEPTED_SEQUENCE_FAIL`;
+      * `scripts/test_accepted_sequence.py` — **17/17 green**, pinning both leg orders, the one-press-per-stop
+        property, the wire notes against the firmware's own mapping, the base conversion, and **one negative per
+        way to lose a link** (missing window, a capacity denial with every other link intact, a second stop,
+        ring loss, missing boot banner, missing successor start, missing metadata).
+      Stimulus provenance per AGENTS.md: both legs are **TEMP variants** forked with the sanctioned
+      `stimulus temp` mechanism — `STIM-BASE-2-ONE-OD-01-TEMP-ACCEPTED-SEQ-REC` and `…-OD` under
+      `captures/stimuli/`, deliberately **not registered**.
+      **First device run** (`captures/s4f13-od-20260927_015145`, leg b, track 8, A=4, B=5, fresh boot, shutdown
+      `complete`): `SETUP_INCOMPLETE`, and the oracle's two failures are the useful part —
+      1. **`overflow_free` FAIL: a `RING,shed,1` row at boot.** The identity/telemetry shed is present even on a
+         fresh upload, so a shed row must be distinguished from an *eviction* before this gate can be a pass
+         condition; recorded rather than relaxed.
+      2. **`L5_successor_started` FAIL: nothing started after A's stop.** The leg's own log shows why — A's
+         overdub opened, `Loop 4: Stop Overdub` opened A's finalization window, and the switch logged
+         `Loop 5: Queued playback switch` and never executed: no `RECA` for B, no B stop. So the **leg plan is
+         wrong, not the firmware**: the `od` leg never gets B started (it presses the record button while the
+         queued switch has not run, so the gesture acts on A), and its B target is empty, so an *overdub* there
+         has no loop to open onto. The next attempt must (a) settle B before the leg, and (b) drive B's start
+         through the switch-carried start rather than a bare record press.
+      **Not checked off:** the acceptance this task exists to prove has not been observed on device, and the
+      leg needs the two corrections above before it can be.
       Two legs, each a managed run (`scripts/host_midi_hitl.py run --preset base`, or the
       `scripts/hitl_stop_interruption.py` wrapper for the interruption variant — **never** a captured
       `command.json`; bounded by `HITL_MANAGED_RUN_TIMEOUT_S`):
