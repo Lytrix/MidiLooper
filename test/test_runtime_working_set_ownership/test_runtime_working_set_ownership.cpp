@@ -51,6 +51,15 @@ bool sequencerRunning = false;
 // note-edit revert the clear performs. That revert is a note-edit neighbour, so it stays observable here
 // rather than failing closed; nothing in this suite asserts on it.
 #define HARNESS_OBSERVABLE_SLOT_CLEAR
+// The production **record-stop commit** route. One fixture drives `TrackManager::handleTransportStop()` and
+// asserts the take commits with nonzero length and content -- the device failure this encodes is a successor
+// whose take finalised at length 0 while a start marker made it look successful. That route's implementations
+// live in the two TUs included below, so the four stubs that shadow them are lifted by this macro. It changes
+// nothing for the fixtures above: none of them reached `handleTransportStop`, `stopRecordingToStopped`,
+// `stopRecording` or `commitCaptureForStop`, all of which were fail-closed until now.
+#define HARNESS_LINKS_REAL_TRANSPORT_STOP
+// ...and the physical all-notes-off fan-out it reaches is observable (no-op) for this route.
+#define HARNESS_OBSERVABLE_ALL_NOTES_OFF
 // The stub surface: physical outputs and unrelated domain routes stay fail-closed or observable.
 #include "off_path_deps.h"
 
@@ -65,6 +74,11 @@ bool sequencerRunning = false;
 // S4b: the production switch path (`finalizeCaptureAndSelectSlot`) and the slot-matrix helpers it
 // calls. `replaceSingleEnabledSlotWithTarget` is already linked above via TrackManagerSlotMatrix.cpp.
 #include "../../src/TrackManager/TrackManagerCaptureQueue.cpp"
+// The record-stop commit route (see the macro above): `TrackManager::handleTransportStop` and the
+// `Track::stopRecordingToStopped` -> `Track::commitCaptureForStop` chain it drives.
+#include "../../src/Track/TrackCaptureStopCommit.cpp"
+#include "../../src/Utils/RecordStopLength.cpp"
+#include "../../src/TrackManager/TrackManagerTransportTick.cpp"
 // The slot-enable helper the switch path consults.
 #include "../../src/TrackManager/TrackManagerInternalHelpers.cpp"
 // The persistence request the switch path makes for the slot the capture left.
@@ -247,6 +261,43 @@ struct TrackCaptureStopTestAccess {
   }
   static uint8_t selectedSlotIndex(uint8_t trackIndex) {
     return trackManager.slotStateMachine.getSelectedSlotIndex(trackIndex);
+  }
+  // ---- the record-stop commit route ---------------------------------------------------------------
+  /// The production transport-stop entry (`TrackManager::handleTransportStop`), wired through
+  /// `HARNESS_LINKS_REAL_TRANSPORT_STOP`. On device this is the route that finalises a live capture with
+  /// `RECS,stopToStopped`, and the route a take must survive.
+  static void transportStop() { trackManager.handleTransportStop(); }
+  /// Whether `slot`'s loop holds committed passes -- the "belongs to this slot's loop" half of slot identity.
+  static bool committedPassesInSlot(Track& track, uint8_t slot) {
+    return track.getLoop(slot).hasCommittedPasses();
+  }
+  /// The slot loop's own length, which the commit path sets. A start marker says nothing about this.
+  static uint32_t slotLoopLength(Track& track, uint8_t slot) {
+    return track.getLoop(slot).loopLengthTicks;
+  }
+  /// Whether `slot`'s **committed** rows contain a note-on for `note`. This reads the pass content the way
+  /// the firmware's own `!CAPTURE_CONTENT` dump does, so the assertion is on recorded content rather than on
+  /// a live capture store that a later stop could discard.
+  static bool committedSlotHasNote(Track& track, uint8_t slot, uint8_t note) {
+    Loop& loop = track.getLoop(slot);
+    MidiEventVec rows;
+    auto holdsNote = [&rows, note]() {
+      for (const auto& e : rows) {
+        if (static_cast<unsigned>(e.type) == 144u && e.data.noteData.note == note &&
+            e.data.noteData.velocity > 0) {
+          return true;
+        }
+      }
+      return false;
+    };
+    LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds, rows);
+    if (holdsNote()) return true;
+    for (size_t i = 0; i < loop.passes.overdubPasses.size(); ++i) {
+      rows.clear();
+      LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses[i].committedChunkIds, rows);
+      if (holdsNote()) return true;
+    }
+    return false;
   }
 };
 
@@ -954,6 +1005,156 @@ void test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds()
                             "later dispatch must not add events to C's interval");
 }
 
+
+/// **S4f.3 — the successor's take must COMMIT with content, not merely start.**
+///
+/// Encodes a real device failure. On hardware the whole handoff chain worked -- A's finalizer outstanding,
+/// B's stop capacity-denied, C's switch/start requested and retained, B's stop binding, C's capture starting
+/// -- and C's take still committed with **final length 0 and no content**, because the harness never injected
+/// MIDI into C after it started. A start marker (`RECA`) therefore read as success while the user-visible
+/// result was empty.
+///
+/// The fixture above stops at "C is recording and its capture store grew by the injected note's on and off":
+/// it never drives the transport-stop route and never asserts that the take **commits**. This one drives that
+/// route and asserts the committed result, so a start marker can never satisfy it.
+///
+/// One track, A = slot 0, B = slot 1, C = slot 2 (A and B carry content; C is the empty record target).
+/// Steps 1-7 reach the same handoff state as the fixture above, then:
+///   8. MIDI enters C's capture through the real input handler;
+///   9. the **production transport-stop route** finalises the take -- on device, the route that emits
+///      `RECS,stopToStopped`;
+///  10. the user-visible result: C still owns the active slot, C's loop holds a committed pass, the length is
+///      NONZERO, and the committed rows contain the injected note (with an uninjected-note control);
+///  11. B's outstanding finalization completing afterwards does not damage C's committed take.
+void test_the_successor_take_commits_with_content_after_a_transport_stop() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 1);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+
+  // (1) A overdubs through the production gesture; its stop is admitted and held.
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::isOverdubbing(track));
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                           "precondition: A's stop must be admitted before the handoff");
+
+  // (2) B becomes active (A's own stop is bound, so the switch commits) and overdubs.
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::activateSlot(0, 1);
+  TEST_ASSERT_EQUAL_UINT8(1, TrackCaptureStopTestAccess::activeLoopIndex(track));
+  TrackCaptureStopTestAccess::startOverdubbing(track, clockManager.getCurrentTick());
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::isOverdubbing(track));
+
+  // (3) B's stop is requested and denied on capacity, latching against B's own slot.
+  clockManager.assignCurrentTickSilently(264);
+  TrackCaptureStopTestAccess::selectSlotIndex(0, 1);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1));
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 1));
+
+  // (4) Switch/start on C while B's stop is unadmitted: retained, neither committed nor dropped.
+  clockManager.assignCurrentTickSilently(300);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(2);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(0, 2),
+                           "the switch must retain C's record start");
+
+  // (5)/(6) Dispatch keeps the requests; then capacity frees and B's stop binds.
+  for (uint32_t tick = 301; tick <= 301 + 768; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  bool bStopBound = false;
+  for (int turn = 0; turn < 64 && !bStopBound; ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurn(track);
+    bStopBound = TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 1);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(bStopBound, "B's accepted stop must bind once capacity frees");
+
+  // (7) Dispatch commits the retained switch and starts C on C's eligible boundary.
+  const uint32_t resumeTick = clockManager.getCurrentTick();
+  for (uint32_t tick = resumeTick + 1;
+       tick <= resumeTick + 768 * 3 && !TrackCaptureStopTestAccess::isRecording(track); ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the retained switch must commit to C");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track), "C must be recording");
+
+  // (8) The notes enter C through the real MIDI input handler, and must land in C's capture.
+  const uint8_t kSuccessorNote = 67;
+  const size_t beforeInput = TrackCaptureStopTestAccess::captureEventCount(track);
+  const uint32_t tickBeforeInput = clockManager.getCurrentTick();
+  inputNote(kSuccessorNote, tickBeforeInput + 8, tickBeforeInput + 40);
+  TEST_ASSERT_EQUAL_MESSAGE(beforeInput + 2, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "the injected note's on and off must enter C's capture");
+
+  // Give the take a bar of material before the stop, so a nonzero length is the expected result rather than
+  // an artefact of the injection tick.
+  clockManager.assignCurrentTickSilently(tickBeforeInput + 768);
+
+  // Precondition that makes the transport stop the thing under test rather than an incidental step: before
+  // it, C's take is live and **uncommitted** -- exactly the device state whose zero-length commit is the
+  // failure encoded here. Without this the assertions below could pass on a take something else committed.
+  const uint32_t liveLengthBeforeStop = TrackCaptureStopTestAccess::slotLoopLength(track, 2);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::committedPassesInSlot(track, 2),
+                            "precondition: C's take must not be committed before the transport stop");
+
+  // (9) The production transport-stop route finalises the take.
+  TrackCaptureStopTestAccess::transportStop();
+
+  // (10) The USER-VISIBLE result. A start marker proves none of this.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "C must still own the active slot after the transport stop");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::committedPassesInSlot(track, 2),
+                           "C's take must COMMIT a pass, not merely have started");
+  const uint32_t committedLength = TrackCaptureStopTestAccess::slotLoopLength(track, 2);
+  char lengthDetail[224];
+  snprintf(lengthDetail, sizeof(lengthDetail),
+           "C's committed take must have a NONZERO length (active=%u loopLength=%u committedPasses=%d, "
+           "liveLengthBeforeStop=%u)",
+           TrackCaptureStopTestAccess::activeLoopIndex(track), committedLength,
+           TrackCaptureStopTestAccess::committedPassesInSlot(track, 2) ? 1 : 0,
+           liveLengthBeforeStop);
+  TEST_ASSERT_TRUE_MESSAGE(committedLength > 0u, lengthDetail);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::committedSlotHasNote(track, 2, kSuccessorNote),
+                           "C's committed content must hold the note the user played");
+  // Control: the search is note-specific, so it cannot pass by finding any row at all.
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::committedSlotHasNote(track, 2, 99),
+                            "control: a note that was never played must not appear in C's content");
+
+  // (11) B's outstanding finalization completing later must not damage C's committed take.
+  const size_t committedRows = TrackCaptureStopTestAccess::captureEventCount(track);
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  for (int turn = 0; turn < 64; ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurn(track);
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "a later completion must not move the active slot off C");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(committedLength,
+                                   TrackCaptureStopTestAccess::slotLoopLength(track, 2),
+                                   "a later completion must not change C's committed length");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::committedSlotHasNote(track, 2, kSuccessorNote),
+                           "a later completion must not damage C's committed content");
+  (void)committedRows;
+}
+
 /// **S4b.1 — contract check 7, cross-track successor.** The successor sits on a **different track**,
 /// which the same-track fixtures cannot show: `CaptureStopJobs`, the S4f.1 latch and
 /// `hasStopInFlightForSlot` are all per track, so the predecessor's live finalizer must not gate the
@@ -1496,6 +1697,8 @@ int main() {
   RUN_TEST(test_a_declared_envelope_breach_is_reported_and_does_not_block_activation);
   RUN_TEST(test_switching_starts_the_new_take_while_the_previous_take_still_finalizes);
   RUN_TEST(test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds);
+  // The successor's take must COMMIT with content -- the device failure a start marker hid.
+  RUN_TEST(test_the_successor_take_commits_with_content_after_a_transport_stop);
   // S4b.1 contract check 7 coverage, and the exactly-once half the committed carrier was missing.
   RUN_TEST(test_a_cross_track_successor_starts_while_the_predecessor_finalizes);
   RUN_TEST(test_a_cleared_successor_is_a_record_target_while_the_predecessor_finalizes);
