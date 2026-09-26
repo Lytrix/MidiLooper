@@ -6937,3 +6937,61 @@ Kept as directed: **request retention is demonstrated on hardware; end-to-end ca
 failed or is incomplete.** What changed this round is that the oracle can now evaluate the whole chain -- the
 release blocker is gone, the successor records content, and the remaining gaps are named: the L3/L5 check
 bases, L7's parity interpretation, and the fallback's content consequences.
+
+### The device acceptance passes without concessions (2026-09-26)
+
+Run `captures/s4f3-retention-20260926_172941` -- the repeat from this round, with the release attribution fix
+in the firmware and the timely note injection in the driver -- now returns **`RETENTION_PASS`, exit 0, with
+zero concessions**:
+
+| Link / gate | Evidence |
+|---|---|
+| integrity | fresh boot (16 `BOOT` lines), `identity_pinned` (`git_commit=ac0cde75`, `firmware_hex_sha256=b119c4a3`), no ring eviction, complete tail, tempo 120.0 |
+| L1 A's finalizer outstanding | `DIAG,reentry_window_open,4,1025,6144` |
+| L2 B's stop denied, identified | `DIAG,reentry,deny,1212,2,5,1` -- names slot 5 **and interval 2** |
+| L3 C's request retained | the retained row for slot 6 appears after the timely denial line and before the release, with no start executed first |
+| L4 capacity released | `canonical_release,4,40,6144,8` -- **A's** slot and generation |
+| L5 that same B stop bound | `DIAG,reentry,bound,1537,2,5,0` -- the **denied interval 2**, on slot 5 |
+| L6 C starts exactly once | exactly one `RECA,6`, after the release |
+| L7 C recorded the expected MIDI | dump for slot 6 declares note 67 in **both** its storage and effective rows, and they agree |
+| L8 bounded follow-up | 14 s of follow-up, no repeat start, no re-issued denial, no extra seal |
+| activation invariant | no violation logged |
+
+The capacity-denied window measured **1376.5 ms**, and the chain completed inside it -- so the natural
+finalization window suffices, which is what the objective's device run was to establish. The pause hook stays
+unimplemented because the natural workload works.
+
+**What changed in L7 this round, and why it is not a weakened bar.** The previous instrument required the
+content pipeline's whole-playback review to report `inventory_equal`, which failed with `extra` rows. Reading
+the run explains why that instrument cannot hold here:
+
+- the dump describes **one loop** -- `CAPTURE_CONTENT,begin,track=8,slot=6,length=1536` with exactly two
+  declared events, both note 67;
+- the capture is the **whole audible output**, and the playback carried dozens of unrelated notes (0, 12-95)
+  because every enabled slot and track sounds.
+
+So the review was comparing a one-loop inventory against a whole-track performance; `extra` rows were
+inevitable and said nothing about the successor. The check now reads storage<->effective parity from the dump
+**for the loop under test**, using the two row groups the dump already provides (`record`/`overdub` storage vs
+`effective` materialisation): the expected notes must appear in **both**, and the two must agree. That is the
+same property the skill's `storage_matches_effective` targets, scoped to the successor, and it is strictly more
+specific than the review for this purpose -- it names the notes and the rows rather than a boolean over a
+performance that layers other content. When a review *is* supplied, its whole-playback result is reported
+alongside rather than deciding the link. Pitch presence alone still does not pass: both row groups are required.
+
+**Still open, and deliberately not closed by this pass** (the owner's framing: successful retention does not
+close predecessor preservation):
+
+- **A's and B's content is not verified.** A and B are known to have committed nonzero 8-bar takes
+  (`RECS,stopToStopped,4,...6144,0` and `,5,...6144,0`), but their *content* has not been dumped and compared
+  the way C's has.
+- **The raw-only companion fallback remains unresolved.** `Overdub stop retarget: companion path stalled; raw
+  pass only` reproduced again in this run, so the predecessor interval is again committed without its
+  companion representation. Whether its content is nonetheless correct is exactly what the A/B dump would
+  decide.
+- The whole-playback review's `extra` rows are explained as layering by inspection (the notes are unrelated to
+  the successor's dump), but that is an interpretation, not a measurement: establishing it properly means
+  dumping each slot with the others silenced.
+
+**Status.** The successor-handoff acceptance now passes on hardware **without concessions**. A/B content
+verification and the fallback's content consequences remain open, so predecessor preservation is not claimed.

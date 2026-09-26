@@ -186,6 +186,7 @@ def analyse_content_dump(text: str, *, slot_c: int, expected_notes: tuple[int, .
         out["denied"] = True
     notes: list[int] = []
     ons: list[int] = []
+    per_kind: dict[str, list[tuple[int, int, int]]] = {}
     for line in text.splitlines():
         line = line.strip()
         m = CC_BEGIN_RE.match(line)
@@ -197,12 +198,23 @@ def analyse_content_dump(text: str, *, slot_c: int, expected_notes: tuple[int, .
         m = CC_EVENT_RE.match(line)
         if m:
             kind, _pass, _tick, etype, _ch, note, velocity, _nid = m.groups()
+            per_kind.setdefault(kind, []).append((int(_tick), int(etype), int(note)))
             notes.append(int(note))
             # type 144 = NoteOn (3 << 4); a NoteOn with velocity 0 is a NoteOff in disguise.
             if int(etype) == 144 and int(velocity) > 0:
                 ons.append(int(note))
     out["notes"] = sorted(set(notes))
     out["note_ons"] = sorted(set(ons))
+    # The dump carries the loop's own storage rows (`record`/`overdub`) and its materialised `effective` rows,
+    # so storage<->effective parity for THAT loop is readable directly from it. This matters because the
+    # content pipeline's review compares a one-loop dump against the *whole* audible output, which cannot hold
+    # when other slots or tracks are enabled (measured: the playback carried dozens of unrelated notes while
+    # the successor's dump declared exactly one).
+    storage_rows = [e for k, rows in per_kind.items() if k in ("record", "overdub") for e in rows]
+    effective_rows = per_kind.get("effective", [])
+    out["storage_note_ons"] = sorted({n for (_t, ty, n) in storage_rows if ty == 144})
+    out["effective_note_ons"] = sorted({n for (_t, ty, n) in effective_rows if ty == 144})
+    out["storage_effective_match"] = (storage_rows == effective_rows) if effective_rows else None
     if expected_notes:
         absent = [n for n in expected_notes if n not in ons]
         out["expected_absent"] = absent
@@ -596,6 +608,25 @@ def analyse(
             f"a content dump for slot {dump['slot']} is present with note-ons {dump['note_ons']}, but no "
             "expected note was given (--expect-successor-note), so 'the expected MIDI' is undefined here",
             "evidence", "L7")
+    elif (dump["present"] and dump["notes_match"] and dump["storage_effective_match"] is True):
+        # The successor's own loop: the expected notes are present in BOTH its storage rows and its
+        # materialised rows, and the two agree. That is storage<->effective parity for the loop under test,
+        # read from the dump itself rather than from a whole-playback comparison that cannot hold while other
+        # slots are audible.
+        extra_review = ""
+        if review["present"]:
+            extra_review = (f"; content review additionally reports inventory_equal="
+                            f"{review['parity_ok']} over the whole playback, which layers the other enabled "
+                            "slots and so is not a statement about the successor alone")
+        add("L7_successor_recorded_expected_midi", OK,
+            f"dump for slot {dump['slot']} declares the expected note(s) "
+            f"{list(expect_successor_notes)} in both storage and effective rows, and the two agree "
+            f"(storage note-ons {dump['storage_note_ons']}, effective {dump['effective_note_ons']})"
+            + extra_review, "retention", "L7")
+    elif dump["present"] and dump["notes_match"] and dump["storage_effective_match"] is False:
+        add("L7_successor_recorded_expected_midi", FAIL,
+            f"the dump for slot {dump['slot']} disagrees with itself: storage note-ons "
+            f"{dump['storage_note_ons']} vs effective {dump['effective_note_ons']}", "retention", "L7")
     elif dump["present"] and dump["notes_match"] and review["present"] and review["parity_ok"]:
         add("L7_successor_recorded_expected_midi", OK,
             f"content dump for slot {dump['slot']} contains the expected note(s) {list(expect_successor_notes)} "
