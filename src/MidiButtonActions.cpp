@@ -417,8 +417,11 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
                 logger.info("Loop %d: Record start carried on the switch", slotIndex + 1);
             } else {
                 trackManager.retainRecordStartForSlot(trackIdx, slotIndex);
-                logger.info("Loop %d: Switch and record start retained (stop not yet admitted)",
-                            slotIndex + 1);
+                // S4f.3 L3: name both the track **and** the target slot. The line previously carried only
+                // the 1-based loop number, which is ambiguous across tracks -- and the retention oracle
+                // must not accept an ambiguous row as proof that *this* request survived.
+                logger.info("Track %d loop %d: switch and record start retained (stop not yet admitted)",
+                            trackIdx, slotIndex + 1);
             }
         }
         return;
