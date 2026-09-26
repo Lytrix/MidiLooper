@@ -5024,3 +5024,71 @@ One honest limit inside the suite: the stop-admission case asserts through
 button route, because the button route drags the note-edit input layer into this boundary — the same
 choice `test_storage_manager_load` documents. The ring term is additionally held alone by
 `test_continuous_capture`'s matrix.
+
+## S4.1 — release when the slot leaves the active set (2026-09-25, G2 execution packet, first slice)
+
+### Identity and scope
+
+The release surface named by S4.1 is track-global and predicate-free: `TrackPlaybackRuntime::resetAll`
+and `clearAllLedgers` loop every **allocated** slot, discarding each slot runtime's `reset()` refusal.
+The first slice fixes the reachable corruption the acceptance criterion names — *B-stop while A
+finalizes on the same track → A's ledger and canonical inputs survive* — and leaves the memory-pressure
+conversions (which need a fixture this change has not built) to the same task's remainder.
+
+### Audit of the call sites (read, then classified)
+
+| Site | Scope it operates on | Keep / convert |
+|---|---|---|
+| `Track::sendAllNotesOff` (global transport stop) | every slot, deliberately — the transport silences the whole track | **keep track-global** |
+| `Track::handleNoteEditFold` `endInPlaying` (in-edit fold completing *this interval's* stop) | one interval, on its own slot | **convert** |
+| `Track::stopOverdubbing` fallback (`endInPlaying == false`) | one interval, on its own slot | **convert** |
+| `Track::stopOverdubbingToStopped` | one interval, on its own slot | **convert** |
+| `Track::releasePlaybackMergedMidiEventsMemory` → `resetAll(false)` | every slot, under memory pressure | **remainder** — needs the memory-pressure fixture |
+| `Track::invalidatePlaybackMergedMidiEvents` → `resetAll(preserveLedger)` | every slot, guarded only by `hasPendingDeferredOverdubStop` | **remainder** — same fixture |
+| `DeferredSaveJobStages` footer save reads `getActiveLoopIndex()` | one interval | **remainder** — needs the persistence fixture |
+
+The stop paths are the corruption: while a predecessor finalizes on one slot, a sibling slot's stop
+clears **every** allocated slot's ledger, erasing the predecessor's open-note suppression state. The
+canonical inputs are not touched by the ledger clear itself; they are released by
+`tryReleaseCanonicalCaptureReservation`, which already evaluates `noLiveOwnerForSlot` (S2b.4).
+
+### Oracle fixed before behavior edits
+
+Stopping one interval SHALL clear only its own slot's ledger. A sibling slot that still holds a live
+finalization owner SHALL keep its ledger and its canonical inputs. The global transport stop SHALL
+still clear every slot's ledger (the control that the conversion did not narrow a deliberate sweep).
+
+### Controls and coverage
+
+Fixture in `test_runtime_working_set_ownership`: slot 1 becomes a finalizing predecessor (production
+interval start + production stop admission) with a marked ledger entry; slot 0 then takes a stop
+through the production route; the fixture asserts slot 1's ledger entry and canonical admission
+survive while slot 0's own ledger is cleared. Control: `sendAllNotesOff()` clears both.
+
+### Completion record (2026-09-25)
+
+`Track::clearStoppingIntervalLedger()` is the named per-interval owner: it clears **only** the
+stopping interval's slot ledger. Both converted stop routes call it — `handleNoteEditFold`'s
+`endInPlaying` branch and `stopOverdubbing`'s fallback — and `Track::sendAllNotesOff` keeps the
+deliberate track-global sweep, which now loops the per-slot `LoopPlaybackRuntime::clearLedger()` so the
+sweep has one implementation.
+
+**The fixture was red-proven.** The first version drove `stopOverdubbing()` on an ordinary (non-edit)
+interval and passed even with the fix reverted — the ordinary route takes the **deferred admission**
+path, so neither converted site ran. That is a false green, and it is recorded here rather than
+quietly replaced. The fixture was retargeted at the named owner, and with the scoping reverted to
+`playbackRuntime.clearAllLedgers()` it fails exactly as intended: *"a sibling slot's ledger must
+survive the stop"*. With the fix it passes, and the control (the track-global sweep) still clears both
+slots.
+
+Fixture `test_a_stop_clears_only_its_own_slots_ledger` — green, red on the pre-fix behavior. Full
+native `2,441 passed / 1 skipped`; capture-serial builds with `variables 96,160` unchanged and
+`code 391,912 → 391,960` / `padding 1,304 → 1,256` (the named function; 416 B of headroom remains).
+
+**Open remainder of S4.1 (unchanged by this slice):** `releasePlaybackMergedMidiEventsMemory` and
+`invalidatePlaybackMergedMidiEvents` still call the track-global `resetAll` and still discard its
+per-slot refusal — the memory-pressure conversions, which need their own fixture;
+`DeferredSaveJobStages`' footer save still reads `getActiveLoopIndex()`; and the
+`(slot, generation)` release entry with the generation carried onto `captureStopOwner` (S4.2) is not
+built yet, which is why the lease's `releaseWorkingSetLease`/`releaseAllWorkingSetLeases` remain
+uncalled.

@@ -1212,7 +1212,20 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       named, owned and checked elsewhere when they land. This matches the checked S0.3/S0.4 pattern of
       recording a deferred term rather than leaving the predicate task open indefinitely.
 - [ ] S4.1 Release when the slot leaves the active set and the guard reports no live owner; release is
-      total. **The existing release APIs must be converted, not supplemented (rerun blocker):**
+      total. **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
+      memory-pressure and `(slot, generation)` conversions remain.** `Track::clearStoppingIntervalLedger()`
+      now clears only the stopping interval's slot ledger, and both converted stop routes call it
+      (`handleNoteEditFold`'s `endInPlaying` branch, `stopOverdubbing`'s fallback);
+      `Track::sendAllNotesOff` keeps the deliberate track-global sweep (now looping the per-slot
+      `LoopPlaybackRuntime::clearLedger()`). Fixture `test_a_stop_clears_only_its_own_slots_ledger` is
+      **red on the pre-fix behavior** (the first version drove the ordinary stop route, which takes the
+      deferred admission path and never reached a converted site — a false green, recorded). Full native
+      `2,441 passed / 1 skipped`; capture-serial `variables` unchanged (`code 391,912 → 391,960`).
+      **Still open:** `releasePlaybackMergedMidiEventsMemory` and `invalidatePlaybackMergedMidiEvents`
+      still use the track-global `resetAll` and discard its refusal; `DeferredSaveJobStages`' footer read;
+      and the `(slot, generation)` release surface with the generation carried onto `captureStopOwner`
+      (S4.2), which is why the lease's release methods remain uncalled. Packet and record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4.1. **The existing release APIs must be converted, not supplemented (rerun blocker):**
       `resetAll`, `clearAllLedgers`, `Track::releasePlaybackMergedMidiEventsMemory` and
       `TrackManager::releaseBackgroundPlaybackMergedMidiEventsMemory` are track-global, predicate-free, and
       discard `reset()`'s refusal — a successor stop on the same slot while a predecessor is pinned reaches
