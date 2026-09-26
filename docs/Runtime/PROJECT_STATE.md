@@ -1,6 +1,57 @@
 # Project state (execution context)
 
-**Current handoff — recovery committed; DMA deferred (2026-09-26).**
+**Current handoff — S4.1 lease release verified and checked; F4 completion-failure policy fixed (2026-09-26).**
+Two slices since the last checkpoint. **S4.1's lease leg** is verified natively with no firmware change
+(three fixtures; the retired slot is released by the next same-track playback reset, refused while a live
+finalization owns it, and the protection is triple-layered and red-proved by staged guard removal) and **S4.1
+is checked**, its device leg recorded as an evidence obligation because the `DIAG,ws_release,…` emission and
+its Tier-A promotion already exist. **F4 / DEC-091** is a firmware change: a persistently failing workspace
+completion is now **discharged and reported** instead of re-queued at the queue head, where it blocked every
+other persistence item and kept `hasDeferredSaveWork()` true for the rest of the boot (refusing the save
+pre-flight and the read-only slot-payload observation). Full native **2,469 passed / 7 skipped**;
+capture-serial SUCCESS with `code 392,360 / padding 856` (byte-identical; the named queue API the first cut
+added cost 256 B of ITCM and was withdrawn rather than widening the floor); `include/` untouched. Device
+evidence for the failure path is owed — it is an SD fault path with no fault injection. Records:
+[`ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ "S4.1 — working-set lease release on a same-track slot switch" and § "F4 — a failed workspace completion is
+discharged"; decisions `DEC-090`, `DEC-091`. Recovery hardware content/Undo/Redo acceptance and the parked
+DMA repair remain open and unchanged.
+
+
+**Previous handoff — S4.1 lease release verified; S4.1 checked; DMA still deferred (2026-09-26).**
+S4.1's last behavior leg is closed with **no firmware change**: the working-set lease of a retired slot is
+released by the **next same-track playback reset/switch** (not by retirement itself), refused with
+`RefusedBusy` while a live finalization owns the slot, and the live-finalization protection is
+**triple-layered** (track-level early return → per-slot predicate → the runtime's own `reset()` refusal),
+each layer red-proved by staged guard removal. Three new fixtures in `test_runtime_working_set_ownership`
+(23/23); full native **2,468 passed / 7 skipped**; capture-serial SUCCESS with `padding 856` (floor 840);
+`src/` untouched. **S4.1 is checked**, its device leg recorded as an evidence obligation only — the
+`DIAG,ws_release,<slot>,<generation>,<outcome>` emission already exists and is Tier-A, so a run plus an
+oracle that reads the row is what is owed. Record:
+[`ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ "S4.1 — working-set lease release on a same-track slot switch". **Next recommended native slice:**
+`FinalizeWorkspace` retry policy (a persistent completion failure retries at the queue head and blocks the
+queue behind it; owes a bounded-failure `DEC` before code) — see
+[continuation packet](../../openspec/changes/runtime-working-set-ownership/NEXT-STEPS.md). Recovery
+hardware content/Undo/Redo acceptance and the parked DMA repair are unchanged and still open.
+
+
+**Previous handoff — S4.1 persistence identity closed as verified; DMA still deferred (2026-09-26).**
+S4.1's persistence-identity remainder is settled with **no firmware change**: the deferred save's footer
+records the workspace focus at **footer-write time** (content identity stays the interval's slot), verified
+by four new cases in `test_storage_drain_restore` that pause the real worker with the footer due, hand off
+A→B through the production selection route, and reload — plus a no-switch control, a post-footer handoff and
+an SD write fault; red-proved. Full native **2,465 passed / 7 skipped**, capture-serial SUCCESS with
+`padding 856` (floor 840), `src/` untouched. **DEC-090**; record:
+[`ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ "S4.1 — persistence identity during handoff". Next recommended native slice: S4.1's remaining
+working-set **lease** release on a same-track slot switch, and then the `FinalizeWorkspace` retry-policy
+question found while building the fixture — see
+[continuation packet](../../openspec/changes/runtime-working-set-ownership/NEXT-STEPS.md). Recovery
+hardware content/Undo/Redo acceptance and the parked DMA repair are unchanged and still open.
+
+
+**Previous handoff — recovery committed; DMA deferred (2026-09-26).**
 Recovery/loaded undo is committed in `f29539e3`. Automatic repair and healthy boot
 completed on hardware; full device content/Undo/Redo acceptance remains open.
 Blocking-SPI display update is user-confirmed. **User parks DMA repair until after

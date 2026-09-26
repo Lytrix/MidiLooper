@@ -33,32 +33,83 @@ a realtime acceptance result. Applicable visual/MIDI timing requirements stay op
 record the transport in every result and do not equate its timings with the earlier
 DMA baseline. Deferral does not waive any stage gate.
 
-## Recommended next native slice: S4.1 — persistence identity during handoff
+## S4.1 — persistence identity during handoff: DONE (native verified, 2026-09-26)
 
-Prefer this bounded native investigation while hardware baseline work is unsettled.
-Verified source: `DeferredSaveJobStages`' `DeferredFooterWriteStage::ActiveLoopIndex`
-reads `trackManager.getActiveLoopIndex(footerTrackCursor)` at execution time.
-`CurrentWorkspaceSaveJob` contains stage/track cursors and `stateSnapshot`, but no
-captured active-slot array. This is explicitly listed as an S4.1 remainder.
+Closed as verified with **no firmware change**; the recommended slice below is superseded.
+`DeferredSaveJobStages`' footer read is **not** a defect: the footer records the workspace focus at
+**footer-write time** (the contract), while the interval's slot stays the **content** identity (its body is
+a `LoopPersist` item keyed by `(track, slot)`, cleared only by its own token-verified write). The
+alternative — substituting the interval's slot, or capturing the whole save at admission — is rejected:
+the first red-proves as a reverted focus, the second would make the image internally inconsistent with the
+live-per-stage bodies beside it. Recorded as **DEC-090**; packet and record in
+[ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md) § "S4.1 — persistence identity during handoff".
 
-**This read is not yet proven wrong.** The runtime footer represents workspace
-selection, which may legitimately differ from the slot whose capture is being
-persisted. Do not replace it mechanically with the outgoing capture slot.
+**What was built:** four cases in `test_storage_drain_restore` — the real deferred worker paused with the
+footer due and unwritten, an A→B handoff through `TrackManager::setSelectedSlotIndex`, then a reload with
+content, loop identities and the **restored focus** asserted per slot; a no-switch control (restores A); a
+handoff *after* the footer was written (the selection route's requeue lands it); and an SD write fault at
+the footer (nothing published; the retry lands the handoff). **Red-proved** by pinning the footer's reads to
+the interval's slot (three handoff cases fail on the restored focus, the control passes); the first attempt
+was a false green and is recorded. Full native 2,465 passed / 7 skipped; capture-serial SUCCESS with
+`padding 856` (floor 840) on an untouched `src/`.
 
-Next G0/G2 packet should:
+**Found while building the fixture, deliberately not fixed here (needs its own packet):** a persistently
+failing `FinalizeWorkspace` step retries **at the queue head** and blocks everything behind it. The failure
+branch clears `pending` and requeues the item, and every retry re-enters `CurrentSetCompletion` — the shape
+observed was `queueDepth=2`, `stage=CurrentSetCompletion`, `runtime.bundle.bin` size 0, still retrying after
+4,096 turns. On device that is an SD error path, so the question is a bounded retry/failure policy
+(drop-and-report vs. keep retrying), not a local fix. Host fixtures must drop the work queue rather than
+drain it (`PersistenceWorkQueue::resetForTests()`), which is recorded in the fixture comment.
 
-1. Trace stop A → slot-keyed persistence admission → workspace header/footer writes
-   → handoff to B → load, distinguishing content identity from workspace focus.
-2. Establish the existing contract's metadata consistency point and whether later
-   selection dirties/requeues persistence. Use StorageManager as the existing owner.
-3. Pause the real deferred worker before footer emission, perform A→B through the
-   manager, resume and reload. Assert A/B content, loop identities and the specified
-   restored focus; include failure/retry and no-switch controls. No test-only owner.
-4. Only change code if that fixture demonstrates a contract violation. Preserve
-   RAM1 floor 840, and run focused/full native plus capture-serial build.
+## S4.1 — working-set lease release on a same-track switch: DONE (native verified, 2026-09-26)
 
-This investigation requires no device reset, clear or recording and does not wait
-on a DMA fix. It does not close S4.1's other release-transition work or the S3 gate.
+Closed with **no firmware change**, like the persistence slice before it. Three fixtures in
+`test_runtime_working_set_ownership` (23/23) drive the production switch commit with a live owner latched on
+the **incoming** slot (the retired slot is released, its generation advances and its pre-switch identity is
+consumed, while the owned sibling is untouched), the refusal under a live finalization (`noLiveOwnerForSlot`
+false, `releaseSlot` → `RefusedBusy`, lease and generation unchanged, the switch still committing), and the
+release **after** retirement through the next same-track switch. Red-proved in three stages — predicate,
+predicate + `reset()` refusal, then also the track-level early return — which showed the protection is
+**triple-layered** and attributable layer by layer. Full native 2,468 passed / 7 skipped; capture-serial
+SUCCESS with `padding 856`; `src/` untouched.
+
+**Two corrections this slice recorded.** (1) The route that releases a retired slot is **not** the
+retirement: `TrackPreparedStopCommit::completeDeferredCleanup` clears `captureStopOwner` and arms the
+*capacity* marker but releases no working set, so the release happens on the **next playback reset** (a
+switch), or on the memory-pressure/undo lanes. (2) The earlier "needs an emission that names the lease
+release" was **stale**: `DIAG,ws_release,<slot>,<generation>,<outcome>` already exists and is Tier-A
+(`bbedfeac`). S4.1's device leg therefore owes only a **run** in which that path fires for the slot under
+test, plus an oracle that reads the row — no new instrumentation. S4.1 is checked with that recorded as an
+evidence obligation, matching how S4.3 records its device byte delta.
+
+## F4 / DEC-091 — `FinalizeWorkspace` retry policy: DONE (implemented, native verified, 2026-09-26)
+
+Addressed in this session. The completion failure is now **terminal**: the item is discharged into the
+queue's tombstone and the failure is reported once, instead of being re-queued at the **head** where a
+deterministic step retried forever, blocked every other persistence item and kept `hasDeferredSaveWork()`
+true — which refused the save-new-set pre-flight and made the read-only slot-payload observation answer
+`busy` for the rest of the boot. The per-slot dirty set is left as the failure found it, which is the retry
+the persistence contract names. Fixture
+`test_f4_a_failed_completion_is_discharged_and_releases_the_queue` in `test_storage_drain_restore`, red-proved
+by restoring the front-requeue (a **false green in the fixture's first cut** — a single-turn fault self-heals
+on the retry — is recorded). RAM1 byte-identical (`code 392,360 / padding 856`); the named queue API the
+first cut added cost 256 B of ITCM and was withdrawn rather than widening the floor. **Two consequences
+recorded rather than hidden:** the blocking drain now reports `Failed` (not `TemporarilyBlocked/
+waiting_commit_gate`) in the mixed shape where the save's completion fails *and* a restore is commit-gated —
+the S2b.7 parked-instance fixture was re-premised on the drain's **ownership transfer** and pins the corrected
+verdict; and the same front-requeue shape remains for **body/bundle** item failures, where the retry is the
+content-durability intent (bounding those is a separate decision). **Device evidence owed:** an SD fault path
+with no device fault injection.
+
+## Recommended next slice
+
+**S4.1's device row for the lease release** — the only behavior-side item left in this change is *evidence*,
+not code: run a case in which `releaseEligiblePlaybackRuntimeSlots` fires for the slot under test (a
+cross-track take start, memory pressure, or a same-track switch after retirement) and read
+`DIAG,ws_release,<slot>,<generation>,<outcome>`, which already exists and is Tier-A. It needs an authorized
+device run plus an oracle that consumes the row; no new instrumentation and no stimulus change.
+
+Then the remaining native candidates below, unchanged.
 
 ## Other candidates and why not first
 
@@ -83,7 +134,16 @@ on a DMA fix. It does not close S4.1's other release-transition work or the S3 g
 
 Production hashes still match the checkpoint tested with 2,461 native passes /
 7 skips; isolated ABI recovery tests cover those recovery skips. Reader/audit tests
-rerun: 16 pass. Both affected OpenSpecs validate. Snapshot spec hygiene preserves
+rerun: 16 pass. Both affected OpenSpecs validate. **S4.1 persistence identity
+(2026-09-26):** full native **2,465 passed / 7 skipped** (the four new cases are the
+delta), capture-serial SUCCESS with `padding 856` (floor 840), `src/` untouched.
+**S4.1 lease release on a same-track switch (2026-09-26):** focused
+`test_runtime_working_set_ownership` 23/23 (three new cases), full native **2,468
+passed / 7 skipped**, capture-serial SUCCESS with `padding 856`, `src/` untouched,
+guards red-proved in three stages. **F4 / DEC-091 (2026-09-26):** focused
+`test_storage_drain_restore` 15/15 (one new case; one pre-existing S2b.7 case
+re-premised and recorded), full native **2,469 passed / 7 skipped**, capture-serial
+SUCCESS with `padding 856` (byte-identical), red-proved, `include/` untouched. Snapshot spec hygiene preserves
 previously omitted base scenarios and classifies two new requirements as ADDED;
 no intended behavior changed in that reconciliation. No push or PR requested.
 Capture remains open for the current diagnostic session; verify persistence idle

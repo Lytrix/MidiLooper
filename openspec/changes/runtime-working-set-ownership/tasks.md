@@ -6,7 +6,8 @@ stored-event parity and reboot survival remain open. See takeover packet in ARCH
 **Current continuation:** [NEXT-STEPS.md](NEXT-STEPS.md) supersedes historical
 queue/hold statements below. DMA fault repair is parked until AFTER this OpenSpec
 by user request, with no stage-gate waiver. S4.1 — persistence identity during
-handoff is the recommended next native investigation; not implemented or checked off.
+handoff was investigated and closed as verified on 2026-09-26 (DEC-090, no firmware
+change); the next recommended native slice is named in that same file.
 
 
 Scope: `docs/Runtime/CURRENT_WORK.md` § Now implementing.
@@ -1246,8 +1247,27 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       needs S5.2a's per-slot descriptor and the deferred-reconstruction term arrives with S5.2e — both are
       named, owned and checked elsewhere when they land. This matches the checked S0.3/S0.4 pattern of
       recording a deferred term rather than leaving the predicate task open indefinitely.
-- [ ] S4.1 Release when the slot leaves the active set and the guard reports no live owner; release is
-      total. **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
+- [x] S4.1 Release when the slot leaves the active set and the guard reports no live owner; release is
+      total. **CHECKED 2026-09-26.** The release behavior is implemented and verified at the level the task
+      names: the `(slot, generation)` entry, the per-slot liveness guard, and — closed in two slices this
+      day — the persistence-identity read during a handoff and the **working-set lease release on a
+      same-track slot switch**. The lease leg now has three fixtures in `test_runtime_working_set_ownership`
+      (23/23) driving the production switch commit with a live owner latched on the *incoming* slot (retired
+      slot released + generation advanced + identity consumed, owned sibling untouched; control: retire and
+      switch back), the refusal under a live finalization (`noLiveOwnerForSlot` false, `releaseSlot` →
+      `RefusedBusy`, lease and generation unchanged, switch still commits), and the release **after**
+      retirement through the next same-track switch. **Red-proved** by removing the guards in stages: the
+      predicate alone (case A fails; B/C survive on `reset()`'s own refusal), predicate + refusal (case B
+      fails, *"Expected 6 Was 1 … RefusedBusy"*, plus four pre-existing fixtures), and predicate + refusal +
+      the track-level early return (case C fails) — so the live-finalization protection is
+      **triple-layered** and each layer is independently observable. No production code changed; full native
+      **2,468 passed / 7 skipped**; capture-serial SUCCESS, `padding 856` (floor 840). **Remaining, and it is
+      an evidence obligation rather than a behavior gap:** the device row for the lease release has not been
+      *observed* on a run — the emission `DIAG,ws_release,<slot>,<generation>,<outcome>` already exists and
+      is **Tier-A** (added in `bbedfeac`), so what is owed is a run in which the path fires for the slot
+      under test plus an oracle that reads the row. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.1 — working-set lease release on a same-track
+      slot switch". **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
       memory-pressure and `(slot, generation)` conversions remain.** `Track::clearStoppingIntervalLedger()`
       now clears only the stopping interval's slot ledger, and both converted stop routes call it
       (`handleNoteEditFold`'s `endInPlaying` branch, `stopOverdubbing`'s fallback);
@@ -1312,12 +1332,42 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `test_s4_1_capture_work_slot_uses_the_pinned_interval_slot`, red-proved (*Expected 1 Was 3*). Full
       native 2,459 passed / 1 skipped; `padding 840` (floor). **Still open:** the working-set lease release
       is *inferred* from the sweep mechanism rather than asserted by name (the oracle asserts L4's
-      finalization-capacity release); the activation/deactivation sweep caller on a same-track slot switch;
-      and `DeferredSaveJobStages`' footer read, which is a **design question, not a local defect** — the
-      deferred save walks *live* state per stage (`track.getLoop(poolCursor)`), so capturing only the footer
-      at admission would make the persisted image internally inconsistent; a snapshot-at-admission save is a
-      persistence-semantics change owing its own `DEC`. Record:
-      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.1 reconciliation".
+      finalization-capacity release); and the activation/deactivation sweep caller on a same-track slot switch.
+      **CLOSED AS VERIFIED 2026-09-26 — `DeferredSaveJobStages`' footer read (persistence identity during
+      handoff).** The read is **not** a defect: the footer records the workspace focus at **footer-write
+      time**, which is the contract, and the interval's slot stays the **content** identity (its body is a
+      `LoopPersist` item keyed by `(track, slot)`, cleared only by its own token-verified write). Four cases
+      in `test_storage_drain_restore` drive the real worker paused with the footer due and unwritten, an A→B
+      handoff through `TrackManager::setSelectedSlotIndex`, then a reload: content, loop identities and the
+      **restored focus** are asserted per slot, with a no-switch control (restores A), a handoff *after* the
+      footer was written (the selection route's requeue lands it), and an SD write fault at the footer
+      (nothing published; the retry lands the handoff). **Red-proved** by pinning the footer's two reads to
+      the interval's slot — the three handoff cases fail on the restored focus while the control passes; the
+      first red-proof attempt was a **false green** (pinning only `Slot`-keyed writes left the handoff's own
+      requeued `WorkspaceFooter` write reading live state, which repaired it) and is recorded as the
+      robustness property it is. No production code changed: `src/` is untouched. Recorded as **DEC-090**;
+      packet and record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.1 — persistence identity
+      during handoff".
+- [x] S4.1a Deferred-save completion failure policy: a persistently failing workspace completion must not
+      hold the persistence queue. **DONE 2026-09-26 (raised by this task's fixture work; decided as
+      DEC-091).** The completion failure branch used to requeue the item **at the queue head**, so a
+      deterministic failing step retried forever: every other item waited behind it and
+      `hasDeferredSaveWork()` stayed true — refusing the save-new-set pre-flight and making the read-only
+      slot-payload observation answer `busy` for the rest of the boot. It now reports the failure once
+      (`PERS,result,...,failed`, `failedAtMs`) and discharges the item into the queue's terminal tombstone,
+      leaving the per-slot dirty set for the next save trigger. Fixture
+      `test_f4_a_failed_completion_is_discharged_and_releases_the_queue` in `test_storage_drain_restore`
+      (fault held through the assertion window) asserts the discharge, the reported failure, the guard
+      clearing and staying clear, the preserved dirty set and the completing retry; **red-proved** by
+      restoring the front-requeue (*"Expected 0 Was 1. the failed completion must be discharged … queue=1"*),
+      and a **false green in the fixture's first cut is recorded** (a single-turn fault self-heals on the
+      retry, which is what the requeue is for). The S2b.7 parked-instance drain fixture was **re-premised**
+      on the drain's ownership transfer (its progress-counter oracle needed the removed spin) and pins the
+      corrected `Failed` verdict for the mixed failed-save/gated-restore shape. RAM1: `code 392,360 /
+      padding 856`, byte-identical — the withdrawn named queue API cost 256 B of ITCM and was dropped rather
+      than widening the floor. **Device evidence owed:** this is an SD fault path and no device fault
+      injection exists for it; the behavior is host-verified only. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "F4 — a failed workspace completion is discharged".
 - [ ] S4.2 Generation-mismatched release rejected and reported (native fixture reproducing the
       A-releases / C-reuses / late-A-cleanup sequence).
       **PARTIAL 2026-09-25 — the finalization identity is generation-qualified; the lease's own

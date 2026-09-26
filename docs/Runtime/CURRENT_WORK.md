@@ -1,5 +1,82 @@
 # Current work (implementation scope)
 
+**2026-09-26 — F4 / DEC-091: a failed workspace completion is discharged, not retried at the queue head.**
+Firmware change, found while building the S4.1 persistence fixture. A persistent failure in the workspace
+completion (`patchLastActiveUnix`, the bundle CRC refresh, `workspace.bin`) requeued the `FinalizeWorkspace`
+item **at the queue head**; since those sub-steps are deterministic the retry could never succeed, so every
+other persistence item waited behind it and `hasDeferredSaveWork()` stayed true for the rest of the boot —
+which refuses the save-new-set pre-flight and makes the read-only slot-payload observation answer `busy`
+(`LibraryObservationSession`). The failure is now **terminal**: `abandonPersistenceWorkItem`
+(FLASH-resident) reports it once (`PERS,result,…,"failed"`, `failedAtMs`) and lands the item in the queue's
+existing tombstone via `markItemPersisted`, leaving the per-slot dirty set — the retry the persistence
+contract names. Fixture `test_f4_a_failed_completion_is_discharged_and_releases_the_queue`
+(`test_storage_drain_restore`) holds the card in write-refusal through the whole assertion window and asserts
+the discharge, the reported failure, the guard clearing **and staying clear**, the preserved dirty set, and
+the completing retry; **red-proved** by restoring the front-requeue (*Expected 0 Was 1 … queue=1*), with a
+**false green in the fixture's first cut recorded** (a single-turn fault self-heals on the retry, which is
+what the requeue is for). **RAM1:** `code 392,360 / padding 856`, byte-identical — the named queue API the
+first cut added cost 256 B of ITCM and was **withdrawn rather than widening the floor**. **Two consequences
+recorded rather than hidden:** the blocking drain now reports `Failed` instead of
+`TemporarilyBlocked/waiting_commit_gate` in the mixed shape where the completion fails *and* a restore is
+commit-gated (the S2b.7 parked-instance fixture was re-premised on the drain's ownership transfer and pins
+the corrected verdict), and the same front-requeue shape remains for **body/bundle** item failures where the
+retry is the content-durability intent (a separate decision). Focused 15/15; full native **2,469 passed /
+7 skipped**; capture-serial SUCCESS. **Device evidence owed:** an SD fault path with no fault injection.
+Record: [`ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ "F4 — a failed workspace completion is discharged"; decision: `DEC-091`.
+
+
+
+**2026-09-26 — S4.1 working-set lease release on a same-track switch: verified, no firmware change.** The
+last behavior leg of S4.1. Three fixtures in `test_runtime_working_set_ownership` (23/23) drive the
+production switch commit (`TrackManager::finalizeCaptureAndSelectSlot` → `Track::resetPlaybackStateForSlot`
+→ `invalidatePlaybackMergedMidiEvents` → `releaseEligiblePlaybackRuntimeSlots` → `releaseSlot(slot,
+generation)`): the retired slot is released with its generation advanced and its pre-switch identity
+consumed while a live-owner-protected sibling is untouched (control: retire, switch back, the other slot
+goes); a live finalization refuses the release (`noLiveOwnerForSlot` false, `releaseSlot` → `RefusedBusy`,
+lease and generation unchanged) while the switch still commits (an admitted stop does not hold the active
+slot); and after the production grain retires the stop, the **next** same-track switch releases the retired
+slot. **Two corrections:** (1) the route that releases it is *not* the retirement —
+`TrackPreparedStopCommit::completeDeferredCleanup` clears `captureStopOwner` and arms the *capacity* marker
+but releases no working set, so the next playback reset does it; (2) the earlier "needs an emission" clause
+was stale: `DIAG,ws_release,<slot>,<generation>,<outcome>` already exists and is Tier-A (`bbedfeac`).
+**Red-proved in three stages:** predicate-only (case A fails, B/C survive on `reset()`'s own refusal),
+predicate + refusal (case B fails *Expected 6 Was 1 … RefusedBusy*, plus four pre-existing fixtures), and
+also the track-level early return (case C fails) — the live-finalization protection is **triple-layered**.
+`src/` untouched; focused 23/23; full native **2,468 passed / 7 skipped**; capture-serial SUCCESS,
+`padding 856` (floor 840). S4.1 is **checked**, with its device leg recorded as an evidence obligation: the
+lease-release row has an emission and needs a run + oracle, not instrumentation. Record:
+[`ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ "S4.1 — working-set lease release on a same-track slot switch".
+
+
+
+**2026-09-26 — S4.1 persistence identity during handoff: CLOSED AS VERIFIED, no firmware change.** The
+`DeferredSaveJobStages` footer read that S4.1 carried as a possible defect is the **contract**: the footer
+records the workspace focus at **footer-write time**, while the interval's slot stays the **content**
+identity (its body is a `LoopPersist` item keyed by `(track, slot)`, cleared only by its own token-verified
+write; the bundle rename is the publish point). Four cases in `test_storage_drain_restore` drive the real
+deferred worker paused with the footer due and unwritten (`stage == Footer`, `footerWriteStage ==
+SelectedTrack`, cursor 0), an A→B handoff through `TrackManager::setSelectedSlotIndex(..., SyncPlayback::Yes)`,
+then a reload through `StorageManager::loadCurrentWorkspaceFromSd`: A's and B's content, loop identities and
+the **restored focus** are asserted per slot, with a no-switch control (restores A), a handoff *after* the
+footer was written (the selection route's own requeue lands it), and an SD write fault at the footer
+(nothing published — the durable bundle stays byte-identical — and the retry lands the handoff).
+**Red-proved** by pinning the footer's two reads to the interval's slot: the three handoff cases fail on the
+restored focus (`restored active=1 selected=1 (expected 3)`) while the control passes. The first red-proof
+attempt was a **false green** and is recorded: pinning only `Slot`-keyed writes left the handoff's own
+requeued `WorkspaceFooter` write reading live state, which repaired the footer — a real robustness property
+of the route. `src/` is untouched (`git diff` empty); full native **2,465 passed / 7 skipped**;
+capture-serial SUCCESS, `padding 856` (floor 840). Recorded as **DEC-090**; packet:
+[`ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ "S4.1 — persistence identity during handoff". **Still open in S4.1:** the working-set **lease** release on
+a same-track slot switch (assert it by name; the emission is a separate decision) — named as the next slice
+in [NEXT-STEPS.md](../../openspec/changes/runtime-working-set-ownership/NEXT-STEPS.md), together with a
+newly found `FinalizeWorkspace` retry-policy question (a persistently failing completion retries at the
+queue head and blocks the queue behind it; observed while building this fixture, not fixed here).
+
+
+
 **2026-09-26 — approved load-time undo implemented; host recovery passes.**
 DEC-088 — load-time undo reconstruction supersedes the earlier zero-after-load
 policy. All 122 actions derive from saved passes on load/reload with empty undo

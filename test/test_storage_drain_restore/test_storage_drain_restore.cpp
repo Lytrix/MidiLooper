@@ -25,6 +25,7 @@ bool sequencerRunning = false;
 // The stub surface: physical outputs and unrelated domain routes stay fail-closed or observable.
 // This suite links the real load path, which defines the two loop-slot-payload functions, so it opts
 // out of those stubs.
+#define HARNESS_LINKS_REAL_STOP_TELEMETRY
 #include "../test_storage_manager_load/load_harness_stubs.h"
 #include "drain_harness_stubs.h"
 #include "../test_storage_manager_load/load_and_restore_harness.h"
@@ -91,6 +92,13 @@ bool sequencerRunning = false;
 #include "../../src/StorageManager/LoadLoopJob.cpp"
 #include "../../src/Loop/LoopPendingNoteChange.cpp"
 #include "../../src/TrackManager/TrackManagerSlotMatrix.cpp"
+// S4.1 persistence-identity fixture: the production slot-keyed persistence admission
+// (`requestLoopSlotPersistAndSaveState`) and the stop-telemetry identity resolution live in this TU, so
+// the fixture admits persistence through the same entry a capture stop uses rather than restating it.
+#include "../../src/Track/TrackStopTelemetryColdHelpers.cpp"
+// S4.1 persistence-identity fixture: the slot move's enabled-set helper, so the focus move's own
+// selection step is the production one rather than a hand-poked flag.
+#include "../../src/TrackManager/TrackManagerInternalHelpers.cpp"
 #include "../../src/StorageManager/LoopSlotRestoreQueue.cpp"
 // The runtime's own explicit-request / background-fill entry points live beside the SD boot load, not
 // in the load-job TU: without them the suite could only reach the queue through internal helpers.
@@ -442,8 +450,17 @@ void test_s2b7_the_drain_advances_the_restore_to_completion_where_the_gate_admit
 }
 
 /// **S2b.7 (D4 point 1, parked instance):** a parked job keeps its session, so the drain's wait can
-/// outlive the active instance. With the session held by the **parked** instance alone the drain must
-/// still service it rather than leave it stranded.
+/// outlive the active instance. With the session held by the **parked** instance alone the drain must still
+/// service it rather than leave it stranded.
+///
+/// **DEC-091 changed what this case can observe, and the replacement is the direct form of the same claim.**
+/// The old oracle was the restore-progress counter advancing, which needed the drain to loop many times --
+/// and it looped only because the owed save was re-queued at the head after every failed completion. That
+/// failure policy is gone (a failed completion is discharged), so the drain now services the parked
+/// instance for the single frame its episode has, and that frame performs the **ownership transfer**:
+/// asserted here by probe (the parked instance becomes active and owns the request) instead of by a counter
+/// that a second frame would have moved. The request must still be owed afterwards -- serviced, not
+/// consumed or dropped.
 void test_s2b7_the_drain_services_a_parked_instance_holding_the_session() {
   resetLoadSubsystemForS2b7();
   RestoreHarness::setRuntimeTransportIdle();
@@ -453,45 +470,74 @@ void test_s2b7_the_drain_services_a_parked_instance_holding_the_session() {
   // Force the stall shape D4 point 1 names: the only live instance is the parked one.
   StorageManagerInternal::parkActiveLoadLoopJob();
   const bool sessionHeld = StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd();
-  const uint32_t progressBefore = StorageManagerInternal::restoreProgressCounter();
+  bool parkedBefore = false;
+  uint8_t parkedBeforeTrack = 0, parkedBeforeSlot = 0, parkedBeforePhase = 0;
+  StorageManager::probeParkedLoadLoopJob(parkedBefore, parkedBeforeTrack, parkedBeforeSlot,
+                                         parkedBeforePhase);
   storageSession.currentWorkspaceSave.pending = true;
 
   const SyncDrainResult result =
       StorageManagerInternal::drainPersistenceWorkBlockingDetailed(looperState.getLooperState());
 
-  char message[320];
+  bool activeAfter = false;
+  uint8_t activeTrack = 0, activeSlot = 0, activePhase = 0, activeFocus = 0;
+  StorageManager::probeActiveLoadLoopJob(activeAfter, activeTrack, activeSlot, activePhase,
+                                         activeFocus);
+  bool parkedAfter = false;
+  uint8_t parkedTrack = 0, parkedSlot = 0, parkedPhase = 0;
+  StorageManager::probeParkedLoadLoopJob(parkedAfter, parkedTrack, parkedSlot, parkedPhase);
+
+  char transferMessage[320];
+  snprintf(transferMessage, sizeof(transferMessage),
+           "before parked=%d %u/%u; after active=%d %u/%u ph=%u parked=%d %u/%u",
+           parkedBefore ? 1 : 0, static_cast<unsigned>(parkedBeforeTrack),
+           static_cast<unsigned>(parkedBeforeSlot), activeAfter ? 1 : 0,
+           static_cast<unsigned>(activeTrack), static_cast<unsigned>(activeSlot),
+           static_cast<unsigned>(activePhase), parkedAfter ? 1 : 0,
+           static_cast<unsigned>(parkedTrack), static_cast<unsigned>(parkedSlot));
+
+  char message[512];
   snprintf(message, sizeof(message),
-           "held=%d active=%d any=%d outcome=%d reason=%s progress=%u->%u save_owed=%d",
-           sessionHeld ? 1 : 0, StorageManagerInternal::isActiveLoadLoopJobRunning() ? 1 : 0,
+           "held=%d active=%d any=%d outcome=%d reason=%s save_owed=%d | %s", sessionHeld ? 1 : 0,
+           StorageManagerInternal::isActiveLoadLoopJobRunning() ? 1 : 0,
            StorageManagerInternal::anyLoadLoopJobActive() ? 1 : 0,
            static_cast<int>(result.outcome), result.reason,
-           static_cast<unsigned>(progressBefore),
-           static_cast<unsigned>(StorageManagerInternal::restoreProgressCounter()),
-           storageSession.currentWorkspaceSave.pending ? 1 : 0);
-  char diag[320];
-  snprintf(diag, sizeof(diag), "held=%d outcome=%d reason=%s committed=%d save_owed=%d progress=%u",
+           storageSession.currentWorkspaceSave.pending ? 1 : 0, transferMessage);
+  char diag[512];
+  snprintf(diag, sizeof(diag),
+           "held=%d outcome=%d reason=%s committed=%d save_owed=%d owned=%d",
            sessionHeld ? 1 : 0, static_cast<int>(result.outcome), result.reason,
            trackManager.getTrack(3).getLoop(2).hasCommittedPasses() ? 1 : 0,
            storageSession.currentWorkspaceSave.pending ? 1 : 0,
-           static_cast<unsigned>(StorageManagerInternal::restoreProgressCounter()));
+           StorageManagerInternal::anyLoadLoopJobActive() ? 1 : 0);
+
   TEST_ASSERT_TRUE_MESSAGE(sessionHeld, "the parked instance must be holding the SD session");
+  TEST_ASSERT_TRUE_MESSAGE(parkedBefore && parkedBeforeTrack == 3 && parkedBeforeSlot == 2,
+                           transferMessage);
+  // The drain serviced it: the parked instance was promoted and now owns the request.
+  TEST_ASSERT_FALSE_MESSAGE(parkedAfter,
+                            "the drain must take the parked instance into service, not leave it parked");
+  TEST_ASSERT_TRUE_MESSAGE(activeAfter && activeTrack == 3 && activeSlot == 2, transferMessage);
+  // Serviced does not mean consumed: the request is still owed, and it published nothing while the global
+  // commit gate (another track playing) denies.
   TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::anyLoadLoopJobActive(),
-                           "the fixture must leave the parked instance live");
-  TEST_ASSERT_GREATER_THAN_MESSAGE(
-      progressBefore, StorageManagerInternal::restoreProgressCounter(),
-      "the drain must service the parked instance holding the session, not leave it stranded");
-  // The commit gate still denies, so the parked request must not publish. The **save** is deliberately
-  // not asserted as owed here: the drain raises the urgent-save priority, and
-  // `shouldPrioritizeWorkspaceSaveDrain()` may then discharge the save while the restore stays
-  // commit-gated -- the same shape as the archived A3.7 shape (b) device run (`captures/a37fix-04/`).
-  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(SyncDrainOutcome::TemporarilyBlocked),
-                                static_cast<int>(result.outcome), diag);
-  TEST_ASSERT_EQUAL_STRING_MESSAGE("waiting_commit_gate", result.reason,
-                                   "the parked request's named wait must be reported");
+                           "the drain must leave the request owned, not dropped");
   TEST_ASSERT_FALSE_MESSAGE(trackManager.getTrack(3).getLoop(2).hasCommittedPasses(),
                             "the commit gate must not be bypassed for a parked request either");
-  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(SyncDrainOutcome::TemporarilyBlocked),
+  // **The verdict is `Failed`, not `TemporarilyBlocked/waiting_commit_gate`, and DEC-091 is why.** This
+  // minimal fixture has no valid workspace to complete, so the owed save genuinely fails; previously the
+  // drain never reached that step -- it spun on the re-queued completion and broke out on the commit gate
+  // first, reporting the gate's wait. A failed save must be reported as failed rather than masked by the
+  // restore's wait (the *blocked* shape keeps its named wait in the active-instance sibling above, which
+  // still passes), so this case pins the corrected priority.
+  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(SyncDrainOutcome::Failed),
                                 static_cast<int>(result.outcome), message);
+  TEST_ASSERT_FALSE_MESSAGE(storageSession.currentWorkspaceSave.lastCompletedOk,
+                            "the drain must not report success for a save it could not complete");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("none", result.reason,
+                                   "the failed save is the outcome; no wait masks it");
+  TEST_ASSERT_FALSE_MESSAGE(storageSession.currentWorkspaceSave.pending,
+                            "the failed completion must be discharged, not left owed");
 }
 
 /// **S2b.7 control:** once the restore releases the SD session, the *same* drain is no longer gated by
@@ -535,6 +581,626 @@ void test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session
   TEST_ASSERT_FALSE_MESSAGE(strcmp(result.reason, "unexplained") == 0, message);
 }
 
+// ---------------------------------------------------------------------------
+// S4.1 — persistence identity during handoff: what the workspace footer records, and **when**.
+//
+// S4.1's release acceptance is the A/B/C device run; this section closes the half of S4.1 that is a
+// **persistence** question rather than a release one (the `DeferredSaveJobStages` footer read carried in
+// the task's remainder, and [NEXT-STEPS.md](../../openspec/changes/runtime-working-set-ownership/NEXT-STEPS.md)
+// § "Recommended next native slice"). The footer stage writes each track's `activeLoopIndex` and
+// `selectedSlotIndex` from **live** state at footer-write time
+// (`trackManager.getActiveLoopIndex(footerTrackCursor)`), while the loop bodies are written under the
+// **interval's** slot identity. These cases answer, with the real deferred worker and the real loader,
+// whether those two identities disagree in a way the persisted image cannot represent:
+//
+//   * PAUSE the real worker with the footer DUE but not yet emitted (`stage == Footer`,
+//     `footerWriteStage == SelectedTrack`, `footerTrackCursor == 0`). The driver simply stops calling
+//     `processDeferredSaveState`, so no test-only owner or hook is added to production code;
+//   * perform the A -> B handoff through the production manager route
+//     (`TrackManager::setSelectedSlotIndex(..., SyncPlayback::Yes)`), the move a slot gesture makes;
+//   * resume the worker and RELOAD through `StorageManager::loadCurrentWorkspaceFromSd`, then drain the
+//     restore it queues with the production load-service turns.
+//
+// The oracle keeps the two identities distinct, which is the contract's own distinction:
+// **content identity** is the interval's slot (A's body lands under A's id and nowhere else), and
+// **workspace focus** is the selection at footer-write time (B, because the footer is written *after*
+// the handoff -- not A, the interval whose capture-stop admission owed the save). The no-switch control
+// restores A, so "B" cannot pass by construction, and the failure case proves a failed footer write never
+// publishes a torn image.
+// ---------------------------------------------------------------------------
+
+namespace S41Footer {
+
+constexpr uint8_t kTrack = 0;
+/// The interval whose slot-keyed persistence admission owes the save (the stop's own admission shape).
+constexpr uint8_t kSlotA = 1;
+/// The successor the handoff moves the workspace focus to.
+constexpr uint8_t kSlotB = 3;
+/// A slot the fixture parks the focus on before moving it to A: the production selection route returns
+/// early when the selection already **is** the target, so a case that started there would owe no save.
+constexpr uint8_t kSlotParked = 0;
+constexpr uint8_t kNoteA = 60;
+constexpr uint8_t kNoteB = 67;
+constexpr uint32_t kSeedLoopLengthTicks = 768;
+/// Generous bound: reaching the footer costs one slice per header/meta field (~250 on this geometry), and
+/// a bounded wait is what keeps a stalled worker a failure instead of a hang.
+constexpr uint32_t kTurnBudget = 4096;
+
+/// The loop identity the production payload builder stamps for `(track, slot)`. Distinct per slot, which
+/// is what makes a slot-keyed mix-up visible in the restored content.
+inline LoopId seededLoopId(uint8_t trackIndex, uint8_t slotIndex) {
+  return 1000u + static_cast<uint32_t>(trackIndex) * 16u + slotIndex;
+}
+
+/// The fixture's read of the workspace focus, through the same production accessors the runtime uses.
+struct WorkspaceFocus {
+  uint8_t selectedTrack = 0xFF;
+  uint8_t active[Config::NUM_TRACKS] = {};
+  uint8_t selected[Config::NUM_TRACKS] = {};
+};
+
+inline WorkspaceFocus readWorkspaceFocus() {
+  WorkspaceFocus focus;
+  focus.selectedTrack = trackManager.getSelectedTrackIndex();
+  for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+    focus.active[t] = trackManager.getActiveLoopIndex(t);
+    focus.selected[t] = trackManager.getSelectedSlotIndex(t);
+  }
+  return focus;
+}
+
+inline bool focusOnTrackIs(const WorkspaceFocus& focus, uint8_t track, uint8_t slot) {
+  return focus.selectedTrack == track && focus.active[track] == slot &&
+         focus.selected[track] == slot;
+}
+
+/// True when the owed save is down to its **completion**: the bundle is on the card, nothing is queued or
+/// writing, and the save is still owed. This is the observable pause point an injected card fault needs to
+/// land in the completion's own first sub-step -- the completion is admitted *and* stepped inside one
+/// scheduler slice, so "queued but not yet writing" is never observable in the healthy path.
+inline bool workspaceCompletionIsNext() {
+  return !storageSession.persistenceWorkItem.itemActive &&
+         PersistenceWorkQueue::writingWorkItemCount() == 0 &&
+         PersistenceWorkQueue::queueDepth() == 0 &&
+         storageSession.currentWorkspaceSave.pending &&
+         !StorageManagerInternal::workspaceFooterPersistDeferred &&
+         SD.exists(CurrentSetStorage::kCurrentRuntimeBundlePath);
+}
+
+/// One production scheduler turn -- the same entry `main.cpp` calls after MIDI/clock/playback servicing.
+inline void workerTurn() {
+  StorageManager::processDeferredSaveState(looperState.getLooperState());
+}
+
+/// Drive production turns until `stop` reports true. Returns the turns run; the caller asserts against
+/// `kTurnBudget` so a worker that never reaches the state fails rather than hangs.
+template <typename StopPredicate>
+inline uint32_t driveTurnsUntil(uint32_t maxTurns, StopPredicate stop) {
+  uint32_t turns = 0;
+  for (; turns < maxTurns; ++turns) {
+    if (stop()) break;
+    workerTurn();
+  }
+  return turns;
+}
+
+/// The pause point this section is built on: the worker owes the footer and has emitted none of it.
+inline bool workspaceFooterIsDue() {
+  return storageSession.currentWorkspaceSave.stage == DeferredSaveStage::Footer &&
+         storageSession.currentWorkspaceSave.footerWriteStage ==
+             DeferredFooterWriteStage::SelectedTrack &&
+         storageSession.currentWorkspaceSave.footerTrackCursor == 0;
+}
+
+/// The worker has nothing left owed: no pending save, no queued/writing item, and no deferred footer
+/// request left over from a focus change.
+inline bool workerIsIdle() {
+  return !StorageManagerInternal::hasPersistenceWorkPending() &&
+         !StorageManagerInternal::workspaceFooterPersistDeferred;
+}
+
+inline uint32_t driveWorkerToIdle() {
+  return driveTurnsUntil(kTurnBudget, workerIsIdle);
+}
+
+/// One line naming every gate the worker can be parked behind, for a bounded-wait failure message. A
+/// "nothing happened" failure must say which gate denied.
+inline void formatWorkerState(char* out, size_t outSize) {
+  snprintf(out, outSize,
+           "stage=%u footerStage=%u cursor=%u pending=%u footerDeferred=%u queue=%u writing=%u "
+           "itemActive=%u captureActive=%u recording=%u armedOrQueued=%u holdoff=%u slotLoad=%u "
+           "completedOk=%u bundle=%u temp=%u",
+           static_cast<unsigned>(storageSession.currentWorkspaceSave.stage),
+           static_cast<unsigned>(storageSession.currentWorkspaceSave.footerWriteStage),
+           static_cast<unsigned>(storageSession.currentWorkspaceSave.footerTrackCursor),
+           storageSession.currentWorkspaceSave.pending ? 1u : 0u,
+           StorageManagerInternal::workspaceFooterPersistDeferred ? 1u : 0u,
+           static_cast<unsigned>(PersistenceWorkQueue::queueDepth()),
+           static_cast<unsigned>(PersistenceWorkQueue::writingWorkItemCount()),
+           storageSession.persistenceWorkItem.itemActive ? 1u : 0u,
+           StorageManagerInternal::isCaptureActiveForPersistence() ? 1u : 0u,
+           StorageManagerInternal::isCaptureRecordingForPersistence() ? 1u : 0u,
+           StorageManagerInternal::anyTrackArmedOrPendingRecordForPersistence() ? 1u : 0u,
+           StorageManagerInternal::deferredSaveBlockedByPostLoadCommitHoldoff() ? 1u : 0u,
+           StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd() ? 1u : 0u,
+           storageSession.currentWorkspaceSave.lastCompletedOk ? 1u : 0u,
+           SD.exists(CurrentSetStorage::kCurrentRuntimeBundlePath) ? 1u : 0u,
+           SD.exists(CurrentSetStorage::kCurrentMetaTempPath) ? 1u : 0u);
+}
+
+/// Whether the slot's committed pass rows contain a note-on for `note` -- the same read the firmware's
+/// own content dump makes, so the assertion is on recorded content rather than on a live capture store.
+inline bool committedSlotHasNote(Track& track, uint8_t slot, uint8_t note) {
+  Loop& loop = track.getLoop(slot);
+  MidiEventVec rows;
+  auto holdsNote = [&rows, note]() {
+    for (const auto& e : rows) {
+      if (static_cast<unsigned>(e.type) == 144u && e.data.noteData.note == note &&
+          e.data.noteData.velocity > 0) {
+        return true;
+      }
+    }
+    return false;
+  };
+  LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds, rows);
+  if (holdsNote()) return true;
+  for (size_t i = 0; i < loop.passes.overdubPasses.size(); ++i) {
+    rows.clear();
+    LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses[i].committedChunkIds, rows);
+    if (holdsNote()) return true;
+  }
+  return false;
+}
+
+/// Drop what a previous case owed and start this one from a known persistence state. The load subsystem
+/// reset is the S2b.7 one (it is the same load/restore state these cases queue through).
+inline void resetPersistenceSessionForS41() {
+  resetLoadSubsystemForS2b7();
+  // Drop what an earlier case owed rather than draining it: a leftover `FinalizeWorkspace` entry outlives
+  // the image it was admitted against, so it would sit at the queue head failing forever (the completion
+  // step patches `runtime.bundle.bin`, which a fresh case has not written yet).
+  StorageManagerInternal::resetDeferredSaveJobState();
+  StorageManagerInternal::resetPersistenceWorkItemJobState();
+  PersistenceWorkQueue::resetForTests();
+  StorageManagerInternal::resetRevisionCommitJobState();
+  StorageManagerInternal::resetRevisionLoadJobState();
+  storageSession.revisionCommit.pending = false;
+  storageSession.revisionCommit.inProgress = false;
+  storageSession.revisionLoad.pending = false;
+  storageSession.revisionLoad.inProgress = false;
+  storageSession.bootRecovery.pending = false;
+  storageSession.currentWorkspaceSave.pending = false;
+  storageSession.currentWorkspaceSave.urgentRequested = false;
+  storageSession.currentWorkspaceSave.deferDispatchUntilMs = 0;
+  StorageManagerInternal::workspaceFooterPersistDeferred = false;
+  StorageManagerInternal::armPostLoadCommitSaveHoldoff(0);
+}
+
+/// Two committed slots on the focus track, seeded through the production payload writer and the
+/// production deferred-restore service. Their notes and loop identities differ, so a slot-keyed mix-up
+/// anywhere in the save/load path is visible in the assertions.
+inline void seedTwoCommittedSlots() {
+  trackManager.setSelectedTrack(kTrack);
+  TEST_ASSERT_TRUE_MESSAGE(RestoreHarness::writePayloadWithOneNoteToSd(kTrack, kSlotA, kNoteA),
+                           "the fixture needs slot A's payload built by the production writer");
+  TEST_ASSERT_TRUE_MESSAGE(RestoreHarness::writePayloadWithOneNoteToSd(kTrack, kSlotB, kNoteB),
+                           "the fixture needs slot B's payload built by the production writer");
+  RestoreHarness::armRestoreRequestThroughProductionQueue(kTrack, kSlotA);
+  RestoreHarness::armRestoreRequestThroughProductionQueue(kTrack, kSlotB);
+  RestoreHarness::runLoadServiceTurns(128, RestoreHarness::restoreWorkIdle);
+
+  Track& track = trackManager.getTrack(kTrack);
+  TEST_ASSERT_TRUE_MESSAGE(track.getLoop(kSlotA).hasCommittedPasses(),
+                           "slot A must hold committed content before the handoff");
+  TEST_ASSERT_TRUE_MESSAGE(track.getLoop(kSlotB).hasCommittedPasses(),
+                           "slot B must hold committed content before the handoff");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kSeedLoopLengthTicks, track.getLoop(kSlotA).loopLengthTicks,
+                                   "slot A must carry the seeded loop length");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kSeedLoopLengthTicks, track.getLoop(kSlotB).loopLengthTicks,
+                                   "slot B must carry the seeded loop length");
+
+  // The restore's commit arms the finite post-load save holdoff; advance the fixture clock past it so the
+  // deferred worker is not parked by the *previous* load's own grace period.
+  nativeMillisAdvance(LoadLoopBudget::PostLoadCommitSaveHoldoffMs + 1u);
+}
+
+/// Put the workspace focus on slot A through the production selection route and let the worker land it,
+/// so the card holds a complete, durable image whose focus is A before the case starts.
+inline void establishDurableFocusOnA() {
+  if (trackManager.getSelectedSlotIndex(kTrack) == kSlotA) {
+    trackManager.setSelectedSlotIndex(kTrack, kSlotParked, SyncPlayback::Yes);
+    (void)driveWorkerToIdle();
+  }
+  trackManager.setSelectedSlotIndex(kTrack, kSlotA, SyncPlayback::Yes);
+  TEST_ASSERT_TRUE_MESSAGE(focusOnTrackIs(readWorkspaceFocus(), kTrack, kSlotA),
+                           "the production slot-move route must put the runtime focus on A");
+  const uint32_t turns = driveWorkerToIdle();
+  char state[512];
+  formatWorkerState(state, sizeof(state));
+  char message[640];
+  snprintf(message, sizeof(message),
+           "the focus move's own persist request must discharge within the turn budget (turns=%u %s)",
+           static_cast<unsigned>(turns), state);
+  TEST_ASSERT_TRUE_MESSAGE(workerIsIdle(), message);
+  // `workerIsIdle()` alone is satisfied by a save that **failed and dropped** its obligation, so the
+  // precondition also names the completion: the durable image must exist and have been written ok.
+  TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.lastCompletedOk,
+                           "the durable image must be a completed save, not an idle failed one");
+  TEST_ASSERT_TRUE_MESSAGE(SD.exists(CurrentSetStorage::kCurrentRuntimeBundlePath),
+                           "the durable image must leave a runtime bundle on the card");
+}
+
+/// The slot-keyed persistence admission a capture stop performs, through the production composite
+/// itself: `Track::requestLoopSlotPersist` (`markLoopSlotMaterialDirty` + `admitLoopSlotPersist`) plus the
+/// owed save. `UINT32_MAX` is the "no stop-path heap sample" admission the current-heap gate then serves.
+inline void admitSlotKeyedPersistForA() {
+  requestLoopSlotPersistAndSaveState(trackManager.getTrack(kTrack), kSlotA, UINT32_MAX);
+}
+
+/// Reload the workspace from the card and drive the restore it queues, then report what the card held.
+inline void reloadWorkspaceFromCard() {
+  TEST_ASSERT_TRUE_MESSAGE(StorageManager::loadCurrentWorkspaceFromSd(looperState.getLooperState()),
+                           "the persisted workspace must reload from the card");
+  // The boot playback set is the per-track union of the footer's active and selected slots, so only the
+  // persisted focus is restored by the load itself. The slot the footer did **not** name is read back
+  // through the runtime's own focus request -- the same entry the selection path uses -- so both slots'
+  // content is observed through production calls rather than by poking the payload loader.
+  StorageManager::requestLoopSlotRestoreFromSd(kTrack, kSlotA);
+  StorageManager::requestLoopSlotRestoreFromSd(kTrack, kSlotB);
+  RestoreHarness::runLoadServiceTurns(128, RestoreHarness::restoreWorkIdle);
+}
+
+/// Post-reload restore state, for the content assertion's failure message.
+inline void formatRestoreState(char* out, size_t outSize) {
+  DeferredLoopSlotRestore head{};
+  const bool hasHead = peekFirstPendingLoopSlotRestore(head);
+  snprintf(out, outSize,
+           "pending=%u jobActive=%u running=%u session=%u bootDrain=%u seq=%u committed=%u/%u "
+           "payloadRam=%u/%u attempted=%u/%u head=%u/%u",
+           static_cast<unsigned>(StorageManagerInternal::pendingLoopSlotRestoreCount()),
+           StorageManagerInternal::anyLoadLoopJobActive() ? 1u : 0u,
+           StorageManagerInternal::isActiveLoadLoopJobRunning() ? 1u : 0u,
+           SlotLoadSession::isActive() ? 1u : 0u,
+           StorageManagerInternal::getBootTitleLoadDrain() ? 1u : 0u,
+           sequencerRunning ? 1u : 0u,
+           trackManager.getTrack(kTrack).getLoop(kSlotA).hasCommittedPasses() ? 1u : 0u,
+           trackManager.getTrack(kTrack).getLoop(kSlotB).hasCommittedPasses() ? 1u : 0u,
+           StorageManager::hasLoopSlotPayloadOnSdInRam(kTrack, kSlotA) ? 1u : 0u,
+           StorageManager::hasLoopSlotPayloadOnSdInRam(kTrack, kSlotB) ? 1u : 0u,
+           StorageManagerInternal::isLoopSlotRestoreAttempted(kTrack, kSlotA) ? 1u : 0u,
+           StorageManagerInternal::isLoopSlotRestoreAttempted(kTrack, kSlotB) ? 1u : 0u,
+           hasHead ? static_cast<unsigned>(head.track) : 255u,
+           hasHead ? static_cast<unsigned>(head.slot) : 255u);
+}
+
+/// The content/identity half of the oracle: each slot still holds **its own** loop identity and note.
+inline void assertSlotContentSurvived(uint8_t slot, uint8_t note, const char* label) {
+  Track& track = trackManager.getTrack(kTrack);
+  char message[512];
+  char restoreState[256];
+  formatRestoreState(restoreState, sizeof(restoreState));
+  snprintf(message, sizeof(message),
+           "%s: committed=%u length=%lu loopId=%lu | %s", label,
+           track.getLoop(slot).hasCommittedPasses() ? 1u : 0u,
+           static_cast<unsigned long>(track.getLoop(slot).loopLengthTicks),
+           static_cast<unsigned long>(track.getLoop(slot).loopId), restoreState);
+  TEST_ASSERT_TRUE_MESSAGE(track.getLoop(slot).hasCommittedPasses(), message);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kSeedLoopLengthTicks, track.getLoop(slot).loopLengthTicks, message);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(seededLoopId(kTrack, slot),
+                                   static_cast<uint32_t>(track.getLoop(slot).loopId), message);
+  TEST_ASSERT_TRUE_MESSAGE(committedSlotHasNote(track, slot, note), message);
+  const uint8_t otherNote = (note == kNoteA) ? kNoteB : kNoteA;
+  TEST_ASSERT_FALSE_MESSAGE(committedSlotHasNote(track, slot, otherNote),
+                            "a slot must not carry the other slot's content");
+}
+
+/// The focus half of the oracle, with A and B named apart so a constant answer cannot pass.
+inline void assertRestoredFocusIs(uint8_t expectedSlot, const char* label) {
+  const WorkspaceFocus focus = readWorkspaceFocus();
+  char message[224];
+  snprintf(message, sizeof(message),
+           "%s: restored selectedTrack=%u active=%u selected=%u (expected track %u slot %u)", label,
+           static_cast<unsigned>(focus.selectedTrack), static_cast<unsigned>(focus.active[kTrack]),
+           static_cast<unsigned>(focus.selected[kTrack]), static_cast<unsigned>(kTrack),
+           static_cast<unsigned>(expectedSlot));
+  TEST_ASSERT_TRUE_MESSAGE(focusOnTrackIs(focus, kTrack, expectedSlot), message);
+}
+
+}  // namespace S41Footer
+
+/// **S4.1 / persist-1: the footer records the workspace focus at footer-write time.**
+///
+/// The worker is paused with A's stop-shaped, slot-keyed persistence admitted and the footer due but
+/// unwritten. The A -> B handoff then happens through the production manager route, and the worker
+/// resumes. The persisted image must keep the two identities apart: A's body under A's loop identity
+/// (the interval that owed the save), and the **focus** on B (the selection when the footer was written).
+/// The interval's own slot (A) is the counterexample this case rejects, which is the mechanical
+/// substitution NEXT-STEPS.md warns against.
+void test_s4_1_the_footer_records_the_focus_at_footer_write_time_not_the_interval_slot() {
+  S41Footer::resetPersistenceSessionForS41();
+  S41Footer::seedTwoCommittedSlots();
+  S41Footer::establishDurableFocusOnA();
+
+  S41Footer::admitSlotKeyedPersistForA();
+  const uint32_t turnsToFooter = S41Footer::driveTurnsUntil(S41Footer::kTurnBudget,
+                                                            S41Footer::workspaceFooterIsDue);
+  char pauseMessage[256];
+  snprintf(pauseMessage, sizeof(pauseMessage),
+           "the worker must reach the footer stage within the turn budget (turns=%u stage=%u footerStage=%u cursor=%u)",
+           static_cast<unsigned>(turnsToFooter),
+           static_cast<unsigned>(storageSession.currentWorkspaceSave.stage),
+           static_cast<unsigned>(storageSession.currentWorkspaceSave.footerWriteStage),
+           static_cast<unsigned>(storageSession.currentWorkspaceSave.footerTrackCursor));
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::workspaceFooterIsDue(), pauseMessage);
+  TEST_ASSERT_TRUE_MESSAGE(SD.exists(CurrentSetStorage::kCurrentMetaTempPath),
+                           "the paused bundle write must hold its temp file");
+  const size_t sizeBeforeFooter = SD.files[CurrentSetStorage::kCurrentMetaTempPath].size();
+
+  // The handoff, through the same route a slot gesture uses (selection + active slot together). The
+  // note-edit session lifecycle the route drives is counted, so "the production route ran" is observed
+  // rather than assumed.
+  const uint32_t slotChangesBefore = DrainHarness::slotChangeNotifications();
+  trackManager.setSelectedSlotIndex(S41Footer::kTrack, S41Footer::kSlotB, SyncPlayback::Yes);
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::focusOnTrackIs(S41Footer::readWorkspaceFocus(), S41Footer::kTrack,
+                                                     S41Footer::kSlotB),
+                           "the production slot move must put the runtime focus on B");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(
+      slotChangesBefore, DrainHarness::slotChangeNotifications(),
+      "the handoff must go through the production slot-move route, not a hand-poked index");
+
+  const uint32_t resumedTurns = S41Footer::driveWorkerToIdle();
+  char state[512];
+  S41Footer::formatWorkerState(state, sizeof(state));
+  char idleMessage[768];
+  snprintf(idleMessage, sizeof(idleMessage),
+           "the worker must discharge the save after the handoff (turns=%u %s)",
+           static_cast<unsigned>(resumedTurns), state);
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::workerIsIdle(), idleMessage);
+  TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.lastCompletedOk,
+                           "the resumed save must complete rather than fail and drop its obligation");
+  TEST_ASSERT_TRUE_MESSAGE(SD.exists(CurrentSetStorage::kCurrentRuntimeBundlePath),
+                           "the completed save must leave a runtime bundle on the card");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(sizeBeforeFooter,
+                                   SD.files[CurrentSetStorage::kCurrentRuntimeBundlePath].size(),
+                                   "the footer must have been appended after the pause point");
+  // The dirty flag is cleared only by a completed, token-verified body write for that slot.
+  TEST_ASSERT_FALSE_MESSAGE(currentSetLoopSlotDirty[S41Footer::kTrack][S41Footer::kSlotA],
+                            "the slot-keyed admission must have been discharged by A's own body write");
+
+  S41Footer::reloadWorkspaceFromCard();
+  S41Footer::assertSlotContentSurvived(S41Footer::kSlotA, S41Footer::kNoteA, "A after handoff");
+  S41Footer::assertSlotContentSurvived(S41Footer::kSlotB, S41Footer::kNoteB, "B after handoff");
+  S41Footer::assertRestoredFocusIs(S41Footer::kSlotB, "focus after a handoff before footer emission");
+}
+
+/// **S4.1 / persist-1 control: without the handoff the same sequence restores A.**
+///
+/// This is what makes the case above discriminating: the assertion is not "the focus is always B", it is
+/// "the restored focus is the selection the footer was written from".
+void test_s4_1_control_the_no_switch_sequence_restores_the_unmoved_focus() {
+  S41Footer::resetPersistenceSessionForS41();
+  S41Footer::seedTwoCommittedSlots();
+  S41Footer::establishDurableFocusOnA();
+
+  S41Footer::admitSlotKeyedPersistForA();
+  (void)S41Footer::driveTurnsUntil(S41Footer::kTurnBudget, S41Footer::workspaceFooterIsDue);
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::workspaceFooterIsDue(),
+                           "the control needs the same pause point as the handoff case");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(S41Footer::kSlotA,
+                                  trackManager.getSelectedSlotIndex(S41Footer::kTrack),
+                                  "the control must not move the focus");
+
+  const uint32_t turns = S41Footer::driveWorkerToIdle();
+  char state[512];
+  S41Footer::formatWorkerState(state, sizeof(state));
+  char idleMessage[768];
+  snprintf(idleMessage, sizeof(idleMessage),
+           "the control's save must discharge within the turn budget (turns=%u %s)",
+           static_cast<unsigned>(turns), state);
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::workerIsIdle(), idleMessage);
+  TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.lastCompletedOk,
+                           "the control's save must complete rather than fail and drop its obligation");
+
+  S41Footer::reloadWorkspaceFromCard();
+  S41Footer::assertSlotContentSurvived(S41Footer::kSlotA, S41Footer::kNoteA, "A without a handoff");
+  S41Footer::assertSlotContentSurvived(S41Footer::kSlotB, S41Footer::kNoteB, "B without a handoff");
+  S41Footer::assertRestoredFocusIs(S41Footer::kSlotA, "focus without a handoff");
+}
+
+/// **S4.1 / persist-2: a handoff after the footer was durably written is still landed.**
+///
+/// The worker is paused once the bundle (footer included) is finalized on the card and the body write is
+/// next. The handoff then happens, so the footer on the card names A and the runtime names B. The
+/// selection route's own `requestWorkspaceFooterPersistWhenSafe` + `requestDeferredSaveState` must
+/// requeue the footer, and the reload must show B -- otherwise a focus change made between two saves is
+/// silently lost.
+void test_s4_1_a_handoff_after_the_footer_was_written_is_requeued_and_lands() {
+  S41Footer::resetPersistenceSessionForS41();
+  S41Footer::seedTwoCommittedSlots();
+  S41Footer::establishDurableFocusOnA();
+
+  S41Footer::admitSlotKeyedPersistForA();
+  // Pause *after* the footer reached the card: the bundle temp has been renamed onto the final path.
+  const uint32_t turns = S41Footer::driveTurnsUntil(
+      S41Footer::kTurnBudget, []() {
+        return SD.exists(CurrentSetStorage::kCurrentRuntimeBundlePath) &&
+               !SD.exists(CurrentSetStorage::kCurrentMetaTempPath);
+      });
+  char pauseMessage[256];
+  snprintf(pauseMessage, sizeof(pauseMessage),
+           "the worker must finalize the bundle (footer included) within the turn budget (turns=%u temp=%u final=%u)",
+           static_cast<unsigned>(turns), SD.exists(CurrentSetStorage::kCurrentMetaTempPath) ? 1u : 0u,
+           SD.exists(CurrentSetStorage::kCurrentRuntimeBundlePath) ? 1u : 0u);
+  TEST_ASSERT_TRUE_MESSAGE(!SD.exists(CurrentSetStorage::kCurrentMetaTempPath), pauseMessage);
+  TEST_ASSERT_TRUE_MESSAGE(SD.exists(CurrentSetStorage::kCurrentRuntimeBundlePath), pauseMessage);
+
+  trackManager.setSelectedSlotIndex(S41Footer::kTrack, S41Footer::kSlotB, SyncPlayback::Yes);
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::focusOnTrackIs(S41Footer::readWorkspaceFocus(), S41Footer::kTrack,
+                                                     S41Footer::kSlotB),
+                           "the production slot move must put the runtime focus on B");
+
+  const uint32_t resumedTurns = S41Footer::driveWorkerToIdle();
+  char state[512];
+  S41Footer::formatWorkerState(state, sizeof(state));
+  char idleMessage[768];
+  snprintf(idleMessage, sizeof(idleMessage),
+           "the handoff after the footer must requeue and discharge persistence (turns=%u %s)",
+           static_cast<unsigned>(resumedTurns), state);
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::workerIsIdle(), idleMessage);
+  TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.lastCompletedOk,
+                           "the requeued write must complete rather than fail and drop its obligation");
+
+  S41Footer::reloadWorkspaceFromCard();
+  S41Footer::assertSlotContentSurvived(S41Footer::kSlotA, S41Footer::kNoteA, "A after late handoff");
+  S41Footer::assertSlotContentSurvived(S41Footer::kSlotB, S41Footer::kNoteB, "B after late handoff");
+  S41Footer::assertRestoredFocusIs(S41Footer::kSlotB, "focus after a handoff past the footer");
+}
+
+/// **S4.1 / persist-3: a failed footer write publishes nothing, and the retry lands the handoff.**
+///
+/// The handoff happens with the card refusing writes, so the aborted bundle must leave the previously
+/// durable image byte-identical (no torn footer, no half-written bundle accepted by the loader). With the
+/// card healthy again, the requeued write must land the post-handoff focus plus both bodies.
+void test_s4_1_a_failed_footer_write_never_publishes_and_the_retry_lands_the_handoff() {
+  S41Footer::resetPersistenceSessionForS41();
+  S41Footer::seedTwoCommittedSlots();
+  S41Footer::establishDurableFocusOnA();
+
+  const std::vector<uint8_t> durableBundle =
+      SD.files[CurrentSetStorage::kCurrentRuntimeBundlePath];
+  TEST_ASSERT_TRUE_MESSAGE(!durableBundle.empty(),
+                           "the case needs the pre-handoff durable image to compare against");
+
+  S41Footer::admitSlotKeyedPersistForA();
+  (void)S41Footer::driveTurnsUntil(S41Footer::kTurnBudget, S41Footer::workspaceFooterIsDue);
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::workspaceFooterIsDue(),
+                           "the failure case needs the same pause point as the handoff case");
+
+  // The card starts refusing writes at the footer, and the handoff happens underneath the failed write.
+  nativeSdWriteBudget = 0;
+  trackManager.setSelectedSlotIndex(S41Footer::kTrack, S41Footer::kSlotB, SyncPlayback::Yes);
+  const uint32_t failedTurns = S41Footer::driveTurnsUntil(256, []() { return false; });
+  nativeSdWriteBudget = -1;
+
+  char failedMessage[256];
+  snprintf(failedMessage, sizeof(failedMessage),
+           "the failed write must leave the durable bundle untouched (turns=%u equal=%u size=%u/%u)",
+           static_cast<unsigned>(failedTurns),
+           SD.files[CurrentSetStorage::kCurrentRuntimeBundlePath] == durableBundle ? 1u : 0u,
+           static_cast<unsigned>(SD.files[CurrentSetStorage::kCurrentRuntimeBundlePath].size()),
+           static_cast<unsigned>(durableBundle.size()));
+  TEST_ASSERT_TRUE_MESSAGE(SD.files[CurrentSetStorage::kCurrentRuntimeBundlePath] == durableBundle,
+                           failedMessage);
+  TEST_ASSERT_FALSE_MESSAGE(SD.exists(CurrentSetStorage::kCurrentMetaTempPath) &&
+                                CurrentSetStorage::verifySaveFileTokenAtPath(
+                                    CurrentSetStorage::kCurrentMetaTempPath),
+                            "an aborted footer write must not leave a token-valid temp bundle behind");
+
+  const uint32_t retryTurns = S41Footer::driveWorkerToIdle();
+  char retryMessage[256];
+  snprintf(retryMessage, sizeof(retryMessage),
+           "the retry must discharge the owed save (turns=%u pending=%u footerDeferred=%u)",
+           static_cast<unsigned>(retryTurns),
+           storageSession.currentWorkspaceSave.pending ? 1u : 0u,
+           StorageManagerInternal::workspaceFooterPersistDeferred ? 1u : 0u);
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::workerIsIdle(), retryMessage);
+
+  S41Footer::reloadWorkspaceFromCard();
+  S41Footer::assertSlotContentSurvived(S41Footer::kSlotA, S41Footer::kNoteA, "A after failed write");
+  S41Footer::assertSlotContentSurvived(S41Footer::kSlotB, S41Footer::kNoteB, "B after failed write");
+  S41Footer::assertRestoredFocusIs(S41Footer::kSlotB, "focus after the retry");
+}
+
+/// **F4 / DEC-091 — a failed workspace completion is discharged, not retried at the queue head.**
+///
+/// The completion's sub-steps (`patchLastActiveUnix`, the bundle CRC refresh, `workspace.bin`) are
+/// deterministic, so a failure re-entered the same step forever: the item was requeued to the **head**, so
+/// every other persistence item waited behind it and `hasDeferredSaveWork()` stayed true for the rest of the
+/// boot -- which refuses the save pre-flight and the read-only slot-payload observation (`"busy"`). This
+/// drives the real worker into that failure with the card refusing writes, and asserts the discharge, the
+/// reported failure, the user-facing recovery, and that the owed work is still owed.
+void test_f4_a_failed_completion_is_discharged_and_releases_the_queue() {
+  S41Footer::resetPersistenceSessionForS41();
+  S41Footer::seedTwoCommittedSlots();
+  S41Footer::establishDurableFocusOnA();
+
+  S41Footer::admitSlotKeyedPersistForA();
+  // Run until the **completion** is the only work left, so the injected fault lands in its first sub-step
+  // rather than in the bundle or the body write.
+  const uint32_t turnsToCompletion = S41Footer::driveTurnsUntil(
+      S41Footer::kTurnBudget, []() { return S41Footer::workspaceCompletionIsNext(); });
+  char pauseMessage[256];
+  snprintf(pauseMessage, sizeof(pauseMessage),
+           "the worker must reach the completion within the turn budget (turns=%u %s)",
+           static_cast<unsigned>(turnsToCompletion), []() -> const char* {
+             static char state[512];
+             S41Footer::formatWorkerState(state, sizeof(state));
+             return state;
+           }());
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::workspaceCompletionIsNext(), pauseMessage);
+  // The body is durable before the completion runs, and its dirty flag is discharged by its own write.
+  TEST_ASSERT_FALSE_MESSAGE(currentSetLoopSlotDirty[S41Footer::kTrack][S41Footer::kSlotA],
+                            "the slot's body write must have completed before the completion step");
+  // A slot left materially dirty at failure time is the "owed work" the contract keeps for the retry.
+  StorageManager::markLoopSlotMaterialDirty(S41Footer::kTrack, S41Footer::kSlotB);
+  TEST_ASSERT_TRUE(currentSetLoopSlotDirty[S41Footer::kTrack][S41Footer::kSlotB]);
+
+  // The card refuses writes from here on: the failure under test is a **persistent** one. (A single-turn
+  // fault would self-heal on the retry, which is exactly what the front-requeue is for -- so it cannot
+  // tell the two policies apart.)
+  nativeSdWriteBudget = 0;
+  S41Footer::workerTurn();
+
+  // Reported, not silent.
+  TEST_ASSERT_FALSE_MESSAGE(storageSession.currentWorkspaceSave.lastCompletedOk,
+                            "a failed completion must not report success");
+  TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.failedAtMs != 0,
+                           "a failed completion must record when it failed");
+
+  // Discharged: no requeued head, no writing entry, nothing active.
+  (void)S41Footer::driveTurnsUntil(64, S41Footer::workerIsIdle);
+  char state[512];
+  S41Footer::formatWorkerState(state, sizeof(state));
+  char idleMessage[768];
+  snprintf(idleMessage, sizeof(idleMessage),
+           "the failed completion must be discharged, not left holding the queue (%s)", state);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, PersistenceWorkQueue::queueDepth(), idleMessage);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, PersistenceWorkQueue::writingWorkItemCount(), idleMessage);
+  TEST_ASSERT_FALSE_MESSAGE(storageSession.persistenceWorkItem.itemActive, idleMessage);
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::hasDeferredSaveWork(), idleMessage);
+
+  // Heal the card for the recovery leg below.
+  nativeSdWriteBudget = -1;
+
+  // `hasDeferredSaveWork()` is the guard the two unrelated consumers read -- the save-new-set pre-flight
+  // (`SavedSetIo`) and the read-only slot-payload observation, whose entry answers `PSTR("busy")` while it
+  // is true (`LibraryObservationSession`). Those TUs are deliberately outside this suite's linked set
+  // (A1.7's recorded scope decision), so the fixture asserts the guard itself, and that it stays false:
+  // nothing may re-queue behind the discharged failure.
+  for (int turn = 0; turn < 8; ++turn) {
+    S41Footer::workerTurn();
+  }
+  TEST_ASSERT_FALSE_MESSAGE(StorageManager::hasDeferredSaveWork(),
+                            "the guard the observation and save pre-flight read must clear and stay clear");
+
+  // The owed work is still owed: the dirty slot was not swept by the failure...
+  TEST_ASSERT_TRUE_MESSAGE(currentSetLoopSlotDirty[S41Footer::kTrack][S41Footer::kSlotB],
+                           "a failed completion must leave the dirty set for the next save");
+  // ...and the next save trigger completes once the card is healthy -- the documented retry.
+  S41Footer::admitSlotKeyedPersistForA();
+  const uint32_t retryTurns = S41Footer::driveWorkerToIdle();
+  char retryState[512];
+  S41Footer::formatWorkerState(retryState, sizeof(retryState));
+  char retryMessage[768];
+  snprintf(retryMessage, sizeof(retryMessage),
+           "the next save trigger must complete after a discharged failure (turns=%u %s)",
+           static_cast<unsigned>(retryTurns), retryState);
+  TEST_ASSERT_TRUE_MESSAGE(S41Footer::workerIsIdle(), retryMessage);
+  TEST_ASSERT_TRUE_MESSAGE(storageSession.currentWorkspaceSave.lastCompletedOk, retryMessage);
+  TEST_ASSERT_TRUE_MESSAGE(SD.exists(CurrentSetStorage::kCurrentRuntimeBundlePath), retryMessage);
+}
+
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_drain_suite_links_the_closed_import_set);
@@ -549,5 +1215,12 @@ int main(int, char**) {
   RUN_TEST(test_s2b7_the_drain_advances_the_restore_to_completion_where_the_gate_admits);
   RUN_TEST(test_s2b7_the_drain_services_a_parked_instance_holding_the_session);
   RUN_TEST(test_s2b7_control_the_drain_completes_once_the_restore_releases_the_session);
+  // S4.1 — persistence identity during handoff: the footer's identity and its write point.
+  RUN_TEST(test_s4_1_the_footer_records_the_focus_at_footer_write_time_not_the_interval_slot);
+  RUN_TEST(test_s4_1_control_the_no_switch_sequence_restores_the_unmoved_focus);
+  RUN_TEST(test_s4_1_a_handoff_after_the_footer_was_written_is_requeued_and_lands);
+  RUN_TEST(test_s4_1_a_failed_footer_write_never_publishes_and_the_retry_lands_the_handoff);
+  // F4 / DEC-091 -- a failed workspace completion must not hold the queue.
+  RUN_TEST(test_f4_a_failed_completion_is_discharged_and_releases_the_queue);
   return UNITY_END();
 }

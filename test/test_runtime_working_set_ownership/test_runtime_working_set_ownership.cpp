@@ -649,6 +649,204 @@ void test_the_release_sweep_skips_a_slot_with_a_live_owner() {
 }
 
 
+/// **S4.1 — a same-track slot switch releases the retired slot's working-set lease, per slot.**
+///
+/// The device evidence for S4.1 is the *finalization-capacity* release (`canonical_release,<slot>,…`);
+/// nothing named the working-set **lease** release on a same-track switch, and for a same-track sequence
+/// the take-start sweep excludes the track. This drives the production switch commit
+/// (`TrackManager::finalizeCaptureAndSelectSlot` -> `Track::resetPlaybackStateForSlot` ->
+/// `Track::invalidatePlaybackMergedMidiEvents` -> `Track::releaseEligiblePlaybackRuntimeSlots`) with the
+/// **incoming** slot protected by a live owner, so the release must be evaluated per slot: the retired
+/// slot is released, the owned one is not.
+void test_s4_1_a_same_track_switch_releases_the_retired_slots_lease() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kRetired = 1;
+  constexpr uint8_t kIncoming = 3;
+  commitRecordPassIntoTrackSlot(track, kRetired);
+  commitRecordPassIntoTrackSlot(track, kIncoming);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kRetired, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kIncoming, true));
+  TrackCaptureStopTestAccess::activateSlot(0, kRetired);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kRetired, track.getActiveLoopIndex(),
+                                  "the fixture needs the retired slot active");
+
+  const uint16_t retiredGeneration = TrackCaptureStopTestAccess::slotGeneration(track, kRetired);
+  const uint16_t incomingGeneration = TrackCaptureStopTestAccess::slotGeneration(track, kIncoming);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kRetired),
+                           "the retired slot must hold a working set before the switch");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kIncoming),
+                           "the incoming slot must hold a working set before the switch");
+  // An admitted working set is not itself a live owner, so the retired slot is releasable...
+  TEST_ASSERT_TRUE_MESSAGE(track.noLiveOwnerForSlot(kRetired),
+                           "an admitted working set must not block release on its own");
+
+  // The track is audibly playing, which is the ordinary state a slot switch happens in: it keeps the
+  // switch's own "start playback if the target has data" step out of this fixture (that step belongs to
+  // the playback-start suites and is fail-closed here).
+  track.forceSetState(TRACK_PLAYING);
+  TEST_ASSERT_TRUE(track.isAudiblePlaybackActive());
+
+  // ...while the incoming slot is protected, so a track-global sweep cannot pass this fixture.
+  TrackCaptureStopTestAccess::latchAcceptedStopForSlot(track, kIncoming);
+  TEST_ASSERT_FALSE_MESSAGE(track.noLiveOwnerForSlot(kIncoming),
+                            "the fixture needs a live owner on the incoming slot");
+
+  // The production switch, same track.
+  TrackCaptureStopTestAccess::finalizeCaptureAndSelectSlot(0, kIncoming, 96);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kIncoming, track.getActiveLoopIndex(),
+                                  "the switch must move the active slot");
+
+  // The retired slot: released, and its identity advanced, so the exact slot is observable.
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kRetired),
+                            "the switch must release the retired slot's working set");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::slotGeneration(track, kRetired) >
+                               retiredGeneration,
+                           "the release must advance the retired slot's generation");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(WorkingSetOutcome::StaleGeneration),
+      static_cast<uint8_t>(TrackCaptureStopTestAccess::releaseSlot(track, kRetired, retiredGeneration)),
+      "the pre-switch identity must no longer release: the switch consumed it");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(WorkingSetOutcome::NotHeld),
+      static_cast<uint8_t>(TrackCaptureStopTestAccess::releaseSlot(
+          track, kRetired, TrackCaptureStopTestAccess::slotGeneration(track, kRetired))),
+      "nothing may be left to release on the retired slot");
+
+  // The protected sibling is untouched: the release was per slot, not a track-global reset.
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kIncoming),
+                           "a slot with a live owner must survive the switch");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(incomingGeneration,
+                                   TrackCaptureStopTestAccess::slotGeneration(track, kIncoming),
+                                   "a refused slot's generation must not move");
+
+  // Control: retire the owner, switch back, and the same route releases the other slot.
+  TrackCaptureStopTestAccess::consumeAcceptedStop(track);
+  TEST_ASSERT_TRUE(track.noLiveOwnerForSlot(kIncoming));
+  TrackCaptureStopTestAccess::finalizeCaptureAndSelectSlot(0, kRetired, 192);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kIncoming),
+                            "the control switch must release the now-unowned slot");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::slotGeneration(track, kIncoming) > incomingGeneration);
+}
+
+/// **S4.1 — a live finalization refuses the retired slot's lease release.**
+///
+/// While an interval finalizes, `Track::invalidatePlaybackMergedMidiEvents` early-returns on the
+/// **track-level** `hasPendingDeferredOverdubStop()`, so the sweep is suppressed before the per-slot
+/// predicate is consulted; the slot's own entry independently refuses with `RefusedBusy`
+/// (`LoopPlaybackRuntime::reset()` returns false while `captureStopOwner` is pending). The switch still
+/// commits -- an *admitted* stop does not hold the active slot (S4f.3) -- so this is the S4.1 handoff
+/// shape with the lease being the thing that survives it.
+void test_s4_1_a_live_finalization_refuses_the_retired_slots_lease_release() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kFinalizing = 1;
+  constexpr uint8_t kSuccessor = 3;
+  commitRecordPassIntoTrackSlot(track, kFinalizing);
+  commitRecordPassIntoTrackSlot(track, kSuccessor);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kFinalizing, true));
+  TrackCaptureStopTestAccess::activateSlot(0, kFinalizing);
+
+  // A live interval on the finalizing slot, opened through the production start, with its stop admitted.
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::startOverdubbing(track, 96);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "the fixture needs a live interval");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::appendCaptureNote(track, 96, 120, 60));
+  TEST_ASSERT_TRUE_MESSAGE(
+      TrackCaptureStopTestAccess::admitStopForSlot(track, PendingStopDestination::Playing, 96,
+                                                   kFinalizing, /*interval=*/1),
+      "the production stop admission must accept on the warmed slot");
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+
+  const uint16_t generation = TrackCaptureStopTestAccess::slotGeneration(track, kFinalizing);
+  TEST_ASSERT_FALSE_MESSAGE(track.noLiveOwnerForSlot(kFinalizing),
+                            "a live finalization must refuse release on its slot");
+
+  // The slot's own entry refuses and names the refusal. (It also asks the pending stop to become a
+  // transport stop -- that is `reset()`'s documented behaviour on this path, not a fixture artifact.)
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(WorkingSetOutcome::RefusedBusy),
+      static_cast<uint8_t>(TrackCaptureStopTestAccess::releaseSlot(track, kFinalizing, generation)),
+      "a live finalization must answer RefusedBusy");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kFinalizing),
+                           "a refused release must not drop the working set");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(generation,
+                                   TrackCaptureStopTestAccess::slotGeneration(track, kFinalizing),
+                                   "a refused release must not advance the generation");
+
+  // The production switch commits, and the lease survives it: the sweep is suppressed while the
+  // interval finalizes, so nothing is released underneath the owner.
+  TrackCaptureStopTestAccess::finalizeCaptureAndSelectSlot(0, kSuccessor, 120);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kSuccessor, track.getActiveLoopIndex(),
+                                  "an admitted stop must not hold the active slot (S4f.3)");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kFinalizing),
+                           "the switch must not release a finalizing slot's working set");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(generation,
+                                   TrackCaptureStopTestAccess::slotGeneration(track, kFinalizing),
+                                   "the suppressed sweep must not touch the generation");
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                           "the interval must still be finalizing after the switch");
+}
+
+/// **S4.1 — the retired slot's lease is released once its finalization retires.**
+///
+/// The complement of the refusal case, and the answer to "which same-track route releases it": not the
+/// retirement itself (`TrackPreparedStopCommit::completeDeferredCleanup` clears `captureStopOwner` and arms
+/// the *capacity* release marker, but releases no working set), so the next same-track switch's playback
+/// reset is what reaches the retired slot. This drives that route end to end.
+void test_s4_1_the_retired_slots_lease_is_released_once_its_finalization_retires() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kFinalizing = 1;
+  constexpr uint8_t kSuccessor = 3;
+  commitRecordPassIntoTrackSlot(track, kFinalizing);
+  commitRecordPassIntoTrackSlot(track, kSuccessor);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kFinalizing, true));
+  TrackCaptureStopTestAccess::activateSlot(0, kFinalizing);
+
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::startOverdubbing(track, 96);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::appendCaptureNote(track, 96, 120, 61));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::admitStopForSlot(track, PendingStopDestination::Playing, 96,
+                                                                kFinalizing, /*interval=*/1));
+  const uint16_t generation = TrackCaptureStopTestAccess::slotGeneration(track, kFinalizing);
+
+  // The handoff: the switch commits while the predecessor still finalizes, and the lease survives it.
+  TrackCaptureStopTestAccess::finalizeCaptureAndSelectSlot(0, kSuccessor, 120);
+  TEST_ASSERT_EQUAL_UINT8(kSuccessor, track.getActiveLoopIndex());
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kFinalizing),
+                           "the predecessor must keep its lease while it finalizes");
+  TEST_ASSERT_EQUAL_UINT16(generation, TrackCaptureStopTestAccess::slotGeneration(track, kFinalizing));
+
+  // Retire the finalization through the production grain.
+  for (int turn = 0; turn < 8192 && track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                            "the fixture must retire the deferred stop");
+  TEST_ASSERT_TRUE_MESSAGE(track.noLiveOwnerForSlot(kFinalizing),
+                           "retirement must free the slot for release");
+
+  // The next same-track switch runs the sweep with no live owner left, and releases the retired slot.
+  TrackCaptureStopTestAccess::finalizeCaptureAndSelectSlot(0, kFinalizing, 192);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kFinalizing),
+                            "the next switch must release the retired slot's working set");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::slotGeneration(track, kFinalizing) > generation,
+                           "the release must advance the retired slot's generation");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(WorkingSetOutcome::StaleGeneration),
+      static_cast<uint8_t>(
+          TrackCaptureStopTestAccess::releaseSlot(track, kFinalizing, generation)),
+      "the pre-switch identity must be stale after the release");
+}
+
+
 /// **S4.3 — reactivating a released slot reuses its capacity with no net pool growth.** The reuse
 /// contract is structural: releasing a slot retires its working set but keeps the slot's runtime
 /// object, so the next activation takes that same capacity back instead of allocating a new one. This
@@ -1734,6 +1932,11 @@ int main() {
   RUN_TEST(test_a_late_cleanup_cannot_clear_a_successor_finalization_marker);
   RUN_TEST(test_the_slot_generation_release_entry_is_identity_qualified_and_preserves_refusals);
   RUN_TEST(test_the_release_sweep_skips_a_slot_with_a_live_owner);
+  // S4.1 -- the working-set lease release on a same-track slot switch (the device run only evidences
+  // the finalization-capacity release).
+  RUN_TEST(test_s4_1_a_same_track_switch_releases_the_retired_slots_lease);
+  RUN_TEST(test_s4_1_a_live_finalization_refuses_the_retired_slots_lease_release);
+  RUN_TEST(test_s4_1_the_retired_slots_lease_is_released_once_its_finalization_retires);
   RUN_TEST(test_reactivating_a_released_slot_reuses_its_capacity);
   RUN_TEST(test_a_declared_envelope_breach_is_reported_and_does_not_block_activation);
   RUN_TEST(test_switching_starts_the_new_take_while_the_previous_take_still_finalizes);
