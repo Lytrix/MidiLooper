@@ -5550,3 +5550,47 @@ The guard at `TrackOverdubLifecycle.cpp:1552` now logs when it is asked to overd
 
 Status: default gate 12/12; `S4B_ACCEPTANCE=1` red with the datum above; full native 2,448 passed /
 1 skipped; capture-serial RAM1 byte-identical.
+
+## S4f.3 / S4b.1 — the zero-length overdub is refused; the carrier dispatch is what remains (2026-09-25, fifth pass)
+
+### Milestone measurement that settled the fork
+
+The probe now records the state **at the switch commit**, before the start step. The fork I was choosing
+between last pass is closed:
+
+```
+afterSwitch phase=0 session=0 loopLen=0        <- the successor is clean at commit
+... later ...
+phase=2 hasOverdubSession=1 loopLen=0          <- and in an Overdub session afterwards
+```
+
+The switch therefore does **not** establish the successor's overdub session, and neither does the wrap
+path. It is the start route: `TrackManager::startOverdubbingTrack` had **no validation of the target** --
+it read `track.getActiveLoop()`, checked only "already overdubbing", and called
+`track.startOverdubbing()`. On an empty successor that opens an overdub session on a loop with no length,
+and the capture append then has nothing to append into, which is exactly `size=0`.
+
+### Landed: the refusal
+
+`TrackManager::startOverdubbingTrack` now refuses an overdub start when the active loop's
+`loopLengthTicks == 0`, with a logged reason and the slot. An overdub needs an existing loop to overdub
+onto; a zero-length loop is a target that needs **record** admission, which is what establishes the
+length. The refusal cannot reject a legitimate flow, because such a session can never accept an event --
+and the full native suite confirms it: **2,448 passed / 1 skipped**, no regression.
+
+This is the second diagnosability improvement in the same area: the first made `startOverdubbing`'s
+empty-active-loop guard log instead of no-op; this one stops the invalid session being opened at all, one
+level up, where the target is chosen.
+
+### What remains
+
+The acceptance sequence still does not complete: after the refusal, the state is
+`playing=1 overdubbing=0 recording=0 pendingStop=1 active=1` -- the switch committed (active on B), A's
+finalizer is still in flight, and B is no longer *incorrectly* overdubbing, but B has **not started
+recording**. So the remaining work is the route selection at the caller: for an empty successor the start
+must go through record admission (which establishes the length) rather than being attempted as an overdub
+and refused. That is the S4f.3 carrier's dispatch half, now with a clean invariant underneath it instead
+of a silent contradiction.
+
+Status: default gate 12/12; `S4B_ACCEPTANCE=1` red with the state above; RAM1 `variables` unchanged,
+`code 391,960 -> 392,024` / `padding 1,256 -> 1,192` (the refusal and its log; 352 B of headroom).

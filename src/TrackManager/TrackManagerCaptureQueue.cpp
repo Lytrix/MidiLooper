@@ -223,6 +223,17 @@ void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
   if (track.isOverdubbing() && loop.capture.phase == CapturePhase::Overdub) {
     return;
   }
+  // S4f.3: an overdub needs an existing loop to overdub onto. A zero-length active loop means the
+  // target has no loop yet -- after a switch handoff that is an empty successor, which needs *record*
+  // admission (it establishes the length), not an overdub session. Refusing explicitly keeps the two
+  // routes distinct instead of opening a session that can never accept an event.
+  if (loop.loopLengthTicks == 0) {
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "Overdub start refused: active loop has no length (slot=%u); the target needs record "
+               "admission first",
+               static_cast<unsigned>(track.getActiveLoopIndex()));
+    return;
+  }
   SC_ODUB_STAGE("manager_enter", 0, DebugSessionCapture::kUnsampledHeapBytes,
                 DebugSessionCapture::kUnsampledHeapBytes, "ok");
   const uint8_t slot = track.getActiveLoopIndex();
