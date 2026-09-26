@@ -965,6 +965,12 @@ SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t ge
                 (unsigned long)loopLengthTicks, (unsigned long)availableChunks);
 }
 
+SC_MEM_ATTR void workingSetLeaseReleased(uint8_t slot, uint16_t generation, const char* outcome) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,ws_release,%u,%u,%s\r\n"), (unsigned long)micros(),
+                static_cast<unsigned>(slot), static_cast<unsigned>(generation),
+                outcome != nullptr ? outcome : "?");
+}
+
 SC_MEM_ATTR void firstRecordReturnWindowAdopted(uint32_t loopLengthTicks, size_t retainedEvents) {
   emitCapPrintf("#CAP,%lu,DIAG,first_record_adopt,%lu,%lu\r\n", (unsigned long)micros(),
                 (unsigned long)loopLengthTicks, (unsigned long)retainedEvents);

@@ -7351,18 +7351,27 @@ blocker" is stale. The chain, read from the code rather than inferred:
   `ownsLiveFinalization` term of `Track::noLiveOwnerForSlot` (S3.2) — the same liveness guard S4.1 names.
 - **identity-qualified** — L4 reported `canonical_release,4,40,6144,8`: the retiring owner's slot **and**
   generation, which is S4.1/S4.2's identity requirement on device rather than only natively.
-- **the working-set release itself** — `TrackManager::startRecordingTrack` ->
-  `releaseBackgroundPlaybackMergedMidiEventsMemory(trackIndex)` -> for every *other* track
-  `releasePlaybackMergedMidiEventsMemory()` -> `releaseEligiblePlaybackRuntimeSlots()` ->
-  `releaseSlot(slot, generation)` behind `noLiveOwnerForSlot`. **C's start is what triggers that sweep**, and
-  C's start is exactly what the run drove and the oracle asserted (`RECA,6` once, after the release).
+- **the working-set release: NOT evidenced by this run — corrected below.** `TrackManager::startRecordingTrack`
+  -> `releaseBackgroundPlaybackMergedMidiEventsMemory(trackIndex)` sweeps `if (i != captureTrackIndex)`, i.e.
+  every track **except the one capturing**. The whole A/B/C sequence runs on **track 8**, so C's start sweeps
+  tracks 0-7 and **excludes track 8** — A's own working set is not released by it. An earlier draft of this
+  section claimed C's start performs A's working-set release; that is **wrong for a same-track run** and is
+  withdrawn here. The paths that can release a same-track slot are the memory-pressure release
+  (`TrackManagerMemoryPressure` -> `tryReleasePlaybackMergedMidiEventsMemory`) and the playback-reset/undo path
+  (`resetPlaybackState`/`resetPlaybackStateForSlot`/`TrackUndo` -> `invalidatePlaybackMergedMidiEvents`, which
+  early-returns while a deferred stop is pending), plus the cross-track take-start sweep when the take starts on
+  a **different** track.
 - **reuse** — C starting after A releases **is** S4.3 verbatim ("activating C after A releases uses A's
   capacity"); S4.3 is checked with its *device* leg recorded open, and this run supplies that leg.
 
-**Honest boundary.** The oracle asserts L4 as the **finalization-capacity** release naming the retiring owner.
-The **working-set lease** release rides on C's start sweep and is not separately asserted by name, so "the lease
-was released" is currently *inferred from the mechanism* rather than observed. That is a small oracle addition,
-not a new stage, and it is recorded here as the remaining gap rather than claimed as covered.
+**Honest boundary, restated after the correction above.** What this run evidences is the
+**finalization-capacity/occupancy** release, by name and identity-qualified (L4), and C starting after it. What it
+does **not** evidence is the **working-set lease** release for the retired slot: that path is not on the
+same-track take-start sweep, and it is not asserted by name anywhere. So S4.1's device acceptance is
+**partial**: its occupancy release is demonstrated on device, its working-set lease release is demonstrated only
+natively (S4.3's reuse fixture) and is *inferred* on device. Closing that gap needs two things, and neither is a
+new stage: an emission that names the lease release, and a run in which that path actually fires for the slot
+under test (a cross-track take, or memory pressure, rather than a same-track sequence).
 
 ### The "rerun blocker" text was stale — verified against the tree
 

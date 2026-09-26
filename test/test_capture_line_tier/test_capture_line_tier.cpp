@@ -433,6 +433,11 @@ void test_deferred_stop_identity_edges_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701459,DIAG,canonical_release,7,3,4096,448"));
   // Long micros field must not shift the tag parse.
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,39819493,DIAG,canonical_release,7,3,4096,448"));
+  // The working-set LEASE release, which `canonical_release` does not report (that row is the retiring
+  // occupancy). Both the release and its refusals carry identity and must survive the shed.
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701459,DIAG,ws_release,7,3,released"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701459,DIAG,ws_release,7,3,refused_busy"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,ws_release_partial,1"));
 }
 
 // The comparison is bounded by strlen of its literal. Passing a literal's length *including* its NUL makes

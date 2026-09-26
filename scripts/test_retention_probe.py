@@ -192,6 +192,35 @@ class RetentionProbeChainTests(unittest.TestCase):
         self.assertEqual("unknown", check.status, check.detail)
         self.assertIn("pre-identity firmware", check.detail)
 
+    # --- S4.1: the working-set lease release is reported by name, not inferred ----------------------
+    def test_a_ws_release_row_is_reported_by_name_and_is_not_a_gate(self):
+        """Reported, not gating: `canonical_release` is the occupancy, `ws_release` is the lease."""
+        text = chain_log(extra=["#CAP,60000000,DIAG,ws_release,4,40,released"])
+        result = run(text, accept_slot_scoped_bind=True, accept_event_count_only=True)
+        joined = " ".join(result.limitations)
+        self.assertIn("IS observed by name", joined)
+        self.assertIn("[4]", joined)
+        self.assertEqual(["60000000: DIAG,ws_release,4,40,released"],
+                         result.evidence["working_set_lease_release"])
+        # It must not change the verdict: the row is evidence about a different resource than L4's.
+        self.assertEqual("RETENTION_PARTIAL", result.verdict)
+
+    def test_refused_lease_releases_are_reported_not_discarded(self):
+        text = chain_log(extra=["#CAP,60000000,DIAG,ws_release,4,40,refused_busy"])
+        result = run(text, accept_slot_scoped_bind=True, accept_event_count_only=True)
+        joined = " ".join(result.limitations)
+        self.assertIn("refusals reported rather than discarded", joined)
+        self.assertIn("slot 4 (refused_busy)", joined)
+
+    def test_an_absent_ws_release_row_reads_as_not_exercised_not_as_a_failure(self):
+        """A same-track A/B/C sequence excludes its own track from the take-start sweep, so the row can
+        legitimately be absent -- the report must say so rather than leave it inferred."""
+        result = run(chain_log(), accept_slot_scoped_bind=True, accept_event_count_only=True)
+        joined = " ".join(result.limitations)
+        self.assertIn("NOT observed by name", joined)
+        self.assertIn("did not exercise it", joined)
+        self.assertEqual([], result.evidence["working_set_lease_release"])
+
     # --- one negative per remaining link ------------------------------------------------------------
     def test_no_denial_at_all_is_not_exercised(self):
         text = chain_log()

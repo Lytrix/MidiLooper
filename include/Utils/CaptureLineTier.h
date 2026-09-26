@@ -98,8 +98,11 @@ inline bool isTierALine(const char* line) {
   // Bound each comparison by strlen of the literal itself. Hand-counting the length is a trap: passing it
   // one byte too long includes the literal's NUL, and since strncmp stops at a NUL the match then only
   // succeeds for a tag that ends exactly there -- i.e. it silently never matches a real row.
+  // `ws_release` joins them: it names the *working-set lease* release, which `canonical_release` does not
+  // (that one reports the retiring occupancy). Without it the lease release is only inferable.
   if (strncmp(tag, "DIAG,reentry", strlen("DIAG,reentry")) == 0 ||
-      strncmp(tag, "DIAG,canonical_release,", strlen("DIAG,canonical_release,")) == 0) {
+      strncmp(tag, "DIAG,canonical_release,", strlen("DIAG,canonical_release,")) == 0 ||
+      strncmp(tag, "DIAG,ws_release,", strlen("DIAG,ws_release,")) == 0) {
     return true;
   }
   return strncmp(tag, "ST,", 3) == 0 || strncmp(tag, "PERS,", 5) == 0 ||

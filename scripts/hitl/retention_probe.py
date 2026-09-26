@@ -70,6 +70,11 @@ WINDOW_OPEN_RE = re.compile(r"^DIAG,reentry_window_open,(\d+),(\d+),(\d+)$")
 # successor's admission back to the predecessor that freed the capacity.
 CANONICAL_RELEASE_RE = re.compile(r"^DIAG,canonical_release,(\d+),(\d+),(\d+),(\d+)$")
 REENTRY_RE = re.compile(r"^DIAG,reentry,([a-z_]+),(\d+),(\d+),(\d+),(\d+)$")
+# Wire form: DIAG,ws_release,<slot>,<generation>,<outcome>. This names the **working-set lease** release,
+# which `canonical_release` does not: that row reports the retiring *occupancy*. Held separately and
+# reported rather than gating, because the release path only fires where a sweep or pressure runs it -- a
+# same-track A/B/C sequence excludes its own track from the take-start sweep.
+WS_RELEASE_RE = re.compile(r"^DIAG,ws_release,(\d+),(\d+),([a-z_]+)$")
 RECA_RE = re.compile(r"^RECA,(\d+),(\d+)$")
 # Exactly the documented successful stop kinds, not an open `stop*` pattern: `TrackCaptureStopCommit` emits
 # `"stop"` (the ordinary route) and `"stopToStopped"` (the transport-stop route). Anything else is not a
@@ -320,7 +325,7 @@ def analyse(
     lines = session_log.splitlines()
     checks: list[Check] = []
     evidence: dict[str, list[str]] = {k: [] for k in
-                                      ("window_open", "canonical_release", "denial", "retained_request",
+                                      ("window_open", "canonical_release", "working_set_lease_release", "denial", "retained_request",
                                        "stop_bind", "successor_start", "successor_seal",
                                        "invariant_violation", "overflow")}
     limitations: list[str] = []
@@ -556,6 +561,34 @@ def analyse(
         else:
             verdict = "RETENTION_NOT_EXERCISED"
         return Analysis(verdict, checks, episode, evidence, limitations, concessions)
+
+    # ---------------- S4.1: the working-set lease release, by name ----------------
+    # Reported, not gating. `canonical_release` (L4) is the retiring *occupancy*; this is the lease. The
+    # release path runs from a take-start sweep (which excludes the capturing track), the memory-pressure
+    # release, or the playback-reset/undo path -- so a same-track sequence may legitimately show none, and
+    # a missing row here means "this run did not exercise it", not "the release did not happen".
+    lease_releases = []
+    for e in entries:
+        m = WS_RELEASE_RE.match(e.body)
+        if m:
+            lease_releases.append((int(m.group(1)), int(m.group(2)), m.group(3), e))
+            evidence["working_set_lease_release"].append(f"{e.us}: {e.body}")
+    released_slots = sorted({slot for slot, _gen, outcome, _e in lease_releases if outcome == "released"})
+    if lease_releases:
+        refused = [f"slot {slot} ({outcome})" for slot, _gen, outcome, _e in lease_releases
+                   if outcome != "released"]
+        limitations.append(
+            f"the working-set lease release IS observed by name in this run (`DIAG,ws_release`): released "
+            f"slot(s) {released_slots or 'none'}"
+            + (f"; refusals reported rather than discarded: {', '.join(refused)}" if refused else "")
+            + ". This is the lease, which `canonical_release` does not report.")
+    else:
+        limitations.append(
+            "the working-set lease release is NOT observed by name in this run: no `DIAG,ws_release` row. "
+            "That row is emitted only where the release path fires -- a take-start sweep (which excludes the "
+            "capturing track, so a same-track sequence never sweeps its own slots), the memory-pressure "
+            "release, or the playback-reset/undo path. Its absence means this run did not exercise it, not "
+            "that the release failed; the release remains exercised natively (S4.3's reuse fixture).")
 
     # ---------------- L3: C's request retained ----------------
     # The retained-request row is a human log line, not a #CAP row, so it carries no device timestamp and
