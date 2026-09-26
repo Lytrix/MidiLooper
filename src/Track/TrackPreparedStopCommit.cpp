@@ -202,7 +202,9 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
   if (ownsLiveSession) {
     loop.closeOverdubSession();
   }
-  if (runtime.captureStopOwner == &stop) runtime.captureStopOwner = nullptr;
+  // S4.2: identity-qualified, so a late cleanup cannot clear a successor's marker on a reused
+  // runtime object.
+  (void)runtime.clearCaptureStopOwner(stop, stop.frozenGeneration);
   // DEC-067: the successor's stop may be admitted again once this job's
   // finalization resources are back; the maintenance turn reports that edge.
   runtime.canonicalReleaseMarkerArmed = true;
