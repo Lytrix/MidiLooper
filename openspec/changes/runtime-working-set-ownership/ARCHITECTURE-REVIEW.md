@@ -6548,3 +6548,43 @@ destructive on user data and needs its own explicit authorization.
 track 3 slot 2, track 7 slot 1, and **track 8 slots 5, 6, 7, 8**. Track 8 is the natural choice: three empty
 slots on one track, and using them overwrites nothing -- the run only *creates* a seeded take on A and B and a
 recorded take on C. Note the consequence for the owner: afterwards those three slots hold new 2-bar takes.
+
+### Step 3: the driver runs end to end and stops at its own tempo precondition
+
+The first authorized run was attempted on the authorized empty targets (track 8, slots 5/6/7, all confirmed
+empty by the read-only census). Three harness defects were found and fixed on the way, each of which had made
+the run impossible rather than merely awkward:
+
+1. `--run-token` **must be hex**. `capture_session.py` documents the token as "hex token echoed by capture
+   firmware with its device timestamp", and a non-hex token such as `retention-<epoch>` kills the child
+   instantly: `ManagedCaptureSession` then times out waiting for a session pointer while the child's piped
+   output is swallowed. Fixed to `uuid.uuid4().hex`.
+2. The capture port had no default, so `ManagedCaptureSession` was handed `port=None` and died in
+   `subprocess.Popen` with a `TypeError`. Fixed to `hitl.config.DEFAULT_CAPTURE_SERIAL_PORT`.
+3. The successor note was injected one channel too high (mido channels are 0-based; the per-track input
+   channel is `track - 1`), which would have silently failed L7.
+
+With those fixed the driver starts the managed capture, boots, and reaches its **tempo precondition** -- where
+it refuses, correctly, rather than producing a run whose timings are wrong:
+
+```
+tempo precondition failed: no read-back of 120.0 BPM after CC102=60.
+```
+
+**Why, from the run's own log:** the session log contains **zero `TEMPO` lines and zero loop-edit lines**, and
+its first telemetry row carries ~170 s of device uptime. Two independent findings follow:
+
+- **The device did not reset when the capture opened.** `capture_session.py` prints "Teensy resets when serial
+  opens", and the skill already warns this is unreliable. A run whose log has no boot banner cannot satisfy
+  `fresh_boot`, so it could not have been a verdict anyway -- the reset has to be forced (re-upload
+  immediately before, or a 134-baud open) rather than assumed.
+- **The track+slot select does not enter LOOP_EDIT.** CC102 is mode-gated (`handleTempoInput` is LOOP_EDIT
+  only), and with no TEMPO line at all the CC was ignored. The tempo probe's own advisory had already hinted
+  at this ("the device was already in LOOP_EDIT" when it ran), so its success was inherited state, not a
+  reproducible route. The likely explicit entry is the EDIT button (`EDIT_BUTTON_NOTE` = 38), which has not
+  been tried.
+
+**Status: the run is unperformed, and no slot was written.** Nothing was cleared, the targets remain as the
+census found them, and the driver's refusals are the reason. What remains is small and specific: force a real
+reset before the run, find the reproducible LOOP_EDIT entry (or pin the tempo without needing that mode), then
+re-run the same command. The pause hook stays a contingency.
