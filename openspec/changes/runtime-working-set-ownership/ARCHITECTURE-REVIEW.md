@@ -7256,3 +7256,80 @@ capture transitions 48 green. Both new guards red-proved by mutation.
 plus successor capture still needs a rerun in which `RETENTION_PASS` is reached with zero concessions. What it
 does change is that the previously-unexplained `INSUFFICIENT_EVIDENCE` should no longer be reachable for this
 reason. A/B preservation, the raw-only companion fallback and playback-output parity remain open.
+
+---
+
+## The rerun after the Tier-A fix: RETENTION_PASS, zero concessions (2026-09-26)
+
+Run `captures/s4f3-retention-20260926_181732`, identity
+**`git_commit 5629e7e4f96d` / `firmware_hex_sha256 da59a7eeb3e0`** -- a firmware hash distinct from every
+earlier run, so this is the promoted image and not a stale one.
+
+**Verdict: `RETENTION_PASS`, exit 0, 20/20 checks `ok`, zero concessions.** Every link is identity-grade; no
+link was accepted on a weaker basis, and `concessions` is empty.
+
+**The point of the run: the rows that used to be missing are present.** This is the direct test of the Tier-A
+promotion, and the same records whose *absence* forced `INSUFFICIENT_EVIDENCE` at 17:56 are now in a completed
+run's log:
+
+    DIAG,reentry_window_open,4,1121,6144        (17:56: zero rows)
+    DIAG,canonical_release,4,40,6144,8          (17:56: zero rows)
+    DIAG,reentry,deny,1311,2,5,1                (17:56: no denial row at all)
+    DIAG,reentry,bound,1706,2,5,0
+
+`capture_integrity` again reports **no ring eviction**, which is the signature that distinguished this cause
+from eviction: the evidence was being *shed*, not evicted, so nothing was ever reported as lost.
+
+**The chain, as the oracle reads it.** `reentry_window_open` for slot 4 at 58,173,344 us -> `deny` for slot 5
+on interval 2 at 58,670,400 us -> C's retained-request row for slot 6 **staged between the denial and the
+release, with no start executed before the release** -> `canonical_release,4,40,6144,8` at 59,723,633 us ->
+`bound` for slot 5 on **the denied interval 2** at 59,698,903 us -> exactly one `RECA,6` at 61,759,537 us,
+**after** the release -> the complete dump for slot 6 -> a clean bounded follow-up. The capacity-denied window
+measured **1550.3 ms**.
+
+**L5's ordering is the one the owner corrected, and it holds here.** The bind at 59,698,903 us precedes the
+release record at 59,723,633 us by **24.7 ms**, and the oracle now reads the bind as the availability edge and
+the release as the first maintenance turn at which the resources were *observed* free -- informational with
+respect to L5, exactly as the corrected reading requires. The earlier inversion (requiring the bind after the
+release) is gone.
+
+**L7 is loop-scoped, and the run shows why that scoping is necessary rather than convenient.** The verifier's
+whole-playback review returns `FAIL` with `inventory_equal=False` on all 36 cycles, because track 8's slots 1-4
+still hold committed content and their notes sound alongside the loop under test -- the playback carries those
+as `EXTRA`. That is the pre-existing instrument limitation the owner named, not a defect in the successor: the
+deciding evidence is the dump's own per-slot completeness (`declared counts {'effective#0': 2, 'record#0': 2}
+match parsed`) with note 67 present in **both** the storage and effective rows and the two agreeing on the full
+MIDI fields compared (tick, type, channel, note, velocity). `storage_matches_effective` is `True`. The oracle
+records the review's result alongside rather than letting it decide, and states in the check detail that this is
+**not** MIDI-output playback parity.
+
+**Staging was verified before A's window opened, and the clear is now attributable.** The targets were cleared
+as a **separate, deliberate** step (never silently, inside the run), then a read-only census re-verified
+eligibility: the library's committed count moved **61 -> 58**, exactly the three cleared slots, and
+`target_precondition` returned true. The run was gated on that census and passed `--no-clear`, so nothing
+touched the verified state.
+
+**A driver bug found by running this, and fixed (commit `5fc74bf9`).** The prepare step reported
+`clear_5_wrong_slot` for all three targets while the device had cleared exactly the right slots: target 5 ->
+`active_slot=4`, target 6 -> `active_slot=5`, target 7 -> `active_slot=6`. The firmware identity fields are
+**0-based** (matching `#CAP` and the census) while the driver's `slot_number` is **1-based** (the CLI), and the
+new check compared them raw. The presses were always correct; only the verification was. The conversion now
+lives in one place and the regression test pins both directions; replayed against the real prepare log all
+three targets verify true. Note the shape of this: the bug was *invisible* before the slot identity was added,
+because any clear marker was accepted -- which is exactly how a preparation could report success on a slot it
+never cleared. Adding the identity exposed it, and running exposed the identity's base.
+
+**One driver observation, recorded rather than smoothed over:** the driver's live `transport_stopped`
+confirmation returned `false`, yet the successor's take committed and L7 reads a complete dump. The oracle's
+evidence is authoritative here; the live check is a host-side convenience that should not be treated as a gate.
+
+**Scope closed.** *Retention plus successor capture*, at this precise scope: request retention, the
+capacity-denied window, the identity-grade denial and bind, the exactly-once start after the release, and the
+successor's own committed/effective content. The denied request was **staged** inside the window and C started
+afterwards, which is the expected retention behaviour; the natural 1550.3 ms window sufficed, so the pause hook
+remains unimplemented contingency.
+
+**Still open, and not claimed by this pass:** A's and B's content preservation (the dump covers the active slot,
+C, only), the `companion path stalled; raw pass only` fallback's content consequences, and **MIDI-output
+playback parity**, which is a separate property from this loop-scoped parity. The whole-playback review remains
+unable to decide it while other slots are enabled.
