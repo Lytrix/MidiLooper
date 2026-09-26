@@ -6424,3 +6424,98 @@ Writing one negative per link exposed three defects in the oracle itself:
 - Host-script suite: 574 tests, 6 failures + 2 errors, **all pre-existing** and unrelated (they concern C++
   consumers in `TrackOverdubLifecycle.cpp` and `TrackPlaybackHotPath.cpp`, which this work never touched);
   the count matches the previously recorded baseline.
+
+## S4f.3 — the concession loophole closed, and the evidence gaps (2026-09-26)
+
+### 1. Conceded results are now explicitly partial
+
+The oracle previously returned `RETENTION_PASS` with **exit 0** whenever every link was satisfied "on a
+conceded basis". Recording concessions separately did not stop an automated consumer from reading exit 0 as
+full acceptance, so that was a real acceptance loophole.
+
+- **`RETENTION_PARTIAL` (exit 5)** is now its own verdict, and `RETENTION_PASS` (**exit 0**) is reserved for
+  the **complete, unconceded** chain. A conceded result can never exit 0.
+- Every operator claim that substitutes for evidence now produces a concession, including
+  `--allow-setup-issue`: allowlisting a base-report issue is the operator asserting it is a setup artefact,
+  which is a claim and not evidence. The oracle's own detail text says so, and the verdict is at best
+  PARTIAL. A partial result must not close the device gate.
+
+### 2. L5 closed: an identity-grade binding record
+
+`beginDeferredOverdubStopForSlot` now emits, on the edge where admission is **committed**:
+
+```cpp
+DebugSessionCapture::reentryDecision("bound", currentTick, interval, slot, captureStopQueueDepth());
+```
+
+It reuses the **existing** `reentryDecision` emitter and wire format
+(`DIAG,reentry,bound,<tick>,<interval>,<slot>,<depth>`), so no new family and no new format string were
+added. `interval` is the parameter the caller passed -- `captureInterval_` via `beginDeferredOverdubStop`, or
+the latch's stored interval via `driveAcceptedInteraction` -- which is exactly the identity the **denial**
+reports. A denied request and its later binding can therefore be **correlated** instead of inferred, which is
+what L5 previously could not do.
+
+The record keeps the previously identified telemetry gap honest in both directions: L5 now passes
+**unconceded** only when a `bound` record names the *same* slot **and** the *same* interval as the denial. A
+`bound` record for the denied interval that appears **before** capacity was released is a `RETENTION_FAIL`,
+because the capacity model says that cannot happen. Slot-scoped evidence alone still only earns a concession.
+
+**RAM1: the approved floor is preserved, and measurably so.** `padding` is byte-identical at **840**; FLASH
+`code` grew `1,025,608 -> 1,025,712` (**+104 bytes**). The reason is placement, not luck:
+`beginDeferredOverdubStopForSlot` is `TRACK_COLD_MEM`, i.e. FLASH-resident, so the added call does not enter
+the ITCM `code` segment the floor measures. No space needed to be recovered because none was consumed.
+
+### 3. L3: the retained-request row now names the track *and* the slot
+
+The row was `Loop %d: Switch and record start retained (stop not yet admitted)` -- ambiguous across tracks,
+since it carried only the 1-based loop number. It is now
+
+```
+Track %d loop %d: switch and record start retained (stop not yet admitted)
+```
+
+with the manager's 0-based track index, matching the other `CAT_TRACK` rows. The oracle requires **both**
+fields plus positional ordering after the denial and before the release, and its failure detail says the link
+stays insufficient otherwise. Recorded limitation: the row is a human log line, so ordering is **positional**
+(it carries no device timestamp) -- deterministic under the logger's append order, but weaker than a `#CAP`
+record, and the oracle says so rather than implying timestamp-grade ordering.
+
+### 4. L7 now requires the content pipeline, not an event count
+
+`storedNoteEvent`/`storedNotes` have no callers, so the capture has no per-note record of its own and the
+seal's `eventCount` can only say *that* a take was sealed with N events. L7 therefore now consumes the
+**existing content pipeline**:
+
+- `--content-dump` (`serial.log` from `dump_and_capture.py`) -- the oracle parses
+  `CAPTURE_CONTENT,begin,track=..,slot=..,length=..` to learn **which slot was dumped**, and
+  `CAPTURE_CONTENT,event,<kind>,<pass>,<tick>,<type>,<channel>,<note>,<velocity>,<noteId>` for the real
+  **pitches**. `--expect-successor-note` (repeatable) names the notes the successor take must contain.
+- `--content-review` (`content-review.json`) -- storage<->effective **parity** per playback cycle.
+
+An unconceded L7 pass requires the dump to be for the successor slot **and** to contain the expected notes
+**and** the review to report `inventory_equal` on every cycle. A review alone is `INSUFFICIENT_EVIDENCE` with
+the reason stated ("parity is not note-level"); a dump for the wrong slot, or without the expected note, is a
+`RETENTION_FAIL`.
+
+Recorded oddity of the dump, which is why the oracle reads the slot from `begin` and not from `track=`: that
+field is emitted from `midiChannel`, not a track index.
+
+### Evidence
+
+- `scripts/test_retention_probe.py`: **36 host tests, all green** (was 29). New cover: conceded links yield
+  `RETENTION_PARTIAL` with exit 5 and never 0; the complete **unconceded** chain reaches `RETENTION_PASS` with
+  **exit 0 and zero concessions**; the identity bind record removes the L5 concession; a `bound` record before
+  the release fails; slot-only bind evidence stays weaker; a review alone is parity-only; a dump for the wrong
+  slot fails; a dump without the expected note fails; a dump without a review is not a full pass.
+- Firmware `teensy41-capture-serial`: SUCCESS, `variables 96,160 / code 392,376 / padding 840`, FLASH
+  `+104 bytes` -- the floor is untouched.
+
+### Step 3, the device run: prepared, **not** performed
+
+The first authorized no-concession run needs a host sequence that performs the actual gestures -- select the
+track, press each slot's record/overdub button, and start/stop the transport -- and **that flow does not
+exist**: `scripts/hitl/flows/queued_switch.py` is a Phase-1 skeleton (`transport.phase_wait` plus a marker),
+and the action layer exposes only `press_record`, `press_play_stop`, `press_edit` and `press_undo` -- no
+per-slot record press and no slot/track select. Building it is host work with device round-trips, and rushing
+it would produce exactly the kind of non-evidence this entire section exists to prevent. It is therefore
+recorded as the next step rather than attempted here, and **no device command was run** for this section.

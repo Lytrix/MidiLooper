@@ -1630,6 +1630,29 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       carrying the target in two owners contradicts "avoid another target owner". The pending-start owner is
       the single home; the switch is still executed by the existing switch path. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3 (retention).
+      **CONCESSION LOOPHOLE CLOSED + EVIDENCE GAPS (2026-09-26).** Conceded links no longer produce a pass:
+      **`RETENTION_PARTIAL` (exit 5)** is its own verdict and `RETENTION_PASS` (**exit 0**) is reserved for the
+      complete, unconceded chain -- `--allow-setup-issue` now also counts as a concession, because allowlisting
+      a report issue is an operator claim, not evidence. **L5 closed:** `beginDeferredOverdubStopForSlot` emits
+      `reentryDecision("bound", tick, interval, slot, depth)` on the admission-committed edge, reusing the
+      existing emitter and wire format, so a denial and its later binding correlate on the **same interval
+      identity**; a `bound` record for the denied interval *before* the release is a `RETENTION_FAIL`, and
+      slot-scoped evidence alone still only earns a concession. **RAM1 floor preserved, measurably:** `padding`
+      byte-identical at **840**, FLASH `+104 bytes`, because the function is `TRACK_COLD_MEM` (FLASH-resident)
+      and never enters the ITCM segment the floor measures -- no space needed recovering. **L3:** the retained
+      row now names the track *and* the slot (`Track %d loop %d: switch and record start retained ...`); the
+      oracle requires both plus positional ordering, and records that the ordering is positional because a
+      human log row carries no timestamp. **L7:** now requires the **existing content pipeline** -- the
+      `!CAPTURE_CONTENT` dump for the successor slot's real **pitches** (`--content-dump`,
+      `--expect-successor-note`) **and** `content-review.json` parity (`--content-review`); a review alone is
+      parity-only and insufficient, a wrong-slot dump or a missing expected note fails. Evidence: **36 host
+      tests** green, including the complete unconceded chain reaching `RETENTION_PASS`/exit 0 with zero
+      concessions; firmware SUCCESS with the floor untouched.
+      **STEP 3 (the first authorized no-concession device run) NOT PERFORMED:** it needs a host sequence that
+      performs the real gestures, and that flow does not exist -- `scripts/hitl/flows/queued_switch.py` is a
+      Phase-1 skeleton and the action layer has no per-slot record press or slot/track select. Building it is
+      host work with device round-trips; no device command was run, and the run is recorded as the next step
+      rather than rushed into non-evidence.
       **ORACLE TIGHTENED (2026-09-26) — the first oracle could falsely report `RETENTION_PASS`.** The owner
       reproduced two false passes and both are now refused: C's start **before** capacity release (was a pass;
       now `RETENTION_FAIL`, exit 2, failing L3 and L6), and **removal of B's identity-specific denial** with the
