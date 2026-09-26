@@ -28,7 +28,11 @@ BASE_REPORT = {"hitl_report": {"capture_integrity": "COMPLETE", "capture_complet
 OPEN_US = 100_000_000
 WINDOW_US = 1_335_389
 RELEASE_US = OPEN_US + WINDOW_US
-DENIAL_US = OPEN_US + 20_000
+# The denial must sit inside the window and be separated from the window's opening by more than the 150 ms
+# exposure floor: that opening-to-denial interval is the oracle's **bounded** width evidence (the release edge
+# is a deferred-maintenance turn, so `RELEASE_US - OPEN_US` is only an upper bound). A denial only 20 ms after
+# the window opened is the *narrow-window* case, which its own test drives by moving this edge.
+DENIAL_US = OPEN_US + 600_000
 # The successor seal must follow the release for a well-ordered run.
 START_US = RELEASE_US + 100_000
 SEAL_US = START_US + 50_000
@@ -38,7 +42,7 @@ TAIL_US = STOP_US + 600_000  # > the 500 ms follow-up floor
 
 def chain_log(*, retained: bool = True, start_us: int = START_US, seal_events: int = 2,
               release_us: int = RELEASE_US, extra: list[str] | None = None,
-              denial: str | None = None, bind_evidence: bool = True,
+              denial: str | None = None, denial_us: int = DENIAL_US, bind_evidence: bool = True,
               dup_start: bool = False, tail_us: int = TAIL_US,
               seed: bool = True, window_us: int | None = OPEN_US) -> str:
     """A synthetic capture log for the full chain; each keyword removes or moves one link."""
@@ -48,8 +52,8 @@ def chain_log(*, retained: bool = True, start_us: int = START_US, seal_events: i
         lines.append(f"#CAP,{OPEN_US - 5000},RECS,stop,0,13930,13663,1803,1536,0")
     if window_us is not None:
         lines.append(f"#CAP,{window_us},DIAG,reentry_window_open,0,16387,1536")
-    lines.append(f"#CAP,{DENIAL_US},{denial_body}")
-    lines.append(f"#CAP,{DENIAL_US},ODUB,stop,admission,0,0,4294967295,4294967295,1,0,"
+    lines.append(f"#CAP,{denial_us},{denial_body}")
+    lines.append(f"#CAP,{denial_us},ODUB,stop,admission,0,0,4294967295,4294967295,1,0,"
                  "successor_stop_denied_capacity")
     if retained:
         # A human log row: no #CAP timestamp, ordered by position between the denial and the release.
@@ -342,10 +346,13 @@ class RetentionProbeChainTests(unittest.TestCase):
         observed free, and it landed 25 ms AFTER B had already bound -- so requiring a bind to follow the
         release record inverts the timing the fix documents.
         """
-        from test_retention_probe import OPEN_US, RELEASE_US, chain_log
-        # A bind after the denial but before the release record is legitimate.
-        text = chain_log().replace(f"#CAP,{RELEASE_US + 5_000},DIAG,reentry,bound,17000,7,1,0",
-                                   f"#CAP,{OPEN_US + 30_000},DIAG,reentry,bound,17000,7,1,0")
+        from test_retention_probe import DENIAL_US, OPEN_US, RELEASE_US, chain_log
+        # A bind after the denial but before the release record is legitimate. Both edges are moved here
+        # because the denial must stay INSIDE the window (`in_window` is open < denial < release): the
+        # bounded edge is the denial, and the release record is only the maintenance turn that followed it.
+        text = chain_log(release_us=DENIAL_US + 40_000).replace(
+            f"#CAP,{DENIAL_US + 45_000},DIAG,reentry,bound,17000,7,1,0",
+            f"#CAP,{DENIAL_US + 10_000},DIAG,reentry,bound,17000,7,1,0")
         result = run(text, content_dump=content_dump(), content_review=REVIEW_OK,
                      expect_successor_notes=(67,))
         self.assertEqual("ok", by_name(result)["L5_same_b_stop_bound"].status,
@@ -453,10 +460,37 @@ class RetentionProbeChainTests(unittest.TestCase):
         self.assertEqual("fail", by_name(result)["tempo_verified"].status)
 
     def test_a_narrow_window_is_an_exposure_setup_failure(self):
-        result = run(chain_log(release_us=OPEN_US + 40_000), accept_slot_scoped_bind=True,
+        """The bounded evidence is the opening-to-denial interval: a denial 20 ms after the window opened
+        cannot have been staged by two host gestures, whatever the release-turn delta says."""
+        result = run(chain_log(denial_us=OPEN_US + 20_000), accept_slot_scoped_bind=True,
                      accept_event_count_only=True)
         self.assertEqual("SETUP_INCOMPLETE", result.verdict)
         self.assertEqual("fail", by_name(result)["capacity_denied_window_wide_enough"].status)
+
+    def test_a_late_release_turn_does_not_fail_a_well_staged_window(self):
+        """The regression this check exists for, in the device's own numbers. `canonical_release` is emitted by
+        the deferred-maintenance turn that services the marker, so the delta it reports is a servicing latency,
+        not the window's closure: on device the turn read a small delta for a window whose denied successor stop
+        had come far later (the run measured 34.8 ms against a denial 513 ms after the window opened).
+
+        The device's actual shape -- release turn delta *smaller* than the opening-to-denial interval -- cannot
+        be reproduced here, because `in_window` requires `open < denial < release`, so the release turn is
+        necessarily the later of the two. That is why the naive check and this one agree on this fixture's
+        verdict: both compare a quantity above the floor. The discriminating assertions are on the reported
+        quantities (the bounded interval names its source; the delta is labelled a servicing latency), and
+        `test_a_narrow_window_is_an_exposure_setup_failure` is the verdict-level negative.
+        """
+        text = chain_log(denial_us=OPEN_US + 513_000, release_us=OPEN_US + 547_778)
+        result = run(text, content_dump=content_dump(), content_review=REVIEW_OK,
+                     expect_successor_notes=(67,))
+        width = by_name(result)["capacity_denied_window_wide_enough"]
+        self.assertEqual("ok", width.status, width.detail)
+        # The gate is the bounded interval (opening -> denial), reported with its source.
+        self.assertIn("at least 513000 us", width.detail)
+        self.assertIn("device timestamp", width.detail)
+        # ... and the release-turn delta is reported beside it, named as what it is.
+        self.assertIn("servicing latency, not the closure", width.detail)
+        self.assertIn("upper bound only", by_name(result)["L4_capacity_released"].detail)
 
     def test_no_finalizer_window_cannot_stage_the_state(self):
         result = run(chain_log(window_us=None), accept_slot_scoped_bind=True,
