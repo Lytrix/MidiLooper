@@ -135,51 +135,79 @@ def _confirm(capture_log: Path, *, label: str, markers: tuple[str, ...], timeout
     return ok
 
 
+def _transport_running(capture_log: Path) -> bool:
+    """Whether the transport is running, from the most recent device line that says so."""
+    state = False
+    for line in _lines(capture_log):
+        if "Transport started" in line:
+            state = True
+        elif "Transport stopped" in line:
+            state = False
+    return state
+
+
+def _ensure_transport(out_port, capture_log: Path, *, running: bool, press_ms: int,
+                      events: list[dict], label: str, attempts: int = 3) -> bool:
+    """Make the transport running or stopped, and REQUIRE the transition rather than assume it.
+
+    Pressing the global transport note toggles it, so a blind press when it is already in the wanted state
+    flips it the wrong way. The device's own "Transport started"/"Transport stopped" lines are readable, so the
+    state is read first and the transition is then required. This matters for the seed: pressing a slot button
+    while the track is *playing* takes the `isPlaying() && slotHasData` branch (SD-aware, so a cleared but
+    payload-carrying slot counts as filled) and never reaches the record path.
+    """
+    for attempt in range(attempts):
+        if _transport_running(capture_log) == running:
+            events.append({"event": f"{label}_transport", "running": running, "attempt": attempt})
+            return True
+        before = len(_lines(capture_log))
+        _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
+                          channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
+        want = "Transport started" if running else "Transport stopped"
+        other = ",ST,Track,STOPPED,PLAYING" if running else ",ST,Track,PLAYING,STOPPED"
+        _wait_for_any(capture_log, after=before, markers=(want, other), timeout_s=4.0)
+        time.sleep(0.5)
+    ok = _transport_running(capture_log) == running
+    events.append({"event": f"{label}_transport", "running": running, "confirmed": ok})
+    return ok
+
+
 def _clear_slot(out_port, capture_log: Path, *, track: int, slot_number: int, press_ms: int,
                 events: list[dict], clear_press_ms: int = 900) -> bool:
-    """Clear one slot, following the proven recipe: select the slot, then long-press the record button.
+    """Clear one slot using the owner's recipe: **from stopped**, slot press, then long-hold record press.
 
-    `CLEAR_TRACK_FOR_SLOT` only clears when the slot is the **selected** one (`slot == selectedSlot`); on any
-    other slot the same gesture queues playback instead. The clear targets the selected slot, which is why the
-    selection and the long press are a pair. Clearing is standing-authorized for the development set, and it is
-    what makes a slot a genuine record target: every slot on this device retains an SD payload, and the
-    per-slot gesture consults SD-aware content, so a slot with no committed passes still is not armable until
-    it is cleared.
+    The owner's recipe verbatim: "from stopped, slot press, long hold record press will clear it". The
+    transport must be stopped first (`_ensure_transport` reads the device's own state rather than blind
+    toggling), the slot press selects the slot -- `CLEAR_TRACK_FOR_SLOT` only clears the *selected* slot, and
+    any other slot takes the playback path instead -- and the long hold on the record button is the clear.
+
+    Clearing is what makes a slot a genuine record target: every slot on this device retains an SD payload and
+    the per-slot gesture consults SD-aware content, so an uncleared slot routes to the playback-switch branch
+    instead of the record path.
     """
-    # Stop and let deferred persistence settle: a live capture owns persistence and cannot be cleared.
-    _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
-                      channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
-    time.sleep(1.0)
+    if not _ensure_transport(out_port, capture_log, running=False, press_ms=press_ms, events=events,
+                             label=f"clear_{slot_number}"):
+        raise RuntimeError(f"could not stop the transport before clearing slot {slot_number}")
     slots.press_track(_Ctx(out_port), track, press_ms=press_ms)
     slots.press_slot_record(_Ctx(out_port), slot_number, press_ms=press_ms)
     time.sleep(1.0)
-    # If that selection armed a capture, commit it before clearing.
-    if _wait_for_any(capture_log, after=len(_lines(capture_log)) - 1,
-                     markers=("Recording started", ",RECA,"), timeout_s=1.0):
-        _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
-                          channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
-        time.sleep(1.5)
-    # The clear is refused while deferred persistence is busy -- measured on device: the first target logged
-    # "Clear refused: deferred save temporarily blocked by waiting_commit_gate; slot left untouched" while a
-    # later target cleared fine. So settle, retry, and treat "Clear ignored ... empty" as success too.
+
     cleared = False
-    for attempt in range(4):
-        time.sleep(3.0)
+    for attempt in range(3):
         before = len(_lines(capture_log))
         _send_long_press(out_port, note=RECORD_BUTTON_NOTE,
                          channel_1based=CONTROL_CHANNEL_1BASED, press_ms=clear_press_ms)
         _wait_for_any(capture_log, after=before,
-                      markers=("Track cleared", "Clear selected slot", "Clear ignored",
-                               "Clear refused", "slot cleared"),
+                      markers=("Track cleared", "Clear selected slot", "Clear ignored", "Clear refused"),
                       timeout_s=6.0)
         tail = " ".join(_lines(capture_log)[before:])
-        if ("Track cleared" in tail or "Clear selected slot" in tail
-                or "Clear ignored" in tail or "slot cleared" in tail):
+        if any(m in tail for m in ("Track cleared", "Clear selected slot", "Clear ignored")):
             cleared = True
             break
-        events.append({"event": f"clear_slot_{slot_number}_retry", "attempt": attempt + 1})
-    events.append({"event": f"clear_slot_{slot_number}", "confirmed": cleared})
-    time.sleep(1.0)
+        events.append({"event": f"clear_{slot_number}_retry", "attempt": attempt + 1})
+        time.sleep(3.0)
+    events.append({"event": f"clear_{slot_number}", "confirmed": cleared})
+    time.sleep(0.5)
     return cleared
 
 
@@ -206,23 +234,30 @@ def _seed_slot(out_port, capture_log: Path, *, track: int, slot_number: int, cha
     # switch" -- and `slotHasData` is SD-aware, so a slot with no committed content but a retained SD payload
     # (every slot on this device: payload_inventory=64) counts as filled. The record path is reached only when
     # the track is not playing, where the press arms and the transport start then begins the capture.
-    stop_before = len(_lines(capture_log))
-    _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
-                      channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
-    _wait_for_any(capture_log, after=stop_before,
-                  markers=("Transport stopped", ",ST,Track,PLAYING,STOPPED"), timeout_s=3.0)
-    events.append({"event": f"seed_{slot_number}_stopped_first", "confirmed": True})
+    if not _ensure_transport(out_port, capture_log, running=False, press_ms=press_ms, events=events,
+                             label=f"seed_{slot_number}"):
+        raise RuntimeError(f"could not stop the transport before seeding slot {slot_number}; pressing the "
+                           "slot while the track plays would take the playback-switch branch")
 
     before = len(_lines(capture_log))
     slots.press_slot_record(_Ctx(out_port), slot_number, press_ms=press_ms)
     events.append({"event": f"seed_{slot_number}_selected"})
-    _wait_for_any(capture_log, after=before,
-                  markers=(",ST,Track,STOPPED,ARMED", ",ST,Track,STOPPED,RECORDING",
-                           "Start Recording"),
-                  timeout_s=3.0)
+    saw = _wait_for_any(capture_log, after=before,
+                        markers=(",ST,Track,STOPPED,ARMED", ",ST,Track,STOPPED,RECORDING",
+                                 "Start Recording"),
+                        timeout_s=3.0)
+    if not saw:
+        # A cleared slot can take the arm-and-wait path (`handleArmedRecordPress` returns handled), so the
+        # first press only arms. Press again: the second press is the record start for an armed slot.
+        slots.press_slot_record(_Ctx(out_port), slot_number, press_ms=press_ms)
+        events.append({"event": f"seed_{slot_number}_second_press"})
+        _wait_for_any(capture_log, after=before,
+                      markers=(",ST,Track,STOPPED,ARMED", ",ST,Track,STOPPED,RECORDING",
+                               "Start Recording"),
+                      timeout_s=3.0)
     # The arm needs a running transport to begin the capture.
-    _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
-                      channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
+    _ensure_transport(out_port, capture_log, running=True, press_ms=press_ms, events=events,
+                      label=f"seed_{slot_number}_start")
     recording = _wait_for_any(capture_log, after=before,
                               markers=("Recording started", ",RECA,", ",ST,Track,ARMED,RECORDING"),
                               timeout_s=phase_timeout_s)
@@ -262,6 +297,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--phase-timeout-s", type=float, default=12.0)
     p.add_argument("--window-timeout-s", type=float, default=6.0)
     p.add_argument("--successor-note", type=int, default=67)
+    p.add_argument("--prepare-only", action="store_true",
+                   help="stop after clearing the three targets, then exit. The owner's recipe is to clear "
+                        "each required slot first and then run as normal, which also keeps the clear's state "
+                        "effects out of the seeding phase.")
+    p.add_argument("--clear-targets", action="store_true",
+                   help="also clear the targets in this run (off by default: prepare first, then run).")
     p.add_argument("--no-clear", action="store_true",
                    help="skip the target clear. By default the three targets are cleared before seeding, "
                         "which is standing-authorized for the development set and is what makes them genuine "
@@ -388,11 +429,24 @@ def main(argv: Optional[list[str]] = None) -> int:
                 "(CC102 is mode-gated); without it every timing below is wrong, so the flow refuses to "
                 "continue rather than produce a bad run.")
 
-        # --- clear the targets, so they are genuine record targets rather than payload-carrying slots ---
-        if not args.no_clear:
+        # --- optional in-run clear; the normal flow is `--prepare-only` first, then run as normal ---
+        if args.clear_targets and not args.no_clear:
             for slot_number in (args.slot_a, args.slot_b, args.slot_c):
                 _clear_slot(out_port, capture_log, track=args.track, slot_number=slot_number,
                             press_ms=args.press_ms, events=events)
+        if args.prepare_only:
+            for slot_number in (args.slot_a, args.slot_b, args.slot_c):
+                _clear_slot(out_port, capture_log, track=args.track, slot_number=slot_number,
+                            press_ms=args.press_ms, events=events)
+            report["result"] = "TARGETS_PREPARED"
+            report["events"] = events
+            report["session_log"] = str(capture_log)
+            (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
+            print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
+            for e in events:
+                print(f"  {e}")
+            print("[retention] targets prepared; now run without --prepare-only")
+            return 0
 
         # --- setup: seed A and B, confirming each transition before the next gesture ---
         _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_a, channel=t0,
@@ -447,6 +501,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                  timeout_s=args.phase_timeout_s, events=events)
         report["result"] = "DROVE_SEQUENCE" if started else "SEQUENCE_INCOMPLETE"
 
+    if report.get("result") == "TARGETS_PREPARED":
+        report["session_log"] = str(capture_log)
+        (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
+        print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
+        for e in events:
+            print(f"  {e}")
+        print("[retention] targets prepared; now run without --prepare-only")
+        return 0
     report["session_log"] = str(capture_log)
     (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
