@@ -667,6 +667,11 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
   // the start is its own press -- the acceptance sequence's "switch to B, then start B".
   clockManager.assignCurrentTickSilently(200);
   TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  // Milestone: did the *switch commit* already leave the successor in an Overdub capture session?
+  const unsigned phaseAfterSwitch =
+      static_cast<unsigned>(track.getActiveLoop().capture.phase);
+  const bool overdubSessionAfterSwitch = track.getActiveLoop().hasOverdubSession();
+  const unsigned loopLenAfterSwitch = (unsigned)track.getActiveLoop().loopLengthTicks;
   if (TrackCaptureStopTestAccess::activeLoopIndex(track) == 1 &&
       !TrackCaptureStopTestAccess::isRecording(track) &&
       !TrackCaptureStopTestAccess::isOverdubbing(track)) {
@@ -765,6 +770,9 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
              (unsigned)tickBeforeInput, (unsigned)loopLenBeforeInput, (unsigned)onTick,
              static_cast<unsigned>(track.getActiveLoop().capture.phase),
              track.getActiveLoop().hasOverdubSession() ? 1 : 0);
+    snprintf(state + strlen(state), sizeof(state) - strlen(state),
+             " | afterSwitch phase=%u session=%d loopLen=%u", phaseAfterSwitch,
+             overdubSessionAfterSwitch ? 1 : 0, loopLenAfterSwitch);
     if (getenv("S4B_ACCEPTANCE") == nullptr) {
       return;
     }
