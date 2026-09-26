@@ -1,0 +1,67 @@
+{
+  "track": 8,
+  "slot_a": 4,
+  "slot_b": 4,
+  "slot_c": 4,
+  "events": [
+    {
+      "event": "midi_output_opened"
+    },
+    {
+      "event": "tempo_already_pinned",
+      "requested_bpm": 120.0,
+      "confirmed": true,
+      "route": "boot_readback"
+    },
+    {
+      "event": "tempo_pinned",
+      "requested_bpm": 120.0,
+      "confirmed": true,
+      "route": "boot_readback"
+    },
+    {
+      "event": "clear_4_transport",
+      "running": false,
+      "attempt": 0
+    },
+    {
+      "event": "clear_4_retry",
+      "attempt": 1
+    },
+    {
+      "event": "clear_4_retry",
+      "attempt": 2
+    },
+    {
+      "event": "clear_4",
+      "confirmed": true,
+      "identity_grade": true
+    },
+    {
+      "event": "clear_4_transport",
+      "running": false,
+      "attempt": 0
+    },
+    {
+      "event": "clear_4_retry",
+      "attempt": 1
+    },
+    {
+      "event": "clear_4",
+      "confirmed": true,
+      "identity_grade": true
+    },
+    {
+      "event": "clear_4_transport",
+      "running": false,
+      "attempt": 0
+    },
+    {
+      "event": "clear_4",
+      "confirmed": true,
+      "identity_grade": true
+    }
+  ],
+  "result": "TARGETS_PREPARED",
+  "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/rwso-clear-t8s4-20260926_184747/session_20260926_184758.log"
+}

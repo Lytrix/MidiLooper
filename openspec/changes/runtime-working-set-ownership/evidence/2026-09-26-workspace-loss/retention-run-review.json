@@ -1,0 +1,190 @@
+{
+  "verdict": "RETENTION_PASS",
+  "identity": {
+    "git_commit": "5629e7e4f96d765f0e8122eb8a7b152de9aa2f89",
+    "firmware_hex_sha256": "da59a7eeb3e0bdd0724d5f2e074d1ff813f6f66bf601d9f9975d5fc3b781de65"
+  },
+  "checks": [
+    {
+      "name": "telemetry_present",
+      "kind": "setup",
+      "status": "ok",
+      "link": null,
+      "detail": "13475 #CAP records"
+    },
+    {
+      "name": "fresh_boot",
+      "kind": "setup",
+      "status": "ok",
+      "link": null,
+      "detail": "boot banner in the first 60 lines"
+    },
+    {
+      "name": "identity_pinned",
+      "kind": "setup",
+      "status": "ok",
+      "link": null,
+      "detail": "git_commit=5629e7e4f96d firmware_hex_sha256=da59a7eeb3e0"
+    },
+    {
+      "name": "capture_integrity",
+      "kind": "setup",
+      "status": "ok",
+      "link": null,
+      "detail": "no ring eviction"
+    },
+    {
+      "name": "observation_tail_complete",
+      "kind": "setup",
+      "status": "ok",
+      "link": null,
+      "detail": "log ends on a complete line"
+    },
+    {
+      "name": "reported_issues_resolved",
+      "kind": "setup",
+      "status": "ok",
+      "link": null,
+      "detail": "base report lists no issues"
+    },
+    {
+      "name": "tempo_verified",
+      "kind": "setup",
+      "status": "ok",
+      "link": null,
+      "detail": "device tempo 120.0 BPM matches 120.0"
+    },
+    {
+      "name": "setup_transitions_confirmed",
+      "kind": "setup",
+      "status": "ok",
+      "link": null,
+      "detail": "no base report to contradict it"
+    },
+    {
+      "name": "seed_content_on_a",
+      "kind": "setup",
+      "status": "ok",
+      "link": null,
+      "detail": "RECS,stopToStopped,4,347,0,6491,6144,0 at 54667042 us (final length 6144 ticks)"
+    },
+    {
+      "name": "L1_finalizer_outstanding",
+      "kind": "retention",
+      "status": "ok",
+      "link": "L1",
+      "detail": "DIAG,reentry_window_open,4,1121,6144 at 58173344 us"
+    },
+    {
+      "name": "L4_release_names_the_retiring_owner",
+      "kind": "retention",
+      "status": "ok",
+      "link": "L4",
+      "detail": "slot 4, generation 40, loop 6144 ticks, 8 chunks free"
+    },
+    {
+      "name": "capacity_denied_window_wide_enough",
+      "kind": "setup",
+      "status": "ok",
+      "link": null,
+      "detail": "1550289 us (1550.3 ms) between window_open and canonical_release; floor 150000 us"
+    },
+    {
+      "name": "L4_capacity_released",
+      "kind": "retention",
+      "status": "ok",
+      "link": "L4",
+      "detail": "DIAG,canonical_release,4,40,6144,8 at 59723633 us -- names the retiring owner. Informational with respect to L5: it is the first maintenance turn at which the resources were observed free, not the availability edge, so a bind earlier than this record is expected (the bind's own admission guard is what proves availability)."
+    },
+    {
+      "name": "L2_denial_identified_for_b",
+      "kind": "retention",
+      "status": "ok",
+      "link": "L2",
+      "detail": "DIAG,reentry,deny,1311,2,5,1 at 58670400 us names slot 5 and interval 2"
+    },
+    {
+      "name": "L3_request_retained_for_c",
+      "kind": "retention",
+      "status": "ok",
+      "link": "L3",
+      "detail": "the retained-request log row for slot 6 appears after the denial and before the release, and no start was executed before the release"
+    },
+    {
+      "name": "L5_same_b_stop_bound",
+      "kind": "retention",
+      "status": "ok",
+      "link": "L5",
+      "detail": "DIAG,reentry,bound,1706,2,5,0 at 59698903 us names the **denied interval** 2 on slot 5, after the denial at 58670400 us"
+    },
+    {
+      "name": "L6_successor_started_once",
+      "kind": "retention",
+      "status": "ok",
+      "link": "L6",
+      "detail": "exactly one RECA,6 at 61759537 us, after the release at 59723633 us"
+    },
+    {
+      "name": "L7_successor_recorded_expected_midi",
+      "kind": "retention",
+      "status": "ok",
+      "link": "L7",
+      "detail": "complete dump for slot 6 (declared counts {'effective#0': 2, 'record#0': 2} match parsed) declares the expected note(s) [67] in both storage and effective rows, and the two agree on the full MIDI fields compared -- tick, type, channel, note, velocity (storage note-ons [67], effective [67]). This is loop-scoped committed/effective parity for the successor; it is NOT MIDI-output playback parity, which would require the other enabled slots and tracks to be silent; content review additionally reports inventory_equal=False over the whole playback, which layers the other enabled slots and so is not a statement about the successor alone"
+    },
+    {
+      "name": "L8_bounded_followup_clean",
+      "kind": "retention",
+      "status": "ok",
+      "link": "L8",
+      "detail": "14328069 us of follow-up after the last required event with no repeat start, no re-issued denial and no extra seal"
+    },
+    {
+      "name": "activation_invariant_held",
+      "kind": "retention",
+      "status": "ok",
+      "link": null,
+      "detail": "no activation-invariant violation logged"
+    }
+  ],
+  "evidence": {
+    "window_open": [
+      "58173344: DIAG,reentry_window_open,4,1121,6144"
+    ],
+    "canonical_release": [
+      "59723633: DIAG,canonical_release,4,40,6144,8"
+    ],
+    "working_set_lease_release": [],
+    "denial": [
+      "58670400: DIAG,reentry,deny,1311,2,5,1"
+    ],
+    "retained_request": [
+      "track 7 loop 7: [58.914] [INFO] Track 7 loop 7: switch and record start retained (stop not yet admitted)"
+    ],
+    "stop_bind": [
+      "59723671: DIAG,canonical_release,5,0,6144,8",
+      "59698903: DIAG,reentry,bound,1706,2,5,0"
+    ],
+    "successor_start": [
+      "61759537: RECA,6,2304"
+    ],
+    "successor_seal": [
+      "66759060: RECS,stage,seal,3995,3986,4294967295,4294967295,2,0,ok"
+    ],
+    "invariant_violation": [],
+    "overflow": []
+  },
+  "limitations": [
+    "the working-set lease release is NOT observed by name in this run: no `DIAG,ws_release` row. That row is emitted only where the release path fires -- a take-start sweep (which excludes the capturing track, so a same-track sequence never sweeps its own slots), the memory-pressure release, or the playback-reset/undo path. Its absence means this run did not exercise it, not that the release failed; the release remains exercised natively (S4.3's reuse fixture).",
+    "L5 is identity-grade: the bind is read from `DIAG,reentry,bound,<tick>,<interval>,<slot>,<depth>`, which names the same `captureInterval_` the denial names. (The earlier claim that nothing names that identity on the binding edge is withdrawn -- it described the state before this change added the `bound` record.) The *release* marker is separate and is NOT the availability edge: it is emitted on the first maintenance turn at which the resources were observed free, which is measurably later than the admission it enables.",
+    "L7 note-level evidence: `storedNoteEvent`/`storedNotes` have no callers, so the capture has no per-note record of its own. Pitch-level proof therefore comes from the content pipeline's `!CAPTURE_CONTENT` dump (`--content-dump`), whose `begin` row names the dumped slot and whose events carry real pitches, plus `content-review.json` (`--content-review`) for storage<->effective parity. Note the dump's own oddity, which is why the slot is read from `begin` and not from `track=`: that field is emitted from `midiChannel`, not a track index."
+  ],
+  "concessions": [],
+  "episode": {
+    "slot_a": 4,
+    "window_open_us": 58173344,
+    "window_open_loop_len_ticks": 6144,
+    "capacity_release_us": 59723633,
+    "capacity_denied_window_us": 1550289,
+    "capacity_denied_window_ms": 1550.3
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "git_commit": "bbedfeac5bc8cd3d43441314d2a4e5e1e96923d2",
+  "firmware_hex_sha256": "6d9272dd0eccddcd78cbd54d78e227eda543917eb4efbc1e80e5eccd2759ee94",
+  "firmware_hex": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+  "build_env": "teensy41-capture-serial",
+  "track": 8,
+  "slot_a": 4,
+  "slot_b": 4,
+  "slot_c": 4,
+  "seed_bars": 2,
+  "overdub_notes": 24,
+  "result": "TARGETS_PREPARED",
+  "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/rwso-clear-t8s4-20260926_184747/session_20260926_184758.log",
+  "finished_at": "2026-09-26T18:48:45"
+}

@@ -98,6 +98,18 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=False)
 
     if not args.no_reset:
+        # A reset is the dangerous step when a previous session left persistence unfinished: on 2026-09-26 a
+        # clear admitted a deferred workspace save, the driver closed the port mid-write, and this tool's
+        # reset landed on top of it -- the workspace then failed to load and the device came up empty. The
+        # latch is set by `hitl.device_shutdown` on an incomplete shutdown; honour it instead of resetting.
+        from hitl.device_shutdown import refuse_reset_if_latched
+
+        refusal = refuse_reset_if_latched(tool="hitl_boot_census")
+        if refusal is not None:
+            print(refusal)
+            print("[census] refusing to reset; re-run with --no-reset to attach to the device as it is "
+                  "(read-only) once the device is known good.")
+            return 4
         subprocess.run(["pio", "run", "-e", "teensy41-capture-serial", "-t", "upload"],
                        capture_output=True, timeout=180, check=False, cwd=str(REPO_ROOT))
     port = wait_for_port()
