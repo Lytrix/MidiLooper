@@ -5190,3 +5190,46 @@ Full native `2,444 passed / 1 skipped`; capture-serial builds.
 - `captureStopOwnerGeneration` (S4.2) and the lease generation remain separate identities: the lease
   generation advances only on release, so a finalizing interval keeps its lease until its slot is
   actually released. Wiring them into one alias is not required by any current caller.
+
+## S4.3 — reactivation reuses released capacity (2026-09-25, G2 execution packet + record)
+
+### What the reuse actually is (read, then asserted)
+
+`releaseSlot` retires a slot's **working set** — it does not free the slot's runtime object:
+`TrackPlaybackRuntime::runtimeBySlot_` holds the `LoopPlaybackRuntimePtr`, and only the runtime's
+destructor/deleter frees it. So "reuse" is **capacity retained at a stable address**: the next
+activation of that slot re-admits its working set into the same object, and the per-slot state
+(generation, roles) advances rather than accumulating.
+
+### Oracle and control
+
+Four release/re-activate cycles on one committed slot SHALL each return to the baseline state: the
+lease unheld after the sweep, the slot generation advanced, the **same runtime object address** on
+re-admission, the same role set, and the same `LoopEventStore::freeChunkCount()`. A control activates
+the slot once before the cycles, because "no growth" is only meaningful against a real working set.
+
+The fixture is `test_reactivating_a_released_slot_reuses_its_capacity` in
+`test_runtime_working_set_ownership`.
+
+### Red proof
+
+With the sweep disabled (`releasePlaybackMergedMidiEventsMemory` a no-op) it fails on *"the sweep must
+release the slot's working set"*, and the companion S4.1 fixture fails on *"the sweep must release a
+slot with no live owner"*. Restored and re-verified.
+
+**Measurement limit, recorded rather than papered over:** the native build has no PSRAM, so
+`extmem_malloc` is a no-op there and `ExternalPoolAccounting` cannot report external bytes. This
+fixture therefore observes reuse **structurally** (object identity, generation, role set, chunk pool),
+not as a PSRAM byte delta. The byte-level claim on device remains a device measurement, like the S2.2/S2.3
+budget items.
+
+### Production caller
+
+The entry has a live caller today: `TrackManager::startRecordingOnTrack` →
+`releaseBackgroundPlaybackMergedMidiEventsMemory` sweeps every **other** track when a take starts, which
+is exactly the role transition that should return background capacity. The sweep is also driven from the
+memory-pressure path (`Track::tryReleasePlaybackMergedMidiEventsMemory`). What is **not** built is an
+explicit sweep on a same-track slot switch — recorded here as S4.3's remaining integration rather than
+implied done.
+
+Full native `2,445 passed / 1 skipped`; capture-serial builds with RAM1 byte-identical.
