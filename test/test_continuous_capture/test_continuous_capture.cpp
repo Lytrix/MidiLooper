@@ -211,6 +211,24 @@ struct TrackCaptureStopTestAccess {
   }
   /// The production consumption entry for the accepted interaction (S4f.1/S4f.2).
   static void consumeAcceptedStop(Track& track) { track.consumeAcceptedStopObligation(); }
+  /// S3.3: the selection mechanism the UI gesture ends in, reached through TrackManager's own member.
+  static void selectSlotIndex(uint8_t trackIndex, uint8_t slot) {
+    trackManager.slotStateMachine.setSelectedSlotIndex(trackIndex, slot);
+  }
+  static uint8_t selectedSlotIndex(uint8_t trackIndex) {
+    return trackManager.slotStateMachine.getSelectedSlotIndex(trackIndex);
+  }
+  /// S3.3: the roles this slot actually holds. The lease mutates only through `acquire`/`release`,
+  /// so a flat role set is exactly "no lease churn" — no counter is needed, which is why the
+  /// per-slot runtime stays inside its size pin.
+  static uint8_t workingSetRoles(const Track& track, uint8_t slot) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr ? static_cast<uint8_t>(rt->workingSetRoles()) : 0;
+  }
+  static uint16_t workingSetGeneration(const Track& track, uint8_t slot) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr ? rt->workingSetGeneration() : 0;
+  }
   static bool ringEntrySlotIs(const Track& track, size_t index, uint8_t slot) {
     return track.captureStopJobs_ != nullptr && index < track.captureStopJobs_->count &&
            track.captureStopJobs_->entries[(track.captureStopJobs_->head + index) %
@@ -5043,6 +5061,98 @@ void test_s3_2_liveness_predicates_are_discriminating_per_owner_kind() {
                            "a published pair and an admitted working set are not owners");
 }
 
+
+/// **S3.3 — selection acquires nothing.** The law is `active roles x bounded window`, not
+/// `recorded slots x whole-loop state`: plain selection/browsing must not acquire or release a
+/// working set, and must not depend on working-set availability. The observation is the lease's own
+/// churn counter, which moves only when an operation actually adds or removes a role.
+namespace {
+/// Local copy of the suite's commit helper so this fixture does not depend on the definition order of
+/// the file-scope helper, and to keep the S3.3 case self-contained.
+void s33CommitRecordPassIntoTrackSlot(Track& track, uint8_t slot) {
+  TrackCaptureStopTestAccess::selectSlot(track, slot);
+  Loop& loop = track.getActiveLoop();
+  loop.loopLengthTicks = 768;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(48, 1, 48, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(768, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+}
+}  // namespace
+
+void test_s3_3_selection_and_browsing_acquire_no_working_set() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  const uint8_t trackIndex = 0;
+
+  // Three committed, restored-shaped slots: this is the library a user browses.
+  for (uint8_t slot = 0; slot < 3; ++slot) {
+    s33CommitRecordPassIntoTrackSlot(track, slot);
+  }
+
+  // Control: nothing holds a lease before browsing, so a flat role set is meaningful.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, TrackCaptureStopTestAccess::workingSetRoles(track, 0),
+                                  "browsing must start from a cold slot");
+
+  // Browse every slot, repeatedly. This drives the selection mechanism itself
+  // (`SlotStateMachine`), which is what the UI gesture ends in. The *manager* entry
+  // `TrackManager::setSelectedSlotIndex` is deliberately not used: it also calls
+  // `StorageManager::prioritizeLoopSlotRestoreForFocus`, which is a fail-closed off-path stub in this
+  // suite (the same boundary `test_stop_in_flight_refuses_the_move_to_a_new_slot` records). The
+  // storage half of a switch is owned by the load/restore suites; the selection half is what this
+  // requirement is about.
+  for (int pass = 0; pass < 3; ++pass) {
+    for (uint8_t slot = 0; slot < 3; ++slot) {
+      TrackCaptureStopTestAccess::selectSlotIndex(trackIndex, slot);
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(slot, TrackCaptureStopTestAccess::selectedSlotIndex(trackIndex),
+                                      "browsing must actually move the selection");
+    }
+  }
+
+  // The positive assertion of the requirement: browsing left every slot's lease untouched. Zero
+  // roles is the no-churn witness -- any acquire would have set a bit, and the generation would move
+  // only on a release.
+  for (uint8_t slot = 0; slot < 3; ++slot) {
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+        0, TrackCaptureStopTestAccess::workingSetRoles(track, slot),
+        "selection/browsing must not acquire a working set");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+        0, TrackCaptureStopTestAccess::workingSetGeneration(track, slot),
+        "selection/browsing must not release a working set");
+  }
+  // Corollary from the spec: selection latency cannot depend on working-set availability, so the
+  // browsed slots still hold no runtime at all.
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, 0),
+                            "selection must not admit a slot runtime");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::runtimeAllocated(track, 1));
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::runtimeAllocated(track, 2));
+
+  // Positive control: the cold admission boundary *does* move the counter, so the flat result above
+  // is the absence of churn and not a counter that never increments.
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(1, true),
+                           "the record arm must admit the working set");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, 1),
+                           "the record arm must admit the slot's runtime");
+  const uint8_t armedRoles = TrackCaptureStopTestAccess::workingSetRoles(track, 1);
+  TEST_ASSERT_TRUE_MESSAGE(
+      (armedRoles & static_cast<uint8_t>(WorkingSetRole::PlaybackWindow)) != 0,
+      "the record arm must hold the playback-window role");
+  TEST_ASSERT_TRUE_MESSAGE(
+      (armedRoles & static_cast<uint8_t>(WorkingSetRole::LiveCapture)) != 0,
+      "the record arm must hold the live-capture role");
+  // A repeated admission is idempotent: the held set is unchanged.
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      armedRoles, TrackCaptureStopTestAccess::workingSetRoles(track, 1),
+      "a repeated prewarm must not change the held set");
+  // And no browsed slot was touched.
+  TEST_ASSERT_EQUAL_UINT8(0, TrackCaptureStopTestAccess::workingSetRoles(track, 2));
+  TEST_ASSERT_EQUAL_UINT16(0, TrackCaptureStopTestAccess::workingSetGeneration(track, 2));
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -5051,6 +5161,7 @@ int main() {
     RUN_TEST(test_adversarial_reentry_at_a_companion_checkpoint);
     return UNITY_END();
   }
+  RUN_TEST(test_s3_3_selection_and_browsing_acquire_no_working_set);
   RUN_TEST(test_s3_2_liveness_predicates_are_discriminating_per_owner_kind);
   RUN_TEST(test_first_interval_uses_production_routes_and_freezes_at_punch_out);
   RUN_TEST(test_stop_descriptor_rotation_preserves_worker_borrow_and_reuses_retired_slots);
