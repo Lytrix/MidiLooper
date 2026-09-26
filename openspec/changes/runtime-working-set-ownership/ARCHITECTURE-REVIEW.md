@@ -6026,3 +6026,62 @@ pending-start owner.
 2. S4b.1 check 7 coverage: cross-track targets and cleared / populated targets.
 3. S4b.1 check 6: a successful start "cannot execute twice" has no dedicated fixture (the blocked fixture
    asserts it for the retained request, not for the ordinary double-dispatch case).
+
+## S4f.3 — HITL attempt on the registered entry points (2026-09-26): no pass, and the new path is uncovered
+
+Run identity, both runs: `git_commit e743b97c185884e77c5706917639888ea8e2166b`,
+`firmware_hex_sha256 14a1aea74af01e581ca20dfe6bee83a47c7ac3f34fab7b760ecdfccc7cef9d00` (the flashed image is
+the verified one). Device prep followed the skill: upload, wait for the port, documented scratch slot
+**track 5 / slot 1**.
+
+**Entry point 1 -- stop-interruption wrapper (`scripts/hitl_stop_interruption.py`), twice.**
+
+- First attempt was **my procedural error** and is recorded as such: run on track 8 / slot 4 without a fresh
+  boot, immediately after another run. It aborted on preconditions with `#CAP lines observed: 3`,
+  `INCONCLUSIVE_CAPTURE (SPARSE_CAPTURE)` -- the skill's stale-device signature (section 3). Corrected by
+  re-uploading and using the documented scratch slot.
+- Second attempt (`captures/s4f3-stop-t5s1-120bpm-20260926_141559`) reached the fixture properly:
+  `ST STOPPED_RECORDING->PLAYING: 1`, `ST PLAYING->OVERDUBBING: 1`, record on/off `32/32`,
+  `deferred persist nonblocking ... ok=True`, `MIDI-boundary intervals {OVERDUBBING: 1, OVERDUB_STOPPING: 1,
+  PLAYING: 8, RECORDING: 1}` with `stopping=1`, and display `overdub_ok=True transport_ok=True`. The
+  intervention **was** sent.
+- Verdicts: focused `INCONCLUSIVE_CAPTURE` with `no_device_stop_inside_stopping`; base `FAIL
+  (FIRMWARE_CONTRADICTION)` with `overdub_unmatched_open_notes`, `overdub_out_of_range_notes`.
+- The base issues are the skill's documented **setup** verdicts ("dense generator left notes held at stop;
+  setup verdict only"). The focused issue is **not a timing flake in the ordinary sense**: the session log
+  shows why it cannot be hit --
+
+  ```
+  #CAP,136629878,ST,Track,OVERDUBBING,OVERDUB_STOPPING
+  #CAP,136629899,ST,Track,OVERDUB_STOPPING,PLAYING     <- 21 microseconds later
+  #CAP,136639414,ST,Track,PLAYING,STOPPED             <- transport stop, +9.5 ms
+  ```
+
+  The `OVERDUB_STOPPING` window lasts **21 us**, because the admitted stop defers finalization (DEC-078) and
+  returns the track to PLAYING immediately (the finalize stage itself took 7,383 us, and it runs *after* the
+  state edge). The checkpoint requires the host transport Stop to land **inside** that state, so no
+  `--intervention-delay-ms` value can reliably hit it. This is an **architectural mismatch between the
+  fixture's premise and the deferred-finalization design** that S4f.3/S4b.1 depend on -- not evidence about
+  this change.
+
+**Entry point 2 -- registered baseline preset (`--preset base`, `STIM-BASE-2-2-01`).**
+`INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)`: `RECORDING: 0` and `OVERDUBBING: 0` with
+`record_first_note_missing`, aborting at "second overdub transition not confirmed". Host->device MIDI did
+not arm a record. This is the same **base-preset setup race** already recorded for this change
+("... present with DMA off too and owned by the still-open `runtime-working-set-ownership` selection
+fixture"), and it is not attributable to this slice. Tempo was **correct** in this run
+(`record loop length 1536/1536`), so the race is not a tempo artefact.
+
+**Tempo note.** The device was found at **160.0 BPM**, not the 120.0 previously pinned; the DEC-086 fader
+pinned it back to 120.0 (`CC102=60 -> 120.0 BPM`, `scripts/hitl_tempo_fader_probe.py --set-tempo 120`,
+`captures/s4f3-tempo-pin-20260926_141525/`). The pin does not survive a reboot, and every HITL entry point
+opens (and may reset) the serial port, so **tempo must be re-pinned per run** -- worth automating before the
+next device session.
+
+**Conclusion, stated plainly: the HITL step did not produce a pass, and it could not have covered this
+slice.** Per the skill, `INCONCLUSIVE_CAPTURE` is not a pass. More importantly, **no registered stimulus
+exercises the behaviour this slice implements** -- a switch/start requested while the predecessor's stop is
+capacity-denied -- so these runs are regression context only. Device coverage of the retention path needs a
+new stimulus; per the repo rule that is a **temporary variant** first, promoted to a new `STIM-...-02` only
+once the owner accepts it as the reproducer. The owner declined the variant for this session, so the
+retention path remains **host-verified only** and that limitation is recorded here rather than papered over.
