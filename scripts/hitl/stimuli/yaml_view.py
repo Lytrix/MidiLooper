@@ -45,7 +45,7 @@ def dump_yaml(value: Any, indent: int = 0) -> str:
             return "[]"
         lines = []
         for item in value:
-            if isinstance(item, (dict, list)):
+            if isinstance(item, (dict, list, tuple)):
                 item_yaml = dump_yaml(item, indent + 1)
                 if item_yaml.startswith("{") or item_yaml.startswith("["):
                     lines.append(f"{pad}- {item_yaml}")
@@ -68,12 +68,17 @@ def dump_yaml(value: Any, indent: int = 0) -> str:
                 else:
                     lines.append(f"{pad}{key_text}:")
                     lines.append(dump_yaml(item, indent + 1))
-            elif isinstance(item, list):
+            elif isinstance(item, (list, tuple)):
+                # `dataclasses.asdict` preserves tuple fields as tuples (`StimulusSpec.overdubs`,
+                # `must_prove`, `human_checks`, `interactions`), so a `list`-only test here let every one of
+                # them fall through to the `else` branch and be inlined after its key -- which emitted
+                # `overdubs: - name: "OD1"` and detached the second `must_prove` entry to column 0, i.e.
+                # invalid YAML. Tuples are sequences here exactly as lists are.
                 if not item:
                     lines.append(f"{pad}{key_text}: []")
                 else:
                     lines.append(f"{pad}{key_text}:")
-                    lines.append(dump_yaml(item, indent + 1))
+                    lines.append(dump_yaml(list(item), indent + 1))
             else:
                 lines.append(f"{pad}{key_text}: {dump_yaml(item)}")
         return "\n".join(lines)
