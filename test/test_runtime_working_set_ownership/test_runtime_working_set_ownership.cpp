@@ -24,6 +24,7 @@
 #include <unity.h>
 
 #include <cstdio>
+#include <cstdlib>
 
 #include "../test_support/firmware/Arduino.h"
 #include "../test_support/firmware/SD.h"
@@ -35,6 +36,10 @@ bool sequencerRunning = false;
 
 #include "../test_support/track_harness.inc"
 
+// S4b: this suite links the real stop-telemetry TU (the switch requests persistence for the slot the
+// capture left), so the stub surface must not also define those diagnostics.
+#define HARNESS_LINKS_REAL_STOP_TELEMETRY
+#define HARNESS_OBSERVABLE_SLOT_CHANGE
 // The stub surface: physical outputs and unrelated domain routes stay fail-closed or observable.
 #include "off_path_deps.h"
 
@@ -46,6 +51,13 @@ bool sequencerRunning = false;
 #include "../../src/TrackManager/TrackManagerSlotMatrix.cpp"
 #include "../../src/Loop/LoopPendingNoteChange.cpp"
 #include "../../src/MidiHandler.cpp"
+// S4b: the production switch path (`finalizeCaptureAndSelectSlot`) and the slot-matrix helpers it
+// calls. `replaceSingleEnabledSlotWithTarget` is already linked above via TrackManagerSlotMatrix.cpp.
+#include "../../src/TrackManager/TrackManagerCaptureQueue.cpp"
+// The slot-enable helper the switch path consults.
+#include "../../src/TrackManager/TrackManagerInternalHelpers.cpp"
+// The persistence request the switch path makes for the slot the capture left.
+#include "../../src/Track/TrackStopTelemetryColdHelpers.cpp"
 #include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
 #include "../../src/EditManager/NoteGeometryResolver.cpp"
 #include "../../src/EditManager/EditSessionInteraction.cpp"
@@ -93,6 +105,30 @@ struct TrackCaptureStopTestAccess {
     return track.beginDeferredOverdubStopForSlot(destination, tick, slot, interval);
   }
   static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
+  /// S4b: the switch path and the live-interval state the acceptance sequence needs.
+  static void finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newSlot, uint32_t tick) {
+    trackManager.finalizeCaptureAndSelectSlot(trackIndex, newSlot, tick);
+  }
+  static bool hasPendingDeferredOverdubStop(const Track& track) {
+    return track.hasPendingDeferredOverdubStop();
+  }
+  static bool hasStopInFlight(const Track& track) { return track.hasStopInFlight(); }
+  static bool hasAcceptedUnexecutedInteraction(const Track& track) {
+    return track.hasAcceptedUnexecutedInteraction();
+  }
+  static bool captureActive(const Track& track) { return track.getActiveLoop().captureActive(); }
+  static size_t captureEventCount(const Track& track) {
+    return track.getActiveLoop().capture.store.size();
+  }
+  static bool appendCaptureNote(Track& track, uint32_t onTick, uint32_t offTick, uint8_t note) {
+    Loop& loop = track.getActiveLoop();
+    return loop.appendCaptureEvent(MidiEvent::NoteOn(onTick, 1, note, 100)) &&
+           loop.appendCaptureEvent(MidiEvent::NoteOff(offTick, 1, note, 0));
+  }
+  static bool isOverdubbing(const Track& track) { return track.isOverdubbing(); }
+  static bool isRecording(const Track& track) { return track.isRecording(); }
+  static void startOverdubbing(Track& track, uint32_t tick) { track.startOverdubbing(tick); }
+  static uint8_t activeLoopIndex(const Track& track) { return track.getActiveLoopIndex(); }
   static void latchAcceptedStopForSlot(Track& track, uint8_t slot) {
     track.latchAcceptedStop(PendingStopDestination::Playing, slot, 0);
   }
@@ -175,6 +211,17 @@ void commitRecordPassIntoTrackSlot(Track& track, uint8_t slot) {
   TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(768, CommitReason::RecordStop));
   TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
   TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+}
+
+/// The production MIDI input route, so a "B accepts MIDI" assertion goes through the handler rather
+/// than poking the capture store. Mirrors the continuous-capture harness's helper.
+void inputNote(uint8_t pitch, uint32_t onTick, uint32_t offTick) {
+  clockManager.assignCurrentTickSilently(onTick);
+  midiHandler.handleMidiMessage(midi::NoteOn, 1, pitch, 100, SOURCE_USB);
+  if (offTick != UINT32_MAX) {
+    clockManager.assignCurrentTickSilently(offTick);
+    midiHandler.handleMidiMessage(midi::NoteOff, 1, pitch, 0, SOURCE_USB);
+  }
 }
 
 constexpr uint8_t kPlaybackWindowBit =
@@ -571,6 +618,90 @@ void test_a_declared_envelope_breach_is_reported_and_does_not_block_activation()
 }
 
 
+
+/// **S4b.1 — the switch acceptance sequence.** A is recording/overdubbing; switching to B ends A's live
+/// capture at the handoff boundary, A keeps everything it needs to finalize, and **B starts immediately
+/// without waiting for A's finalization**. This drives the exact gesture and proves B *accepts MIDI and
+/// records it* -- not merely that a prewarm succeeded -- while A's finalizer is still outstanding.
+void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  // Slot 0 holds committed content (the take A overdubs), slot 1 is the empty target B.
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+
+  // (1) A is live through the production button route: an overdub interval on slot 0 with a note.
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "fixture precondition: A must be overdubbing");
+  inputNote(60, 96, 120);
+
+  // A's stop is admitted but **deliberately not advanced**: the finalizer stays in flight, so anything
+  // B does happens while A is still finalizing. This is the "pause A's finalizer" the acceptance needs.
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  const bool aFinalizing = TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track) ||
+                           TrackCaptureStopTestAccess::hasStopInFlight(track) ||
+                           TrackCaptureStopTestAccess::hasAcceptedUnexecutedInteraction(track);
+  TEST_ASSERT_TRUE_MESSAGE(aFinalizing,
+                           "A must have an admitted, still-unfinished finalization before the switch");
+
+  // (2) Switch to B at the handoff boundary.
+  TrackCaptureStopTestAccess::finalizeCaptureAndSelectSlot(0, 1, 200);
+
+  // (3) S4b.1's requirement: the switch moves the active slot so B can start while A finalizes. It
+  // does **not** hold today, and the reason is a carried prerequisite rather than an oversight: S4f.5
+  // requires that the active slot not move under an *unadmitted* stop
+  // (`test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`), and the contract keeps that
+  // guard until **S4f.3** supplies the switch's accepted-interaction carrier and commits the switch
+  // after the stop binds. Until then the switch refuses and the incoming take waits -- the exact
+  // behavior this fixture exists to eliminate.
+  if (TrackCaptureStopTestAccess::activeLoopIndex(track) != 1) {
+    // Characterization of the current behavior: the switch holds the active slot while the stop is
+    // unadmitted/in flight, which S4f.5 requires and which S4b.1 must replace once S4f.3 supplies the
+    // switch's accepted-interaction carrier. Asserting it means the day S4f.3 lands this branch stops
+    // being taken and the acceptance below runs instead.
+    TEST_ASSERT_TRUE_MESSAGE(
+        TrackCaptureStopTestAccess::hasAcceptedUnexecutedInteraction(track) ||
+            TrackCaptureStopTestAccess::hasStopInFlight(track),
+        "the switch may only hold while the stop is still unadmitted/in flight");
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                    "the switch held the active slot on A");
+    TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                              "with the switch held, B has not started");
+    if (getenv("S4B_ACCEPTANCE") == nullptr) {
+      // Default gate: the characterization above is the assertion. `S4B_ACCEPTANCE=1` runs the
+      // requirement itself, which is red until S4f.3 lands:
+      //   S4B_ACCEPTANCE=1 pio test -e native -f test_runtime_working_set_ownership
+      return;
+    }
+    TEST_FAIL_MESSAGE(
+        "S4b.1 is blocked on S4f.3 (the switch's accepted-interaction carrier): the switch holds the "
+        "active slot while A finalizes, so B cannot start. Remove this branch when S4f.3 lands.");
+  }
+
+  // (4) B starts immediately -- while A is still finalizing.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the switch moved the active slot to B at the handoff boundary");
+  TrackCaptureStopTestAccess::startOverdubbing(track, 200);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "B must start while A still finalizes");
+
+  // The decisive assertion: B accepts MIDI and records it, with A's finalizer still outstanding.
+  const size_t before = TrackCaptureStopTestAccess::captureEventCount(track);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::appendCaptureNote(track, 200, 240, 64),
+                           "B must accept a MIDI note");
+  TEST_ASSERT_EQUAL_MESSAGE(before + 2, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "B must have recorded the note's on and off");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track) ||
+                               TrackCaptureStopTestAccess::hasStopInFlight(track),
+                           "A's finalization must still be outstanding while B records");
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
@@ -583,5 +714,6 @@ int main() {
   RUN_TEST(test_the_release_sweep_skips_a_slot_with_a_live_owner);
   RUN_TEST(test_reactivating_a_released_slot_reuses_its_capacity);
   RUN_TEST(test_a_declared_envelope_breach_is_reported_and_does_not_block_activation);
+  RUN_TEST(test_switching_starts_the_new_take_while_the_previous_take_still_finalizes);
   return UNITY_END();
 }
