@@ -52,9 +52,17 @@ void TrackManager::setMasterLoopLength(uint32_t) { OFF_PATH(); }
 void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats*, bool) { OFF_PATH(); }
 #endif
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+// These are the persistence requests a switch/selection makes. Storage behavior belongs to the load
+// suites; suites driving the switch keep them observable so the role handoff is what is under test.
+#if defined(HARNESS_OBSERVABLE_SD_REFRESH)
+void StorageManager::markLoopSlotMaterialDirty(uint8_t, uint8_t) {}
+void StorageManager::admitLoopSlotPersist(uint8_t, uint8_t) {}
+void StorageManager::requestDeferredSaveState(const LooperState&, uint32_t, bool) {}
+#else
 void StorageManager::markLoopSlotMaterialDirty(uint8_t, uint8_t) { OFF_PATH(); }
 void StorageManager::admitLoopSlotPersist(uint8_t, uint8_t) { OFF_PATH(); }
 void StorageManager::requestDeferredSaveState(const LooperState&, uint32_t, bool) { OFF_PATH(); }
+#endif
 #endif
 #define OFF_PATH_EDIT(Type) \
 void Type::onEnter(EditManager&, Track&, uint32_t) { OFF_PATH(); } \
@@ -75,8 +83,20 @@ uint8_t resolveTrackIndexForPersistence(const Track& track) {
 }
 #endif
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+#if defined(HARNESS_OBSERVABLE_SLOT_CHANGE)
+void EditManager::onSelectedSlotChanged(Track&, uint8_t) {}
+#else
 void EditManager::onSelectedSlotChanged(Track&, uint8_t) { OFF_PATH(); }
+#endif
+// The switch path commits any open edit session on depart. Linking the real depart TU pulls the whole
+// note-edit closure (reopen/persist/display-refresh), which is out of scope for a role-handoff suite, so
+// suites that drive the switch keep this observable instead of fail-closed. No edit session is open in
+// those cases, so the observable form is behaviorally the production no-op.
+#if defined(HARNESS_OBSERVABLE_SLOT_CHANGE)
+void EditManager::beforeSelectedSlotChange(Track&) {}
+#else
 void EditManager::beforeSelectedSlotChange(Track&) { OFF_PATH(); }
+#endif
 #endif
 // The switch path invalidates the display cache; suites that drive the switch keep this observable
 // instead of fail-closed, because the display is not the behavior under test.
@@ -88,14 +108,37 @@ void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) { OFF_PA
 // A suite that links the real StorageManager load path (which defines these two) opts out with
 // `HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD`; everything else keeps the fail-closed route.
 #if !defined(HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD) && !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+// The switch asks whether the target slot has a payload on SD. The harness has no card, so the
+// truthful observable answer is "no payload on SD"; the storage behavior is the load suites' subject.
+#if defined(HARNESS_OBSERVABLE_SD_REFRESH)
+bool StorageManager::hasLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) { return false; }
+#else
 bool StorageManager::hasLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) { OFF_PATH(); return false; }
+#endif
+// The switch path refreshes the target slot's payload from SD. The storage half of a switch belongs to
+// the load/restore suites, so it is observable here rather than fail-closed: the behavior under test is
+// the role handoff, not the SD read.
+#if defined(HARNESS_OBSERVABLE_SD_REFRESH)
+void StorageManager::refreshLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) {}
+#else
 void StorageManager::refreshLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) { OFF_PATH(); }
 #endif
-#if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
-void StorageManager::prioritizeLoopSlotRestoreForFocus(uint8_t, uint8_t) { OFF_PATH(); }
 #endif
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+// The selection/focus change asks storage to prioritize a restore. Storage is the load suites' subject;
+// suites driving the switch keep this observable.
+#if defined(HARNESS_OBSERVABLE_SD_REFRESH)
+void StorageManager::prioritizeLoopSlotRestoreForFocus(uint8_t, uint8_t) {}
+#else
+void StorageManager::prioritizeLoopSlotRestoreForFocus(uint8_t, uint8_t) { OFF_PATH(); }
+#endif
+#endif
+#if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+#if defined(HARNESS_OBSERVABLE_SD_REFRESH)
+void StorageManager::requestWorkspaceFooterPersistWhenSafe() {}
+#else
 void StorageManager::requestWorkspaceFooterPersistWhenSafe() { OFF_PATH(); }
+#endif
 #endif
 void Track::silenceSlotMidiOutput(uint8_t) { OFF_PATH(); }
 #include "BarStepButtonHandler.h"
