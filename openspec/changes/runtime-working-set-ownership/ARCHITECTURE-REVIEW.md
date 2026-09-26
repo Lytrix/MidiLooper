@@ -6717,3 +6717,50 @@ the run.
 the run; (b) run the content pipeline over A, B and C; (c) re-run when authorized. The natural workload did
 successfully expose the denied state, so the pause hook stays **unimplemented** unless repeatability requires
 it, and the oracle is **not** to be weakened to turn this run into a pass.
+
+### Authorized re-run (2026-09-26): verdict-grade, chain reproduced, blocked on one evidence defect
+
+Run `captures/s4f3-retention-20260926_171217`, targets track 8 slots 5/6/7, driver with the fixed upload
+default and metadata writing.
+
+**Verdict-grade this time.** The oracle's integrity gates all pass: `fresh_boot` (16 `BOOT` lines in this
+session's own log -- the default re-upload fixed the earlier failure), `identity_pinned`
+(`git_commit=a13428d485e1 firmware_hex_sha256=68a96f5ff4f6`), `capture_integrity`,
+`observation_tail_complete`, `tempo_verified` and `seed_content_on_a`.
+
+**The chain reproduced**, which matters for the repeatability question that would justify the pause hook:
+
+```
+[62.459] Reentry window open slot=4                          L1  A's finalizer outstanding
+[62.554] Loop 6: Switch gesture from slot 5                      capture-switch (neutral message now)
+[62.959] Loop 6: Stop Overdub
+[62.959] Overdub stop refused: stop_job_pending phase=7 ...  L2  B's stop denied on capacity
+[63.204] Loop 7: Switch gesture from slot 6                      C switch/start REQUESTED
+[63.855] Overdub stop retarget: companion path stalled; raw pass only   the fallback, reproduced
+[63.864] Reentry window open slot=5                          L5  B's stop bound after release
+[63.902] Reentry released                                        release edge, unnamed slot
+#CAP,66026816,RECA,6,2304                                    L6  C emitted a start record
+```
+
+So on the user's corrected wording: **B's identified stop was capacity-denied, C's request was retained, that
+same B interval later bound, and C emitted a start record** -- twice now, on two consecutive runs.
+
+**The oracle now fails on exactly one thing**, and it is the traced firmware defect rather than the retention
+behaviour: `L4_capacity_released: no DIAG,canonical_release,4 after A's window opened`. The only release row
+in the whole log is `canonical_release,5` -- B's slot -- because the marker is consumed via `activeLoopIndex`
+instead of the slot that retired. The oracle is **not** weakened to accommodate it: as long as that record
+names the wrong slot, L4 cannot pass for A, and the verdict stays `SETUP_INCOMPLETE`.
+
+**Oracle fix made on the way (legitimate, not a weakening):** the device emits more than one record-stop kind.
+A plain stop emits `RECS,stop,<slot>`, while the transport-stop route emits `RECS,stopToStopped,<slot>` --
+observed for all three slots in this run. The `seed_content_on_a` check now accepts any `stop*` kind, because
+its intent is "a take landed on this slot", not "this exact route was taken". Previously it failed every seed.
+
+**Two content findings from this run, both for the verification step:**
+
+- **C's take committed with `length=0`.** `RECS,stopToStopped,6,6305,0,4001,0,0` -- C's capture started
+  (`RECA,6,2304`) and stopped, but finalised at zero length, and the content dump confirms it:
+  `CAPTURE_CONTENT,begin,track=8,slot=6,length=0` with no events. So L7 is unmet for a reason *beyond* the
+  missing note verification: the successor's take has no content to verify yet.
+- **The raw-only fallback reproduced** at 63.855 s, so the predecessor interval is again committed without its
+  companion representation. Its content still needs verifying, as does A's.
