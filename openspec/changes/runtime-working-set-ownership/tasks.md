@@ -2135,6 +2135,44 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `TrackManagerCaptureQueue`'s slot-owner TU; or (3) accept them as device-observable claims. The
       simulation was reverted in full (both files restored, suite green at 101/101, no test or harness change
       committed).
+      **HARNESS SPLIT LANDED 2026-09-27 (option 1) — (c) is now a passing fixture; (d) and (e) remain open.**
+      `test_continuous_capture/off_path_deps.h`'s single macro was split **by owner family**, each family
+      carrying its own gate while the historical umbrella keeps every existing suite's behaviour byte-for-byte:
+      `A34A_LINKS_REAL_TRACK_TRANSPORT` (Track playback/queued-start owners + the LED update),
+      `A34A_LINKS_REAL_TRACK_STOP_COMMIT` (**new**: the synchronous stop-commit owners alone —
+      `stopRecording` / `stopRecordingToStopped` / `commitCaptureForStop`),
+      `A34A_LINKS_REAL_STORAGE_PERSIST`, `A34A_LINKS_REAL_EDIT_SESSION`, and
+      `A34A_LINKS_REAL_TRACK_STOP_TELEMETRY` (**new**: the stop-path telemetry helpers).
+      `A34A_LINKS_REAL_TRACK_TRANSPORT_ALL` still means "all of them", so
+      `test_drain_reentry_callback_safety` is unchanged (8/8). Enabling the stop-commit family links the real
+      `TrackCaptureStopCommit.cpp`, `TrackManagerMidiLedFeedback.cpp`, `TrackManagerPlaybackPolicy.cpp`,
+      `TrackManagerMemoryPressure.cpp` and `RecordStopLength.cpp`; `resetActiveLoopAfterEmptyCapture` is
+      supplied with its **real body** because it is a genuine state owner, while the two diagnostics
+      (`collectStopPathStorageStats`, `logRecordStopStage`) are inert stand-ins — the real pair computes a
+      census and emits a log line, and neither feeds a decision.
+      **Finding recorded from the split:** two boundaries that look like transport are actually the playback
+      TU's — `sendAllNotesOff` and `silenceSlotMidiOutput` live in `TrackPlaybackHotPath.cpp` beside the MIDI
+      silence owners **B03 counts** (asserting `g_nativeSilenceTrackCalls == 1`), so linking the broader
+      transport family silently replaces that instrumentation. The stop-commit family therefore leaves them as
+      inert stand-ins; what they omit is the per-slot LED/ledger clearing, and a future fixture that depends on
+      *that* must link the playback TU and rework B03's observation. The same is true of the three
+      persistence requests the stop route reaches: they are **inert by configuration, not by stubbing**
+      (`PersistenceAdmit.cpp` compiles each to an immediate `return` under `BYPASS_STOP_UNDO_SAVE`, which the
+      native env sets), so the stop-commit family stands them in without making this suite exercise the
+      persistence path.
+      **Fixture (c)** `test_s4f10c_accept_and_latch_then_transport_stop_supersedes_before_the_drive` asserts,
+      **while the canonical owner is still live**, that the stop is *accepted and latched* (obligation
+      present, no stop descriptor consumed, the interval still overdubbing, the obligation latched against the
+      interval's own slot **and** identity, the capture store unchanged) and then, after the transport stop,
+      that the obligation is **consumed** and never re-created by eight further drive turns, with the interval
+      resolving to STOPPED and never PLAYING. **Red-proved:** commenting out the production
+      `consumeAcceptedStopObligation()` in `Track::stopOverdubbingToStopped` fails it exactly on
+      *"transport stop must consume the accepted obligation…"* (1 failed / 101 succeeded); `src/` was restored
+      and is clean. **Still open:** **(d)** stop + record-start in the same tick needs the manager's
+      pending-start owner linked (`TrackManagerCaptureQueue.cpp`), and **(e)** stop + undo needs the real undo
+      path and the `TrackUndo` closure. Both are bounded and now have a working family to build on.
+      Verification: `test_continuous_capture` **102/102**, `test_drain_reentry_callback_safety` 8/8, full
+      native **2,470 passed / 7 skipped** (baseline 2,469 + the new fixture), OpenSpec validates.
 - [ ] S4f.11 Measure acceptance -> execution latency **per interaction class** on device against the declared
       budgets (design Revision 17) and record the numbers: stop overdub, record/overdub start, slot/track switch,
       cold undo/redo, load loop. Exceeding a budget is a reported event, not a silent wait.
