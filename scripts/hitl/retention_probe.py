@@ -475,16 +475,19 @@ def analyse(
             f"{m_rel.group(4)} chunks free", "retention", "L4")
     window_us = release.us - window_open.us
     episode = Episode(slot_a, window_open.us, window_open_loop_len, release.us, window_us)
-    wide = window_us >= min_window_us
-    add("capacity_denied_window_wide_enough", OK if wide else FAIL,
-        f"{window_us} us ({window_us/1000:.1f} ms) between window_open and canonical_release; floor "
-        f"{min_window_us} us" + ("" if wide else ": too narrow to stage two host gestures -- an exposure "
-                                 "problem, not a retention result"), "setup")
+    # The window WIDTH is not gated here, and the reason is measured rather than stylistic: the release edge
+    # is `canonical_finalization_capacity_released`, emitted by the deferred-maintenance turn that services
+    # the `canonicalReleaseMarker` -- so `window_us` is an **upper bound** on how long the window stayed open,
+    # not the closure instant, and the release turn can service several slots at once (measured on device
+    # 2026-09-27: two retirements released 48 us apart in one turn, giving 34.8 ms for a window that a
+    # successor's denial had been staged inside 513 ms earlier). Gating on it would fail a run whose staging
+    # demonstrably worked, and neither log row marks the closure, so the width this quantity reports is not
+    # usable evidence in either direction. The bounded check follows L2, once the denial is identified.
     add("L4_capacity_released", OK,
-        f"{release.body} at {release.us} us -- names the retiring owner. Informational with respect to L5: it "
-        "is the first maintenance turn at which the resources were observed free, not the availability edge, "
-        "so a bind earlier than this record is expected (the bind's own admission guard is what proves "
-        "availability).", "retention", "L4")
+        f"{release.body} at {release.us} us -- names the retiring owner. This is the first maintenance turn "
+        "at which the resources were observed free, not the availability edge or the window closure, so a bind "
+        "earlier than this record is expected (the bind's own admission guard is what proves availability), "
+        "and the window width it implies is an upper bound only.", "retention", "L4")
 
     def in_window(us: int) -> bool:
         return episode.window_open_us < us < episode.capacity_release_us
@@ -498,6 +501,8 @@ def analyse(
     for e in denials:
         evidence["denial"].append(f"{e.us}: {e.body}{'' if in_window(e.us) else '  (outside the window)'}")
 
+    human_at_us: Optional[int] = None
+    human_text: Optional[str] = None
     human_denied = False
     if staged_denials:
         denial = staged_denials[0]
@@ -550,6 +555,46 @@ def analyse(
             add("L2_denial_identified_for_b", FAIL,
                 f"no denial for slot {slot_b} inside A's finalization window ({len(denials)} denial(s) "
                 "elsewhere): the capacity-denied state was never entered", "retention", "L2")
+
+    # ---------------- the exposure gate: what the window width CAN prove ----------------
+    # The successor's denial is the point at which the run stops being staged and starts being exercised, so
+    # the interval from A's window opening to that denial is a **lower bound** on how long the window stayed
+    # open -- it is directly observed, and no deferred turn can inflate it. The release-turn upper bound
+    # (`window_us`) is reported beside it for the width's order of magnitude and never gates on its own,
+    # because a late maintenance turn makes it read arbitrarily small (see L4 above).
+    if denial is not None:
+        # The device-timestamped denial is the bounded edge, so this is a real floor verdict -- and on a real
+        # FAIL the run is genuinely unusable evidence, which is what `setup` asserts.
+        exposure_us = denial.us - window_open.us
+        if exposure_us >= min_window_us:
+            add("capacity_denied_window_wide_enough", OK,
+                f"the window was open at least {exposure_us} us ({exposure_us/1000:.1f} ms) -- from A's window "
+                f"opening to the successor's denial (device timestamp) -- against a "
+                f"{min_window_us} us floor; the successor's stop was denied against it, which bounds it below. "
+                f"The release-turn upper bound is {window_us} us ({window_us/1000:.1f} ms), which is a "
+                "servicing latency, not the closure", "setup", "L1")
+        else:
+            add("capacity_denied_window_wide_enough", FAIL,
+                f"the window was open for at most {exposure_us} us ({exposure_us/1000:.1f} ms) before the "
+                f"successor's denial, against a {min_window_us} us floor: too narrow to stage two host "
+                "gestures -- an exposure problem, not a retention result", "setup", "L1")
+    elif human_denied:
+        # No device-timestamped denial. The bounded edge would be the host-timestamped human row, and that
+        # arithmetic is INVALID: the human row's prefix is host seconds since the capture started while
+        # `window_open.us` is device `micros()` since boot, so the difference is not a duration at all
+        # (measured: it computes a negative window). The codebase already refuses to mix the two bases for
+        # L5's ordering; the same refusal applies here, so the width is reported as ungated and L2 has
+        # already reported the missing row that would anchor it.
+        add("capacity_denied_window_wide_enough", UNKNOWN,
+            f"the window width cannot be gated: the bounded edge is the successor's denial, and its only row "
+            f"here is host-timestamped, which shares no time base with the device's window-open record (host "
+            f"seconds since capture start vs device micros since boot). The release-turn upper bound is "
+            f"{window_us} us, which is a servicing latency rather than the closure, so it does not gate "
+            "either. L2 reports the missing device-timestamped denial row", "evidence", "L1")
+    elif human_at_us is None and denial is None:
+        # No denial was identified at all: L2 has already failed for that reason, so no floor check is added
+        # (a second failure for the same cause would only make the report harder to read).
+        pass
 
     if denial is None:
         # Distinguish "never entered" from "entered but unidentifiable" -- and never let either of those

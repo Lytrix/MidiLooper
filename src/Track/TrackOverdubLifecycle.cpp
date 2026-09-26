@@ -1831,10 +1831,18 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
                                : !loop.hasActiveOverdubTransferAdmission() ? "transfer_admission"
                                                                           : "session_exit_handoff");
     if (headJob != nullptr && headJob->admission.pending) {
+      // Name the slot and the interval here too, for the same reason the `else` branch does: this row IS the
+      // timely edge, and `stop_job_pending` is the reason a successor's stop actually meets on the reentry
+      // path -- so leaving it without identity is precisely where attribution is needed. Without it the
+      // retention oracle's L2 can only report that "a denial happened", not which slot/interval was denied
+      // (measured on device 2026-09-27: this branch produced the run's only denial, with no slot/interval, so
+      // L2 fell back to UNKNOWN and the run could not be a verdict).
       logger.log(CAT_TRACK, LOG_INFO,
-                 "Overdub stop refused: %s phase=%u dest=%u closure=%u recycle_owner=%u "
+                 "Overdub stop refused: %s slot=%u interval=%lu phase=%u dest=%u closure=%u recycle_owner=%u "
                  "recycle_started=%u undo_ready=%u",
-                 busyReason, static_cast<unsigned>(headJob->admission.phase),
+                 busyReason, static_cast<unsigned>(activeLoopIndex),
+                 static_cast<unsigned long>(captureInterval_),
+                 static_cast<unsigned>(headJob->admission.phase),
                  static_cast<unsigned>(headJob->admission.destination),
                  static_cast<unsigned>(headJob->admission.remainingClosureGrains),
                  headJob->admission.historyRecycleOwner != nullptr ? 1u : 0u,
