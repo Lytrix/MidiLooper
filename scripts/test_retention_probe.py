@@ -166,9 +166,12 @@ class RetentionProbeChainTests(unittest.TestCase):
 
         L5 orders the bind against `denial.us` in DEVICE micros. The human row's timestamp is host
         milliseconds, so accepting it as the L2 pass would put two time bases into that comparison.
+
+        The row's `slot=` field is the firmware's **0-based** number, so it is one less than the 1-based
+        `--slot-b` the oracle is given: B is slot 1 here, logged as `slot=0`. Verified on device.
         """
         text = self._human_only_denial_log(
-            "[1885.0] [DEBUG] [TRACK] Overdub stop refused: capacity unavailable slot=1 interval=7")
+            "[1885.0] [DEBUG] [TRACK] Overdub stop refused: capacity unavailable slot=0 interval=7")
         result = run(text, accept_slot_scoped_bind=True, accept_event_count_only=True)
         check = by_name(result)["L2_denial_identified_for_b"]
         self.assertEqual("unknown", check.status, check.detail)
@@ -178,9 +181,12 @@ class RetentionProbeChainTests(unittest.TestCase):
         self.assertNotEqual(0, result.exit_code)
 
     def test_a_human_denial_naming_another_slot_fails_rather_than_staying_unknown(self):
-        """The logging fix makes a wrong-slot denial detectable, which previously looked like a gap."""
+        """The logging fix makes a wrong-slot denial detectable, which previously looked like a gap.
+
+        `slot=4` is the 0-based field for 1-based slot 5, which is not B (slot 1): a real mismatch.
+        """
         text = self._human_only_denial_log(
-            "[1885.0] [DEBUG] [TRACK] Overdub stop refused: capacity unavailable slot=5 interval=7")
+            "[1885.0] [DEBUG] [TRACK] Overdub stop refused: capacity unavailable slot=4 interval=7")
         result = run(text, accept_slot_scoped_bind=True, accept_event_count_only=True)
         check = by_name(result)["L2_denial_identified_for_b"]
         self.assertEqual("fail", check.status, check.detail)

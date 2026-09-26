@@ -1276,7 +1276,22 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       therefore (a) a cross-track take start after a predecessor's lease exists, (b) the memory-pressure lane,
       and (c) a same-track switch **after** retirement — the run above exercised none of them. Also recorded:
       the pre-identity firmware gives no lease telemetry at all on this path, and the campaign's L2 blocker
-      (`Track::stopOverdubbing`'s `pending` branch logging no slot/interval) is independent of this row. **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
+      (`Track::stopOverdubbing`'s `pending` branch logging no slot/interval) is independent of this row.
+      **ROUTE (a) RETIRED 2026-09-27 — it cannot fire the row at all.** The re-run completed the full chain
+      again with **zero** `DIAG,ws_release` rows, and the source explains it: `Track::prewarmPlaybackForSlot`
+      acquires a lease **only** when `prepareCapture` is true, and the only callers that pass `true` are the
+      record arm and the boot-cold overdub start — boot's `prewarmBootPlaybackRuntimeSlots` passes **false**
+      ("Boot reserves staging, not eight full view/bridge/companion bundles before SD load"). Since the
+      cross-track sweep (`releaseBackgroundPlaybackMergedMidiEventsMemory`) **excludes the capturing track**, a
+      lease can only ever exist on the track that armed the record, so a take start can never sweep a slot that
+      holds one. **What remains is route (c), the one the native fixtures already pin:** a same-track switch
+      **after** retirement, where `resetPlaybackStateForSlot` → `releaseEligiblePlaybackRuntimeSlots` runs over
+      the retired slot. The device leg is therefore owed as a **reachable protocol** (arm and stop a take, let
+      the finalizer retire, then switch away on that same track) rather than a hoped-for one; the arm-then-start
+      sequence in this run does not produce it, because the successor's `startRecordingTrack` sweeps *other*
+      tracks while A's retired lease lives on the **same** track. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.1's lease-release device row: the cross-track
+      route is a structural dead end". **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
       memory-pressure and `(slot, generation)` conversions remain.** `Track::clearStoppingIntervalLedger()`
       now clears only the stopping interval's slot ledger, and both converted stop routes call it
       (`handleNoteEditFold`'s `endInPlaying` branch, `stopOverdubbing`'s fallback);
@@ -1904,6 +1919,26 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       another track while a lease is still held, so this shape exercises **none** of the three routes S4.1's
       packet names. Full record, timeline, reproduction commands and the two-track-number-base trap:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.1 device leg + S4f.3 no-concession run".
+      **NO-CONCESSION DEVICE GATE CLOSED 2026-09-27 — `RETENTION_PASS`, exit 0, 20/20 `ok`, zero
+      concessions.** Re-run on the same authorized targets (track 8, A=4, B=5, C=8) with the two fixes in the
+      flashed image (`675a115a`), identity `git_commit 675a115a8225` / `firmware_hex_sha256 e76e1818e069`.
+      Every link is on its own evidence: L1 `DIAG,reentry_window_open,3,1117,2304`; the exposure gate now
+      **bounded at 531.1 ms** across A's window opening to the successor's denial (the old formula would have
+      said 34.8 ms from the release turn's delta, which is a servicing latency — the two are now separate
+      report fields and only the bounded one gates); L2 reads the **device-timestamped**
+      `DIAG,reentry,deny,1321,2,4,1` (slot 4, interval 2) rather than falling back to `UNKNOWN`, which is what
+      the `stop_job_pending` identity emission bought; L3 the retained row for slot 7 between denial and
+      release; L4 `canonical_release,3,40,2304,8`; L5 `DIAG,reentry,bound,1717,2,4,0` on the **denied**
+      interval; L6 exactly one `RECA,7` after the release; L7 note 67 in storage **and** effective with the
+      fields agreeing; L8 a clean bounded follow-up. Content pipeline: declared counts
+      `{'effective#0': 2, 'record#0': 2}` match parsed, `storage_matches_effective: true`. **Three host
+      defects were found by running and fixed, not worked around:** `exit_code` was a computed property that
+      `report_dict` never serialized (so every review file omitted the authoritative code); the oracle's CLI is
+      **0-based** for slots *and* tracks while the driver's is 1-based, and passing the driver's numbers makes a
+      correct run look like it had no denial at all (now documented in the docstring and per-argument help, with
+      the denial row's 0-based `slot=` converted explicitly); and the first cut of the exposure fix subtracted
+      host seconds from device micros, producing a *negative* window — it now reports the width ungated instead.
+      Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4f.3 no-concession device gate — CLOSED".
 - [x] S4f.4 **Transport/clock timing validity (B2, T2).** (**REVISED 2026-09-23 by architect decision --
       `design.md` Revision 24; the stored-epoch requirement is WITHDRAWN.** The latch's `transportEpoch`
       field is **removed** (latch 40 -> 32 bytes, `CaptureStopJobs` 2,736 -> 2,728, both pins updated and

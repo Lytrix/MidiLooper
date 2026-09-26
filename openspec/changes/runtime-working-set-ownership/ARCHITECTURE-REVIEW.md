@@ -8428,7 +8428,10 @@ completeness is the deciding evidence.
    and no such start happened while another track's slot still held a lease. S4.1's packet names three routes
    for the device row (a cross-track take start, memory pressure, or a same-track switch **after** retirement)
    — this campaign exercised the chain but **none of those three**, so the row remains owed and the route must
-   be chosen deliberately rather than hoped for.
+   be chosen deliberately rather than hoped for. **Superseded by the re-run below, which retires route (a)
+   outright:** the cross-track sweep cannot fire the row *at all*, because leases are only ever acquired on the
+   track that armed the record. See § "S4.1's lease-release device row: the cross-track route is a structural
+   dead end".
 
 ### Reproduction
 
@@ -8458,4 +8461,96 @@ track 8 slot 5 was cleared under the user's explicit authorization for this run.
 **No acceptance is claimed.** S4.1's lease-release device row and S4f.3's no-concession run both remain open;
 what changed is that the campaign is now executable, its identity is pinnable, and its three blockers are
 named with evidence instead of assumed.
+
+
+---
+
+## S4f.3 no-concession device gate — CLOSED `RETENTION_PASS`, and the lease-release route corrected (2026-09-27)
+
+The re-run the first campaign's findings called for, on the same authorized targets (**track 8, A=4, B=5,
+C=8**), with both fixes committed (`675a115a`) so the flashed image is pinned to them. **Result:
+`RETENTION_PASS`, exit 0, 20/20 checks `ok`, `concessions: []`.** Identity `git_commit 675a115a8225` /
+`firmware_hex_sha256 e76e1818e069`.
+
+```
+  [ok] (setup)       fresh_boot / identity_pinned / capture_integrity / observation_tail_complete
+  [ok] (setup)       tempo_verified 120.0 / seed_content_on_a (RECS,stopToStopped,3,2051,0,2051,2304,0)
+  [ok] (retention/L1) L1_finalizer_outstanding   DIAG,reentry_window_open,3,1117,2304 at 40659414 us
+  [ok] (setup/L1)     capacity_denied_window_wide_enough  bounded open->denial 531.1 ms vs 150 ms floor
+  [ok] (retention/L2) L2_denial_identified_for_b  DIAG,reentry,deny,1321,2,4,1 at 41190532 us, slot 4 interval 2
+  [ok] (retention/L4) L4_capacity_released        DIAG,canonical_release,3,40,2304,8 at 42284312 us
+  [ok] (retention/L3) L3_request_retained_for_c   retained row for slot 7 between the denial and the release
+  [ok] (retention/L5) L5_same_b_stop_bound        DIAG,reentry,bound,1717,2,4,0 -- the denied interval 2 on slot 4
+  [ok] (retention/L6) L6_successor_started_once   exactly one RECA,7 at 44257122 us, after the release
+  [ok] (retention/L7) L7_successor_recorded...    note 67 in storage AND effective, fields agree
+  [ok] (retention/L8) L8_bounded_followup_clean   no repeat start, no re-issued denial, no extra seal
+```
+
+**The two fixes did what they were for, and each is visible in the result.** L2 now reads the identity from
+the **device-timestamped** deny row (`slot 4 interval 2`) instead of falling back to `UNKNOWN`, which is what
+the `stop_job_pending` identity emission bought. And the exposure gate reports **531.1 ms bounded** where the
+old formula would have said **34.8 ms** — the release turn's delta was 1624.9 ms here, so the two quantities
+are now named apart in the report (`bounded_open_to_denial_*` vs `release_turn_delta_*`) and only the bounded
+one gates. L3's match also needed the base conversion this run exposed: the retained row logs
+`Track 7 loop 8` for the target selected as 1-based track 8 / slot 8, because `trackIndex` is 0-based.
+
+**Three host defects were found by running, and fixed rather than worked around.** (1) `exit_code` was a
+computed property that `report_dict` never serialized, so **every** review file omitted the authoritative
+code — a consumer reading the record could not tell a pass from a partial; it is now a field. (2) The oracle's
+CLI is **0-based** for slots *and* tracks (matching the firmware's own fields), while the HITL driver's CLI is
+1-based; passing the driver's numbers makes a correct run look like it had no denial and no retained request
+at all. That convention is now stated in the oracle's docstring and in each argument's help text, and the
+human denial row's `slot=` is converted explicitly, because the firmware logs it 0-based. (3) The first cut of
+the exposure fix computed its bounded interval from the **host**-timestamped row when the device one was
+absent — subtracting host seconds-since-capture-start from device micros-since-boot, which produced a
+*negative* window. That arithmetic is invalid for the reason the codebase already refuses to mix the two bases
+for L5, so the width is now reported ungated instead.
+
+**Content, per the content pipeline:** the `!CAPTURE_CONTENT` dump for the successor slot declares counts
+`{'effective#0': 2, 'record#0': 2}` matching what was parsed, `storage_matches_effective: true`, and note 67
+present in **both** storage and effective rows agreeing on tick/type/channel/note/velocity. The
+whole-playback review returns `inventory_equal=False`, which is the known reading, not a parity failure: track
+8's other slots still hold committed content that sounds alongside the loop under test.
+
+### S4.1's lease-release device row: the cross-track route is a structural dead end
+
+**`DIAG,ws_release` is absent again (0 rows) in a run that completed the full chain** — and this time the
+reason is established in the source rather than inferred. A working-set lease is acquired **only** when
+`Track::prewarmPlaybackForSlot` is called with `prepareCapture == true`:
+
+```
+  if (ok && runtime != nullptr && prepareCapture) {
+    runtime->acquireWorkingSetLease(WorkingSetRole::PlaybackWindow | WorkingSetRole::LiveCapture);
+  }
+```
+
+The only callers that pass `true` are the **record arm** and the **boot-cold overdub start**. Boot's
+`prewarmBootPlaybackRuntimeSlots` passes `false` deliberately ("Boot reserves staging, not eight full
+view/bridge/companion bundles before SD load"). And the cross-track sweep
+(`TrackManager::releaseBackgroundPlaybackMergedMidiEventsMemory`) **excludes the capturing track**. Therefore
+a lease can only exist on the track that armed the record, so a take start can never sweep a slot that holds
+one: **S4.1's packet route (a) — "a cross-track take start" — cannot fire the row at all**, and this run is the
+measurement that retires it.
+
+What remains is route (c) in the packet, and it is the one the native fixtures already pin: **a same-track
+switch after retirement**. The arm-then-start sequence in this run does not produce a release for A either,
+because the successor's `startRecordingTrack` sweeps *other* tracks, while A's retired lease on the **same**
+track is released by the next playback reset — `resetPlaybackStateForSlot` on the next same-track switch. The
+device leg is therefore still owed, but it is now a **reachable** protocol (switch away from the retired slot
+after its finalization retires) instead of a hoped-for one.
+
+**Device state after the run:** shutdown verified `complete` (2 stop+drain cycles to verified persistence
+idle), no latch. The campaign's own content occupies track 8 slots 4, 5 and 8; no user content was touched by
+this re-run (preparation cleared campaign-authored test data only).
+
+**Reproduction, with the bases as the oracle requires them (0-based):**
+
+```
+.venv/bin/python scripts/hitl_retention_handoff.py --track 8 --slot-a 4 --slot-b 5 --slot-c 8 \
+    --out-dir captures/<run> --census captures/<preverify>/census.json
+.venv/bin/python scripts/hitl/retention_probe.py --session-log captures/<run>/session_*.log \
+    --metadata captures/<run>/metadata.json --slot-a 3 --slot-b 4 --slot-c 7 --track-b 7 \
+    --content-dump captures/<pb>/serial.log --content-review captures/<pb>/content-review.json \
+    --expect-successor-note 67 --out captures/<run>/retention-review.json
+```
 
