@@ -182,6 +182,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help="pin and VERIFY the device tempo after this run's own boot; the flow aborts if the "
                         "read-back does not match, because every timing in it is calibrated for this tempo")
     p.add_argument("--tempo-cc", type=int, default=102)
+    p.add_argument("--upload", action="store_true",
+                   help="re-upload the firmware first, so this run's capture catches a real boot banner. The "
+                        "authorized run needs it: a capture that does not reset the device cannot satisfy "
+                        "fresh_boot, and the reset-on-open the capture prints is not reliable.")
+    p.add_argument("--build-env", default="teensy41-capture-serial")
     p.add_argument("--capture-port", default=DEFAULT_CAPTURE_SERIAL_PORT)
     p.add_argument("--boot-wait-s", type=float, default=10.0)
     args = p.parse_args(argv)
@@ -211,6 +216,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     a0, b0, c0 = args.slot_a - 1, args.slot_b - 1, args.slot_c - 1
     t0 = args.track - 1
 
+    if args.upload:
+        import subprocess
+        print(f"[retention] re-uploading {args.build_env} to force a real reset before the run")
+        subprocess.run(["pio", "run", "-e", args.build_env, "-t", "upload"], check=True)
+        time.sleep(1.0)
+
     with ManagedCaptureSession(port=args.capture_port, boot_wait_s=args.boot_wait_s,
                               out_dir=out_dir, run_token=uuid.uuid4().hex) as capture:
         capture_log = capture.session_log
@@ -220,30 +231,55 @@ def main(argv: Optional[list[str]] = None) -> int:
         events.append({"event": "midi_output_opened"})
 
         # --- tempo: applied and read back AFTER this run's own open, which is the run's final reset ---
-        # The pin does not survive a reboot, and every timing here is calibrated for one tempo, so this is a
-        # precondition rather than a nicety: no read-back matching --tempo-bpm, no gestures.
+        # LOOP_EDIT gates CC102 (`handleTempoInput`), and the route in is not documented: the tempo probe's
+        # success came from a device that was *already* in LOOP_EDIT ("the device was already in LOOP_EDIT"),
+        # so its track+slot presses were incidental. Try the cheapest route first -- a fresh boot may already
+        # be in the loop view -- and record which route worked instead of assuming one. A slot press is
+        # deliberately last: on an empty slot it arms a recording, which is a state change this step must not
+        # cause.
         note_channel = t0  # 0-based MIDI channel for note input on this track
-        before_tempo = len(_lines(capture_log))
-        slots.press_track(_Ctx(out_port), args.track, press_ms=args.press_ms)
-        slots.press_slot_record(_Ctx(out_port), args.slot_a, press_ms=args.press_ms)
-        # Entering LOOP_EDIT for the selected track is not instant: the proven probe drains 6 s after the
-        # loop-row select before it sends the CC, so match that and allow two attempts.
-        time.sleep(6.0)
         cc_value = int(round(args.tempo_bpm - 60.0))
+        cc_value = max(0, min(127, cc_value))
+        tempo_routes = (
+            ("boot_state", ()),
+            ("track_selected", ("track",)),
+            ("track_and_slot_selected", ("track", "slot")),
+        )
         pinned = False
-        for _attempt in range(2):
-            out_port.send(mido.Message("control_change", channel=CONTROL_CHANNEL_1BASED - 1,
-                                       control=args.tempo_cc, value=max(0, min(127, cc_value))))
-            pinned = _wait_for_any(capture_log, after=before_tempo,
-                                   markers=(f"-> {args.tempo_bpm:.1f} BPM",), timeout_s=4.0)
+        tempo_route = None
+        for route_name, presses in tempo_routes:
+            before_tempo = len(_lines(capture_log))
+            for kind in presses:
+                if kind == "track":
+                    slots.press_track(_Ctx(out_port), args.track, press_ms=args.press_ms)
+                else:
+                    slots.press_slot_record(_Ctx(out_port), args.slot_a, press_ms=args.press_ms)
+                time.sleep(1.0)
+            for _attempt in range(2):
+                out_port.send(mido.Message("control_change", channel=CONTROL_CHANNEL_1BASED - 1,
+                                           control=args.tempo_cc, value=cc_value))
+                # The firmware logs an applied tempo only when it *changes*; when the device is already at
+                # the requested value it logs "Tempo unchanged: CC=<n> maps to current <bpm> BPM" instead.
+                # That line is a read-back too -- it names the device's current tempo -- and ignoring it made
+                # this precondition refuse a perfectly valid session.
+                pinned = _wait_for_any(
+                    capture_log, after=before_tempo,
+                    markers=(f"-> {args.tempo_bpm:.1f} BPM",
+                             f"maps to current {args.tempo_bpm:.1f} BPM"), timeout_s=4.0)
+                if pinned:
+                    break
+            events.append({"event": f"tempo_route:{route_name}", "confirmed": pinned})
             if pinned:
+                tempo_route = route_name
                 break
-        events.append({"event": "tempo_pinned", "requested_bpm": args.tempo_bpm, "confirmed": pinned})
+        events.append({"event": "tempo_pinned", "requested_bpm": args.tempo_bpm,
+                       "confirmed": pinned, "route": tempo_route})
         if not pinned:
             raise SystemExit(
                 f"tempo precondition failed: no read-back of {args.tempo_bpm:.1f} BPM after CC{args.tempo_cc}="
-                f"{cc_value}. The flow needs LOOP_EDIT to be reachable for the selected track; without the pin "
-                "every timing below is wrong, so it refuses to continue rather than produce a bad run.")
+                f"{cc_value} on any of {[r for r, _ in tempo_routes]}. LOOP_EDIT must be reachable for the pin "
+                "(CC102 is mode-gated); without it every timing below is wrong, so the flow refuses to "
+                "continue rather than produce a bad run.")
 
         # --- setup: seed A and B, confirming each transition before the next gesture ---
         _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_a, note=60,
