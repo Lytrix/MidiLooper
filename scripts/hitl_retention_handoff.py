@@ -55,6 +55,7 @@ from hitl.control_constants import (  # noqa: E402
     TRACK_SELECT_NOTE_BASE,
 )
 from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT  # noqa: E402
+from hitl.device_shutdown import DeviceSession, clear_latch, refuse_reset_if_latched  # noqa: E402
 from hitl.managed_capture import ManagedCaptureSession  # noqa: E402
 from hitl.midi_io import _find_midi_port, _send_long_press, _send_short_press  # noqa: E402
 
@@ -533,6 +534,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     t0 = args.track - 1
 
     if args.upload:
+        # An incomplete shutdown from a previous session latches, and the reset it would perform is the
+        # dangerous step -- the 2026-09-26 workspace-load failure was an interrupted save plus the next
+        # reset landing on top of it. Refuse rather than reset.
+        refusal = refuse_reset_if_latched(tool="hitl_retention_handoff")
+        if refusal is not None:
+            print(refusal)
+            events.append({"event": "reset_refused_after_incomplete_shutdown",
+                           "reason": refusal})
+            report["result"] = "RESET_REFUSED_AFTER_INCOMPLETE_SHUTDOWN"
+            report["events"] = events
+            (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
+            print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
+            return 4
         import subprocess
         print(f"[retention] re-uploading {args.build_env} to force a real reset before the run")
         subprocess.run(["pio", "run", "-e", args.build_env, "-t", "upload"], check=True)
@@ -546,217 +560,232 @@ def main(argv: Optional[list[str]] = None) -> int:
         out_port = mido.open_output(_find_midi_port("Teensy", is_input=False))
         events.append({"event": "midi_output_opened"})
 
-        # --- tempo: applied and read back AFTER this run's own open, which is the run's final reset ---
-        # LOOP_EDIT gates CC102 (`handleTempoInput`), and the route in is not documented: the tempo probe's
-        # success came from a device that was *already* in LOOP_EDIT ("the device was already in LOOP_EDIT"),
-        # so its track+slot presses were incidental. Try the cheapest route first -- a fresh boot may already
-        # be in the loop view -- and record which route worked instead of assuming one. A slot press is
-        # deliberately last: on an empty slot it arms a recording, which is a state change this step must not
-        # cause.
-        note_channel = t0  # 0-based MIDI channel for note input on this track
-        cc_value = int(round(args.tempo_bpm - 60.0))
-        cc_value = max(0, min(127, cc_value))
-        # If the device already reports the requested tempo in its own boot output, take that as the
-        # read-back and send nothing. The device enters LOOP_EDIT at boot and logs its tempo there
-        # ("Sent tempo CC feedback: 120.0 BPM"), and *pressing* track/slot to reach the mode is a side effect
-        # this step should not cause: a run whose seed presses were silently consumed (no state transitions at
-        # all after the clears) is consistent with those presses having left the UI somewhere the loop buttons
-        # do not reach the record path.
-        already = _wait_for_any(capture_log, after=0,
-                               markers=(f"Sent tempo CC feedback: {args.tempo_bpm:.1f} BPM",
-                                        f"maps to current {args.tempo_bpm:.1f} BPM"),
-                               timeout_s=0.1)
-        pinned = bool(already)
-        tempo_route = "boot_readback" if already else None
-        if already:
-            events.append({"event": "tempo_already_pinned", "requested_bpm": args.tempo_bpm,
-                           "confirmed": True, "route": "boot_readback"})
-        tempo_routes = (() if already else (
-            ("boot_state", ()),
-            ("track_selected", ("track",)),
-            ("track_and_slot_selected", ("track", "slot")),
-        ))
-        for route_name, presses in tempo_routes:
-            before_tempo = len(_lines(capture_log))
-            for kind in presses:
-                if kind == "track":
-                    slots.press_track(_Ctx(out_port), args.track, press_ms=args.press_ms)
-                else:
-                    slots.press_slot_record(_Ctx(out_port), args.slot_a, press_ms=args.press_ms)
-                time.sleep(1.0)
-            for _attempt in range(2):
-                out_port.send(mido.Message("control_change", channel=CONTROL_CHANNEL_1BASED - 1,
-                                           control=args.tempo_cc, value=cc_value))
-                # The firmware logs an applied tempo only when it *changes*; when the device is already at
-                # the requested value it logs "Tempo unchanged: CC=<n> maps to current <bpm> BPM" instead.
-                # That line is a read-back too -- it names the device's current tempo -- and ignoring it made
-                # this precondition refuse a perfectly valid session.
-                pinned = _wait_for_any(
-                    capture_log, after=before_tempo,
-                    markers=(f"-> {args.tempo_bpm:.1f} BPM",
-                             f"maps to current {args.tempo_bpm:.1f} BPM"), timeout_s=4.0)
-                if pinned:
-                    break
-            events.append({"event": f"tempo_route:{route_name}", "confirmed": pinned})
-            if pinned:
-                tempo_route = route_name
-                break
-        events.append({"event": "tempo_pinned", "requested_bpm": args.tempo_bpm,
-                       "confirmed": pinned, "route": tempo_route})
-        if not pinned:
-            raise SystemExit(
-                f"tempo precondition failed: no read-back of {args.tempo_bpm:.1f} BPM after CC{args.tempo_cc}="
-                f"{cc_value} on any of {[r for r, _ in tempo_routes]}. LOOP_EDIT must be reachable for the pin "
-                "(CC102 is mode-gated); without it every timing below is wrong, so the flow refuses to "
-                "continue rather than produce a bad run.")
+        # --- canonical shutdown covers EVERY exit from here: normal, early return, or exception ---
+        # This is a context manager rather than a call at each exit precisely because a per-exit call can be
+        # forgotten when a new `return` is added. `--prepare-only` returning here, the SETUP_INCOMPLETE
+        # return, the normal completion and any exception all drain through `__exit__`, which keeps the
+        # serial port open until persistence is *verified* idle (not slept) and latches an incomplete
+        # shutdown so the next run refuses to reset.
+        with DeviceSession(
+                capture_log_getter=lambda: capture_log,
+                send_transport_stop=lambda: _ensure_transport(
+                    out_port, capture_log, running=False, press_ms=args.press_ms, events=events,
+                    label="shutdown"),
+                out_dir=out_dir,
+                context=f"retention-handoff {'prepare-only' if args.prepare_only else 'run'}",
+                events=events) as shutdown_session:
 
-        # --- the target precondition, BEFORE A's finalization window is opened ---
-        # Verified from the read-only census, by track and slot. `Track cleared` now names the slot it acted
-        # on (`(active_slot=N)`), so `_clear_slot` can prove it cleared the INTENDED target -- but a clear
-        # line still does not prove the slot's final state (a clear can report while content survives), so
-        # eligibility comes from the device's own per-slot census report instead.
-        # A failure stops the run as SETUP_INCOMPLETE; it does not clear again in passing.
-        if args.census is not None:
-            ok, detail = target_precondition(json.loads(args.census.read_text()), track=args.track,
-                                             slots=(args.slot_a, args.slot_b, args.slot_c))
-            events.append({"event": "target_precondition", "ok": ok, "detail": detail})
-            if not ok:
-                report["result"] = "SETUP_INCOMPLETE_TARGET_NOT_EMPTY"
+            # --- tempo: applied and read back AFTER this run's own open, which is the run's final reset ---
+            # LOOP_EDIT gates CC102 (`handleTempoInput`), and the route in is not documented: the tempo probe's
+            # success came from a device that was *already* in LOOP_EDIT ("the device was already in LOOP_EDIT"),
+            # so its track+slot presses were incidental. Try the cheapest route first -- a fresh boot may already
+            # be in the loop view -- and record which route worked instead of assuming one. A slot press is
+            # deliberately last: on an empty slot it arms a recording, which is a state change this step must not
+            # cause.
+            note_channel = t0  # 0-based MIDI channel for note input on this track
+            cc_value = int(round(args.tempo_bpm - 60.0))
+            cc_value = max(0, min(127, cc_value))
+            # If the device already reports the requested tempo in its own boot output, take that as the
+            # read-back and send nothing. The device enters LOOP_EDIT at boot and logs its tempo there
+            # ("Sent tempo CC feedback: 120.0 BPM"), and *pressing* track/slot to reach the mode is a side effect
+            # this step should not cause: a run whose seed presses were silently consumed (no state transitions at
+            # all after the clears) is consistent with those presses having left the UI somewhere the loop buttons
+            # do not reach the record path.
+            already = _wait_for_any(capture_log, after=0,
+                                   markers=(f"Sent tempo CC feedback: {args.tempo_bpm:.1f} BPM",
+                                            f"maps to current {args.tempo_bpm:.1f} BPM"),
+                                   timeout_s=0.1)
+            pinned = bool(already)
+            tempo_route = "boot_readback" if already else None
+            if already:
+                events.append({"event": "tempo_already_pinned", "requested_bpm": args.tempo_bpm,
+                               "confirmed": True, "route": "boot_readback"})
+            tempo_routes = (() if already else (
+                ("boot_state", ()),
+                ("track_selected", ("track",)),
+                ("track_and_slot_selected", ("track", "slot")),
+            ))
+            for route_name, presses in tempo_routes:
+                before_tempo = len(_lines(capture_log))
+                for kind in presses:
+                    if kind == "track":
+                        slots.press_track(_Ctx(out_port), args.track, press_ms=args.press_ms)
+                    else:
+                        slots.press_slot_record(_Ctx(out_port), args.slot_a, press_ms=args.press_ms)
+                    time.sleep(1.0)
+                for _attempt in range(2):
+                    out_port.send(mido.Message("control_change", channel=CONTROL_CHANNEL_1BASED - 1,
+                                               control=args.tempo_cc, value=cc_value))
+                    # The firmware logs an applied tempo only when it *changes*; when the device is already at
+                    # the requested value it logs "Tempo unchanged: CC=<n> maps to current <bpm> BPM" instead.
+                    # That line is a read-back too -- it names the device's current tempo -- and ignoring it made
+                    # this precondition refuse a perfectly valid session.
+                    pinned = _wait_for_any(
+                        capture_log, after=before_tempo,
+                        markers=(f"-> {args.tempo_bpm:.1f} BPM",
+                                 f"maps to current {args.tempo_bpm:.1f} BPM"), timeout_s=4.0)
+                    if pinned:
+                        break
+                events.append({"event": f"tempo_route:{route_name}", "confirmed": pinned})
+                if pinned:
+                    tempo_route = route_name
+                    break
+            events.append({"event": "tempo_pinned", "requested_bpm": args.tempo_bpm,
+                           "confirmed": pinned, "route": tempo_route})
+            if not pinned:
+                raise SystemExit(
+                    f"tempo precondition failed: no read-back of {args.tempo_bpm:.1f} BPM after CC{args.tempo_cc}="
+                    f"{cc_value} on any of {[r for r, _ in tempo_routes]}. LOOP_EDIT must be reachable for the pin "
+                    "(CC102 is mode-gated); without it every timing below is wrong, so the flow refuses to "
+                    "continue rather than produce a bad run.")
+
+            # --- the target precondition, BEFORE A's finalization window is opened ---
+            # Verified from the read-only census, by track and slot. `Track cleared` now names the slot it acted
+            # on (`(active_slot=N)`), so `_clear_slot` can prove it cleared the INTENDED target -- but a clear
+            # line still does not prove the slot's final state (a clear can report while content survives), so
+            # eligibility comes from the device's own per-slot census report instead.
+            # A failure stops the run as SETUP_INCOMPLETE; it does not clear again in passing.
+            if args.census is not None:
+                ok, detail = target_precondition(json.loads(args.census.read_text()), track=args.track,
+                                                 slots=(args.slot_a, args.slot_b, args.slot_c))
+                events.append({"event": "target_precondition", "ok": ok, "detail": detail})
+                if not ok:
+                    report["result"] = "SETUP_INCOMPLETE_TARGET_NOT_EMPTY"
+                    report["events"] = events
+                    report["session_log"] = str(capture_log)
+                    _write_metadata(out_dir, args=args, result=report["result"], session_log=capture_log)
+                    (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
+                    print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
+                    print(f"[retention] SETUP_INCOMPLETE: {detail}")
+                    return 3
+
+            # --- optional in-run clear; the normal flow is `--prepare-only` first, then run as normal ---
+            if args.clear_targets and not args.no_clear:
+                for slot_number in (args.slot_a, args.slot_b, args.slot_c):
+                    _clear_slot(out_port, capture_log, track=args.track, slot_number=slot_number,
+                                press_ms=args.press_ms, events=events)
+            if args.prepare_only:
+                for slot_number in (args.slot_a, args.slot_b, args.slot_c):
+                    _clear_slot(out_port, capture_log, track=args.track, slot_number=slot_number,
+                                press_ms=args.press_ms, events=events)
+                report["result"] = "TARGETS_PREPARED"
                 report["events"] = events
                 report["session_log"] = str(capture_log)
-                _write_metadata(out_dir, args=args, result=report["result"], session_log=capture_log)
+                _write_metadata(out_dir, args=args, result="TARGETS_PREPARED", session_log=capture_log)
                 (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
                 print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
-                print(f"[retention] SETUP_INCOMPLETE: {detail}")
-                return 3
+                for e in events:
+                    print(f"  {e}")
+                print("[retention] targets prepared; now run without --prepare-only")
+                return 0
 
-        # --- optional in-run clear; the normal flow is `--prepare-only` first, then run as normal ---
-        if args.clear_targets and not args.no_clear:
-            for slot_number in (args.slot_a, args.slot_b, args.slot_c):
-                _clear_slot(out_port, capture_log, track=args.track, slot_number=slot_number,
-                            press_ms=args.press_ms, events=events)
-        if args.prepare_only:
-            for slot_number in (args.slot_a, args.slot_b, args.slot_c):
-                _clear_slot(out_port, capture_log, track=args.track, slot_number=slot_number,
-                            press_ms=args.press_ms, events=events)
-            report["result"] = "TARGETS_PREPARED"
-            report["events"] = events
-            report["session_log"] = str(capture_log)
-            _write_metadata(out_dir, args=args, result="TARGETS_PREPARED", session_log=capture_log)
-            (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
-            print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
-            for e in events:
-                print(f"  {e}")
-            print("[retention] targets prepared; now run without --prepare-only")
-            return 0
+            # --- setup: seed B first, then A, so that A is the ACTIVE slot when the window starts ---
+            # The record button acts on the active slot, and moving the active slot back to A by pressing A's loop
+            # button while playing routes through a LoopEnd-quantized playback switch. Seeding A last makes it
+            # active for free.
+            _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_b, channel=t0,
+                       note=args.seed_note_b, bars=args.seed_bars, press_ms=args.press_ms,
+                       phase_timeout_s=args.phase_timeout_s, events=events,
+                       seed_notes=args.seed_notes)
+            _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_a, channel=t0,
+                       note=args.seed_note_a, bars=args.seed_bars, press_ms=args.press_ms,
+                       phase_timeout_s=args.phase_timeout_s, events=events,
+                       seed_notes=args.seed_notes)
 
-        # --- setup: seed B first, then A, so that A is the ACTIVE slot when the window starts ---
-        # The record button acts on the active slot, and moving the active slot back to A by pressing A's loop
-        # button while playing routes through a LoopEnd-quantized playback switch. Seeding A last makes it
-        # active for free.
-        _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_b, channel=t0,
-                   note=args.seed_note_b, bars=args.seed_bars, press_ms=args.press_ms,
-                   phase_timeout_s=args.phase_timeout_s, events=events,
-                   seed_notes=args.seed_notes)
-        _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_a, channel=t0,
-                   note=args.seed_note_a, bars=args.seed_bars, press_ms=args.press_ms,
-                   phase_timeout_s=args.phase_timeout_s, events=events,
-                   seed_notes=args.seed_notes)
+            # The seeds each end by stopping the transport, and the record button only overdubs a *playing*
+            # track -- on a stopped transport it arms instead. So start it and require the playing state before
+            # the window's first gesture (measured: without this the first record press did nothing and the whole
+            # window collapsed to B's stop on its own).
+            if not _ensure_transport(out_port, capture_log, running=True, press_ms=args.press_ms,
+                                     events=events, label="window_start"):
+                raise RuntimeError("could not start the transport before the critical window")
+            _wait_for_any(capture_log, after=max(len(_lines(capture_log)) - 40, 0),
+                          markers=(",ST,Track,STOPPED,PLAYING", "Playback started"), timeout_s=3.0)
 
-        # The seeds each end by stopping the transport, and the record button only overdubs a *playing*
-        # track -- on a stopped transport it arms instead. So start it and require the playing state before
-        # the window's first gesture (measured: without this the first record press did nothing and the whole
-        # window collapsed to B's stop on its own).
-        if not _ensure_transport(out_port, capture_log, running=True, press_ms=args.press_ms,
-                                 events=events, label="window_start"):
-            raise RuntimeError("could not start the transport before the critical window")
-        _wait_for_any(capture_log, after=max(len(_lines(capture_log)) - 40, 0),
-                      markers=(",ST,Track,STOPPED,PLAYING", "Playback started"), timeout_s=3.0)
+            # --- the critical window: presses ordered by the chain, with the minimum confirmations needed ---
+            # A multi-press on a loop button has a *triple* action too, so the firmware holds the second tap in
+            # `PendingDouble` until the triple window expires before firing DOUBLE_PRESS. A press that follows on
+            # the same note inside that wait is read as the third tap (REDO_FOR_SLOT) instead of the stop we
+            # wanted. Each multi-press therefore waits for its own resolution -- "Double press detected", or the
+            # state it causes -- before the next press on that slot. This costs nothing inside the finalization
+            # window because it happens before the switch that opens it.
+            c_switch_line = len(_lines(capture_log))
+            for gesture in critical_window_gestures(track=args.track, a=args.slot_a, b=args.slot_b,
+                                                   c=args.slot_c):
+                mark = len(_lines(capture_log))
+                _emit(out_port, gesture, press_ms=args.press_ms, gap_ms=args.gesture_gap_ms,
+                      multi_press_ms=args.multi_press_ms, multi_gap_ms=args.multi_gap_ms)
+                events.append({"event": f"gesture:{gesture.step}", "note_line": mark,
+                               "host_monotonic_ns": time.monotonic_ns()})
+                if gesture.step == "c_switch_request":
+                    c_switch_line = mark
+                if gesture.kind == "record":
+                    # Barely pause: just enough for the press to be processed. The following gesture is on a
+                    # DIFFERENT button (B's stop uses B's loop button), so there is no tap-merge risk, and waiting
+                    # for the overdub state cost 0.77 s of the window -- which was the difference between B's stop
+                    # being denied and being admitted.
+                    time.sleep(0.12)
+                    if gesture.step == "a_overdub_start":
+                        # Give A's overdub something to capture. Measured: with an empty overdub the device logs
+                        # "Overdub session opened: events=0" and the finalizer retires in ~0.5 s, so there is no
+                        # window to stage B's denied stop in. Content is what makes the finalizer do work -- and
+                        # it is also what the successor take is supposed to inherit.
+                        for k in range(args.overdub_notes):
+                            pitch = args.seed_note_a + (k % 12)
+                            out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=t0))
+                            time.sleep(0.02)
+                            out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=t0))
+                            time.sleep(0.02)
+                        events.append({"event": "a_overdub_notes_injected", "notes": args.overdub_notes})
+                time.sleep(max(args.gesture_gap_ms, 1) / 1000.0)
 
-        # --- the critical window: presses ordered by the chain, with the minimum confirmations needed ---
-        # A multi-press on a loop button has a *triple* action too, so the firmware holds the second tap in
-        # `PendingDouble` until the triple window expires before firing DOUBLE_PRESS. A press that follows on
-        # the same note inside that wait is read as the third tap (REDO_FOR_SLOT) instead of the stop we
-        # wanted. Each multi-press therefore waits for its own resolution -- "Double press detected", or the
-        # state it causes -- before the next press on that slot. This costs nothing inside the finalization
-        # window because it happens before the switch that opens it.
-        c_switch_line = len(_lines(capture_log))
-        for gesture in critical_window_gestures(track=args.track, a=args.slot_a, b=args.slot_b,
-                                               c=args.slot_c):
-            mark = len(_lines(capture_log))
-            _emit(out_port, gesture, press_ms=args.press_ms, gap_ms=args.gesture_gap_ms,
-                  multi_press_ms=args.multi_press_ms, multi_gap_ms=args.multi_gap_ms)
-            events.append({"event": f"gesture:{gesture.step}", "note_line": mark,
-                           "host_monotonic_ns": time.monotonic_ns()})
-            if gesture.step == "c_switch_request":
-                c_switch_line = mark
-            if gesture.kind == "record":
-                # Barely pause: just enough for the press to be processed. The following gesture is on a
-                # DIFFERENT button (B's stop uses B's loop button), so there is no tap-merge risk, and waiting
-                # for the overdub state cost 0.77 s of the window -- which was the difference between B's stop
-                # being denied and being admitted.
-                time.sleep(0.12)
-                if gesture.step == "a_overdub_start":
-                    # Give A's overdub something to capture. Measured: with an empty overdub the device logs
-                    # "Overdub session opened: events=0" and the finalizer retires in ~0.5 s, so there is no
-                    # window to stage B's denied stop in. Content is what makes the finalizer do work -- and
-                    # it is also what the successor take is supposed to inherit.
-                    for k in range(args.overdub_notes):
-                        pitch = args.seed_note_a + (k % 12)
-                        out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=t0))
-                        time.sleep(0.02)
-                        out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=t0))
-                        time.sleep(0.02)
-                    events.append({"event": "a_overdub_notes_injected", "notes": args.overdub_notes})
-            time.sleep(max(args.gesture_gap_ms, 1) / 1000.0)
+            # --- observe the chain in the device telemetry ---
+            # The timely markers are the firmware's own human log lines. Its comment at the emission site is
+            # explicit: "The human log line is the *timely* edge for the HITL probe (`#CAP` DIAG rows queue behind
+            # the deferred stop's flood and arrive seconds late); the DIAG row is the evidence-tier record." The
+            # window really was open when only the human line was visible, so keying on the #CAP row alone made
+            # this check report False for a window that had opened.
+            window_opened = _wait_for_any(capture_log, after=0,
+                                         markers=(f"Reentry window open slot={a0}",),
+                                         timeout_s=args.window_timeout_s)
+            events.append({"event": "finalizer_window_open", "confirmed": window_opened})
+            denied = _wait_for_any(capture_log, after=0,
+                                  markers=("Overdub stop refused", f"DIAG,reentry,deny,",
+                                           "successor_stop_denied_capacity"),
+                                  timeout_s=args.window_timeout_s)
+            events.append({"event": "successor_stop_denied", "confirmed": denied})
+            bound = _wait_for_any(capture_log, after=0,
+                                 markers=(f"DIAG,reentry,bound,", f"Reentry window open slot={b0}"),
+                                 timeout_s=args.window_timeout_s)
+            events.append({"event": "successor_stop_bound", "confirmed": bound})
+            # Detect the successor's start from the TIMELY human line, not the `#CAP RECA` row. The firmware defers
+            # `#CAP` rows behind the deferred stop's flood (documented at their emission sites), so keying the note
+            # injection on `RECA` reported False and the note was never sent -- which is why C finalised at length 0
+            # (`RECS,stopToStopped,6,...,4001,0,0`) while the seeds, whose notes were sent, committed 6144 ticks.
+            started = _wait_for_any(capture_log, after=c_switch_line,
+                                    markers=("Recording started @ tick",), timeout_s=args.phase_timeout_s)
+            events.append({"event": "successor_started", "confirmed": started,
+                           "marker": "human Recording-started line"})
 
-        # --- observe the chain in the device telemetry ---
-        # The timely markers are the firmware's own human log lines. Its comment at the emission site is
-        # explicit: "The human log line is the *timely* edge for the HITL probe (`#CAP` DIAG rows queue behind
-        # the deferred stop's flood and arrive seconds late); the DIAG row is the evidence-tier record." The
-        # window really was open when only the human line was visible, so keying on the #CAP row alone made
-        # this check report False for a window that had opened.
-        window_opened = _wait_for_any(capture_log, after=0,
-                                     markers=(f"Reentry window open slot={a0}",),
-                                     timeout_s=args.window_timeout_s)
-        events.append({"event": "finalizer_window_open", "confirmed": window_opened})
-        denied = _wait_for_any(capture_log, after=0,
-                              markers=("Overdub stop refused", f"DIAG,reentry,deny,",
-                                       "successor_stop_denied_capacity"),
-                              timeout_s=args.window_timeout_s)
-        events.append({"event": "successor_stop_denied", "confirmed": denied})
-        bound = _wait_for_any(capture_log, after=0,
-                             markers=(f"DIAG,reentry,bound,", f"Reentry window open slot={b0}"),
-                             timeout_s=args.window_timeout_s)
-        events.append({"event": "successor_stop_bound", "confirmed": bound})
-        # Detect the successor's start from the TIMELY human line, not the `#CAP RECA` row. The firmware defers
-        # `#CAP` rows behind the deferred stop's flood (documented at their emission sites), so keying the note
-        # injection on `RECA` reported False and the note was never sent -- which is why C finalised at length 0
-        # (`RECS,stopToStopped,6,...,4001,0,0`) while the seeds, whose notes were sent, committed 6144 ticks.
-        started = _wait_for_any(capture_log, after=c_switch_line,
-                                markers=("Recording started @ tick",), timeout_s=args.phase_timeout_s)
-        events.append({"event": "successor_started", "confirmed": started,
-                       "marker": "human Recording-started line"})
+            if started:
+                # Let the successor take run, then inject the note the oracle will look for.
+                time.sleep(2.0)
+                # mido channels are 0-based; the device's per-track input channel for track N is N-1.
+                out_port.send(mido.Message("note_on", note=args.successor_note, velocity=100,
+                                           channel=note_channel))
+                time.sleep(0.4)
+                out_port.send(mido.Message("note_off", note=args.successor_note, velocity=0,
+                                           channel=note_channel))
+                events.append({"event": "successor_note_injected", "note": args.successor_note})
+                time.sleep(2.0)
 
-        if started:
-            # Let the successor take run, then inject the note the oracle will look for.
-            time.sleep(2.0)
-            # mido channels are 0-based; the device's per-track input channel for track N is N-1.
-            out_port.send(mido.Message("note_on", note=args.successor_note, velocity=100,
-                                       channel=note_channel))
-            time.sleep(0.4)
-            out_port.send(mido.Message("note_off", note=args.successor_note, velocity=0,
-                                       channel=note_channel))
-            events.append({"event": "successor_note_injected", "note": args.successor_note})
-            time.sleep(2.0)
-
-        # Stop the transport so the content dump's preconditions hold, and let persistence settle.
-        _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
-                          channel_1based=CONTROL_CHANNEL_1BASED, press_ms=args.press_ms)
-        time.sleep(4.0)
-        _confirm(capture_log, label="transport_stopped", markers=(",ST,Track,",),
-                 timeout_s=args.phase_timeout_s, events=events)
-        report["result"] = "DROVE_SEQUENCE" if started else "SEQUENCE_INCOMPLETE"
+            # Stop the transport so the content dump's preconditions hold, and let persistence settle.
+            _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
+                              channel_1based=CONTROL_CHANNEL_1BASED, press_ms=args.press_ms)
+            time.sleep(4.0)
+            _confirm(capture_log, label="transport_stopped", markers=(",ST,Track,",),
+                     timeout_s=args.phase_timeout_s, events=events)
+            report["result"] = "DROVE_SEQUENCE" if started else "SEQUENCE_INCOMPLETE"
 
     if report.get("result") == "TARGETS_PREPARED":
         report["session_log"] = str(capture_log)
@@ -767,11 +796,21 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("[retention] targets prepared; now run without --prepare-only")
         return 0
     report["session_log"] = str(capture_log)
+    report["shutdown"] = shutdown_session.result.as_dict()
+    if not shutdown_session.result.ok:
+        # The behaviour may have been driven correctly, but this run is not safe to build on: the device was
+        # left with persistence unfinished. Report it as such instead of a clean pass.
+        report["result"] = f"SHUTDOWN_{shutdown_session.result.status.upper()}"
     _write_metadata(out_dir, args=args, result=report["result"], session_log=capture_log)
     (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
+    print(f"[retention] device shutdown: {shutdown_session.result.status} -- {shutdown_session.result.detail}")
     for e in events:
         print(f"  {e}")
+    if not shutdown_session.result.ok:
+        print("[retention] INCOMPLETE DEVICE SHUTDOWN: not a clean run; the next reset is latched off until "
+              "this is deliberately cleared.")
+        return 1
     print(f"[retention] drove {report['result']}; run the content pipeline and the retention oracle next")
     return 0 if report["result"] == "DROVE_SEQUENCE" else 1
 
