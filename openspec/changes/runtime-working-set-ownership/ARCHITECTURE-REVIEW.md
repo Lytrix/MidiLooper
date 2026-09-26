@@ -5594,3 +5594,49 @@ of a silent contradiction.
 
 Status: default gate 12/12; `S4B_ACCEPTANCE=1` red with the state above; RAM1 `variables` unchanged,
 `code 391,960 -> 392,024` / `padding 1,256 -> 1,192` (the refusal and its log; 352 B of headroom).
+
+## S4f.3 / S4b.1 — the target's focus is the missing link; the start still does not dispatch (2026-09-25, sixth pass)
+
+### Finding: the gesture acts on the *selected* slot, which the switch deliberately leaves behind
+
+With the zero-length overdub refused, the state after the fixture's start step was
+
+```
+playing=1 overdubbing=0 recording=0 pendingStop=1 active=1 selected=0
+```
+
+`active=1` (the switch committed and the audio moved to B) but `selected=0` -- the switch **keeps focus on
+the predecessor** on purpose (`setSelectedSlotIndex(trackIndex, captureSlot, SyncPlayback::No)` in
+`finalizeCaptureAndSelectSlot`, so the piano roll and LEDs stay on the capture that was just taken). The
+arm/record entry (`MidiButtonActions::handleToggleRecord`) and the record-arm branch both act on the
+**selected** slot, so the start was being aimed at A, not at the active target B.
+
+The fixture now selects the active target before starting, which is what a user does when the switch moved
+the audio to B. State afterwards:
+
+```
+playing=1 overdubbing=0 recording=0 pendingStop=1 active=1 selected=1
+```
+
+Coherent -- no false overdub session, focus on the target -- but **B still has not started recording**.
+So the refusal removed the contradiction and the focus fix removed the mis-targeting, and what is left is
+the dispatch itself.
+
+### Where the remaining work is
+
+The start reaches the record-arm path but no recording begins. The candidates, in order:
+
+1. **`handlePendingRecordStart` phase/ref-slot condition.** It gates on
+   `pendingRecordRefSlot` against the reference loop's `loopLengthTicks`/`startLoopTick`; after a handoff
+   the reference is the predecessor, so the boundary mathematics may never satisfy `shouldStart`.
+2. **The queued start not surviving the handoff** -- `pendingRecordSlot`/`pendingRecord` may be set for a
+   slot that the switch's bookkeeping clears (`finalizeCaptureAndSelectSlot` clears `pendingRecord`,
+   `pendingRecordQueuedAtTick` and every `pendingRecordSlot` for the track).
+3. The record-arm branch requiring a state the successor does not have.
+
+Candidate 2 is the most suspicious given the code read: the switch clears exactly the per-slot record
+bookkeeping that would carry the requested start to the successor, which is the "retain the requested
+switch and start" half of S4f.3's specification.
+
+Status: default gate 12/12; `S4B_ACCEPTANCE=1` red with the coherent state above; full native 2,448 passed
+/ 1 skipped; RAM1 unchanged from the refusal commit.
