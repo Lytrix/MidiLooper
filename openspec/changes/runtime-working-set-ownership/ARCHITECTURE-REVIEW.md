@@ -4985,3 +4985,42 @@ Fixture green; `test_continuous_capture` 101/101. Full native suite `2,436 passe
 build, 97 suites — 4 suites are in the native `test_ignore` list). RAM1 byte-identical to the S3.1
 routing (`variables 96,160 / code 391,912 / padding 1,304 / locals 34,912`), so this slice costs
 nothing in firmware. No production line changed.
+
+## S3 gate — acceptance suite landed; the gate itself is not closed (2026-09-25)
+
+`test_runtime_working_set_ownership` now exists and is linked as a firmware-boundary suite
+(`scripts/native_test_link.py`, the continuous-capture harness's measured stub set). It is the stage's
+acceptance over the **production admission paths**, deliberately not a restatement of the unit suites
+(`test_working_set_lease` keeps the lease arithmetic; `test_continuous_capture` keeps the per-owner-kind
+matrix and the selection fixture):
+
+1. **Boot/load is an admission boundary** — a committed slot leaves `prewarmBootPlaybackRuntimeSlots()`
+   holding no working set, and the *same* slot gains `PlaybackWindow | LiveCapture` at the record arm.
+   Asserting both on one slot is what makes the absence meaningful.
+2. **A repeated admission does not churn** — the held set and the generation are unchanged, because the
+   lease is identity-qualified.
+3. **Release is guarded by liveness** — an accepted interaction refuses release and frees it when
+   consumed; an in-flight prepared handover refuses and frees it when retired; a stop admitted through
+   the production entry (interval opened by `startOverdubbing`, then
+   `beginDeferredOverdubStopForSlot`) refuses and, once driven to retirement through the production
+   grain path, frees the slot.
+4. **Selection acquires nothing** — browsing leaves every slot's role set `None`, generation 0 and no
+   runtime.
+
+4 cases green; full native suite `2,440 passed / 1 skipped` (98 suites — 4 are in the native
+`test_ignore` list). Firmware RAM1 byte-identical (`variables 96,160 / code 391,912 / padding 1,304 /
+locals 34,912`): the suite is test-only.
+
+**What still blocks the gate, named rather than implied:**
+
+- **S2b gates** — S2b.3's post-restore half, S2b.5's device gate and the transferred S2b.7 device legs are
+  device measurements, not native work.
+- **S2.2/S2.3 current-root budget** — per-class bytes (`P` playback window, `C` live-capture extension,
+  `D` deferred, derived root hours) are device measurements and remain open.
+- `test_playback_prewarm` **unchanged** — ✅ verified in every run of this stage.
+
+One honest limit inside the suite: the stop-admission case asserts through
+`beginDeferredOverdubStopForSlot` with an interval opened by `startOverdubbing` rather than the MIDI
+button route, because the button route drags the note-edit input layer into this boundary — the same
+choice `test_storage_manager_load` documents. The ring term is additionally held alone by
+`test_continuous_capture`'s matrix.
