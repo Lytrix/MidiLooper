@@ -104,6 +104,18 @@ struct TrackCaptureStopTestAccess {
     return rt != nullptr && rt->ledger.isActive(1, note);
   }
   static void clearAllLedgersForTests(Track& track) { track.playbackRuntime.clearAllLedgers(); }
+  /// S4.1/S4.2: the `(slot, generation)` release entry and the identity a caller must present.
+  static uint16_t slotGeneration(Track& track, uint8_t slot) {
+    return track.playbackRuntime.slotGeneration(slot);
+  }
+  static WorkingSetOutcome releaseSlot(Track& track, uint8_t slot, uint16_t generation,
+                                       bool preserveLedger = true) {
+    return track.playbackRuntime.releaseSlot(slot, generation, preserveLedger);
+  }
+  static bool leaseHoldsWorkingSet(const Track& track, uint8_t slot) {
+    const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr && rt->lease_.roles() != WorkingSetRole::None;
+  }
   // ---- S4.2 generation-qualified finalization identity ------------------------------------
   /// The runtime's own recorded owner identity (null until an interval is admitted).
   static bool setCaptureStopOwner(Track& track, uint8_t slot, uint32_t generation) {
@@ -391,6 +403,85 @@ void test_a_late_cleanup_cannot_clear_a_successor_finalization_marker() {
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::clearCaptureStopOwner(track, 0, liveGeneration));
 }
 
+
+/// **S4.1/S4.2 — the `(slot, generation)` release entry.** Release is identity-qualified, gated by
+/// liveness at the track level, and preserves the slot runtime's own refusal instead of discarding it
+/// (the pre-S4.1 `TrackPlaybackRuntime::resetAll` dropped that answer).
+void test_the_slot_generation_release_entry_is_identity_qualified_and_preserves_refusals() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 0));
+
+  // Identity: the generation captured now is the one a caller must present.
+  const uint16_t generation = TrackCaptureStopTestAccess::slotGeneration(track, 0);
+
+  // A stale generation is a rejected no-op and must not release the held working set.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(WorkingSetOutcome::StaleGeneration),
+      static_cast<uint8_t>(TrackCaptureStopTestAccess::releaseSlot(track, 0,
+                                                                   static_cast<uint16_t>(generation + 1))),
+      "a stale generation must be a rejected no-op");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 0),
+                           "a stale release must not drop the held working set");
+
+  // The matching identity releases, and the generation advances so the same identity cannot release
+  // twice (the reuse guard).
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(WorkingSetOutcome::Released),
+      static_cast<uint8_t>(TrackCaptureStopTestAccess::releaseSlot(track, 0, generation)),
+      "the matching identity must release");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 0),
+                            "release must drop the held working set");
+  const uint16_t advanced = TrackCaptureStopTestAccess::slotGeneration(track, 0);
+  TEST_ASSERT_TRUE_MESSAGE(advanced > generation, "release must advance the slot generation");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(WorkingSetOutcome::StaleGeneration),
+      static_cast<uint8_t>(TrackCaptureStopTestAccess::releaseSlot(track, 0, generation)),
+      "the previous identity must not release a reused slot");
+
+  // An unheld slot reports NotHeld rather than a false release.
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(WorkingSetOutcome::NotHeld),
+      static_cast<uint8_t>(TrackCaptureStopTestAccess::releaseSlot(track, 0, advanced)));
+  // ...and an out-of-range slot cannot be released.
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(WorkingSetOutcome::NotHeld),
+      static_cast<uint8_t>(TrackCaptureStopTestAccess::releaseSlot(track, 200, 0)));
+}
+
+/// **S4.1 — the track-level release is gated by liveness.** `releaseEligiblePlaybackRuntimeSlots`
+/// must skip a slot whose predicate reports a live owner: releasing underneath one is what the
+/// predicate-free `resetAll` did.
+void test_the_release_sweep_skips_a_slot_with_a_live_owner() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 1);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+
+  // A live owner on the slot: an accepted interaction latched for it.
+  TrackCaptureStopTestAccess::latchAcceptedStopForSlot(track, 1);
+  TEST_ASSERT_FALSE_MESSAGE(track.noLiveOwnerForSlot(1), "the fixture needs a live owner");
+
+  const uint16_t generation = TrackCaptureStopTestAccess::slotGeneration(track, 1);
+  track.releasePlaybackMergedMidiEventsMemory();
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+      generation, TrackCaptureStopTestAccess::slotGeneration(track, 1),
+      "the sweep must not release a slot with a live owner");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 1),
+                           "a live owner's working set must survive the sweep");
+
+  // Control: once the owner retires, the same sweep does release it.
+  TrackCaptureStopTestAccess::consumeAcceptedStop(track);
+  TEST_ASSERT_TRUE(track.noLiveOwnerForSlot(1));
+  track.releasePlaybackMergedMidiEventsMemory();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::slotGeneration(track, 1) > generation,
+                           "the sweep must release a slot with no live owner");
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
@@ -399,5 +490,7 @@ int main() {
   RUN_TEST(test_a_stop_clears_only_its_own_slots_ledger);
   RUN_TEST(test_selection_acquires_no_working_set);
   RUN_TEST(test_a_late_cleanup_cannot_clear_a_successor_finalization_marker);
+  RUN_TEST(test_the_slot_generation_release_entry_is_identity_qualified_and_preserves_refusals);
+  RUN_TEST(test_the_release_sweep_skips_a_slot_with_a_live_owner);
   return UNITY_END();
 }

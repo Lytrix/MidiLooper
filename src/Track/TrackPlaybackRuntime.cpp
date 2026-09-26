@@ -1992,15 +1992,6 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM LoopPlaybackRuntime* allocateLoopPlaybackRuntime
   return new (mem) LoopPlaybackRuntime();
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM void TrackPlaybackRuntime::resetAll(bool preserveLedger) {
-  for (auto& rt : runtimeBySlot_) {
-    if (!rt) {
-      continue;
-    }
-    rt->reset(preserveLedger);
-  }
-}
-
 TRACK_PLAYBACK_RUNTIME_COLD_MEM void TrackPlaybackRuntime::clearAllLedgers() {
   // The deliberate whole-track sweep (global transport stop). Per-interval stops use the slot's own
   // `clearLedger()` so a sibling that is still finalizing does not lose its suppression state (S4.1).
@@ -2010,6 +2001,27 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void TrackPlaybackRuntime::clearAllLedgers() {
     }
     rt->clearLedger();
   }
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM uint16_t TrackPlaybackRuntime::slotGeneration(
+    uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return 0;
+  const LoopPlaybackRuntimePtr& rt = runtimeBySlot_[slotIndex];
+  return rt ? rt->workingSetGeneration() : 0;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM WorkingSetOutcome TrackPlaybackRuntime::releaseSlot(
+    uint8_t slotIndex, uint16_t generation, bool preserveLedger) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return WorkingSetOutcome::NotHeld;
+  LoopPlaybackRuntimePtr& rt = runtimeBySlot_[slotIndex];
+  if (!rt) return WorkingSetOutcome::NotHeld;
+  // Identity first: a stale generation is a rejected no-op, and this is the check that makes a late
+  // release on a reused slot harmless (S4.2). The release call itself re-validates and bumps.
+  if (rt->workingSetGeneration() != generation) return WorkingSetOutcome::StaleGeneration;
+  // The slot runtime's own refusal is preserved, not discarded.
+  if (!rt->reset(preserveLedger)) return WorkingSetOutcome::RefusedBusy;
+  const WorkingSetOutcome released = rt->releaseAllWorkingSetLeases();
+  return released == WorkingSetOutcome::Released ? released : WorkingSetOutcome::NotHeld;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM LoopPlaybackRuntime* TrackPlaybackRuntime::trySlot(
