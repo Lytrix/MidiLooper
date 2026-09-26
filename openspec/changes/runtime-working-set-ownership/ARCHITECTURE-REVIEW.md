@@ -7475,6 +7475,11 @@ evidence-modifying -- it has already discarded an incomplete runtime bundle temp
   and exception -- instead of at each `return`, which is how `--prepare-only` was missed. A structural test
   asserts every `return` inside the capture session sits inside a `DeviceSession`.
 
+**Device validation of this fix remains PENDING.** It is host-tested only: the drain has never run against
+the board, and it cannot be device-validated while the incident hold is latched. Its tests support the
+correction; they do not demonstrate it on hardware. Recording that plainly so a later reader does not read
+"fixed" as "proven on the device".
+
 **A false green in that structural test, found by red-proving it.** An earlier visitor returned early from
 `visit_FunctionDef`, so `main`'s body was never traversed and the assertion passed even against a planted
 `return` that bypassed the drain. Fixed, and re-red-proved (the planted return is now flagged at its line).
