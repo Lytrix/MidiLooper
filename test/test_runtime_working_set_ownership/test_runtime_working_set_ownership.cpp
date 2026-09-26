@@ -42,6 +42,15 @@ bool sequencerRunning = false;
 #define HARNESS_OBSERVABLE_SLOT_CHANGE
 #define HARNESS_OBSERVABLE_SD_REFRESH
 #define HARNESS_OBSERVABLE_START_RECLAIM
+// S4b.1 check 7 (cross-track): the successor's track must be selected through the production route, which
+// departs the note-edit session before it moves focus. That departure is the edit suites' subject, so it
+// stays observable here rather than failing closed -- the same treatment the switch's storage and display
+// boundaries already get above.
+#define HARNESS_OBSERVABLE_TRACK_SELECT
+// S4b.1 check 7 (cleared target): driving a **cleared** slot through `Track::clear()` reaches the
+// note-edit revert the clear performs. That revert is a note-edit neighbour, so it stays observable here
+// rather than failing closed; nothing in this suite asserts on it.
+#define HARNESS_OBSERVABLE_SLOT_CLEAR
 // The stub surface: physical outputs and unrelated domain routes stay fail-closed or observable.
 #include "off_path_deps.h"
 
@@ -223,17 +232,25 @@ struct TrackCaptureStopTestAccess {
 
 namespace {
 
-/// Commit one record pass into a slot so the slot holds content -- the state a restored library has.
-void commitRecordPassIntoTrackSlot(Track& track, uint8_t slot) {
+/// Commit one record pass of `lengthTicks` into a slot so the slot holds content -- the state a restored
+/// library has. The length is a parameter because the populated-target variant must be able to tell
+/// "the successor used **its own** loop's phase" from "the successor inherited the predecessor's": it
+/// gives the two slots different lengths and asserts the successor kept its own.
+void commitRecordPassIntoTrackSlotOfLength(Track& track, uint8_t slot, uint32_t lengthTicks) {
   TrackCaptureStopTestAccess::selectSlot(track, slot);
   Loop& loop = track.getActiveLoop();
-  loop.loopLengthTicks = 768;
+  loop.loopLengthTicks = lengthTicks;
   loop.beginCapture(CapturePhase::Record);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(48, 1, 48, 0)));
-  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(768, CommitReason::RecordStop));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(lengthTicks, CommitReason::RecordStop));
   TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
   TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+}
+
+/// Commit one record pass into a slot so the slot holds content -- the state a restored library has.
+void commitRecordPassIntoTrackSlot(Track& track, uint8_t slot) {
+  commitRecordPassIntoTrackSlotOfLength(track, slot, 768);
 }
 
 /// The production MIDI input route, so a "B accepts MIDI" assertion goes through the handler rather
@@ -917,6 +934,328 @@ void test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds()
                             "later dispatch must not add events to C's interval");
 }
 
+/// **S4b.1 — contract check 7, cross-track successor.** The successor sits on a **different track**,
+/// which the same-track fixtures cannot show: `CaptureStopJobs`, the S4f.1 latch and
+/// `hasStopInFlightForSlot` are all per track, so the predecessor's live finalizer must not gate the
+/// successor track's start. The assertions are deliberately asymmetric -- the predecessor's finalizer
+/// must still be outstanding, and still identified by the predecessor's own slot, *while* the successor
+/// records on its own track.
+void test_a_cross_track_successor_starts_while_the_predecessor_finalizes() {
+  LoopEventStore::initPool();
+  Track& predecessor = trackManager.getTrack(0);
+  Track& successor = trackManager.getTrack(1);
+  predecessor.ensureLoopsAllocated();
+  successor.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(predecessor, 0);
+  TEST_ASSERT_TRUE(predecessor.prewarmPlaybackForSlot(0, true));
+
+  // (1) The predecessor's stop is admitted and held, so its track's deferred capacity is occupied.
+  trackManager.setSelectedTrack(0);
+  predecessor.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(predecessor, 0);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(predecessor),
+                           "precondition: the predecessor must be overdubbing");
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(predecessor, 0),
+                           "the predecessor's stop must be admitted and held before the handoff");
+
+  // (2) Start the successor through the production gesture, on its own track.
+  trackManager.setSelectedTrack(1);
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(0);
+  const uint32_t queuedTick = clockManager.getCurrentTick();
+  for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3 &&
+                             !TrackCaptureStopTestAccess::isRecording(successor) &&
+                             !TrackCaptureStopTestAccess::isOverdubbing(successor);
+       ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  // Red-proof note: this fixture guards against *cross-track coupling*, and no earlier version of the code
+  // had any, so there is nothing to revert. It is red-proved by introducing the coupling the fixture must
+  // detect -- a temporary guard in `startRecordingTrack` that refuses while **any** track has a stop in
+  // flight -- which fails exactly here ("the successor track must start while the predecessor finalizes").
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(successor),
+                           "the successor track must start while the predecessor finalizes");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasStopInFlight(successor),
+                            "the successor track must hold no stop obligation of its own");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(predecessor, 0),
+                           "the predecessor's finalizer must still be outstanding");
+
+  // (3) The successor records on its own track through the real MIDI route.
+  const size_t before = TrackCaptureStopTestAccess::captureEventCount(successor);
+  const uint32_t onTick = clockManager.getCurrentTick() + 8;
+  inputNote(64, onTick, onTick + 32);
+  TEST_ASSERT_EQUAL_MESSAGE(before + 2, TrackCaptureStopTestAccess::captureEventCount(successor),
+                            "the successor must record the incoming note on its own track");
+
+  // (4) The predecessor completes without disturbing the successor.
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(predecessor);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(predecessor);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(predecessor),
+                            "the predecessor's finalizer must be able to complete");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(successor),
+                           "the predecessor's completion must not stop the successor");
+  TEST_ASSERT_EQUAL_MESSAGE(before + 2, TrackCaptureStopTestAccess::captureEventCount(successor),
+                            "the predecessor's completion must not damage the successor's interval");
+}
+
+/// **S4b.1 — contract check 7, cleared successor.** The successor slot previously held content that was
+/// cleared, so it must still be treated as a **record** target while being *not virgin*: its slot runtime
+/// survives the clear (only passes and loop geometry are dropped), which is the state the production
+/// clear leaves and why the gesture comment says a just-cleared slot "can re-arm".
+///
+/// The clear is performed with the production clear's **slot-local** steps
+/// (`MidiButtonActions::handleClearTrack` once its storage-drain and undo-snapshot bookkeeping is done)
+/// plus `Track::clear()`, which is the production pass removal. The storage drain and the undo snapshot
+/// belong to the persistence/undo suites, not here.
+void test_a_cleared_successor_is_a_record_target_while_the_predecessor_finalizes() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  const uint8_t tidx = trackManager.getSelectedTrackIndex();
+
+  // (1) Fill slot 1, give it a working set, then clear it.
+  commitRecordPassIntoTrackSlot(track, 1);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, 1),
+                           "precondition: the future target must hold a runtime before the clear");
+  // `Track::clear()` returns early on TRACK_EMPTY, so the clear needs a live state (a real slot being
+  // cleared is STOPPED or PLAYING, never EMPTY).
+  track.forceSetState(TRACK_STOPPED);
+  TrackCaptureStopTestAccess::selectSlot(track, 1);
+  trackManager.clearPendingSlotSwitch(tidx);
+  trackManager.setPendingEnabledSetReplacement(tidx, false);
+  trackManager.setSlotEnabled(tidx, 1, false);
+  trackManager.setSlotMuted(tidx, 1, false);
+  trackManager.clearQueuedRecordingTrack(tidx, 1);
+  trackManager.setLayeredSlotHeld(tidx, 1, false);
+  track.clear();
+  TEST_ASSERT_FALSE_MESSAGE(track.hasCommittedPassesInSlot(1),
+                            "a cleared slot must be a record target");
+  TEST_ASSERT_FALSE_MESSAGE(track.hasDataInSlot(1), "a cleared slot must hold no loop data");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, 1),
+                           "the cleared slot must still hold its runtime: it is not a virgin slot");
+
+  // (2) Predecessor A on slot 0 overdubs and its stop is admitted and held.
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "precondition: A must be overdubbing");
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                           "A's stop must be admitted and held before the handoff");
+
+  // (3) Switch/start onto the cleared target: the switch commits and the start is carried.
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the switch onto the cleared target must commit");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                           "the switch must carry a record start onto the cleared target");
+
+  const uint32_t queuedTick = clockManager.getCurrentTick();
+  for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3 &&
+                             !TrackCaptureStopTestAccess::isRecording(track) &&
+                             !TrackCaptureStopTestAccess::isOverdubbing(track);
+       ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                           "the cleared target must start recording from the carried start");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                            "the executed start must be consumed exactly once");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                           "A's finalizer must still be outstanding while the target records");
+
+  // (4) The cleared target records incoming MIDI.
+  const size_t before = TrackCaptureStopTestAccess::captureEventCount(track);
+  const uint32_t onTick = clockManager.getCurrentTick() + 8;
+  inputNote(65, onTick, onTick + 32);
+  TEST_ASSERT_EQUAL_MESSAGE(before + 2, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "the cleared target must record the incoming note's on and off");
+
+  // (5) A completes without damaging the successor.
+  const size_t successorEvents = TrackCaptureStopTestAccess::captureEventCount(track);
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                            "A's finalizer must be able to complete");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "A's completion must not move the active slot off the cleared target");
+  TEST_ASSERT_EQUAL_MESSAGE(successorEvents, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "A's completion must not damage the cleared target's interval");
+}
+
+/// **S4b.1 — contract check 7, populated successor.** The successor slot holds committed content, so the
+/// switch must **not** carry a record start: the contract's branch for a populated target is the
+/// *overdub* on the target's own playback phase. The negative is the point -- the empty-target carrier
+/// must not arm a record over committed content -- and the two slots are given **different lengths**
+/// (predecessor 768, successor 1,536) so "the successor used its own phase" is falsifiable rather than
+/// assumed.
+void test_a_populated_successor_overdubs_on_its_own_phase_while_the_predecessor_finalizes() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  const uint8_t tidx = trackManager.getSelectedTrackIndex();
+  commitRecordPassIntoTrackSlotOfLength(track, 0, 768);
+  commitRecordPassIntoTrackSlotOfLength(track, 1, 1536);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+
+  // (1) A overdubs on slot 0. Unlike the empty-target fixtures the stop is **not** pressed first: for a
+  // populated target the switch itself admits A's stop as the capture handoff, which is the branch the
+  // contract's populated-target wording describes (switch while capturing). A stop pressed beforehand
+  // would leave the track PLAYING instead of OVERDUBBING and route the gesture down the *playback*-switch
+  // lane instead, which is a different owner and a different question.
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "precondition: A must be overdubbing");
+  inputNote(60, 96, 120);
+
+  // (2) Switch to the populated successor while A is still capturing. The switch admits A's stop and
+  // commits, and it must carry **no** record start: the target is not a record target.
+  clockManager.assignCurrentTickSilently(144);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the switch to the populated successor must commit");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                           "the switch must leave A's stop admitted and finalizing");
+  // Measured while red-proving this: the negative below is defended **twice**, by the carrier's own
+  // `!hasCommittedPassesInSlot` predicate and independently by `queueRecordingTrack`'s committed-passes
+  // refusal. Disabling either alone leaves the suite fully green, so the assertion proves the *property*
+  // but does not attribute the refusal to one guard. Red-proving it required disabling both.
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                            "a populated target must NOT be armed for a record start");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::anyRecordQueued(tidx),
+                            "no record request may survive a switch onto a populated target");
+
+  // (3) The successor's own phase is what the overdub uses: its loop length is untouched by the handoff.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1536, track.getLoop(1).loopLengthTicks,
+                                   "the populated successor must keep its own loop length");
+  TrackCaptureStopTestAccess::startOverdubbing(track, clockManager.getCurrentTick());
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "the populated successor must be overdubbable through the production entry");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::captureActive(track),
+                           "the overdub must have an active capture interval");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1536, track.getActiveLoop().loopLengthTicks,
+                                   "the overdub must run against the successor's own phase, not A's");
+
+  // (4) A completes without disturbing the successor's interval or phase.
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                            "A's finalizer must be able to complete");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "A's completion must not move the active slot off the successor");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1536, track.getLoop(1).loopLengthTicks,
+                                   "A's completion must not rewrite the successor's phase");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "A's completion must not end the successor's overdub");
+}
+
+/// **S4b.1 — check 6, exactly-once for the *committed* carrier.** The blocked fixture proves exactly-once
+/// for a request that had to wait for admission. The committed case -- the switch's own gesture carrying
+/// the start, dispatched on the next eligible boundary -- had no exactly-once assertion: the acceptance
+/// fixture never checks that the request was consumed, and never dispatches again after the start. This
+/// fixture closes that half: consumption, no re-arm, and no second execution.
+///
+/// **Residual gap, recorded rather than implied.** This does not cover the *arm-and-wait re-queue* path
+/// (`startRecordingTrack` -> `!clockManager.shouldQuantizeRecordStart()` re-queues and returns false) as a
+/// route of its own, nor a committed start that *fails* and is retried; both remain uncovered here.
+/// Checked while writing this and **not** a defect: the ordinary immediate start cannot leave a stale
+/// request behind, because `handleArmedRecordPress` cancels any queued arm and returns before the
+/// immediate `startRecordingTrack` call is reached (`MidiButtonActions.cpp`), so that route has nothing to
+/// consume twice.
+void test_the_switch_carried_start_executes_exactly_once() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  const uint8_t tidx = trackManager.getSelectedTrackIndex();
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+
+  // (1) A overdubs, then its stop is admitted and held.
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::isOverdubbing(track));
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track));
+
+  // (2) The switch's own gesture carries the start for the empty target (the committed case).
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  TEST_ASSERT_EQUAL_UINT8(1, TrackCaptureStopTestAccess::activeLoopIndex(track));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                           "the switch must carry the start for the empty target");
+
+  const uint32_t queuedTick = clockManager.getCurrentTick();
+  for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3 &&
+                             !TrackCaptureStopTestAccess::isRecording(track) &&
+                             !TrackCaptureStopTestAccess::isOverdubbing(track);
+       ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                           "the carried start must execute while A finalizes");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                            "the executed start must be consumed exactly once");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::anyRecordQueued(tidx),
+                            "no record request may survive a successful start");
+
+  // (3) The started interval takes the injected note.
+  const size_t before = TrackCaptureStopTestAccess::captureEventCount(track);
+  const uint32_t onTick = clockManager.getCurrentTick() + 8;
+  inputNote(66, onTick, onTick + 32);
+  TEST_ASSERT_EQUAL_MESSAGE(before + 2, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "the started interval must record the incoming note");
+
+  // (4) Exactly once: two further bar boundaries of dispatch must not re-arm or re-execute the start.
+  const size_t startedEvents = TrackCaptureStopTestAccess::captureEventCount(track);
+  const uint8_t startedSlot = TrackCaptureStopTestAccess::activeLoopIndex(track);
+  const uint32_t afterStart = clockManager.getCurrentTick();
+  for (uint32_t tick = afterStart + 1; tick <= afterStart + 768 * 2; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(startedSlot, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "later dispatch must not move the active slot");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                            "the start request must not be re-armed by later dispatch");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::anyRecordQueued(tidx),
+                            "no record request may exist after the start was consumed");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                           "the started interval must still be the recording interval");
+  TEST_ASSERT_EQUAL_MESSAGE(startedEvents, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "a second execution would have restarted the interval and dropped its "
+                            "captured events");
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
@@ -931,5 +1270,10 @@ int main() {
   RUN_TEST(test_a_declared_envelope_breach_is_reported_and_does_not_block_activation);
   RUN_TEST(test_switching_starts_the_new_take_while_the_previous_take_still_finalizes);
   RUN_TEST(test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds);
+  // S4b.1 contract check 7 coverage, and the exactly-once half the committed carrier was missing.
+  RUN_TEST(test_a_cross_track_successor_starts_while_the_predecessor_finalizes);
+  RUN_TEST(test_a_cleared_successor_is_a_record_target_while_the_predecessor_finalizes);
+  RUN_TEST(test_a_populated_successor_overdubs_on_its_own_phase_while_the_predecessor_finalizes);
+  RUN_TEST(test_the_switch_carried_start_executes_exactly_once);
   return UNITY_END();
 }
