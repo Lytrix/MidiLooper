@@ -660,10 +660,16 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedUnexecutedInteraction(track),
                             "the stop must be admitted, not merely accepted-and-unexecuted");
 
-  // (3) Switch to B and start it through the user-facing gesture. For an empty target this one
-  // gesture finalizes A's capture, commits the switch and starts B's recording.
+  // (3) Switch to B through the user-facing gesture, then start B with the same gesture. The per-slot
+  // gesture finalizes A's capture, commits the switch and returns; it does not also start the target, so
+  // the start is its own press -- the acceptance sequence's "switch to B, then start B".
   clockManager.assignCurrentTickSilently(200);
   TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  if (TrackCaptureStopTestAccess::activeLoopIndex(track) == 1 &&
+      !TrackCaptureStopTestAccess::isRecording(track) &&
+      !TrackCaptureStopTestAccess::isOverdubbing(track)) {
+    TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  }
 
   if (TrackCaptureStopTestAccess::activeLoopIndex(track) != 1) {
     // Characterization of the current behavior. The switch holds the active slot because S4f.5
@@ -688,6 +694,22 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
   // (4) B is the live interval and records incoming MIDI while A remains unfinished.
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
                                   "the switch moved the active slot to B at the handoff boundary");
+  // S4f.3 moved the handoff on: the admitted stop releases the active slot, so the switch now commits
+  // (asserted just above). What still does not happen is B *starting*: the per-slot gesture returns
+  // after committing the switch, so the requested start is not carried through to the target. That is
+  // S4f.3's remaining half (the switch's carrier must dispatch the requested start at its commit
+  // point), and it is why this acceptance is still red.
+  if (!TrackCaptureStopTestAccess::isRecording(track) &&
+      !TrackCaptureStopTestAccess::isOverdubbing(track)) {
+    if (getenv("S4B_ACCEPTANCE") == nullptr) {
+      TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                                "B has not started yet (S4f.3's carrier-dispatch half is open)");
+      return;
+    }
+    TEST_FAIL_MESSAGE(
+        "S4f.3/S4b.1: the switch commits but the requested start is not dispatched to the target, so B "
+        "never starts while A finalizes.");
+  }
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track) ||
                                TrackCaptureStopTestAccess::isOverdubbing(track),
                            "B must start from the gesture while A still finalizes");

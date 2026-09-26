@@ -3358,6 +3358,8 @@ void test_stop_job_and_live_ingress_own_distinct_staging() {
   TEST_ASSERT_EQUAL(193, live->storage.events[0].tick);
 }
 
+// S4f.3: a committed switch invalidates the display cache; the display is not under test here.
+#define HARNESS_OBSERVABLE_SLOT_CHANGE
 #include "off_path_deps.h"
 
 /// Regression for the reset-before-guard defect: a redundant or ineligible
@@ -4684,21 +4686,23 @@ void test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes() {
   TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
   TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
   TEST_ASSERT_TRUE(track.hasStopInFlight());
-  // The admitted job still owns its active slot until it retires (the pre-existing DEC-067 rule this
-  // slice does not change), so the switch stays refused.
+  // S4f.3 (2026-09-25): the admitted job does **not** hold the active slot. It carries its own identity
+  // (`job.owner`, `job.slot`, `job.loopId`, the latch, `captureStopOwner`) and the deferred drive
+  // finalizes from `*job.owner` / `slotIfAllocated(job.slot)`, so the switch commits once the stop is
+  // admitted and the successor can start while the predecessor still finalizes. The assertion below
+  // therefore expects the move; the *unadmitted* refusal is the earlier assertion in this fixture.
   trackManager.setActiveLoopIndex(trackIndex, 1);
-  TEST_ASSERT_EQUAL_UINT8(0, track.getActiveLoopIndex());
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.getActiveLoopIndex(),
+                                  "an admitted stop must release the active slot (S4f.3)");
 
   for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i) {
     TrackCaptureStopTestAccess::step(track);
   }
   TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
   TEST_ASSERT_FALSE(track.hasStopInFlight());
-  // The positive half -- that a switch *does* move once nothing is in flight -- cannot be asserted in
-  // this suite: the move calls `StorageManager::prioritizeLoopSlotRestoreForFocus`, which is a
-  // fail-closed off-path stub here. The guard reads `hasStopInFlight()`, which is now false, so the
-  // refusal above is what this fixture owns.
-  TEST_ASSERT_EQUAL_UINT8(0, track.getActiveLoopIndex());
+  // The finalization ran to completion from the job's own identity while the active slot was on the
+  // successor, which is the handoff this fixture now covers.
+  TEST_ASSERT_EQUAL_UINT8(1, track.getActiveLoopIndex());
 }
 
 /// P1/B03 (S4f.4, DEC-070): transport stop retargets a pending stop to STOPPED through the

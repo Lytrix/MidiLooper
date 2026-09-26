@@ -5390,3 +5390,67 @@ open, so the observable stub is the honest choice and is documented as such.
 Full native `2,448 passed / 1 skipped`; capture-serial builds with RAM1 byte-identical. No production
 behavior changed: the deliverable is the tightened, honest fixture plus the finding that the unadmitted
 case already holds.
+
+## S4f.3 — accepted-switch handling: the admitted-stop half landed; carrier dispatch open (2026-09-25)
+
+### What changed
+
+`TrackManager::finalizeCaptureAndSelectSlot` no longer refuses to move the active slot when the interval's
+stop is **admitted**. The removed branch was the `hasStopInFlight()` early return; the
+`hasAcceptedUnexecutedInteraction()` guard is **kept**, because S4f.5 requires the active slot not to move
+under an *accepted-but-unexecuted* stop whose interval slot the latch has not yet bound.
+
+The removal is safe because the deferred job already carries its own identity:
+`Track::processDeferredOverdubStopGrain` finalizes from `Loop& loop = *job.owner` and
+`playbackRuntime.slotIfAllocated(job.slot)`, with an explicit guard
+(`&getLoop(job.slot) != job.owner`) and an `ownsTrackState` check that merely reports whether the job still
+owns the *active* slot. Finalization therefore no longer depends on the active slot staying on the
+predecessor.
+
+### Test consequence, asserted not assumed
+
+`test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes` asserted the old rule — that the
+admitted job still holds the active slot. That assertion was **obsolete under S4f.3**, and its own comment
+already recorded that the positive half ("a switch *does* move once nothing is in flight") could not be
+asserted in that suite. It now asserts the corrected rule: the **unadmitted** case still refuses the move
+(unchanged first assertion), and once the stop is admitted the move happens and the finalization completes
+from the job's own identity while the active slot sits on the successor. 101/101 green.
+
+`DisplayManager::invalidateForSlotChange` and `EditManager`'s selected-slot hooks are observable in the
+continuous-capture and ownership harnesses (`HARNESS_OBSERVABLE_SLOT_CHANGE`) because a committed switch
+now reaches them; they are display/edit boundaries, not the handoff.
+
+### Still open — the carrier's dispatch half
+
+**B still does not start.** With the switch committing, the per-slot gesture
+(`MidiButtonActions::handleToggleRecordForSlot`) returns immediately after
+`finalizeCaptureAndSelectSlot`:
+
+```cpp
+if ((track.isRecording() || track.isOverdubbing()) && previousSlot != slotIndex) {
+    trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
+    trackManager.finalizeCaptureAndSelectSlot(trackIdx, slotIndex, now);
+    logger.info("Loop %d: Switched from slot %d (capture finalized)", …);
+    return;
+}
+```
+
+So the requested start is never dispatched to the target. S4f.3's remaining half is exactly what its task
+text specifies: the `SlotStateMachine` pending switch is the authoritative carrier and **dispatch at the
+switch's commit point** replaces the unconditional pending-switch clear in `TrackManagerTransportTick`.
+Until that exists, the acceptance sequence needs its documented second gesture — matching the user's own
+phrasing ("switch to B, then start B") — and the fixture's start is currently not carried across the
+handoff.
+
+The fixture carries both modes: the default gate asserts the current characterization (switch commits,
+start not yet dispatched) and `S4B_ACCEPTANCE=1` runs the requirement, red with that reason.
+
+### Remaining S4f.3 work, named
+
+1. A `Switch` latch that identifies its prerequisite stop (not a second target owner).
+2. Dispatch of the retained switch (and the start bound to it) **after the interval's stop binds**.
+3. Replacement of the unconditional `clearPendingSlotSwitch` in `TrackManagerTransportTick` with
+   consumption at successful switch commit.
+4. Fixture: queued switch + undo + stop admission in one window → the target is never lost.
+
+Full native `2,448 passed / 1 skipped`; capture-serial builds with RAM1 byte-identical.
