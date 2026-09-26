@@ -261,6 +261,23 @@ struct LoopPlaybackRuntime {
   /// The slot's finalization owner: a capture interval whose stop this runtime is finalizing.
   /// Defensively independent of the ring, because it can be set without a ring entry.
   bool ownsLiveFinalization() const { return captureStopOwner != nullptr; }
+  /// S4.2: record the admitted interval's finalization ownership, qualified by its generation.
+  /// Ring entries are reused at stable addresses, so the pointer alone cannot tell a live owner from
+  /// a stale one.
+  void setCaptureStopOwner(PendingStopAdmission& admission, uint32_t generation) {
+    captureStopOwner = &admission;
+    captureStopOwnerGeneration = generation;
+  }
+  /// S4.2: clear only the owner this identity names. Generation-qualified and address-qualified, so a
+  /// late cleanup on a reused runtime object is a rejected no-op instead of nulling a successor's
+  /// marker.
+  bool clearCaptureStopOwner(const PendingStopAdmission& admission, uint32_t generation) {
+    if (captureStopOwner != &admission) return false;
+    if (captureStopOwnerGeneration != generation) return false;
+    captureStopOwner = nullptr;
+    captureStopOwnerGeneration = 0;
+    return true;
+  }
   /// A prepared playback handover still being *built* owns this slot's scratch. The published pair
   /// is deliberately not a term: it is the slot's playback authority and stays valid while the slot
   /// sounds, so counting it would make release unreachable for every sounding slot. S4b.2's switch
@@ -354,7 +371,11 @@ struct LoopPlaybackRuntime {
   LoopEventStore::ChunkReservation canonicalCaptureChunks;
   // Borrowed from the admitted Track job until its cleanup completes. A cache
   // reset cannot reclaim that job's accepted source or partially copied output.
+  // S4.2: the pointer is qualified by the owner's generation, because ring entries are reused at
+  // stable addresses -- a late cleanup on the reused runtime object must not null a successor's
+  // marker.
   PendingStopAdmission* captureStopOwner = nullptr;
+  uint32_t captureStopOwnerGeneration = 0;
   bool prewarmCanonicalCaptureOutput();
   bool canonicalCaptureOutputAdmitted() const;
   bool replenishCanonicalCaptureChunk();

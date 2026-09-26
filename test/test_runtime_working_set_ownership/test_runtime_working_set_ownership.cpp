@@ -104,6 +104,34 @@ struct TrackCaptureStopTestAccess {
     return rt != nullptr && rt->ledger.isActive(1, note);
   }
   static void clearAllLedgersForTests(Track& track) { track.playbackRuntime.clearAllLedgers(); }
+  // ---- S4.2 generation-qualified finalization identity ------------------------------------
+  /// The runtime's own recorded owner identity (null until an interval is admitted).
+  static bool setCaptureStopOwner(Track& track, uint8_t slot, uint32_t generation) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    if (rt == nullptr) return false;
+    rt->setCaptureStopOwner(*rt->captureStopOwner, generation);
+    return true;
+  }
+  /// Mark the slot as owned by a *different* generation, as happens when the runtime object is reused.
+  static bool setSuccessorCaptureStopOwner(Track& track, uint8_t slot, uint32_t generation) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    if (rt == nullptr || rt->captureStopOwner == nullptr) return false;
+    rt->setCaptureStopOwner(*rt->captureStopOwner, generation);
+    return true;
+  }
+  static bool clearCaptureStopOwner(Track& track, uint8_t slot, uint32_t generation) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    if (rt == nullptr || rt->captureStopOwner == nullptr) return false;
+    return rt->clearCaptureStopOwner(*rt->captureStopOwner, generation);
+  }
+  static bool hasCaptureStopOwner(Track& track, uint8_t slot) {
+    const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr && rt->captureStopOwner != nullptr;
+  }
+  static uint32_t captureStopOwnerGeneration(const Track& track, uint8_t slot) {
+    const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr ? rt->captureStopOwnerGeneration : 0;
+  }
   /// S4.1: the named per-interval ledger clear the two stop routes now call.
   static void clearStoppingIntervalLedger(Track& track) { track.clearStoppingIntervalLedger(); }
   static void selectSlotIndex(uint8_t trackIndex, uint8_t slot) {
@@ -317,6 +345,52 @@ void test_a_stop_clears_only_its_own_slots_ledger() {
 }
 
 
+
+/// **S4.2 — a late cleanup must not clear a successor's finalization marker.** `captureStopOwner` is a
+/// raw `PendingStopAdmission*` on a runtime object that ring entries reuse at stable addresses, so an
+/// address-only clear (the pre-S4.2 `if (runtime.captureStopOwner == &stop)`) lets a predecessor's
+/// late cleanup null a successor's marker. The clear is now generation-qualified; this drives the
+/// A-releases / C-reuses / late-A-cleanup sequence directly.
+void test_a_late_cleanup_cannot_clear_a_successor_finalization_marker() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+
+  // Establish a real owner through the production admission, so the fixture works on a genuine
+  // `PendingStopAdmission` rather than a stand-in.
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  Loop& loop = track.getLoop(0);
+  track.startOverdubbing(96);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(96, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(120, 1, 60, 0)));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::admitStopForSlot(track, PendingStopDestination::Playing,
+                                                               96, 0, /*interval=*/1));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasCaptureStopOwner(track, 0));
+
+  // The owner's generation is the identity a cleanup must present.
+  const uint32_t staleGeneration =
+      TrackCaptureStopTestAccess::captureStopOwnerGeneration(track, 0) + 1u;
+
+  // A late cleanup presenting a *different* generation is a rejected no-op, and the live marker
+  // survives -- this is the successor on the reused runtime object.
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::clearCaptureStopOwner(track, 0, staleGeneration),
+                            "a generation-mismatched cleanup must be rejected");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasCaptureStopOwner(track, 0),
+                           "a late cleanup must not clear a successor's marker");
+
+  // Control: the matching identity does clear it, so the rejection above is the generation check
+  // and not a clear that never works.
+  const uint32_t liveGeneration = TrackCaptureStopTestAccess::captureStopOwnerGeneration(track, 0);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::clearCaptureStopOwner(track, 0, liveGeneration),
+                           "the matching identity must clear the marker");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasCaptureStopOwner(track, 0));
+  // ...and a second cleanup of the same identity is a no-op, not a crash or a resurrection.
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::clearCaptureStopOwner(track, 0, liveGeneration));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
@@ -324,5 +398,6 @@ int main() {
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);
   RUN_TEST(test_a_stop_clears_only_its_own_slots_ledger);
   RUN_TEST(test_selection_acquires_no_working_set);
+  RUN_TEST(test_a_late_cleanup_cannot_clear_a_successor_finalization_marker);
   return UNITY_END();
 }

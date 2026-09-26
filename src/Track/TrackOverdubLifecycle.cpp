@@ -641,7 +641,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   }
   job.admission.destination = destination;
   job.owner = &loop;
-  runtime->captureStopOwner = &job.admission;
+  runtime->setCaptureStopOwner(job.admission, job.admission.frozenGeneration);
   // DEC-068: admission is now committed and no fallible step remains, so take this interval's own
   // session-exit tail. The shared session state is still this interval's (the successor's window
   // opens below), and this receipt is the only record of our identities once it swaps them out.
