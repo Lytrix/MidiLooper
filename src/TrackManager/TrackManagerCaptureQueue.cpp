@@ -340,7 +340,8 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     // stop was *admitted and bound* to it. When the stop was retained on the latch instead, the slot
     // stays put -- otherwise the accepted stop would be driven against a slot that is no longer its
     // own. S4f.3 replaces this with the switch's accepted-interaction carrier and commits the switch
-    // after the stop binds.
+    // after the stop binds. S4b.1's handoff depends on that carrier: without it, moving the active
+    // slot here breaks `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`.
     if (t.hasAcceptedUnexecutedInteraction()) return;
   } else if (t.hasStopInFlight()) {
     // The pending finalizer owns its active slot until it resolves the
