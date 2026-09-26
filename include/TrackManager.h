@@ -240,6 +240,10 @@ private:
   uint8_t deferredPlaybackPrewarmTrack_ = 0;
   uint8_t deferredPlaybackPrewarmSlot_ = 0;
 
+  // S3.3: the native fixtures read the selection mechanism directly, so a selection-cost assertion
+  // does not have to route through the storage-side focus hook (a fail-closed boundary in the
+  // continuous-capture harness).
+  friend struct TrackCaptureStopTestAccess;
   //friend class UI; // Optional: if you have a UI or debug class needing internal access
 };
 

@@ -115,6 +115,9 @@ inline uint8_t workingSetCapFor(const WorkingSetLeaseCaps& caps, WorkingSetRole 
  */
 class WorkingSetLeaseSlot {
  public:
+  /// Idempotent: an already-held role is not an error, so a repeated admission is free. Whether the
+  /// held set changed is observable in `roles()` — the S3.3 fixture needs no counter for it, which
+  /// keeps the per-slot runtime inside its size pin.
   WorkingSetOutcome acquire(WorkingSetRole role) {
     if (!isDeclaredRoleSet(role)) {
       return WorkingSetOutcome::InvalidRole;
