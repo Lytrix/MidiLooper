@@ -45,7 +45,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from hitl.actions import slots  # noqa: E402
-from hitl.control_constants import GLOBAL_TRANSPORT_NOTE, CONTROL_CHANNEL_1BASED  # noqa: E402
+from hitl.control_constants import (  # noqa: E402
+    CONTROL_CHANNEL_1BASED,
+    GLOBAL_TRANSPORT_NOTE,
+    LOOP_SELECT_NOTE_BASE,
+    TRACK_SELECT_NOTE_BASE,
+)
 from hitl.managed_capture import ManagedCaptureSession  # noqa: E402
 from hitl.midi_io import _find_midi_port, _send_short_press  # noqa: E402
 
@@ -171,6 +176,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--census", type=Path, default=None,
                    help="census.json from a read-only --library-observe run; when given, every target must "
                         "be empty or the run refuses (this script never clears a slot)")
+    p.add_argument("--tempo-bpm", type=float, default=120.0,
+                   help="pin and VERIFY the device tempo after this run's own boot; the flow aborts if the "
+                        "read-back does not match, because every timing in it is calibrated for this tempo")
+    p.add_argument("--tempo-cc", type=int, default=102)
     p.add_argument("--capture-port", default=None)
     p.add_argument("--boot-wait-s", type=float, default=10.0)
     args = p.parse_args(argv)
@@ -207,6 +216,26 @@ def main(argv: Optional[list[str]] = None) -> int:
             raise RuntimeError("managed capture did not publish a session log")
         out_port = mido.open_output(_find_midi_port("Teensy", is_input=False))
         events.append({"event": "midi_output_opened"})
+
+        # --- tempo: applied and read back AFTER this run's own open, which is the run's final reset ---
+        # The pin does not survive a reboot, and every timing here is calibrated for one tempo, so this is a
+        # precondition rather than a nicety: no read-back matching --tempo-bpm, no gestures.
+        note_channel = t0  # 0-based MIDI channel for note input on this track
+        before_tempo = len(_lines(capture_log))
+        slots.press_track(_Ctx(out_port), args.track, press_ms=args.press_ms)
+        slots.press_slot_record(_Ctx(out_port), args.slot_a, press_ms=args.press_ms)
+        time.sleep(1.0)
+        cc_value = int(round(args.tempo_bpm - 60.0))
+        out_port.send(mido.Message("control_change", channel=CONTROL_CHANNEL_1BASED - 1,
+                                   control=args.tempo_cc, value=max(0, min(127, cc_value))))
+        pinned = _wait_for_any(capture_log, after=before_tempo,
+                              markers=(f"-> {args.tempo_bpm:.1f} BPM",), timeout_s=6.0)
+        events.append({"event": "tempo_pinned", "requested_bpm": args.tempo_bpm, "confirmed": pinned})
+        if not pinned:
+            raise SystemExit(
+                f"tempo precondition failed: no read-back of {args.tempo_bpm:.1f} BPM after CC{args.tempo_cc}="
+                f"{cc_value}. The flow needs LOOP_EDIT to be reachable for the selected track; without the pin "
+                "every timing below is wrong, so it refuses to continue rather than produce a bad run.")
 
         # --- setup: seed A and B, confirming each transition before the next gesture ---
         _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_a, note=60,
