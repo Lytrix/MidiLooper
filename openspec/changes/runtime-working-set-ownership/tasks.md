@@ -1305,6 +1305,28 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `RECA`/`RECS` and `DIAG,ws_release` carry **0-based** slot fields (`RECA,3` = the same slot as
       `Loop 4`). So the seed rows `RECA,4` then `RECA,3` are the driver seeding B (slot 5) first and A
       (slot 4) second, exactly as its own comment says.
+      **FIVE RUNS, NO ROW — the release is not reachable by any same-track sequence tried, and the reason is
+      now definite rather than suspected.** Across `captures/s41-lease-*`, `s41-switch458-*`, `s41-commit-*`
+      and a final **clean-upload, fresh-boot** run (`captures/s41-commit-upl-20260927_014715`, boot banner
+      `BOOT,usb_host,deferred`, shutdown `complete`), the take records and commits (`RECA,3,0` then
+      `RECS,stopToStopped,3,2089,0,2089,2304,0`), the switch commits, and **zero `ws_release` rows appear**.
+      Every run also reports `slot_a_finalizer_retired: False` — there is no `reentry_window_open` and no
+      `canonical_release` for the predecessor at all. Two protocol shapes were tried (transport-stop then
+      switch; capture-switch while recording) and both stop shapes produce the same signature, so the
+      missing link is the same in each: **the predecessor's stop completes without leaving a deferred
+      finalization**, and the release sweep is therefore never called on a retired slot in this shape.
+      **What a future attempt needs, stated precisely:** a sequence in which the predecessor's stop is
+      *accepted and latched* (the DEC-078 shape the retention campaign produced when a live canonical owner
+      forced the stop to be admitted as a job) **and** a same-track switch that commits *after* that job
+      retires. Neither the simple record/stop sequence nor the 4→5→8 acceptance has both halves, which is why
+      five runs found nothing. This is recorded as a **reachability result for the shapes tried**, not as
+      evidence that the release is broken — the release remains exercised natively (S4.3's reuse fixture and
+      the three S4.1 fixtures), and the device row stays owed.
+      **Also recorded:** a stale shutdown latch blocked the first upload attempt. It had been set by this
+      probe's own first cut (a `TypeError` in `_ensure_transport`, so the transport stop never ran), survived
+      three verified-clean shutdowns, and was cleared only after an independent read-only check
+      (`deferred_save_idle_in_suffix` true, library observation complete at 59 committed). The latch behaved
+      correctly; its message pointing at the 2026-09-26 workspace-loss procedure is the designed response.
       **Consequence for the release row, stated so the next attempt does not chase a phantom:** no
       `ws_release` appears in a 4→5→8 retention sequence, and that is expected rather than a defect. The
       release runs from a playback reset on the track, and the final switch to slot 8 is *retained* — it never
