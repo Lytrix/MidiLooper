@@ -116,9 +116,10 @@ class RetentionGesturePlanTests(unittest.TestCase):
             self.assertNotEqual(prev, cur,
                                 f"{step} presses the same button as the gesture before it; inside the triple "
                                 "window they would merge")
-        # And A is never pressed on its own loop button, while B's loop button is used exactly once.
+        # A is never pressed on its own loop button. B's loop button is used twice -- the switch and the stop
+        # -- but they are separated by the record press, which is exactly what the loop above checks.
         self.assertNotIn(loop_note(1), notes)
-        self.assertEqual(1, notes.count(loop_note(2)))
+        self.assertEqual(2, notes.count(loop_note(2)))
 
     def test_the_slots_are_independent_of_the_track(self):
         plan = critical_window_gestures(track=1, a=6, b=7, c=8)

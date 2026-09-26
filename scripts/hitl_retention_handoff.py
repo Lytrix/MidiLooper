@@ -200,6 +200,51 @@ def _ensure_transport(out_port, capture_log: Path, *, running: bool, press_ms: i
     return ok
 
 
+def _write_metadata(out_dir: Path, *, args, result: str, session_log: Optional[Path]) -> dict:
+    """Write the run identity the oracle requires: a pinned commit and firmware hash.
+
+    The oracle's `identity_pinned` gate refuses evidence that is not pinned to a build, and the first device
+    run failed it because this driver wrote nothing. The firmware hash is taken from the newest built
+    `firmware.hex` for the env in the PlatformIO cache, which is the image the upload step just programmed.
+    """
+    import hashlib
+    import subprocess as _sp
+
+    commit = None
+    try:
+        commit = _sp.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                         cwd=str(ROOT), check=True).stdout.strip() or None
+    except Exception:  # pragma: no cover - git may be unavailable
+        commit = None
+    firmware_sha = None
+    cache = Path.home() / "Library" / "Caches"
+    candidates = sorted(cache.glob(f"pio-build-*/{args.build_env}/firmware.hex"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)
+    if candidates:
+        digest = hashlib.sha256()
+        with candidates[0].open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+        firmware_sha = digest.hexdigest()
+    meta = {
+        "git_commit": commit,
+        "firmware_hex_sha256": firmware_sha,
+        "firmware_hex": str(candidates[0]) if candidates else None,
+        "build_env": args.build_env,
+        "track": args.track,
+        "slot_a": args.slot_a,
+        "slot_b": args.slot_b,
+        "slot_c": args.slot_c,
+        "seed_bars": args.seed_bars,
+        "overdub_notes": args.overdub_notes,
+        "result": result,
+        "session_log": str(session_log) if session_log else None,
+        "finished_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    (out_dir / "metadata.json").write_text(json.dumps(meta, indent=2) + "\n")
+    return meta
+
+
 def _clear_slot(out_port, capture_log: Path, *, track: int, slot_number: int, press_ms: int,
                 events: list[dict], clear_press_ms: int = 900) -> bool:
     """Clear one slot using the owner's recipe: **from stopped**, slot press, then long-hold record press.
@@ -365,10 +410,12 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help="pin and VERIFY the device tempo after this run's own boot; the flow aborts if the "
                         "read-back does not match, because every timing in it is calibrated for this tempo")
     p.add_argument("--tempo-cc", type=int, default=102)
-    p.add_argument("--upload", action="store_true",
-                   help="re-upload the firmware first, so this run's capture catches a real boot banner. The "
-                        "authorized run needs it: a capture that does not reset the device cannot satisfy "
-                        "fresh_boot, and the reset-on-open the capture prints is not reliable.")
+    p.add_argument("--upload", dest="upload", action="store_true", default=True,
+                   help="re-upload before the capture (DEFAULT). The oracle's fresh_boot gate needs a boot "
+                        "banner in THIS session's log, and the capture's reset-on-open is not reliable -- the "
+                        "first device run failed fresh_boot precisely because only the prepare phase uploaded.")
+    p.add_argument("--no-upload", dest="upload", action="store_false",
+                   help="skip the re-upload (only for a throwaway attempt; the run will not be verdict-grade)")
     p.add_argument("--build-env", default="teensy41-capture-serial")
     p.add_argument("--capture-port", default=DEFAULT_CAPTURE_SERIAL_PORT)
     p.add_argument("--boot-wait-s", type=float, default=10.0)
@@ -489,6 +536,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             report["result"] = "TARGETS_PREPARED"
             report["events"] = events
             report["session_log"] = str(capture_log)
+            _write_metadata(out_dir, args=args, result="TARGETS_PREPARED", session_log=capture_log)
             (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
             print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
             for e in events:
@@ -605,6 +653,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("[retention] targets prepared; now run without --prepare-only")
         return 0
     report["session_log"] = str(capture_log)
+    _write_metadata(out_dir, args=args, result=report["result"], session_log=capture_log)
     (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
     for e in events:
