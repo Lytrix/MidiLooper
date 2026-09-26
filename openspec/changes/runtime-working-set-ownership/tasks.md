@@ -1221,10 +1221,19 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       **red on the pre-fix behavior** (the first version drove the ordinary stop route, which takes the
       deferred admission path and never reached a converted site — a false green, recorded). Full native
       `2,441 passed / 1 skipped`; capture-serial `variables` unchanged (`code 391,912 → 391,960`).
-      **Still open:** `releasePlaybackMergedMidiEventsMemory` and `invalidatePlaybackMergedMidiEvents`
-      still use the track-global `resetAll` and discard its refusal; `DeferredSaveJobStages`' footer read;
-      and the `(slot, generation)` release surface with the generation carried onto `captureStopOwner`
-      (S4.2), which is why the lease's release methods remain uncalled. Packet and record:
+      **SECOND SLICE 2026-09-25 — the `(slot, generation)` release entry exists and the two
+      memory-pressure sites are converted.** `TrackPlaybackRuntime::releaseSlot(slot, generation,
+      preserveLedger)` reports `NotHeld` / `StaleGeneration` / `RefusedBusy` / `Released`, with
+      `slotGeneration(slot)` as the identity a caller presents; `Track::releaseEligiblePlaybackRuntimeSlots`
+      applies it per slot behind `noLiveOwnerForSlot`; `releasePlaybackMergedMidiEventsMemory` and
+      `invalidatePlaybackMergedMidiEvents` call it. The predicate-free `TrackPlaybackRuntime::resetAll`
+      was **deleted** (no remaining callers). No new state: the identity is the S3.1 working-set lease
+      generation, so `sizeof(TrackPlaybackRuntime)` stays 32 and RAM1 is byte-identical. Both fixtures are
+      **red-proven** (identity check removed → stale release accepted; liveness gate removed → the sweep
+      releases a live-owned slot). Full native `2,444 passed / 1 skipped`.
+      **Still open:** `DeferredSaveJobStages`' footer read (`getActiveLoopIndex()`), and the
+      activation/deactivation sweep callers S4.3/S4.4 describe — the entry is callable and called, but
+      nothing yet calls it on a role transition. Packet and record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4.1. **The existing release APIs must be converted, not supplemented (rerun blocker):**
       `resetAll`, `clearAllLedgers`, `Track::releasePlaybackMergedMidiEventsMemory` and
       `TrackManager::releaseBackgroundPlaybackMergedMidiEventsMemory` are track-global, predicate-free, and
@@ -1259,11 +1268,16 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       (with the generation check removed it fails). Cost is **zero**: the field fit existing padding, so
       `sizeof(LoopPlaybackRuntime)` stays 6,344 and RAM1 is byte-identical. Full native
       `2,442 passed / 1 skipped`.
-      **Still open:** the per-slot *runtime* generation is not bumped on release — `WorkingSetLeaseSlot`
-      supports it, but releasing at the stop edge would drop a finalizing interval's lease, so it belongs
-      with S4.1's `(slot, generation)` release entry once "the slot leaves the active set" is expressed
-      for the release path. `captureStopOwnerGeneration` is therefore self-contained rather than an alias
-      of the lease generation, and the lease's release methods remain uncalled. Record:
+      **Also landed 2026-09-25 (second slice):** the per-slot runtime generation now *advances on
+      release* — `TrackPlaybackRuntime::releaseSlot` calls `releaseAllWorkingSetLeases()`, which bumps the
+      lease generation, and `slotGeneration(slot)` exposes it as the identity a release must present. The
+      release path itself is `(slot, generation)`-qualified and its refusal is reported
+      (`RefusedBusy`), so S4.2's "A releases / C reuses / late-A cleanup" sequence is now expressible on
+      both the finalization identity (`captureStopOwnerGeneration`) and the slot's working-set lease.
+      **Still open:** the two identities are not aliased — `captureStopOwnerGeneration` is the interval's
+      `frozenGeneration`, while the lease generation is the slot-runtime lifecycle counter. No current
+      caller needs them unified, and unifying them would have to respect that a finalizing interval keeps
+      its lease until its slot is actually released. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4.2. **`captureStopOwner` needs a generation:** it is a raw
       `PendingStopAdmission*` cleared by address identity (`TrackPreparedStopCommit.cpp:205`) while ring entries
       are reused at stable addresses, so a late cleanup on the reused runtime object can null a successor's

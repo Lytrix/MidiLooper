@@ -5141,3 +5141,52 @@ finalizing interval's lease, which is exactly what must not happen; it belongs w
 path. `captureStopOwnerGeneration` is therefore a self-contained identity, not yet an alias of the
 lease generation. The lease's `releaseWorkingSetLease` / `releaseAllWorkingSetLeases` remain uncalled
 for that reason.
+
+## S4.1/S4.2 — the `(slot, generation)` release entry (2026-09-25, G2 execution packet + record)
+
+### Identity and scope
+
+`TrackPlaybackRuntime::resetAll` was predicate-free and discarded every slot's refusal. The
+`(slot, generation)` release entry replaces it, so release is identity-qualified and its refusals are
+reported rather than swallowed.
+
+### What was built
+
+- **`TrackPlaybackRuntime::releaseSlot(slot, generation, preserveLedger)`** — the single release entry.
+  It reports `NotHeld` (out of range / no runtime / nothing to release), `StaleGeneration` (the identity
+  does not match), `RefusedBusy` (the slot runtime's own `reset()` refused because accepted capture
+  still owns its scratch), or `Released`.
+- **`TrackPlaybackRuntime::slotGeneration(slot)`** — the identity a caller must present.
+- **`Track::releaseEligiblePlaybackRuntimeSlots(preserveLedger)`** — the group operation: for each slot,
+  skip unless `noLiveOwnerForSlot(slot)`, then call the entry with that slot's generation.
+- `Track::releasePlaybackMergedMidiEventsMemory` and `Track::invalidatePlaybackMergedMidiEvents` (the
+  two sites S4.1 names) now call it. `TrackPlaybackRuntime::resetAll` was **deleted** — it had no
+  remaining callers, and leaving a predicate-free release surface would invite its reuse.
+
+**No new state.** The generation is the slot's existing working-set lease generation
+(`WorkingSetLeaseSlot`, S3.1), so `sizeof(TrackPlaybackRuntime)` stays **32** and
+`sizeof(LoopPlaybackRuntime)` stays **6,344**. The capture-serial RAM1 line is byte-identical
+(`variables 96,160 / code 391,960 / padding 1,256`).
+
+### Oracles, both red-proven
+
+| Fixture | Assertion | Red proof |
+|---|---|---|
+| `test_the_slot_generation_release_entry_is_identity_qualified_and_preserves_refusals` | a stale generation is a rejected no-op and keeps the held set; the matching identity releases and advances the generation; the previous identity then cannot release the reused slot; unheld and out-of-range report `NotHeld` | with the identity check removed: *Expected 5 Was 1 — a stale generation must be a rejected no-op* |
+| `test_the_release_sweep_skips_a_slot_with_a_live_owner` | the sweep leaves a latched slot's generation and working set untouched, and releases it once the latch is consumed (control) | with the liveness gate removed: *Expected 0 Was 1 — the sweep must not release a slot with a live owner* |
+
+Both fixtures were **first run invalid**: a failed `cd` in one shell call left a stale working
+directory, so the edit script silently wrote nothing and the "probe" tested an unmodified tree. The
+red proofs above were re-run with absolute paths, and the file state was verified after each restore.
+Recorded because a probe whose edit silently no-ops is exactly how a false green survives.
+
+Full native `2,444 passed / 1 skipped`; capture-serial builds.
+
+### Still open
+
+- `DeferredSaveJobStages`' footer read (`getActiveLoopIndex()`) — needs the persistence fixture.
+- The release entry is now callable and called, but **no caller has yet been added for the
+  activation/deactivation sweep S4.3/S4.4 describe**; S4.1's remaining sites are the persistence reads.
+- `captureStopOwnerGeneration` (S4.2) and the lease generation remain separate identities: the lease
+  generation advances only on release, so a finalizing interval keeps its lease until its slot is
+  actually released. Wiring them into one alias is not required by any current caller.
