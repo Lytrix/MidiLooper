@@ -6957,8 +6957,10 @@ zero concessions**:
 | L8 bounded follow-up | 14 s of follow-up, no repeat start, no re-issued denial, no extra seal |
 | activation invariant | no violation logged |
 
-The capacity-denied window measured **1376.5 ms**, and the chain completed inside it -- so the natural
-finalization window suffices, which is what the objective's device run was to establish. The pause hook stays
+The capacity-denied window measured **1376.5 ms**, and the **denied request was staged inside it**; C
+started afterwards, which is the expected retention behaviour (retention means the request survives, not that
+the successor starts within the window). The natural finalization window is therefore sufficient to stage the
+denial, which is what the objective's device run was to establish. The pause hook stays
 unimplemented because the natural workload works.
 
 **What changed in L7 this round, and why it is not a weakened bar.** The previous instrument required the
@@ -6995,3 +6997,48 @@ close predecessor preservation):
 
 **Status.** The successor-handoff acceptance now passes on hardware **without concessions**. A/B content
 verification and the fallback's content consequences remain open, so predecessor preservation is not claimed.
+
+### The three bounded actions the owner asked for (2026-09-26), re-evaluated without a new run
+
+**1. The availability edge reconciled with the binding/release ordering.** The ordering was wrong to present
+as L1->L8: B bound at 62,558,117 us while A's release marker is at 62,583,420 us -- **25.3 ms later**. The
+release marker is not the availability edge, and the fix for its slot did not make it one. The edge that
+matters is A's job retirement plus the resources being admitted, and the proof that it preceded the bind is
+the bind's own admission guard: `beginDeferredOverdubStopForSlot` returns false while
+`hasPendingDeferredOverdubStop()` or `finalizationResourcesBusy` holds, so B binding at all is evidence that
+availability had arrived by then. The marker is emitted on the first maintenance turn at which the resources
+were *observed* free, which is a later observation. The oracle now says so in the check itself: `L4` is
+**informational with respect to L5**, and `L5` is ordered against the **denial**, not against the release
+record. The successor-handoff scope therefore does not claim a release-before-bind ordering; what it claims is
+denial -> retention -> bind, which is what the evidence supports.
+
+**2. L7's comparison strengthened, and re-evaluated on the existing artifacts.** The previous comparison
+reduced each row to `(tick, type, pitch)` and trusted the dump. It now:
+
+- compares the **complete MIDI fields** -- tick, type, **channel**, note, **velocity** -- between the loop's
+  storage rows (`record`/`overdub`) and its `effective` rows;
+- requires a **complete dump block** (`CAPTURE_CONTENT,end` present), so a truncated dump is a failure rather
+  than something to interpret;
+- requires the **declared per-group counts to match what parsed**, the same consistency check the content
+  verifier performs.
+
+Re-evaluated against the **already captured** artifacts -- no new device run -- the result is unchanged and
+now says what it checked: `complete dump for slot 6 (declared counts {'effective#0': 2, 'record#0': 2} match
+parsed) declares the expected note(s) [67] in both storage and effective rows, and the two agree on the full
+MIDI fields compared`. So "storage and effective rows agree" no longer overstates the check.
+
+**Scope named precisely.** This is **loop-scoped committed/effective parity for the successor**. It is
+**not** MIDI-output playback parity, which would require the other enabled slots and tracks to be silent; the
+check says so in its own detail rather than leaving it implied.
+
+**3. The stale limitation removed.** The report claimed "L5 identity link unavailable: nothing names
+`captureInterval_` when a stop binds". That is withdrawn -- it described the state *before* this change added
+`DIAG,reentry,bound`, which names exactly that identity, and which is how L5 now passes. It is replaced by the
+correct statement: L5 is identity-grade, and the *release* marker is a separate, later observation.
+
+**Wording corrected.** "The chain completed inside the window" overstated it: the **denied request was staged
+inside** the window and C started afterwards. That is the expected retention behaviour -- retention means the
+request survives until capacity frees, not that the successor starts within the window.
+
+**Closed at this scope: retention plus successor capture.** Kept open exactly as before: A/B preservation,
+the raw-only companion fallback, and playback-output parity.

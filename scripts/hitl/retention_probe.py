@@ -91,6 +91,9 @@ OVERFLOW_MARKERS = ("RING,overflow", "RING,tier_a_evicted")
 
 CC_BEGIN_RE = re.compile(r"^CAPTURE_CONTENT,begin,track=(\d+),slot=(\d+),length=(\d+)$")
 CC_EVENT_RE = re.compile(r"^CAPTURE_CONTENT,event,([a-z]+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)$")
+# `CAPTURE_CONTENT,rows,<kind>,<pass>,<count>` -- the declared row count per group, so a dump can be checked
+# for internal completeness rather than trusted.
+CC_ROWS_RE = re.compile(r"^CAPTURE_CONTENT,rows,([a-z]+),(\d+),(\d+)$")
 CC_DENIED = "CAPTURE_CONTENT,denied"
 
 DEFAULT_MIN_WINDOW_US = 150_000
@@ -186,7 +189,10 @@ def analyse_content_dump(text: str, *, slot_c: int, expected_notes: tuple[int, .
         out["denied"] = True
     notes: list[int] = []
     ons: list[int] = []
-    per_kind: dict[str, list[tuple[int, int, int]]] = {}
+    # Full MIDI-relevant fields, not just (tick, type, pitch): channel and velocity are part of what the loop
+    # stores and what parity must cover.
+    per_kind: dict[str, list[tuple[int, int, int, int, int]]] = {}
+    declared_counts: dict[tuple[str, int], int] = {}
     for line in text.splitlines():
         line = line.strip()
         m = CC_BEGIN_RE.match(line)
@@ -195,10 +201,15 @@ def analyse_content_dump(text: str, *, slot_c: int, expected_notes: tuple[int, .
             out["slot"] = int(m.group(2))
             out["length"] = int(m.group(3))
             continue
+        m = CC_ROWS_RE.match(line)
+        if m:
+            declared_counts[(f"{m.group(1)}#{m.group(2)}")] = int(m.group(3))
+            continue
         m = CC_EVENT_RE.match(line)
         if m:
-            kind, _pass, _tick, etype, _ch, note, velocity, _nid = m.groups()
-            per_kind.setdefault(kind, []).append((int(_tick), int(etype), int(note)))
+            kind, kidx, _tick, etype, _ch, note, velocity, _nid = m.groups()
+            per_kind.setdefault(f"{kind}#{kidx}", []).append(
+                (int(_tick), int(etype), int(_ch), int(note), int(velocity)))
             notes.append(int(note))
             # type 144 = NoteOn (3 << 4); a NoteOn with velocity 0 is a NoteOff in disguise.
             if int(etype) == 144 and int(velocity) > 0:
@@ -210,11 +221,18 @@ def analyse_content_dump(text: str, *, slot_c: int, expected_notes: tuple[int, .
     # content pipeline's review compares a one-loop dump against the *whole* audible output, which cannot hold
     # when other slots or tracks are enabled (measured: the playback carried dozens of unrelated notes while
     # the successor's dump declared exactly one).
-    storage_rows = [e for k, rows in per_kind.items() if k in ("record", "overdub") for e in rows]
-    effective_rows = per_kind.get("effective", [])
-    out["storage_note_ons"] = sorted({n for (_t, ty, n) in storage_rows if ty == 144})
-    out["effective_note_ons"] = sorted({n for (_t, ty, n) in effective_rows if ty == 144})
+    storage_rows = [e for k, rows in per_kind.items() if k.startswith(("record#", "overdub#")) for e in rows]
+    effective_rows = per_kind.get("effective#0", [])
+    out["storage_note_ons"] = sorted({n for (_t, ty, _c, n, _v) in storage_rows if ty == 144})
+    out["effective_note_ons"] = sorted({n for (_t, ty, _c, n, _v) in effective_rows if ty == 144})
+    # Compare the complete MIDI fields (tick, type, channel, note, velocity), not just (tick, type, pitch).
     out["storage_effective_match"] = (storage_rows == effective_rows) if effective_rows else None
+    # A dump is only usable if it is a COMPLETE block and its declared per-group counts match what parsed.
+    out["complete"] = "CAPTURE_CONTENT,end" in text
+    parsed_counts = {k: len(v) for k, v in per_kind.items()}
+    out["declared_counts_match"] = bool(declared_counts) and all(
+        parsed_counts.get(k, 0) == n for k, n in declared_counts.items())
+    out["declared_counts"] = {k: n for k, n in sorted(declared_counts.items())}
     if expected_notes:
         absent = [n for n in expected_notes if n not in ons]
         out["expected_absent"] = absent
@@ -401,7 +419,11 @@ def analyse(
         f"{window_us} us ({window_us/1000:.1f} ms) between window_open and canonical_release; floor "
         f"{min_window_us} us" + ("" if wide else ": too narrow to stage two host gestures -- an exposure "
                                  "problem, not a retention result"), "setup")
-    add("L4_capacity_released", OK, f"{release.body} at {release.us} us", "retention", "L4")
+    add("L4_capacity_released", OK,
+        f"{release.body} at {release.us} us -- names the retiring owner. Informational with respect to L5: it "
+        "is the first maintenance turn at which the resources were observed free, not the availability edge, "
+        "so a bind earlier than this record is expected (the bind's own admission guard is what proves "
+        "availability).", "retention", "L4")
 
     def in_window(us: int) -> bool:
         return episode.window_open_us < us < episode.capacity_release_us
@@ -510,10 +532,12 @@ def analyse(
     for e in after_release[:3]:
         evidence["stop_bind"].append(f"{e.us}: {e.body}")
     limitations.append(
-        "L5 identity link unavailable: the denied interval (`captureInterval_`) is emitted only by "
-        "`reentryDecision`; nothing names it when a stop binds. Stop-tier records carry the job's "
-        "`frozenGeneration` (`staging.captureGeneration`), a different identity space, so slot-scoped bind "
-        "evidence cannot be tied back to the denied interval.")
+        "L5 is identity-grade: the bind is read from `DIAG,reentry,bound,<tick>,<interval>,<slot>,<depth>`, "
+        "which names the same `captureInterval_` the denial names. (The earlier claim that nothing names that "
+        "identity on the binding edge is withdrawn -- it described the state before this change added the "
+        "`bound` record.) The *release* marker is separate and is NOT the availability edge: it is emitted on "
+        "the first maintenance turn at which the resources were observed free, which is measurably later than "
+        "the admission it enables.")
     bound_identity = [e for e in entries
                       if (m := REENTRY_RE.match(e.body)) and m.group(1) == "bound"
                       and int(m.group(4)) == slot_b and int(m.group(3)) == interval_b]
@@ -608,6 +632,14 @@ def analyse(
             f"a content dump for slot {dump['slot']} is present with note-ons {dump['note_ons']}, but no "
             "expected note was given (--expect-successor-note), so 'the expected MIDI' is undefined here",
             "evidence", "L7")
+    elif dump["present"] and not dump["complete"]:
+        add("L7_successor_recorded_expected_midi", FAIL,
+            "the content dump has no `CAPTURE_CONTENT,end`, so it is not a complete block and cannot be "
+            "evidence", "retention", "L7")
+    elif dump["present"] and not dump["declared_counts_match"]:
+        add("L7_successor_recorded_expected_midi", FAIL,
+            f"the content dump's declared group counts do not match what parsed: declared "
+            f"{dump['declared_counts']} -- an incomplete dump is not evidence", "retention", "L7")
     elif (dump["present"] and dump["notes_match"] and dump["storage_effective_match"] is True):
         # The successor's own loop: the expected notes are present in BOTH its storage rows and its
         # materialised rows, and the two agree. That is storage<->effective parity for the loop under test,
@@ -619,9 +651,12 @@ def analyse(
                             f"{review['parity_ok']} over the whole playback, which layers the other enabled "
                             "slots and so is not a statement about the successor alone")
         add("L7_successor_recorded_expected_midi", OK,
-            f"dump for slot {dump['slot']} declares the expected note(s) "
-            f"{list(expect_successor_notes)} in both storage and effective rows, and the two agree "
-            f"(storage note-ons {dump['storage_note_ons']}, effective {dump['effective_note_ons']})"
+            f"complete dump for slot {dump['slot']} (declared counts {dump['declared_counts']} match parsed) "
+            f"declares the expected note(s) {list(expect_successor_notes)} in both storage and effective "
+            f"rows, and the two agree on the full MIDI fields compared -- tick, type, channel, note, velocity "
+            f"(storage note-ons {dump['storage_note_ons']}, effective {dump['effective_note_ons']}). This is "
+            "loop-scoped committed/effective parity for the successor; it is NOT MIDI-output playback parity, "
+            "which would require the other enabled slots and tracks to be silent"
             + extra_review, "retention", "L7")
     elif dump["present"] and dump["notes_match"] and dump["storage_effective_match"] is False:
         add("L7_successor_recorded_expected_midi", FAIL,
