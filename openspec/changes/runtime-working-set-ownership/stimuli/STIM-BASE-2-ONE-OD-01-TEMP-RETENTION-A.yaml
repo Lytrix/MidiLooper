@@ -1,0 +1,27 @@
+# reason: No canonical stimulus stages the capacity-denied successor handoff: it needs A's admitted finalizer held while B's stop is denied and a switch/start is requested on C. Prepared only; not authorized to run.
+# Temporary or exported stimulus view. Not a registry authority.
+# id: STIM-BASE-2-ONE-OD-01-TEMP-RETENTION-A  kind: temporary  parent: STIM-BASE-2-ONE-OD-01
+stimulus_id: "STIM-BASE-2-ONE-OD-01-TEMP-RETENTION-A"
+version: 1
+kind: "temporary"
+scenario_id: "base"
+description: "2-bar record plus one overdub; no second overdub; no post-stop undo"
+generator: "canonical_record_one_overdub_legacy_args"
+base_bars: 2
+base_pattern: "BASE-2"
+base_stimulus_id: null
+overdubs:
+  - name: "OD1"
+    bars: 2
+    pattern: "BASELINE_OVERDUB"
+    note_low: 24
+    note_high: 39
+interactions: []
+must_prove:
+  - "base_recorded"
+  - "committed_od1"
+human_checks:
+  - "seed loop plays"
+tempo_bpm: 120.0
+clock_ppqn: 24
+parent_id: "STIM-BASE-2-ONE-OD-01"
