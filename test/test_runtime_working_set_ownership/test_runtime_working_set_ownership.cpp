@@ -46,6 +46,9 @@ bool sequencerRunning = false;
 #include "../../src/TrackManager/TrackManagerSlotMatrix.cpp"
 #include "../../src/Loop/LoopPendingNoteChange.cpp"
 #include "../../src/MidiHandler.cpp"
+#include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
+#include "../../src/EditManager/NoteGeometryResolver.cpp"
+#include "../../src/EditManager/EditSessionInteraction.cpp"
 
 struct TrackCaptureStopTestAccess {
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
@@ -90,6 +93,19 @@ struct TrackCaptureStopTestAccess {
     track.latchAcceptedStop(PendingStopDestination::Playing, slot, 0);
   }
   static void consumeAcceptedStop(Track& track) { track.consumeAcceptedStopObligation(); }
+  /// S4.1: the slot's open-note ledger. Marking an entry is the observable that a stop must not
+  /// sweep off a sibling slot.
+  static void markLedgerEntry(Track& track, uint8_t slot, uint8_t note) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    if (rt != nullptr) rt->ledger.noteOn(1, note, kInvalidNoteId, 0, 100);
+  }
+  static bool ledgerEntryActive(const Track& track, uint8_t slot, uint8_t note) {
+    const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr && rt->ledger.isActive(1, note);
+  }
+  static void clearAllLedgersForTests(Track& track) { track.playbackRuntime.clearAllLedgers(); }
+  /// S4.1: the named per-interval ledger clear the two stop routes now call.
+  static void clearStoppingIntervalLedger(Track& track) { track.clearStoppingIntervalLedger(); }
   static void selectSlotIndex(uint8_t trackIndex, uint8_t slot) {
     trackManager.slotStateMachine.setSelectedSlotIndex(trackIndex, slot);
   }
@@ -259,11 +275,54 @@ void test_selection_acquires_no_working_set() {
   }
 }
 
+
+/// **S4.1 — an interval's stop clears only its own slot's ledger.** The release surface was
+/// track-global: while a predecessor finalizes on one slot, a sibling slot's stop swept every
+/// allocated slot's ledger, erasing the predecessor's open-note suppression state. This drives the
+/// named per-interval clear that both converted stop routes call, and the track-global sweep is the
+/// control that proves the conversion narrowed the stop path rather than disabling the sweep.
+void test_a_stop_clears_only_its_own_slots_ledger() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 1);
+
+  // Both slots hold a working set with a marked ledger entry.
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+  TrackCaptureStopTestAccess::markLedgerEntry(track, 0, 60);
+  TrackCaptureStopTestAccess::markLedgerEntry(track, 1, 62);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 1, 62));
+
+  // The stopping interval is slot 1. Slot 0 is the sibling that must survive -- the state a
+  // finalizing predecessor holds.
+  TrackCaptureStopTestAccess::selectSlot(track, 1);
+  TrackCaptureStopTestAccess::clearStoppingIntervalLedger(track);
+
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 1, 62),
+                            "the stopping interval must clear its own slot's ledger");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60),
+                           "a sibling slot's ledger must survive the stop");
+
+  // Control: the deliberate whole-track sweep (global transport stop) still clears every slot, so the
+  // conversion narrowed the per-interval path rather than weakening the sweep. It drives the same
+  // `TrackPlaybackRuntime::clearAllLedgers()` that `Track::sendAllNotesOff` calls, without pulling the
+  // MIDI-sending hot path into this boundary.
+  TrackCaptureStopTestAccess::clearAllLedgersForTests(track);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60),
+                            "the track-global sweep must still clear every slot");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 1, 62));
+}
+
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);
+  RUN_TEST(test_a_stop_clears_only_its_own_slots_ledger);
   RUN_TEST(test_selection_acquires_no_working_set);
   return UNITY_END();
 }

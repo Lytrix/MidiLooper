@@ -2002,11 +2002,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void TrackPlaybackRuntime::resetAll(bool preserv
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM void TrackPlaybackRuntime::clearAllLedgers() {
+  // The deliberate whole-track sweep (global transport stop). Per-interval stops use the slot's own
+  // `clearLedger()` so a sibling that is still finalizing does not lose its suppression state (S4.1).
   for (auto& rt : runtimeBySlot_) {
     if (!rt) {
       continue;
     }
-    rt->ledger.clear();
+    rt->clearLedger();
   }
 }
 
