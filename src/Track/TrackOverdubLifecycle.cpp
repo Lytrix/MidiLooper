@@ -1543,7 +1543,19 @@ void Track::startOverdubbing(uint32_t currentTick) {
   // needs, so a successor may record while the predecessor finalizes but its own
   // stop is denied until the predecessor retires (`beginDeferredOverdubStop`).
   Loop& loopRef = getActiveLoop();
+  // S4f.3: this is the switch handoff's start path. It must not silently do nothing: after a handoff the
+  // track can still report `TRACK_OVERDUBBING` from the predecessor while the *active* loop is a
+  // different, empty successor. An overdub needs an existing loop to overdub onto, so an empty active
+  // loop is not a completed overdub -- it is a successor that has not established its length, and the
+  // caller must route it through record admission instead. Returning silently here is what made
+  // "B never starts" read as a carrier gap for three passes.
   if (trackState == TRACK_OVERDUBBING && loopRef.capture.phase == CapturePhase::Overdub) {
+    if (loopRef.loopLengthTicks == 0) {
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "Overdub start on an empty active loop (slot=%u): the interval belongs to a "
+                 "predecessor, so this successor needs record admission, not overdub",
+                 static_cast<unsigned>(activeLoopIndex));
+    }
     return;
   }
   // Capture staging is provisioned by capture admission, not by boot (DEC-065). This
