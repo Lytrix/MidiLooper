@@ -2281,6 +2281,26 @@ and captures/s13-slope-evidence/extended-slope.json. -->
          through the switch-carried start rather than a bare record press.
       **Not checked off:** the acceptance this task exists to prove has not been observed on device, and the
       leg needs the two corrections above before it can be.
+      **BUG FOUND AND FIXED IN THE DRIVER 2026-09-27 (reported by the owner, "it counts down, then counts down
+      again"):** the leg pressed slot 5 **twice inside the firmware's ~300 ms tap window** — `b_switch` at
+      26.158 s and `b_stop` at 26.503 s, with the record press interleaved — and the device logged
+      `Loop 5: Queued playback switch` → `Loop 5: Reaffirmed playback switch` → `Loop 5: Reaffirmed playback
+      switch`, i.e. **two countdowns for one switch**. Two causes, both now pinned:
+      * **driver (fixed):** `hitl_accepted_sequence.py` now spaces loop-button presses by at least the firmware
+        tap window and **waits for a queued switch to execute** (a `Playback started` row) before pressing
+        again. `_switch_pending` is the predicate; the double-press was a timing artifact of the driver, not a
+        user gesture, and a test that pressed again inside the window was testing the merge, not the sequence.
+      * **firmware (recorded, not fixed):** `queuePlayingSlotSwitch` calls `clearPendingSlotSwitch()` and then
+        `requestPendingSlotSwitch()`, which overwrites `pendingQueuedAtTick` **unconditionally**. A repeat on
+        the *same* target while one is already pending therefore **restarts the quantized countdown** instead
+        of being a no-op, and the `Reaffirmed playback switch` row is emitted for it. The comment above the
+        call says the short-press queue is "always a replace", which is right for a *different* target; nothing
+        distinguishes that from re-affirming the same one. Whether that should be idempotent is a behaviour
+        decision owing its own change, so it is recorded here rather than changed under a fixture task.
+      **Regression coverage:** `test_accepted_sequence.py` now has a `SwitchRepeatGuardTests` class (5 cases:
+      a queued-but-unexecuted switch reads as pending, the *reaffirm* row also reads as pending, an executed
+      switch frees the buttons, another slot's switch does not hold this one, and the tap window is at least
+      the firmware's). Suite 22/22.
       Two legs, each a managed run (`scripts/host_midi_hitl.py run --preset base`, or the
       `scripts/hitl_stop_interruption.py` wrapper for the interruption variant — **never** a captured
       `command.json`; bounded by `HITL_MANAGED_RUN_TIMEOUT_S`):

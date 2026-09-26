@@ -17,7 +17,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from hitl_accepted_sequence import Gesture, _emit, leg_gestures, to_firmware_slot  # noqa: E402
+from hitl_accepted_sequence import (  # noqa: E402
+    DEFAULT_TAP_WINDOW_S,
+    Gesture,
+    _emit,
+    _switch_pending,
+    leg_gestures,
+    to_firmware_slot,
+)
 from hitl.accepted_sequence_probe import analyse  # noqa: E402
 from hitl.control_constants import (  # noqa: E402
     GLOBAL_TRANSPORT_NOTE,
@@ -142,6 +149,55 @@ def run(text, *, leg="od", slot_a=4, slot_b=5, **kw):
 
 def by_name(result):
     return {c.name: c for c in result.checks}
+
+
+class SwitchRepeatGuardTests(unittest.TestCase):
+    """Regression for the double-countdown defect found on device 2026-09-27.
+
+    Measured: the driver pressed slot 5 twice inside the firmware's tap window, and the device logged
+    `Queued playback switch` -> `Reaffirmed playback switch` -> `Reaffirmed ...`, i.e. **two countdowns for
+    one switch**, because `queuePlayingSlotSwitch` clears and re-requests without checking whether the same
+    target is already pending. `_switch_pending` is the guard that makes the driver wait it out.
+    """
+
+    def _log(self, tmp_name, lines):
+        import tempfile
+        from pathlib import Path as _P
+        path = _P(tempfile.mkdtemp()) / tmp_name
+        path.write_text("\n".join(lines) + "\n")
+        return path
+
+    def test_a_queued_switch_that_has_not_executed_reads_as_pending(self):
+        log = self._log("s.log", [
+            "[26.158] [INFO] Button press: Loop 5 (short)",
+            "[26.217] [INFO] Loop 5: Queued playback switch",
+        ])
+        self.assertTrue(_switch_pending(log, 0, 5),
+                        "a queued switch with no execution must hold the slot buttons")
+
+    def test_the_reaffirm_row_also_reads_as_pending(self):
+        """The reaffirm is the second countdown; it must not read as 'done'."""
+        log = self._log("s.log", [
+            "[26.217] [INFO] Loop 5: Queued playback switch",
+            "[26.595] [INFO] Loop 5: Reaffirmed playback switch",
+        ])
+        self.assertTrue(_switch_pending(log, 0, 5))
+
+    def test_an_executed_switch_is_no_longer_pending(self):
+        log = self._log("s.log", [
+            "[26.217] [INFO] Loop 5: Queued playback switch",
+            "[27.100] [DEBUG] [TRACK] Playback started @ tick 1536",
+        ])
+        self.assertFalse(_switch_pending(log, 0, 5),
+                         "once the switch has run, the buttons are free again")
+
+    def test_a_switch_for_another_slot_does_not_hold_this_one(self):
+        log = self._log("s.log", ["[26.217] [INFO] Loop 8: Queued playback switch"])
+        self.assertFalse(_switch_pending(log, 0, 5))
+
+    def test_the_tap_window_is_at_least_the_firmware_window(self):
+        # The firmware holds a second tap for ~300 ms before deciding short/double; pressing sooner merges.
+        self.assertGreaterEqual(DEFAULT_TAP_WINDOW_S, 0.30)
 
 
 class OracleTests(unittest.TestCase):
