@@ -107,6 +107,11 @@ struct TrackCaptureStopTestAccess {
     return track.beginDeferredOverdubStopForSlot(destination, tick, slot, interval);
   }
   static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
+  /// S4f.3: the real S4f.2 dispatch decision, the same entry `processDeferredIdleMaintenance` calls, so
+  /// the accepted stop is driven to admission by the production lane rather than by a test-only path.
+  static bool serviceAcceptedInteractionTurn(Track& track) {
+    return track.serviceAcceptedInteractionTurn();
+  }
   /// S4b: the switch path and the live-interval state the acceptance sequence needs.
   static void finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newSlot, uint32_t tick) {
     trackManager.finalizeCaptureAndSelectSlot(trackIndex, newSlot, tick);
@@ -203,6 +208,11 @@ struct TrackCaptureStopTestAccess {
   }
   /// S4.1: the named per-interval ledger clear the two stop routes now call.
   static void clearStoppingIntervalLedger(Track& track) { track.clearStoppingIntervalLedger(); }
+  /// The production active-slot write authority (`TrackManager::setActiveLoopIndex`), so a fixture
+  /// performs a switch through the same entry a gesture uses.
+  static void activateSlot(uint8_t trackIndex, uint8_t slot) {
+    trackManager.setActiveLoopIndex(trackIndex, slot);
+  }
   static void selectSlotIndex(uint8_t trackIndex, uint8_t slot) {
     trackManager.slotStateMachine.setSelectedSlotIndex(trackIndex, slot);
   }
@@ -757,73 +767,155 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
                             "A's completion must not damage B's recorded interval");
 }
 
-/// **S4b.1 — an unadmitted stop is a different case from an admitted, paused finalizer.** When A's stop
-/// has not been admitted yet, the switch **and the start it carries** must be *retained* and execute once
-/// admission becomes possible -- **without a second gesture**. This is separate coverage on purpose: the
-/// acceptance case above must never accept an accepted-but-unexecuted stop as "A is finalizing".
-void test_the_switch_gesture_carries_the_start_without_a_second_press() {
+/// **S4f.3 — accepted-switch retention under unavailable stop admission (blocked -> ready).**
+///
+/// This is the end-to-end proof S4b.1's check 4 needs, and it replaces an earlier version of this
+/// coverage whose claimed request did not exist: that body returned early from an `activeLoopIndex != 1`
+/// characterization branch in the default gate, so it passed while holding nothing. The false green is
+/// recorded in the packet.
+///
+/// One track, three slots. A (slot 0) and B (slot 1) carry committed content, C (slot 2) is empty:
+///
+///  1. A's stop is **admitted and bound** and its finalizer is held unfinished -- it occupies the track's
+///     deferred-finalization capacity.
+///  2. B becomes active through the production active-slot authority and **overdubs**, so B's stop is a
+///     deferred stop (a fresh *record* stop is not capacity-governed, which is why B is an overdub).
+///  3. B's stop is requested and **denied on capacity**, so B's obligation latches against B's own slot.
+///  4. A switch/start is requested on C while B's stop is unadmitted. The switch must not commit and must
+///     not be dropped: the request is retained.
+///  5. Repeated dispatch must leave B's obligation and C's switch/start intact, and must never move the
+///     active slot underneath B's unadmitted stop.
+///  6. Capacity is released (A's finalizer completes) and B's stop is driven until it binds.
+///  7. Dispatch then commits the retained switch to C and starts C, which records MIDI.
+///  8. Further dispatch must not execute either request twice.
+void test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds() {
   LoopEventStore::initPool();
   Track& track = trackManager.getSelectedTrack();
   track.ensureLoopsAllocated();
   commitRecordPassIntoTrackSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 1);
   TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
 
+  // (1) A overdubs through the production gesture; its stop is admitted and **held**.
   track.forceSetState(TRACK_PLAYING);
   clockManager.assignCurrentTickSilently(96);
   TrackCaptureStopTestAccess::selectSlot(track, 0);
   midiButtonActions.handleToggleRecord();
-  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::isOverdubbing(track));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "precondition: A must be overdubbing");
   inputNote(60, 96, 120);
-
-  // A stop that is accepted but has no admitted finalizer yet.
   clockManager.assignCurrentTickSilently(144);
-  TrackCaptureStopTestAccess::latchAcceptedStopForSlot(track, 0);
-  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasAcceptedUnexecutedInteraction(track));
-  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
-                            "this case is specifically the *unadmitted* stop");
-
-  // The switch/start request is made while admission is impossible, then admission is allowed.
-  clockManager.assignCurrentTickSilently(200);
-  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
-
-  if (TrackCaptureStopTestAccess::activeLoopIndex(track) != 1) {
-    // Not retained today: the request is refused outright rather than held. Recorded as the gap.
-    TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
-                              "no finalizer was admitted, so none can be outstanding");
-    if (getenv("S4B_ACCEPTANCE") == nullptr) {
-      return;
-    }
-    TEST_FAIL_MESSAGE(
-        "S4b.1/S4f.3: a switch requested while the stop is unadmitted is refused rather than retained; "
-        "it must survive and execute once admission becomes possible, without another gesture.");
-  }
-
-  // Retained path: the switch executed once admission allowed it, without a second gesture.
-  TEST_ASSERT_EQUAL_UINT8(1, TrackCaptureStopTestAccess::activeLoopIndex(track));
+  midiButtonActions.handleToggleRecord();
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
-                           "A's admitted stop must still be finalizing at the handoff");
+                           "A's stop must be admitted before the handoff");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 0),
+                           "A's admitted stop must be identified by A's own slot");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 0),
+                            "A's stop is admitted, not merely accepted-and-unexecuted");
 
-  // S4b.1 contract check 4, both halves, from the **one** gesture above: the switch's own press carried
-  // the start, and no further press is made. The request must exist now (queued, not started) and must
-  // execute on the target's eligible boundary while A still finalizes.
-  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(0, 1),
-                           "the switch must carry the record start for the target it switched to");
-  const uint32_t queuedTick = clockManager.getCurrentTick();
-  for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3 &&
-                             !TrackCaptureStopTestAccess::isRecording(track) &&
-                             !TrackCaptureStopTestAccess::isOverdubbing(track);
-       ++tick) {
+  // (2) B becomes active (A's own stop is bound, so the switch commits) and overdubs.
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::activateSlot(0, 1);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the switch to B must commit while A still finalizes");
+  TrackCaptureStopTestAccess::startOverdubbing(track, clockManager.getCurrentTick());
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "B must be overdubbing for its stop to need deferred admission");
+
+  // (3) B's stop is requested and denied on capacity, latching against B's own slot.
+  clockManager.assignCurrentTickSilently(264);
+  TrackCaptureStopTestAccess::selectSlotIndex(0, 1);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
+                           "B's denied stop must be accepted and latched against B's own slot");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 1),
+                            "capacity is held by A, so B's stop must not be admitted");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 0),
+                           "A's finalizer must still be the capacity holder");
+
+  // (4) Request switch/start on C while B's stop is unadmitted: retained, neither committed nor dropped.
+  clockManager.assignCurrentTickSilently(300);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(2);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+      "activation must NOT move the active slot underneath B's unadmitted stop");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(0, 2),
+                           "the switch must retain C's record start rather than drop it");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
+                           "B's stop obligation must survive the switch request");
+
+  // (5) Repeated dispatch: neither request may be lost or executed early, and the active slot must stay
+  // on B for the whole blocked window -- the explicit assertion the contract asks for.
+  for (uint32_t tick = 301; tick <= 301 + 768 * 3; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+        1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+        "the active slot must not move under B's unadmitted stop, on any dispatch");
+    TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                              "C must not start before its prerequisite stop binds");
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(0, 2),
+                           "C's switch/start must survive repeated dispatch");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
+                           "B's stop obligation must survive repeated dispatch");
+
+  // (6) Release capacity: A's finalizer completes, then B's stop is driven until it binds.
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                            "A's finalizer must be able to complete and release capacity");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
+                           "B's stop obligation is still waiting after capacity frees");
+  bool bStopBound = false;
+  for (int turn = 0; turn < 64 && !bStopBound; ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurn(track);
+    bStopBound = TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 1);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(bStopBound, "B's accepted stop must bind once capacity frees");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
+                            "the bound stop's obligation must be consumed exactly once");
+
+  // (7) Dispatch now commits the retained switch and starts C on C's eligible boundary.
+  const uint32_t resumeTick = clockManager.getCurrentTick();
+  for (uint32_t tick = resumeTick + 1;
+       tick <= resumeTick + 768 * 3 && !TrackCaptureStopTestAccess::isRecording(track); ++tick) {
     clockManager.assignCurrentTickSilently(tick);
     TrackCaptureStopTestAccess::startPendingRecord(tick);
   }
-  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track) ||
-                               TrackCaptureStopTestAccess::isOverdubbing(track),
-                           "B must start from the switch's own gesture, with no second press");
-  TEST_ASSERT_EQUAL_UINT8(1, TrackCaptureStopTestAccess::activeLoopIndex(track));
-  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
-                           "A's finalizer must still be outstanding when B starts");
-}
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the retained switch must commit to C once its stop bound");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                           "C must start recording from the retained request, with no further gesture");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(0, 2),
+                            "the executed start must be consumed exactly once");
 
+  // C records the incoming MIDI through the production input route.
+  const size_t before = TrackCaptureStopTestAccess::captureEventCount(track);
+  const uint32_t tickBeforeInput = clockManager.getCurrentTick();
+  inputNote(67, tickBeforeInput + 8, tickBeforeInput + 40);
+  TEST_ASSERT_EQUAL_MESSAGE(before + 2, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "C must record the incoming MIDI note's on and off");
+
+  // (8) Exactly once: further dispatch must not re-execute either request or disturb C's interval.
+  const size_t cEvents = TrackCaptureStopTestAccess::captureEventCount(track);
+  const uint32_t afterStart = clockManager.getCurrentTick();
+  for (uint32_t tick = afterStart + 1; tick <= afterStart + 768 * 2; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "subsequent dispatch must not move the active slot again");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(0, 2),
+                            "the start request must not be re-armed by later dispatch");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
+                            "B's stop obligation must not be re-executed by later dispatch");
+  TEST_ASSERT_EQUAL_MESSAGE(cEvents, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "later dispatch must not add events to C's interval");
+}
 
 int main() {
   UNITY_BEGIN();
@@ -838,6 +930,6 @@ int main() {
   RUN_TEST(test_reactivating_a_released_slot_reuses_its_capacity);
   RUN_TEST(test_a_declared_envelope_breach_is_reported_and_does_not_block_activation);
   RUN_TEST(test_switching_starts_the_new_take_while_the_previous_take_still_finalizes);
-  RUN_TEST(test_the_switch_gesture_carries_the_start_without_a_second_press);
+  RUN_TEST(test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds);
   return UNITY_END();
 }

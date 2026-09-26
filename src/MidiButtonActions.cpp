@@ -401,13 +401,25 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
         // consumes it only when the start actually happens -- so a live stop obligation on the
         // predecessor delays it instead of discarding it, and the user does not have to press again.
         //
+        // S4f.3: when the switch could **not** commit (the predecessor's stop is accepted but not yet
+        // admitted) the request is **retained**, not dropped: `retainRecordStartForSlot` writes the same
+        // manager pending-start owner without moving the audible set, since the predecessor is still the
+        // active interval. `handlePendingRecordStart` then re-attempts activation on every eligible
+        // boundary and consumes the request only at a successful start.
+        //
         // The phase reference is deliberately **none**: the contract requires the transport's bar grid
         // for an empty or cleared target and forbids the predecessor's mutable loop timing from becoming
         // an accidental dependency of the target's start (`refSlotPhaseForQueue(track, previousSlot)`
         // would do exactly that, since the predecessor here has a loop length).
-        if (committed && !track.hasCommittedPassesInSlot(slotIndex)) {
-            trackManager.queueRecordingTrack(trackIdx, slotIndex, ::Config::INVALID_LOOP_SLOT);
-            logger.info("Loop %d: Record start carried on the switch", slotIndex + 1);
+        if (!track.hasCommittedPassesInSlot(slotIndex)) {
+            if (committed) {
+                trackManager.queueRecordingTrack(trackIdx, slotIndex, ::Config::INVALID_LOOP_SLOT);
+                logger.info("Loop %d: Record start carried on the switch", slotIndex + 1);
+            } else {
+                trackManager.retainRecordStartForSlot(trackIdx, slotIndex);
+                logger.info("Loop %d: Switch and record start retained (stop not yet admitted)",
+                            slotIndex + 1);
+            }
         }
         return;
     }

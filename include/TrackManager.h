@@ -73,6 +73,12 @@ public:
   /// already-committed slot, a refused state change**) returns false so the caller can retain the
   /// request instead of consuming it; the dispatcher clears a queued start only on success.
   bool startRecordingTrack(uint8_t trackIndex, uint32_t currentTick);
+  /// S4f.3: retain a record-start request for `slotIndex` in the manager pending-start owner **without**
+  /// the enabled-set change `queueRecordingTrack` performs. Used when the switch carrying the request
+  /// cannot commit yet (the predecessor's stop is accepted but not admitted): the request must survive,
+  /// but the audible set must not move while the predecessor is still the active interval. The enabled
+  /// set is applied by `startRecordingTrack` when the start actually executes.
+  void retainRecordStartForSlot(uint8_t trackIndex, uint8_t slotIndex);
   /// Free non-capturing tracks' playback merge buffers before capture (multi-track headroom).
   void releaseBackgroundPlaybackMergedMidiEventsMemory(uint8_t captureTrackIndex);
   void stopRecordingTrack(uint8_t trackIndex);
