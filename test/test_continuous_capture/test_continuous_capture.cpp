@@ -194,6 +194,10 @@ struct TrackCaptureStopTestAccess {
   /// S4.0/S2b.4 access: the per-slot liveness predicate, the reservation release and re-reserve, and a
   /// raw ring entry's slot by storage index (including entries outside the live window).
   static bool noLiveOwner(Track& track, uint8_t slot) { return track.noLiveOwnerForSlot(slot); }
+  /// S4f.6's slot-scoped in-flight predicate, which the decoy-answer matrix asserts through.
+  static bool stopInFlightForSlot(Track& track, uint8_t slot) {
+    return track.hasStopInFlightForSlot(slot);
+  }
   // ---- S3.2 per-owner-kind predicates -----------------------------------------------------
   static bool ownsLiveFinalization(Track& track, uint8_t slot) {
     auto* rt = track.playbackRuntime.slotIfAllocated(slot);
@@ -3360,7 +3364,55 @@ void test_stop_job_and_live_ingress_own_distinct_staging() {
 
 // S4f.3: a committed switch invalidates the display cache; the display is not under test here.
 #define HARNESS_OBSERVABLE_SLOT_CHANGE
+// The real **transport** family only: the stop routes and the synchronous commit owner below are what the
+// `(c)`/`(e)` latch-supersession fixtures need, and this suite keeps its storage and edit-session boundaries
+// fail-closed exactly as before. Before the family split this macro also pulled in the storage and
+// edit-session closures (~30 TUs); the boundary assessment lives in `off_path_deps.h`.
+// The stop-COMMIT family only: the real `stopRecording`/`stopRecordingToStopped`/`commitCaptureForStop`
+// owners. The broader transport family is deliberately NOT enabled -- it would also link the play/stop
+// machinery, whose real owners reach the playback hot path and the MIDI-silence boundaries B03 counts.
+#define A34A_LINKS_REAL_TRACK_STOP_COMMIT
 #include "off_path_deps.h"
+
+// The measured closure of the real transport family (found by linking, not by guessing).
+//
+// `TrackCaptureStopCommit.cpp` is the synchronous stop owner: `Track::commitCaptureForStop`,
+// `stopRecording`, `stopRecordingToStopped` and `finalizeCommitSideEffects`. It is included here, after
+// `off_path_deps.h`, because that header emits the fail-closed stand-ins this macro turns off.
+#include "../../src/Track/TrackCaptureStopCommit.cpp"
+// The TrackManager owners whose stand-ins the transport family removes.
+#include "../../src/TrackManager/TrackManagerMidiLedFeedback.cpp"
+#include "../../src/TrackManager/TrackManagerPlaybackPolicy.cpp"
+#include "../../src/TrackManager/TrackManagerMemoryPressure.cpp"
+// The record-stop length law the stop routes compute through.
+#include "../../src/Utils/RecordStopLength.cpp"
+
+// `resetActiveLoopAfterEmptyCapture` is why `TrackStopTelemetryColdHelpers.cpp` cannot simply be left out: it
+// is a genuine state owner (it discards the empty capture and clears the loop length), not a log. Linking
+// that whole TU would collide with six stand-ins this header owns, so the three telemetry symbols the stop
+// routes actually reach are supplied here with the real state reset preserved. The other two are diagnostics
+// -- the real pair computes a storage census and emits a stop-stage line, and neither feeds a decision -- so
+// an empty census is deliberate: this suite asserts capture/latch state, never stop-path storage statistics.
+TRACK_INTERNAL_MEM StopPathStorageStats collectStopPathStorageStats(const Loop&, bool,
+                                                                  const PendingCapturePass*) {
+  return StopPathStorageStats{};
+}
+TRACK_INTERNAL_MEM void logRecordStopStage(const Loop&, uint32_t, const char*, uint32_t, uint32_t,
+                                           uint32_t, const char*, const StopPathStorageStats*) {}
+// The real body, kept because the empty-capture stop branch depends on it.
+TRACK_INTERNAL_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop) {
+  loop.discardCapture();
+  loop.resetPassTimeline();
+  loop.loopLengthTicks = 0;
+  loop.loopStartTick = 0;
+  loop.startLoopTick = 0;
+  loop.nextEventIndex = 0;
+  loop.lastTickInLoop = 0;
+  loop.invalidatePlaybackCaches();
+}
+// NOTE: the edit-session fold needs nothing here. The family split deliberately stopped the transport gate
+// from un-gating it, so `off_path_deps.h`'s fail-closed stand-in remains in force for this suite -- which is
+// the correct boundary, since an edit-session fold is not part of the stop route under test.
 
 /// Regression for the reset-before-guard defect: a redundant or ineligible
 /// queueDeferredStoredMidiVerification() call must not cancel an already-queued dump.
@@ -4790,6 +4842,85 @@ void test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_
       "an accepted interaction must make its track eligible even when the track is idle");
 }
 
+/// S4f.10(c) / DEC-078 — accept-and-latch, then transport stop **before the drive**, supersedes it.
+///
+/// The obligation under test is DEC-078's: when the finalization resources are still owned, a stop is
+/// **accepted and latched** rather than refused or dropped, and the interval keeps recording. The fixture
+/// asserts that state while the canonical owner is still live -- a populated store is what makes
+/// `beginDeferredOverdubStop` refuse and take the accept-and-latch branch; with the store empty the stop
+/// would simply be admitted and this would be B03's case instead.
+///
+/// Then the transport stops before any deferred turn drives the request. `Track::stopOverdubbingToStopped`
+/// documents the clause: "the accepted stop's obligation is therefore consumed here, so the deferred drive
+/// can never execute a stale PLAYING stop against an interval this path already stopped." Without that
+/// consumption the latch outlives the transport stop, `hasStopInFlight()` stays true, and every later start
+/// and switch on the track is refused -- a wedged track, not a lost stop.
+///
+/// This suite could not reach this path before the boundary split: the transport-stop entry completes the
+/// stop through `Track::commitCaptureForStop`, whose owner was a fail-closed stand-in here.
+void test_s4f10c_accept_and_latch_then_transport_stop_supersedes_before_the_drive() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+
+  // A live owner holds the canonical target: this is the DEC-078 precondition for accept-and-latch.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::prewarmCanonicalReservation(track, 0));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::appendCanonicalEvent(track, 0));
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::canonicalOutputEmpty(track, 0));
+
+  const size_t rowsBefore = track.getActiveLoop().capture.store.size();
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+
+  // --- the accept-and-latch assertion, taken while the owner is still live ---
+  TEST_ASSERT_TRUE_MESSAGE(track.hasAcceptedUnexecutedInteraction(),
+                           "a stop whose finalization resources are owned must be accepted and latched");
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                            "the deny path must not create a stop descriptor");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)),
+                                   "no descriptor may be consumed by an accepted-but-unadmitted stop");
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+                           "the interval keeps recording while its stop waits (DEC-078)");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::stopInFlightForSlot(track, 0),
+                           "the latched obligation is what makes the interval's stop in-flight");
+  const uint64_t interval = TrackCaptureStopTestAccess::interval(track);
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(interval, TrackCaptureStopTestAccess::acceptedLatchInterval(track),
+                                   "the obligation is latched against the interval's own identity");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(0, TrackCaptureStopTestAccess::acceptedLatchSlot(track),
+                                "and against the interval's own slot");
+  TEST_ASSERT_EQUAL(rowsBefore, track.getActiveLoop().capture.store.size());
+
+  // --- now the world moves under it: transport stop, before any drive turn ---
+  nativeTransportRunning = false;
+  TrackCaptureStopTestAccess::clearCanonicalOutput(track, 0);
+  track.stopOverdubbingToStopped();
+  TEST_ASSERT_FALSE_MESSAGE(
+      track.hasAcceptedUnexecutedInteraction(),
+      "transport stop must consume the accepted obligation, or the deferred drive executes a stale stop "
+      "against an interval this path already stopped");
+  TEST_ASSERT_FALSE_MESSAGE(track.isPlaying(),
+                            "a stop superseded by transport stop must never resolve to TRACK_PLAYING");
+
+  // Repeated drive turns must not re-create it, and must not add a second descriptor.
+  for (size_t turn = 0; turn < 8; ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(track.hasAcceptedUnexecutedInteraction(),
+                            "no drive turn may re-create a consumed obligation");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::queueSize(track) <= 1,
+                           "the transport stop must not stack a second stop descriptor");
+
+  // The stop still completes: superseding the latch must not leave the interval live forever.
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i) {
+    TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE_MESSAGE(track.isStopped(), "the interval resolves to STOPPED, never back to PLAYING");
+  TEST_ASSERT_TRUE(track.getActiveLoop().hasCommittedPasses());
+}
+
 /// S4f.4 transition 3 (load/replacement): a request whose interval is gone must not bind to whatever now
 /// occupies the same slot number. It is superseded -- reported and retired once -- rather than parked, since
 /// parking would wait forever for an interval that can never return.
@@ -5259,6 +5390,7 @@ int main() {
   RUN_TEST(test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve);
   RUN_TEST(test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes);
   RUN_TEST(test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track);
+  RUN_TEST(test_s4f10c_accept_and_latch_then_transport_stop_supersedes_before_the_drive);
   RUN_TEST(test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound);
   RUN_TEST(test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution);
   RUN_TEST(test_record_arm_admission_is_repeatable);
