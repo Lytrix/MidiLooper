@@ -1291,7 +1291,25 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       sequence in this run does not produce it, because the successor's `startRecordingTrack` sweeps *other*
       tracks while A's retired lease lives on the **same** track. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.1's lease-release device row: the cross-track
-      route is a structural dead end". **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
+      route is a structural dead end".
+      **4→5→8 SWITCH SEQUENCE CONFIRMED ON DEVICE 2026-09-27, and the slot accounting is now pinned.**
+      The existing retention driver *is* the correct 4→5→8 machine: its `b_switch` presses slot 5's loop
+      button **while A is overdubbing**, which is the capture-switch that admits A's stop as a deferred job,
+      and its `c_switch_request` presses slot 8 while B still captures, so that request is **retained** rather
+      than committed. One run (`captures/s41-switch458-20260927_014248`, `--no-upload --no-clear`) shows the
+      order verbatim: `Loop 5: Switch gesture from slot 4` then `Loop 8: Switch gesture from slot 5` followed
+      by `Track 7 loop 8: switch and record start retained (stop not yet admitted)`, with the successor
+      starting at tick 2304 and the shutdown `complete`.
+      **Base convention, pinned because it cost two wrong readings:** the human `Loop N:` / `Switch gesture
+      from slot N` rows are **1-based** (`Loop 4` = the fourth slot = the driver's `--slot-a 4`), while
+      `RECA`/`RECS` and `DIAG,ws_release` carry **0-based** slot fields (`RECA,3` = the same slot as
+      `Loop 4`). So the seed rows `RECA,4` then `RECA,3` are the driver seeding B (slot 5) first and A
+      (slot 4) second, exactly as its own comment says.
+      **Consequence for the release row, stated so the next attempt does not chase a phantom:** no
+      `ws_release` appears in a 4→5→8 retention sequence, and that is expected rather than a defect. The
+      release runs from a playback reset on the track, and the final switch to slot 8 is *retained* — it never
+      commits inside the window, so no reset runs after A retires. Exercising the row needs a switch that
+      **commits** after retirement, which is a different sequence from the retention acceptance. **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
       memory-pressure and `(slot, generation)` conversions remain.** `Track::clearStoppingIntervalLedger()`
       now clears only the stopping interval's slot ledger, and both converted stop routes call it
       (`handleNoteEditFold`'s `endInPlaying` branch, `stopOverdubbing`'s fallback);
