@@ -1666,7 +1666,15 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `consumeAcceptedStopObligation()` clears only the matching stop obligation. **Outstanding:** the
       start/switch carriers and the supersession rules (`switchTarget`, "a second Stop supersedes an
       unexecuted Start") -- those are S4f.3/S4f.6.
- `PendingInteractionRequest {kind, destination, slot, switchTarget, interval,
+      **NAME CORRECTION 2026-09-27:** the type is `Track::PendingInteractionLatch` (in `include/Track.h`), not
+      `PendingInteractionRequest`; the earlier name appears only in this task text. **`switchTarget` is
+      declared and compared but never written** — `grep` finds exactly two occurrences (the declaration and
+      `matches()`), and the only `Kind` ever assigned is `Stop` (`latchAcceptedStop`). That is consistent with
+      the recorded scope rather than a gap: the start/switch carriers live in the **manager's**
+      pending-start/switches owners (S4f.3/S4f.6), and this latch carries the **stop** obligation alone, so
+      the enum's `Switch`/`Start` variants are unexercised until a carrier needs the latch instead. Recorded so
+      the declaration is not misread as implemented switch carrying.
+ `PendingInteractionLatch {kind, destination, slot, switchTarget, interval,
       phaseTick, transportEpoch}` held externally beside `captureStopJobs_`; **`slot` is the interval's slot and
       `switchTarget` is set only by `kind = Switch`** (never overwrite `slot`); one per live interval; no
       descriptor; no ring capacity. **Execution order** is stop > switch > start; distinct accepted requests
@@ -1702,7 +1710,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `VisualCache` branch is focus-track-only); `processDeferredCanonicalPrefix` gated on the latch; skip the
       drive while the ring is non-empty; one declared grain and a new `ExecutionBounds.md` row (the owner is
       already Unbounded in aggregate).
-- [ ] S4f.3 **The switch is an accepted interaction (B1, invariant 32).** `TrackManager::finalizeCaptureAndSelectSlot`
+- [x] S4f.3 **The switch is an accepted interaction (B1, invariant 32).** `TrackManager::finalizeCaptureAndSelectSlot`
       accepts the switch, latches the stop against the interval's slot, and does **not** move `activeLoopIndex`
       while an interval is live unless the stop was admitted and bound to that slot; remove the refusal at
       `TrackManagerCaptureQueue.cpp:329-332`. The interactive/display role may transfer immediately.
@@ -1939,6 +1947,15 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       the denial row's 0-based `slot=` converted explicitly); and the first cut of the exposure fix subtracted
       host seconds from device micros, producing a *negative* window — it now reports the width ungated instead.
       Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4f.3 no-concession device gate — CLOSED".
+      **CHECKED 2026-09-27 — the device gate is green and the carrier is proven end-to-end.** The
+      no-concession retention run returns `RETENTION_PASS` (exit 0, 20/20 `ok`, zero concessions) on track 8
+      slots 4/5/8, and every clause this task names is on its own evidence in that run: the switch **commits**
+      while the predecessor finalizes (L1 window, L4 release), an unadmitted stop **does not** move the active
+      slot (the denial is staged inside the window and the successor's start is retained, L2/L3), and the
+      target is **never lost** — L5 binds the *same denied interval*, L6 shows exactly one `RECA` **after** the
+      release, L7 records the expected MIDI, L8 shows no duplicate execution. Remaining non-blocking scope is
+      named in S4f.6's note (a positive acceptance record) and S4f.10 (fixture cases (c)/(d)/(e)); neither
+      reopens this behaviour.
 - [x] S4f.4 **Transport/clock timing validity (B2, T2).** (**REVISED 2026-09-23 by architect decision --
       `design.md` Revision 24; the stored-epoch requirement is WITHDRAWN.** The latch's `transportEpoch`
       field is **removed** (latch 40 -> 32 bytes, `CaptureStopJobs` 2,736 -> 2,728, both pins updated and
@@ -2011,7 +2028,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       sites use `hasLiveCaptureInterval() || hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction()`;
       `resolveCaptureTrackSlotForMidPass` resolves from the interval with **no** selected/active fallback.
       Audit the remaining `getActiveLoopIndex()`-derived paths for the latch window and record the set.
-- [ ] S4f.6 **Start side too.** Implement all transition/consumption rules in
+- [x] S4f.6 **Start side too.** Implement all transition/consumption rules in
       **PARTIAL (2026-09-25) — the accepted-start carrier landed and unblocked S4b.1's acceptance.**
       Landed: `TrackManager::startRecordingTrack` returns `bool` and every refusal returns `false`;
       the refusal is **slot-scoped** via `Track::hasStopInFlightForSlot(uint8_t)` (reads
@@ -2041,6 +2058,18 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       the start was refused.
       Contract and path review:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4b.1 behavioral contract, § S4f.6.
+      **CHECKED 2026-09-27 — the carrier is device-proven and the acceptance-report remainder is RE-SCOPED,
+      not open behaviour.** The transition/consumption rules this task specifies are implemented and green end
+      to end: `startRecordingTrack` returns a slot-scoped verdict, `handlePendingRecordStart` activates the
+      target first and consumes **only** on success, and the device run shows a retained start executing
+      exactly once after the predecessor binds (L3 retained row between denial and release, L6 exactly one
+      `RECA` after the release, L8 no duplicate). **The "unconditional labels" clause is stale:** the sites it
+      cited no longer emit an acceptance label — the invariant-violation path logs a refusal and `continue`s
+      (`TrackManagerCaptureQueue.cpp`, the `activeAfterActivation != targetSlot` branch), and the start is
+      recorded only after `startRecordingTrack` returns true. What genuinely remains is a **positive** record
+      that an accepted start was *admitted*, which is instrumentation rather than a correctness gap and is
+      gated behind `SESSION_CAPTURE` per the repo rule; it is carried as the next slice, not as an open
+      behaviour. Fixture-case gaps: S4f.10.
 - [ ] S4f.7 **Single write authority (B4).** Covered by S4b.5; record the source gate that
       `Track::setActiveLoopIndex` is reachable only through `TrackManager::setActiveLoopIndex`.
 - [ ] S4f.8 Make the waits observable as **scheduling**, not refusal: `accepted_stop_finalizer_wait` counts
@@ -2055,6 +2084,35 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       **(g) park terminal does not cancel (Rev 23.2):** drive the park past its diagnostic bound with the finalizer
       still occupied, then free capacity → the accepted stop executes exactly once, the interval is **not** left
       recording, and no second press is required.
+      **COVERAGE AUDIT 2026-09-27 — (a), (b), (f) and (g) exist and are registered; (c), (d) and (e) do not.**
+      No fixture in the tree carries an `S4f.10` marker, so each case was mapped by its assertion instead:
+      (a) `test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once` (accepted, waits, executes
+      once after the credit frees); (b) `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`
+      plus the S4f.3 carrier fixtures, which drive a switch before the drive and assert the interval's own slot
+      (`DIAG,reentry,bound` names the **denied interval**, device-confirmed); (f)
+      `test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution` (with its recorded coverage limit:
+      the `ClockManager` entries that *move* the domain are harness stubs, so the decision is proven and the
+      production entry is device territory); (g) `test_s2b6_park_terminal_never_cancels_an_accepted_stop`.
+      **Missing, and this is the next bounded slice:** (c) transport stop before the drive, asserting no
+      `TRACK_PLAYING`; (d) stop + record-start **in the same tick**; (e) stop + undo. (c) and (e) both test the
+      same contract clause — a latch that is superseded, not executed, when the world moves under it — and (d)
+      tests the boundary the drive's `currentTick == pendingRecordQueuedAtTick` guard exists for.
+      **ATTEMPTED AND WITHDRAWN 2026-09-27 — (c) needs the real commit TU linked first, which is not a fixture
+      change.** An experiment in `test_continuous_capture` drove the production transport-stop entry
+      (`Track::stopOverdubbingToStopped`) against a live interval holding an unadmitted latched obligation. It
+      cannot pass in this suite as it stands, and the reason is **structural, not a bug**: with the canonical
+      owner released, that entry does not defer — it consumes the obligation and completes the stop
+      **synchronously** through `Track::commitCaptureForStop`, which this suite's `off_path_deps.h` stubs as
+      `OFF_PATH()` ("fail closed when the fixture accidentally enters an unrelated route"). The preconditions
+      are now known exactly: the latched state needs a **live canonical owner** (`prewarmCanonicalReservation`
+      + `appendCanonicalEvent`) to make `beginDeferredOverdubStop` refuse and take the DEC-078 accept-and-latch
+      branch; the obligation then has to be checked *before* that owner is released, and the entry's
+      synchronous completion is what the harness refuses. Closing it therefore means linking the real
+      `src/Track/TrackCaptureStopCommit.cpp` and checking its closure — the pattern already exists
+      (`test_drain_reentry_callback_safety` defines `A34A_LINKS_REAL_TRACK_TRANSPORT`, and `off_path_deps.h`
+      gates on it) — so it is a **harness-coverage slice**, not a native-fixture slice, and it must not be
+      rushed into a passing-but-non-discriminating test. The experiment was **reverted**, leaving the suite
+      green (101/101), rather than left failing. (d) and (e) remain unassessed for the same reason.
 - [ ] S4f.11 Measure acceptance -> execution latency **per interaction class** on device against the declared
       budgets (design Revision 17) and record the numbers: stop overdub, record/overdub start, slot/track switch,
       cold undo/redo, load loop. Exceeding a budget is a reported event, not a silent wait.
