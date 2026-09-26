@@ -1630,6 +1630,37 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       carrying the target in two owners contradicts "avoid another target owner". The pending-start owner is
       the single home; the switch is still executed by the existing switch path. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3 (retention).
+      **ORACLE TIGHTENED (2026-09-26) — the first oracle could falsely report `RETENTION_PASS`.** The owner
+      reproduced two false passes and both are now refused: C's start **before** capacity release (was a pass;
+      now `RETENTION_FAIL`, exit 2, failing L3 and L6), and **removal of B's identity-specific denial** with the
+      generic `successor_stop_denied_capacity` row left in place (was a pass; now `INSUFFICIENT_EVIDENCE`, exit
+      4). The oracle now requires an **ordered chain** — L1 A's finalizer outstanding → L2 B's stop denied
+      **with slot and interval** → L3 C's request retained → L4 capacity released → L5 that same B stop bound →
+      L6 C starts exactly once **after the release** → L7 C recorded the expected MIDI → L8 bounded follow-up
+      with no duplicates — and a missing or reordered link is never a pass. New verdict
+      `INSUFFICIENT_EVIDENCE` (exit 4) distinguishes "the run was staged but a link has no telemetry" from
+      `SETUP_INCOMPLETE` (exit 3, "this run is not evidence"). Integrity gates added: `identity_pinned`
+      (metadata must carry `git_commit` **and** `firmware_hex_sha256`), `capture_integrity` (no ring eviction;
+      base-report `capture_integrity == COMPLETE`), `observation_tail_complete` (log not cut mid-line;
+      `capture_complete`), `setup_transitions_confirmed`, and `reported_issues_resolved`. **Telemetry gaps
+      reported, not inferred:** L5's identity link is **unavailable** (`captureInterval_` is emitted only by
+      `reentryDecision`; stop-tier records carry `frozenGeneration` = `staging.captureGeneration`, a different
+      identity space, so only slot-scoped bind evidence exists — closing it needs one emission on the binding
+      edge carrying the request's interval); L7 is **count-level** because `storedNoteEvent`/`storedNotes` have
+      no callers, so pitch-level needs the content pipeline; L3 rests on a **human log line** with no `#CAP`
+      record. Weaker links pass only via explicit `--accept-slot-scoped-bind` / `--accept-event-count-only`
+      **concessions**, recorded as concessions rather than proofs. **Correction:** exit-code separation does
+      **not** establish that out-of-range notes were generator artefacts; any base-report issue now blocks a
+      pass unless explicitly allowlisted, and an allowlisting is recorded as an **operator claim**.
+      **Withdrawn:** the earlier "no finalizer-pause control is required" — the 1.335 s measurement is a timing
+      observation from a session with no boot banner, so the hook stays a **contingency**. Evidence: 29 host
+      tests in `scripts/test_retention_probe.py` (one negative per way to lose a link; complete chain with
+      concessions; the same chain without them lands on `INSUFFICIENT_EVIDENCE`), CLI reproductions giving exit
+      2 and 4, and the real device log returning `SETUP_INCOMPLETE` (exit 3) while still measuring the window.
+      Three oracle bugs were found by its own tests and fixed: an unknown link masking an affirmative
+      violation, an early return masking setup failures as `RETENTION_NOT_EXERCISED`, and a follow-up tail
+      computed from file order instead of the maximum timestamp. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3 (the retention oracle tightened).
       **DEVICE STIMULUS PREPARED, NOT RUN (2026-09-26).** Per the owner's direction the temporary retention
       stimulus and its evidence oracle are prepared and the device run is **not** authorized, so nothing was
       executed and no target slot is assumed authorized. Assessment: the requirement is decidable from

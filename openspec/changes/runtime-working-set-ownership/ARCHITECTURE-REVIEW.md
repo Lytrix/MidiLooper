@@ -6125,6 +6125,11 @@ tens of milliseconds, so the state is reachable with a **natural workload** and 
 is required**. The gated pause is therefore *not* proposed for implementation; its design is kept below only
 so the option is not lost.
 
+> **Corrected 2026-09-26 -- see the retention-oracle-tightened section below.** "No finalizer-pause
+> control is required" is **withdrawn**: a window duration is not a staged run, and the session that produced
+> it had no boot banner. The measurement supports *trying* a natural workload under a fresh boot; it does not
+> establish that the hook will never be needed. The hook stays a contingency.
+
 Caveat, because it decides how the number may be cited: that session's log has **no boot banner** and 108 s
 of uptime, so it is not verdict-grade -- the oracle fails `fresh_boot` on it, correctly. The 1.335 s figure is
 a timing observation to be **reconfirmed under a fresh boot** in the authorized run.
@@ -6189,6 +6194,10 @@ Retention checks: `successor_stop_admission_denied` (the denial must fall **insi
   missing step yields `SETUP_INCOMPLETE`, and setup failures exit 3 against retention failures at 2, so the two
   cannot be conflated.
 
+> **Corrected 2026-09-26:** exit codes classify *verdicts*; they never established a *cause*. The tightened
+> oracle blocks a pass on any base-report issue that is not explicitly allowlisted, and records an allowlisting
+> as an **operator claim**, not as evidence.
+
 ### Contingency: bounded, gated finalizer pause (design only, NOT implemented)
 
 If a future workload narrows the window below the staging floor, the control must (a) hold the deferred stop
@@ -6196,8 +6205,9 @@ outstanding, (b) keep MIDI input and the scheduler running -- no blocking delay 
 auto-releasing after a deadline, and (d) be **compile-time gated off by default** so the shipped image and the
 RAM1 floor (`padding` is exactly 840) are untouched. Sketch: `#if defined(HITL_FINALIZER_PAUSE)` around a
 skip in the deferred-stop grain owner while a deadline-bounded flag is set, the flag set only by a
-capture-build command. **Not implemented**: the measurement above shows it is unnecessary, and adding code at
-the RAM1 floor needs its own justification.
+capture-build command. **Not implemented** (corrected 2026-09-26): the hook stays a **contingency** -- the 1.335 s
+measurement does not establish that it is unnecessary, only that a natural workload is worth trying first.
+Adding code at the RAM1 floor still needs its own justification.
 
 ### Found defect, reported not fixed (adjacent to this deliverable)
 
@@ -6304,3 +6314,113 @@ the assumption that a single documented scratch slot covered three targets. Reco
 the *next* device session only: the recorded refusal of a temporary variant still stands, so the stimulus
 remains prepared-and-not-run, and each target must still be verified empty (or cleared with permission) before
 the run.
+
+## S4f.3 — the retention oracle tightened: an ordered chain, or an explicit "insufficient evidence" (2026-09-26)
+
+The first oracle could report `RETENTION_PASS` on evidence that did not prove the requirement. The owner
+reproduced two false passes from its own synthetic fixture, and both are now refused. This section supersedes
+the evidence model in the section above; the three claims called out below are corrected in place there.
+
+### The two reproduced false passes
+
+| Reproduction | Old behaviour | Now |
+|---|---|---|
+| C's start at `100200000 us`, A's release at `101335389 us` | **passed** -- the start was only required to follow the *denial* | `RETENTION_FAIL`, exit 2: L3 and L6 both fail with "a start for slot 2 executed at 100200000 us, before capacity was released at 101335389 us" |
+| the identity-specific `DIAG,reentry,deny` removed, generic stage record left | **passed** -- `successor_stop_denied_capacity` substituted for it | `INSUFFICIENT_EVIDENCE`, exit 4: "only the generic 'successor_stop_denied_capacity' stop-stage record is present inside the window ... it cannot establish that B's stop was the one denied" |
+
+### Required ordered chain
+
+Each link needs its own evidence, and a missing or reordered link is never a pass:
+
+| Link | Evidence |
+|---|---|
+| L1 A's finalizer outstanding | `DIAG,reentry_window_open,<A>,<stopTick>,<loopLen>` |
+| L2 B's stop denied, **with B's slot and interval** | `DIAG,reentry,deny\|deny_resource,<tick>,<interval>,<slotB>,<depth>` **inside** A's window |
+| L3 C's request retained | the retained-request row for C, ordered after the denial and before the release, **and** no start for C before the release |
+| L4 capacity released | `DIAG,canonical_release,<A>` |
+| L5 that same B stop admitted and bound | see the gap below |
+| L6 C starts exactly once, **after the release** | exactly one `RECA,<C>`, timestamped after L4 |
+| L7 C recorded the expected MIDI | see the gap below |
+| L8 bounded follow-up, no duplicates | >= `--followup-us` of telemetry after the last required event, no second start, no post-release denial, no extra seal |
+
+Plus integrity gates that were previously absent and could not stop a pass: `identity_pinned` (metadata must
+carry `git_commit` **and** `firmware_hex_sha256`), `capture_integrity` (no `RING,overflow` / `RING,tier_a_evicted`,
+and `capture_integrity == COMPLETE` in the base report), `observation_tail_complete` (log not cut mid-line,
+`capture_complete` true), `setup_transitions_confirmed`, and `reported_issues_resolved`.
+
+### Where existing telemetry cannot prove a link
+
+Reported as `INSUFFICIENT_EVIDENCE` and named, never inferred:
+
+1. **L5's identity link is unavailable.** The denial names `captureInterval_`, which is emitted **only** by
+   `reentryDecision` (`TrackOverdubLifecycle.cpp`: the `admit`/`deny`/`deny_resource` sites). Nothing names
+   that identity when a stop later **binds**: the stop-tier records (`stop_phase`, `stop_grain`) carry
+   `captureStopJob().admission.frozenGeneration`, which `beginDeferredOverdubStopForSlot` sets from
+   `staging.captureGeneration` -- a *different* identity space. So L5 is provable at **slot** granularity
+   only. Without an explicit `--accept-slot-scoped-bind`, the oracle reports
+   `INSUFFICIENT_EVIDENCE`; with it, it passes **and records the concession**, never a proof.
+   *The record that would close it:* one emission on the binding edge carrying the interval the request
+   named -- the natural place is `beginDeferredOverdubStopForSlot`'s success path, whose `interval` parameter
+   is exactly that identity.
+2. **L7 is count-level, not pitch-level.** `storedNoteEvent` / `storedNotes` / `queueStoredNoteOn` /
+   `recStoredNoteOn` have **no callers** in `src/`, so there is no per-note capture record. What exists is the
+   seal stage's `eventCount` (`RECS,stage,seal,...,<eventCount>,...`), which proves *that* a take was sealed
+   with N events, not *which* pitches. The oracle therefore requires either the content pipeline's review
+   (`--content-review`, requiring `inventory_equal` per cycle) for a pitch-level pass, or an explicit
+   `--accept-event-count-only` concession.
+3. **L3 rests on a human log line.** The only evidence that a successor request was *retained* is the
+   `logger.info("Loop %d: Switch and record start retained ...")` row added by this change -- there is no
+   `#CAP` record for a retained request. If that row is absent the oracle says
+   `INSUFFICIENT_EVIDENCE`, and the detail names the missing record. *The record that would close it:* a
+   one-shot `#CAP` emission when the carrier retains, `DIAG,retain,<kind>,<slot>,<interval>`.
+
+### Correction: what exit-code separation does and does not establish
+
+The section above implied the setup/retention split accounted for the accompanying verdicts in the base leg,
+`overdub_out_of_range_notes` in particular. **It does not.** Exit codes classify *verdicts*; they prove nothing
+about a cause. The oracle now reads the base report's `issues` and **blocks a pass** on any issue that is not
+explicitly allowlisted (`--allow-setup-issue`), and when one is allowlisted it records the statement as an
+**operator claim** that the issue is a setup artefact. Nothing in the oracle establishes that cause; the
+owner's caution stands.
+
+### Corrections to the previous section's conclusion
+
+- "**no finalizer-pause control is required**" and "the measurement above shows it is unnecessary" are
+  **withdrawn**. The 1.335 s window was measured on a session with **no boot banner**, and a window duration
+  is not a staged run: it supports *trying* a natural workload under a fresh boot, which is what the prepared
+  stimulus does. The hook stays a **contingency**, and whether it is ever needed is decided by that run, not
+  by the measurement alone.
+- The 1.335 s figure remains valid as a **timing observation** and is what `capacity_denied_window_wide_enough`
+  will re-measure.
+
+### Oracle bugs found by its own tests (recorded, not quietly fixed)
+
+Writing one negative per link exposed three defects in the oracle itself:
+
+1. **The verdict precedence let an unknown link mask an affirmative violation.** A wrong-slot start produced
+   L6 = fail *and* L7 = unknown, and the unknown won, reporting `INSUFFICIENT_EVIDENCE` instead of
+   `RETENTION_FAIL`. Fixed: an affirmative retention violation now outranks an unknown link, because hiding a
+   proven break behind "we could not tell" is the wrong default.
+2. **An early return masked setup failures.** With no denial at all the code returned
+   `RETENTION_NOT_EXERCISED` before evaluating setup, so a log with no boot banner and no tempo read-back was
+   reported as a behavioural result. Fixed, and covered by a test.
+3. **The follow-up tail used file order.** A record that was later in the file but earlier in time shrank the
+   computed tail and produced a spurious "follow-up too short". Fixed to use the maximum timestamp.
+
+### Evidence
+
+- `scripts/test_retention_probe.py`: **29 host tests, all green**, including the complete chain under
+  concessions, the same chain **without** concessions reaching `INSUFFICIENT_EVIDENCE` rather than a pass, and
+  one negative per link: missing boot banner, missing identity, ring overflow, truncated log, incomplete base
+  report, unconfirmed setup transitions, unexplained report issue, allowlisted issue recorded as a claim,
+  missing tempo read-back, narrow window, no finalizer window, no denial, generic-only denial, missing
+  retained row, a start that was not held, missing bind link, two starts, wrong-slot start, zero-event seal,
+  unexpected event count, pitch-level content review, short follow-up, re-issued denial, invariant violation,
+  and setup failures not masked by an unstaged denial. 29 tests, one per way to lose a link.
+- CLI reproduction of both owner-reported cases gives exit 2 and exit 4 respectively.
+- The real device log (`captures/s4f3-stop-t5s1-120bpm-20260926_141559`) now returns
+  `SETUP_INCOMPLETE` (exit 3) while still measuring the 1335.4 ms window -- a non-staged run is reported as
+  non-evidence, not as a behavioural result.
+- Host-script suite: 574 tests, 6 failures + 2 errors, **all pre-existing** and unrelated (they concern C++
+  consumers in `TrackOverdubLifecycle.cpp` and `TrackPlaybackHotPath.cpp`, which this work never touched);
+  the count matches the previously recorded baseline.
