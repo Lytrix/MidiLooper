@@ -105,6 +105,43 @@ TRACK_COLD_MEM bool Track::hasStopInFlightForSlot(uint8_t slot) const {
   return false;
 }
 
+TRACK_COLD_MEM bool Track::captureWorkSlot(uint8_t& slotOut) const {
+  if (hasLiveCaptureInterval()) {
+    // Only the active slot may RECORD/OVERDUB, so here the active index *is* the interval's identity
+    // rather than a stand-in for it.
+    slotOut = getActiveLoopIndex();
+    return true;
+  }
+  if (!hasStopInFlight()) {
+    return false;
+  }
+  // A stop in flight is pinned to its interval's slot; the active index is only the fallback for a
+  // stop-in-flight state that carries no slot at all.
+  if (pinnedStopSlot(slotOut)) {
+    return true;
+  }
+  slotOut = getActiveLoopIndex();
+  return true;
+}
+
+TRACK_COLD_MEM bool Track::pinnedStopSlot(uint8_t& slotOut) const {
+  // S4.1: the interval's own slot, not the active index. The deferred job carries `job.slot` and the
+  // latch carries `slot`; both survive an active-slot change, which is exactly why a consumer that
+  // means "the interval being finalized" cannot read `getActiveLoopIndex()`. The job is consulted
+  // first because it is the admitted obligation; a latch without a job is a stop accepted but not yet
+  // admitted (S4f.5), and it still names the target the user stopped.
+  if (const Track::CaptureStopJob* job = captureStopJobHead()) {
+    slotOut = job->slot;
+    return true;
+  }
+  const PendingInteractionLatch* latch = interactionLatch();
+  if (latch != nullptr && latch->isSet()) {
+    slotOut = latch->slot;
+    return true;
+  }
+  return false;
+}
+
 TRACK_COLD_MEM uint32_t Track::acceptedStopWaitCount() const {
   const PendingInteractionLatch* latch = interactionLatch();
   return latch != nullptr ? latch->waitCount : 0;

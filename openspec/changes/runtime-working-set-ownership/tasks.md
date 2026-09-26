@@ -1254,6 +1254,33 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       there. Both persistence items need a fixture this change has not built yet, so they are done with it.
       Fixture: B-stop while A finalizes on the same track+slot → A's ledger and canonical inputs
       survive.
+      **RECONCILED 2026-09-26 — the "must be converted" text above is superseded by the tree, and the
+      A/B/C device run is this task's release evidence.** Verified: `clearStoppingIntervalLedger()` clears
+      **its own slot** through `LoopPlaybackRuntime::clearLedger()` (the comment names the old global sweep
+      as the S4.1 rerun blocker), `TrackPlaybackRuntime::resetAll` is **deleted** and replaced by
+      `releaseEligiblePlaybackRuntimeSlots()` -> `releaseSlot(slot, generation)` behind
+      `noLiveOwnerForSlot`, the one remaining `clearAllLedgers()` caller is the deliberate whole-track
+      `sendAllNotesOff` sweep, and the slot-threaded persistence reads are converted
+      (`TrackStopTelemetryColdHelpers` documents the interval-slot rule; `TrackCaptureStopCommit` uses
+      `persistSlotIndex = slot`). **Device evidence:** the accepted-switch retention run
+      (`captures/s4f3-retention-20260926_181732`) exercises the release path end-to-end — the release
+      marker fires only with `captureStopOwner == nullptr` (the `ownsLiveFinalization` term), names the
+      retiring owner's slot **and generation** (`canonical_release,4,40,6144,8`), and C's start drives
+      `startRecordingTrack` -> `releaseBackgroundPlaybackMergedMidiEventsMemory` ->
+      `releaseEligiblePlaybackRuntimeSlots`, i.e. the guarded working-set release, followed by C's reuse
+      (S4.3). **Fixed here:** the mid-pass journal resolver still read `getActiveLoopIndex()` for a stop in
+      flight, journalling an interval pinned to slot 5 under whichever slot was active; the rule now lives
+      on the owner as `Track::captureWorkSlot()` (with `Track::pinnedStopSlot()`), returns false rather than
+      guessing, and the selected-track fallback is removed — fixture
+      `test_s4_1_capture_work_slot_uses_the_pinned_interval_slot`, red-proved (*Expected 1 Was 3*). Full
+      native 2,459 passed / 1 skipped; `padding 840` (floor). **Still open:** the working-set lease release
+      is *inferred* from the sweep mechanism rather than asserted by name (the oracle asserts L4's
+      finalization-capacity release); the activation/deactivation sweep caller on a same-track slot switch;
+      and `DeferredSaveJobStages`' footer read, which is a **design question, not a local defect** — the
+      deferred save walks *live* state per stage (`track.getLoop(poolCursor)`), so capturing only the footer
+      at admission would make the persisted image internally inconsistent; a snapshot-at-admission save is a
+      persistence-semantics change owing its own `DEC`. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.1 reconciliation".
 - [ ] S4.2 Generation-mismatched release rejected and reported (native fixture reproducing the
       A-releases / C-reuses / late-A-cleanup sequence).
       **PARTIAL 2026-09-25 — the finalization identity is generation-qualified; the lease's own
