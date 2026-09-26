@@ -5454,3 +5454,57 @@ start not yet dispatched) and `S4B_ACCEPTANCE=1` runs the requirement, red with 
 4. Fixture: queued switch + undo + stop admission in one window → the target is never lost.
 
 Full native `2,448 passed / 1 skipped`; capture-serial builds with RAM1 byte-identical.
+
+## S4f.3 / S4b.1 — root cause of "B does not start" (2026-09-25, third pass)
+
+The switch now commits (S4f.3 first half) and the fixture drives the production routes, so the remaining
+failure is isolated to one mechanism rather than a suspected carrier gap.
+
+### The observation
+
+```
+B did not record the note: recording=0 overdubbing=1 captureActive=1 size=0 loopLen=0 active=1
+```
+
+B is **overdubbing with `loopLengthTicks == 0`**, and the note is not captured.
+
+### The mechanism, from the code
+
+1. `startOverdubbing` opens with a guard on the **track** state and the **active** loop's phase:
+   ```cpp
+   Loop& loopRef = getActiveLoop();
+   if (trackState == TRACK_OVERDUBBING && loopRef.capture.phase == CapturePhase::Overdub) {
+     return;   // already overdubbing -- does nothing for the successor
+   }
+   ```
+2. The switch commits the active slot to the empty target, but the track's state remains
+   `TRACK_OVERDUBBING` from the predecessor, and the successor's capture phase is `Overdub`.
+3. The start gesture's overdub branch (`handleToggleRecord` → `track.isOverdubbing()` →
+   `stopOverdubbing()` in `handleToggleRecordForSlot`) therefore never routes the empty target through
+   the **record** path that establishes `loopLengthTicks`.
+4. With `loopLen == 0` the capture append has no loop to append into, so `size` stays 0 and the note is
+   dropped silently.
+
+### Why this is a state-coherence defect, not a carrier gap
+
+An overdub interval **needs an existing loop to overdub onto**. After a handoff to an *empty* target the
+track cannot still be "overdubbing" in a way that describes the successor: the predecessor's finalization
+is carried by the deferred job (`job.slot`, the latch, `captureStopOwner`), not by the track's live state
+flag. So `trackState == TRACK_OVERDUBBING` must not survive to describe an empty successor, and the
+successor's record admission must be the **record** route.
+
+### Next change (not yet made)
+
+On switch commit, when the target has no committed content and no live interval, the track must leave the
+overdubbing state so the successor routes through record admission and establishes its length. Candidate
+sites, to be decided against the contract rather than guessed:
+
+- `TrackManager::finalizeCaptureAndSelectSlot` after the switch commits, or
+- `Track::startOverdubbing`'s guard, which currently returns silently instead of reporting that the
+  requested successor is empty (a silent no-op is what made this expensive to find).
+
+The existing S4f.5 refusal (accepted-but-unexecuted stop holds the active slot) and the S4f.3 first half
+(admitted stop releases it) must both stay intact.
+
+Status: default gate 12/12 (characterization records the above); `S4B_ACCEPTANCE=1` red with the exact
+state; full native 2,448 passed / 1 skipped; capture-serial RAM1 byte-identical.
