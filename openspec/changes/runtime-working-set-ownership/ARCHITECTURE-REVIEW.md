@@ -4937,6 +4937,51 @@ grain drive and asserts release while the working set stays admitted.
 `ownsLiveFinalization`, `ownsInFlightPreparedHandover`), with the two inexpressible terms recorded
 in place with their owning stages rather than dropped. Behavior is unchanged — same terms, same
 order of refusal, no resource or release call moved — and the new fixture is `PASSED` in the
-continuous-capture suite (101 cases). Full native suite **2,520 passed / 1 skipped** — no regressions
-from the rename. RAM1 `variables` flat (`code 391,912 / padding 1,304`, unchanged from the S3.1
-routing); capture-serial builds.
+continuous-capture suite (101 cases). Full native suite `2,436 passed / 1 skipped` (clean build,
+97 suites) — no regressions from the rename. RAM1 `variables` flat (`code 391,912 / padding 1,304`,
+unchanged from the S3.1 routing); capture-serial builds.
+
+## S3.3 — selection acquires nothing (2026-09-25, G2 execution packet)
+
+### Identity and scope
+
+The law is `active roles x bounded window`, not `recorded slots x whole-loop state`. Plain selection
+and browsing must acquire and release **nothing**, and selection latency must not depend on
+working-set availability. S3.3 adds no production behavior: it fixes the observation and proves the
+requirement against the production selection mechanism.
+
+### The observation (no new state)
+
+The lease mutates only through `acquire`/`release`, so a slot whose held role set stays
+`WorkingSetRole::None` and whose generation stays 0 across a browse is a **no-churn witness**. No
+counter is needed. The first cut added acquire/release churn counters to `WorkingSetLeaseSlot`; the
+`sizeof(LoopPlaybackRuntime) == 6,344` pin rejected it, and re-pinning to grow the per-slot runtime
+purely for test observation is the wrong trade for this change. The counters were removed and the
+fixture reads the existing `workingSetRoles()` / `workingSetGeneration()`.
+
+### Oracle fixed before behavior edits
+
+Browsing many recorded slots SHALL leave every slot's role set `None` and generation 0, and SHALL
+leave no slot runtime allocated (selection cannot depend on working-set availability). A positive
+control SHALL show the cold admission boundary setting the roles, and a repeated admission SHALL
+leave the held set unchanged. Without the control, a witness that can never change would pass.
+
+### Controls and coverage
+
+`test_continuous_capture` — `test_s3_3_selection_and_browsing_acquire_no_working_set`: three
+committed slots, three browse passes through `SlotStateMachine::setSelectedSlotIndex` (the mechanism
+the UI gesture ends in), then the role-set/generation/runtime assertions per slot; the control is the
+record arm on one slot plus a repeated admission.
+
+**Boundary, recorded not worked around:** the *manager* entry `TrackManager::setSelectedSlotIndex`
+also calls `StorageManager::prioritizeLoopSlotRestoreForFocus`, which is a fail-closed off-path stub
+in this suite — the same boundary `test_stop_in_flight_refuses_the_move_to_a_new_slot` already
+records. The storage half of a switch is owned by the load/restore suites; the selection half is this
+requirement.
+
+### Completion record (2026-09-25)
+
+Fixture green; `test_continuous_capture` 101/101. Full native suite `2,436 passed / 1 skipped` (clean
+build, 97 suites — 4 suites are in the native `test_ignore` list). RAM1 byte-identical to the S3.1
+routing (`variables 96,160 / code 391,912 / padding 1,304 / locals 34,912`), so this slice costs
+nothing in firmware. No production line changed.

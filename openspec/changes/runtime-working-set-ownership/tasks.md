@@ -1158,9 +1158,21 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       Fixture `test_s3_2_liveness_predicates_are_discriminating_per_owner_kind` in `test_continuous_capture`
       holds each kind alone and asserts the composite refuses only for it, plus two inverse controls (an
       unowned slot allows release; a slot holding only a published pair and an admitted working set allows
-      release). Suite 101/101; full native **2,520 passed / 1 skipped**; RAM1 flat; capture-serial builds.
+      release). Suite 101/101; full native `2,436 passed / 1 skipped` (clean build, 97 suites); RAM1 flat; capture-serial builds.
       Packet and record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3.2.
-- [ ] S3.3 Selection acquires nothing: assert the SELECTED tier and browsing cause no lease churn.
+- [x] S3.3 Selection acquires nothing: assert the SELECTED tier and browsing cause no lease churn.
+      **DONE 2026-09-25 (fixture only; no production line changed).**
+      `test_s3_3_selection_and_browsing_acquire_no_working_set` browses three committed slots three
+      times through `SlotStateMachine::setSelectedSlotIndex` — the mechanism the UI gesture ends in —
+      and asserts every slot still holds `WorkingSetRole::None`, generation 0, and **no slot runtime
+      at all** (selection cannot depend on working-set availability). The positive control is the
+      record arm, which sets `PlaybackWindow | LiveCapture`, plus a repeated admission that must leave
+      the held set unchanged, so a witness that can never move cannot pass. The observation needs **no
+      new state**: the first cut added acquire/release churn counters and the
+      `sizeof(LoopPlaybackRuntime) == 6,344` pin rejected it, so the counters were removed rather than
+      re-pinning the per-slot runtime for test observation. Suite 101/101; full native
+      `2,436 passed / 1 skipped` (clean build); firmware RAM1 byte-identical to S3.1. Packet and record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3.3.
 - [ ] S3 gates: S2b gates plus S2.2/S2.3 current-root budget (no phase-F behavior prerequisite), plus `test_runtime_working_set_ownership`; `test_playback_prewarm` unchanged.
 
 ## S4 — release, recycle and stale-owner protection
