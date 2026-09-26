@@ -8,11 +8,15 @@ void TrackManager::forceMidiLedUpdate(uint32_t) {}
 #endif
 void DisplayManager::emitDisplayCaptureSnapshot(const Track&, uint8_t, uint32_t) {}
 void DisplayManager::refreshViewportAfterOverdubStop(Track&, uint8_t, uint32_t) {}
+// Some suites link the real Track stop-telemetry TU (S4b needs the switch's persistence request), so
+// these stop-path diagnostics must not also be defined here.
+#if !defined(HARNESS_LINKS_REAL_STOP_TELEMETRY)
 void emitOverdubStopDisplaySnapshot(Track&, uint8_t, uint32_t) {}
 void logMemoryAfterOverdubStop(uint32_t, const Loop&) {}
 void logOverdubStopStage(const Loop&, uint32_t, const char*, uint32_t, uint32_t, uint32_t, const char*, const StopPathStorageStats*, const PendingCapturePass*) {}
 const char* commitResultLabel(CommitResult) { return "native"; }
 void requestActiveLoopSlotPersist(Track&, uint8_t) { OFF_PATH(); }
+#endif
 MidiEventVec& EditManager::sessionMidiEvents() { OFF_PATH(); static MidiEventVec empty; return empty; }
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
 void EditManager::foldLiveCaptureIntoNoteEditSession(Track&) { OFF_PATH(); }
@@ -63,16 +67,24 @@ OFF_PATH_EDIT(EditStartNoteState)
 OFF_PATH_EDIT(EditLengthNoteState)
 OFF_PATH_EDIT(EditPitchNoteState)
 #undef OFF_PATH_EDIT
+#if !defined(HARNESS_LINKS_REAL_STOP_TELEMETRY)
 uint8_t resolveTrackIndexForPersistence(const Track& track) {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i)
     if (&trackManager.getTrack(i) == &track) return i;
   return Config::INVALID_TRACK_INDEX;
 }
+#endif
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
 void EditManager::onSelectedSlotChanged(Track&, uint8_t) { OFF_PATH(); }
 void EditManager::beforeSelectedSlotChange(Track&) { OFF_PATH(); }
 #endif
+// The switch path invalidates the display cache; suites that drive the switch keep this observable
+// instead of fail-closed, because the display is not the behavior under test.
+#if defined(HARNESS_OBSERVABLE_SLOT_CHANGE)
+void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) {}
+#else
 void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) { OFF_PATH(); }
+#endif
 // A suite that links the real StorageManager load path (which defines these two) opts out with
 // `HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD`; everything else keeps the fail-closed route.
 #if !defined(HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD) && !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
