@@ -7081,3 +7081,57 @@ live capture) *before* the critical window, rather than assuming the clear left 
 **Status.** Unchanged in scope: the previous run closed **retention plus successor capture** (`RETENTION_PASS`,
 zero concessions, verdict-grade); this rerun is a `RETENTION_FAIL` and closes nothing. The variance is itself
 the finding. A/B preservation, the raw-only companion fallback and playback-output parity remain open.
+
+### The target hypothesis is now a demonstrated fact, and the precondition is enforced (2026-09-26)
+
+**Direct census (read-only `!LIB_OBSERVE`, writes nothing), taken after the refused rerun:**
+
+| target | committed | passes | loop | events |
+|---|---|---|---|---|
+| track 8 slot 5 | yes | 1 | 6144 | 32 |
+| track 8 slot 6 | yes | 1 | 6144 | 32 |
+| **track 8 slot 7 (C)** | **yes** | 1 | **1536** | **2** |
+
+C's take is 1536 ticks with **two events** -- exactly the note 67 on/off that the *previous* run's successor
+recorded. So at the refused run's C gesture, **C was not an empty record target**. The missing carrier
+messages follow from that, and the earlier reading ("the carrier was never engaged") is now explained rather
+than hypothesised: `handleToggleRecordForSlot`'s carrier is guarded by `!hasCommittedPassesInSlot`, so with a
+populated C there was no record start to carry, nothing to retain and nothing to execute. That is **staging**,
+not a behaviour defect -- and it is a behaviour defect only if C is verified empty and the carrier is still
+absent, which is the distinction the owner asked to preserve.
+
+**The prepare phase cannot be trusted to leave a slot empty, which is the sharper finding.** It logged two
+`Track cleared` lines and one `Clear ignored -- selected slot is empty`, yet C still held its previous take.
+The clear line names no slot in the `Track cleared` form, so "Track cleared" neither identifies the target nor
+proves its final state -- exactly the owner's point. The preparation is therefore not evidence, and the state
+must come from the device's own per-slot report.
+
+**Enforced now, before A's finalization window opens: `target_precondition`.** It reads a read-only census, keys
+the state by **(track, slot)** rather than by slot index alone, and requires every named target to be an empty
+record target. On failure the run stops as `SETUP_INCOMPLETE_TARGET_NOT_EMPTY` (exit 3) with the detail naming
+the offending slots, and it **does not clear again in passing**. An unreported target is refused rather than
+assumed empty ("unknown is not the same as empty").
+
+**Classification recorded, per the owner.** An intentionally populated successor is a **supported use case**,
+but it belongs to the **populated-slot/overdub acceptance scenario**: it cannot satisfy this empty-target
+record-start scenario merely by receiving the same gesture. That is why a populated target here is a staging
+failure, not a reason to relax the scenario.
+
+**Host regression:** five tests now prove the refusal without a device -- empty targets pass; a populated
+successor is refused *and named*, with the populated-slot/overdub sentence in the detail; a populated
+predecessor is refused; an unreported target is refused rather than assumed empty; and the check keys on the
+named track, so another track's populated slot of the same index does not fail this one. 15 plan tests green.
+
+### Closeout wording corrected
+
+- **The refused rerun is recorded as: the scenario did not produce C's start; target eligibility at the glance
+  is unresolved at the time and is now resolved as *not eligible* (C held a stale take).** Stopping rather than
+  repeating an uncontrolled run was the right action.
+- On "closed retention plus successor capture": the two review items were in fact addressed and re-evaluated --
+  the release-versus-binding ordering was reconciled (`L4` made explicitly informational, `L5` ordered against
+  the denial, with the bind's admission guard as the availability proof) and the dump comparison was
+  strengthened (full MIDI fields: tick, type, channel, note, velocity; a required `CAPTURE_CONTENT,end`; and
+  declared-versus-parsed group counts), and the **earlier artifacts were re-evaluated under those stricter
+  checks with the verdict unchanged** (`RETENTION_PASS`). That closure rests on that re-evaluation of one run,
+  **not** on a fresh run under the strengthened oracle, since the rerun under it was refused for staging. The
+  owner should read the closure that way; if that is too narrow a basis, it stays open.
