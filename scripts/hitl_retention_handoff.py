@@ -70,28 +70,40 @@ def critical_window_gestures(*, track: int, a: int, b: int, c: int,
                              seed_b_separately: bool = True) -> list[Gesture]:
     """The ordered presses of the critical window, with the chain's semantics encoded in the order.
 
-    The order is the requirement: A's stop must be requested *before* B is switched to, B's overdub must be
-    running *before* B's stop is requested (only an overdub stop is capacity-governed), and C's switch must
-    come *after* B's stop request so that the denial it depends on has already happened.
+    Two corrections from running it against the device:
+
+    * **There is no separate `a_stop_request`.** The capture-switch to B *is* A's stop: pressing the target
+      slot while the track is still capturing routes to `finalizeCaptureAndSelectSlot`, which admits and binds
+      A's stop and commits the switch in one gesture. A separate stop press first is worse than redundant --
+      an admitted stop leaves the track in `PLAYING` (measured: `OVERDUBBING -> OVERDUB_STOPPING -> PLAYING` in
+      21 us), and the next press then takes the playing/filled branch, "Queued playback switch", never the
+      capture-switch that opens the finalization window.
+    * The order below is therefore: A overdubs, the switch to B both stops A and moves the active slot,
+      B overdubs, B's stop is denied, and C's switch is issued while B is still capturing so it is retained.
     """
     return [
         Gesture("select_track", "track", track),
         Gesture("a_overdub_start", "slot_overdub", a),
-        Gesture("a_stop_request", "slot_record", a),          # admits the deferred finalizer
-        Gesture("b_switch", "slot_record", b),                # capture-switch: commits, activates B
+        Gesture("b_switch", "slot_record", b),                # capture-switch: admits A's stop and commits
         Gesture("b_overdub_start", "slot_overdub", b),
         Gesture("b_stop_request", "slot_record", b),          # denied on capacity inside A's window
         Gesture("c_switch_request", "slot_record", c),        # retained, must not commit yet
     ]
 
 
-def _emit(out_port, gesture: Gesture, *, press_ms: int, gap_ms: int) -> None:
+def _emit(out_port, gesture: Gesture, *, press_ms: int, gap_ms: int,
+          multi_press_ms: int = 40, multi_gap_ms: int = 40) -> None:
     if gesture.kind == "track":
         slots.press_track(_Ctx(out_port), gesture.value, press_ms=press_ms)
     elif gesture.kind == "slot_record":
         slots.press_slot_record(_Ctx(out_port), gesture.value, press_ms=press_ms)
     elif gesture.kind == "slot_overdub":
-        slots.press_slot_overdub(_Ctx(out_port), gesture.value, press_ms=press_ms, gap_ms=gap_ms)
+        # Multi-press timing is deliberately much tighter than a normal press: the loop buttons' effective
+        # double-tap window is shorter than a 120 ms press plus a 60 ms gap (measured: the second tap was
+        # classified "First tap or outside window" with a 180 ms release-to-release gap, so every overdub
+        # became two single presses).
+        slots.press_slot_overdub(_Ctx(out_port), gesture.value, press_ms=multi_press_ms,
+                                 gap_ms=multi_gap_ms)
     elif gesture.kind == "transport":
         _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
                           channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
@@ -292,6 +304,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--slot-c", type=int, required=True, choices=range(1, 9))
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--press-ms", type=int, default=120)
+    p.add_argument("--multi-press-ms", type=int, default=40,
+                   help="hold time for a multi-press (overdub); the double-tap window is short")
+    p.add_argument("--multi-gap-ms", type=int, default=40,
+                   help="release-to-press gap inside a multi-press")
     p.add_argument("--gesture-gap-ms", type=int, default=60,
                    help="gap between presses inside the critical window; keep it small, the window is ~1.3 s")
     p.add_argument("--phase-timeout-s", type=float, default=12.0)
@@ -456,13 +472,34 @@ def main(argv: Optional[list[str]] = None) -> int:
                    note=args.seed_note_b, bars=args.seed_bars, press_ms=args.press_ms,
                    phase_timeout_s=args.phase_timeout_s, events=events)
 
-        # --- the critical window: presses ordered by the chain, with no confirmation inside it ---
+        # --- the critical window: presses ordered by the chain, with the minimum confirmations needed ---
+        # A multi-press on a loop button has a *triple* action too, so the firmware holds the second tap in
+        # `PendingDouble` until the triple window expires before firing DOUBLE_PRESS. A press that follows on
+        # the same note inside that wait is read as the third tap (REDO_FOR_SLOT) instead of the stop we
+        # wanted. Each multi-press therefore waits for its own resolution -- "Double press detected", or the
+        # state it causes -- before the next press on that slot. This costs nothing inside the finalization
+        # window because it happens before the switch that opens it.
         for gesture in critical_window_gestures(track=args.track, a=args.slot_a, b=args.slot_b,
                                                c=args.slot_c):
             mark = len(_lines(capture_log))
-            _emit(out_port, gesture, press_ms=args.press_ms, gap_ms=args.gesture_gap_ms)
+            _emit(out_port, gesture, press_ms=args.press_ms, gap_ms=args.gesture_gap_ms,
+                  multi_press_ms=args.multi_press_ms, multi_gap_ms=args.multi_gap_ms)
             events.append({"event": f"gesture:{gesture.step}", "note_line": mark,
                            "host_monotonic_ns": time.monotonic_ns()})
+            if gesture.kind == "slot_overdub":
+                # Wait for the double to resolve (or for the overdub state it causes) before the next press.
+                _wait_for_any(capture_log, after=mark,
+                              markers=("Double press detected", ",ST,Track,PLAYING,OVERDUBBING",
+                                       "Double press", "Overdub"),
+                              timeout_s=1.5)
+            if gesture.step == "b_switch":
+                # Separate the switch from the double press that follows on the SAME button. Measured: with
+                # only the normal gap the firmware merged them and logged "Triple press detected" for Loop 6,
+                # so B got REDO_FOR_SLOT instead of an overdub and nothing downstream happened. The gap must
+                # exceed the triple-tap window (400 ms default).
+                _wait_for_any(capture_log, after=mark,
+                              markers=("Button press: Loop", "scheduling short press"), timeout_s=0.5)
+                time.sleep(0.55)
             time.sleep(max(args.gesture_gap_ms, 1) / 1000.0)
 
         # --- observe the chain in the device telemetry ---

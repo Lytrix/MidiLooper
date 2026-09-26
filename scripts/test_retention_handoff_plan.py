@@ -47,17 +47,22 @@ def loop_note(slot_1based: int) -> int:
 
 class RetentionGesturePlanTests(unittest.TestCase):
     def test_the_chain_order_is_the_requirement(self):
-        """A's stop, then B's switch, then B's overdub, then B's stop, then C's switch -- in that order."""
+        """A overdubs, the switch to B (which is also A's stop), B overdubs, B stops, C is requested."""
         plan = critical_window_gestures(track=5, a=1, b=2, c=3)
         self.assertEqual(
-            ["select_track", "a_overdub_start", "a_stop_request", "b_switch", "b_overdub_start",
-             "b_stop_request", "c_switch_request"],
+            ["select_track", "a_overdub_start", "b_switch", "b_overdub_start", "b_stop_request",
+             "c_switch_request"],
             [g.step for g in plan],
         )
 
-    def test_a_stop_precedes_the_b_switch_that_depends_on_it(self):
+    def test_there_is_no_separate_a_stop_press(self):
+        """The capture-switch performs A's stop. Measured: an admitted stop leaves the track PLAYING, so a
+        separate stop press first makes the next press take the playing/filled branch and the
+        finalization window never opens."""
         steps = [g.step for g in critical_window_gestures(track=5, a=1, b=2, c=3)]
-        self.assertLess(steps.index("a_stop_request"), steps.index("b_switch"))
+        self.assertNotIn("a_stop_request", steps)
+        # ...and the switch that performs it comes after A's overdub has been asked for.
+        self.assertLess(steps.index("a_overdub_start"), steps.index("b_switch"))
 
     def test_b_overdub_precedes_b_stop_because_only_an_overdub_stop_is_capacity_governed(self):
         steps = [g.step for g in critical_window_gestures(track=5, a=1, b=2, c=3)]
@@ -78,17 +83,18 @@ class RetentionGesturePlanTests(unittest.TestCase):
         notes = port.note_sequence()
         # track 5 -> note base + 4; A=1, B=2, C=3 -> their loop notes; overdub is a double press.
         expected = [TRACK_SELECT_NOTE_BASE + 4,
-                    loop_note(1), loop_note(1), loop_note(1),  # A: overdub (x2), stop
-                    loop_note(2), loop_note(2), loop_note(2), loop_note(2),  # B: switch, OD (x2), stop
-                    loop_note(3)]                    # C: switch request
+                    loop_note(1), loop_note(1),                  # A: overdub (x2)
+                    loop_note(2), loop_note(2), loop_note(2),    # B: switch, then overdub (x2)
+                    loop_note(2),                                # B: stop request
+                    loop_note(3)]                                # C: switch request
         self.assertEqual(expected, notes)
 
     def test_the_overdub_gestures_are_double_presses_and_the_rest_are_single(self):
         plan = critical_window_gestures(track=5, a=1, b=2, c=3)
         port = emit_all(plan, gap_ms=0)
         notes = port.note_sequence()
-        # A: one double press (the overdub) plus the single stop request = 3.
-        self.assertEqual(3, notes.count(loop_note(1)), "A gets a double press and a stop request")
+        # A: exactly one double press; the switch performs its stop, so there is no third press.
+        self.assertEqual(2, notes.count(loop_note(1)), "A gets one double press and nothing else")
         # B: the switch, the overdub double press, and the stop request = 4.
         self.assertEqual(4, notes.count(loop_note(2)), "B gets a switch, a double press, and a stop")
         self.assertEqual(1, notes.count(loop_note(3)), "C gets a single switch request")
