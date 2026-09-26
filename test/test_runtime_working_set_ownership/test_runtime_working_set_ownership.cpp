@@ -754,7 +754,7 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
     char state[224];
     snprintf(state, sizeof(state),
              "B did not record the note: recording=%d overdubbing=%d captureActive=%d size=%zu tick=%u "
-             "loopLen=%u active=%u beforeTick=%u beforeLoopLen=%u onTick=%u",
+             "loopLen=%u active=%u beforeTick=%u beforeLoopLen=%u onTick=%u phase=%u hasOverdubSession=%d",
              TrackCaptureStopTestAccess::isRecording(track) ? 1 : 0,
              TrackCaptureStopTestAccess::isOverdubbing(track) ? 1 : 0,
              TrackCaptureStopTestAccess::captureActive(track) ? 1 : 0,
@@ -762,7 +762,9 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
              (unsigned)clockManager.getCurrentTick(),
              (unsigned)track.getActiveLoop().loopLengthTicks,
              TrackCaptureStopTestAccess::activeLoopIndex(track),
-             (unsigned)tickBeforeInput, (unsigned)loopLenBeforeInput, (unsigned)onTick);
+             (unsigned)tickBeforeInput, (unsigned)loopLenBeforeInput, (unsigned)onTick,
+             static_cast<unsigned>(track.getActiveLoop().capture.phase),
+             track.getActiveLoop().hasOverdubSession() ? 1 : 0);
     if (getenv("S4B_ACCEPTANCE") == nullptr) {
       return;
     }
