@@ -25,9 +25,19 @@ void EditManager::commitAllPendingNoteEditActions(Track&) { OFF_PATH(); }
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
 void Track::stopPlaying() { OFF_PATH(); }
 void Track::startPlaying(uint32_t, bool) { OFF_PATH(); }
+void Track::togglePlayStop() { OFF_PATH(); }
+#endif
+// The record-stop commit route is a **separate** boundary from the play/stop transport neighbours above: one
+// fixture has to drive the production transport-stop route and assert that the resulting take *commits* with
+// content, and that route lives in `TrackCaptureStopCommit.cpp` + `TrackManagerTransportTick.cpp`. Those TUs
+// define `Track::stopRecording`, `Track::stopRecordingToStopped`, `Track::commitCaptureForStop` and
+// `TrackManager::handleTransportStop`, so the four stubs move behind this macro. Default stays OFF_PATH: only
+// a TU that defines the macro (and includes the real TUs) links them, and no fixture in the suite reached any
+// of the four before this. `stopPlaying`/`startPlaying`/`togglePlayStop` deliberately stay stubbed -- the
+// recording branch is the one under test, and the play branch must remain fail-closed.
+#if !defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
 void Track::stopRecording(uint32_t) { OFF_PATH(); }
 void Track::stopRecordingToStopped(uint32_t) { OFF_PATH(); }
-void Track::togglePlayStop() { OFF_PATH(); }
 #endif
 // Track::invalidateCaches and its committed-scratch neighbour are production code here
 // (TrackMidiEventRouting.cpp / CommittedMidiScratch.cpp are linked by the test TU):
@@ -58,17 +68,30 @@ void EditManager::revertNoteEditSessionForLoopClear(Track&) {}
 void EditManager::revertNoteEditSessionForLoopClear(Track&) { OFF_PATH(); }
 #endif
 const MidiEventVec& EditManager::editMidiEvents(const Track&) const { OFF_PATH(); static MidiEventVec empty; return empty; }
+#if !defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
 CommitResult Track::commitCaptureForStop(CommitReason, uint32_t, uint32_t, uint8_t) { OFF_PATH(); return {}; }
+#endif
 // A physical output boundary, not an unrelated domain route: silencing is reachable from both stop
 // destinations, so failing closed here left the whole `Stopped`-destination deferred drain without any
 // native coverage (see B03). Counting it instead keeps it observable -- a fixture can assert the track
 // was silenced -- without pretending the silence itself is under test. Reset in setUp.
 void Track::silenceTrackMidiOutput() { ++g_nativeSilenceTrackCalls; }
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+// `handleTransportStop` reaches these two, so a suite that drives that route makes them observable rather
+// than fail-closed. Neither weakens the fixture that drives it: `clearQueuedPlaybackStart` is a reset of a
+// queued start the transport-stop fixture never has, and `setMasterLoopLength` records the *track manager's*
+// adopted length while that fixture asserts the loop's own `loopLengthTicks` (set by the commit itself).
+// `queuePlaybackStartAtGrid`/`commitQueuedPlaybackStart` are NOT reachable from the route and stay
+// fail-closed, as do the play/stop neighbours above.
+#if defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
+void Track::clearQueuedPlaybackStart() {}
+void TrackManager::setMasterLoopLength(uint32_t) {}
+#else
 void Track::clearQueuedPlaybackStart() { OFF_PATH(); }
+void TrackManager::setMasterLoopLength(uint32_t) { OFF_PATH(); }
+#endif
 void Track::queuePlaybackStartAtGrid(int32_t, uint32_t) { OFF_PATH(); }
 void Track::commitQueuedPlaybackStart(uint32_t) { OFF_PATH(); }
-void TrackManager::setMasterLoopLength(uint32_t) { OFF_PATH(); }
 // The record start ends by reclaiming disabled-pass storage. That reclaim is not the handoff under
 // test, so suites that drive a start keep it observable.
 #if defined(HARNESS_OBSERVABLE_START_RECLAIM)
@@ -195,5 +218,39 @@ void ClockManager::onMidiStop() { OFF_PATH(); }
 void ClockManager::onMidiClockPulse() { OFF_PATH(); }
 void ClockManager::requestTransitionTo(ClockSource) { OFF_PATH(); }
 uint32_t ClockManager::setLastMidiClockTime(uint32_t) { OFF_PATH(); return 0; }
+#if !defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
 void TrackManager::handleTransportStop() { OFF_PATH(); }
+#endif
 MidiFaderActions::MidiFaderActions() {}
+
+// ---- the record-stop commit route's own boundaries (HARNESS_LINKS_REAL_TRANSPORT_STOP) ----------------
+// Linking `TrackCaptureStopCommit.cpp` + `TrackManagerTransportTick.cpp` brings the real record-stop commit
+// chain, and with it exactly these neighbours. They are the same classes of boundary the rest of this file
+// already handles, so they get the same treatment rather than new semantics:
+//  * display refresh after a record stop -- an empty body, mirroring `refreshViewportAfterRecordStop`'s
+//    sibling `refreshViewportAfterOverdubStop` above;
+//  * persistence queries -- false, so `handleTransportStop` never queues a workspace save, and the write
+//    requests below fail closed if that ever changes;
+//  * `Track::sendAllNotesOff` -- a physical output boundary, so it is observable for a suite that drives the
+//    stop route (no-op) and fail-closed otherwise.
+void DisplayManager::refreshViewportAfterRecordStop(Track&, uint8_t, uint32_t) {}
+#if defined(HARNESS_OBSERVABLE_ALL_NOTES_OFF)
+void Track::sendAllNotesOff() {}
+#else
+void Track::sendAllNotesOff() { OFF_PATH(); }
+#endif
+#if defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
+// `handleTransportStop` calls this only when the save query below says yes; it is defined so the route links,
+// and it fails closed if the route is ever entered.
+void StorageManager::admitGlobalMeta() { OFF_PATH(); }
+// The real `StorageManager::shouldQueueCurrentWorkspaceSave()` is already defined in the linked set and
+// references these; they answer "nothing is dirty, nothing needs a full write, nothing to auto-save", which
+// is the fail-closed answer for a suite that is not testing persistence.
+namespace StorageManagerInternal {
+CurrentSetStorage::AnchorFields currentSetAnchorFields;
+bool forceCurrentSetFullLoopWrite = false;
+bool anyAllocatedLoopEditStateDirty() { return false; }
+bool anyCurrentSetLoopSlotDirty() { return false; }
+}  // namespace StorageManagerInternal
+bool CurrentSetStorage::shouldAutoSaveBeforeLoadIntoCurrent(const AnchorFields&) { return false; }
+#endif
