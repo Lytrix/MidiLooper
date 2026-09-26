@@ -152,29 +152,31 @@ def _seed_slot(out_port, capture_log: Path, *, track: int, slot_number: int, cha
     slots.press_track(_Ctx(out_port), track, press_ms=press_ms)
     time.sleep(0.5)
 
-    # Ensure the transport is RUNNING before the slot press. The firmware's documented per-slot flow is
-    # "empty + playing: queue next-wrap record, second press = immediate punch-in"; on a stopped transport the
-    # press instead arms and waits, which is how the first version stalled here after seeding A.
-    transport_before = len(_lines(capture_log))
+    # The track must NOT be playing when the slot is pressed. Measured on device: with the track playing,
+    # `handleToggleRecordForSlot` takes its `isPlaying() && slotHasData` branch and logs "Queued playback
+    # switch" -- and `slotHasData` is SD-aware, so a slot with no committed content but a retained SD payload
+    # (every slot on this device: payload_inventory=64) counts as filled. The record path is reached only when
+    # the track is not playing, where the press arms and the transport start then begins the capture.
+    stop_before = len(_lines(capture_log))
     _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
                       channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
-    running = _wait_for_any(capture_log, after=transport_before,
-                            markers=("Transport started",), timeout_s=3.0)
-    events.append({"event": f"seed_{slot_number}_transport", "running": running})
+    _wait_for_any(capture_log, after=stop_before,
+                  markers=("Transport stopped", ",ST,Track,PLAYING,STOPPED"), timeout_s=3.0)
+    events.append({"event": f"seed_{slot_number}_stopped_first", "confirmed": True})
 
     before = len(_lines(capture_log))
     slots.press_slot_record(_Ctx(out_port), slot_number, press_ms=press_ms)
     events.append({"event": f"seed_{slot_number}_selected"})
+    _wait_for_any(capture_log, after=before,
+                  markers=(",ST,Track,STOPPED,ARMED", ",ST,Track,STOPPED,RECORDING",
+                           "Start Recording"),
+                  timeout_s=3.0)
+    # The arm needs a running transport to begin the capture.
+    _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
+                      channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
     recording = _wait_for_any(capture_log, after=before,
                               markers=("Recording started", ",RECA,", ",ST,Track,ARMED,RECORDING"),
-                              timeout_s=3.0)
-    if not recording:
-        # Second press: the queued record becomes an immediate punch-in (documented short-press flow).
-        slots.press_slot_record(_Ctx(out_port), slot_number, press_ms=press_ms)
-        events.append({"event": f"seed_{slot_number}_punch_in"})
-        recording = _wait_for_any(capture_log, after=before,
-                                  markers=("Recording started", ",RECA,"),
-                                  timeout_s=phase_timeout_s)
+                              timeout_s=phase_timeout_s)
     if not recording:
         raise RuntimeError(f"slot {slot_number} never started recording")
     events.append({"event": f"seed_{slot_number}_recording", "confirmed": True})
