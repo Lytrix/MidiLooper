@@ -1283,7 +1283,22 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       are reused at stable addresses, so a late cleanup on the reused runtime object can null a successor's
       marker. Carry `(slot, runtime generation)` and check it at set **and** clear; bump the slot runtime
       generation on every release.
-- [ ] S4.3 Reuse: activating C after A releases uses A's capacity with no net pool growth.
+- [x] S4.3 Reuse: activating C after A releases uses A's capacity with no net pool growth.
+      **DONE 2026-09-25 (native; the device byte delta remains a device measurement).** Reuse here is
+      **capacity retained at a stable address**, not a free/realloc cycle: `releaseSlot` retires the
+      slot's working set while `runtimeBySlot_` keeps the `LoopPlaybackRuntime`, so the next activation
+      re-admits into the same object and the generation/role state advances instead of accumulating.
+      Fixture `test_reactivating_a_released_slot_reuses_its_capacity` runs four release/re-activate
+      cycles and asserts, against a baseline activation control: lease unheld after the sweep, generation
+      advanced, **same runtime address** on re-admission, same role set, and the same
+      `LoopEventStore::freeChunkCount()`. **Red-proven** (with the sweep disabled it fails on "the sweep
+      must release the slot's working set"). The entry already has a production caller —
+      `TrackManager::startRecordingOnTrack` → `releaseBackgroundPlaybackMergedMidiEventsMemory` sweeps
+      every other track — and the memory-pressure path drives it too. **Recorded limit:** the native build
+      has no PSRAM, so `ExternalPoolAccounting` cannot report external bytes; the fixture observes reuse
+      structurally and the byte-level device claim stays open with the S2.2/S2.3 budget items. **Still
+      open:** an explicit sweep on a same-track slot switch. Full native `2,445 passed / 1 skipped`; RAM1
+      byte-identical. Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4.3.
 - [ ] S4.4 Declared cap policy when activation is requested beyond the envelope (refuse vs queue),
       reported rather than resolved by allocating.
 - [ ] S4.5 **P3 acceptance (depends on remaining S4f; not a P2 release gate). Per-interval finalization states (DEC-078 acceptance contract)**: preserve the DEC-067 capacity model; native fixture for A-stops-and-finalizes / B-records /
