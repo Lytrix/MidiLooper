@@ -259,14 +259,28 @@ class RetentionProbeChainTests(unittest.TestCase):
         self.assertEqual([], result.concessions)
         self.assertEqual("ok", by_name(result)["L5_same_b_stop_bound"].status)
 
-    def test_binding_before_the_release_contradicts_the_capacity_model(self):
+    def test_a_bind_before_the_denial_fails_and_one_between_denial_and_release_passes(self):
+        """The bind is ordered against the DENIAL, not against the release *record*.
+
+        Measured on device: `canonical_release` is the first maintenance turn at which the resources were
+        observed free, and it landed 25 ms AFTER B had already bound -- so requiring a bind to follow the
+        release record inverts the timing the fix documents.
+        """
+        from test_retention_probe import OPEN_US, RELEASE_US, chain_log
+        # A bind after the denial but before the release record is legitimate.
         text = chain_log().replace(f"#CAP,{RELEASE_US + 5_000},DIAG,reentry,bound,17000,7,1,0",
-                                   f"#CAP,{OPEN_US + 50_000},DIAG,reentry,bound,17000,7,1,0")
+                                   f"#CAP,{OPEN_US + 30_000},DIAG,reentry,bound,17000,7,1,0")
         result = run(text, content_dump=content_dump(), content_review=REVIEW_OK,
                      expect_successor_notes=(67,))
-        self.assertEqual("RETENTION_FAIL", result.verdict)
-        self.assertIn("before* capacity was released",
-                      by_name(result)["L5_same_b_stop_bound"].detail)
+        self.assertEqual("ok", by_name(result)["L5_same_b_stop_bound"].status,
+                         by_name(result)["L5_same_b_stop_bound"].detail)
+        # A bind at or before the denial is still a contradiction.
+        text = chain_log().replace(f"#CAP,{RELEASE_US + 5_000},DIAG,reentry,bound,17000,7,1,0",
+                                   f"#CAP,{OPEN_US + 1_000},DIAG,reentry,bound,17000,7,1,0")
+        result = run(text, content_dump=content_dump(), content_review=REVIEW_OK,
+                     expect_successor_notes=(67,))
+        self.assertEqual("fail", by_name(result)["L5_same_b_stop_bound"].status)
+        self.assertIn("without a denied prerequisite", by_name(result)["L5_same_b_stop_bound"].detail)
 
     def test_a_slot_only_bind_record_is_a_weaker_link(self):
         text = "\n".join(l for l in chain_log().splitlines() if "DIAG,reentry,bound" not in l) + "\n"
