@@ -7135,3 +7135,48 @@ named track, so another track's populated slot of the same index does not fail t
   checks with the verdict unchanged** (`RETENTION_PASS`). That closure rests on that re-evaluation of one run,
   **not** on a fresh run under the strengthened oracle, since the rerun under it was refused for staging. The
   owner should read the closure that way; if that is too narrow a basis, it stays open.
+
+### Rerun with verified-empty staging: the chain happened, the identity-grade tier was absent (2026-09-26)
+
+Authorized rerun, staged properly this time: prepare cleared the targets and a **fresh read-only census
+confirmed all three empty** (`track 8 slots 5/6/7 committed: {5: False, 6: False, 7: False}`) before the run,
+which then passed its `target_precondition`. The chain then happened, evidenced by the timely human rows and the
+driver's live confirmations:
+
+```
+[58.476] Reentry window open slot=4                            L1  A's finalizer outstanding
+[58.568] Loop 6: Switch gesture from slot 5                        capture-switch
+[58.977] Overdub stop refused: stop_job_pending phase=7 ...     L2  B's stop DENIED on capacity
+[59.222] Loop 7: Switch gesture from slot 6                        C's switch/start requested
+[59.835] Reentry window open slot=5                            L5  B's stop bound
+[59.846] Reentry released slot=4 generation=40
+[59.847] Reentry released slot=5 generation=0
+[62.118] Recording started @ tick 2304                         L6  C's capture started
+```
+
+and the driver reported `successor_stop_denied`, `successor_stop_bound` and `successor_started` all confirmed,
+with the note injected and the dump for slot 6 at `length=1536`.
+
+**But this run's log contains none of the deferred `#CAP` DIAG rows**: zero `DIAG,reentry_window_open`, zero
+`DIAG,canonical_release`, and no `DIAG,reentry,deny` for L2. The oracle therefore returns
+**`INSUFFICIENT_EVIDENCE`**, which is the honest verdict: the chain structurally occurred, but the
+identity-grade records that would name the denied slot/interval and the retiring owner are missing.
+
+**Three checks now prefer the timely human row and say when they used it** -- L1 (the window, whose device
+timestamp is parsed from the logger's `[58.476]` prefix), L4 (the release, including the owner identity parsed
+from `generation=`), and L2, which stays **insufficient** because the human denial row (`Overdub stop refused:
+<reason>`) carries **no slot and no interval** -- only the `#CAP` row does. The checks never substitute the human
+row silently; the detail names the fallback.
+
+**Finding to carry forward: the `#CAP` DIAG tier is not reliably present.** The firmware documents that these
+rows "queue behind the deferred stop's flood and arrive seconds late", but measured here they were **absent
+from a completed run's log entirely**, while `capture_integrity` reported no ring eviction and the tail was
+complete. Whether the tier is dropped, or flushed after the session closes, needs its own investigation -- and
+it matters because the *identity-grade* half of this acceptance (L2's denied slot/interval, L4's retiring owner,
+L1's loop length) lives only there. Until that is understood, an acceptance run may legitimately end at
+`INSUFFICIENT_EVIDENCE` even when the behaviour is correct, and that is what happened here.
+
+**Status.** This rerun: `INSUFFICIENT_EVIDENCE` -- chain evidenced, identity-grade records absent. It closes
+nothing and refutes nothing. The earlier run (17:29), whose log does carry the full `#CAP` tier, remains the
+one that reaches `RETENTION_PASS` under the strengthened checks. A/B preservation, the raw-only companion
+fallback and playback-output parity remain open.

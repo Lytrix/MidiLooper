@@ -142,6 +142,28 @@ class Analysis:
                 "INSUFFICIENT_EVIDENCE": 4}[self.verdict]
 
 
+# The logger prefixes human rows with the DEVICE time in seconds -- `[58.476]` -- which is the same clock the
+# `#CAP` rows carry in microseconds. The human rows are the timely edge (the firmware documents that `#CAP`
+# rows queue behind the deferred stop's flood and arrive late, and sometimes do not arrive at all), so a check
+# that needs an edge prefers the `#CAP` row and falls back to the human row's own timestamp rather than
+# reporting absence.
+HUMAN_TS_RE = re.compile(r"^\[(\d+(?:\.\d+)?)\]")
+
+
+def human_us(line: str) -> Optional[int]:
+    m = HUMAN_TS_RE.match(line.strip())
+    return None if m is None else int(round(float(m.group(1)) * 1_000_000))
+
+
+def human_entry(lines: list[str], marker: str) -> Optional[Entry]:
+    for line in lines:
+        if marker in line:
+            us = human_us(line)
+            if us is not None:
+                return Entry(us, f"HUMAN {marker}")
+    return None
+
+
 def parse_entries(text: str) -> list[Entry]:
     entries: list[Entry] = []
     for line in text.splitlines():
@@ -390,30 +412,49 @@ def analyse(
 
     window_open = next((e for e in entries
                         if (m := WINDOW_OPEN_RE.match(e.body)) and int(m.group(1)) == slot_a), None)
+    window_open_fallback = False
+    if window_open is None:
+        window_open = human_entry(lines, f"Reentry window open slot={slot_a}")
+        window_open_fallback = window_open is not None
     if window_open is None:
         add("L1_finalizer_outstanding", FAIL,
-            f"no DIAG,reentry_window_open,{slot_a}: A's deferred stop never froze its interval, so the "
+            f"neither a DIAG,reentry_window_open,{slot_a} row nor the timely human 'Reentry window open "
+            f"slot={slot_a}' row is present: A's deferred stop never froze its interval, so the "
             "capacity-denied state cannot be staged", "setup", "L1")
         return Analysis("SETUP_INCOMPLETE", checks, None, evidence, limitations, concessions)
-    evidence["window_open"].append(f"{window_open.us}: {window_open.body}")
+    evidence["window_open"].append(
+        f"{window_open.us}: {window_open.body}"
+        + ("  (from the timely human row; the deferred #CAP row is absent)" if window_open_fallback else ""))
     add("L1_finalizer_outstanding", OK, f"{window_open.body} at {window_open.us} us", "retention", "L1")
 
     m_open = WINDOW_OPEN_RE.match(window_open.body)
-    release = _first_after(entries, window_open.us,
+    # The human window row names the slot but not the loop length (the `#CAP` row does). Zero means "not
+    # carried by the row that supplied this edge", and it is reported as such rather than pretended.
+    window_open_loop_len = int(m_open.group(3)) if m_open is not None else 0
+    release = _first_after(entries, window_open.us - 1,
                            lambda e: (mm := CANONICAL_RELEASE_RE.match(e.body)) is not None
                            and int(mm.group(1)) == slot_a)
+    if release is None:
+        release = human_entry(lines, f"Reentry released slot={slot_a}")
     if release is None:
         add("L4_capacity_released", FAIL,
             f"no DIAG,canonical_release,{slot_a} after A's window opened: A never retired", "setup", "L4")
         return Analysis("SETUP_INCOMPLETE", checks, None, evidence, limitations, concessions)
     evidence["canonical_release"].append(f"{release.us}: {release.body}")
     m_rel = CANONICAL_RELEASE_RE.match(release.body)
+    if m_rel is None:
+        # `Reentry released slot=4 generation=40` -- the timely human form carries the same identity.
+        m_h = re.search(r"Reentry released slot=(\d+) generation=(\d+)", release.body)
+        if m_h is not None:
+            add("L4_release_names_the_retiring_owner", OK,
+                f"slot {m_h.group(1)}, generation {m_h.group(2)} (from the timely human row; the deferred "
+                "#CAP row is absent)", "retention", "L4")
     if m_rel is not None:
         add("L4_release_names_the_retiring_owner", OK,
             f"slot {m_rel.group(1)}, generation {m_rel.group(2)}, loop {m_rel.group(3)} ticks, "
             f"{m_rel.group(4)} chunks free", "retention", "L4")
     window_us = release.us - window_open.us
-    episode = Episode(slot_a, window_open.us, int(m_open.group(3)), release.us, window_us)
+    episode = Episode(slot_a, window_open.us, window_open_loop_len, release.us, window_us)
     wide = window_us >= min_window_us
     add("capacity_denied_window_wide_enough", OK if wide else FAIL,
         f"{window_us} us ({window_us/1000:.1f} ms) between window_open and canonical_release; floor "
@@ -437,6 +478,7 @@ def analyse(
     for e in denials:
         evidence["denial"].append(f"{e.us}: {e.body}{'' if in_window(e.us) else '  (outside the window)'}")
 
+    human_denied = False
     if staged_denials:
         denial = staged_denials[0]
         interval_b = int(REENTRY_RE.match(denial.body).group(3))
@@ -454,16 +496,29 @@ def analyse(
     else:
         denial = None
         interval_b = None
-        add("L2_denial_identified_for_b", FAIL,
-            f"no denial for slot {slot_b} inside A's finalization window ({len(denials)} denial(s) "
-            "elsewhere): the capacity-denied state was never entered", "retention", "L2")
+        # The denial's own timely human row exists (`Overdub stop refused: <reason>`), but it carries no slot or
+        # interval: only `DIAG,reentry,deny,<tick>,<interval>,<slot>,<depth>` does, and `#CAP` rows are deferred
+        # and were absent entirely in the measured run. So the denial HAPPENED without being attributable --
+        # insufficient evidence, not a failure and not a pass.
+        human_denial = human_entry(lines, "Overdub stop refused")
+        if human_denial is not None:
+            human_denied = True
+            add("L2_denial_identified_for_b", UNKNOWN,
+                f"the denial happened ({human_denial.body} at {human_denial.us} us) but carries no slot or "
+                "interval, and the identity-grade DIAG,reentry,deny row is absent from this log: which "
+                "slot/interval was denied is not established", "evidence", "L2")
+        else:
+            human_denied = False
+            add("L2_denial_identified_for_b", FAIL,
+                f"no denial for slot {slot_b} inside A's finalization window ({len(denials)} denial(s) "
+                "elsewhere): the capacity-denied state was never entered", "retention", "L2")
 
     if denial is None:
         # Distinguish "never entered" from "entered but unidentifiable" -- and never let either of those
         # mask a failed setup, which would report a run that is not evidence as a behavioural result.
         if any(c.status == FAIL and c.kind == "setup" for c in checks):
             verdict = "SETUP_INCOMPLETE"
-        elif stage_lines:
+        elif stage_lines or human_denied:
             verdict = "INSUFFICIENT_EVIDENCE"
         else:
             verdict = "RETENTION_NOT_EXERCISED"
