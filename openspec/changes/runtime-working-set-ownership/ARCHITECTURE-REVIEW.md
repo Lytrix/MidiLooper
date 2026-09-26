@@ -5277,3 +5277,62 @@ a change to the per-track cardinality, and both are architecture decisions rathe
 Recorded as the task's open remainder instead of being implied resolved.
 
 Full native `2,446 passed / 1 skipped`; capture-serial builds with RAM1 byte-identical.
+
+## S4b.1 — role transfer: retracting the S4.4 conclusion, and the real blocker (2026-09-25)
+
+### Correction to S4.4
+
+S4.4 concluded that "the declared envelope is stricter than the resource model" because enforcing a
+one-live-capture-per-track cap broke fixtures that arm a second slot. **That conclusion was wrong.**
+The check counted `PlaybackWindow | LiveCapture` for a slot that was merely *prepared*; a slot holding an
+**outgoing finalizer** was therefore labelled `LiveCapture` and counted against a live-capture cap. The
+mislabel was in the check. `LiveCapture` on two prepared slots does not prove the one-live-capture
+contract is wrong — the outgoing role is `DeferredFinalization` (per admitted interval, DEC-078), not a
+second live capture. The required behavior is an **outgoing finalizer plus an incoming live capture**,
+which the contract wants; two live captures on one track were never required. The cap policy remains
+**reported, not enforced** (S4.4), but its justification is now the mislabeled census, not a claim that
+the envelope is unsatisfiable.
+
+### The acceptance requirement, executable
+
+`test_switching_starts_the_new_take_while_the_previous_take_still_finalizes` in
+`test_runtime_working_set_ownership` drives the exact gesture: A overdubbing on slot 0 through
+`midiButtonActions.handleToggleRecord` + the real MIDI input route → A's stop admitted and **deliberately
+not advanced** (finalizer paused) → switch to B → B must start and record MIDI while A still finalizes.
+It asserts through `TrackManager::finalizeCaptureAndSelectSlot` (the production switch) and asserts B's
+recorded events, not a prewarm result.
+
+**Result: S4b.1's requirement is NOT met, and the reason is a carried prerequisite.**
+
+The switch path returns early while `hasAcceptedUnexecutedInteraction()` or `hasStopInFlight()`, so the
+active slot stays on A and B cannot start. That guard is deliberate and documented: S4f.5 requires that
+the active slot not move under an **unadmitted** stop
+(`test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`), and `IMPLEMENTATION_CONTRACT.md`
+§1 carries the guard until **S4f.3** supplies the switch's accepted-interaction carrier and commits the
+switch after the stop binds.
+
+Removing the guard was tried, verified to make the acceptance pass, and then **reverted**: it fails
+`test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`, i.e. it lands S4b by breaking a
+requirement S4b depends on. S4b.1 therefore needs S4f.3 first.
+
+The fixture carries both modes:
+
+- default gate — asserts the **current** characterization (switch holds the active slot; B has not
+  started), so the suite stays green and the prerequisite is a recorded fact;
+- `S4B_ACCEPTANCE=1 pio test -e native -f test_runtime_working_set_ownership` — runs the requirement
+  itself, currently **red** with the exact reason. The branch is condition-guarded, so the moment S4f.3
+  lands the acceptance assertions run automatically.
+
+### Still to do for S4b, in order
+
+1. **S4f.3** — the switch's accepted-interaction carrier (the prerequisite above).
+2. Then the remaining S4b cases, none of which is proven by this slice: the **cross-track** switch;
+   **repeated switches B → C while A still finalizes**, which needs the explicit bounded overlap policy
+   (`Omax = NUM_TRACKS` inbound holders; "an outbound live/finalizing role is already counted in C/D and
+   is never released to satisfy O") rather than an assumed-unbounded accumulation.
+3. The finalizer-pause lever is currently "admit the stop and do not call the grain drive". A
+   discriminating fixture that pauses a *specific* finalization phase would make the assertion tighter.
+
+Full native `2,447 passed / 1 skipped`; capture-serial builds with RAM1 byte-identical. No production
+behavior changed in this slice (the switch-guard edit was reverted); the deliverable is the executable
+requirement plus the corrected S4.4 attribution.
