@@ -1301,6 +1301,22 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       byte-identical. Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4.3.
 - [ ] S4.4 Declared cap policy when activation is requested beyond the envelope (refuse vs queue),
       reported rather than resolved by allocating.
+      **PARTIAL 2026-09-25 — the breach is reported; refuse-vs-queue is deliberately NOT settled.**
+      `Track::reportEnvelopeBreachIfAny(slot, role)` reads the per-slot lease census (no storage) and, when
+      a class is already held at its declared cap, reports `#MEM_DENIED,reason=cap_reached,class=N` via the
+      new `MemoryMonitor::reportDeclaredCapDenied` — a reason deliberately distinct from an allocation
+      failure (`prewarm_failed`), so "declared cardinality exceeded" is never read as "the pool ran out".
+      It does **not** refuse, and that is the finding: the first cut *enforced* the declared caps at the
+      activation entry and broke the suite, because **the declared envelope is stricter than the resource
+      model** (the implementation supports per-slot capture roles; 85 continuous-capture fixtures arm a
+      second slot). Enforcing the declaration would reject supported flows, so the enforcement was reverted
+      and only the observation kept. The enforcing caps remain the lease's own (`WorkingSetLeaseTable`,
+      covered by `test_working_set_lease`), which refuse at the point of custody. Fixture
+      `test_a_declared_envelope_breach_is_reported_and_does_not_block_activation`. **Open:** nothing is
+      refused, so the refuse-vs-queue decision is unanswered and needs either a cap the resource model also
+      enforces or an architecture decision on per-track cardinality; the emitted report line is a device
+      observation, not host-assertable. Full native `2,446 passed / 1 skipped`; RAM1 byte-identical.
+      Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4.4.
 - [ ] S4.5 **P3 acceptance (depends on remaining S4f; not a P2 release gate). Per-interval finalization states (DEC-078 acceptance contract)**: preserve the DEC-067 capacity model; native fixture for A-stops-and-finalizes / B-records /
       A-releases / B-stops-and-takes-the-lease, and for a stop arriving while A still finalizes — accepted with no
       partial stop, B still recording/overdubbing, and the accepted stop executing once the role
