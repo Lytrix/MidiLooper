@@ -349,6 +349,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help="skip the target clear. By default the three targets are cleared before seeding, "
                         "which is standing-authorized for the development set and is what makes them genuine "
                         "record targets (every slot here retains an SD payload).")
+    p.add_argument("--overdub-notes", type=int, default=24,
+                   help="notes injected into A's OVERDUB. An empty overdub finalizes in ~0.5 s, leaving no "
+                        "window to stage B's denied stop in.")
     p.add_argument("--seed-notes", type=int, default=16,
                    help="notes per seeded take. Density, not loop length, is what widens the finalization "
                         "window (measured: 1.48/1.77/1.72 s at 4/8/16 bars).")
@@ -531,12 +534,23 @@ def main(argv: Optional[list[str]] = None) -> int:
             events.append({"event": f"gesture:{gesture.step}", "note_line": mark,
                            "host_monotonic_ns": time.monotonic_ns()})
             if gesture.kind == "record":
-                # The record button acts on the active slot, so wait for the state it causes before the next
-                # press: without this the following press can act on a track that is not yet overdubbing.
-                _wait_for_any(capture_log, after=mark,
-                              markers=("Overdubbing started", "Stop Overdub", ",ST,Track,PLAYING,OVERDUBBING",
-                                       "Overdub stop refused", "Overdub session opened"),
-                              timeout_s=1.0)
+                # Barely pause: just enough for the press to be processed. The following gesture is on a
+                # DIFFERENT button (B's stop uses B's loop button), so there is no tap-merge risk, and waiting
+                # for the overdub state cost 0.77 s of the window -- which was the difference between B's stop
+                # being denied and being admitted.
+                time.sleep(0.12)
+                if gesture.step == "a_overdub_start":
+                    # Give A's overdub something to capture. Measured: with an empty overdub the device logs
+                    # "Overdub session opened: events=0" and the finalizer retires in ~0.5 s, so there is no
+                    # window to stage B's denied stop in. Content is what makes the finalizer do work -- and
+                    # it is also what the successor take is supposed to inherit.
+                    for k in range(args.overdub_notes):
+                        pitch = args.seed_note_a + (k % 12)
+                        out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=t0))
+                        time.sleep(0.02)
+                        out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=t0))
+                        time.sleep(0.02)
+                    events.append({"event": "a_overdub_notes_injected", "notes": args.overdub_notes})
             time.sleep(max(args.gesture_gap_ms, 1) / 1000.0)
 
         # --- observe the chain in the device telemetry ---
