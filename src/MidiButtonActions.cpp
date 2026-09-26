@@ -468,9 +468,6 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     } else if (track.isOverdubbing()) {
         logger.info("Loop %d: Stop Overdub", slotIndex + 1);
         track.stopOverdubbing();
-    } else if (track.hasPendingDeferredOverdubStop()) {
-        logger.info("Loop %d: Overdub finalization pending", slotIndex + 1);
-        return;
     } else if (track.isPlaying()) {
         // Empty slot while playing => existing short-press record/queue flow.
         if (slotCanArmForRecord) {
