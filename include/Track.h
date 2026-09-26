@@ -409,6 +409,20 @@ public:
   /// blocking a *different* target: after a switch handoff the successor on another slot must be able
   /// to start while the predecessor finalizes.
   bool hasStopInFlightForSlot(uint8_t slot) const;
+  /// S4.1: the slot a **capture work item** must be keyed to -- the interval's own slot, never a
+  /// stand-in for it. The live capture's slot *is* the active slot (only it may RECORD/OVERDUB), but a
+  /// stop in flight is pinned to ITS interval's slot across an active-slot change (S4f.3), so the active
+  /// index must not be substituted for it. Returns false when nothing is capturing and no stop is in
+  /// flight, so a caller refuses rather than guesses. Kept here, on the owner, so the rule has one
+  /// definition and one fixture instead of being re-derived per consumer.
+  bool captureWorkSlot(uint8_t& slotOut) const;
+  /// S4.1: the slot an **in-flight stop** is pinned to, by identity rather than by the active index.
+  /// A deferred stop keeps its interval's slot across an active-slot change (S4f.3), so a consumer
+  /// that means "the interval being finalized" must read this and must **not** substitute
+  /// `getActiveLoopIndex()`: that would key the interval's work to whichever slot happens to be active
+  /// when the work runs. False when no stop is in flight, which is when the active index is the
+  /// authority (the live capture's slot, since only the active slot may RECORD/OVERDUB).
+  bool pinnedStopSlot(uint8_t& slotOut) const;
   /// S4f.8 evidence: waits counted on the accepted stop (0 when none is latched).
   uint32_t acceptedStopWaitCount() const;
   bool isPlaying() const;

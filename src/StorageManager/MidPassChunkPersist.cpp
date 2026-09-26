@@ -29,9 +29,13 @@ STORAGE_PERSIST_MEM void closeMidPassJournal(MidPassChunkPersistJob& job) {
 STORAGE_PERSIST_MEM bool resolveActiveCaptureTrackSlot(uint8_t& trackIndexOut, uint8_t& slotIndexOut) {
     for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
         const Track& track = trackManager.getTrack(trackIndex);
-        if (track.hasLiveCaptureInterval() || track.hasStopInFlight()) {
+        // S4.1: the slot comes from the owner's identity rule, not from `getActiveLoopIndex()` here.
+        // The active index used to key this interval's mid-pass journal, so a stop pinned to one slot
+        // was journalled under whichever slot happened to be active when the drain ran.
+        uint8_t intervalSlot = 0;
+        if (track.captureWorkSlot(intervalSlot)) {
             trackIndexOut = trackIndex;
-            slotIndexOut = track.getActiveLoopIndex();
+            slotIndexOut = intervalSlot;
             return true;
         }
     }
@@ -48,12 +52,9 @@ STORAGE_PERSIST_MEM bool resolveCaptureTrackSlotForMidPass(uint8_t& trackIndexOu
         slotIndexOut = job.slotIndex;
         return true;
     }
-    const uint8_t selectedTrack = trackManager.getSelectedTrackIndex();
-    if (selectedTrack < trackManager.getTrackCount()) {
-        trackIndexOut = selectedTrack;
-        slotIndexOut = trackManager.getTrack(selectedTrack).getActiveLoopIndex();
-        return true;
-    }
+    // S4.1: the selected-track / active-index fallback is removed. It keyed a queued chunk to whichever
+    // slot happened to be selected when the drain ran, which is not an identity any capture owns --
+    // returning false makes the caller requeue the chunk instead of journaling it under a guessed slot.
     return false;
 }
 

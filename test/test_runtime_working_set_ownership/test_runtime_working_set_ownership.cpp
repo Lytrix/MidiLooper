@@ -1683,12 +1683,53 @@ void test_a_start_refused_by_its_own_live_stop_obligation_retries_to_a_single_ta
                                   "the recorded note must survive later dispatch");
 }
 
+/// **S4.1 — a capture work item is keyed to the interval's own slot.** The live capture's slot *is*
+/// the active slot (only it may RECORD/OVERDUB), but a stop in flight is pinned to ITS interval's slot
+/// across an active-slot change, so `captureWorkSlot` must not substitute the active index. The
+/// mid-pass journal resolver reads this rule, and it previously read `getActiveLoopIndex()` directly --
+/// so a stop pinned to one slot was journalled under whichever slot was active when the drain ran.
+void test_s4_1_capture_work_slot_uses_the_pinned_interval_slot() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 1);
+  commitRecordPassIntoTrackSlot(track, 3);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+  track.forceSetState(TRACK_PLAYING);
+
+  // A stop in flight pinned to slot 1, with the active slot moved to 3.
+  TrackCaptureStopTestAccess::latchAcceptedStopForSlot(track, 1);
+  TrackCaptureStopTestAccess::activateSlot(0, 3);
+
+  // The discriminator: the active index really is a different slot, so a rule that read it reports 3.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(3, track.getActiveLoopIndex(),
+                                  "the fixture must move the active slot away from the interval");
+
+  uint8_t slot = 0xFF;
+  TEST_ASSERT_TRUE(track.captureWorkSlot(slot));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, slot, "the pinned interval's slot must key the work item");
+
+  // Control: once the obligation is consumed there is no stop in flight, so the rule refuses rather
+  // than falling back to the active index -- the mid-pass resolver requeues instead of guessing.
+  TrackCaptureStopTestAccess::consumeAcceptedStop(track);
+  TEST_ASSERT_FALSE_MESSAGE(track.captureWorkSlot(slot),
+                            "with nothing in flight the rule must refuse rather than guess");
+
+  // Control (b): a live capture's slot IS the active slot, because only it may RECORD/OVERDUB. This
+  // keeps the refusal above from being a rule that simply never resolves.
+  track.forceSetState(TRACK_RECORDING);
+  TEST_ASSERT_TRUE(track.captureWorkSlot(slot));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(3, slot, "a live capture is on the active slot by construction");
+  track.forceSetState(TRACK_PLAYING);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);
   RUN_TEST(test_a_stop_clears_only_its_own_slots_ledger);
+  RUN_TEST(test_s4_1_capture_work_slot_uses_the_pinned_interval_slot);
   RUN_TEST(test_selection_acquires_no_working_set);
   RUN_TEST(test_a_late_cleanup_cannot_clear_a_successor_finalization_marker);
   RUN_TEST(test_the_slot_generation_release_entry_is_identity_qualified_and_preserves_refusals);

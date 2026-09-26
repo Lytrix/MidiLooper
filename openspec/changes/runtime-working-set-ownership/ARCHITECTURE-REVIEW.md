@@ -7333,3 +7333,89 @@ remains unimplemented contingency.
 C, only), the `companion path stalled; raw pass only` fallback's content consequences, and **MIDI-output
 playback parity**, which is a separate property from this loop-scoped parity. The whole-playback review remains
 unable to decide it while other slots are enabled.
+
+---
+
+## S4.1 reconciliation — the A/B/C device run *is* the release acceptance (2026-09-26)
+
+**The owner's correction, verified:** the accepted-switch retention run is not merely "related to" S4.1. It is the
+device acceptance for the release path S4.1 defines, and the tasks.md entry still describing a live "rerun
+blocker" is stale. The chain, read from the code rather than inferred:
+
+- **S4.1 asks:** *release when the slot leaves the active set and the guard reports no live owner; release is
+  total.*
+- **"leaves the active set"** — A switches to B, so A's slot stops being active while its deferred finalization
+  still holds the occupancy.
+- **"the guard reports no live owner"** — the release marker (`TrackDeferredMaintenance.cpp`) fires only when
+  `runtime->captureStopOwner == nullptr` **and** `canonicalCaptureOutputAdmitted()`. That first clause is the
+  `ownsLiveFinalization` term of `Track::noLiveOwnerForSlot` (S3.2) — the same liveness guard S4.1 names.
+- **identity-qualified** — L4 reported `canonical_release,4,40,6144,8`: the retiring owner's slot **and**
+  generation, which is S4.1/S4.2's identity requirement on device rather than only natively.
+- **the working-set release itself** — `TrackManager::startRecordingTrack` ->
+  `releaseBackgroundPlaybackMergedMidiEventsMemory(trackIndex)` -> for every *other* track
+  `releasePlaybackMergedMidiEventsMemory()` -> `releaseEligiblePlaybackRuntimeSlots()` ->
+  `releaseSlot(slot, generation)` behind `noLiveOwnerForSlot`. **C's start is what triggers that sweep**, and
+  C's start is exactly what the run drove and the oracle asserted (`RECA,6` once, after the release).
+- **reuse** — C starting after A releases **is** S4.3 verbatim ("activating C after A releases uses A's
+  capacity"); S4.3 is checked with its *device* leg recorded open, and this run supplies that leg.
+
+**Honest boundary.** The oracle asserts L4 as the **finalization-capacity** release naming the retiring owner.
+The **working-set lease** release rides on C's start sweep and is not separately asserted by name, so "the lease
+was released" is currently *inferred from the mechanism* rather than observed. That is a small oracle addition,
+not a new stage, and it is recorded here as the remaining gap rather than claimed as covered.
+
+### The "rerun blocker" text was stale — verified against the tree
+
+S4.1's tasks.md entry still demands that the predicate-free release APIs "must be converted, not supplemented".
+They have been. Verified 2026-09-26:
+
+| Named site | State in the tree |
+|---|---|
+| successor stop reaching `clearAllLedgers()` | **Converted.** `Track::clearStoppingIntervalLedger()` clears **its own slot** via `LoopPlaybackRuntime::clearLedger()`, called from `handleNoteEditFold` and `stopOverdubbingToStopped`; the comment names the old behaviour as the S4.1 rerun blocker. |
+| `TrackPlaybackRuntime::resetAll` | **Deleted.** Replaced by `releaseEligiblePlaybackRuntimeSlots()`, which applies `releaseSlot(slot, generation)` per slot behind `noLiveOwnerForSlot`. The remaining `clearAllLedgers()` caller is the deliberate whole-track `sendAllNotesOff` sweep, which is correct. |
+| slot-threaded persistence reads (`TrackCaptureStopCommit`, `TrackStopTelemetryColdHelpers`) | **Converted.** `TrackStopTelemetryColdHelpers` documents "the caller names the interval's slot; resolving `getActiveLoopIndex()` here would key the persistence of a captured interval to whichever slot happens to be active at commit time", and `TrackCaptureStopCommit` uses `persistSlotIndex = slot`. |
+
+### What was genuinely still wrong: the mid-pass journal resolver
+
+`resolveCaptureTrackSlotForMidPass` (the mid-pass chunk journal's identity) still resolved the slot as
+**`getActiveLoopIndex()`** for a **stop in flight**. That is the same defect class the table above records as
+fixed elsewhere: a stop in flight is pinned to *its* interval's slot across an active-slot change (S4f.3), so if
+the interval is on slot 5 and the user has moved the active slot to 7, the interval's mid-pass chunks were
+journalled under **7**. The selected-track/active-index fallback in the same function keyed a queued chunk to
+whatever slot happened to be selected when the drain ran.
+
+**Fix, placed on the owner.** The rule moved to `Track::captureWorkSlot(uint8_t&)` — the slot a capture work
+item must be keyed to — so it has one definition and one fixture instead of being re-derived per consumer
+(matching S3.1's own principle that the slot's owner holds the rule). The live capture's slot *is* the active
+slot, because only the active slot may RECORD/OVERDUB; a stop in flight resolves through the new
+`Track::pinnedStopSlot()` (the deferred job's `job.slot`, else the latch's `slot`); and with nothing in flight
+it returns **false**, so the resolver requeues instead of guessing. The resolver is now a thin loop over the
+owner's rule, and the selected-track fallback is gone.
+
+**Oracle and red proof.** `test_s4_1_capture_work_slot_uses_the_pinned_interval_slot` in
+`test_runtime_working_set_ownership`: a stop latched for slot 1 with the active slot moved to 3 must resolve to
+**1**, with the active index asserted to be **3** so a rule that read it cannot pass; a control consumes the
+obligation and requires a refusal ("must refuse rather than guess"); and a second control puts the track in
+RECORDING to show a live capture resolves to the active slot, so the refusal is not a rule that never resolves.
+**Red-proved:** substituting `getActiveLoopIndex()` for the pinned slot fails it with *"Expected 1 Was 3 — the
+pinned interval's slot must key the work item"*. Full native **2,459 passed / 1 skipped**; capture-serial
+SUCCESS with `code 392,376 / padding 840` (at the approved floor — the rule is `TRACK_COLD_MEM`, FLASH-resident,
+and the resolver is `STORAGE_PERSIST_MEM`).
+
+**Recorded so it is not rediscovered:** the resolver **cannot** be exercised from
+`test_storage_drain_restore`, which includes the TU. It linked only because the resolver had no caller and the
+linker discarded it; the first caller pulls in a closure (cold overdub-stop logging, `EditManager`,
+`DisplayManager`, `TrackTransportControl`) that this suite deliberately omits. That is why the rule and its
+fixture live on `Track` in the ownership suite rather than being stubbed into the storage suite — the seam chose
+the design, and the design is better for it.
+
+### The `DeferredSaveJobStages` footer read is a design question, not a local defect
+
+Investigated and **not** changed. The footer writes each track's `activeLoopIndex`/`selectedSlotIndex` from live
+`trackManager` reads, and S4.1's entry lists it as a remaining site. But the deferred save is **not** an
+admitted-image snapshot: the loop-slot stage reads the **live** `track.getLoop(poolCursor)` as it walks
+(`DeferredSaveJobStages.cpp`), so the footer reading live state is *consistent* with the rest of the job.
+Capturing only the footer at admission would make the persisted image internally **inconsistent** — a footer
+describing a moment the loop bodies were not written at — which is worse than the status quo. Making the whole
+save snapshot-at-admission is a persistence-semantics change beyond S4.1 and would owe its own `DEC`. Recorded
+rather than implemented, per the entry's own note that it "needs the persistence fixture".
