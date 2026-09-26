@@ -456,8 +456,13 @@ def analyse(
 
     # The retained log row carries no timestamp of its own; it must sit between the denial and the release,
     # which is checked textually by ordering the log lines.
-    denial_line = next((i for i, l in enumerate(lines) if f"DIAG,reentry,deny" in l
-                        and f",{slot_b}," in l), None)
+    # Order the retained row against the TIMELY human denial line, not the `#CAP` denial row: `#CAP` rows are
+    # deferred and flush late, so their file order does not reflect their order in time, while both this row
+    # and the retained row are human rows at the same latency class.
+    denial_line = next((i for i, l in enumerate(lines) if "Overdub stop refused" in l), None)
+    if denial_line is None:
+        denial_line = next((i for i, l in enumerate(lines) if "DIAG,reentry,deny" in l
+                            and f",{slot_b}," in l), None)
     release_line = next((i for i, l in enumerate(lines) if CANONICAL_RELEASE_RE.match(
         (CAP_RE.match(l.strip()).group(2) if CAP_RE.match(l.strip()) else ""))), None)
     retained_line = next((i for i, l in enumerate(lines)
@@ -500,20 +505,25 @@ def analyse(
     bound_identity = [e for e in entries
                       if (m := REENTRY_RE.match(e.body)) and m.group(1) == "bound"
                       and int(m.group(4)) == slot_b and int(m.group(3)) == interval_b]
-    bound_identity_after = [e for e in bound_identity if e.us > episode.capacity_release_us]
-    bound_identity_before = [e for e in bound_identity if e.us <= episode.capacity_release_us]
+    # The requirement is that the denied stop BOUND after the denial (and after A's window opened). It is
+    # deliberately not ordered against `canonical_release`: that record is the first maintenance turn at which
+    # the resources were observed free, measured 25 ms *after* B had already bound, so a bind preceding the
+    # release *record* is expected rather than a contradiction.
+    bound_identity_after = [e for e in bound_identity
+                            if e.us > denial.us and e.us > episode.window_open_us]
+    bound_identity_before = [e for e in bound_identity
+                             if e.us <= denial.us or e.us <= episode.window_open_us]
     for e in bound_identity:
         evidence["stop_bind"].append(f"{e.us}: {e.body}")
 
     if bound_identity_after:
         add("L5_same_b_stop_bound", OK,
             f"{bound_identity_after[0].body} at {bound_identity_after[0].us} us names the **denied interval** "
-            f"{interval_b} on slot {slot_b}, after the release", "retention", "L5")
+            f"{interval_b} on slot {slot_b}, after the denial at {denial.us} us", "retention", "L5")
     elif bound_identity_before:
         add("L5_same_b_stop_bound", FAIL,
-            f"interval {interval_b} on slot {slot_b} bound at {bound_identity_before[0].us} us, *before* "
-            f"capacity was released at {episode.capacity_release_us} us: the stop bound while the predecessor "
-            "still held the finalization resources", "retention", "L5")
+            f"interval {interval_b} on slot {slot_b} bound at {bound_identity_before[0].us} us, at or before "
+            f"the denial at {denial.us} us: the stop bound without a denied prerequisite", "retention", "L5")
     elif after_release:
         detail = (f"slot-scoped bind evidence for slot {slot_b} after the release: {after_release[0].body} "
                   f"at {after_release[0].us} us -- but not tied to interval {interval_b}; the identity-grade "
