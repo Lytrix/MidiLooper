@@ -1353,9 +1353,16 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       **reverted** because it fails
       `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`. The fixture asserts the current
       characterization in the default gate and runs the requirement, currently red, under
-      `S4B_ACCEPTANCE=1`. **Also still to prove (not by this slice):** the cross-track switch, and repeated
-      B → C switches while A finalizes, which need the explicit bounded overlap policy (`Omax = NUM_TRACKS`;
-      an outbound finalizing role is counted in C/D and never released to satisfy O). Record:
+      `S4B_ACCEPTANCE=1`. **Tightened after review (2026-09-25):** the acceptance precondition now requires
+      an **admitted** finalizer (`hasPendingDeferredOverdubStop` and *not* accepted-unexecuted); B is reached
+      through `MidiButtonActions::handleToggleRecordForSlot` and the real MIDI handler against an **empty**
+      target, so the gesture and incoming MIDI are proven to reach B; and the characterization branch is to
+      be **deleted** when S4f.3 lands rather than left conditional. **New result:** the separate
+      **unadmitted-stop** case (`test_an_unadmitted_stop_retains_the_switch_and_start_requests`) **passes** —
+      the switch and start *are* retained and execute once admission becomes possible without a second
+      gesture. **Also still to prove (not by this slice):** the cross-track switch, and repeated B → C
+      switches while A finalizes, which depend on **finalizer capacity**, not only on the inbound overlap
+      policy — `Omax` alone does not solve repeated switches (recorded per the review). Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4b.1.
 - [ ] S4b.2 Pre-provision the inbound role before releasing the outbound one, with the overlap bounded and
       accounted in the S2 budget; the switch point performs no allocation, and the transfer must not steal
