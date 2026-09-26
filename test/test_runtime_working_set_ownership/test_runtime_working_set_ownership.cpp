@@ -758,16 +758,10 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
 }
 
 /// **S4b.1 — an unadmitted stop is a different case from an admitted, paused finalizer.** When A's stop
-/// has not been admitted yet, the switch must be *retained* and execute once admission becomes possible
-/// -- without a second gesture. This is separate coverage on purpose: the acceptance case above must
-/// never accept an accepted-but-unexecuted stop as "A is finalizing".
-///
-/// Scope note (S4f.6, measured): the retained request proved here is the **switch**. The contract's
-/// check 4 also requires the *start* to be carried by that same gesture; the switch branch of
-/// `handleToggleRecordForSlot` returns straight after `finalizeCaptureAndSelectSlot` and never queues
-/// one, so that half is still open and belongs to S4f.3's carrier. The start below is deliberately a
-/// second press and is labelled as such rather than being counted as "without another gesture".
-void test_an_unadmitted_stop_retains_the_switch_request_without_a_second_gesture() {
+/// has not been admitted yet, the switch **and the start it carries** must be *retained* and execute once
+/// admission becomes possible -- **without a second gesture**. This is separate coverage on purpose: the
+/// acceptance case above must never accept an accepted-but-unexecuted stop as "A is finalizing".
+void test_the_switch_gesture_carries_the_start_without_a_second_press() {
   LoopEventStore::initPool();
   Track& track = trackManager.getSelectedTrack();
   track.ensureLoopsAllocated();
@@ -809,14 +803,11 @@ void test_an_unadmitted_stop_retains_the_switch_request_without_a_second_gesture
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
                            "A's admitted stop must still be finalizing at the handoff");
 
-  // S4b.1 contract check 4, second half. Be precise about what this proves. The start below is a
-  // **second** press, so it does *not* satisfy "without another gesture" -- carrying the requested start
-  // on the switch's own gesture is S4f.3's remaining carrier half, recorded in the packet. What it does
-  // prove is S4f.6: a start requested once the stop has bound is executed rather than stranded, even
-  // when the predecessor's stop reached admission through the latch rather than through a clean
-  // quantization window.
-  TrackCaptureStopTestAccess::selectSlotIndex(0, 1);
-  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  // S4b.1 contract check 4, both halves, from the **one** gesture above: the switch's own press carried
+  // the start, and no further press is made. The request must exist now (queued, not started) and must
+  // execute on the target's eligible boundary while A still finalizes.
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(0, 1),
+                           "the switch must carry the record start for the target it switched to");
   const uint32_t queuedTick = clockManager.getCurrentTick();
   for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3 &&
                              !TrackCaptureStopTestAccess::isRecording(track) &&
@@ -827,8 +818,10 @@ void test_an_unadmitted_stop_retains_the_switch_request_without_a_second_gesture
   }
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track) ||
                                TrackCaptureStopTestAccess::isOverdubbing(track),
-                           "B must start once the stop has bound, not be stranded by it");
+                           "B must start from the switch's own gesture, with no second press");
   TEST_ASSERT_EQUAL_UINT8(1, TrackCaptureStopTestAccess::activeLoopIndex(track));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                           "A's finalizer must still be outstanding when B starts");
 }
 
 
@@ -845,6 +838,6 @@ int main() {
   RUN_TEST(test_reactivating_a_released_slot_reuses_its_capacity);
   RUN_TEST(test_a_declared_envelope_breach_is_reported_and_does_not_block_activation);
   RUN_TEST(test_switching_starts_the_new_take_while_the_previous_take_still_finalizes);
-  RUN_TEST(test_an_unadmitted_stop_retains_the_switch_request_without_a_second_gesture);
+  RUN_TEST(test_the_switch_gesture_carries_the_start_without_a_second_press);
   return UNITY_END();
 }

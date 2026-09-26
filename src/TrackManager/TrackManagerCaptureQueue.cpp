@@ -328,9 +328,9 @@ void TrackManager::handleQuantizedStop(uint32_t currentTick) {
   }
 }
 
-void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newSlot,
-                                                uint32_t currentTick) {
-  if (trackIndex >= Config::NUM_TRACKS || newSlot >= Config::MAX_LOOPS_PER_TRACK) return;
+bool TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newSlot,
+                                               uint32_t currentTick) {
+  if (trackIndex >= Config::NUM_TRACKS || newSlot >= Config::MAX_LOOPS_PER_TRACK) return false;
 
   pendingRecord[trackIndex] = false;
   pendingRecordQueuedAtTick[trackIndex] = UINT32_MAX;
@@ -366,7 +366,7 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     // own. S4f.3 replaces this with the switch's accepted-interaction carrier and commits the switch
     // after the stop binds. S4b.1's handoff depends on that carrier: without it, moving the active
     // slot here breaks `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`.
-    if (t.hasAcceptedUnexecutedInteraction()) return;
+    if (t.hasAcceptedUnexecutedInteraction()) return false;
   }
   // S4f.3: an **admitted** stop does not hold the active slot. The deferred job carries its own
   // identity -- `job.owner`, `job.slot`, `job.loopId`, the interval latch and `captureStopOwner` -- and
@@ -401,4 +401,7 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
   // Keep UI focus on the slot that received the capture so piano roll / LEDs match the new audio.
   setSelectedSlotIndex(trackIndex, captureSlot, SyncPlayback::No);
   forceMidiLedUpdate(currentTick);
+  // S4f.3: the switch committed. This is the commit point a carrier consumes at, so the caller learns
+  // the target is active instead of having to re-derive it from the active slot index.
+  return true;
 }

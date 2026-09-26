@@ -392,8 +392,23 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     // If capturing and the user selects another filled slot: commit capture first.
     if ((track.isRecording() || track.isOverdubbing()) && previousSlot != slotIndex) {
         trackManager.setSelectedSlotIndex(trackIdx, slotIndex);
-        trackManager.finalizeCaptureAndSelectSlot(trackIdx, slotIndex, now);
+        const bool committed = trackManager.finalizeCaptureAndSelectSlot(trackIdx, slotIndex, now);
         logger.info("Loop %d: Switched from slot %d (capture finalized)", slotIndex + 1, previousSlot + 1);
+
+        // S4f.6 carrier: this gesture asked for `slotIndex`, so when the target is a **record** target
+        // the start is requested here rather than dropped with the return. It is queued, not started:
+        // `handlePendingRecordStart` dispatches it on the target's eligible boundary and, per S4f.6,
+        // consumes it only when the start actually happens -- so a live stop obligation on the
+        // predecessor delays it instead of discarding it, and the user does not have to press again.
+        //
+        // The phase reference is deliberately **none**: the contract requires the transport's bar grid
+        // for an empty or cleared target and forbids the predecessor's mutable loop timing from becoming
+        // an accidental dependency of the target's start (`refSlotPhaseForQueue(track, previousSlot)`
+        // would do exactly that, since the predecessor here has a loop length).
+        if (committed && !track.hasCommittedPassesInSlot(slotIndex)) {
+            trackManager.queueRecordingTrack(trackIdx, slotIndex, ::Config::INVALID_LOOP_SLOT);
+            logger.info("Loop %d: Record start carried on the switch", slotIndex + 1);
+        }
         return;
     }
 
