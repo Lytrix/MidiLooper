@@ -418,6 +418,37 @@ void test_tier_a_and_critical_are_only_displaced_by_their_own_kind() {
   TEST_ASSERT_TRUE(CaptureLineTier::incomingMayDisplace(true, false, false, false));
 }
 
+// The deferred-stop admission edges are the ONLY identity-grade evidence of the successor handoff, and the
+// timing-critical shed drops non-Tier-A diagnostics silently (by design, without reporting a loss). A
+// completed 2026-09-26 run lost all of them: zero `reentry_window_open`, zero `canonical_release`, no
+// `reentry,deny` -- while `capture_integrity` reported no eviction. They must therefore be Tier-A, and the
+// comparison must actually match a real row (see the length boundary below).
+void test_deferred_stop_identity_edges_are_tier_a() {
+  // The denial, from the decision owner: slot + interval identity.
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701449,DIAG,reentry,deny,12345,4096,7,2"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701449,DIAG,reentry,bound,12345,4096,7,2"));
+  // The finalizer window opening.
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701454,DIAG,reentry_window_open,7,12345,4096"));
+  // The retiring owner's slot + generation.
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701459,DIAG,canonical_release,7,3,4096,448"));
+  // Long micros field must not shift the tag parse.
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,39819493,DIAG,canonical_release,7,3,4096,448"));
+}
+
+// The comparison is bounded by strlen of its literal. Passing a literal's length *including* its NUL makes
+// strncmp stop at the NUL and match only a tag that ends exactly there, so a real row silently misses and the
+// evidence is shed again -- the exact defect this promotion exists to remove. These cases pin the boundaries.
+void test_deferred_stop_identity_match_has_no_length_boundary_gap() {
+  // `canonical_release,` is 23 bytes; the tag continues past it and must still match.
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,1,DIAG,canonical_release,0,0,0,0"));
+  // Without the trailing comma it is a different subtag and must NOT be swept in.
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,canonical_release_partial,1"));
+  // The `reentry` prefix must not degrade into a loose "DIAG,re" match.
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,recent,1"));
+  // The rest of the shed class stays shed.
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,reclaim,1,2,3,4,5,ok,6"));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_tag_is_the_field_after_micros);
@@ -430,6 +461,8 @@ int main() {
   RUN_TEST(test_transport_and_persistence_lines_are_tier_a);
   RUN_TEST(test_note_and_display_traffic_is_not_tier_a);
   RUN_TEST(test_other_diag_subtags_are_not_tier_a);
+  RUN_TEST(test_deferred_stop_identity_edges_are_tier_a);
+  RUN_TEST(test_deferred_stop_identity_match_has_no_length_boundary_gap);
   RUN_TEST(test_tag_parse_survives_a_wide_micros_field);
   RUN_TEST(test_tag_starts_with_matches_led_mo_diag);
   RUN_TEST(test_malformed_lines_are_not_tier_a);

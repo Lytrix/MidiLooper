@@ -20,6 +20,7 @@ from hitl.control_constants import LOOP_SELECT_NOTE_BASE, TRACK_SELECT_NOTE_BASE
 from hitl_retention_handoff import (  # noqa: E402
     Gesture,
     _emit,
+    cleared_slot_from_lines,
     critical_window_gestures,
     target_precondition,
 )
@@ -189,6 +190,52 @@ class RetentionGesturePlanTests(unittest.TestCase):
         port = FakePort()
         _emit(port, Gesture("t", "transport", 0), press_ms=120, gap_ms=0)
         self.assertIn(GLOBAL_TRANSPORT_NOTE, port.note_sequence())
+
+
+
+class ClearVerificationTests(unittest.TestCase):
+    """The staging clear must prove it cleared the INTENDED slot.
+
+    Before the firmware named the slot, `_clear_slot` accepted any `Track cleared`/`Clear ignored` marker.
+    That is how a preparation reported success while the successor slot still held content, which then made
+    the successor ineligible for the record-start scenario. These pin the identity verdict, including the
+    distinction between "no identity line" (None) and "a clear line naming another slot" (False).
+    """
+
+    def test_the_intended_slot_clearing_is_a_pass(self):
+        self.assertTrue(cleared_slot_from_lines(
+            ["[1885.0] [DEBUG] [TRACK] Track cleared @ tick 1885 (active_slot=7)"], slot_number=7))
+
+    def test_a_clear_line_naming_another_slot_is_a_failure(self):
+        """The defect: a bare marker match must not pass when the clear hit a different slot."""
+        self.assertFalse(cleared_slot_from_lines(
+            ["[1885.0] [DEBUG] [TRACK] Track cleared @ tick 1885 (active_slot=5)"], slot_number=7))
+
+    def test_the_intended_slot_already_empty_is_acceptable_for_a_preparation(self):
+        self.assertTrue(cleared_slot_from_lines(
+            ["[1.0] [DEBUG] Clear ignored \u2014 selected slot is empty (track 8 slot 7)"],
+            slot_number=7))
+
+    def test_a_missing_identity_line_is_unknown_not_a_pass(self):
+        """An older firmware emits the legacy marker only; that must not be claimed as identity-grade."""
+        self.assertIsNone(cleared_slot_from_lines(
+            ["[20.456] [DEBUG] [TRACK] Track cleared @ tick 1885"], slot_number=7))
+
+    def test_the_legacy_one_based_line_is_not_treated_as_identity(self):
+        """`MIDI: Clear selected slot N` is 1-based; parsing it as identity would be off by one."""
+        self.assertIsNone(cleared_slot_from_lines(
+            ["[1456.072] [INFO] MIDI: Clear selected slot 2"], slot_number=2))
+
+    def test_a_wrong_slot_clear_does_not_mask_a_later_correct_one(self):
+        lines = [
+            "[1.0] [DEBUG] [TRACK] Track cleared @ tick 100 (active_slot=5)",
+            "[2.0] [DEBUG] [TRACK] Track cleared @ tick 200 (active_slot=7)",
+        ]
+        self.assertTrue(cleared_slot_from_lines(lines, slot_number=7))
+
+    def test_the_whole_track_empty_form_names_the_slot_too(self):
+        self.assertTrue(cleared_slot_from_lines(
+            ["[1.0] [DEBUG] Clear ignored \u2014 track is empty (track 8 slot 6)"], slot_number=6))
 
 
 if __name__ == "__main__":

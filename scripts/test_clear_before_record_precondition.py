@@ -380,10 +380,23 @@ class DeferredSaveClearTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(sends, 1)
 
-    def test_active_after_stop_blocks_clear_without_retry(self):
-        result, sends = self.run_prepare([], [True, True])
+    def test_active_after_stop_and_retry_blocks_clear(self):
+        """Still active after the retry stop press -> blocked, and both presses were sent.
+
+        The retry is deliberate (see `_prepare_deferred_save_before_clear`: transport is a toggle, so a
+        blind stop press can *start* it when the device already stopped itself; `captures/successor-wrap-50`
+        died that way). This asserts the block still happens after the retry, which is strictly stronger
+        than the pre-retry expectation of a single press, so the third sequencer probe must be supplied.
+        """
+        result, sends = self.run_prepare([], [True, True, True])
         self.assertFalse(result)
-        self.assertEqual(sends, 1)
+        self.assertEqual(sends, 2)
+
+    def test_retry_stop_press_recovers_toggle_started_transport(self):
+        """The retry's purpose: a second press clears a transport the first press accidentally started."""
+        result, sends = self.run_prepare([], [True, True, False])
+        self.assertTrue(result)
+        self.assertEqual(sends, 2)
 
     def test_save_wait_timeout_blocks_clear(self):
         result, _ = self.run_prepare(["#CAP,100,SAVE,pending,1"], [False], idle=False)

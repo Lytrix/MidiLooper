@@ -7164,19 +7164,95 @@ identity-grade records that would name the denied slot/interval and the retiring
 
 **Three checks now prefer the timely human row and say when they used it** -- L1 (the window, whose device
 timestamp is parsed from the logger's `[58.476]` prefix), L4 (the release, including the owner identity parsed
-from `generation=`), and L2, which stays **insufficient** because the human denial row (`Overdub stop refused:
-<reason>`) carries **no slot and no interval** -- only the `#CAP` row does. The checks never substitute the human
-row silently; the detail names the fallback.
+from `generation=`), and L2. At the time of that writing L2 stayed **insufficient** because the human denial row
+(`Overdub stop refused: <reason>`) carried **no slot and no interval** -- only the `#CAP` row did. **That is no
+longer true**: the denial now names both on the human row (see § "The evidence edges are Tier-A now"). L2 still
+declines to *pass* on the human row alone, for a reason that survives the fix: L5 orders the bind against
+`denial.us` in **device micros**, while the human row's timestamp is **host milliseconds**, so promoting it to
+the pass would put two time bases into that comparison. It now distinguishes a denial naming another slot
+(fail) from a matching denial whose device-timestamped row is absent (insufficient). The checks never
+substitute the human row silently; the detail names the fallback.
 
-**Finding to carry forward: the `#CAP` DIAG tier is not reliably present.** The firmware documents that these
+**Finding to carry forward: the `#CAP` DIAG tier is not reliably present.** *(RESOLVED 2026-09-26 — it was
+not a deferral or flush problem at all: these tags were in the timing-critical **shed** class, which drops
+non-Tier-A diagnostics silently and reports no loss. They are Tier-A now. See § "The evidence edges are Tier-A
+now"; the investigation this paragraph asks for is answered there.)* The firmware documents that these
 rows "queue behind the deferred stop's flood and arrive seconds late", but measured here they were **absent
 from a completed run's log entirely**, while `capture_integrity` reported no ring eviction and the tail was
 complete. Whether the tier is dropped, or flushed after the session closes, needs its own investigation -- and
 it matters because the *identity-grade* half of this acceptance (L2's denied slot/interval, L4's retiring owner,
 L1's loop length) lives only there. Until that is understood, an acceptance run may legitimately end at
-`INSUFFICIENT_EVIDENCE` even when the behaviour is correct, and that is what happened here.
+`INSUFFICIENT_EVIDENCE` even when the behaviour is correct, and that is what happened here. *(No longer
+expected: with the tags promoted to Tier-A, this specific `INSUFFICIENT_EVIDENCE` cause is removed.)*
 
 **Status.** This rerun: `INSUFFICIENT_EVIDENCE` -- chain evidenced, identity-grade records absent. It closes
 nothing and refutes nothing. The earlier run (17:29), whose log does carry the full `#CAP` tier, remains the
 one that reaches `RETENTION_PASS` under the strengthened checks. A/B preservation, the raw-only companion
 fallback and playback-output parity remain open.
+
+---
+
+## The evidence edges are Tier-A now, and the clear path names its target (2026-09-26)
+
+**This closes the cause of the `INSUFFICIENT_EVIDENCE` rerun at 17:56.** That run behaved correctly and was
+refused by the oracle because **zero** deferred `#CAP` rows existed -- 0 window rows, 0 release rows, no
+`reentry,deny` -- while `capture_integrity` reported no eviction and the tail was complete. It was recorded as
+an unexplained gap ("the `#CAP` DIAG tier is not reliably present", "needs its own investigation"). It is
+explained: **it was never a deferral or a flush problem. The lines were in the deliberately-shed class.**
+
+`CaptureLineTier::isTierALine` decides what the timing-critical shed may drop, and it drops non-Tier-A
+diagnostics **silently, by design, without reporting a loss**. None of the three identity-grade tags were in
+its allowlist -- `grep` count was 0 for `DIAG,reentry,`, `DIAG,reentry_window_open,` and
+`DIAG,canonical_release,`. So the shed removed exactly the evidence the acceptance is computed from, and the
+integrity report was right that nothing was *evicted*: shedding is not eviction, which is why the signature was
+"absent, with no loss reported".
+
+**Fix.** The three tags are now Tier-A. Tier-A may only be displaced by Tier-A, and these are a handful of
+one-shot edge rows per run, so they cannot monopolise the ring. The predicate lives in `isTierALine`, called by
+a `FLASHMEM` (`SC_MEM_ATTR`) function, so this costs **no RAM1**: `code 392,376 / padding 840` before and after,
+at the approved floor.
+
+**A latent bug in that fix, caught before it shipped.** The comparison was first written as
+`strncmp(tag, "DIAG,canonical_release,", 24)`. `strlen` of that literal is **23**; passing the length *including*
+the NUL makes `strncmp` stop at the NUL and match only a tag that ends exactly there, so the real row would
+**never** have matched and the evidence would have been shed again -- silently, with the same signature this
+section exists to remove. The length is now `strlen(...)` and
+`test_deferred_stop_identity_match_has_no_length_boundary_gap` pins the boundary. Red-proved: restoring the
+length to 24 fails that test (`Expected TRUE Was FALSE`) and the promotion test with it.
+
+**The timely edges now carry identity too**, so attribution does not depend on the ring at all:
+
+  - `Overdub stop refused: <reason> slot=<n> interval=<n>` -- the denial, on the same admission edge, in the
+    human log. Previously it named neither, so a reader could see that a denial happened but not for which slot.
+  - `Track cleared @ tick <n> (active_slot=<n>)` -- appended via `logTrackEvent`'s existing format parameter, so
+    the established `Track cleared @ tick N` prefix survives every existing substring matcher
+    (`legacy_record_baseline`, `hitl_stop_timeline_probe`, `test_clear_before_record_precondition`).
+  - `Clear ignored — ... (track <t> slot <n>)` -- both forms, which is what made the failed preparation
+    unauditable: the run logged two `Track cleared` and one `Clear ignored — selected slot is empty` and the
+    slot still held content.
+
+**Consequence: preparation is now auditable.** `_clear_slot` in the retention handoff previously accepted *any*
+`Track cleared`/`Clear ignored` marker, which is precisely how a preparation reported success on a slot it never
+cleared. It now parses the identity and returns pass / fail / unknown: the intended slot cleared, a clear naming
+a **different** slot (retry, not success), or no identity line at all -- recorded as `identity_grade: false`
+rather than silently counted as proof. Base convention is explicit because mixing it is the trap: `active_slot=`
+and the `Clear ignored` `slot` field are 0-based, matching `#CAP` identity and the census; the older `MIDI: Clear
+selected slot N` line is 1-based and is deliberately **not** used for identity. Red-proved: removing the slot
+comparison fails `test_a_clear_line_naming_another_slot_is_a_failure`.
+
+**Also fixed under this change:** the oracle's own wire-form docstring documented `DIAG,canonical_release` with
+three fields where the emitter and the regex both use four (`slot,generation,loopLen,chunks`); and a **stale
+host test** (`test_active_after_stop_blocks_clear_without_retry`) that supplied two sequencer probes for a retry
+path that makes three, so it errored on `StopIteration` regardless of this change (confirmed pre-existing by
+stashing). It is replaced by two cases that assert the current, stricter behaviour: still-active after the retry
+blocks the clear (two presses), and the retry recovers a transport the first press accidentally started.
+
+**Verification.** `pio run -e teensy41-capture-serial` SUCCESS, `padding 840` (floor), all four new log strings
+present in the fresh ELF. `pio test -e native` **2,457 succeeded / 1 skipped** (up 2, the new tier tests).
+Oracle `test_retention_probe.py` 39 green (up 3), gesture plan 22 green (up 7), clear precondition 28 green,
+capture transitions 48 green. Both new guards red-proved by mutation.
+
+**Scope.** This is a logging/telemetry fix plus its guards. It does **not** close the device gate: retention
+plus successor capture still needs a rerun in which `RETENTION_PASS` is reached with zero concessions. What it
+does change is that the previously-unexplained `INSUFFICIENT_EVIDENCE` should no longer be reachable for this
+reason. A/B preservation, the raw-only companion fallback and playback-output parity remain open.

@@ -28,7 +28,7 @@ acceptance and an automated consumer must not close the device gate on it. A con
 Telemetry used, all existing and slot/identity-bearing where the chain needs it:
 
     DIAG,reentry_window_open,<slot>,<stopTick>,<loopLengthTicks>   DEC-067 successor_start_window_open
-    DIAG,canonical_release,<slot>,<loopLengthTicks>,<chunks>       canonical_finalization_capacity_released
+    DIAG,canonical_release,<slot>,<generation>,<loopLengthTicks>,<chunks>  canonical_finalization_capacity_released
     DIAG,reentry,<decision>,<tick>,<interval>,<slot>,<depth>       the denial, from the decision owner
     ODUB,stop,admission,...,successor_stop_denied_capacity         the denial's stop-side stage record
     DIAG,stop_phase|stop_grain,<track>,<slot>,...                  the deferred stop transaction, per slot
@@ -36,7 +36,9 @@ Telemetry used, all existing and slot/identity-bearing where the chain needs it:
     RECS,stop,<slot>,... / RECS,stage,seal,...,<eventCount>,...     the sealed take and its event count
 
 **Known telemetry gap, reported rather than papered over.** `captureInterval_` -- the identity the denial
-names -- is emitted *only* by `reentryDecision`. Nothing names it when a stop later **binds**: the stop-tier
+names -- is emitted by `reentryDecision` and, since the logging fix, on the denial's timely human row
+(`Overdub stop refused: <reason> slot=<n> interval=<n>`); the human row has no device timestamp, so the
+device-time ordering anchor still comes from the `#CAP` row. Nothing names it when a stop later **binds**: the stop-tier
 records carry the job's `frozenGeneration` (`staging.captureGeneration`), which is a different identity space,
 and `storedNoteEvent`/`storedNotes` have no callers at all. So L5 can be proven at **slot** granularity but
 not tied to the denied interval, and L7 can be proven at **event-count** granularity but not at pitch level
@@ -77,6 +79,9 @@ RECS_STOP_RE = re.compile(r"^RECS,(?:stop|stopToStopped),(\d+),(\d+),(\d+),(\d+)
 RECS_SEAL_RE = re.compile(r"^RECS,stage,seal,")
 STOP_SLOT_RE = re.compile(r"^DIAG,(?:stop_phase|stop_grain),(\d+),(\d+),")
 DENIAL_STAGE_RE = re.compile(r"^ODUB,stop,admission,.*,successor_stop_denied_capacity$")
+# The denial's own human row carries its identity since the logging fix: the deferred `#CAP` row can be
+# dropped by the timing-critical shed, and this row is the timely edge for the same admission decision.
+HUMAN_DENIAL_ID_RE = re.compile(r"Overdub stop refused:.* slot=(\d+) interval=(\d+)")
 TEMPO_FEEDBACK_RE = re.compile(r"Sent tempo CC feedback: ([0-9.]+) BPM")
 TEMPO_APPLIED_RE = re.compile(r"TEMPO: CC=\d+ -> ([0-9.]+) BPM")
 # The firmware logs an applied tempo only when it changes; an already-correct value is reported as
@@ -155,13 +160,23 @@ def human_us(line: str) -> Optional[int]:
     return None if m is None else int(round(float(m.group(1)) * 1_000_000))
 
 
-def human_entry(lines: list[str], marker: str) -> Optional[Entry]:
+def human_line(lines: list[str], marker: str) -> Optional[tuple[int, str]]:
+    """The (host-micros, raw text) of the first human log line containing `marker`.
+
+    `human_entry` deliberately keeps only the marker, which is enough for a timestamp-only fallback. An
+    identity fallback needs the text itself (the denial now names its slot and interval on the human row).
+    """
     for line in lines:
         if marker in line:
             us = human_us(line)
             if us is not None:
-                return Entry(us, f"HUMAN {marker}")
+                return us, line.strip()
     return None
+
+
+def human_entry(lines: list[str], marker: str) -> Optional[Entry]:
+    hit = human_line(lines, marker)
+    return None if hit is None else Entry(hit[0], f"HUMAN {marker}")
 
 
 def parse_entries(text: str) -> list[Entry]:
@@ -496,17 +511,35 @@ def analyse(
     else:
         denial = None
         interval_b = None
-        # The denial's own timely human row exists (`Overdub stop refused: <reason>`), but it carries no slot or
-        # interval: only `DIAG,reentry,deny,<tick>,<interval>,<slot>,<depth>` does, and `#CAP` rows are deferred
-        # and were absent entirely in the measured run. So the denial HAPPENED without being attributable --
-        # insufficient evidence, not a failure and not a pass.
-        human_denial = human_entry(lines, "Overdub stop refused")
-        if human_denial is not None:
+        # The denial has a timely human row. Since the logging fix that row names its slot and interval, so
+        # it can now (a) prove the denial was for a DIFFERENT slot -- a real failure, not a gap -- and
+        # (b) report the identity even when the device-timestamped row is absent. It is deliberately NOT
+        # promoted to the L2 pass here: L5 orders the bind against `denial.us` in DEVICE micros, while this
+        # row's timestamp is host milliseconds, and silently substituting one base for the other would
+        # corrupt the very ordering L5 exists to prove. The `#CAP` row is Tier-A now, so it should be present.
+        hit = human_line(lines, "Overdub stop refused")
+        if hit is not None:
             human_denied = True
-            add("L2_denial_identified_for_b", UNKNOWN,
-                f"the denial happened ({human_denial.body} at {human_denial.us} us) but carries no slot or "
-                "interval, and the identity-grade DIAG,reentry,deny row is absent from this log: which "
-                "slot/interval was denied is not established", "evidence", "L2")
+            human_at_us, human_text = hit
+            m = HUMAN_DENIAL_ID_RE.search(human_text)
+            if m is not None and int(m.group(1)) != slot_b:
+                add("L2_denial_identified_for_b", FAIL,
+                    f"the denial names slot {m.group(1)} with interval {m.group(2)}, but B holds slot "
+                    f"{slot_b}: a different slot's stop was denied, so B's stop was not the one refused",
+                    "retention", "L2")
+            elif m is not None:
+                add("L2_denial_identified_for_b", UNKNOWN,
+                    f"the timely human denial row names B's slot {slot_b} and interval {m.group(2)} "
+                    f"({human_text[:120]} at {human_at_us} us), but the device-timestamped "
+                    "DIAG,reentry,deny,<tick>,<interval>,<slot>,<depth> row is absent from this log, so the "
+                    "denial cannot be placed in device time; L5's ordering needs that anchor",
+                    "evidence", "L2")
+            else:
+                add("L2_denial_identified_for_b", UNKNOWN,
+                    f"the denial happened ({human_text[:120]} at {human_at_us} us) but its human row carries "
+                    "no slot or interval (pre-identity firmware), and the identity-grade "
+                    "DIAG,reentry,deny row is absent: which slot/interval was denied is not established",
+                    "evidence", "L2")
         else:
             human_denied = False
             add("L2_denial_identified_for_b", FAIL,

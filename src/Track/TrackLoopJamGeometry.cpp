@@ -31,7 +31,10 @@ TRACK_COLD_MEM void resetActiveLoopPlaybackCursorForJam(Track& track) {
 
 TRACK_COLD_MEM void Track::clear() {
     if (trackState == TRACK_EMPTY) {
-        logger.debug("Track already empty; ignoring clear");
+        // Name the target: identification was previously impossible from the log, so a preparation that
+        // silently kept content could not be told from one that cleared the intended slot.
+        logger.debug("Track already empty; ignoring clear (active_slot=%u)",
+                     static_cast<unsigned>(getActiveLoopIndex()));
         return;
     }
 
@@ -52,7 +55,8 @@ TRACK_COLD_MEM void Track::clear() {
     overdubWrapCommitPending_ = false;
     invalidateCaches();
     editManager.revertNoteEditSessionForLoopClear(*this);
-    logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());
+    logger.logTrackEvent("Track cleared", clockManager.getCurrentTick(), "active_slot=%u",
+                         static_cast<unsigned>(getActiveLoopIndex()));
 }
 
 uint32_t Track::getTicksPerBar() {
