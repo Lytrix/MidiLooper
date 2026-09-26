@@ -24,9 +24,11 @@ Then run the content pipeline and the oracle separately:
         --content-review captures/<run>-playback/content-review.json \
         --expect-successor-note <note> --slot-a <A0> --slot-b <B0> --slot-c <C0> --track-b <track0>
 
-Destructive-operations policy: this script **never clears** a slot. It verifies that each target is empty
-before seeding and refuses to run otherwise; clearing an occupied slot is a separate, explicitly authorized
-action (`--clear-authorized` is deliberately not implemented here).
+Destructive-operations policy: this script clears **only** the three targets it was given, and only when
+asked -- `--prepare-only` (clear the three and exit) or `--clear-targets` (clear inside the run). It verifies
+each target is empty through the read-only library census before seeding and refuses otherwise, and it never
+clears any other slot: clearing an occupied target that was not named is a separate, explicitly authorized
+action, and no bypass flag exists here.
 """
 
 from __future__ import annotations
@@ -478,9 +480,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--clear-targets", action="store_true",
                    help="also clear the targets in this run (off by default: prepare first, then run).")
     p.add_argument("--no-clear", action="store_true",
-                   help="skip the target clear. By default the three targets are cleared before seeding, "
-                        "which is standing-authorized for the development set and is what makes them genuine "
-                        "record targets (every slot here retains an SD payload).")
+                   help="skip the target clear. Clearing is OFF by default anyway: the targets must already "
+                        "be empty, and the --census precondition refuses the run otherwise. The normal flow is "
+                        "--prepare-only first, then a plain run. `--clear-targets` turns a clear on inside the "
+                        "run; `--prepare-only` clears the three targets and exits.")
     p.add_argument("--overdub-notes", type=int, default=24,
                    help="notes injected into A's OVERDUB. An empty overdub finalizes in ~0.5 s, leaving no "
                         "window to stage B's denied stop in.")
@@ -492,7 +495,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--seed-bars", type=int, default=2)
     p.add_argument("--census", type=Path, default=None,
                    help="census.json from a read-only --library-observe run; when given, every target must "
-                        "be empty or the run refuses (this script never clears a slot)")
+                        "be empty or the run refuses. The script clears nothing unless asked: `--prepare-only` "
+                        "and `--clear-targets` are the two clearing paths, and both act only on the three "
+                        "named targets.")
     p.add_argument("--tempo-bpm", type=float, default=120.0,
                    help="pin and VERIFY the device tempo after this run's own boot; the flow aborts if the "
                         "read-back does not match, because every timing in it is calibrated for this tempo")
@@ -513,19 +518,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     # Precondition, enforced rather than documented: the design seeds A and B by **recording** into them and
     # leaves C empty as the record target, so all three must be empty. Recording is refused by the firmware on
-    # a slot with committed passes, which is why the read-only library observation is required first. This
-    # script never clears a slot: clearing an occupied target is a separate, explicitly authorized action.
-    if False:  # superseded: the census is now a pre-window precondition for every run
-        data = json.loads(args.census.read_text())
-        rows = (data.get("library_observation") or {}).get("slots") or []
-        occupied = [(r.get("track", -1) + 1, r.get("slot", -1) + 1) for r in rows
-                    if isinstance(r, dict) and r.get("has_committed_content")]
-        for slot_number in (args.slot_a, args.slot_b, args.slot_c):
-            if (args.track, slot_number) in occupied:
-                raise SystemExit(
-                    f"target track {args.track} slot {slot_number} already holds committed content; the "
-                    "design needs all three targets empty (A and B are seeded by recording, C stays empty as "
-                    "the record target). Choose empty targets or clear them under a separate authorization.")
+    # a slot with committed passes, which is why the read-only library observation is required first. The
+    # enforcement lives in `target_precondition`, applied after this run's own boot (below) so the census is
+    # read against the same device state the gestures act on; an earlier, unconditional copy of it here was
+    # never reached and was removed rather than left looking like a guard.
 
     events: list[dict] = []
     report = {"track": args.track, "slot_a": args.slot_a, "slot_b": args.slot_b,

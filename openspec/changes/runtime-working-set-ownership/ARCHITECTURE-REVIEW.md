@@ -8308,3 +8308,154 @@ was re-queued at the head. Two things changed with DEC-091, and both are asserte
 recorded in the session closeout. No device action: this is an SD **fault** path, and no device fault
 injection exists for it, so device evidence is owed rather than claimed (recorded in the task entry).
 
+
+---
+
+## S4.1 device leg + S4f.3 no-concession run — first authorized campaign (2026-09-27)
+
+The first authorized end-to-end attempt at the two device legs S4.1 and S4f.3 still owe. The run **executed on
+the authorized targets** and its identity is pinned, but its verdict is **`SETUP_INCOMPLETE` (exit 3) — not a
+pass**, and the working-set lease release was **not** observed. Both device legs therefore stay open. This
+section records what ran, what it proves, and the three findings that must be settled before the next attempt.
+
+### Authorization and targets, from the device's own census
+
+`scripts/hitl_boot_census.py --library-observe` (read-only: resets by re-upload, sends only `!LIB_OBSERVE`,
+writes nothing, clears nothing, never moves the transport) established the library state first, because the
+retention scenario needs **three empty slots on one track** and the recorded authorization was a single
+scratch slot:
+
+| census | committed slots | note |
+|---|---|---|
+| baseline (`captures/s41-track5-census-20260926_235718`) | **60 / 64** | every slot retains an SD payload (`payload_inventory=64`); **track 5 has no empty slot**; the only empty slots on the device were track 3 slot 2, track 7 slot 1, track 8 slots 4 and 8 |
+| after preparation | 59 | track 8 slot 5 cleared |
+| after the run | 62 | track 8 slots 4, 5, 8 now hold the seeded/recorded takes |
+
+No track had three empty slots, so the user authorized **clearing exactly one slot**: track 8, with A = 4,
+B = 5 and C = 8. Preparation ran `hitl_retention_handoff.py --prepare-only`, and every clear came back
+**identity-grade** (`cleared_slot_from_lines` matched the firmware's own `(active_slot=N)`, not a bare
+`Track cleared` marker). A second read-only census then confirmed all three targets `committed=False` before
+any gesture was sent.
+
+**Target identity is proven by state, not by a log label.** The run log contains `Button press: Track 8
+(short)` / `Selected track 8` (1-based, user-facing) beside `[TRACK] Track 7 armed` — the arm site logs the
+**0-based `trackIndex`**. The two bases are adjacent in one log and cannot be reconciled by reading; the
+census diff settles it, and it shows the writes landing exactly where authorized:
+
+```
+slots that CHANGED during the run:  track 8 slot 4, track 8 slot 5, track 8 slot 8   (pre=False -> post=True)
+track 7: unchanged in every slot
+```
+
+`track 7` in that message is track index 7, i.e. the eighth track. **This cost the first reading of the run**:
+the log alone was read as "the run went to the wrong track", which the census disproved. The lesson is recorded
+because the same trap will recur in every future device session against a log with two track-number bases.
+
+### What the run produced
+
+Identity: `git_commit 5849d620ebc5`, `firmware_hex_sha256 adbb079fd552`. Fresh boot, pinned identity, no ring
+eviction, complete observation tail, tempo 120.0 BPM verified by read-back, seed content confirmed on A.
+The oracle reports every chain link present in order:
+
+```
+  [ok  ] (setup)          fresh_boot / identity_pinned / capture_integrity / observation_tail_complete
+  [ok  ] (setup)          tempo_verified 120.0 BPM / seed_content_on_a (RECS,stopToStopped,4,2091,0,2091,2304,0)
+  [ok  ] (retention/L1)   L1_finalizer_outstanding   DIAG,reentry_window_open,4,1709,2304 at 37379958 us
+  [ok  ] (retention/L4)   L4_release_names_the_retiring_owner  slot 4, generation 0, 2304 ticks, 8 chunks
+  [ok  ] (retention/L4)   L4_capacity_released       DIAG,canonical_release,4,0,2304,8 at 37414736 us
+  [FAIL] (setup)          capacity_denied_window_wide_enough: 34778 us (34.8 ms) against a 150000 us floor
+  [????] (evidence/L2)    L2_denial_identified_for_b: the denial happened, but its human row carries no slot
+                          or interval and the identity-grade DIAG,reentry,deny row is absent
+verdict: SETUP_INCOMPLETE (exit 3)
+```
+
+The device drove the whole sequence — A's overdub, the switch to B, B's overdub, B's stop **denied on
+capacity**, C's switch/start **retained**, capacity released, C started once and recorded — and the timely
+human rows show it:
+
+```
+[35.816] [TRACK] Reentry window open slot=3
+[35.921] Loop 5: Switch gesture from slot 4
+[36.329] Loop 5: Stop Overdub
+[36.329] [TRACK] Overdub stop refused: stop_job_pending phase=7 dest=1 ...
+[36.545] Loop 8: Switch gesture from slot 5
+[36.545] Track 7 loop 8: switch and record start retained (stop not yet admitted)
+[37.379] [TRACK] Reentry window open slot=4
+[39.416] Recording started @ tick 2304
+```
+
+Content: the dump declares 2 expected rows, `storage_matches_effective=True` and `max_bar_refs=2`. The
+whole-playback review returns FAIL/`inventory_equal=False` on every cycle, which is **expected here and not a
+parity failure**: track 8's other slots still hold committed content whose notes sound alongside the loop
+under test (reported as `EXTRA`), exactly the reading S4f.3's L7 reassessment recorded. The dump's own
+completeness is the deciding evidence.
+
+### Three findings the campaign produced
+
+1. **The oracle's window-width measurement mixes two timing sources, and the 34.8 ms it reports is not
+   trustworthy.** `capacity_denied_window_wide_enough` computes `release.us - window_open.us` from the
+   **deferred `#CAP` rows**, while the same file documents that those rows "queue behind the deferred stop's
+   flood and arrive seconds late" and uses the timely **human** rows as the edge everywhere else. In this run
+   both intervals' releases were flushed in one burst 48 us apart (`canonical_release,3` at 37414688,
+   `canonical_release,4` at 37414736), so slot 4's release timestamp is *the flush time*, not the availability
+   edge — the same defect class as the "prefer the timely human rows" fix in `6e13c210`, but in the one check
+   that was not converted. The human rows put the two window opens **1.56 s apart** (35.816 → 37.379), i.e. the
+   same order as the 1.335 s/1.55 s figures the earlier passes measured. **So the window may well have been
+   wide enough and the check cannot tell.** This is an oracle defect to fix before the next run, and it is
+   deliberately **not** fixed here: the run above is the evidence for it.
+2. **L2's identity gap is real, and it is a half-converted emission — verified in the source, not inferred.**
+   `Track::stopOverdubbing` (in `TrackOverdubLifecycle.cpp`) has **two** refusal rows, and only one of them
+   carries identity:
+
+   * the `headJob != nullptr && headJob->admission.pending` branch emits
+     `Overdub stop refused: %s phase=%u dest=%u closure=%u recycle_owner=%u recycle_started=%u undo_ready=%u`
+     — **no slot, no interval**. This is the row this run produced
+     (`stop_job_pending phase=7 dest=1 closure=0 recycle_owner=0 recycle_started=0 undo_ready=0`);
+   * the `else` branch emits the identity-bearing
+     `Overdub stop refused: %s slot=%u interval=%lu`, with the comment that the human row is the timely edge and
+     "without the identity it cannot attribute the denial".
+
+   So the S4f.3 logging fix covered the **non-pending** refusals, and the one reason that governs the
+   successor's stop in exactly this scenario — a predecessor stop job still pending — was left out. That is
+   either an unfinished conversion or a deliberate scope limit; it is **not** yet a regression, and it is
+   **not** the `successor_stop_denied_capacity` reason either. Closing it is one emission on that branch and
+   would let L2 be read from the timely row (and needs the RAM1 check, since this TU is not obviously
+   FLASH-resident). Recorded as a finding, not fixed here.
+3. **The working-set lease release is not exercised by this shape — measured, not inferred.**
+   `DIAG,ws_release` appears **zero** times in a run that completed the full A/B/C chain. The G0 trace already
+   explains why and the run confirms it: the same-track handoff excludes its own track from the take-start
+   sweep, so no sweep runs over the retired slot; the cross-track sweep only releases slots on *other* tracks,
+   and no such start happened while another track's slot still held a lease. S4.1's packet names three routes
+   for the device row (a cross-track take start, memory pressure, or a same-track switch **after** retirement)
+   — this campaign exercised the chain but **none of those three**, so the row remains owed and the route must
+   be chosen deliberately rather than hoped for.
+
+### Reproduction
+
+```
+# 1. read-only state (resets by re-upload; writes nothing)
+.venv/bin/python scripts/hitl_boot_census.py --out-dir captures/<census> --library-observe \
+    --settle-s 25 --observe-window-s 30
+# 2. prepare the authorized targets (identity-grade clears, stopped transport)
+.venv/bin/python scripts/hitl_retention_handoff.py --track 8 --slot-a 4 --slot-b 5 --slot-c 8 \
+    --out-dir captures/<prep> --prepare-only
+# 3. re-census and require all three empty, then run with the census enforced
+.venv/bin/python scripts/hitl_retention_handoff.py --track 8 --slot-a 4 --slot-b 5 --slot-c 8 \
+    --out-dir captures/<run> --census captures/<census>/census.json
+# 4. content pipeline, then the oracle
+.venv/bin/python .agents/skills/hitl-content-verification/scripts/dump_and_capture.py --out-dir captures/<pb>
+.venv/bin/python .agents/skills/hitl-content-verification/scripts/verify_playback_content.py captures/<pb>
+.venv/bin/python scripts/hitl/retention_probe.py --session-log captures/<run>/session_*.log \
+    --metadata captures/<run>/metadata.json --slot-a 4 --slot-b 5 --slot-c 8 --track-b 8 \
+    --content-dump captures/<pb>/serial.log --content-review captures/<pb>/content-review.json \
+    --expect-successor-note 67 --out captures/<run>/retention-review.json
+```
+
+**Device state after the run:** shutdown verified `complete` (2 stop+drain cycles reaching verified
+persistence idle), no latch. Track 8 slots 4, 5 and 8 now hold the campaign's takes, and the content of
+track 8 slot 5 was cleared under the user's explicit authorization for this run.
+
+**No acceptance is claimed.** S4.1's lease-release device row and S4f.3's no-concession run both remain open;
+what changed is that the campaign is now executable, its identity is pinnable, and its three blockers are
+named with evidence instead of assumed.
+

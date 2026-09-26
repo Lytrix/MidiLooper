@@ -1,6 +1,30 @@
 # Project state (execution context)
 
-**Current handoff — S4.1 lease release verified and checked; F4 completion-failure policy fixed (2026-09-26).**
+**Current handoff — first authorized device campaign for the two owed device legs: executed, not accepted
+(2026-09-27).** The session committed the verified checkpoint `5849d620` (F4/DEC-091 plus the two S4.1
+verification slices), then ran the first authorized attempt at S4.1's lease-release row and S4f.3's
+no-concession retention run. A **read-only library census came first and changed the plan**: the device holds
+**60/64 committed slots** and **no track has three empty slots** — including track 5, the documented scratch
+track — so the user authorized clearing exactly one slot, and the run used **track 8, A=4, B=5, C=8** with
+identity-grade clears and a census re-verification of all three targets before any gesture. Identity
+`git_commit 5849d620ebc5` / `firmware_hex_sha256 adbb079fd552`; fresh boot, pinned identity, no ring eviction,
+tempo verified. **The whole chain ran and all eight links are present in order, but the oracle returns
+`SETUP_INCOMPLETE` (exit 3) — no acceptance is claimed, and both device legs stay open.** Three findings are
+recorded: the window-width check still reads the **deferred `#CAP` rows** (34.8 ms reported against a 150 ms
+floor, while the timely human rows put the window opens 1.56 s apart, so it cannot distinguish "too narrow"
+from "flushed late"); the denial row for `stop_job_pending` carries **no slot/interval** while the sibling
+branch does, which is the identity link L2 needs; and **zero `DIAG,ws_release` rows** appeared in a completed
+A/B/C chain, so S4.1's row is still owed with its triggering route now named rather than assumed. A **log
+reading trap** is recorded too: `Selected track 8` (1-based) sits beside `[TRACK] Track 7 armed` (0-based
+`trackIndex`), and only the census diff proves the writes landed on the authorized track. Host tests green
+(`test_retention_handoff_plan` 23/23, `test_retention_probe` 42/42); device shutdown `complete`, no latch; the
+authorized clear of **track 8 slot 5** is the only content this session removed. Record:
+[`ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ "S4.1 device leg + S4f.3 no-concession run". Recovery hardware content/Undo/Redo acceptance and the parked
+DMA repair remain open and unchanged.
+
+
+**Previous handoff — S4.1 lease release verified and checked; F4 completion-failure policy fixed (2026-09-26).**
 Two slices since the last checkpoint. **S4.1's lease leg** is verified natively with no firmware change
 (three fixtures; the retired slot is released by the next same-track playback reset, refused while a live
 finalization owns it, and the protection is triple-layered and red-proved by staged guard removal) and **S4.1
