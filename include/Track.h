@@ -249,6 +249,10 @@ public:
   bool hasLiveCaptureStopJobForSlot(uint8_t slot) const;
   /// S3.2 owner kind: an accepted-but-not-yet-executed interaction latched for `slot` (S4f.1).
   bool hasAcceptedInteractionForSlot(uint8_t slot) const;
+  /// S4.1: release every slot whose liveness predicate reports no live owner, through the
+  /// `(slot, generation)` entry. The predicate-free `TrackPlaybackRuntime::resetAll` discarded each
+  /// slot's refusal; this preserves it.
+  void releaseEligiblePlaybackRuntimeSlots(bool preserveLedger);
   /// S4.1: clear **only the stopping interval's** slot ledger. Never the track-global sweep — while a
   /// predecessor finalizes on a sibling slot, sweeping would erase its open-note suppression state.
   void clearStoppingIntervalLedger();

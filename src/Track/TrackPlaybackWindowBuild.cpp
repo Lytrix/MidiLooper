@@ -472,6 +472,18 @@ void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
   invalidatePlaybackMergedMidiEvents(true);
 }
 
+TRACK_COLD_MEM void Track::releaseEligiblePlaybackRuntimeSlots(bool preserveLedger) {
+  // S4.1: the (slot, generation) release entry, evaluated through the liveness predicate. This
+  // replaces the track-global `TrackPlaybackRuntime::resetAll`, which was predicate-free and
+  // discarded every per-slot refusal -- a released slot could be reset underneath a live owner.
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    if (!noLiveOwnerForSlot(slot)) {
+      continue;
+    }
+    (void)playbackRuntime.releaseSlot(slot, playbackRuntime.slotGeneration(slot), preserveLedger);
+  }
+}
+
 TRACK_COLD_MEM void Track::invalidatePlaybackMergedMidiEvents(bool preserveLedger) {
   // The job borrows generation-qualified scratch. Preserve it until STOPPED
   // recovery has consumed accepted input; terminal cleanup retries this reset.
@@ -481,7 +493,7 @@ TRACK_COLD_MEM void Track::invalidatePlaybackMergedMidiEvents(bool preserveLedge
     return;
   }
   bumpPlaybackGeneration();
-  playbackRuntime.resetAll(preserveLedger);
+  releaseEligiblePlaybackRuntimeSlots(preserveLedger);
 }
 TRACK_COLD_MEM void Track::prewarmBootPlaybackRuntimeSlots() {
   ensureLoopsAllocated();
@@ -814,7 +826,7 @@ bool Track::isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const {
 }
 
 TRACK_COLD_MEM void Track::releasePlaybackMergedMidiEventsMemory() {
-  playbackRuntime.resetAll(false);
+  releaseEligiblePlaybackRuntimeSlots(false);
 }
 
 TRACK_COLD_MEM bool Track::hasLiveCaptureStopJobForSlot(uint8_t slot) const {

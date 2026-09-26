@@ -72,6 +72,9 @@ enum class WorkingSetOutcome : uint8_t {
   NotHeld,
   /// Release: the slot is held, but by a different generation (the rejected no-op, S4.2).
   StaleGeneration,
+  /// Release: a live owner remains, or the slot runtime's own reset refused (accepted capture owns
+  /// its scratch). Reported, never discarded -- the pre-S4.1 `resetAll` dropped this answer.
+  RefusedBusy,
 };
 
 /// Declared caps for the measured active envelope (design.md role classes). Device facts:

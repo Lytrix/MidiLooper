@@ -698,8 +698,6 @@ LoopPlaybackRuntime* allocateLoopPlaybackRuntime();
 
 class TrackPlaybackRuntime {
  public:
-  void resetAll(bool preserveLedger);
-
   void clearAllLedgers();
 
   LoopPlaybackRuntime& slot(uint8_t slotIndex);
@@ -712,6 +710,18 @@ class TrackPlaybackRuntime {
   /// Non-allocating peek. nullptr if this slot has no runtime yet.
   LoopPlaybackRuntime* slotIfAllocated(uint8_t slotIndex);
   const LoopPlaybackRuntime* slotIfAllocated(uint8_t slotIndex) const;
+
+  /// S4.1/S4.2: release one slot's runtime working set under its `(slot, generation)` identity.
+  ///
+  /// The generation is the slot's working-set lease generation, which is the per-slot runtime
+  /// generation: a release whose generation does not match is a reported no-op, so a late caller
+  /// cannot release a reused slot. A slot runtime's own `reset()` refusal (accepted capture still
+  /// owns its scratch) is **preserved and reported** as `RefusedBusy` rather than discarded -- the
+  /// pre-S4.1 `resetAll` dropped it. `preserveLedger` selects the reset variant the caller needs.
+  WorkingSetOutcome releaseSlot(uint8_t slotIndex, uint16_t generation, bool preserveLedger);
+
+  /// The identity a caller must present to `releaseSlot`.
+  uint16_t slotGeneration(uint8_t slotIndex) const;
 
  private:
   std::array<LoopPlaybackRuntimePtr, Config::MAX_LOOPS_PER_TRACK> runtimeBySlot_{};
