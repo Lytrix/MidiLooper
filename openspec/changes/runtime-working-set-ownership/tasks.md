@@ -1635,6 +1635,15 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `resolveCaptureTrackSlotForMidPass` resolves from the interval with **no** selected/active fallback.
       Audit the remaining `getActiveLoopIndex()`-derived paths for the latch window and record the set.
 - [ ] S4f.6 **Start side too.** Implement all transition/consumption rules in
+      **BLOCKS S4b.1 (2026-09-25).** `TrackManager::startRecordingTrack` refuses while
+      `Track::hasStopInFlight()`, and its own comment assigns the replacement to this task ("S4f.6 replaces
+      this refusal with the accepted-start carrier and the stop > switch > start composition"). After the
+      S4f.3 handoff, A's admitted stop *is* `hasStopInFlight()`, so the successor's start is refused inside
+      the start call -- before the dispatcher's consumption lines -- which strands the request: retained
+      but never executed and never superseded. The timing half is already sound (the dispatcher falls back
+      to the transport bar grid for a zero-length reference), so this carrier is the remaining piece for
+      `S4b.1`'s acceptance. Contract and path review:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4b.1 behavioral contract.
       `IMPLEMENTATION_CONTRACT.md` §5, including manager-owned requests with no live interval, deferred
       eligibility and the combined in-flight query. Add paused-worker fixtures for every listed sequence.
       A second Stop supersedes an unexecuted Start explicitly; after Start commits it stops the new interval. `TrackManagerCaptureQueue.cpp:24-29` accepts the record/overdub start and
