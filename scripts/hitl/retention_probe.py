@@ -72,6 +72,9 @@ STOP_SLOT_RE = re.compile(r"^DIAG,(?:stop_phase|stop_grain),(\d+),(\d+),")
 DENIAL_STAGE_RE = re.compile(r"^ODUB,stop,admission,.*,successor_stop_denied_capacity$")
 TEMPO_FEEDBACK_RE = re.compile(r"Sent tempo CC feedback: ([0-9.]+) BPM")
 TEMPO_APPLIED_RE = re.compile(r"TEMPO: CC=\d+ -> ([0-9.]+) BPM")
+# The firmware logs an applied tempo only when it changes; an already-correct value is reported as
+# "Tempo unchanged: CC=<n> maps to current <bpm> BPM", which is equally a read-back of the current tempo.
+TEMPO_UNCHANGED_RE = re.compile(r"Tempo unchanged: CC=\d+ maps to current ([0-9.]+) BPM")
 RETAINED_LOG_RE = re.compile(r"Track (\d+) loop (\d+): switch and record start retained")
 INVARIANT_VIOLATION_MARKERS = (
     "record activation invariant violated",
@@ -315,7 +318,7 @@ def analyse(
             add("reported_issues_resolved", OK, "base report lists no issues", "setup")
 
     tempos = [float(m.group(1)) for m in (TEMPO_FEEDBACK_RE.search(l) or TEMPO_APPLIED_RE.search(l)
-                                          for l in lines) if m]
+                                          or TEMPO_UNCHANGED_RE.search(l) for l in lines) if m]
     tempo_ok = any(abs(t - tempo_bpm) <= 0.05 for t in tempos)
     add("tempo_verified", OK if tempo_ok else FAIL,
         f"device tempo {tempos[0]:.1f} BPM matches {tempo_bpm:.1f}" if tempo_ok else
