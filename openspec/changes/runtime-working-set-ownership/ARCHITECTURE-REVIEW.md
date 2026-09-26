@@ -5852,3 +5852,75 @@ green while completion was not.
    populated-target case is the overdub-on-B's-playback-phase branch of the contract.
 4. **Repeated B -> C while A finalizes** stays its own **capacity** acceptance case (finalizer capacity, not
    the inbound overlap policy); `Omax` alone does not cover it.
+
+## S4f.3 — the carrier's commit case: the switch's own gesture carries the start (2026-09-25, landed)
+
+**Scope (pinned).** Close S4b.1's contract check 4 for the **committed** switch: one press on the target
+slot while a capture is live on the predecessor must both commit the switch and carry the requested record
+start, so the user does not have to press again. Out of scope, and recorded below: the **uncommitted**
+switch (the stop is admission-denied for capacity) and the unconditional pending-record clear.
+
+**Transition oracle.**
+
+- Given A overdubbing with an **unadmitted** (latched) stop, when the target slot's gesture is pressed
+  **once** through `MidiButtonActions::handleToggleRecordForSlot`, then the switch commits, a record start
+  for the target is **queued**, and driving the production dispatcher across the target's bar boundary
+  starts capture on the target -- with **no further press** and with A's finalizer still outstanding.
+- Given the same precondition but a target that already holds committed MIDI, then the switch commits and
+  **no** record start is carried (the gesture asked for the slot, not for a take).
+
+**Implementation.**
+
+- `TrackManager::finalizeCaptureAndSelectSlot` returns `bool`: the **commit point** now reports whether the
+  switch committed. It returns `false` on the invalid-argument guard and on
+  `if (t.hasAcceptedUnexecutedInteraction()) return false;` -- the S4f.5 rule that the active slot must not
+  move under an accepted-but-unexecuted stop. Callers may ignore the result, so the other three call sites
+  are unchanged in behavior.
+- `handleToggleRecordForSlot`'s capture-switch branch captures that result and, when the switch committed
+  and the target has no committed passes, queues the record start with
+  `queueRecordingTrack(trackIdx, slotIndex, Config::INVALID_LOOP_SLOT)`.
+- **The phase reference is deliberately `INVALID_LOOP_SLOT`.** `refSlotPhaseForQueue(track, previousSlot)`
+  -- what the ordinary arm path uses -- returns the predecessor's slot whenever that loop has a length, and
+  the predecessor here always does. Using it would make **A's mutable loop timing an accidental dependency
+  of B's start**, which the owner-provided contract forbids by name; with no reference the dispatcher falls
+  back to the transport's bar grid, which is what the contract requires for an empty or cleared target.
+
+**Evidence.**
+
+- `test_the_switch_gesture_carries_the_start_without_a_second_press` (renamed from
+  `test_an_unadmitted_stop_retains_the_switch_request_without_a_second_gesture`; the old name and its
+  second press are gone): asserts the request exists (`recordQueuedForSlot(0, 1)`) right after the single
+  gesture, drives the dispatcher with **no** further press, and asserts the target is recording with A's
+  finalizer still outstanding.
+- **Red-proof:** disabling the carrier line fails exactly this fixture (`1 failed, 11 succeeded`). The
+  two-gesture acceptance fixture still passes in that run, so the new fixture **discriminates** the carrier
+  rather than restating the acceptance.
+- Green in default and `S4B_ACCEPTANCE=1` modes; full native **2,448 passed / 1 skipped** (which includes
+  `test_continuous_capture`, whose `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`
+  asserts the S4f.3-corrected rule).
+- Firmware `teensy41-capture-serial`: SUCCESS. RAM1 `variables 96,160 / code 392,104 (was 392,040) /
+  padding 1,112 (was 1,176) / free for locals 34,912` -- 64 bytes of code for the carrier, padding still
+  above the approved 840-byte floor.
+
+**Check 4 is now met for the committed case; the uncommitted case is the reachable remainder.** The
+uncommitted switch is not hypothetical: `Track::stopOverdubbing` **denies** admission when
+`hasPendingDeferredOverdubStop() || finalizationResourcesBusy`, keeping the interval recording and the
+obligation latched (DEC-067's capacity answer). In that window `finalizeCaptureAndSelectSlot` returns
+`false`, and with this slice nothing is carried -- the switch is neither performed nor **retained**, so the
+press is dropped. Carrying it needs the switch itself to be retained with its prerequisite-stop identity
+(the `SlotStateMachine` pending switch / `TrackManager::requestSlotSwitch`) and consumed at a later commit.
+That is S4f.3's original "queued switch + stop admission in one window -> the target is never lost" fixture,
+and it lands on the **finalizer-capacity** question this change deliberately keeps open -- `Omax` alone does
+not answer it.
+
+**Still open, unchanged by this slice.**
+
+1. **The uncommitted switch** (above): retain rather than drop, with the prerequisite stop identified.
+2. **The unconditional pending-record clear** at the top of `finalizeCaptureAndSelectSlot` (see § S4f.6
+   remaining item 2). This slice queues *after* that call, so the carrier's own request survives it -- but a
+   start queued by any other route **before** a switch is still discarded. With the carrier in place this is
+   now the only known path that discards a live start request, and it should be scoped to the finalized slot
+   when the retained-switch work lands.
+3. S4b.1 check 7 coverage (cross-track, cleared and populated targets) and check 6's "cannot execute twice"
+   leg.
+4. Repeated **B -> C while A finalizes** remains a capacity acceptance case.

@@ -1351,11 +1351,12 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       dispatch loop, so a regression cannot pass by returning early or by pressing again. Red-proved by
       restoring the pre-S4f.6 `hasStopInFlight()` guard (`2 failed, 10 succeeded`).
       **Still open, and named rather than implied:**
-      (a) **check 4's start half** — the switch's own gesture does not yet carry the requested start, so the
-      fixture's start is a *second* press; `test_an_unadmitted_stop_retains_the_switch_request_without_a_second_gesture`
-      was **renamed from `..._retains_the_switch_and_start_requests`, whose name overclaimed** — it only ever
-      proved the switch. The carrier (retained switch identifying its prerequisite stop → consumption at
-      successful commit → dispatch of the retained start) is **S4f.3's remaining half**;
+      (a) **check 4's start half** — **now met for the committed switch** (S4f.3 PARTIAL 2: the switch's own
+      gesture carries the record start; `test_the_switch_gesture_carries_the_start_without_a_second_press`
+      asserts it and is red-proved). The **uncommitted** case is the remainder: when
+      `Track::stopOverdubbing` denies admission on capacity, the switch returns `false` and the press is
+      dropped rather than retained — that needs the switch's own retained carrier and depends on the
+      finalizer-capacity question;
       (b) **new finding to fix with it:** `finalizeCaptureAndSelectSlot` clears all pending-record state at
       its top *before* it knows the switch will commit, so a switch discards a retained start request for any
       slot — the landed fixture cannot see this because it commits the switch before queuing the start;
@@ -1568,7 +1569,29 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       **top**, before it knows the switch will commit (it can still return early on an unadmitted stop), so a
       switch currently **discards** a retained start request for any slot. The carrier must queue its start
       before that commit and scope the clear, or the contract's "no request is discarded because a predecessor
-      is finalizing" fails on the switch path itself. Record:
+      is finalizing" fails on the switch path itself.
+      **PARTIAL 2 (2026-09-25) — the carrier's commit case landed.** `finalizeCaptureAndSelectSlot` now
+      **returns whether it committed**, and `handleToggleRecordForSlot`'s capture-switch branch uses that
+      commit point to carry the requested record start for a **record target**:
+      `queueRecordingTrack(trackIdx, slotIndex, Config::INVALID_LOOP_SLOT)`. The phase reference is
+      deliberately none, because `refSlotPhaseForQueue(track, previousSlot)` would return the predecessor's
+      slot (it always has a length here) and so make A's mutable loop timing an accidental dependency of B's
+      start — forbidden by name in the owner-provided contract; with no reference the dispatcher uses the
+      transport's bar grid, as required for an empty/cleared target. Fixture
+      `test_the_switch_gesture_carries_the_start_without_a_second_press` (renamed; the second press is
+      gone) asserts the request exists after **one** gesture, drives the dispatcher with no further press,
+      and asserts the target records while A still finalizes. **Red-proved** by disabling the carrier
+      (`1 failed, 11 succeeded`), and the two-gesture acceptance fixture still passes in that run, so the
+      fixture **discriminates** the carrier. Green in both gate modes; full native `2,448 passed /
+      1 skipped`; firmware SUCCESS with `code 392,040 → 392,104` and `padding 1,176 → 1,112` (above the
+      840-byte floor). **Still open after it:** (a) the **uncommitted** switch — the reachable window where
+      `Track::stopOverdubbing` **denies** admission on capacity
+      (`hasPendingDeferredOverdubStop() || finalizationResourcesBusy`, DEC-067), so the switch returns
+      `false` and the press is **dropped** rather than retained; retaining it needs the switch's own carrier
+      with its prerequisite-stop identity, and it lands on the finalizer-capacity question left open;
+      (b) the unconditional pending-record clear at the top of `finalizeCaptureAndSelectSlot`, which the
+      carrier now survives only because it queues *after* the call — scope it to the finalized slot when the
+      retained switch lands. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3, § S4f.6.
 - [x] S4f.4 **Transport/clock timing validity (B2, T2).** (**REVISED 2026-09-23 by architect decision --
       `design.md` Revision 24; the stored-epoch requirement is WITHDRAWN.** The latch's `transportEpoch`
