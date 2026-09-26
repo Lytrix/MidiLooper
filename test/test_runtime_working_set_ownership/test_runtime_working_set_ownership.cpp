@@ -41,6 +41,7 @@ bool sequencerRunning = false;
 #define HARNESS_LINKS_REAL_STOP_TELEMETRY
 #define HARNESS_OBSERVABLE_SLOT_CHANGE
 #define HARNESS_OBSERVABLE_SD_REFRESH
+#define HARNESS_OBSERVABLE_START_RECLAIM
 // The stub surface: physical outputs and unrelated domain routes stay fail-closed or observable.
 #include "off_path_deps.h"
 
@@ -668,145 +669,76 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedUnexecutedInteraction(track),
                             "the stop must be admitted, not merely accepted-and-unexecuted");
 
-  // (3) Switch to B through the user-facing gesture, then start B with the same gesture. The per-slot
-  // gesture finalizes A's capture, commits the switch and returns; it does not also start the target, so
-  // the start is its own press -- the acceptance sequence's "switch to B, then start B".
+  // (3) Switch to B through the user-facing gesture, then start B. The per-slot gesture finalizes A's
+  // capture, commits the switch and returns; it does not also start the target, so the start is its own
+  // press -- the acceptance sequence's "switch to B, then start B".
   clockManager.assignCurrentTickSilently(200);
   TrackCaptureStopTestAccess::toggleRecordForSlot(1);
-  // Milestone: did the *switch commit* already leave the successor in an Overdub capture session?
-  const unsigned phaseAfterSwitch =
-      static_cast<unsigned>(track.getActiveLoop().capture.phase);
-  const bool overdubSessionAfterSwitch = track.getActiveLoop().hasOverdubSession();
-  const unsigned loopLenAfterSwitch = (unsigned)track.getActiveLoop().loopLengthTicks;
-  if (TrackCaptureStopTestAccess::activeLoopIndex(track) == 1 &&
-      !TrackCaptureStopTestAccess::isRecording(track) &&
-      !TrackCaptureStopTestAccess::isOverdubbing(track)) {
-    // Start B through the arm/record button entry (the one that reaches the record-admission path);
-    // a start on a running transport may be queued, so advance the tick domain across the loop's bar
-    // boundary through the production dispatch.
-    // The arm/record entry and the record-arm branch both act on the **selected** slot, which the
-    // switch deliberately leaves on the predecessor (S4f.5 keeps focus for the piano roll). Select the
-    // active target first, which is what the user does when the switch moved the audio to B.
-    TrackCaptureStopTestAccess::selectSlotIndex(0, 1);
-    // Start B through the per-slot gesture, which is the successor-start route (the arm entry
-    // `handleToggleRecord` routes a track already reporting overdubbing to `stopOverdubbing`).
-    TrackCaptureStopTestAccess::toggleRecordForSlot(1);
-    // A start on a running transport is **queued** at the loop's bar boundary
-    // (`TrackManager::handlePendingRecordStart`), so drive that production dispatch across the boundary
-    // first, and only fall back to a further press if no queued start existed.
-    // `handlePendingRecordStart` deliberately ignores the tick the start was queued at, so land the
-    // dispatch on the *following* loop boundary rather than the same one.
-    const uint32_t queuedTick = clockManager.getCurrentTick();
-    for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3 &&
-                               !TrackCaptureStopTestAccess::isRecording(track) &&
-                               !TrackCaptureStopTestAccess::isOverdubbing(track);
-         ++tick) {
-      clockManager.assignCurrentTickSilently(tick);
-      TrackCaptureStopTestAccess::startPendingRecord(tick);
-    }
-    if (!TrackCaptureStopTestAccess::isRecording(track) &&
-        !TrackCaptureStopTestAccess::isOverdubbing(track)) {
-      midiButtonActions.handleToggleRecord();
-    }
-  }
+  // S4f.6: the switch commits even though A's admitted stop is still finalizing, and this is now
+  // asserted unconditionally. The characterization branch that accepted "the switch held the active slot
+  // on A" was deleted when S4f.6 landed, per this packet's own note, so a regression to refusing the
+  // switch cannot pass by returning early.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the switch must move the active slot to B while A finalizes");
 
-  if (TrackCaptureStopTestAccess::activeLoopIndex(track) != 1) {
-    // Characterization of the current behavior. The switch holds the active slot because S4f.5
-    // requires the active slot not to move under an *unadmitted* stop, and the contract carries that
-    // guard until S4f.3 supplies the switch's accepted-interaction carrier. Recorded, not skipped.
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, TrackCaptureStopTestAccess::activeLoopIndex(track),
-                                    "S4b.1 NOT MET: the switch held the active slot on A");
-    TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track) ||
-                                  TrackCaptureStopTestAccess::isOverdubbing(track),
-                              "S4b.1 NOT MET: B did not start");
-    if (getenv("S4B_ACCEPTANCE") == nullptr) {
-      // Default gate keeps the characterization. `S4B_ACCEPTANCE=1` runs the requirement itself,
-      // which is red until S4f.3 lands. That branch is removed -- not made conditional again -- when
-      // S4f.3 lands, so a later regression to refusing the switch cannot pass by returning early.
-      return;
-    }
-    TEST_FAIL_MESSAGE(
-        "S4b.1 is blocked on S4f.3 (the switch's accepted-interaction carrier): the switch holds the "
-        "active slot while A finalizes, so B cannot start.");
+  // Start B. The arm/record entry and the record-arm branch both act on the **selected** slot, which the
+  // switch deliberately leaves on the predecessor (S4f.5 keeps focus for the piano roll). Select the
+  // active target first, which is what the user does when the switch moved the audio to B.
+  TrackCaptureStopTestAccess::selectSlotIndex(0, 1);
+  // Start B through the per-slot gesture, which is the successor-start route (the arm entry
+  // `handleToggleRecord` routes a track already reporting overdubbing to `stopOverdubbing`).
+  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  // A start on a running transport is **queued** at the loop's bar boundary
+  // (`TrackManager::handlePendingRecordStart`), so drive that production dispatch across the boundary.
+  // `handlePendingRecordStart` deliberately ignores the tick the start was queued at, so land the
+  // dispatch on the *following* loop boundary rather than the same one. There is deliberately no
+  // fallback press: a start that only happens because the fixture pressed again is not the requirement.
+  const uint32_t queuedTick = clockManager.getCurrentTick();
+  for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3 &&
+                             !TrackCaptureStopTestAccess::isRecording(track) &&
+                             !TrackCaptureStopTestAccess::isOverdubbing(track);
+       ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
   }
 
   // (4) B is the live interval and records incoming MIDI while A remains unfinished.
-  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
-                                  "the switch moved the active slot to B at the handoff boundary");
-  // S4f.3 moved the handoff on: the admitted stop releases the active slot, so the switch now commits
-  // (asserted just above). What still does not happen is B *starting*: the per-slot gesture returns
-  // after committing the switch, so the requested start is not carried through to the target. That is
-  // S4f.3's remaining half (the switch's carrier must dispatch the requested start at its commit
-  // point), and it is why this acceptance is still red.
-  if (!TrackCaptureStopTestAccess::isRecording(track) &&
-      !TrackCaptureStopTestAccess::isOverdubbing(track)) {
-    if (getenv("S4B_ACCEPTANCE") == nullptr) {
-      TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
-                                "B has not started yet (S4f.3's carrier-dispatch half is open)");
-      return;
-    }
-    char state[192];
-    snprintf(state, sizeof(state),
-             "post-switch state: playing=%d overdubbing=%d recording=%d pendingStop=%d "
-             "acceptedUnexecuted=%d stopInFlight=%d active=%u selected=%u",
-             track.isPlaying() ? 1 : 0, TrackCaptureStopTestAccess::isOverdubbing(track) ? 1 : 0,
-             TrackCaptureStopTestAccess::isRecording(track) ? 1 : 0,
-             TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track) ? 1 : 0,
-             TrackCaptureStopTestAccess::hasAcceptedUnexecutedInteraction(track) ? 1 : 0,
-             TrackCaptureStopTestAccess::hasStopInFlight(track) ? 1 : 0,
-             TrackCaptureStopTestAccess::activeLoopIndex(track),
-             TrackCaptureStopTestAccess::selectedSlotIndex(0));
-    snprintf(state + strlen(state), sizeof(state) - strlen(state),
-             " | queuedAny=%d queued0=%d queued1=%d",
-             TrackCaptureStopTestAccess::anyRecordQueued(0) ? 1 : 0,
-             TrackCaptureStopTestAccess::recordQueuedForSlot(0, 0) ? 1 : 0,
-             TrackCaptureStopTestAccess::recordQueuedForSlot(0, 1) ? 1 : 0);
-    TEST_FAIL_MESSAGE(state);
-    TEST_FAIL_MESSAGE(
-        "S4f.3/S4b.1: the switch commits but the requested start is not dispatched to the target, so B "
-        "never starts while A finalizes.");
-  }
+  // S4f.6: B starts while A still finalizes. Before S4f.6 the refusal ran *inside*
+  // `startRecordingTrack` and short-circuited the dispatcher's consumption lines, so the request was
+  // retained but never executed and never superseded. Both characterization branches are deleted; the
+  // claims below are now the requirement itself.
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track) ||
                                TrackCaptureStopTestAccess::isOverdubbing(track),
                            "B must start from the gesture while A still finalizes");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the switch moved the active slot to B at the handoff boundary");
   const size_t before = TrackCaptureStopTestAccess::captureEventCount(track);
   // Inject in the record domain: the dispatcher above advanced the tick to the loop boundary, so the
   // note must lie *after* the current tick or capture rejects it as already past.
   const uint32_t tickBeforeInput = clockManager.getCurrentTick();
-  const uint32_t loopLenBeforeInput = track.getActiveLoop().loopLengthTicks;
   const uint32_t onTick = tickBeforeInput + 8;
   inputNote(64, onTick, onTick + 32);
-  if (TrackCaptureStopTestAccess::captureEventCount(track) != before + 2) {
-    // Characterization of the remaining gap: B is the active, started interval with capture active,
-    // but the note is not captured. `S4B_ACCEPTANCE=1` turns this into the requirement's failure.
-    char state[224];
+  const size_t after = TrackCaptureStopTestAccess::captureEventCount(track);
+  if (after != before + 2) {
+    // An on-failure diagnostic only -- the claim itself is unconditional, so this cannot pass by
+    // returning early the way the pre-S4f.6 characterization could.
+    char state[256];
     snprintf(state, sizeof(state),
              "B did not record the note: recording=%d overdubbing=%d captureActive=%d size=%zu tick=%u "
-             "loopLen=%u active=%u beforeTick=%u beforeLoopLen=%u onTick=%u phase=%u hasOverdubSession=%d",
+             "active=%u beforeTick=%u onTick=%u phase=%u hasOverdubSession=%d",
              TrackCaptureStopTestAccess::isRecording(track) ? 1 : 0,
              TrackCaptureStopTestAccess::isOverdubbing(track) ? 1 : 0,
-             TrackCaptureStopTestAccess::captureActive(track) ? 1 : 0,
-             TrackCaptureStopTestAccess::captureEventCount(track),
+             TrackCaptureStopTestAccess::captureActive(track) ? 1 : 0, after,
              (unsigned)clockManager.getCurrentTick(),
-             (unsigned)track.getActiveLoop().loopLengthTicks,
-             TrackCaptureStopTestAccess::activeLoopIndex(track),
-             (unsigned)tickBeforeInput, (unsigned)loopLenBeforeInput, (unsigned)onTick,
-             static_cast<unsigned>(track.getActiveLoop().capture.phase),
+             TrackCaptureStopTestAccess::activeLoopIndex(track), (unsigned)tickBeforeInput,
+             (unsigned)onTick, static_cast<unsigned>(track.getActiveLoop().capture.phase),
              track.getActiveLoop().hasOverdubSession() ? 1 : 0);
-    snprintf(state + strlen(state), sizeof(state) - strlen(state),
-             " | afterSwitch phase=%u session=%d loopLen=%u", phaseAfterSwitch,
-             overdubSessionAfterSwitch ? 1 : 0, loopLenAfterSwitch);
     snprintf(state + strlen(state), sizeof(state) - strlen(state),
              " | queued any=%d slot0=%d slot1=%d", TrackCaptureStopTestAccess::anyRecordQueued(0) ? 1 : 0,
              TrackCaptureStopTestAccess::recordQueuedForSlot(0, 0) ? 1 : 0,
              TrackCaptureStopTestAccess::recordQueuedForSlot(0, 1) ? 1 : 0);
-    if (getenv("S4B_ACCEPTANCE") == nullptr) {
-      return;
-    }
     TEST_FAIL_MESSAGE(state);
   }
-  TEST_ASSERT_EQUAL_MESSAGE(before + 2, TrackCaptureStopTestAccess::captureEventCount(track),
-                            "B must have recorded the incoming MIDI note's on and off");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
                            "A's finalizer must still be outstanding while B records");
 
@@ -826,10 +758,16 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
 }
 
 /// **S4b.1 — an unadmitted stop is a different case from an admitted, paused finalizer.** When A's stop
-/// has not been admitted yet, the switch and the start must be *retained* and execute once admission
-/// becomes possible -- without a second gesture. This is separate coverage on purpose: the acceptance
-/// case above must never accept an accepted-but-unexecuted stop as "A is finalizing".
-void test_an_unadmitted_stop_retains_the_switch_and_start_requests() {
+/// has not been admitted yet, the switch must be *retained* and execute once admission becomes possible
+/// -- without a second gesture. This is separate coverage on purpose: the acceptance case above must
+/// never accept an accepted-but-unexecuted stop as "A is finalizing".
+///
+/// Scope note (S4f.6, measured): the retained request proved here is the **switch**. The contract's
+/// check 4 also requires the *start* to be carried by that same gesture; the switch branch of
+/// `handleToggleRecordForSlot` returns straight after `finalizeCaptureAndSelectSlot` and never queues
+/// one, so that half is still open and belongs to S4f.3's carrier. The start below is deliberately a
+/// second press and is labelled as such rather than being counted as "without another gesture".
+void test_an_unadmitted_stop_retains_the_switch_request_without_a_second_gesture() {
   LoopEventStore::initPool();
   Track& track = trackManager.getSelectedTrack();
   track.ensureLoopsAllocated();
@@ -868,6 +806,29 @@ void test_an_unadmitted_stop_retains_the_switch_and_start_requests() {
 
   // Retained path: the switch executed once admission allowed it, without a second gesture.
   TEST_ASSERT_EQUAL_UINT8(1, TrackCaptureStopTestAccess::activeLoopIndex(track));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                           "A's admitted stop must still be finalizing at the handoff");
+
+  // S4b.1 contract check 4, second half. Be precise about what this proves. The start below is a
+  // **second** press, so it does *not* satisfy "without another gesture" -- carrying the requested start
+  // on the switch's own gesture is S4f.3's remaining carrier half, recorded in the packet. What it does
+  // prove is S4f.6: a start requested once the stop has bound is executed rather than stranded, even
+  // when the predecessor's stop reached admission through the latch rather than through a clean
+  // quantization window.
+  TrackCaptureStopTestAccess::selectSlotIndex(0, 1);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  const uint32_t queuedTick = clockManager.getCurrentTick();
+  for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3 &&
+                             !TrackCaptureStopTestAccess::isRecording(track) &&
+                             !TrackCaptureStopTestAccess::isOverdubbing(track);
+       ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track) ||
+                               TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "B must start once the stop has bound, not be stranded by it");
+  TEST_ASSERT_EQUAL_UINT8(1, TrackCaptureStopTestAccess::activeLoopIndex(track));
 }
 
 
@@ -884,6 +845,6 @@ int main() {
   RUN_TEST(test_reactivating_a_released_slot_reuses_its_capacity);
   RUN_TEST(test_a_declared_envelope_breach_is_reported_and_does_not_block_activation);
   RUN_TEST(test_switching_starts_the_new_take_while_the_previous_take_still_finalizes);
-  RUN_TEST(test_an_unadmitted_stop_retains_the_switch_and_start_requests);
+  RUN_TEST(test_an_unadmitted_stop_retains_the_switch_request_without_a_second_gesture);
   return UNITY_END();
 }

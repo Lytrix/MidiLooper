@@ -92,6 +92,19 @@ TRACK_COLD_MEM bool Track::hasStopInFlight() const {
   return hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction();
 }
 
+TRACK_COLD_MEM bool Track::hasStopInFlightForSlot(uint8_t slot) const {
+  if (const Track::CaptureStopJob* job = captureStopJobHead()) {
+    if (job->slot == slot) {
+      return true;
+    }
+  }
+  const PendingInteractionLatch* latch = interactionLatch();
+  if (latch != nullptr && latch->isSet() && latch->slot == slot) {
+    return true;
+  }
+  return false;
+}
+
 TRACK_COLD_MEM uint32_t Track::acceptedStopWaitCount() const {
   const PendingInteractionLatch* latch = interactionLatch();
   return latch != nullptr ? latch->waitCount : 0;
