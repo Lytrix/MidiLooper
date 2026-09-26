@@ -154,6 +154,36 @@ def _ensure_transport(out_port, capture_log: Path, *, running: bool, press_ms: i
     return ok
 
 
+# A loop button's short/double/triple discrimination means the firmware holds the second tap until its tap
+# window expires, and a repeat press inside that window merges. Measured on device 2026-09-27: my first leg
+# pressed slot 5 twice 345 ms apart with a record press between them, and the firmware logged
+#   Loop 5: Queued playback switch   ->  Loop 5: Reaffirmed playback switch   ->  Loop 5: Reaffirmed ...
+# i.e. **two countdowns for the same switch**. The firmware side of that is `queuePlayingSlotSwitch`, which
+# clears and re-requests without checking whether the same target is already pending, so the quantized switch
+# restarts from the current tick. The driver's side is this: never press the same gesture twice inside the
+# window, and never press `record` while a queued switch has not executed.
+DEFAULT_TAP_WINDOW_S = 0.35
+
+
+def _switch_pending(capture_log: Path, since: int, slot: int) -> bool:
+    """True while the log shows a queued/affirmed switch for `slot` that has not yet executed."""
+    tail = _lines(capture_log)[since:]
+    queued = any(("Queued playback switch" in l or "Reaffirmed playback switch" in l)
+                 and f"Loop {slot}:" in l for l in tail)
+    executed = any("Playback started" in l for l in tail)
+    return queued and not executed
+
+
+def _wait_switch_executed(capture_log: Path, since: int, timeout_s: float) -> bool:
+    """Wait for the queued switch to actually run before any further press touches the same buttons."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if any("Playback started" in l for l in _lines(capture_log)[since:]):
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def _emit(out_port, gesture: Gesture, *, press_ms: int) -> None:
     if gesture.kind == "track":
         slots.press_track(_Ctx(out_port), gesture.value, press_ms=press_ms)
@@ -274,12 +304,25 @@ def main(argv: list[str] | None = None) -> int:
             leg_mark = len(_lines(capture_log))
             plan = leg_gestures(args.leg, track=args.track, a=args.slot_a, b=args.slot_b)
             report["plan"] = [{"step": g.step, "kind": g.kind, "value": g.value} for g in plan]
+            last_slot_press_at = 0.0
             for gesture in plan:
+                # A queued switch owns the slot buttons until it executes. Pressing anything on the same
+                # buttons before then is what produced the double countdown, so wait it out first.
+                if _switch_pending(capture_log, leg_mark, args.slot_b):
+                    ran = _wait_switch_executed(capture_log, leg_mark, timeout_s=args.phase_timeout_s)
+                    events.append({"event": f"{gesture.step}_waited_for_pending_switch", "confirmed": ran})
                 mark = len(_lines(capture_log))
                 if gesture.step.endswith("_start") and gesture.kind != "transport":
                     # A start/switch needs a running transport; the plan's transport gestures are explicit.
                     _ensure_transport(out_port, capture_log, running=True, press_ms=args.press_ms,
                                       events=events, label=f"{gesture.step}_transport")
+                # Never press a loop button twice inside the firmware's tap window: the second tap merges
+                # into a double/triple and re-queues the switch instead of being a distinct gesture.
+                if gesture.kind == "slot_record":
+                    gap = time.monotonic() - last_slot_press_at
+                    if gap < DEFAULT_TAP_WINDOW_S:
+                        time.sleep(DEFAULT_TAP_WINDOW_S - gap)
+                    last_slot_press_at = time.monotonic()
                 _emit(out_port, gesture, press_ms=args.press_ms)
                 events.append({"event": f"gesture:{gesture.step}", "line": mark,
                                "host_monotonic_ns": time.monotonic_ns()})
