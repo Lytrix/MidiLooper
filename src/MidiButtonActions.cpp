@@ -835,10 +835,12 @@ STORAGE_PERSIST_MEM void MidiButtonActions::handleClearTrack() {
                 track.setState(TRACK_EMPTY);
                 logger.info("MIDI: Clear reset non-empty track state to EMPTY (no loop data)");
             } else {
-                logger.debug("Clear ignored — track is empty");
+                logger.debug("Clear ignored — track is empty (track %u slot %u)",
+                             static_cast<unsigned>(tidx), static_cast<unsigned>(slot));
             }
         } else {
-            logger.debug("Clear ignored — selected slot is empty");
+            logger.debug("Clear ignored — selected slot is empty (track %u slot %u)",
+                             static_cast<unsigned>(tidx), static_cast<unsigned>(slot));
         }
         return;
     }

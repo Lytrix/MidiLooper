@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import uuid
@@ -136,6 +137,37 @@ class _Ctx:
     def __init__(self, out_port):
         self.out_port = out_port
         self.config = self._Cfg()
+
+
+# Clear-outcome identity. The firmware now names the slot it acted on, which is what makes a *preparation*
+# auditable: before this, `Track cleared` named no slot, so a clear that silently kept content was
+# indistinguishable from one that cleared the intended slot (measured: two `Track cleared` plus one
+# `Clear ignored` and the slot still held content).
+#
+# Base convention, deliberately spelled out because mixing it is the trap: `active_slot=` and the
+# `Clear ignored` `slot` field are 0-based, matching the `#CAP` identity and the census; the older
+# user-facing `MIDI: Clear selected slot N` line is 1-based and is NOT used for identity here.
+TRACK_CLEARED_SLOT_RE = re.compile(r"Track cleared @ tick \d+ \(active_slot=(\d+)\)")
+CLEAR_IGNORED_SLOT_RE = re.compile(r"Clear ignored \u2014 [^(]*\(track \d+ slot (\d+)\)")
+
+
+def cleared_slot_from_lines(lines: list[str], *, slot_number: int) -> Optional[bool]:
+    """Did these lines show the intended slot being cleared (or found already empty)?
+
+    Returns True/False on an identity-grade answer, or None when no identity line is present (an older
+    firmware, or a clear that emitted nothing) -- the caller records that distinction instead of counting a
+    bare marker match as proof.
+    """
+    for line in lines:
+        if (m := TRACK_CLEARED_SLOT_RE.search(line)) and int(m.group(1)) == slot_number:
+            return True
+        # Already empty is the desired end state for a preparation, but only if it is THIS slot.
+        if (m := CLEAR_IGNORED_SLOT_RE.search(line)) and int(m.group(1)) == slot_number:
+            return True
+    for line in lines:
+        if TRACK_CLEARED_SLOT_RE.search(line) or CLEAR_IGNORED_SLOT_RE.search(line):
+            return False
+    return None
 
 
 def _lines(path: Path) -> list[str]:
@@ -296,6 +328,7 @@ def _clear_slot(out_port, capture_log: Path, *, track: int, slot_number: int, pr
     time.sleep(1.0)
 
     cleared = False
+    identity_grade = False
     for attempt in range(3):
         before = len(_lines(capture_log))
         _send_long_press(out_port, note=RECORD_BUTTON_NOTE,
@@ -303,13 +336,29 @@ def _clear_slot(out_port, capture_log: Path, *, track: int, slot_number: int, pr
         _wait_for_any(capture_log, after=before,
                       markers=("Track cleared", "Clear selected slot", "Clear ignored", "Clear refused"),
                       timeout_s=6.0)
-        tail = " ".join(_lines(capture_log)[before:])
-        if any(m in tail for m in ("Track cleared", "Clear selected slot", "Clear ignored")):
+        fresh = _lines(capture_log)[before:]
+        verdict = cleared_slot_from_lines(fresh, slot_number=slot_number)
+        if verdict is True:
             cleared = True
+            identity_grade = True
             break
+        if verdict is False:
+            # A clear line appeared, but it names a different slot: the intended target was NOT cleared.
+            # Retry rather than accepting the marker, which is the defect this replaces.
+            events.append({"event": f"clear_{slot_number}_wrong_slot", "attempt": attempt + 1,
+                           "lines": [ln for ln in fresh
+                                     if "Track cleared" in ln or "Clear ignored" in ln][:4]})
+        else:
+            # No identity line: fall back to the legacy markers, flagged so the pass is not silently
+            # identity-grade.
+            tail = " ".join(fresh)
+            if any(m in tail for m in ("Track cleared", "Clear selected slot", "Clear ignored")):
+                cleared = True
+                break
         events.append({"event": f"clear_{slot_number}_retry", "attempt": attempt + 1})
         time.sleep(3.0)
-    events.append({"event": f"clear_{slot_number}", "confirmed": cleared})
+    events.append({"event": f"clear_{slot_number}", "confirmed": cleared,
+                   "identity_grade": identity_grade})
     time.sleep(0.5)
     return cleared
 
@@ -555,8 +604,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                 "continue rather than produce a bad run.")
 
         # --- the target precondition, BEFORE A's finalization window is opened ---
-        # Verified from the read-only census, by track and slot: "Track cleared" alone neither identifies the
-        # cleared target nor proves its final state, so the state comes from the device's own per-slot report.
+        # Verified from the read-only census, by track and slot. `Track cleared` now names the slot it acted
+        # on (`(active_slot=N)`), so `_clear_slot` can prove it cleared the INTENDED target -- but a clear
+        # line still does not prove the slot's final state (a clear can report while content survives), so
+        # eligibility comes from the device's own per-slot census report instead.
         # A failure stops the run as SETUP_INCOMPLETE; it does not clear again in passing.
         if args.census is not None:
             ok, detail = target_precondition(json.loads(args.census.read_text()), track=args.track,

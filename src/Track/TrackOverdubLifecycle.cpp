@@ -1804,7 +1804,12 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
                  headJob->admission.historyRecycleStarted ? 1u : 0u,
                  headJob->undoPublicationReady ? 1u : 0u);
     } else {
-      logger.log(CAT_TRACK, LOG_INFO, "Overdub stop refused: %s", busyReason);
+      // Name the slot and the interval. The human row is the timely edge, and without the identity it cannot
+      // attribute the denial: "which slot was refused" was previously readable only from the deferred `#CAP`
+      // row, which the timing-critical shed could remove.
+      logger.log(CAT_TRACK, LOG_INFO, "Overdub stop refused: %s slot=%u interval=%lu", busyReason,
+                 static_cast<unsigned>(activeLoopIndex),
+                 static_cast<unsigned long>(captureInterval_));
     }
     return;
   }

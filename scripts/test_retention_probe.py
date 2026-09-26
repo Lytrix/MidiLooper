@@ -145,6 +145,53 @@ class RetentionProbeChainTests(unittest.TestCase):
         self.assertEqual("unknown", by_name(result)["L2_denial_identified_for_b"].status)
         self.assertIn("cannot establish", by_name(result)["L2_denial_identified_for_b"].detail)
 
+    # --- the timely human denial row now carries its own identity ------------------------------------
+    def _human_only_denial_log(self, human_row: str) -> str:
+        """The machine denial rows removed, leaving the denial's timely human row as the only trace.
+
+        This is the measured shedding case: the deferred `#CAP` rows were absent from a completed run while
+        the behaviour had happened, so what the human row can and cannot establish matters.
+        """
+        text = chain_log(extra=[human_row])
+        return "\n".join(l for l in text.splitlines()
+                         if "DIAG,reentry,deny" not in l
+                         and "successor_stop_denied_capacity" not in l) + "\n"
+
+    def test_the_human_denial_names_its_slot_and_interval_but_is_not_a_device_time_anchor(self):
+        """Identity without a device timestamp: reported as insufficient, never promoted to a pass.
+
+        L5 orders the bind against `denial.us` in DEVICE micros. The human row's timestamp is host
+        milliseconds, so accepting it as the L2 pass would put two time bases into that comparison.
+        """
+        text = self._human_only_denial_log(
+            "[1885.0] [DEBUG] [TRACK] Overdub stop refused: capacity unavailable slot=1 interval=7")
+        result = run(text, accept_slot_scoped_bind=True, accept_event_count_only=True)
+        check = by_name(result)["L2_denial_identified_for_b"]
+        self.assertEqual("unknown", check.status, check.detail)
+        self.assertIn("interval 7", check.detail)
+        self.assertIn("device-timestamped", check.detail)
+        self.assertEqual("INSUFFICIENT_EVIDENCE", result.verdict)
+        self.assertNotEqual(0, result.exit_code)
+
+    def test_a_human_denial_naming_another_slot_fails_rather_than_staying_unknown(self):
+        """The logging fix makes a wrong-slot denial detectable, which previously looked like a gap."""
+        text = self._human_only_denial_log(
+            "[1885.0] [DEBUG] [TRACK] Overdub stop refused: capacity unavailable slot=5 interval=7")
+        result = run(text, accept_slot_scoped_bind=True, accept_event_count_only=True)
+        check = by_name(result)["L2_denial_identified_for_b"]
+        self.assertEqual("fail", check.status, check.detail)
+        self.assertIn("slot 5", check.detail)
+        self.assertIn("not the one refused", check.detail)
+
+    def test_a_pre_identity_human_denial_stays_unknown(self):
+        """An older firmware emits the row without the fields; that must not read as a mismatch."""
+        text = self._human_only_denial_log(
+            "[1885.0] [DEBUG] [TRACK] Overdub stop refused: capacity unavailable")
+        result = run(text, accept_slot_scoped_bind=True, accept_event_count_only=True)
+        check = by_name(result)["L2_denial_identified_for_b"]
+        self.assertEqual("unknown", check.status, check.detail)
+        self.assertIn("pre-identity firmware", check.detail)
+
     # --- one negative per remaining link ------------------------------------------------------------
     def test_no_denial_at_all_is_not_exercised(self):
         text = chain_log()

@@ -88,6 +88,20 @@ inline bool isTierALine(const char* line) {
               strlen("DIAG,playback_build,hold_empty,")) == 0) {
     return false;
   }
+  // The deferred-stop admission edges carry the ONLY identity-grade evidence of the successor handoff: the
+  // denial's slot+interval, the retiring owner's slot+generation, and the finalizer window opening. They were
+  // non-Tier-A, so the timing-critical shed -- which drops non-Tier-A diagnostics silently, by design, and
+  // does not report it as a loss -- removed them from a completed run's log entirely: the 2026-09-26 rerun had
+  // zero `DIAG,reentry_window_open`, zero `DIAG,canonical_release` and no `DIAG,reentry,deny`, while
+  // `capture_integrity` reported no eviction and the tail was complete. A handful of one-shot rows per run
+  // must not be shed, so they are Tier-A now (Tier-A may only be displaced by Tier-A).
+  // Bound each comparison by strlen of the literal itself. Hand-counting the length is a trap: passing it
+  // one byte too long includes the literal's NUL, and since strncmp stops at a NUL the match then only
+  // succeeds for a tag that ends exactly there -- i.e. it silently never matches a real row.
+  if (strncmp(tag, "DIAG,reentry", strlen("DIAG,reentry")) == 0 ||
+      strncmp(tag, "DIAG,canonical_release,", strlen("DIAG,canonical_release,")) == 0) {
+    return true;
+  }
   return strncmp(tag, "ST,", 3) == 0 || strncmp(tag, "PERS,", 5) == 0 ||
          strncmp(tag, "RECS,", 5) == 0 || strncmp(tag, "RID,", 4) == 0 ||
          strncmp(tag, "HDR,", 4) == 0 ||

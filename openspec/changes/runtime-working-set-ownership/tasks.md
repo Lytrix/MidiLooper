@@ -1369,6 +1369,15 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       the obligation binds, without another gesture. What that does **not** prove is **immediate** execution,
       which is the capacity question and stays open by instruction. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4b.1, § S4f.6.
+      **Telemetry blocker cleared (2026-09-26): the identity-grade acceptance evidence was in the
+      timing-critical *shed* class, which drops non-Tier-A diagnostics silently and does not report a loss —
+      that, not a deferral or flush problem, is why the 17:56 rerun ended `INSUFFICIENT_EVIDENCE` with zero
+      `#CAP` edge rows while `capture_integrity` reported no eviction.** `DIAG,reentry,`,
+      `DIAG,reentry_window_open,` and `DIAG,canonical_release,` are now Tier-A; the denial names
+      `slot=`/`interval=` on its timely human row; the clear path names its slot, so `_clear_slot` can prove it
+      cleared the *intended* target instead of accepting any marker. No RAM1 cost (`padding 840`, at floor).
+      Guards added and red-proved. Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "The evidence
+      edges are Tier-A now". The device gate is unchanged and still needs the zero-concession rerun.
 - [ ] S4b.2 Pre-provision the inbound role before releasing the outbound one, with the overlap bounded and
       accounted in the S2 budget; the switch point performs no allocation, and the transfer must not steal
       resources from a still-live capture or deferred-finalization owner.
