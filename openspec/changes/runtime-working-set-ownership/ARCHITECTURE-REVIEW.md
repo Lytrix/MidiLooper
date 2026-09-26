@@ -6588,3 +6588,20 @@ its first telemetry row carries ~170 s of device uptime. Two independent finding
 census found them, and the driver's refusals are the reason. What remains is small and specific: force a real
 reset before the run, find the reproducible LOOP_EDIT entry (or pin the tempo without needing that mode), then
 re-run the same command. The pause hook stays a contingency.
+
+### Considered and declined: bar-quantized second press on an empty slot (owner, 2026-09-26)
+
+The owner asked whether a double press on an empty slot could bypass the previous slot's phase (which can be a
+**whole loop away**) and queue the take on the **next bar** instead. It is possible, and the plumbing already
+exists: `TrackManager.h` documents the phase reference as *"a valid slot index for loop-phase punch-in, or
+`Config::INVALID_LOOP_SLOT` for bar boundary only"*, and `handlePendingRecordStart` implements it -- the same
+path the S4f.3 carrier already uses for an empty target. The change would be four lines in the two
+`Immediate punch-in` branches of `MidiButtonActions.cpp`: replace `startRecordingTrack(trackIdx, now)` with
+`queueRecordingTrack(trackIdx, slotIndex, Config::INVALID_LOOP_SLOT)` and drop
+`setAlignLoopOriginOnNextStop(true)`, since a bar-boundary start needs no origin alignment.
+
+**Owner decision: leave the button as it is.** The second press stays an immediate punch-in, so the archived
+`loop-wrap_punch-in_alignment` plan's UX stands and no `DEC-###` entry is required. Recorded here so the
+question is not re-litigated: the bar-grid route stays available to internal callers (the retention carrier)
+and is deliberately **not** wired to the loop button. Nothing in `test/` or the HITL fixtures asserts the
+punch-in line; only that archived plan and two doc comments reference it.

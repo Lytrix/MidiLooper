@@ -78,32 +78,53 @@ class RetentionGesturePlanTests(unittest.TestCase):
         self.assertEqual(5, plan[0].value)
 
     def test_the_presses_reach_the_expected_notes_and_counts(self):
+        from hitl.control_constants import RECORD_BUTTON_NOTE
         plan = critical_window_gestures(track=5, a=1, b=2, c=3)
         port = emit_all(plan, gap_ms=0)
-        notes = port.note_sequence()
-        # track 5 -> note base + 4; A=1, B=2, C=3 -> their loop notes; overdub is a double press.
+        # track 5 -> base+4; A's overdub and B's overdub/stop go through the RECORD button; B and C keep
+        # their own loop buttons for the switch.
         expected = [TRACK_SELECT_NOTE_BASE + 4,
-                    loop_note(1), loop_note(1),                  # A: overdub (x2)
-                    loop_note(2), loop_note(2), loop_note(2),    # B: switch, then overdub (x2)
-                    loop_note(2),                                # B: stop request
-                    loop_note(3)]                                # C: switch request
-        self.assertEqual(expected, notes)
+                    RECORD_BUTTON_NOTE,          # A overdubs (active slot is A)
+                    loop_note(2),                # capture-switch to B, which is also A's stop
+                    RECORD_BUTTON_NOTE,          # B overdubs
+                    loop_note(2),                # B's stop request, denied on capacity
+                    loop_note(3)]                # C switch request, retained
+        self.assertEqual(expected, port.note_sequence())
 
-    def test_the_overdub_gestures_are_double_presses_and_the_rest_are_single(self):
+    def test_no_two_consecutive_presses_share_a_button(self):
+        """A loop button's double press has a triple action, so the firmware holds the second tap until the
+        triple window expires, and any press on the same button inside that wait merges into a triple
+        (measured: "Triple press detected ... Loop 6 (triple)", i.e. REDO instead of an overdub).
+
+        The record button is used three times, but each use is separated by a state wait, so what the plan
+        must guarantee is that no two *consecutive* gestures press the same note.
+        """
+        from hitl.control_constants import RECORD_BUTTON_NOTE
         plan = critical_window_gestures(track=5, a=1, b=2, c=3)
-        port = emit_all(plan, gap_ms=0)
-        notes = port.note_sequence()
-        # A: exactly one double press; the switch performs its stop, so there is no third press.
-        self.assertEqual(2, notes.count(loop_note(1)), "A gets one double press and nothing else")
-        # B: the switch, the overdub double press, and the stop request = 4.
-        self.assertEqual(4, notes.count(loop_note(2)), "B gets a switch, a double press, and a stop")
-        self.assertEqual(1, notes.count(loop_note(3)), "C gets a single switch request")
+
+        def note_of(g):
+            if g.kind == "track":
+                return TRACK_SELECT_NOTE_BASE + g.value - 1
+            if g.kind == "slot_record":
+                return loop_note(g.value)
+            if g.kind == "record":
+                return RECORD_BUTTON_NOTE
+            return None
+
+        notes = [note_of(g) for g in plan]
+        for prev, cur, step in zip(notes, notes[1:], [g.step for g in plan][1:]):
+            self.assertNotEqual(prev, cur,
+                                f"{step} presses the same button as the gesture before it; inside the triple "
+                                "window they would merge")
+        # And A is never pressed on its own loop button, while B's loop button is used exactly once.
+        self.assertNotIn(loop_note(1), notes)
+        self.assertEqual(1, notes.count(loop_note(2)))
 
     def test_the_slots_are_independent_of_the_track(self):
         plan = critical_window_gestures(track=1, a=6, b=7, c=8)
         port = emit_all(plan, gap_ms=0)
-        self.assertIn(LOOP_SELECT_NOTE_BASE + 5, port.note_sequence())
-        self.assertIn(LOOP_SELECT_NOTE_BASE + 7, port.note_sequence())
+        self.assertIn(LOOP_SELECT_NOTE_BASE + 6, port.note_sequence())   # B = slot 7
+        self.assertIn(LOOP_SELECT_NOTE_BASE + 7, port.note_sequence())   # C = slot 8
         self.assertIn(TRACK_SELECT_NOTE_BASE, port.note_sequence())
 
     def test_out_of_range_slots_are_rejected_rather_than_silently_mapped(self):
