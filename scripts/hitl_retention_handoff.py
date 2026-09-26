@@ -273,7 +273,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         if started:
             # Let the successor take run, then inject the note the oracle will look for.
             time.sleep(2.0)
-            note_channel = t0 + 1
+            # mido channels are 0-based; the device's per-track input channel for track N is N-1.
             out_port.send(mido.Message("note_on", note=args.successor_note, velocity=100,
                                        channel=note_channel))
             time.sleep(0.4)
