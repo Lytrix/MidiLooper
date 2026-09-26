@@ -1267,7 +1267,16 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       is **Tier-A** (added in `bbedfeac`), so what is owed is a run in which the path fires for the slot
       under test plus an oracle that reads the row. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.1 — working-set lease release on a same-track
-      slot switch". **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
+      slot switch". **CAMPAIGN RUN 2026-09-27 — the row is still owed, and the shape that would exercise it
+      is now known rather than hoped for.** A full authorized A/B/C run (`git_commit 5849d620ebc5`) completed
+      the whole chain on track 8 slots 4/5/8 and produced **zero** `DIAG,ws_release` rows. That is measured
+      behaviour consistent with the G0 trace, not a defect: the same-track handoff **excludes its own track**
+      from the take-start sweep, and the cross-track sweep only reaches another track's slot, so a start on
+      another track **while a lease is still held** is what the row needs. The three candidate routes are
+      therefore (a) a cross-track take start after a predecessor's lease exists, (b) the memory-pressure lane,
+      and (c) a same-track switch **after** retirement — the run above exercised none of them. Also recorded:
+      the pre-identity firmware gives no lease telemetry at all on this path, and the campaign's L2 blocker
+      (`Track::stopOverdubbing`'s `pending` branch logging no slot/interval) is independent of this row. **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
       memory-pressure and `(slot, generation)` conversions remain.** `Track::clearStoppingIntervalLedger()`
       now clears only the stopping interval's slot ledger, and both converted stop routes call it
       (`handleNoteEditFold`'s `endInPlaying` branch, `stopOverdubbing`'s fallback);
@@ -1867,6 +1876,34 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       exercises this slice's behaviour**, so these runs are regression context only; the owner declined a
       temporary variant this session, so the retention path is **host-verified only**. Full record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3 (HITL attempt).
+      **FIRST AUTHORIZED CAMPAIGN RUN (2026-09-27) — executed on the authorized targets, verdict
+      `SETUP_INCOMPLETE` (exit 3), no acceptance claimed.** The block recorded above ("that flow does not
+      exist") is **stale as of `260a8c14`**: the host gesture layer exists
+      (`scripts/hitl/actions/slots.py` — per-slot record/overdub/clear and track select),
+      `scripts/hitl_retention_handoff.py` drives the sequence and enforces its preconditions, and
+      `scripts/test_retention_handoff_plan.py` pins the gesture order. The device's own read-only census
+      (`hitl_boot_census.py --library-observe`) then established that **60/64 slots hold committed content
+      and no track has three empty slots** — track 5 in particular has none — so the user authorized
+      clearing exactly one slot and the run used **track 8, A=4, B=5, C=8**, every clear identity-grade and
+      every target re-verified empty by census before any gesture. Identity
+      `git_commit 5849d620ebc5` / `firmware_hex_sha256 adbb079fd552`; fresh boot, no ring eviction, complete
+      tail, tempo verified. The device drove the whole chain (A's overdub → switch to B → B's overdub → B's
+      stop **denied on capacity** → C's switch/start **retained** → capacity released → C started once and
+      recorded) and all eight links are present in order. **Three findings, all recorded rather than worked
+      around:** (1) `capacity_denied_window_wide_enough` reports **34.8 ms** against the 150 ms floor, but it
+      is the last check still computing its edges from the **deferred `#CAP` rows** in a file whose own
+      documented rule is to prefer the timely human rows — both releases flushed in one burst 48 µs apart, so
+      that timestamp is the flush, not the edge, while the human rows put the window opens **1.56 s** apart
+      (the order of the earlier 1.335 s/1.55 s passes). The check cannot currently distinguish "too narrow"
+      from "flushed late", so the run is not usable evidence for the width either way. (2) L2's identity gap
+      is a **half-converted emission, verified in the source**: `Track::stopOverdubbing`'s
+      `headJob->admission.pending` branch logs no slot/interval while its `else` branch does, and the
+      no-identity branch is exactly the reason this scenario produces. (3) **`DIAG,ws_release` appears zero
+      times** in a completed A/B/C chain — measured, and consistent with the G0 trace: the same-track
+      handoff excludes its own track from the take-start sweep and the cross-track sweep needs a start on
+      another track while a lease is still held, so this shape exercises **none** of the three routes S4.1's
+      packet names. Full record, timeline, reproduction commands and the two-track-number-base trap:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.1 device leg + S4f.3 no-concession run".
 - [x] S4f.4 **Transport/clock timing validity (B2, T2).** (**REVISED 2026-09-23 by architect decision --
       `design.md` Revision 24; the stored-epoch requirement is WITHDRAWN.** The latch's `transportEpoch`
       field is **removed** (latch 40 -> 32 bytes, `CaptureStopJobs` 2,736 -> 2,728, both pins updated and

@@ -1,5 +1,36 @@
 # Current work (implementation scope)
 
+**2026-09-27 — first authorized device campaign for S4.1's lease row and S4f.3's no-concession run: executed
+on the authorized targets, `SETUP_INCOMPLETE`, nothing accepted.** The two device legs the change still owes
+were attempted in one session, under the user's explicit authorization. A read-only library census
+(`hitl_boot_census.py --library-observe`, which resets by re-upload and then sends only `!LIB_OBSERVE`) came
+first and changed the plan: the device holds **60/64 committed slots** and **no track has three empty slots**
+(track 5, the documented scratch track, has none), so the user authorized clearing exactly one slot. The run
+used **track 8, A=4, B=5, C=8**; every clear was identity-grade (the firmware's own `(active_slot=N)`, not a
+bare `Track cleared` marker) and a second census re-verified all three targets empty before any gesture.
+Identity `git_commit 5849d620ebc5` / `firmware_hex_sha256 adbb079fd552`; fresh boot, no ring eviction, complete
+tail, tempo 120.0 BPM verified by read-back, seed content confirmed. **The device drove the whole chain** — A's
+overdub, the switch to B, B's overdub, B's stop denied on capacity, C's switch/start retained, capacity
+released, C started once and recorded — and the oracle finds all eight links present **in order**, but returns
+`SETUP_INCOMPLETE` (exit 3), so **no acceptance is claimed**. Three findings are recorded instead of worked
+around: (1) `capacity_denied_window_wide_enough` reports **34.8 ms** against its 150 ms floor, but it is the
+last check still taking its edges from the **deferred `#CAP` rows** although the same file's documented rule is
+to prefer the timely human rows — both releases flushed in one burst 48 µs apart, and the human rows put the
+window opens **1.56 s** apart, so the check cannot currently tell "too narrow" from "flushed late";
+(2) `Track::stopOverdubbing`'s `headJob->admission.pending` branch logs **no slot/interval** while its `else`
+branch does, so L2's identity link is missing for exactly the denial reason this scenario produces;
+(3) **zero `DIAG,ws_release` rows** in a completed A/B/C chain — measured and consistent with the G0 trace, so
+S4.1's device row is still owed and the route that would fire it is now named (a start on another track while a
+lease is still held, memory pressure, or a same-track switch *after* retirement). A **reading trap is recorded
+because it cost the first interpretation**: the run log carries `Selected track 8` (1-based, user-facing) beside
+`[TRACK] Track 7 armed` (the arm site logs the 0-based `trackIndex`); only the census diff settles which track
+was written, and it shows the writes landed exactly where authorized. Host-tooling hygiene landed with it: the
+driver's `--no-clear`/`--census` help text claimed targets are cleared by default (they are not) and an
+unreachable `if False:` copy of the census guard was removed. Full record, timeline, reproduction commands:
+[`ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ "S4.1 device leg + S4f.3 no-concession run". Host tests green (`test_retention_handoff_plan` 23,
+`test_retention_probe` 42); device shutdown verified `complete`, no latch.
+
 **2026-09-26 — F4 / DEC-091: a failed workspace completion is discharged, not retried at the queue head.**
 Firmware change, found while building the S4.1 persistence fixture. A persistent failure in the workspace
 completion (`patchLastActiveUnix`, the bundle CRC refresh, `workspace.bin`) requeued the `FinalizeWorkspace`
