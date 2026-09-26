@@ -129,6 +129,12 @@ struct TrackCaptureStopTestAccess {
   static bool isOverdubbing(const Track& track) { return track.isOverdubbing(); }
   static bool isRecording(const Track& track) { return track.isRecording(); }
   static void startOverdubbing(Track& track, uint32_t tick) { track.startOverdubbing(tick); }
+  static bool recordQueuedForSlot(uint8_t trackIndex, uint8_t slot) {
+    return trackManager.isRecordingQueued(trackIndex, slot);
+  }
+  static bool anyRecordQueued(uint8_t trackIndex) {
+    return trackManager.hasQueuedRecordingTrack(trackIndex);
+  }
   /// The production queued-record dispatch (`TrackManager::handlePendingRecordStart`).
   static void startPendingRecord(uint32_t tick) { trackManager.handlePendingRecordStart(tick); }
   static void toggleRecordForSlot(uint8_t slotIndex) {
@@ -682,14 +688,22 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
     // switch deliberately leaves on the predecessor (S4f.5 keeps focus for the piano roll). Select the
     // active target first, which is what the user does when the switch moved the audio to B.
     TrackCaptureStopTestAccess::selectSlotIndex(0, 1);
-    midiButtonActions.handleToggleRecord();
+    // Start B through the per-slot gesture, which is the successor-start route (the arm entry
+    // `handleToggleRecord` routes a track already reporting overdubbing to `stopOverdubbing`).
+    TrackCaptureStopTestAccess::toggleRecordForSlot(1);
     // A start on a running transport is **queued** at the loop's bar boundary
     // (`TrackManager::handlePendingRecordStart`), so drive that production dispatch across the boundary
     // first, and only fall back to a further press if no queued start existed.
-    const uint32_t switchTick = clockManager.getCurrentTick();
-    const uint32_t nextBar = switchTick + (768 - (switchTick % 768));
-    clockManager.assignCurrentTickSilently(nextBar);
-    TrackCaptureStopTestAccess::startPendingRecord(nextBar);
+    // `handlePendingRecordStart` deliberately ignores the tick the start was queued at, so land the
+    // dispatch on the *following* loop boundary rather than the same one.
+    const uint32_t queuedTick = clockManager.getCurrentTick();
+    for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3 &&
+                               !TrackCaptureStopTestAccess::isRecording(track) &&
+                               !TrackCaptureStopTestAccess::isOverdubbing(track);
+         ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      TrackCaptureStopTestAccess::startPendingRecord(tick);
+    }
     if (!TrackCaptureStopTestAccess::isRecording(track) &&
         !TrackCaptureStopTestAccess::isOverdubbing(track)) {
       midiButtonActions.handleToggleRecord();
@@ -742,6 +756,11 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
              TrackCaptureStopTestAccess::hasStopInFlight(track) ? 1 : 0,
              TrackCaptureStopTestAccess::activeLoopIndex(track),
              TrackCaptureStopTestAccess::selectedSlotIndex(0));
+    snprintf(state + strlen(state), sizeof(state) - strlen(state),
+             " | queuedAny=%d queued0=%d queued1=%d",
+             TrackCaptureStopTestAccess::anyRecordQueued(0) ? 1 : 0,
+             TrackCaptureStopTestAccess::recordQueuedForSlot(0, 0) ? 1 : 0,
+             TrackCaptureStopTestAccess::recordQueuedForSlot(0, 1) ? 1 : 0);
     TEST_FAIL_MESSAGE(state);
     TEST_FAIL_MESSAGE(
         "S4f.3/S4b.1: the switch commits but the requested start is not dispatched to the target, so B "
@@ -777,6 +796,10 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
     snprintf(state + strlen(state), sizeof(state) - strlen(state),
              " | afterSwitch phase=%u session=%d loopLen=%u", phaseAfterSwitch,
              overdubSessionAfterSwitch ? 1 : 0, loopLenAfterSwitch);
+    snprintf(state + strlen(state), sizeof(state) - strlen(state),
+             " | queued any=%d slot0=%d slot1=%d", TrackCaptureStopTestAccess::anyRecordQueued(0) ? 1 : 0,
+             TrackCaptureStopTestAccess::recordQueuedForSlot(0, 0) ? 1 : 0,
+             TrackCaptureStopTestAccess::recordQueuedForSlot(0, 1) ? 1 : 0);
     if (getenv("S4B_ACCEPTANCE") == nullptr) {
       return;
     }
