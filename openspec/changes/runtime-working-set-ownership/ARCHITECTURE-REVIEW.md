@@ -5092,3 +5092,52 @@ per-slot refusal — the memory-pressure conversions, which need their own fixtu
 `(slot, generation)` release entry with the generation carried onto `captureStopOwner` (S4.2) is not
 built yet, which is why the lease's `releaseWorkingSetLease`/`releaseAllWorkingSetLeases` remain
 uncalled.
+
+## S4.2 — generation-qualified release and finalization identity (2026-09-25, G2 execution packet + record)
+
+### Identity and scope
+
+`captureStopOwner` was a raw `PendingStopAdmission*` cleared by **address identity**
+(`if (runtime.captureStopOwner == &stop)`). Ring entries are reused at **stable addresses**, so a
+predecessor's late cleanup could null a successor's marker on the same runtime object. S4.2 qualifies
+that identity by the owner's generation.
+
+### What was built
+
+- `LoopPlaybackRuntime::captureStopOwnerGeneration` records the identity alongside the pointer, and
+  `setCaptureStopOwner(admission, generation)` / `clearCaptureStopOwner(admission, generation)` are the
+  only writers. The clear is address- **and** generation-qualified; a mismatch is a rejected no-op.
+- Set site: `beginDeferredOverdubStopForSlot` now records `job.admission.frozenGeneration` (the
+  interval identity the admission already carries).
+- Clear site: `TrackPreparedStopCommit::completeDeferredCleanup` passes `stop.frozenGeneration`, so the
+  cleanup only clears the owner it actually holds.
+
+**Cost: none.** The field fit the struct's existing padding — `sizeof(LoopPlaybackRuntime)` stays
+**6,344** and the capture-serial RAM1 line is byte-identical (`variables 96,160 / code 391,960 /
+padding 1,256 / locals 34,912`).
+
+### Oracle fixed before behavior edits
+
+A cleanup presenting a different generation SHALL be rejected and SHALL leave the live marker intact;
+a cleanup presenting the matching identity SHALL clear it; a repeat of the same identity SHALL be a
+no-op. The middle case is the control that keeps the rejection from being a clear that never works.
+
+### Coverage
+
+`test_runtime_working_set_ownership` — `test_a_late_cleanup_cannot_clear_a_successor_finalization_marker`:
+a real owner established through the production admission, then a stale-generation cleanup (rejected,
+marker intact), then the matching identity (cleared), then the same identity again (no-op).
+**Red-proven:** with the generation check removed the fixture fails on *"a generation-mismatched
+cleanup must be rejected"*.
+
+Full native `2,442 passed / 1 skipped`; capture-serial builds.
+
+### Not yet done in S4.2 — named
+
+The per-slot **runtime** generation is still not bumped on release. `WorkingSetLeaseSlot` supports it
+(`releaseAll` bumps), but calling `releaseAllWorkingSetLeases()` at the stop edge would drop a
+finalizing interval's lease, which is exactly what must not happen; it belongs with S4.1's
+`(slot, generation)` release entry once "the slot leaves the active set" is expressed for the release
+path. `captureStopOwnerGeneration` is therefore a self-contained identity, not yet an alias of the
+lease generation. The lease's `releaseWorkingSetLease` / `releaseAllWorkingSetLeases` remain uncalled
+for that reason.

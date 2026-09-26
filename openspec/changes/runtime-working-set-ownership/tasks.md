@@ -1246,7 +1246,25 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       Fixture: B-stop while A finalizes on the same track+slot → A's ledger and canonical inputs
       survive.
 - [ ] S4.2 Generation-mismatched release rejected and reported (native fixture reproducing the
-      A-releases / C-reuses / late-A-cleanup sequence). **`captureStopOwner` needs a generation:** it is a raw
+      A-releases / C-reuses / late-A-cleanup sequence).
+      **PARTIAL 2026-09-25 — the finalization identity is generation-qualified; the lease's own
+      release is not wired yet.** `LoopPlaybackRuntime::captureStopOwnerGeneration` now records the
+      owner's identity beside the pointer, and `setCaptureStopOwner(admission, generation)` /
+      `clearCaptureStopOwner(admission, generation)` are the only writers: the clear is address- **and**
+      generation-qualified, so a predecessor's late cleanup on a reused runtime object is a rejected
+      no-op instead of nulling a successor's marker. Set site passes the admission's
+      `frozenGeneration`; the clear site is `TrackPreparedStopCommit::completeDeferredCleanup`.
+      Fixture `test_a_late_cleanup_cannot_clear_a_successor_finalization_marker` covers the
+      A-releases / C-reuses / late-A sequence with the matching-identity control, and is **red-proven**
+      (with the generation check removed it fails). Cost is **zero**: the field fit existing padding, so
+      `sizeof(LoopPlaybackRuntime)` stays 6,344 and RAM1 is byte-identical. Full native
+      `2,442 passed / 1 skipped`.
+      **Still open:** the per-slot *runtime* generation is not bumped on release — `WorkingSetLeaseSlot`
+      supports it, but releasing at the stop edge would drop a finalizing interval's lease, so it belongs
+      with S4.1's `(slot, generation)` release entry once "the slot leaves the active set" is expressed
+      for the release path. `captureStopOwnerGeneration` is therefore self-contained rather than an alias
+      of the lease generation, and the lease's release methods remain uncalled. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4.2. **`captureStopOwner` needs a generation:** it is a raw
       `PendingStopAdmission*` cleared by address identity (`TrackPreparedStopCommit.cpp:205`) while ring entries
       are reused at stable addresses, so a late cleanup on the reused runtime object can null a successor's
       marker. Carry `(slot, runtime generation)` and check it at set **and** clear; bump the slot runtime
