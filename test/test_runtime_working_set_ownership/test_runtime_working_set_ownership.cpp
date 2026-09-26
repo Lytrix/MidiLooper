@@ -129,6 +129,8 @@ struct TrackCaptureStopTestAccess {
   static bool isOverdubbing(const Track& track) { return track.isOverdubbing(); }
   static bool isRecording(const Track& track) { return track.isRecording(); }
   static void startOverdubbing(Track& track, uint32_t tick) { track.startOverdubbing(tick); }
+  /// The production queued-record dispatch (`TrackManager::handlePendingRecordStart`).
+  static void startPendingRecord(uint32_t tick) { trackManager.handlePendingRecordStart(tick); }
   static void toggleRecordForSlot(uint8_t slotIndex) {
     midiButtonActions.handleToggleRecordForSlot(slotIndex);
   }
@@ -669,6 +671,15 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
       !TrackCaptureStopTestAccess::isRecording(track) &&
       !TrackCaptureStopTestAccess::isOverdubbing(track)) {
     TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+    // A record start on a running transport is *queued* and dispatched by the production scheduler at
+    // the loop's bar boundary (`TrackManager::handlePendingRecordStart`), so the fixture must advance the
+    // tick domain across one boundary for the queued start to fire.
+    for (uint32_t tick = 768; tick <= 1536 && !TrackCaptureStopTestAccess::isRecording(track) &&
+                               !TrackCaptureStopTestAccess::isOverdubbing(track);
+         tick += 768) {
+      clockManager.assignCurrentTickSilently(tick);
+      TrackCaptureStopTestAccess::startPendingRecord(tick);
+    }
   }
 
   if (TrackCaptureStopTestAccess::activeLoopIndex(track) != 1) {
@@ -706,6 +717,18 @@ void test_switching_starts_the_new_take_while_the_previous_take_still_finalizes(
                                 "B has not started yet (S4f.3's carrier-dispatch half is open)");
       return;
     }
+    char state[192];
+    snprintf(state, sizeof(state),
+             "post-switch state: playing=%d overdubbing=%d recording=%d pendingStop=%d "
+             "acceptedUnexecuted=%d stopInFlight=%d active=%u selected=%u",
+             track.isPlaying() ? 1 : 0, TrackCaptureStopTestAccess::isOverdubbing(track) ? 1 : 0,
+             TrackCaptureStopTestAccess::isRecording(track) ? 1 : 0,
+             TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track) ? 1 : 0,
+             TrackCaptureStopTestAccess::hasAcceptedUnexecutedInteraction(track) ? 1 : 0,
+             TrackCaptureStopTestAccess::hasStopInFlight(track) ? 1 : 0,
+             TrackCaptureStopTestAccess::activeLoopIndex(track),
+             TrackCaptureStopTestAccess::selectedSlotIndex(0));
+    TEST_FAIL_MESSAGE(state);
     TEST_FAIL_MESSAGE(
         "S4f.3/S4b.1: the switch commits but the requested start is not dispatched to the target, so B "
         "never starts while A finalizes.");
