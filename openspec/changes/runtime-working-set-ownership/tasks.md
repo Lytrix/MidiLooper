@@ -2113,6 +2113,28 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       gates on it) — so it is a **harness-coverage slice**, not a native-fixture slice, and it must not be
       rushed into a passing-but-non-discriminating test. The experiment was **reverted**, leaving the suite
       green (101/101), rather than left failing. (d) and (e) remain unassessed for the same reason.
+      **HARNESS ATTEMPTED AND MEASURED 2026-09-27 — the closure does not fit this suite, and the reason is a
+      three-way coupling in one macro.** Enabling `A34A_LINKS_REAL_TRACK_TRANSPORT` in this suite and linking
+      the commit TU was tried end to end. The commit TU's own closure is small and is now known exactly
+      (measured by linking, not guessed): `TrackCaptureStopCommit.cpp` plus `TrackManagerMidiLedFeedback.cpp`,
+      `TrackManagerPlaybackPolicy.cpp` and `TrackManagerMemoryPressure.cpp` (the owners whose stubs that macro
+      removes), and three telemetry symbols — of which `resetActiveLoopAfterEmptyCapture` is a genuine state
+      owner (it discards the empty capture and clears the loop length), so it cannot be stubbed away. **But**
+      that same macro also gates nine stubs spanning **three independent boundary families**: track transport
+      (the target), **storage-persist** (`markLoopSlotMaterialDirty`, `admitLoopSlotPersist`,
+      `requestDeferredSaveState`) and **edit-session** (`foldLiveCaptureIntoNoteEditSession`, plus
+      `onSelectedSlotChanged`/`beforeSelectedSlotChange`/`emitEditEvent`/`reopenNoteEditSession`/
+      `persistActiveNoteEditSession`). Enabling it for the transport family therefore disables the other two,
+      and the re-link then demands the full drain closure (~30 storage TUs) plus `EditManager.cpp` and
+      `NoteEditSessionLifecycle.cpp` — machinery the continuous-capture suite deliberately does not carry.
+      **Conclusion: this needs a harness-architecture decision, not a fixture.** The options, recorded rather
+      than chosen unilaterally: (1) **split `A34A_LINKS_REAL_TRACK_TRANSPORT` by owner family** so a suite can
+      enable the transport family alone — the clean fix, but it edits the shared harness used by
+      `test_drain_reentry_callback_safety` and needs a full native re-run; (2) place the (c)/(e) fixtures in a
+      suite that already links the storage+drain closure, noting that the commit TU additionally needs
+      `TrackManagerCaptureQueue`'s slot-owner TU; or (3) accept them as device-observable claims. The
+      simulation was reverted in full (both files restored, suite green at 101/101, no test or harness change
+      committed).
 - [ ] S4f.11 Measure acceptance -> execution latency **per interaction class** on device against the declared
       budgets (design Revision 17) and record the numbers: stop overdub, record/overdub start, slot/track switch,
       cold undo/redo, load loop. Exceeding a budget is a reported event, not a silent wait.
