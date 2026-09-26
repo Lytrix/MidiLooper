@@ -55,6 +55,7 @@ public:
 
     static bool saveState(const LooperState& state);
     static bool loadState(LooperState& state);
+    static bool bootRecoveryBlocked();
     static bool loadCurrentWorkspaceFromSd(LooperState& state);
     static void requestDeferredSaveState(const LooperState& state, uint32_t admissionHeap = UINT32_MAX,
                                          bool isUrgentRequest = false);

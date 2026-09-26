@@ -1,0 +1,8 @@
+{
+  "git_commit": "335c3c219b7078cc9407764f8b0d651c52406bff",
+  "dirty_worktree": true,
+  "firmware_hex_sha256": "4b13749ab9d97b0699fb02f813a3a9a26b7475a60391e19ffa784c21cec93255",
+  "build_env": "teensy41-capture-serial",
+  "authorization": "upload the firmware",
+  "verified_host_image_sha256": "4b13749ab9d97b0699fb02f813a3a9a26b7475a60391e19ffa784c21cec93255"
+}

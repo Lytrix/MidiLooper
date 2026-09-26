@@ -583,8 +583,13 @@ TRACK_COLD_MEM void appendContentUndoEntriesForSlot(Track& track, uint8_t slotIn
     buildContentUndoEntries(loop.passes, slotIndex, loop.loopId, built);
     for (UndoEntry& entry : built) {
         entry.id = stack.nextEntryId++;
-        stack.entries.push_back(std::move(entry));
     }
+    // A restored slot starts at its content tip. Other loaded slots may already
+    // have runtime redo: insert the new applied units before that partition.
+    stack.entries.insert(stack.entries.begin() + stack.cursor,
+                         std::make_move_iterator(built.begin()),
+                         std::make_move_iterator(built.end()));
+    stack.cursor += built.size();
 }
 
 }  // namespace
@@ -1223,7 +1228,6 @@ TRACK_COLD_MEM void TrackUndo::pushLoopGeometryDepartSnapshot(Track& track, uint
 TRACK_COLD_MEM void TrackUndo::rebuildSlotFromLoopContent(Track& track, uint8_t slotIndex) {
     appendContentUndoEntriesForSlot(track, slotIndex);
     GlobalUndoStack& stack = track.getGlobalUndoStack();
-    stack.cursor = stack.entries.size();
     // LoadLoopJob rebuilds every restored slot. Undo routes through the selected slot, so
     // keep the tip there — do not leave it on the last background slot that loaded
     // (session_20260814_024004: selected=5, entries=17, tip after later slot loads).

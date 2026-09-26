@@ -1,0 +1,94 @@
+********************************************************************************
+Obsolete PIO Core v6.1.18 is used (previous was 6.2.0)
+Please remove multiple PIO Cores from a system:
+https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+********************************************************************************
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 104 tests
+
+Processing test_storage_loop_io in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_storage_loop_io/test_storage_loop_io.cpp:2226: test_diagnostic_decoder_reads_captured_teensy_lsv1	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2227: test_diagnostic_decoder_reads_teensy_legacy_wire_events	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2228: test_diagnostic_decoder_uses_production_lsv1_root	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2229: test_diagnostic_decoder_uses_production_legacy_passes	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2230: test_undo_publication_retains_redo_until_commit_and_defers_latest_command	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2231: test_undo_publication_precommit_restore_preserves_resources_and_entry_buffers	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2232: test_bounded_undo_trim_rechecks_pressure_after_final_root_release	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2233: test_bounded_undo_trim_matches_depth_and_redo_reference	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2234: test_persisted_snapshot_release_returns_chunks_in_bounded_units	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2235: test_persisted_snapshot_release_leaves_shared_owner_unchanged	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2236: test_write_read_loop_snapshot_roundtrip	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2237: test_write_read_disabled_take_preserved	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2238: test_pending_take_not_persisted	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2239: test_write_read_edits_tail_roundtrip	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2240: test_write_read_loop_geometry_tail_roundtrip	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2241: test_legacy_snapshot_without_geometry_tail_loads	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2242: test_save_loop_geometry_assigns_id_and_marks_dirty	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2243: test_legacy_edit_tail_v4_rejected	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2244: test_zero_loop_length_with_committed_events_loads_and_reconciles	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2245: test_apply_snapshot_preserves_start_loop_tick	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2246: test_truncated_edit_tail_fails_read	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2247: test_corrupt_scoped_edit_tail_fails_read	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2248: test_capture_pass_write_uses_chunk_stream_batch_bound	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2249: test_capture_pass_read_uses_chunk_stream_batch_bound	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2250: test_64_bar_record_snapshot_reloads_after_reboot_simulation	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2251: test_64_bar_save_completes_at_ram2_floor_with_bounded_batch	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2252: test_save_note_edit_pass_marks_edit_dirty	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2253: test_simulated_exit_flush_clears_edit_dirty	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2254: test_measure_loop_snapshot_slot_file_bytes_matches_buffer	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2255: test_read_loop_snapshot_header_skips_pass_payload	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2256: test_apply_loop_slot_metadata_without_passes	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2257: test_step_persisted_loop_snapshot_parse_resumes	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2258: test_serialize_reload_content_undo_units_match	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2259: test_write_read_overdub_session_index_tail_roundtrip	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2260: test_legacy_snapshot_without_overdub_session_index_tail_stays_ungrouped	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2261: test_write_loop_persisted_emits_lsv1_when_published_snapshot_current	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2262: test_legacy_slot_migrates_to_lsv1_after_loaded_hydration	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2263: test_write_loop_persisted_stays_legacy_without_published_snapshot	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2264: test_write_loop_persisted_requires_a_settled_published_snapshot	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2265: test_loop_persist_body_decision_awaits_settlement_within_its_budget	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2266: test_lsv1_body_format_roundtrip_dual_write	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2267: test_lsv1_stepped_parse_matches_full_read	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2268: test_lsv1_payload_byte_slice_quota_and_io_boundaries	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2269: test_lsv1_stepped_save_tail_matches_monolithic	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2270: test_lsv1_stepped_save_tail_resumes_write_payload_without_regather	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2271: test_lsv1_stepped_save_tail_large_snapshot_matches_monolithic	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2272: test_lsv1_load_commit_rebuilds_undo_and_preserves_root	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2273: test_lsv1_probe_legacy_and_unsupported	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2274: test_lsv1_rejects_missing_loop_snapshot_section	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2275: test_lsv1_unknown_section_is_skipped	[PASSED]
+test/test_storage_loop_io/test_storage_loop_io.cpp:2276: test_lsv1_rejects_duplicate_loop_snapshot_section	[PASSED]
+------------ native:test_storage_loop_io [PASSED] Took 6.38 seconds ------------
+
+Processing test_global_undo_slot_scope in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:321: test_reposition_preserves_focus_redo_and_other_applied_entries	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:322: test_count_applied_undo_entries_per_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:323: test_count_updates_when_cursor_moves	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:324: test_count_redo_entries_per_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:325: test_stack_tip_gate_blocks_other_loop	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:326: test_erase_undo_entries_for_slot_adjusts_depth	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:327: test_erase_preserves_clear_slot_entries	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:328: test_erase_clear_slot_still_prunes_other_slots	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:329: test_erase_preserves_the_protected_publication_capacity	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:330: test_pass_undo_depth_excludes_clear_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:331: test_stale_undo_skip_removes_tip_for_same_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:332: test_stale_redo_skip_removes_redo_tip_for_same_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:333: test_redo_branch_survives_full_undo_for_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:334: test_pass_undo_depth_hidden_when_slot_cleared	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:335: test_reposition_undo_tip_after_multi_slot_content_rebuild	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:336: test_reposition_undo_tip_for_selected_slot_not_active_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:337: test_later_slot_rebuild_keeps_selected_slot_at_tip	[PASSED]
+-------- native:test_global_undo_slot_scope [PASSED] Took 1.26 seconds --------
+
+=================================== SUMMARY ===================================
+Environment    Test                         Status    Duration
+-------------  ---------------------------  --------  ------------
+native         test_storage_loop_io         PASSED    00:00:06.382
+native         test_global_undo_slot_scope  PASSED    00:00:01.258
+================= 68 test cases: 68 succeeded in 00:00:07.640 =================

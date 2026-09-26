@@ -1,0 +1,460 @@
+{
+  "device_access": false,
+  "original_bytes_unchanged": true,
+  "reconstructed_actions": 122,
+  "reload_retained": 9,
+  "reload_preserves_all_actions": false,
+  "slots": [
+    {
+      "track": 1,
+      "slot": 1,
+      "passed": true,
+      "entries": 3,
+      "findings": []
+    },
+    {
+      "track": 1,
+      "slot": 2,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 1,
+      "slot": 3,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 1,
+      "slot": 4,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 1,
+      "slot": 5,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 1,
+      "slot": 6,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 1,
+      "slot": 7,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 1,
+      "slot": 8,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 2,
+      "slot": 1,
+      "passed": true,
+      "entries": 3,
+      "findings": []
+    },
+    {
+      "track": 2,
+      "slot": 2,
+      "passed": true,
+      "entries": 4,
+      "findings": []
+    },
+    {
+      "track": 2,
+      "slot": 3,
+      "passed": true,
+      "entries": 4,
+      "findings": []
+    },
+    {
+      "track": 2,
+      "slot": 4,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 2,
+      "slot": 5,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 2,
+      "slot": 6,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 2,
+      "slot": 7,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 2,
+      "slot": 8,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 3,
+      "slot": 1,
+      "passed": true,
+      "entries": 1,
+      "findings": []
+    },
+    {
+      "track": 3,
+      "slot": 2,
+      "passed": true,
+      "entries": 0,
+      "findings": []
+    },
+    {
+      "track": 3,
+      "slot": 3,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 3,
+      "slot": 4,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 3,
+      "slot": 5,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 3,
+      "slot": 6,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 3,
+      "slot": 7,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 3,
+      "slot": 8,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 4,
+      "slot": 1,
+      "passed": true,
+      "entries": 3,
+      "findings": []
+    },
+    {
+      "track": 4,
+      "slot": 2,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 4,
+      "slot": 3,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 4,
+      "slot": 4,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 4,
+      "slot": 5,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 4,
+      "slot": 6,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 4,
+      "slot": 7,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 4,
+      "slot": 8,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 5,
+      "slot": 1,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 5,
+      "slot": 2,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 5,
+      "slot": 3,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 5,
+      "slot": 4,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 5,
+      "slot": 5,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 5,
+      "slot": 6,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 5,
+      "slot": 7,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 5,
+      "slot": 8,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 6,
+      "slot": 1,
+      "passed": true,
+      "entries": 1,
+      "findings": []
+    },
+    {
+      "track": 6,
+      "slot": 2,
+      "passed": true,
+      "entries": 1,
+      "findings": []
+    },
+    {
+      "track": 6,
+      "slot": 3,
+      "passed": true,
+      "entries": 1,
+      "findings": []
+    },
+    {
+      "track": 6,
+      "slot": 4,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 6,
+      "slot": 5,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 6,
+      "slot": 6,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 6,
+      "slot": 7,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 6,
+      "slot": 8,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 7,
+      "slot": 1,
+      "passed": true,
+      "entries": 0,
+      "findings": []
+    },
+    {
+      "track": 7,
+      "slot": 2,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 7,
+      "slot": 3,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 7,
+      "slot": 4,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 7,
+      "slot": 5,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 7,
+      "slot": 6,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 7,
+      "slot": 7,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 7,
+      "slot": 8,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 8,
+      "slot": 1,
+      "passed": true,
+      "entries": 3,
+      "findings": []
+    },
+    {
+      "track": 8,
+      "slot": 2,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 8,
+      "slot": 3,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 8,
+      "slot": 4,
+      "passed": true,
+      "entries": 0,
+      "findings": []
+    },
+    {
+      "track": 8,
+      "slot": 5,
+      "passed": true,
+      "entries": 1,
+      "findings": []
+    },
+    {
+      "track": 8,
+      "slot": 6,
+      "passed": true,
+      "entries": 2,
+      "findings": []
+    },
+    {
+      "track": 8,
+      "slot": 7,
+      "passed": true,
+      "entries": 1,
+      "findings": []
+    },
+    {
+      "track": 8,
+      "slot": 8,
+      "passed": true,
+      "entries": 0,
+      "findings": []
+    }
+  ],
+  "safe_to_install": false,
+  "scope": "Host diagnostic reconstruction; original chronology, prior redo branch and clear snapshots are not recovered",
+  "bundle_sha256": "f3d0e0781798dfbd93758ddb5beb904e1876515a7d9f722dfa7da0796c4ac7c3"
+}

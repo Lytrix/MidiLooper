@@ -1,0 +1,19 @@
+{
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-reconstruction.json": "4a63ae107c8a2824a127603f7763a5447b2aa744217001381f784bf43a070db5",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/reconstructed-actions.json": "58cfa95c054a39de160fafc92c83e136b20e6390342e0b610a70f0cf4a76ea7e",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/diagnostic-history.bundle.bin": "f3d0e0781798dfbd93758ddb5beb904e1876515a7d9f722dfa7da0796c4ac7c3",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-ordinary-regression.log": "cafca74d768911bd1640ab9182a1da65d10730b65e5e6023ef401107405d235b",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-test-logs.tar.gz": "58321e8994d246aa22be9fb5a8749049949b598172009f00a9b2f8d9fff4056b",
+  "test/test_offline_undo_recovery/undo_harness_boundaries.h": "ac1bbea8e7780c9a3a0cc96ad0bca6410c356e0f0cdc1814dc6eac8726e0f4e6",
+  "test/test_offline_undo_recovery/test_offline_undo_recovery.cpp": "a099d4c264d68a6ae7650c1214ae68e52f620875efd4ffe30cd9f759ae274845",
+  "tools/midilooper-reader/reconstruct_undo.py": "be33fd08e7eacee3fd6c1b72121960f59a6d87a44ff046cb4d470cea30dfd6b2",
+  "tools/midilooper-reader/RecoveryRuntimeBundle.h": "5a55ef783255fb9c7cf300168cc4f43cbb831b3a560067f023837ecd80aafcb3",
+  "tools/midilooper-reader/prepare_native_decode_headers.py": "bc5c598177d190a796488bafa2b20f1341683e8e64a7add69e57ad67253e5dbc",
+  "test/test_offline_workspace_recovery/test_offline_workspace_recovery.cpp": "4485942744d6d3e32e08fa492b4cb803e02db87bde1177769e4051643871d12e",
+  "test/test_storage_drain_restore/test_storage_drain_restore.cpp": "90fe4c2cfd240d9d02649b73a1d544536a01fc8d89b4cfa7f90e3444345a052a",
+  "src/StorageLoopIo.cpp": "70db141c3afede7096f6ca96586590495e560176a12c8b33af91427989a5e7a8",
+  "src/StorageManager.cpp": "5ee672486ed83e494e5326b5f085f3de405a92c9b6dfaf6b5f93c9b06037b704",
+  "src/TrackUndo.cpp": "b9a04f3d142b616f78d2af0bdfb3f283b8e4b9f73c5a7cd054228509b322ccd3",
+  "src/Loop/LoopContentHistory.cpp": "69434f4e9eabed0df316f7309ab077bc063b32957e675c2ad85abf2790fe6ae7",
+  "src/Loop/LoopSnapshotPublish.cpp": "732aa3e727c7e4738becb6a6a5e51ae7202ed4a4b92ad868923195a70c2f1764"
+}

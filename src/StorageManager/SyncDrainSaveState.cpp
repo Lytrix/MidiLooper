@@ -154,6 +154,8 @@ SyncDrainResult makeDrainResult(SyncDrainFailureReason failureReason,
 }  // namespace
 
 SyncDrainResult drainPersistenceWorkBlockingDetailed(const LooperState& state) {
+    if (StorageManager::bootRecoveryBlocked())
+        return SyncDrainResult{SyncDrainOutcome::Failed, "boot_recovery_blocked"};
 #if BYPASS_STOP_UNDO_SAVE
     (void)state;
     Serial.println("[StorageManager] BYPASS_STOP_UNDO_SAVE: skip saveState");

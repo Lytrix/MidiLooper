@@ -297,8 +297,28 @@ void test_later_slot_rebuild_keeps_selected_slot_at_tip() {
   TEST_ASSERT_EQUAL(2u, countAppliedPassUndoEntriesForSlot(stack, 5));
 }
 
+void test_reposition_preserves_focus_redo_and_other_applied_entries() {
+  GlobalUndoStack stack;
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::RecordPassAdded));
+  stack.entries.push_back(makeEntry(1, UndoEntryKind::RecordPassAdded));
+  stack.entries.push_back(makeEntry(0, UndoEntryKind::OverdubPassAdded));
+  stack.entries.back().passIds.push_back(91);
+  stack.cursor=2;
+  repositionGlobalUndoStackTipForSlot(stack,0);
+  TEST_ASSERT_EQUAL(2u,stack.cursor);
+  TEST_ASSERT_EQUAL(0u,stack.entries[stack.cursor-1].slotIndex);
+  TEST_ASSERT_EQUAL(0u,stack.entries[stack.cursor].slotIndex);
+  TEST_ASSERT_EQUAL(1u,countRedoEntriesForSlot(stack,0));
+  TEST_ASSERT_EQUAL(91u,stack.entries[stack.cursor].passIds[0]);
+  repositionGlobalUndoStackTipForSlot(stack,7);
+  TEST_ASSERT_EQUAL(2u,stack.cursor);
+  TEST_ASSERT_EQUAL(1u,countRedoEntriesForSlot(stack,0));
+  TEST_ASSERT_EQUAL(91u,stack.entries[stack.cursor].passIds[0]);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_reposition_preserves_focus_redo_and_other_applied_entries);
   RUN_TEST(test_count_applied_undo_entries_per_slot);
   RUN_TEST(test_count_updates_when_cursor_moves);
   RUN_TEST(test_count_redo_entries_per_slot);

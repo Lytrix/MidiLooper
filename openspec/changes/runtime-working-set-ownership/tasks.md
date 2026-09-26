@@ -2215,3 +2215,90 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 - [ ] Architecture and guide docs describing slot-resident working sets or the prewarm contract updated
       to the active-role model (documentation closeout).
 - [ ] Archive only after S7 passes; safeguards either landed or explicitly deferred with a reason.
+
+## Incident-support USB folder copy (2026-09-26; separate from stage acceptance)
+
+Local reader preparation is complete (7 host tests, standalone firmware build); see
+`tools/midilooper-reader/README.md`. No production code or stage checkbox changed.
+- [x] With explicit user approval, installed the isolated reader and verified a folder-only
+      `/MidiLooper` copy: 1,007 entries / 6,837,184 bytes; CRC/SHA256/length checks pass.
+      Duplicate file preserved separately. Reader remains installed; normal-looper hold remains.
+      Evidence: `captures/midilooper-folder-copy-20260926-195228/verification.json`.
+      Recovery and content validity remain unclaimed.
+
+- [x] Offline recovery audit of the verified folder copy: verify stored checksums,
+      inventory current slots and saved revision candidates; no device actions or
+      stage acceptance implied.
+      Evidence: `evidence/2026-09-26-workspace-loss/OFFLINE-RECOVERY-AUDIT.md`;
+      16 host tests pass. Full content validation and workspace reconstruction remain open.
+
+- [x] Decode the 64 copied current slots with production parsers on the host and
+      identify runtime metadata requirements; no restore-readiness claim.
+      Evidence: `evidence/2026-09-26-workspace-loss/PRODUCTION-DECODE-AUDIT.md`.
+      Three host native cases pass with explicit target-layout adapter; all slots decode.
+
+- [x] Reconstruct a separate host workspace candidate with unchanged slot bytes;
+      test missing/corrupt bundle refusal, real bundle load and slot restore.
+      Document replacement settings and on-device C++ recovery feasibility.
+      Evidence: `evidence/2026-09-26-workspace-loss/WORKSPACE-RECONSTRUCTION.md`.
+      Host acceptance only; no device install or capacity gate checkoff.
+
+- [x] Test and reconstruct undo history from the copied passes where possible;
+      exercise target load hooks and hydration, verify undo/redo content and reload,
+      and state any unrecoverable history or firmware dependency. Host only.
+
+      Outcome: 122 actions reconstructed; all 60 nonempty slot roundtrips pass.
+      Reload retains only 9, so no installation acceptance. See UNDO-RECONSTRUCTION.md.
+- [x] Establish restart-safe recovered undo history through the production deferred
+      load/hydration boundary; preserve content and validate all recovered entries
+      after reload before considering device installation.
+
+      **Policy review correction (2026-09-26):** this pending step changes the explicit
+      zero-undo-after-load contract; do not treat it as an approved bug fix. See
+      `evidence/2026-09-26-workspace-loss/UNDO-LOAD-POLICY-REVIEW.md`. Approval pending;
+      existing 122-action host proof remains valid, device hold unchanged.
+
+      **Approved and host-verified 2026-09-26:** DEC-088 — load-time undo reconstruction
+      resolves the prior policy block. 122 units survive load/reload with empty
+      bundle undo headers; 60 nonempty slot Undo/Redo roundtrips; hydration ordering
+      and unrelated background-load Redo preservation pass. Firmware builds at
+      padding 840; no device installation or hardware acceptance implied.
+      Evidence: `evidence/2026-09-26-workspace-loss/UNDO-LOAD-FIX.md`.
+- [ ] Device acceptance of reconstructed workspace and load-time undo after the
+      incident hold is deliberately resolved; preserve backup, verify recovered
+      content and Undo/Redo after boot. Not run or authorized by the host-only slice.
+
+Host implementation verification: 2,461 native passed / 5 skipped; isolated recovery
+acceptance passes; capture-serial firmware SUCCESS at padding 840. Device gate above
+remains open.
+
+- [x] Automatic boot metadata reconstruction (DEC-089): inspect before cleanup,
+      validate complete slot matrix, preserve originals, publish checked candidate,
+      block unsafe fallback saves, prove interruption/retry and content preservation
+      on host and build firmware. Actual device acceptance remains separate.
+
+      Host evidence: `evidence/2026-09-26-workspace-loss/BOOT-REPAIR.md`.
+      276 interruption cuts; 64-slot load/Undo/Redo; 122-action healthy reboot;
+      native 2,461 passed / 7 skipped; capture-serial padding 856. Device gate open.
+
+**2026-09-26 — recovery firmware uploaded with explicit user authorization.**
+`teensy41-capture-serial` upload SUCCESS; SHA256
+`4b13749ab9d97b0699fb02f813a3a9a26b7475a60391e19ffa784c21cec93255`
+matches the host-verified image. Confirmed standalone read-only reader before upload;
+archived and cleared the incident hold for this approved recovery installation.
+Device reports runtime metadata repaired, `BOOT,load,ok`, and a settled checkpoint:
+`admission_complete=1`, `interactive_ready=1`, `undo_hydrated=1`,
+`transport_stopped=1`, `deferred_prewarm_idle=1`, `free_chunks=391`.
+Serial held open through verified persistence idle, then closed. No content/clear
+stimuli. This establishes successful recovery boot, not per-loop content parity,
+hardware Undo/Redo roundtrips or second-boot acceptance; those remain open.
+Evidence: active-change workspace-loss `authorized-recovery-upload/`.
+
+**2026-09-26 — blocking-SPI visual comparison PASS (user observed).**
+User confirms “Yes, the screen updates now.” Same recovery/renderer source, existing
+`MIDILOOPER_DISPLAY_DMA=0` switch only. Device reached load=ok, restore admission
+complete, undo hydrated and transport stopped. This isolates the frozen-screen
+behavior to the DMA display route; it does not establish the precise DMA defect.
+Blocking SPI remains installed as a diagnostic workaround; no real-time timing
+acceptance or permanent DMA fix claimed. Serial capture remains open.
+Evidence: `captures/display-blocking-diagnostic-20260926/metadata.json` and session log.

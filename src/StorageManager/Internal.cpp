@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "StorageManagerInternal.h"
+#include "StorageManager.h"
 
 #include "CurrentWorkspaceStorage.h"
 #include "Globals.h"
@@ -223,3 +224,7 @@ STORAGE_PERSIST_MEM bool anyCurrentSetLoopSlotDirty() {
 }
 
 }  // namespace StorageManagerInternal
+
+STORAGE_PERSIST_MEM bool StorageManager::bootRecoveryBlocked() {
+    return StorageManagerInternal::storageSession.bootRecovery.writesBlocked;
+}

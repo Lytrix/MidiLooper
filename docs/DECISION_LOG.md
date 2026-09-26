@@ -40,6 +40,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 | [DEC-060](#dec-060--canonical-per-pass-companion-application) | 2026-09-13 | Combined capture preparation applies companions per canonical pass before merging | Accepted — user endorsed; task 2.3 and validation/HITL gates remain open |
 | [DEC-059](#dec-059--deterministic-companion-pairing-lane-runs) | 2026-09-13 | Deterministic filtered-lane runs replace the invalid companion-pair comparator | Accepted — semantic correction; task 2.3 and validation/HITL gates remain open |
 | [DEC-058](#dec-058--runtime-owned-derived-playback-views-and-bounded-stop-admission) | 2026-09-13 | Runtime-owned derived playback views and bounded deferred overdub stop; canonical content remains in `Loop` | Accepted — implementation authorized; capacity, grain, coverage, stop-latency, and MIDI-trace gates remain required |
+| [DEC-088](#dec-088--reconstruct-undo-from-saved-passes-on-load) | 2026-09-26 | Load derives undo from retained active passes; redo begins empty and survives unrelated slot loads | Accepted — supersedes zero-depth load clauses only |
 | [DEC-057](#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write) | 2026-09-11 | LoopSnapshot body format version 1 (`LSV1` wire discriminator); dual-write `PersistedLoopSnapshot` + `LoopSnapshot`; load undo depth 0 | Accepted — OpenSpec task 5.2 docs/decision only; firmware is 5.3 |
 | [DEC-056](#dec-056--note-edit-rows-enter-the-existing-pending-companion-set-when-the-published-root-is-stale) | 2026-09-08 | NOTE_EDIT `saveNoteEditPass` admits the row into `pendingSnapshotPublishBox.companionIds` when the published root is already stale; not a new publication owner | Accepted — miss-path device PASS [`000740`](../captures/session_20260909_000740.log); current-root close [`000237`](../captures/session_20260909_000237.log) |
 | [DEC-055](#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot) | 2026-09-08 | NOTE_EDIT working set is overlay delta on the opened LoopSnapshot; no second full-loop representation for edit or undo | Accepted — Stage 3 device PASS [`221906`](../captures/session_20260908_221906.log); Stage 2 device PASS [`220445`](../captures/session_20260908_220445.log); Stage 1 device PASS [`212850`](../captures/session_20260908_212850.log) |
@@ -2112,7 +2113,7 @@ Sections use length-framed names (`uint8 nameLength` + name + `uint32 payloadByt
 - **`PersistedLoopSnapshot` section** is compatibility / migration material only — not authority when an `LSV1` + `formatVersion == 1` body is present.
 - **Absence of `LSV1`** ⇒ **legacy** bare `PersistedLoopSnapshot` body; deferred migration path.
 - **`LSV1` present and `formatVersion != 1`** ⇒ **unsupported / reject** slot load — never treat as legacy.
-- Load rebuilds loop-local handles from logical refs; selects the loaded `LoopSnapshot` as published root; **runtime undo depth = 0**, redo empty. Do not invent `U:` depth from passes.
+- Load rebuilds loop-local handles from logical refs; selects the loaded `LoopSnapshot` as published root; **runtime undo depth = 0**, redo empty. Do not invent `U:` depth from passes. **Superseded for files retaining pass records by DEC-088 — load-time undo reconstruction (2026-09-26).**
 - Missing or unparseable required `LoopSnapshot` section on a valid `LSV1` + `formatVersion == 1` body ⇒ **load failure** for that slot. **Must not** fall back to `PersistedLoopSnapshot` as authority.
 - Failed/partial write retains the previously valid card file.
 - On disk: logical ids/refs only; no RAM page packing, runtime addresses, VisualCache, ledgers, cursors, GUS / undo lineage, or `beforePublishedSnapshot` / `afterPublishedSnapshot`.
@@ -3072,7 +3073,8 @@ old representation.
 12. Persistence stores the latest saved complete snapshot only. Reboot loads
     that snapshot, starts with undo depth 0 and redo empty, and discards unsaved
     session tails. This change does not persist undo history or promise
-    post-reboot undo.
+    post-reboot undo. **Zero-depth clause superseded by DEC-088 — load-time undo
+    reconstruction (2026-09-26); snapshot authority and no persisted runtime lineage remain.**
 13. Later verification uses existing gates plus invariant-protecting checks
     only. This change does not add a new test architecture.
 
@@ -4986,3 +4988,171 @@ Fixture support for `runtime-working-set-ownership` (S1.6c.2 capacity revalidati
 
 ### Verification
 Device-verified 2026-09-25 (`scripts/hitl_tempo_fader_probe.py`): CC 60 → **120.0 BPM exactly** (`captures/tempo-pin-120b/`) after the one-BPM-per-step change, and on the earlier 72–200 law CC 32 → 104.3, CC 100 → 172.8, CC 64 → 136.5 BPM with session-entry feedback (`captures/tempo-fader-01/`). The device's saved tempo is restored on boot (119.9 BPM observed), so a HITL reads the live figure from the `Sent tempo CC feedback` line or pins an exact integer. Full native 2,421 passed / 1 skipped. RAM1 unchanged (`variables 96,160 / code 392,024 / padding 1,192 / locals 34,912`), 352 B over the approved floor.
+
+## DEC-087 — Host recovery candidate preserves slot bytes and replaces missing runtime metadata
+
+**Date:** 2026-09-26
+**Owner:** StorageManager (serialization); offline recovery tooling
+**Status:** Accepted for host reconstruction/testing only; device installation and automatic firmware recovery not approved or implemented
+
+### Problem
+The copied current workspace retains 64 readable slot payloads and workspace.bin,
+but runtime.bundle.bin is absent. Loading older saved revisions would reduce the
+surviving library. A direct Mac decoder also has a different MidiEvent ABI from Teensy.
+
+### Decision
+Build a separate host candidate preserving all original files byte-for-byte. Use
+existing C++ serialization to add only the missing runtime bundle. Explicit candidate
+defaults: idle/stopped at 120 BPM, first nonempty slot per track selected/enabled,
+unmuted, selected track 1, fresh global undo and default anchors. These settings
+are replacements, not recovered originals. Validate the candidate through production
+directory load and bounded deferred restore on an in-memory SD boundary. Use an
+isolated target-layout header adapter; do not change deployed serialization or checksums.
+
+### Rationale
+The final host test restores all 64 slots and preserves all 7,840 capture-event
+records byte-for-byte, while the original 65 files remain unchanged. The added
+bundle is 628 bytes. Performance settings/global undo cannot be inferred from slot
+content. A separate candidate keeps this loss explicit and reviewable before installation.
+
+### Alternatives considered
+- Historical bundle transplantation: not selected because undo/settings references
+  have not been shown compatible with current slot generations/content.
+- Older saved set as replacement: at most 22 nonzero-length slots versus the current
+  60; would discard the fuller surviving library.
+- Direct Mac event decoding: invalid without an ABI adapter (32-byte event versus
+  Teensy 20-byte event). SysEx pointer payload restoration is explicitly unsupported.
+
+### Affected modules
+Host-only tools/midilooper-reader and native persistence test harnesses. No src/ or
+include/ production edits. Existing StorageManager/File serializers remain owners.
+
+### Constraints created
+No automatic installation or normal-firmware upload. Future device salvage needs
+its own firmware review and crash/power-loss/SD/memory acceptance; this host result
+is not device validation, whole-boot acceptance, audible parity or capacity evidence.
+
+### Related OpenSpec
+runtime-working-set-ownership, incident-support prerequisite for S1.6c.2 — capacity
+revalidation. Evidence: evidence/2026-09-26-workspace-loss/WORKSPACE-RECONSTRUCTION.md.
+
+### Migration notes
+Candidate reconstructed-03 is a local artifact only. Keep the source backup,
+incident hold and standalone reader unchanged until an installation is authorized.
+
+### Follow-up evidence — derived undo history (2026-09-26)
+
+The missing **original global history** cannot be inferred, but active passes do
+support derived per-slot history: the existing C++ owner reconstructed 122 actions,
+and all 60 nonempty slots passed full Undo/Redo content and note-identity parity.
+This refines the earlier broad wording; it does not authorize replacing original
+chronology. A separate 8,846-byte diagnostic bundle loses 113 actions through the
+host production load/hydration sequence (9 retained), so it is not an installable
+replacement. Host-only/no-installation constraints remain unchanged. Evidence:
+active change `evidence/2026-09-26-workspace-loss/UNDO-RECONSTRUCTION.md`.
+
+### Correction before firmware follow-up (2026-09-26)
+
+The preceding derived-history experiment does not supersede DEC-057 — snapshot
+body format's explicit zero-undo-on-LSV1-load rule. The newer active snapshot and
+working-set specs preserve that rule. Treating the nine retained actions as an
+ordinary history-loss bug was an incorrect interpretation; enabling reconstructed
+undo after reload requires an approved semantics change. Proposed contract is in
+`UNDO-LOAD-POLICY-REVIEW.md`; no decision is superseded and no firmware was edited.
+
+## DEC-088 — Reconstruct undo from saved passes on load
+
+**Date:** 2026-09-26
+**Status:** Accepted by user in this session
+**Owner:** StorageManager load; TrackUndo runtime history
+
+### Problem
+The latest snapshot policy deliberately cleared LSV1 undo. The preserved library
+retains sufficient content to reconstruct 122 actions; the user explicitly approved
+rebuilding undo after load and clarified redo is required only after in-session undo.
+
+### Decision
+Supersede only the zero-undo-after-load clauses of DEC-057 — snapshot body format
+and DEC-044 — immutable snapshot model (clause 12); retain snapshot authority,
+file shape and content-only persistence. Derive per-slot undo from saved active
+record/overdub/edit/geometry rows and existing grouping. Redo starts empty for the
+loaded slot. Undo then creates runtime redo, which unrelated background slot loads
+must preserve. No serialized undo stack, old cursor, abandoned branch or cross-slot
+chronology is restored. Snapshot-only content without sufficient records cannot
+fabricate historical actions.
+
+### Implementation contract
+Use the existing deferred slot commit and TrackUndo rebuild extensions; no new
+owner, schema, queue or stored runtime fields. Install the saved root unchanged,
+then derive history metadata. Preserve other slots' applied/redo partition and
+selection. Deferred hydration may reconstruct boot content but must finish before
+user Undo (existing public-route gate). New commits still discard redo normally.
+History reconstruction does not pin every historical snapshot; existing publication
+rebuilds the effective root when an action is used.
+
+### Validation and constraints
+Prove default empty-history bundle load and reload recover the 122 expected actions,
+without a test-side rebuild. Exercise hydration before/during/after slot restore;
+all 60 nonempty loop Undo/Redo content roundtrips; no-duplication and unrelated-slot
+redo retention. Full native and firmware build/RAM1 checks. Device acceptance remains
+open under incident hold. Do not expand timing claims from host tests.
+
+### Alternatives and migration
+Reject persisting the diagnostic 8,846-byte undo bundle: content already provides
+the units. Reject unconditional global reconstruction on every slot load: it would
+reset live redo. No SD migration; current body records and 628-byte recovery bundle
+remain sufficient. Original global chronology and pre-reboot redo are not recovered.
+
+### Related OpenSpec
+runtime-working-set-ownership and immutable-loop-snapshot-passes content-history
+load delta. New user decision explicitly resolves the prior policy-review blocker.
+
+## DEC-089 — Repair missing runtime metadata before boot cleanup
+
+**Date:** 2026-09-26
+**Status:** Accepted: user approved the proposed automatic boot recovery sequence
+**Owner:** StorageManager; existing file serializers/loaders
+
+### Decision and preconditions
+Inspect current metadata before boot cleanup, quarantine or fallback writes. A valid
+bundle uses normal load. For a missing/corrupt bundle, recover only with a valid
+workspace.bin and a complete, CRC-valid and parseable 8×8 slot matrix; each slot
+identity matches its filename and has an epoch no newer than workspace currentEpoch.
+Missing, corrupt, unsupported or inconsistent slots block automatic reconstruction;
+do not silently recover a smaller library. This conservative case covers the copied
+incident workspace. A genuinely absent workspace keeps the existing fresh/legacy
+boot path. Evidence of slots without valid workspace metadata is a recovery fault.
+
+Generate only a fresh runtime bundle with the already-reviewed stopped/120 BPM,
+first-nonempty-slot-per-track, unmuted defaults and empty undo headers. Validate its
+CRC and full structure before publication. Use unique repair candidate and preserved
+original filenames under current/temp; never overwrite an existing candidate/backup
+and never use the delete-destination rename helper. Rename broken final to unused
+backup, then candidate to final, then verify final. All original loops/workspace and
+pre-existing temp files stay intact during repair. Interrupted repair can retry from
+unchanged sources and does not trust an unverified leftover candidate.
+
+### Failure behavior and lifetimes
+BootRecoveryJob gains a write-block flag (in existing RAM2 aggregate) for this boot.
+On fault, main setup/loop and persistence admission/dispatch refuse normal operation;
+only another boot re-evaluates it. No empty fallback is saved over the failed current
+workspace. Existing read-only external folder reader remains the operational escape.
+No automatic saved-revision overwrite after this failure. Validate one slot at a time
+before normal runtime load; release parsed chunks/snapshots per slot. This is cold
+setup work before MIDI/transport service, not a new interval worker or queue.
+
+### Compatibility, bounds and alternatives
+No SD format change. Reuse current epoch/CRC/SAVE, Loop parsers and footer serializer.
+Retain at most one input slot buffer plus its parse result, not all 64 slot roots.
+No performance claim from native tests; file-size-dependent cold boot work is explicit.
+Atomic filesystem durability under physical power loss is not proven by host tests;
+keep old evidence and test reset at every firmware write/rename boundary. Faulted
+or exhausted candidate/backup namespace fails closed. Reject in-place rewrite, deleting
+the corrupt original, unchecked header-only salvage, and saving an empty runtime.
+
+### Validation
+Real copied library: 64 slots, 7,840 raw events, 122 derived undo actions. Fault matrix:
+missing/corrupt bundle, healthy no-op, invalid workspace/slot, short writes, failed
+backup/promotion, existing leftovers and simulated reboot after interrupted work.
+Original hashes unchanged, no overwrite, no writes on preflight refusal, no save while
+blocked. Full native and capture-serial RAM1/build; no device access in this slice.

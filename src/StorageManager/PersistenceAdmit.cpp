@@ -308,6 +308,7 @@ void StorageManager::deferWorkspaceSaveDispatchDuringPlayback(uint32_t graceMs) 
 
 void StorageManager::requestDeferredSaveState(const LooperState& /*state*/, uint32_t admissionHeap,
                                               bool isUrgentRequest) {
+    if (bootRecoveryBlocked()) return;
 #if BYPASS_STOP_UNDO_SAVE
     (void)isUrgentRequest;
     return;

@@ -1480,7 +1480,7 @@ void test_lsv1_stepped_save_tail_large_snapshot_matches_monolithic() {
                                 monolithicBuffer.size());
 }
 
-void test_lsv1_load_commit_skips_rebuild() {
+void test_lsv1_load_commit_rebuilds_undo_and_preserves_root() {
   resetSnapshotAllocCounters();
   const ImmutableLoopSnapshotRef snapshot = buildLsv1RoundTripSnapshotFixture();
   TEST_ASSERT_NOT_NULL(snapshot.get());
@@ -1524,7 +1524,7 @@ void test_lsv1_load_commit_skips_rebuild() {
   applyLoadedLoopSlotBodyCommit(loop, track, 0, true, oracle, std::move(loadedSnapshot));
   TEST_ASSERT_NOT_NULL(loop.publishedSnapshot().get());
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
-  TEST_ASSERT_EQUAL(0u, testRebuildSlotFromLoopContentCallCount());
+  TEST_ASSERT_EQUAL(1u, testRebuildSlotFromLoopContentCallCount());
 
   testResetRebuildSlotFromLoopContentCallCount();
   PersistedLoopSnapshot legacyOracle = metadata;
@@ -2269,7 +2269,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_lsv1_stepped_save_tail_matches_monolithic);
   RUN_TEST(test_lsv1_stepped_save_tail_resumes_write_payload_without_regather);
   RUN_TEST(test_lsv1_stepped_save_tail_large_snapshot_matches_monolithic);
-  RUN_TEST(test_lsv1_load_commit_skips_rebuild);
+  RUN_TEST(test_lsv1_load_commit_rebuilds_undo_and_preserves_root);
   RUN_TEST(test_lsv1_probe_legacy_and_unsupported);
   RUN_TEST(test_lsv1_rejects_missing_loop_snapshot_section);
   RUN_TEST(test_lsv1_unknown_section_is_skipped);

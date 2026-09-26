@@ -12,6 +12,9 @@ _FIRMWARE_BOUNDARY_SUITES = {
     # Packet A (A1.7) / Packet C: the real blocking persistence drain, which pulls the persistence
     # owners the load suite does not link.
     "test_storage_drain_restore",
+    "test_offline_workspace_recovery",
+    "test_offline_undo_recovery",
+    "test_offline_boot_recovery",
     # Packet D (A4.1): the boot catalog reconcile outcome over the in-memory card.
     "test_storage_reconcile_index",
     # Packet C (A3.4a): the real MIDI/controller dispatch route, which pulls the button manager and the

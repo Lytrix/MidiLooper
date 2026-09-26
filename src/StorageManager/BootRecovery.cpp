@@ -7,6 +7,7 @@
 #include "StorageManagerInternal.h"
 
 #include "BootRecoveryPolicy.h"
+#include "RuntimeBundleRecovery.h"
 #include "CurrentSetStorage.h"
 #include "CurrentWorkspaceStorage.h"
 #include "Globals.h"
@@ -300,7 +301,7 @@ bool StorageManager::attemptBootRecoveryChain(LooperState& state) {
     return false;
 }
 
-bool StorageManager::loadState(LooperState& state) {
+bool STORAGE_PERSIST_MEM StorageManager::loadState(LooperState& state) {
     trackManager.beginBootLoad();
     emitBootMilestone("load", "start");
     struct BootLoadScope {
@@ -308,10 +309,20 @@ bool StorageManager::loadState(LooperState& state) {
     } bootLoadScope;
 
     StorageManagerInternal::resetStorageSessionJobs();
+    const auto repair=StorageManagerInternal::prepareCurrentWorkspaceForBoot();
+    if (repair==StorageManagerInternal::BootBundleRecovery::Blocked) {
+        Serial.println("[StorageManager] BOOT RECOVERY BLOCKED: source files preserved; persistence disabled.");
+        emitBootMilestone("load", "recovery_blocked");
+        return false;
+    }
+    const bool repaired=repair==StorageManagerInternal::BootBundleRecovery::Repaired;
+    if (repaired) Serial.println("[StorageManager] Runtime metadata repaired; loading preserved loops.");
     RtcTime::init();
     StorageManagerInternal::syncWallClockFromSdTimestampsQuickForBootLoad();
-    StorageManagerInternal::discardIncompleteRevisionTempFilesOnSd();
-    StorageManagerInternal::discardIncompleteCurrentWorkspaceTempFilesOnSd();
+    if (repair==StorageManagerInternal::BootBundleRecovery::NoWorkspace) {
+        StorageManagerInternal::discardIncompleteRevisionTempFilesOnSd();
+        StorageManagerInternal::discardIncompleteCurrentWorkspaceTempFilesOnSd();
+    }
 
     const bool hasCurrentWorkspace =
         SD.exists(CurrentSetStorage::kCurrentMetaPath) ||
@@ -336,15 +347,11 @@ bool StorageManager::loadState(LooperState& state) {
             emitBootMilestone("load", "ok");
             return true;
         }
-        Serial.println("[StorageManager] Current workspace load failed; attempting boot recovery chain.");
-        StorageManagerInternal::resetTracksAfterFailedLoad();
-        if (attemptBootRecoveryChain(state)) {
-            emitBootMilestone("load", "ok");
-            return true;
-        }
-        StorageManagerInternal::forceCurrentSetFullLoopWrite = false;
-        StorageManagerInternal::syncCurrentSetDirtyTrackingFromLoadedState();
-        emitBootMilestone("load", "fail");
+        // An unexpected load failure after a verified candidate must not initiate
+        // fallback saves or replace the preserved library with an empty runtime.
+        StorageManagerInternal::storageSession.bootRecovery.writesBlocked=true;
+        Serial.println("[StorageManager] Verified workspace failed to load; persistence disabled.");
+        emitBootMilestone("load", "recovery_blocked");
         return false;
     }
     if (SD.exists(CurrentSetStorage::kLegacyMonolithPath)) {

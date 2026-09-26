@@ -1,0 +1,38 @@
+********************************************************************************
+Obsolete PIO Core v6.1.18 is used (previous was 6.2.0)
+Please remove multiple PIO Cores from a system:
+https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+********************************************************************************
+Verbosity level can be increased via `-v, -vv, or -vvv` option
+Collected 104 tests
+
+Processing test_global_undo_slot_scope in native environment
+--------------------------------------------------------------------------------
+Building...
+Testing...
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:308: test_reposition_preserves_focus_redo_and_other_applied_entries: Expected 2 Was 3	[FAILED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:322: test_count_applied_undo_entries_per_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:323: test_count_updates_when_cursor_moves	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:324: test_count_redo_entries_per_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:325: test_stack_tip_gate_blocks_other_loop	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:326: test_erase_undo_entries_for_slot_adjusts_depth	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:327: test_erase_preserves_clear_slot_entries	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:328: test_erase_clear_slot_still_prunes_other_slots	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:329: test_erase_preserves_the_protected_publication_capacity	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:330: test_pass_undo_depth_excludes_clear_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:331: test_stale_undo_skip_removes_tip_for_same_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:332: test_stale_redo_skip_removes_redo_tip_for_same_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:333: test_redo_branch_survives_full_undo_for_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:334: test_pass_undo_depth_hidden_when_slot_cleared	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:335: test_reposition_undo_tip_after_multi_slot_content_rebuild	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:336: test_reposition_undo_tip_for_selected_slot_not_active_slot	[PASSED]
+test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp:337: test_later_slot_rebuild_keeps_selected_slot_at_tip	[PASSED]
+Program received signal SIGHUP (Hangup: 1)
+-------- native:test_global_undo_slot_scope [ERRORED] Took 1.37 seconds --------
+
+=================================== SUMMARY ===================================
+Environment    Test                         Status    Duration
+-------------  ---------------------------  --------  ------------
+native         test_global_undo_slot_scope  ERRORED   00:00:01.370
+
+============ 18 test cases: 1 failed, 16 succeeded in 00:00:01.370 ============

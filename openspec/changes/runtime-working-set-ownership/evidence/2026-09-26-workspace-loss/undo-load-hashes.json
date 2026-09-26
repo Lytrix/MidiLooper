@@ -1,0 +1,22 @@
+{
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/UNDO-LOAD-FIX.md": "71e86068c154a016006e898553c83f00ebe38b2d6d2ffcef207cb090282ba67b",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-load-acceptance.json": "69a7fa1f7ab27bbce19e4b41301ddd4d8c9f3fe17f5d930f57406463af35763c",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-load-candidate.json": "4c2718077b6c4f2dac6d174baf7fafb7cc4a26a98a5e7b2e03890577b3ea2085",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-load-logs.tar.gz": "fd56acded82e7cd74de090088e9b90ffd4593a101ec72da7db0688aa088bfbec",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-load-red.log": "52082012031c7efcab0d7c99746101fd7ace716b184fc68cb1f39dba67f1057f",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-partition-red.log": "6806c80ca81f10876f0e0ecec0aebdbb8df4bf56700374368f6050f569bd3b64",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-focused-green.log": "77af8b0b4c2f401dd41d49561cbde4600f7f13b1cdec90ff01c673cff95ca40a",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-firmware-build.log": "ed836e14266b0accac97c316c1a3b57e77c8cf9281aa5760bba9086f188e93c6",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-load-full-native.log": "a5736b0c25e1adfa2bdc44d1d2250d16be01996f047872631a35592c66e89738",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-openspec-validate.log": "be6a73c64f49f564ed727566e4ebbe2dcf8be8fcc579530bcc43db760a1d0a01",
+  "openspec/changes/runtime-working-set-ownership/evidence/2026-09-26-workspace-loss/undo-load-production.patch": "cd31d4fae77aa834313d636104b4e04432796b21d4c90c3e11bb5f9325eacde6",
+  "src/StorageLoopIo.cpp": "a40758c7c878dd74f8e587ec6e5f2388207d87b4566d9419bcab7de9816672fa",
+  "src/TrackUndo.cpp": "861efc674e4fdc67537b5b3cdb6e895f5234d30b0d13ba4fac1aa3e5808b50b9",
+  "include/GlobalUndoStack.h": "7ba56507db7ae7e4192958617ac236426ac8efe5b643a01e5b2f5b7949374029",
+  "test/test_offline_undo_recovery/test_offline_undo_recovery.cpp": "896c9d11d0737d045c267188825fcc633be0043bcc91b4b0e0a67a580791c50f",
+  "test/test_global_undo_slot_scope/test_global_undo_slot_scope.cpp": "954bc06c72ce79dc89fc045a7c43bcad998cbaa853af3774025be0917d68b209",
+  "test/test_storage_loop_io/test_storage_loop_io.cpp": "3c1b90791dc8f07baebbb2eec02bf093132e896837eb5e496d207e37d2a89df2",
+  "tools/midilooper-reader/reconstruct_undo.py": "25577a506f5c5657ca276abd4b1172101e2d11b72c5f7b405fcc0d7891ebe8ef",
+  "tools/midilooper-reader/prepare_native_decode_headers.py": "2b18dfdb5376593b4f2968f2385b24a16f71db23040b5fac7f07eda26a7bd520",
+  "tools/midilooper-reader/RecoveryRuntimeBundle.h": "c46414b14e6b997c3541bd40a6226508564e27adcbdd1c3ba9b579f4839b62c0"
+}

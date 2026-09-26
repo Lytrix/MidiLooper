@@ -248,8 +248,7 @@ as soon as preparation is admitted. This is the same prepare-then-commit pattern
 invariant 31 the earlier reading of `undo_resource_denied` as a *user-visible denial* is superseded: the user never
 re-issues, and the code path records the wait and retries.
 
-**Not preserved:** runtime undo history is not persisted; load continues with **undo depth zero** unless that
-is deliberately changed later.
+**Load contract (DEC-088 — load-time undo reconstruction):** runtime undo history is not persisted. Load derives per-slot undo units from saved active pass records, with redo empty. An in-session Undo creates Redo; unrelated background loads preserve it. Original cross-slot chronology and pre-reboot redo are not recovered.
 
 ## Revision 5 — S1's scaling assertion must be RED first
 
@@ -1289,3 +1288,12 @@ Pending-paint growth explicitly retires obsolete backing before copy assignment 
 DEC-085 retains the existing note/event apply workspaces for one construction. Their mutable pitch, bar-page and membership directories identify candidate-private nodes; subsequent changes reuse those nodes, updating chain tails and page counts on append. Active-work flags separate cursor completion from workspace lifetime. Published parents and sibling constructions remain immutable, and completed constructions cannot resume mutation. No allocator replacement, published-node refcount heuristic, membership-capacity change or playback-policy change. Lookup work remains proportional to affected private edits; each membership copy/remove/sort grain retains its existing page bound.
 
 Role-specific first-record reservations are not removed by this change: current capture admission also guarantees deferred-stop and immediate-overdub resources. A replacement role transition/admission contract must preserve those guarantees before the 500 KiB whole-take reservation can be omitted safely.
+
+## Automatic runtime metadata repair at boot
+
+DEC-089 — boot metadata repair follows the approved source-preserving boot sequence.
+[Storage architecture](../../../docs/Authority/Architecture/Storage.md#automatic-runtime-metadata-repair-at-boot)
+is normative for prerequisites, candidate/backup publication, replacement settings,
+write blocking and cold-setup bounds. The execution packet and host evidence are in
+[ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md#automatic-boot-repair--execution-packet-2026-09-26).
+Device installation and recovery acceptance remain separate gates under the incident hold.

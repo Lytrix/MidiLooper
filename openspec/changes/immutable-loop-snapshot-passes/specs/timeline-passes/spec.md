@@ -25,6 +25,19 @@ The system SHALL store capture and note-edit history on a loop through `passes[]
 - **AND** pass rows retain existing Active/Disabled state labels
 - **AND** there is no `PassState::Committed` requirement
 
+#### Scenario: Loop exposes passes not takes array
+
+- **WHEN** firmware loads a loop with capture and edit history
+- **THEN** `Loop` accesses history through **`passes`**
+- **AND** there is no `takes[]` / **Take** type in product code
+
+#### Scenario: Committed-pass presence is not a pass state enum
+
+- **WHEN** a loop has rows in **`passes[]`** after Commit
+- **THEN** committed-pass presence APIs may report true
+- **AND** pass rows still use existing Active/Disabled (or equivalent) state labels
+- **AND** there is no `PassState::Committed` enum value required by this change
+
 ### Requirement: Two-phase pass materialize (phase 1)
 
 `LoopPasses::materialize` SHALL remain available as a compatibility and migration-oracle operation while snapshot migration is incomplete. Normal effective-state reads SHALL select the complete active immutable `LoopSnapshot` directly and SHALL NOT replay historical capture and edit records. Explicit compatibility materialization SHALL preserve the existing two phases: merge Active `recordPass` and `overdubPasses` by `mergeSequence`, then apply Active scoped `editPass` entries in storage order by `EditPassType`.
@@ -47,6 +60,18 @@ The system SHALL store capture and note-edit history on a loop through `passes[]
 - **WHEN** `editPasses[]` contains Active Note and ControlChange rows
 - **THEN** compatibility materialization applies each through its existing handler
 - **AND** capture rows remain chunk-backed during migration
+
+#### Scenario: Materialize matches applyEdits overlay semantics
+
+- **WHEN** native tests run pre-migration **applyEdits** fixture vectors after migration
+- **THEN** materialized MIDI events SHALL match prior output byte-for-byte
+
+#### Scenario: Materialize dispatches note and control-change rows
+
+- **WHEN** **`passes.editPasses[]`** contains Active **EditPassType::Note** and **EditPassType::ControlChange** rows
+- **THEN** materialize applies note rows through **applyNoteEditPass**
+- **AND** materialize applies control-change rows through the control-change edit pass handler
+- **AND** capture rows remain chunk-backed
 
 ### Requirement: Pass-scoped global undo kinds without committed suffix
 
@@ -82,3 +107,24 @@ Global undo SHALL retain `RecordPassAdded`, `OverdubPassAdded`, `NoteEditPassClo
 - **WHEN** snapshot migration is enabled but compatibility rows remain
 - **THEN** their existing Active/Disabled behavior remains available for compatibility
 - **AND** normal effective-state consumers use the selected immutable snapshot
+
+#### Scenario: Overdub stop pushes OverdubPassAdded
+
+- **WHEN** overdub stops and capture is committed into **`passes[]`**
+- **THEN** **OverdubPassAdded** is pushed on **GlobalUndoStack**
+
+#### Scenario: Note edit exit pushes NoteEditPassClosed
+
+- **WHEN** note edit mode exits and **closeNoteEditPass** runs
+- **THEN** **NoteEditPassClosed** is pushed with all **editPassId** values from that **noteEditPass**
+
+#### Scenario: Control-change edit exit pushes ControlChangeEditPassClosed
+
+- **WHEN** control-change edit mode exits and **closeControlChangeEditPass** runs
+- **THEN** **ControlChangeEditPassClosed** is pushed with all **editPassId** values from that **controlChangeEditPass**
+
+#### Scenario: Undo disables pass rows without creating edit rows
+
+- **WHEN** global undo applies **NoteEditPassClosed** or **ControlChangeEditPassClosed**
+- **THEN** the referenced **editPass** rows become **Disabled**
+- **AND** no new **EditActionType::Delete** row is appended
