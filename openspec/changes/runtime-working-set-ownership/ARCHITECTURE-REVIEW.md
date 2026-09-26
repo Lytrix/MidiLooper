@@ -6764,3 +6764,72 @@ its intent is "a take landed on this slot", not "this exact route was taken". Pr
   missing note verification: the successor's take has no content to verify yet.
 - **The raw-only fallback reproduced** at 63.855 s, so the predecessor interval is again committed without its
   companion representation. Its content still needs verifying, as does A's.
+
+### C's zero-length take: traced to the stimulus, with a discriminating comparison (2026-09-26)
+
+Priority as directed: C reached a start, but recording usable content on C still fails, and that is the
+user-visible requirement.
+
+**Trace, from the run's own log**
+
+```
+[63.204] Loop 7: Switch gesture from slot 6                       C's switch/start requested
+[63.864] Reentry window open slot=5                               B's stop bound (capacity was available)
+[63.902] Reentry signal "Reentry released"
+[66.026] [TRACK] Recording started @ tick 2304 (startLoopTick=2304)   C actually started -- HUMAN line
+#CAP,66026816,RECA,6,2304                                         the deferred #CAP row, ~late
+#CAP,76547174,RECS,stopToStopped,6,6305,0,4001,0,0                C stopped with final length 0
+```
+
+**The notes never arrived, because the driver never sent them.** Its note injection was gated on a live check
+for the successor's `#CAP RECA` row, which returned `False` -- the firmware defers `#CAP` rows behind the
+deferred stop's flood, which its own emission sites document. So the injection block never ran: the driver's
+event list contains `successor_started: False` and **no** note-injection event at all. C then recorded nothing,
+and the transport stop finalised it at zero length.
+
+**The discriminating comparison the owner asked for**, same empty-slot recording path, same session:
+
+| slot | notes injected | stop record | final length |
+|---|---|---|---|
+| A (4) | yes | `RECS,stopToStopped,4,277,0,6421,6144,0` | **6144 ticks** |
+| B (5) | yes | `RECS,stopToStopped,5,281,0,6425,6144,0` | **6144 ticks** |
+| C (6) | **no** | `RECS,stopToStopped,6,6305,0,4001,0,0` | **0** |
+
+So the zero-length result tracks the missing notes, not the handoff: the same route commits a full 8-bar take
+when notes are present. On this evidence C's empty take is a **stimulus error**, not a handoff regression --
+and the "with and without a predecessor finalizing" comparison is exactly what separates them.
+
+**Fixed:** the driver now detects the successor's start from the **timely human** `Recording started @ tick`
+line, scoped to lines after the C gesture (an unscoped search would have matched a *seed*). The note injection
+therefore always runs.
+
+### Two corrections to the previous report (owner)
+
+- **The pause hook.** Repeatable natural exposure supports **continuing without** a pause hook. It does not
+  justify *adding* one. Corrected: the hook stays unimplemented because the natural workload works, not because
+  a hook would be justified.
+- **Stop kinds are now an explicit allowlist, and a stop record is no longer proof of content.** Accepting any
+  `stop*` was broader than necessary; `TrackCaptureStopCommit` documents exactly two successful kinds,
+  `"stop"` and `"stopToStopped"`, and the oracle now accepts only those. More importantly, the seed check now
+  requires a **nonzero final length**: `RECS,stopToStopped,6,...,4001,0,0` is a documented successful stop kind
+  with a zero final length -- precisely C's empty take -- so a stop row alone must never satisfy the check. The
+  oracle now reports `seed_content_on_a: RECS,stopToStopped,4,277,0,6421,6144,0 ... (final length 6144 ticks)`.
+
+### Release attribution: the timestamp is wrong too, not just the slot
+
+The owner asked to verify **when** the marker fires, not only which slot it names. The run's own ordering
+answers it: B's stop **bound** at 63.864 s (`Reentry window open slot=5`), which is only possible once A's
+finalization resources are back, while the release edge was reported at **63.902 s -- 38 ms later**. So the
+recorded instant is a later maintenance-turn observation, not the moment capacity became available. Correcting
+the slot alone would leave a record that still does not mark the release; the attribution needs both the
+retiring owner's **slot and identity** (`frozenGeneration`) and an emission at the edge itself rather than on a
+later VisualCache turn. That remains open, and it still has to fit the RAM1 floor (the slot-scanning version
+cost 64 bytes and was reverted).
+
+### Status (corrected wording)
+
+**Request retention is demonstrated on hardware; end-to-end capture/content acceptance has failed or is
+incomplete.** The oracle continues to report `SETUP_INCOMPLETE`, and the separately observed empty successor
+take is recorded above rather than being hidden behind that first setup failure. Still open: the discriminating
+native regression, the release attribution fix, and a re-run verifying A, B and C content -- with the raw-only
+companion fallback treated as unresolved until its content consequences are established.

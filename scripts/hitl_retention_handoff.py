@@ -574,6 +574,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         # wanted. Each multi-press therefore waits for its own resolution -- "Double press detected", or the
         # state it causes -- before the next press on that slot. This costs nothing inside the finalization
         # window because it happens before the switch that opens it.
+        c_switch_line = len(_lines(capture_log))
         for gesture in critical_window_gestures(track=args.track, a=args.slot_a, b=args.slot_b,
                                                c=args.slot_c):
             mark = len(_lines(capture_log))
@@ -581,6 +582,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                   multi_press_ms=args.multi_press_ms, multi_gap_ms=args.multi_gap_ms)
             events.append({"event": f"gesture:{gesture.step}", "note_line": mark,
                            "host_monotonic_ns": time.monotonic_ns()})
+            if gesture.step == "c_switch_request":
+                c_switch_line = mark
             if gesture.kind == "record":
                 # Barely pause: just enough for the press to be processed. The following gesture is on a
                 # DIFFERENT button (B's stop uses B's loop button), so there is no tap-merge risk, and waiting
@@ -620,9 +623,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                              markers=(f"DIAG,reentry,bound,", f"Reentry window open slot={b0}"),
                              timeout_s=args.window_timeout_s)
         events.append({"event": "successor_stop_bound", "confirmed": bound})
-        started = _wait_for_any(capture_log, after=0, markers=(f",RECA,{c0},",),
-                               timeout_s=args.phase_timeout_s)
-        events.append({"event": "successor_started", "confirmed": started})
+        # Detect the successor's start from the TIMELY human line, not the `#CAP RECA` row. The firmware defers
+        # `#CAP` rows behind the deferred stop's flood (documented at their emission sites), so keying the note
+        # injection on `RECA` reported False and the note was never sent -- which is why C finalised at length 0
+        # (`RECS,stopToStopped,6,...,4001,0,0`) while the seeds, whose notes were sent, committed 6144 ticks.
+        started = _wait_for_any(capture_log, after=c_switch_line,
+                                markers=("Recording started @ tick",), timeout_s=args.phase_timeout_s)
+        events.append({"event": "successor_started", "confirmed": started,
+                       "marker": "human Recording-started line"})
 
         if started:
             # Let the successor take run, then inject the note the oracle will look for.

@@ -66,10 +66,11 @@ WINDOW_OPEN_RE = re.compile(r"^DIAG,reentry_window_open,(\d+),(\d+),(\d+)$")
 CANONICAL_RELEASE_RE = re.compile(r"^DIAG,canonical_release,(\d+),(\d+),(\d+)$")
 REENTRY_RE = re.compile(r"^DIAG,reentry,([a-z_]+),(\d+),(\d+),(\d+),(\d+)$")
 RECA_RE = re.compile(r"^RECA,(\d+),(\d+)$")
-# The device has more than one record-stop kind: a plain stop emits `RECS,stop,<slot>`, while the transport-stop
-# route emits `RECS,stopToStopped,<slot>` (observed for every seeded slot and for the successor on device). The
-# check's intent is "a take landed on this slot", so it accepts any `stop*` kind rather than only `stop`.
-RECS_STOP_RE = re.compile(r"^RECS,stop[A-Za-z]*,(\d+),")
+# Exactly the documented successful stop kinds, not an open `stop*` pattern: `TrackCaptureStopCommit` emits
+# `"stop"` (the ordinary route) and `"stopToStopped"` (the transport-stop route). Anything else is not a
+# successful stop this oracle knows how to read.
+# Fields: kind, slot, tick, startTick, rawLength, finalLength, captureAlignFlag.
+RECS_STOP_RE = re.compile(r"^RECS,(?:stop|stopToStopped),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)$")
 RECS_SEAL_RE = re.compile(r"^RECS,stage,seal,")
 STOP_SLOT_RE = re.compile(r"^DIAG,(?:stop_phase|stop_grain),(\d+),(\d+),")
 DENIAL_STAGE_RE = re.compile(r"^ODUB,stop,admission,.*,successor_stop_denied_capacity$")
@@ -338,9 +339,21 @@ def analyse(
 
     # ---------------- L1: A's finalizer outstanding ----------------
     seed = next((e for e in entries if (m := RECS_STOP_RE.match(e.body)) and int(m.group(1)) == slot_a), None)
-    add("seed_content_on_a", OK if seed else FAIL,
-        f"RECS,stop,{slot_a} at {seed.us} us" if seed else
-        f"no RECS,stop,{slot_a}: the seed take on A never landed", "setup")
+    seed_final = int(RECS_STOP_RE.match(seed.body).group(5)) if seed is not None else 0
+    # A stop record is not proof that content landed -- the successor proved that: it produced
+    # `RECS,stopToStopped,6,...,4001,0,0`, a documented successful stop kind with a ZERO final length. The seed
+    # check therefore requires a nonzero final length, not merely a row.
+    if seed is None:
+        add("seed_content_on_a", FAIL,
+            f"no documented stop record (stop|stopToStopped) for slot {slot_a}: the seed take never landed",
+            "setup")
+    elif seed_final == 0:
+        add("seed_content_on_a", FAIL,
+            f"slot {slot_a} has a stop record but a ZERO final length ({seed.body}) -- a stop record alone is "
+            "not proof that content landed", "setup")
+    else:
+        add("seed_content_on_a", OK,
+            f"{seed.body} at {seed.us} us (final length {seed_final} ticks)", "setup")
 
     window_open = next((e for e in entries
                         if (m := WINDOW_OPEN_RE.match(e.body)) and int(m.group(1)) == slot_a), None)
