@@ -6519,3 +6519,32 @@ and the action layer exposes only `press_record`, `press_play_stop`, `press_edit
 per-slot record press and no slot/track select. Building it is host work with device round-trips, and rushing
 it would produce exactly the kind of non-evidence this entire section exists to prevent. It is therefore
 recorded as the next step rather than attempted here, and **no device command was run** for this section.
+
+### Step 3 continued: the driver exists, and the authorized targets are occupied
+
+The blocker above is fixed: `scripts/hitl_retention_handoff.py` now drives the sequence, with the gesture
+order pinned by 10 device-free tests. The read-only target verification the owner asked for was then run, and
+it changed the picture:
+
+**`scripts/hitl_boot_census.py --library-observe` (writes nothing, `!LIB_OBSERVE` only) on the authorized
+targets reports every one of them occupied:**
+
+| Authorized target | Observed |
+|---|---|
+| track 5 slot 1 | `populated`, `has_committed_content=True`, 1 committed pass, 1536 ticks |
+| track 5 slot 2 | `populated`, `has_committed_content=True`, 1 committed pass, 1536 ticks |
+| track 5 slot 3 | `populated`, `has_committed_content=True`, 1 committed pass, 1536 ticks |
+
+This matters because the design **seeds A and B by recording into them** (they must be overdub targets for
+their stops to be capacity-governed) and leaves C empty as the record target -- so all three must be empty,
+and the firmware refuses record on a slot with committed passes. A single documented scratch slot was never
+going to cover three targets, which is why the earlier note refused to assume it.
+
+**The run therefore stopped before any write**, and the driver now enforces this rather than documenting it:
+`--census` refuses to run when a target holds committed content, naming it. No slot was cleared -- clearing is
+destructive on user data and needs its own explicit authorization.
+
+**The library does contain usable empty targets**, so the run need not be destructive. Non-committed slots:
+track 3 slot 2, track 7 slot 1, and **track 8 slots 5, 6, 7, 8**. Track 8 is the natural choice: three empty
+slots on one track, and using them overwrites nothing -- the run only *creates* a seeded take on A and B and a
+recorded take on C. Note the consequence for the owner: afterwards those three slots hold new 2-bar takes.
