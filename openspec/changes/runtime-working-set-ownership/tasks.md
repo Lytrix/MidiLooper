@@ -1364,7 +1364,10 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       (d) **check 6's** "a successful start cannot execute twice" has no dedicated fixture;
       (e) the cross-track switch and repeated B → C switches while A finalizes depend on **finalizer
       capacity**, not only on the inbound overlap policy — `Omax` alone does not solve repeated switches
-      (recorded per the review). Record:
+      (recorded per the review). **Retention itself is now proven** (S4f.3 PARTIAL 3): a switch/start
+      requested while the predecessor's stop cannot be admitted survives repeated dispatch and executes once
+      the obligation binds, without another gesture. What that does **not** prove is **immediate** execution,
+      which is the capacity question and stays open by instruction. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4b.1, § S4f.6.
 - [ ] S4b.2 Pre-provision the inbound role before releasing the outbound one, with the overlap bounded and
       accounted in the S2 budget; the switch point performs no allocation, and the transfer must not steal
@@ -1593,6 +1596,40 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       carrier now survives only because it queues *after* the call — scope it to the finalized slot when the
       retained switch lands. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3, § S4f.6.
+      **PARTIAL 3 (2026-09-25) — accepted-switch retention under unavailable stop admission LANDED.**
+      Both (a) and (b) above are now closed. (a) `TrackManager::retainRecordStartForSlot` retains the start
+      in the **existing** manager pending-start owner without the enabled-set change (the predecessor is
+      still the active audible interval, so the set must not move); `handleToggleRecordForSlot` calls it on
+      the uncommitted path instead of dropping the press. (b) `finalizeCaptureAndSelectSlot` now performs
+      **explicit supersession scoped to the finalized slot** via `clearQueuedRecordingTrack(trackIndex,
+      captureSlot)` (and drops the retained request's phase reference when it is that slot), instead of
+      clearing the whole track's pending-start state before it knows whether the switch will commit.
+      **Three further corrections landed with it.** (i) The overdub guard is **slot-scoped**:
+      `hasLiveCaptureStopJobForSlot(captureSlot)` = this interval's stop is bound, commit;
+      `hasAcceptedInteractionForSlot(captureSlot)` = accepted-unadmitted, wait. `hasPendingDeferredOverdubStop()`
+      is **track-wide** and would let another slot's admitted job stand in for this interval's unadmitted stop.
+      (ii) Re-entering `stopOverdubbing()` on an already-admitted stop is avoided, because
+      `beginDeferredOverdubStopForSlot` returns false for a pending job and the capacity guard then
+      **re-latches**, blocking the very switch being made. (iii) **The activation hazard:**
+      `handlePendingRecordStart` was activating with `Track::setActiveLoopIndex` (unconditional), bypassing the
+      switch path and moving the active slot underneath an unadmitted predecessor stop; it now uses
+      `TrackManager::setActiveLoopIndex` and **explicitly asserts** that a failed activation leaves the active
+      slot unchanged with the predecessor's stop in flight, refusing otherwise.
+      **Evidence:** `test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds` (A's stop held,
+      B overdubbing with its stop capacity-denied, C's switch/start retained, repeated dispatch, capacity
+      released, B's stop binds, C starts and records, no double execution), **red-proved three ways** with
+      distinct failure lines (retention disabled; activation reverted; the old blanket clear restored); a
+      **false green found and removed** (the replaced fixture returned early from a characterization branch in
+      the default gate and held nothing). Full native `2,448 passed / 1 skipped`; firmware SUCCESS.
+      **RAM1 is now exactly on its approved floor** (`code 392,376 / padding 840`); this slice spent 272 bytes
+      and gating the diagnostic recovered none (the strings are FLASH-resident) — **the next slice here must
+      free RAM1 or revisit the floor first**.
+      **Deliberate deviation, recorded:** the review suggested using the `SlotStateMachine` pending-switch owner
+      as well. It is the **playback** switch owner and its consumer cancels a target with no loop data — i.e. a
+      record target — so a record-carrying request parked there would be cancelled by the playback lane; and
+      carrying the target in two owners contradicts "avoid another target owner". The pending-start owner is
+      the single home; the switch is still executed by the existing switch path. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3 (retention).
 - [x] S4f.4 **Transport/clock timing validity (B2, T2).** (**REVISED 2026-09-23 by architect decision --
       `design.md` Revision 24; the stored-epoch requirement is WITHDRAWN.** The latch's `transportEpoch`
       field is **removed** (latch 40 -> 32 bytes, `CaptureStopJobs` 2,736 -> 2,728, both pins updated and

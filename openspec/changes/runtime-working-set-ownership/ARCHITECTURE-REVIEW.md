@@ -5924,3 +5924,105 @@ not answer it.
 3. S4b.1 check 7 coverage (cross-track, cleared and populated targets) and check 6's "cannot execute twice"
    leg.
 4. Repeated **B -> C while A finalizes** remains a capacity acceptance case.
+## S4f.3 — accepted-switch retention under unavailable stop admission (2026-09-25, landed)
+
+**Scope (pinned).** The switch/start request must survive when the predecessor's stop **cannot be admitted**,
+and execute later without another gesture. Consumption happens only at a successful start or an explicit
+supersession. Exactly-once. The existing capacity model is preserved: no new capacity, no new request owner.
+
+**The defect, precisely.** `MidiButtonActions::handleToggleRecordForSlot`'s capture-switch branch committed
+the switch and returned. When the switch could not commit -- `finalizeCaptureAndSelectSlot` returns false
+while the interval's stop is accepted-and-unadmitted -- the branch had **nothing** to retain, so the press
+was dropped: neither the switch nor the start existed anywhere afterwards.
+
+**What was already correct, and is now relied on rather than duplicated.** The stop side already owns
+retention with exactly-once binding: `Track::latchAcceptedStop(destination, slot, interval)` writes the
+obligation against the interval's own identity, and `driveAcceptedInteraction()` (reached through
+`serviceAcceptedInteractionTurn()` at the top of `processDeferredIdleMaintenance`) re-runs the admission
+guard chain on a deferred turn, binds it exactly once when the owner frees, supersedes it if its interval is
+gone, and otherwise parks. The switch therefore **waits** for that obligation instead of re-driving it.
+
+**Implementation.**
+
+- `TrackManager::retainRecordStartForSlot(trackIndex, slotIndex)` retains a record start in the **existing**
+  manager pending-start owner (`pendingRecord` / `pendingRecordSlot` / `pendingRecordRefSlot` /
+  `pendingRecordQueuedAtTick`) **without** the enabled-set change `queueRecordingTrack` performs: while the
+  switch waits, the predecessor is still the active audible interval, so the audible set must not move. The
+  enabled set is applied by `startRecordingTrack` when the start actually executes.
+- `handleToggleRecordForSlot` now retains on the uncommitted path instead of dropping, so the same gesture
+  that could not switch still leaves a live request.
+- `finalizeCaptureAndSelectSlot` no longer clears the whole track's pending-start state. It calls
+  `clearQueuedRecordingTrack(trackIndex, captureSlot)`, which is **explicit supersession scoped to the slot
+  being finalized** and already recomputes `pendingRecord` and resets the queued tick. It also drops the
+  retained request's phase reference when that reference is the finalized slot, so the predecessor's
+  just-committed loop timing cannot become an accidental dependency of the successor's start.
+- The overdub branch of `finalizeCaptureAndSelectSlot` is now **slot-scoped and non-re-entrant**:
+  `hasLiveCaptureStopJobForSlot(captureSlot)` means this interval's stop is bound and the switch may
+  proceed; `hasAcceptedInteractionForSlot(captureSlot)` means it is accepted-but-unadmitted and the switch
+  must wait; otherwise this is the live stop edge and the stop is requested. `hasPendingDeferredOverdubStop()`
+  is deliberately **not** used here: it is **track-wide**, so it would let a different slot's admitted job
+  stand in for this interval's unadmitted stop -- exactly the "A finalizing while B's stop waits" case.
+  Re-entering `stopOverdubbing()` on an already-admitted stop is also harmful, because
+  `beginDeferredOverdubStopForSlot` returns `false` for a pending job and the capacity guard then
+  **re-latches** the obligation, blocking the very switch being made.
+
+**The activation hazard, found by the new fixture and fixed.** `handlePendingRecordStart` activated the
+target with `Track::setActiveLoopIndex`, the **unconditional** setter. That bypassed the switch path
+entirely, so "activate the target first" moved the active slot straight to the target even while the
+predecessor's stop was unadmitted -- and the start then ran against it. Activation now goes through
+`TrackManager::setActiveLoopIndex`, the production write authority that routes a live capture through
+`finalizeCaptureAndSelectSlot`, and the dispatcher asserts the invariant explicitly: if the active slot did
+not reach the target, the **only** accepted explanation is "the active slot is unchanged and the
+predecessor's stop is in flight" (`hasStopInFlightForSlot(predecessorSlot)`); anything else refuses the
+start and reports. The refusal is unconditional; the identifying detail is gated behind `SESSION_CAPTURE`
+per the repo's instrumentation rule.
+
+**Deviation from the review's suggested owner, recorded rather than silently taken.** The recommendation was
+to use the `SlotStateMachine` pending-switch owner **and** the manager pending-start owner. This slice uses
+the pending-start owner as the single home of the request. The `SlotStateMachine` pending switch is the
+**playback** switch owner, and its consumer cancels a target with no loop data
+(`TrackManagerTransportTick`: "pending target no longer has loop data, cancel it") -- which is precisely a
+record target, so a record-carrying request parked there would be cancelled by the playback lane. Carrying
+the target in both owners would also store the same target twice, against the "avoid another target owner"
+instruction. The switch itself is still executed by the existing switch path; only its *request* lives in the
+pending-start owner.
+
+**Evidence.**
+
+- `test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds` (new, one track, slots A/B/C):
+  A's stop is admitted and **held** (capacity occupied); B becomes active through the production active-slot
+  authority and overdubs; B's stop is requested and **denied on capacity**, latching against B's own slot; a
+  switch/start is requested on C and is retained; **repeated dispatch** (768 x 3 ticks) leaves both requests
+  intact and never moves the active slot off B; capacity is released and B's stop is driven through
+  `serviceAcceptedInteractionTurn` until it binds; dispatch then commits the switch to C, starts C, and C
+  records the incoming note; further dispatch re-executes neither request and does not disturb C.
+  - Note for the record: a fresh **record** stop is *not* capacity-governed (`TrackManager::stopRecordingTrack`
+    is synchronous), so only an **overdub** stop can be made to wait. B is therefore an overdub interval,
+    which is the "capture on B" the contract needs.
+- **Red-proved three times, each with a distinct failure line:**
+  - retention disabled (`retainRecordStartForSlot` not called) -> "the switch must retain C's record start
+    rather than drop it" (`1 failed, 11 succeeded`);
+  - activation reverted to `Track::setActiveLoopIndex` -> "the active slot must not move under B's
+    unadmitted stop, on any dispatch" (`1 failed, 11 succeeded`);
+  - the previous unconditional pending-record clear restored -> "C's switch/start must survive repeated
+    dispatch" (`1 failed, 11 succeeded`).
+- A **false green was found and removed**: the fixture this replaces
+  (`test_the_switch_gesture_carries_the_start_without_a_second_press`) asserted
+  `activeLoopIndex == 1` immediately after its gesture, and with the retention change it began taking an
+  `activeLoopIndex != 1` characterization branch that returned early in the default gate -- passing while
+  holding nothing. The branch is gone; the replacement asserts the requirement unconditionally.
+- Green in default and `S4B_ACCEPTANCE=1` modes; full native **2,448 passed / 1 skipped**.
+- Firmware `teensy41-capture-serial`: SUCCESS.
+  **RAM1 is now exactly on its approved floor: `variables 96,160 / code 392,376 / padding 840`, floor
+  `padding >= 840`.** This slice spent 272 bytes of the 1,112 that were available (`code 392,104 -> 392,376`).
+  Gating the diagnostic did **not** recover any of it, because the format strings are FLASH-resident. **The
+  next slice in this area must free RAM1 or revisit the floor decision before adding code.**
+
+**Still open, explicitly.**
+
+1. **Immediate repeated handoffs** (B -> C starting while A still finalizes). Retention is now proven; it does
+   **not** prove immediate execution. This needs the separate **finalizer-capacity** decision: the required
+   bounded finalization overlap and its memory cost must be established before that behavior is promised.
+2. S4b.1 check 7 coverage: cross-track targets and cleared / populated targets.
+3. S4b.1 check 6: a successful start "cannot execute twice" has no dedicated fixture (the blocked fixture
+   asserts it for the retained request, not for the ordinary double-dispatch case).
