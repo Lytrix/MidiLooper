@@ -5508,3 +5508,45 @@ The existing S4f.5 refusal (accepted-but-unexecuted stop holds the active slot) 
 
 Status: default gate 12/12 (characterization records the above); `S4B_ACCEPTANCE=1` red with the exact
 state; full native 2,448 passed / 1 skipped; capture-serial RAM1 byte-identical.
+
+## S4f.3 / S4b.1 — the successor is left in an Overdub capture session (2026-09-25, fourth pass)
+
+### The decisive datum
+
+```
+B did not record the note: recording=0 overdubbing=1 captureActive=1 size=0 loopLen=0 active=1
+  beforeTick=768 beforeLoopLen=0 onTick=776 phase=2 hasOverdubSession=1
+```
+
+`phase=2` is `CapturePhase::Overdub` and `hasOverdubSession=1`, on a slot whose `loopLengthTicks` is
+**0**. So an actual overload-session start ran on the successor.
+
+Only two production sites set `capture.phase = CapturePhase::Overdub`:
+`TrackOverdubLifecycle.cpp:1671` (the tail of `startOverdubbing`) and `TrackOverdubWrap.cpp:101`
+(the overdub wrap). `TrackManagerCaptureQueue.cpp:223` additionally reads
+`track.isOverdubbing() && loop.capture.phase == CapturePhase::Overdub`. So `startOverdubbing` ran on the
+successor and reached its session start, which establishes an overdub session on a loop that has no
+length — the empty-slot contradiction.
+
+### What this rules out
+
+The stale `TRACK_OVERDUBBING` is **not** the root cause on its own: I implemented the state clear in
+`finalizeCaptureAndSelectSlot` (empty successor → leave the live-capture state), confirmed S4f.5 stayed
+green (101/101), and the acceptance state was **byte-identical afterwards**. It cost 48 B of code, so it
+was reverted. The successor's overdub session is therefore established **after** the switch, by a route
+that has not yet been identified.
+
+### Next probe (targeted)
+
+Find which of the two `beginCapture(CapturePhase::Overdub, …)` sites executes on the successor:
+
+- if it is `startOverdubbing`'s tail, the caller that reaches it is the one to fix: for an empty active
+  loop the start must take record admission, which establishes the length first;
+- if it is the wrap path (`TrackOverdubWrap.cpp:101`), the successor is being treated as a wrapping overdub
+  of a loop it does not own, which is a different defect again.
+
+The guard at `TrackOverdubLifecycle.cpp:1552` now logs when it is asked to overdub an empty active loop
+(previous pass), so the log distinguishes these two without further instrumentation.
+
+Status: default gate 12/12; `S4B_ACCEPTANCE=1` red with the datum above; full native 2,448 passed /
+1 skipped; capture-serial RAM1 byte-identical.
