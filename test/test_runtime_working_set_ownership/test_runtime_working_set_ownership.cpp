@@ -129,6 +129,26 @@ struct TrackCaptureStopTestAccess {
     return track.hasPendingDeferredOverdubStop();
   }
   static bool hasStopInFlight(const Track& track) { return track.hasStopInFlight(); }
+  /// S4f.6's slot-scoped predicate: a stop obligation that names **this** slot. The retry fixture needs it
+  /// to assert that the refusal it is exercising is the target's own obligation, not another slot's.
+  static bool hasStopInFlightForSlot(const Track& track, uint8_t slot) {
+    return track.hasStopInFlightForSlot(slot);
+  }
+  /// The native clock boundary (DEC-080). This harness routes `shouldQuantizeRecordStart()` through it, so it
+  /// **is** the clock condition `TrackManager::startRecordingTrack`'s arm-and-wait branch tests.
+  static void setClockRunning(bool running) { nativeTransportRunning = running; }
+  /// Exactly-once observables for one take. A second `Track::startRecording` re-begins capture --
+  /// `Loop::beginCapture` clears the capture extent -- and re-stamps `loop.startLoopTick` from the later
+  /// dispatch tick, so "the take was executed twice" shows up as either of these changing.
+  static uint32_t takeOriginTick(const Track& track) { return track.getActiveLoop().startLoopTick; }
+  static uint32_t firstCaptureEventTick(const Track& track) {
+    const auto& store = track.getActiveLoop().capture.store;
+    return store.size() == 0 ? UINT32_MAX : store.at(0).tick;
+  }
+  static uint8_t firstCaptureEventNote(const Track& track) {
+    const auto& store = track.getActiveLoop().capture.store;
+    return store.size() == 0 ? 0xFF : store.at(0).data.noteData.note;
+  }
   static bool hasAcceptedUnexecutedInteraction(const Track& track) {
     return track.hasAcceptedUnexecutedInteraction();
   }
@@ -1180,13 +1200,15 @@ void test_a_populated_successor_overdubs_on_its_own_phase_while_the_predecessor_
 /// fixture never checks that the request was consumed, and never dispatches again after the start. This
 /// fixture closes that half: consumption, no re-arm, and no second execution.
 ///
-/// **Residual gap, recorded rather than implied.** This does not cover the *arm-and-wait re-queue* path
-/// (`startRecordingTrack` -> `!clockManager.shouldQuantizeRecordStart()` re-queues and returns false) as a
-/// route of its own, nor a committed start that *fails* and is retried; both remain uncovered here.
-/// Checked while writing this and **not** a defect: the ordinary immediate start cannot leave a stale
-/// request behind, because `handleArmedRecordPress` cancels any queued arm and returns before the
-/// immediate `startRecordingTrack` call is reached (`MidiButtonActions.cpp`), so that route has nothing to
-/// consume twice.
+/// **Residual gap, recorded rather than implied.** This fixture covers the *switch-carried committed*
+/// start only. The two other exactly-once routes are covered separately, directly below:
+/// `test_the_arm_and_wait_requeue_retains_then_executes_exactly_once` (the
+/// `!clockManager.shouldQuantizeRecordStart()` re-queue branch) and
+/// `test_a_start_refused_by_its_own_live_stop_obligation_retries_to_a_single_take` (a start refused by a
+/// live stop obligation for its own slot, then retried). Checked while writing this and **not** a defect:
+/// the ordinary immediate start cannot leave a stale request behind, because `handleArmedRecordPress`
+/// cancels any queued arm and returns before the immediate `startRecordingTrack` call is reached
+/// (`MidiButtonActions.cpp`), so that route has nothing to consume twice.
 void test_the_switch_carried_start_executes_exactly_once() {
   LoopEventStore::initPool();
   Track& track = trackManager.getSelectedTrack();
@@ -1256,6 +1278,210 @@ void test_the_switch_carried_start_executes_exactly_once() {
                             "captured events");
 }
 
+/// **Exactly-once: the arm-and-wait re-queue path.** `TrackManager::startRecordingTrack` has a branch where
+/// `!clockManager.shouldQuantizeRecordStart()` re-queues the request in the manager pending-start owner,
+/// leaves the track armed, and returns `false` so the attempt neither starts nor consumes. This fixture
+/// closes the first of the two gaps the fixture above records, and pins what that path can and cannot
+/// execute twice:
+///
+///   1. the re-queue attempt **retains** the request and does not start recording;
+///   2. repeated dispatch while the clock condition is still unsatisfied keeps retaining it;
+///   3. once the clock runs, the request executes **exactly once** and is consumed by that attempt;
+///   4. further dispatch cannot execute it again -- the take origin and its captured events are unchanged,
+///      which a second `Track::startRecording` would break (`Loop::beginCapture` clears the capture extent
+///      and `loop.startLoopTick` is re-stamped from the later tick).
+void test_the_arm_and_wait_requeue_retains_then_executes_exactly_once() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  const uint8_t tidx = trackManager.getSelectedTrackIndex();
+  // Slot 0 holds committed content so the track can be audibly playing; slot 1 is the empty record target.
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+
+  // (1) The clock condition is unsatisfied, so the production gesture reaches the arm-and-wait branch.
+  TrackCaptureStopTestAccess::setClockRunning(false);
+  TEST_ASSERT_FALSE_MESSAGE(clockManager.shouldQuantizeRecordStart(),
+                            "precondition: this fixture needs the unsatisfied clock condition");
+  TrackCaptureStopTestAccess::selectSlotIndex(tidx, 1);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the gesture must have activated the empty record target");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                           "the arm-and-wait branch must retain the request rather than consume it");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::anyRecordQueued(tidx));
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                            "the arm-and-wait branch must not start recording");
+
+  // (2) Dispatch across three bar boundaries while the condition is still unsatisfied. Every attempt is
+  // re-queued and none is consumed: this is the retention half, and it fails if the branch reports success.
+  const uint32_t queuedTick = clockManager.getCurrentTick();
+  for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                            "the start must not execute while the clock condition is unsatisfied");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                           "each unsatisfied attempt must retain the request, not consume it");
+
+  // (3) The clock condition is satisfied: the retained request executes, exactly once.
+  TrackCaptureStopTestAccess::setClockRunning(true);
+  TEST_ASSERT_TRUE(clockManager.shouldQuantizeRecordStart());
+  const uint32_t resumeTick = clockManager.getCurrentTick();
+  for (uint32_t tick = resumeTick + 1;
+       tick <= resumeTick + 768 * 3 && !TrackCaptureStopTestAccess::isRecording(track); ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                           "the retained start must execute once the clock condition is satisfied");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                            "the request must be consumed by the successful attempt");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::anyRecordQueued(tidx),
+                            "no record request may survive the successful attempt");
+
+  // (4) Exactly once. A second execution would re-begin capture: the injected note's events would be
+  // dropped and the take origin would move to the later tick.
+  const uint32_t takeOrigin = TrackCaptureStopTestAccess::takeOriginTick(track);
+  const uint32_t onTick = clockManager.getCurrentTick() + 8;
+  inputNote(71, onTick, onTick + 32);
+  TEST_ASSERT_EQUAL_MESSAGE(2, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "the take must have recorded the injected note's on and off");
+  const uint32_t firstTick = TrackCaptureStopTestAccess::firstCaptureEventTick(track);
+  const uint8_t firstNote = TrackCaptureStopTestAccess::firstCaptureEventNote(track);
+
+  const uint32_t afterStart = clockManager.getCurrentTick();
+  for (uint32_t tick = afterStart + 1; tick <= afterStart + 768 * 3; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "later dispatch must not move the active slot");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                            "the start request must not be re-armed by later dispatch");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                           "the started take must still be the recording interval");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      takeOrigin, TrackCaptureStopTestAccess::takeOriginTick(track),
+      "a second execution would re-begin capture and move the take origin");
+  TEST_ASSERT_EQUAL_MESSAGE(2, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "a second execution would clear the capture extent");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(firstTick, TrackCaptureStopTestAccess::firstCaptureEventTick(track),
+                                   "the recorded note's tick must survive later dispatch");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(firstNote, TrackCaptureStopTestAccess::firstCaptureEventNote(track),
+                                  "the recorded note must survive later dispatch");
+}
+
+/// **Exactly-once: a start that is refused by its own live stop obligation and then retried.**
+/// `TrackManager::startRecordingTrack` refuses while `hasStopInFlightForSlot(activeSlot)` -- the S4f.6
+/// slot-scoped guard -- and returns `false` so the dispatcher retains the request. This fixture closes the
+/// second recorded gap: the refused attempt must not consume, the retry must produce exactly one take, and
+/// the request must be consumed only by the successful attempt.
+///
+/// The obligation is set through the existing test accessor on purpose: a fresh **record** stop is
+/// synchronous (`TrackManager::stopRecordingTrack` -> `Track::stopRecordingToStopped`) and never takes the
+/// deferred path, so a latch is the only way a record target can carry a stop obligation **of its own**.
+/// The start itself is queued by the production per-slot gesture and dispatched by the production
+/// `handlePendingRecordStart`, so only the obligation's origin is synthetic.
+///
+/// Attribution note: the refused phase and the successful phase use the *same* dispatch loop over the same
+/// number of ticks, and the only difference between them is the obligation, so "it started later" cannot be
+/// explained by a tick gate that the refused phase never satisfied.
+void test_a_start_refused_by_its_own_live_stop_obligation_retries_to_a_single_take() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  const uint8_t tidx = trackManager.getSelectedTrackIndex();
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+
+  // (1) The record target carries a live stop obligation that names its own slot.
+  TrackCaptureStopTestAccess::latchAcceptedStopForSlot(track, 1);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasStopInFlightForSlot(track, 1),
+                           "precondition: the target must carry its own stop obligation");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasStopInFlightForSlot(track, 0),
+                            "precondition: the obligation must not be the predecessor slot's");
+
+  // (2) The start is requested through the production gesture; a running clock queues it for the target.
+  clockManager.assignCurrentTickSilently(120);
+  TrackCaptureStopTestAccess::selectSlotIndex(tidx, 1);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                           "the gesture must queue the start for the empty target");
+
+  // (3) Three bar boundaries of production dispatch are refused by the live obligation, and every refusal
+  // retains the request instead of consuming it.
+  const uint32_t queuedTick = clockManager.getCurrentTick();
+  for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(
+      TrackCaptureStopTestAccess::isRecording(track),
+      "a start must not execute while its own slot carries a live stop obligation");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                           "a refused attempt must retain the request, not consume it");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasStopInFlightForSlot(track, 1));
+
+  // (4) The obligation retires and the retry executes -- with the same dispatch loop as (3).
+  TrackCaptureStopTestAccess::consumeAcceptedStop(track);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasStopInFlightForSlot(track, 1),
+                            "the obligation must be gone before the retry");
+  const uint32_t resumeTick = clockManager.getCurrentTick();
+  for (uint32_t tick = resumeTick + 1;
+       tick <= resumeTick + 768 * 3 && !TrackCaptureStopTestAccess::isRecording(track); ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                           "the retained start must execute once its own obligation retires");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the retry must start on the requested target");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                            "the request must be consumed only by the successful attempt");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::anyRecordQueued(tidx),
+                            "no record request may survive the successful attempt");
+
+  // (5) Exactly once across the retry: one take, and later dispatch neither re-arms nor re-executes it.
+  const uint32_t takeOrigin = TrackCaptureStopTestAccess::takeOriginTick(track);
+  const uint32_t onTick = clockManager.getCurrentTick() + 8;
+  inputNote(72, onTick, onTick + 32);
+  TEST_ASSERT_EQUAL_MESSAGE(2, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "the retried take must have recorded the injected note's on and off");
+  const uint32_t firstTick = TrackCaptureStopTestAccess::firstCaptureEventTick(track);
+  const uint8_t firstNote = TrackCaptureStopTestAccess::firstCaptureEventNote(track);
+
+  const uint32_t afterStart = clockManager.getCurrentTick();
+  for (uint32_t tick = afterStart + 1; tick <= afterStart + 768 * 3; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "later dispatch must not move the active slot");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::recordQueuedForSlot(tidx, 1),
+                            "the start request must not be re-armed by later dispatch");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                           "the retried take must still be the recording interval");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      takeOrigin, TrackCaptureStopTestAccess::takeOriginTick(track),
+      "a second execution would re-begin capture and move the take origin");
+  TEST_ASSERT_EQUAL_MESSAGE(2, TrackCaptureStopTestAccess::captureEventCount(track),
+                            "a second execution would clear the capture extent");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(firstTick, TrackCaptureStopTestAccess::firstCaptureEventTick(track),
+                                   "the recorded note's tick must survive later dispatch");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(firstNote, TrackCaptureStopTestAccess::firstCaptureEventNote(track),
+                                  "the recorded note must survive later dispatch");
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
@@ -1275,5 +1501,8 @@ int main() {
   RUN_TEST(test_a_cleared_successor_is_a_record_target_while_the_predecessor_finalizes);
   RUN_TEST(test_a_populated_successor_overdubs_on_its_own_phase_while_the_predecessor_finalizes);
   RUN_TEST(test_the_switch_carried_start_executes_exactly_once);
+  // The two exactly-once routes the fixture above left uncovered.
+  RUN_TEST(test_the_arm_and_wait_requeue_retains_then_executes_exactly_once);
+  RUN_TEST(test_a_start_refused_by_its_own_live_stop_obligation_retries_to_a_single_take);
   return UNITY_END();
 }
