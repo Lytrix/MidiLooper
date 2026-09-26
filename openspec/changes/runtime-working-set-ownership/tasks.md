@@ -1377,7 +1377,18 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `slot=`/`interval=` on its timely human row; the clear path names its slot, so `_clear_slot` can prove it
       cleared the *intended* target instead of accepting any marker. No RAM1 cost (`padding 840`, at floor).
       Guards added and red-proved. Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "The evidence
-      edges are Tier-A now". The device gate is unchanged and still needs the zero-concession rerun.
+      edges are Tier-A now". **The zero-concession device rerun then PASSED (2026-09-26):**
+      `captures/s4f3-retention-20260926_181732` — `RETENTION_PASS`, exit 0, **20/20 checks ok, zero
+      concessions**, identity `5629e7e4f96d` / `da59a7eeb3e0`. The previously-absent identity rows are
+      present (`reentry_window_open`, `canonical_release,4,40,6144,8`, `reentry,deny,1311,2,5,1`,
+      `reentry,bound,1706,2,5,0`) with no ring eviction reported — confirming the shed, not eviction,
+      diagnosis. The bind precedes the release by 24.7 ms under the corrected L5 reading, and the denied
+      request was **staged** inside the 1550.3 ms window with C starting afterwards. **Retention plus
+      successor capture is closed at this precise scope.** Still open and not claimed: A/B content
+      preservation, the raw-only companion fallback, and **MIDI-output playback parity** (the whole-playback
+      review reports `inventory_equal=False` because track 8 slots 1–4 sound alongside the loop under test;
+      L7's deciding evidence is the loop-scoped dump). Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "The rerun after the Tier-A fix".
 - [ ] S4b.2 Pre-provision the inbound role before releasing the outbound one, with the overlap bounded and
       accounted in the S2 budget; the switch point performs no allocation, and the transfer must not steal
       resources from a still-live capture or deferred-finalization owner.
