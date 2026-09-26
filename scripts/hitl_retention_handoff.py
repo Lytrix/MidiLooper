@@ -70,22 +70,35 @@ def critical_window_gestures(*, track: int, a: int, b: int, c: int,
                              seed_b_separately: bool = True) -> list[Gesture]:
     """The ordered presses of the critical window, with the chain's semantics encoded in the order.
 
-    Two corrections from running it against the device:
+    Three corrections, each from running it against the device:
 
-    * **There is no separate `a_stop_request`.** The capture-switch to B *is* A's stop: pressing the target
-      slot while the track is still capturing routes to `finalizeCaptureAndSelectSlot`, which admits and binds
-      A's stop and commits the switch in one gesture. A separate stop press first is worse than redundant --
-      an admitted stop leaves the track in `PLAYING` (measured: `OVERDUBBING -> OVERDUB_STOPPING -> PLAYING` in
-      21 us), and the next press then takes the playing/filled branch, "Queued playback switch", never the
-      capture-switch that opens the finalization window.
-    * The order below is therefore: A overdubs, the switch to B both stops A and moves the active slot,
-      B overdubs, B's stop is denied, and C's switch is issued while B is still capturing so it is retained.
+    * The capture-switch to B **is** A's stop: pressing the target slot while the track is still capturing
+      routes to `finalizeCaptureAndSelectSlot`, which admits and binds A's stop and commits the switch in one
+      gesture. A separate stop press first is worse than redundant -- an admitted stop leaves the track in
+      `PLAYING` (measured: `OVERDUBBING -> OVERDUB_STOPPING -> PLAYING` in 21 us), so the next press takes the
+      playing/filled branch and the finalization window never opens.
+    * **No multi-tap presses.** A loop button's double press has a triple action, so the firmware holds the
+      second tap until the triple window expires, and any press on the same button inside that wait merges
+      into a triple (measured: "Triple press detected ... Loop 6 (triple)", i.e. REDO instead of overdub).
+      The record button toggles overdub and stop on the *active* slot with a **single** press, so the whole
+      window is single presses.
+    * **A must be the active slot when the window starts**, which is why the driver seeds B before A: the
+      record button acts on the active slot, and moving the active slot to A by pressing A's loop button
+      while playing fades through a LoopEnd-quantized playback switch (up to a full loop away).
+
+    So the order is: A overdubs (record button), the capture-switch to B both stops A and moves the active
+    slot, B overdubs (record button), B's stop is requested and denied (record button), and C's switch is
+    issued while B is still capturing so it is retained.
     """
     return [
         Gesture("select_track", "track", track),
-        Gesture("a_overdub_start", "slot_overdub", a),
+        Gesture("a_overdub_start", "record", 0),
         Gesture("b_switch", "slot_record", b),                # capture-switch: admits A's stop and commits
-        Gesture("b_overdub_start", "slot_overdub", b),
+        Gesture("b_overdub_start", "record", 0),
+        # B's own loop button for the stop, NOT the record button: two consecutive record presses merge into
+        # that button's double action (measured: the pair produced "Stop Overdub" through the wrong route).
+        # While B is overdubbing this press takes the common path straight to `stopOverdubbing`, and it is a
+        # different note from the record press before it.
         Gesture("b_stop_request", "slot_record", b),          # denied on capacity inside A's window
         Gesture("c_switch_request", "slot_record", c),        # retained, must not commit yet
     ]
@@ -104,6 +117,9 @@ def _emit(out_port, gesture: Gesture, *, press_ms: int, gap_ms: int,
         # became two single presses).
         slots.press_slot_overdub(_Ctx(out_port), gesture.value, press_ms=multi_press_ms,
                                  gap_ms=multi_gap_ms)
+    elif gesture.kind == "record":
+        _send_short_press(out_port, note=RECORD_BUTTON_NOTE,
+                          channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
     elif gesture.kind == "transport":
         _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
                           channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
@@ -225,7 +241,7 @@ def _clear_slot(out_port, capture_log: Path, *, track: int, slot_number: int, pr
 
 def _seed_slot(out_port, capture_log: Path, *, track: int, slot_number: int, channel: int,
                note: int, bars: int, press_ms: int, phase_timeout_s: float,
-               events: list[dict]) -> None:
+               events: list[dict], seed_notes: int = 16) -> None:
     """Select the slot, record `bars` bars containing one note, stop, and confirm the take committed.
 
     Two things this must get right, both learned by running it:
@@ -278,10 +294,20 @@ def _seed_slot(out_port, capture_log: Path, *, track: int, slot_number: int, cha
     events.append({"event": f"seed_{slot_number}_recording", "confirmed": True})
 
     # Inject the take's content on the track's input channel (mido channels are 0-based).
-    out_port.send(mido.Message("note_on", note=note, velocity=100, channel=channel))
-    time.sleep(0.3)
-    out_port.send(mido.Message("note_off", note=note, velocity=0, channel=channel))
-    time.sleep(max(bars, 1) * 2.0)
+    #
+    # Density, not length, is what widens the finalization window: measured on device, A's window was 1.48 s
+    # at 4 bars, 1.77 s at 8 and 1.72 s at 16 -- a fixed cost dominates, so a longer seed changes nothing.
+    # More captured events is the lever that actually gives the finalize work to do, which is what makes room
+    # for B's stop to land inside A's window.
+    notes = max(1, seed_notes)
+    span_s = max(bars, 1) * 2.0
+    gap_s = span_s / (notes + 1)
+    for i in range(notes):
+        pitch = note + (i % 12)
+        out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=channel))
+        time.sleep(0.03)
+        out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=channel))
+        time.sleep(max(gap_s - 0.03, 0.01))
 
     stopped = len(_lines(capture_log))
     _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
@@ -323,6 +349,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help="skip the target clear. By default the three targets are cleared before seeding, "
                         "which is standing-authorized for the development set and is what makes them genuine "
                         "record targets (every slot here retains an SD payload).")
+    p.add_argument("--seed-notes", type=int, default=16,
+                   help="notes per seeded take. Density, not loop length, is what widens the finalization "
+                        "window (measured: 1.48/1.77/1.72 s at 4/8/16 bars).")
     p.add_argument("--seed-note-a", type=int, default=60)
     p.add_argument("--seed-note-b", type=int, default=62)
     p.add_argument("--seed-bars", type=int, default=2)
@@ -464,13 +493,28 @@ def main(argv: Optional[list[str]] = None) -> int:
             print("[retention] targets prepared; now run without --prepare-only")
             return 0
 
-        # --- setup: seed A and B, confirming each transition before the next gesture ---
-        _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_a, channel=t0,
-                   note=args.seed_note_a, bars=args.seed_bars, press_ms=args.press_ms,
-                   phase_timeout_s=args.phase_timeout_s, events=events)
+        # --- setup: seed B first, then A, so that A is the ACTIVE slot when the window starts ---
+        # The record button acts on the active slot, and moving the active slot back to A by pressing A's loop
+        # button while playing routes through a LoopEnd-quantized playback switch. Seeding A last makes it
+        # active for free.
         _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_b, channel=t0,
                    note=args.seed_note_b, bars=args.seed_bars, press_ms=args.press_ms,
-                   phase_timeout_s=args.phase_timeout_s, events=events)
+                   phase_timeout_s=args.phase_timeout_s, events=events,
+                   seed_notes=args.seed_notes)
+        _seed_slot(out_port, capture_log, track=args.track, slot_number=args.slot_a, channel=t0,
+                   note=args.seed_note_a, bars=args.seed_bars, press_ms=args.press_ms,
+                   phase_timeout_s=args.phase_timeout_s, events=events,
+                   seed_notes=args.seed_notes)
+
+        # The seeds each end by stopping the transport, and the record button only overdubs a *playing*
+        # track -- on a stopped transport it arms instead. So start it and require the playing state before
+        # the window's first gesture (measured: without this the first record press did nothing and the whole
+        # window collapsed to B's stop on its own).
+        if not _ensure_transport(out_port, capture_log, running=True, press_ms=args.press_ms,
+                                 events=events, label="window_start"):
+            raise RuntimeError("could not start the transport before the critical window")
+        _wait_for_any(capture_log, after=max(len(_lines(capture_log)) - 40, 0),
+                      markers=(",ST,Track,STOPPED,PLAYING", "Playback started"), timeout_s=3.0)
 
         # --- the critical window: presses ordered by the chain, with the minimum confirmations needed ---
         # A multi-press on a loop button has a *triple* action too, so the firmware holds the second tap in
@@ -486,32 +530,32 @@ def main(argv: Optional[list[str]] = None) -> int:
                   multi_press_ms=args.multi_press_ms, multi_gap_ms=args.multi_gap_ms)
             events.append({"event": f"gesture:{gesture.step}", "note_line": mark,
                            "host_monotonic_ns": time.monotonic_ns()})
-            if gesture.kind == "slot_overdub":
-                # Wait for the double to resolve (or for the overdub state it causes) before the next press.
+            if gesture.kind == "record":
+                # The record button acts on the active slot, so wait for the state it causes before the next
+                # press: without this the following press can act on a track that is not yet overdubbing.
                 _wait_for_any(capture_log, after=mark,
-                              markers=("Double press detected", ",ST,Track,PLAYING,OVERDUBBING",
-                                       "Double press", "Overdub"),
-                              timeout_s=1.5)
-            if gesture.step == "b_switch":
-                # Separate the switch from the double press that follows on the SAME button. Measured: with
-                # only the normal gap the firmware merged them and logged "Triple press detected" for Loop 6,
-                # so B got REDO_FOR_SLOT instead of an overdub and nothing downstream happened. The gap must
-                # exceed the triple-tap window (400 ms default).
-                _wait_for_any(capture_log, after=mark,
-                              markers=("Button press: Loop", "scheduling short press"), timeout_s=0.5)
-                time.sleep(0.55)
+                              markers=("Overdubbing started", "Stop Overdub", ",ST,Track,PLAYING,OVERDUBBING",
+                                       "Overdub stop refused", "Overdub session opened"),
+                              timeout_s=1.0)
             time.sleep(max(args.gesture_gap_ms, 1) / 1000.0)
 
         # --- observe the chain in the device telemetry ---
+        # The timely markers are the firmware's own human log lines. Its comment at the emission site is
+        # explicit: "The human log line is the *timely* edge for the HITL probe (`#CAP` DIAG rows queue behind
+        # the deferred stop's flood and arrive seconds late); the DIAG row is the evidence-tier record." The
+        # window really was open when only the human line was visible, so keying on the #CAP row alone made
+        # this check report False for a window that had opened.
         window_opened = _wait_for_any(capture_log, after=0,
-                                     markers=(f"DIAG,reentry_window_open,{a0},",),
+                                     markers=(f"Reentry window open slot={a0}",),
                                      timeout_s=args.window_timeout_s)
         events.append({"event": "finalizer_window_open", "confirmed": window_opened})
         denied = _wait_for_any(capture_log, after=0,
-                              markers=(f"DIAG,reentry,deny,", "successor_stop_denied_capacity"),
+                              markers=("Overdub stop refused", f"DIAG,reentry,deny,",
+                                       "successor_stop_denied_capacity"),
                               timeout_s=args.window_timeout_s)
         events.append({"event": "successor_stop_denied", "confirmed": denied})
-        bound = _wait_for_any(capture_log, after=0, markers=(f"DIAG,reentry,bound,",),
+        bound = _wait_for_any(capture_log, after=0,
+                             markers=(f"DIAG,reentry,bound,", f"Reentry window open slot={b0}"),
                              timeout_s=args.window_timeout_s)
         events.append({"event": "successor_stop_bound", "confirmed": bound})
         started = _wait_for_any(capture_log, after=0, markers=(f",RECA,{c0},",),
