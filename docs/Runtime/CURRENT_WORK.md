@@ -3131,15 +3131,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-### Recovered-library OLED freeze — diagnostic build only (2026-09-26)
+### Continuation after recovery (2026-09-26)
 
-User sees the normal first piano-roll frame frozen while MIDI remains responsive.
-Capture confirms changing DISP state/length and advancing DMA completion counters.
-G0: boot-screen gate is passed; actual updated pixel delivery is UNKNOWN. No source
-change justified yet. Build the existing `MIDILOOPER_DISPLAY_DMA=0` comparator in
-an isolated capture-serial configuration, preserving recovery firmware and settings.
-No automatic upload or recording/clear stimulus. This is a temporary transport
-discriminator, not approval to ship blocking SPI as a timing fix.
+DMA fault investigation/repair is parked until after the whole active OpenSpec by
+explicit user instruction. No display implementation slice is active. Recommended
+next scope is S4.1 — persistence identity during handoff: investigate the footer's
+consistency contract and establish a controllable native fixture before edits.
+See [NEXT-STEPS.md](../../openspec/changes/runtime-working-set-ownership/NEXT-STEPS.md).
 
 
 ### Automatic runtime-bundle boot repair (2026-09-26; approved)
@@ -8970,6 +8968,14 @@ Shipped via PR #4 on `feature/memory-pressure-reclaim`.
 ---
 
 ## Parked
+
+### DMA OLED frozen frame — after runtime-working-set-ownership
+
+User explicitly defers this fault until the active OpenSpec is complete. Blocking
+SPI is the installed, visually working comparator, not a proven timing-equivalent
+replacement. Default builds still enable DMA. Reproducer/config and boundaries:
+[NEXT-STEPS.md](../../openspec/changes/runtime-working-set-ownership/NEXT-STEPS.md).
+
 
 ### Later — bound deferred wrap-append ([`183229`](../../captures/session_20260821_183229.log))
 

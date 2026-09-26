@@ -3,6 +3,12 @@ seven orchestration tests. No device gate changed. Unfinished !SLOT_PAYLOAD prob
 stored-event parity and reboot survival remain open. See takeover packet in ARCHITECTURE-REVIEW.md. -->
 # Tasks — runtime-working-set-ownership
 
+**Current continuation:** [NEXT-STEPS.md](NEXT-STEPS.md) supersedes historical
+queue/hold statements below. DMA fault repair is parked until AFTER this OpenSpec
+by user request, with no stage-gate waiver. S4.1 — persistence identity during
+handoff is the recommended next native investigation; not implemented or checked off.
+
+
 Scope: `docs/Runtime/CURRENT_WORK.md` § Now implementing.
 
 **Current handoff (2026-09-23):** [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md)
@@ -1902,8 +1908,10 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       **Still open:** the combined in-flight query and the manager-owned accepted-**start** carrier with a
       **named acceptance report** (pass 4C) so the unconditional labels at
       `TrackManagerCaptureQueue.cpp:221-222,236-237` are never emitted for a start that was not admitted;
-      and the consumption rule on the **switch** path — `finalizeCaptureAndSelectSlot` still clears all
-      pending-record state at its top before it knows the switch will commit (see § S4f.6 remaining item 2).
+      the former whole-track switch-clear remainder is **resolved** by the slot-scoped
+      `clearQueuedRecordingTrack(trackIndex, captureSlot)` call. Arm-and-wait and
+      failed-then-retried exactly-once fixtures are present and registered; those are
+      not future work. See NEXT-STEPS.md for the current source-backed audit.
       `IMPLEMENTATION_CONTRACT.md` §5, including manager-owned requests with no live interval, deferred
       eligibility. Add paused-worker fixtures for every listed sequence.
       A second Stop supersedes an unexecuted Start explicitly; after Start commits it stops the new interval. `TrackManagerCaptureQueue.cpp:24-29` accepts the record/overdub start and

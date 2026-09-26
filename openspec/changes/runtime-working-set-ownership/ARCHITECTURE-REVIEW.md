@@ -7919,3 +7919,9 @@ behavior to the DMA display route; it does not establish the precise DMA defect.
 Blocking SPI remains installed as a diagnostic workaround; no real-time timing
 acceptance or permanent DMA fix claimed. Serial capture remains open.
 Evidence: `captures/display-blocking-diagnostic-20260926/metadata.json` and session log.
+
+### User-directed deferral and continuation
+
+DMA repair is parked until after this OpenSpec. No architecture/timing gate is waived.
+Current device profile, evidence, resolved stale task clauses and source-backed next
+S4.1 — persistence identity investigation are in [NEXT-STEPS.md](NEXT-STEPS.md).
