@@ -1309,7 +1309,31 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       its job and refused to read a release out of an unretired take.
       **So the next attempt must first establish *why* the switch queued and whether a release needs the
       switch to commit immediately rather than quantize.** Note the take itself now occupies slot 4 (track 8
-      slots 5 and 8 remain empty), so a repeat needs an empty target chosen from the pre-run census. **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
+      slots 5 and 8 remain empty), so a repeat needs an empty target chosen from the pre-run census.
+      **SECOND AND THIRD RUNS 2026-09-27 — the window defect is fixed, and the real blocker is now identified.**
+      The probe's window anchoring was **wrong and is fixed**: it anchored on "the newest device timestamp at
+      attach", but the device emits at least two timestamp domains (`#CAP,<us>` and the `#DMA_XFER,<ms>`
+      census run at different bases), so the anchor landed in the future and the window reported **0 rows**
+      while the run had logged 21,319 lines. The window is now the **capture file's own row count at attach**,
+      which is unambiguous, and the run records the switch's human rows for inspection.
+      With that fixed, the third run (`captures/s41-lease-20260927_013540`, track 8, A=4, B=5, window 4,358
+      rows, shutdown `complete`) shows the actual blocker clearly:
+
+      * the take records and commits — `RECA,3,0` then `RECS,stopToStopped,3,360,0,1896,1536,0`;
+      * **the predecessor's stop took the SYNCHRONOUS path, not the deferred one**: zero `stop_grain`, zero
+        `stop_phase`, zero `reentry*` and zero `canonical_release` rows, and the probe's
+        `slot_a_finalizer_retired` check again `confirmed: False`;
+      * the switch still logged `Loop 5: Queued playback switch` (slot 5 was empirically empty — the pre-run
+        observation put track 8's empty slots at 4, 5 and 8), so an empty target does **not** by itself make
+        the switch commit immediately;
+      * therefore **there was nothing for the release to release inside the window**.
+
+      **The protocol step that is wrong is the stop, not the switch**: the same-track release needs the
+      predecessor to leave a **deferred finalization** whose playback reset then frees the slot, and a
+      `stopToStopped` completion retires synchronously without one. The next attempt must drive a stop that
+      goes through the deferred path (the acceptance shape S4f.13 exercises, where the interval's stop is
+      admitted as a job rather than completed inline) before switching. The probe, the corrected window and
+      the switch's human rows are committed so that attempt starts from a working measurement. **PARTIAL 2026-09-25 — the per-interval stop scoping is fixed and red-proven; the
       memory-pressure and `(slot, generation)` conversions remain.** `Track::clearStoppingIntervalLedger()`
       now clears only the stopping interval's slot ledger, and both converted stop routes call it
       (`handleNoteEditFold`'s `endInPlaying` branch, `stopOverdubbing`'s fallback);
