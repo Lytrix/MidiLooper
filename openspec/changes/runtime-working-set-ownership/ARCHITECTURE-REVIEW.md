@@ -5640,3 +5640,118 @@ switch and start" half of S4f.3's specification.
 
 Status: default gate 12/12; `S4B_ACCEPTANCE=1` red with the coherent state above; full native 2,448 passed
 / 1 skipped; RAM1 unchanged from the refusal commit.
+
+## S4b.1 — successor capture handoff: behavioral contract (2026-09-25, owner-provided)
+
+This is the **authoritative contract** for S4b.1. It replaces the earlier framing of the task, which
+described implementation fields rather than behavior. Field changes (for example clearing
+`pendingRecordRefSlot`) are implementation choices and are **not** the acceptance; the evidence does not
+show that any one field is the only remaining defect.
+
+### Acceptance and ownership
+
+A switch and subsequent record/overdub request retain their **target track, slot and requested mode**
+until executed or explicitly superseded. No request is discarded because a predecessor is finalizing.
+
+Before switching away from A, A's stop must be **admitted and bound to A's interval**. Once bound, A's
+finalization may continue independently while B becomes active and starts capture. B must not wait for A's
+finalization or persistence to complete.
+
+### Start timing
+
+The handoff preserves the requested start mode's musical timing. **Finalization adds no extra delay.**
+
+- For an **empty or successfully cleared B**, a quantized record start uses the **transport's bar grid**.
+  B establishes its recording origin at the actual start tick; it does not require an existing loop
+  length or phase.
+- For a **populated B**, overdub uses **B's playback phase** under the existing overdub-start policy.
+- A's mutable loop timing must **not** become an accidental dependency of B's start. Any intentionally
+  requested synchronization to another loop must be explicit and remain valid across the handoff.
+
+### Execution and completion
+
+Start executes **exactly once** after its prerequisite stop binds, its target becomes active, resources
+are ready, and its timing condition is satisfied. The request is **consumed only** after successful start
+or an explicit supersession/cancellation.
+
+A's later completion must not change B's capture, active-slot identity, timing origin or recorded content.
+
+### Timing interpretation (pinned, because it changes the implementation)
+
+"Immediately" here means **no finalization-induced delay, while preserving quantization**. It does **not**
+mean an unbounded wait is acceptable, and it does **not** mean "begin capturing on the gesture itself,
+even between bar boundaries" -- that would be a separate **immediate start mode** and clearing a phase
+reference would not implement it.
+
+### Required acceptance checks
+
+1. A has an **admitted, identified finalizer**, held unfinished.
+2. Switch/start and B's incoming MIDI use **production routes**.
+3. B starts on the **specified eligible boundary** and records the expected notes.
+4. An **unadmitted** A stop retains switch/start requests; they execute after admission **without another
+   gesture**.
+5. Completing A leaves B **unchanged**.
+6. A **failed** start retains its request; a **successful** start cannot execute twice.
+7. Coverage: **same-track and cross-track** targets; **empty, cleared and populated** targets.
+
+**Separate capacity acceptance case (not implied here):** repeated **B -> C handoffs while A finalizes**.
+This contract must not be read as permitting unlimited retained finalizers.
+
+### Correction to the previous pass's diagnosis
+
+The dispatcher **already** handles a zero-length reference by falling back to the transport bar grid
+(`handlePendingRecordStart`: `if (L == 0 || currentTick < st)` -> `currentTick % barTicks == 0`). So
+"accommodate a target with no loop length" was **not** a sufficient diagnosis, and the earlier
+`pendingRecordRefSlot` proposal was premature. The next step is a **full review of the path** -- acceptance
+-> switch -> timing -> provisioning -> start -> consumption -- because a green retention probe proves the
+request is retained, not that it completes.
+
+### Path review result: the start is refused and the request is stranded (not lost to a field)
+
+The full path review (acceptance -> switch -> timing -> provisioning -> start -> consumption) locates the
+defect at **start**, and the code names its own owner.
+
+`TrackManager::startRecordingTrack` opens with:
+
+```cpp
+// S4f.6 replaces this refusal with the accepted-start carrier and the stop > switch > start composition.
+if (tr.hasStopInFlight()) {
+  logger.log(CAT_TRACK, LOG_INFO,
+             "Track %d: record admission deferred while a stop obligation is live", trackIndex);
+  return;
+}
+```
+
+After the handoff, A's admitted stop is exactly `hasStopInFlight()`, so:
+
+- the **timing** step is satisfied -- the dispatcher already falls back to the transport bar grid for a
+  zero-length reference, so `shouldStart` is reachable (the earlier `pendingRecordRefSlot` proposal was
+  wrong and is withdrawn);
+- the **start** step is **refused** -- and because the refusal happens inside `startRecordingTrack`, the
+  dispatcher's consumption lines (`pendingRecordSlot[i][targetSlot] = false; pendingRecord[i] = false;`)
+  are never reached;
+- the **request is therefore stranded**: retained (the retention probe is green) but never consumed, so it
+  neither executes nor is superseded.
+
+So the missing piece is not a timing field: it is the **accepted-start carrier** that this refusal's own
+comment assigns to **S4f.6**, together with the `stop > switch > start` composition. The queue already
+holds the request correctly, which is why retention passes while completion does not. A green retention
+probe proves retention, not end-to-end completion -- exactly as the contract warns.
+
+Dependency chain, corrected: **S4b.1 -> S4f.6** (accepted-start carrier / composition), with S4f.5's
+unadmitted-stop refusal and S4f.3's admitted-stop release both staying intact. The earlier claim that
+S4b.1 was blocked on S4f.3 alone was incomplete: S4f.3's first half was necessary but not sufficient.
+
+Acceptance status against the owner-provided contract:
+
+| Check | Status |
+|---|---|
+| A has an admitted, identified finalizer, held unfinished | **met** (fixture asserts it) |
+| Switch/start and B's MIDI use production routes | **met** |
+| B starts on the specified eligible boundary and records the notes | **not met** -- refused at start |
+| Unadmitted A stop retains requests and executes after admission without another gesture | **met** (passing fixture) |
+| Completing A leaves B unchanged | **not reachable** until B starts |
+| Failed start retains its request; success cannot execute twice | **not met** -- the failed start strands it |
+| Same-track / cross-track; empty / cleared / populated | same-track empty covered; the rest **open** |
+
+Repeated **B -> C while A finalizes** remains its own capacity acceptance case and is not implied by this.
