@@ -482,6 +482,54 @@ void test_the_release_sweep_skips_a_slot_with_a_live_owner() {
                            "the sweep must release a slot with no live owner");
 }
 
+
+/// **S4.3 — reactivating a released slot reuses its capacity with no net pool growth.** The reuse
+/// contract is structural: releasing a slot retires its working set but keeps the slot's runtime
+/// object, so the next activation takes that same capacity back instead of allocating a new one. This
+/// cycles A-release / C-activate repeatedly and asserts the address, the held bytes and the chunk pool
+/// return to the same state every time -- growth would show as a rising pool or a new runtime object.
+void test_reactivating_a_released_slot_reuses_its_capacity() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+
+  // Baseline activation (the control that the cycle's steady state is a real working set).
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  LoopPlaybackRuntime* const runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_TRUE(runtime != nullptr);
+  const uint16_t chunksAfterFirstActivation = LoopEventStore::freeChunkCount();
+
+  // Four release/re-activate cycles. Each one must return to the baseline state.
+  for (int cycle = 0; cycle < 4; ++cycle) {
+    const uint16_t generationBefore = TrackCaptureStopTestAccess::slotGeneration(track, 0);
+    TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 0));
+
+    // Release through the track-level sweep (the entry S4.1 converted).
+    track.releasePlaybackMergedMidiEventsMemory();
+    TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 0),
+                              "the sweep must release the slot's working set");
+    TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::slotGeneration(track, 0) > generationBefore,
+                             "release must advance the slot generation");
+
+    // Re-activate. The runtime object is the slot's capacity and must be the same one.
+    TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true),
+                             "the slot must re-admit its working set");
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(runtime, TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0),
+                                  "re-activation must reuse the slot's runtime object");
+    TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 0),
+                             "re-activation must hold the working set again");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(chunksAfterFirstActivation, LoopEventStore::freeChunkCount(),
+                                     "the reuse cycle must not consume pool chunks");
+  }
+
+  // The slot holds exactly the working set it held at baseline: no accumulation across the cycles.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(WorkingSetRole::PlaybackWindow | WorkingSetRole::LiveCapture),
+      TrackCaptureStopTestAccess::workingSetRoles(track, 0),
+      "the reused slot must hold the same role set, not accumulate roles");
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
@@ -492,5 +540,6 @@ int main() {
   RUN_TEST(test_a_late_cleanup_cannot_clear_a_successor_finalization_marker);
   RUN_TEST(test_the_slot_generation_release_entry_is_identity_qualified_and_preserves_refusals);
   RUN_TEST(test_the_release_sweep_skips_a_slot_with_a_live_owner);
+  RUN_TEST(test_reactivating_a_released_slot_reuses_its_capacity);
   return UNITY_END();
 }
