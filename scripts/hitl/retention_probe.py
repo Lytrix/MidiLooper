@@ -66,7 +66,10 @@ WINDOW_OPEN_RE = re.compile(r"^DIAG,reentry_window_open,(\d+),(\d+),(\d+)$")
 CANONICAL_RELEASE_RE = re.compile(r"^DIAG,canonical_release,(\d+),(\d+),(\d+)$")
 REENTRY_RE = re.compile(r"^DIAG,reentry,([a-z_]+),(\d+),(\d+),(\d+),(\d+)$")
 RECA_RE = re.compile(r"^RECA,(\d+),(\d+)$")
-RECS_STOP_RE = re.compile(r"^RECS,stop,(\d+),")
+# The device has more than one record-stop kind: a plain stop emits `RECS,stop,<slot>`, while the transport-stop
+# route emits `RECS,stopToStopped,<slot>` (observed for every seeded slot and for the successor on device). The
+# check's intent is "a take landed on this slot", so it accepts any `stop*` kind rather than only `stop`.
+RECS_STOP_RE = re.compile(r"^RECS,stop[A-Za-z]*,(\d+),")
 RECS_SEAL_RE = re.compile(r"^RECS,stage,seal,")
 STOP_SLOT_RE = re.compile(r"^DIAG,(?:stop_phase|stop_grain),(\d+),(\d+),")
 DENIAL_STAGE_RE = re.compile(r"^ODUB,stop,admission,.*,successor_stop_denied_capacity$")
