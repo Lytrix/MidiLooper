@@ -19,7 +19,11 @@ A missing or reordered link is **never** a pass. Two verdicts keep the reasons a
   * `INSUFFICIENT_EVIDENCE` (exit 4) -- the run was staged but a link has **no supporting telemetry**. Fix the
     telemetry or the stimulus; do not infer the link.
 
-plus `RETENTION_NOT_EXERCISED` (2), `RETENTION_FAIL` (2), `RETENTION_PASS` (0).
+plus `RETENTION_NOT_EXERCISED` (2), `RETENTION_FAIL` (2), `RETENTION_PARTIAL` (5) and `RETENTION_PASS` (0).
+
+`RETENTION_PASS` is reserved for the **complete, unconceded** chain. Any link accepted on a weaker,
+operator-conceded basis yields `RETENTION_PARTIAL` instead: a partial result is explicitly *not* full
+acceptance and an automated consumer must not close the device gate on it. A conceded result can never exit 0.
 
 Telemetry used, all existing and slot/identity-bearing where the chain needs it:
 
@@ -68,12 +72,16 @@ STOP_SLOT_RE = re.compile(r"^DIAG,(?:stop_phase|stop_grain),(\d+),(\d+),")
 DENIAL_STAGE_RE = re.compile(r"^ODUB,stop,admission,.*,successor_stop_denied_capacity$")
 TEMPO_FEEDBACK_RE = re.compile(r"Sent tempo CC feedback: ([0-9.]+) BPM")
 TEMPO_APPLIED_RE = re.compile(r"TEMPO: CC=\d+ -> ([0-9.]+) BPM")
-RETAINED_LOG_RE = re.compile(r"Loop (\d+): Switch and record start retained")
+RETAINED_LOG_RE = re.compile(r"Track (\d+) loop (\d+): switch and record start retained")
 INVARIANT_VIOLATION_MARKERS = (
     "record activation invariant violated",
     "record activation violated its invariant",
 )
 OVERFLOW_MARKERS = ("RING,overflow", "RING,tier_a_evicted")
+
+CC_BEGIN_RE = re.compile(r"^CAPTURE_CONTENT,begin,track=(\d+),slot=(\d+),length=(\d+)$")
+CC_EVENT_RE = re.compile(r"^CAPTURE_CONTENT,event,([a-z]+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)$")
+CC_DENIED = "CAPTURE_CONTENT,denied"
 
 DEFAULT_MIN_WINDOW_US = 150_000
 DEFAULT_FOLLOWUP_US = 500_000
@@ -116,8 +124,9 @@ class Analysis:
 
     @property
     def exit_code(self) -> int:
-        return {"RETENTION_PASS": 0, "RETENTION_FAIL": 2, "RETENTION_NOT_EXERCISED": 2,
-                "SETUP_INCOMPLETE": 3, "INSUFFICIENT_EVIDENCE": 4}[self.verdict]
+        return {"RETENTION_PASS": 0, "RETENTION_PARTIAL": 5, "RETENTION_FAIL": 2,
+                "RETENTION_NOT_EXERCISED": 2, "SETUP_INCOMPLETE": 3,
+                "INSUFFICIENT_EVIDENCE": 4}[self.verdict]
 
 
 def parse_entries(text: str) -> list[Entry]:
@@ -149,6 +158,62 @@ def _read_json(path: Optional[Path]) -> Optional[dict]:
         return None
 
 
+def analyse_content_dump(text: str, *, slot_c: int, expected_notes: tuple[int, ...]) -> dict[str, Any]:
+    """Read the content pipeline's `!CAPTURE_CONTENT` dump: which slot it dumped, and which notes it holds.
+
+    Field layout (firmware `Track::printStoppedCaptureContentForHitl`):
+        CAPTURE_CONTENT,begin,track=<midiChannel>,slot=<activeLoopIndex>,length=<ticks>
+        CAPTURE_CONTENT,event,<kind>,<pass>,<tick>,<type>,<channel>,<note>,<velocity>,<noteId>
+
+    The `begin` row names the slot that was dumped, and each event carries its real pitch, so unlike the
+    seal's `eventCount` this can show that the successor slot holds the *expected* notes. Note the oddity,
+    recorded rather than relied on: the `track=` field is emitted from `midiChannel`, not a track index.
+    """
+    out: dict[str, Any] = {"present": False, "denied": False, "slot": None, "length": None,
+                           "notes": [], "note_ons": [], "expected_notes": list(expected_notes),
+                           "expected_absent": list(expected_notes), "notes_match": None}
+    if CC_DENIED in text:
+        out["denied"] = True
+    notes: list[int] = []
+    ons: list[int] = []
+    for line in text.splitlines():
+        line = line.strip()
+        m = CC_BEGIN_RE.match(line)
+        if m:
+            out["present"] = True
+            out["slot"] = int(m.group(2))
+            out["length"] = int(m.group(3))
+            continue
+        m = CC_EVENT_RE.match(line)
+        if m:
+            kind, _pass, _tick, etype, _ch, note, velocity, _nid = m.groups()
+            notes.append(int(note))
+            # type 144 = NoteOn (3 << 4); a NoteOn with velocity 0 is a NoteOff in disguise.
+            if int(etype) == 144 and int(velocity) > 0:
+                ons.append(int(note))
+    out["notes"] = sorted(set(notes))
+    out["note_ons"] = sorted(set(ons))
+    if expected_notes:
+        absent = [n for n in expected_notes if n not in ons]
+        out["expected_absent"] = absent
+        out["notes_match"] = not absent
+    return out
+
+
+def analyse_content_review(review: Optional[dict]) -> dict[str, Any]:
+    """Read `content-review.json`: storage<->effective parity per playback cycle."""
+    out: dict[str, Any] = {"present": review is not None, "result": None, "parity_ok": None,
+                           "storage_matches_effective": None}
+    if review is None:
+        return out
+    out["result"] = review.get("result")
+    out["storage_matches_effective"] = review.get("storage_matches_effective")
+    cycles = review.get("cycles") if isinstance(review.get("cycles"), list) else []
+    flags = [c.get("inventory_equal") for c in cycles] or [review.get("inventory_equal")]
+    out["parity_ok"] = bool(flags) and all(f is True for f in flags)
+    return out
+
+
 def _find_base_report(session_log: Path) -> Optional[Path]:
     candidates = sorted(session_log.parent.glob("host_midi_automation_baseline_*.json"))
     return candidates[-1] if candidates else None
@@ -168,6 +233,8 @@ def analyse(
     base_report: Optional[dict] = None,
     metadata: Optional[dict] = None,
     content_review: Optional[dict] = None,
+    content_dump: Optional[str] = None,
+    expect_successor_notes: tuple[int, ...] = (),
     allow_setup_issues: tuple[str, ...] = (),
     accept_slot_scoped_bind: bool = False,
     accept_event_count_only: bool = False,
@@ -237,10 +304,15 @@ def analyse(
             f"claim** that it is a setup artefact; it is not evidence, and nothing here proves the cause.",
             "evidence")
     else:
-        add("reported_issues_resolved", OK,
-            f"every base-report issue is explicitly allowlisted ({issues}) -- recorded as an **operator "
-            "claim** that each is a setup artefact. This is not evidence and nothing here proves the cause."
-            if issues else "base report lists no issues", "setup")
+        if issues:
+            concessions.append(
+                f"base-report issues allowlisted as setup artefacts (operator claim, not evidence): {issues}")
+            add("reported_issues_resolved", OK,
+                f"every base-report issue is explicitly allowlisted ({issues}) -- recorded as an **operator "
+                "claim** that each is a setup artefact. This is not evidence and nothing here proves the "
+                "cause; the verdict is therefore PARTIAL at best.", "setup")
+        else:
+            add("reported_issues_resolved", OK, "base report lists no issues", "setup")
 
     tempos = [float(m.group(1)) for m in (TEMPO_FEEDBACK_RE.search(l) or TEMPO_APPLIED_RE.search(l)
                                           for l in lines) if m]
@@ -337,17 +409,18 @@ def analyse(
         return Analysis(verdict, checks, episode, evidence, limitations, concessions)
 
     # ---------------- L3: C's request retained ----------------
+    # The retained-request row is a human log line, not a #CAP row, so it carries no device timestamp and
+    # its ordering is resolved positionally. It must name the track *and* the target slot, or it cannot be
+    # tied to this request: the earlier form named only the 1-based loop number, which is ambiguous across
+    # tracks. `Track %d` uses the manager's 0-based index, matching the other CAT_TRACK rows.
     retained_hits = []
-    for idx, line in enumerate(lines):
+    for line in lines:
         m = RETAINED_LOG_RE.search(line)
-        if not m:
-            continue
-        mcap = CAP_RE.match(line.strip()) or re.match(r"^#CAP,(\d+),", line.strip())
-        # The retained line is a human log row, not a #CAP row; use the surrounding chronology instead.
-        retained_hits.append((int(m.group(1)), line.strip()))
-    retained_for_c = [h for h in retained_hits if h[0] == slot_c + 1]
-    for slot1, line in retained_hits:
-        evidence["retained_request"].append(f"Loop {slot1}: {line[:120]}")
+        if m:
+            retained_hits.append((int(m.group(1)), int(m.group(2)), line.strip()))
+    retained_for_c = [h for h in retained_hits if h[1] == slot_c + 1 and h[0] == track_b]
+    for track_i, slot1, line in retained_hits:
+        evidence["retained_request"].append(f"track {track_i} loop {slot1}: {line[:140]}")
 
     starts = [e for e in entries if (m := RECA_RE.match(e.body)) and int(m.group(1)) == slot_c]
     for e in starts:
@@ -360,8 +433,9 @@ def analyse(
                         and f",{slot_b}," in l), None)
     release_line = next((i for i, l in enumerate(lines) if CANONICAL_RELEASE_RE.match(
         (CAP_RE.match(l.strip()).group(2) if CAP_RE.match(l.strip()) else ""))), None)
-    retained_line = next((i for i, l in enumerate(lines) if RETAINED_LOG_RE.search(l)
-                          and int(RETAINED_LOG_RE.search(l).group(1)) == slot_c + 1), None)
+    retained_line = next((i for i, l in enumerate(lines)
+                          if (m := RETAINED_LOG_RE.search(l)) and int(m.group(2)) == slot_c + 1
+                          and int(m.group(1)) == track_b), None)
     ordered_retention = (retained_line is not None and denial_line is not None
                          and retained_line > denial_line
                          and (release_line is None or retained_line < release_line))
@@ -375,9 +449,9 @@ def analyse(
             f"released at {episode.capacity_release_us} us: the request was not held", "retention", "L3")
     elif not retained_for_c:
         add("L3_request_retained_for_c", UNKNOWN,
-            f"no 'Switch and record start retained' row for slot {slot_c} (1-based {slot_c + 1}) in the log. "
-            "Retention is currently asserted only by that human log line; there is no #CAP record for a "
-            "retained successor request", "evidence", "L3")
+            f"no unambiguous retained-request row for track {track_b} / slot {slot_c} (1-based "
+            f"{slot_c + 1}). Retention is asserted only by that human log line, so it must name both the "
+            "track and the slot; otherwise this link stays insufficient", "evidence", "L3")
     else:
         add("L3_request_retained_for_c", UNKNOWN,
             "the retained-request row for slot "
@@ -396,9 +470,27 @@ def analyse(
         "`reentryDecision`; nothing names it when a stop binds. Stop-tier records carry the job's "
         "`frozenGeneration` (`staging.captureGeneration`), a different identity space, so slot-scoped bind "
         "evidence cannot be tied back to the denied interval.")
-    if after_release:
+    bound_identity = [e for e in entries
+                      if (m := REENTRY_RE.match(e.body)) and m.group(1) == "bound"
+                      and int(m.group(4)) == slot_b and int(m.group(3)) == interval_b]
+    bound_identity_after = [e for e in bound_identity if e.us > episode.capacity_release_us]
+    bound_identity_before = [e for e in bound_identity if e.us <= episode.capacity_release_us]
+    for e in bound_identity:
+        evidence["stop_bind"].append(f"{e.us}: {e.body}")
+
+    if bound_identity_after:
+        add("L5_same_b_stop_bound", OK,
+            f"{bound_identity_after[0].body} at {bound_identity_after[0].us} us names the **denied interval** "
+            f"{interval_b} on slot {slot_b}, after the release", "retention", "L5")
+    elif bound_identity_before:
+        add("L5_same_b_stop_bound", FAIL,
+            f"interval {interval_b} on slot {slot_b} bound at {bound_identity_before[0].us} us, *before* "
+            f"capacity was released at {episode.capacity_release_us} us: the stop bound while the predecessor "
+            "still held the finalization resources", "retention", "L5")
+    elif after_release:
         detail = (f"slot-scoped bind evidence for slot {slot_b} after the release: {after_release[0].body} "
-                  f"at {after_release[0].us} us -- but not tied to interval {interval_b}")
+                  f"at {after_release[0].us} us -- but not tied to interval {interval_b}; the identity-grade "
+                  "DIAG,reentry,bound record carrying the request's interval is absent")
         if accept_slot_scoped_bind:
             concessions.append(f"L5 accepted on slot-scoped evidence (operator concession): {detail}")
             add("L5_same_b_stop_bound", OK, detail + " [operator concession]", "retention", "L5")
@@ -443,17 +535,48 @@ def analyse(
     for e in ([seal] if seal else []):
         evidence["successor_seal"].append(f"{e.us}: {e.body}")
 
-    review_ok = None
-    if content_review is not None:
-        # The content pipeline's per-cycle verdict, when the run included it.
-        cycles = content_review.get("cycles") if isinstance(content_review.get("cycles"), list) else None
-        flags = ([c.get("inventory_equal") for c in cycles] if cycles
-                 else [content_review.get("inventory_equal")])
-        review_ok = bool(flags) and all(f is True for f in flags)
+    dump = analyse_content_dump(content_dump or "", slot_c=slot_c,
+                                expected_notes=expect_successor_notes)
+    review = analyse_content_review(content_review)
+    limitations.append(
+        "L7 note-level evidence: `storedNoteEvent`/`storedNotes` have no callers, so the capture has no "
+        "per-note record of its own. Pitch-level proof therefore comes from the content pipeline's "
+        "`!CAPTURE_CONTENT` dump (`--content-dump`), whose `begin` row names the dumped slot and whose events "
+        "carry real pitches, plus `content-review.json` (`--content-review`) for storage<->effective parity. "
+        "Note the dump's own oddity, which is why the slot is read from `begin` and not from `track=`: that "
+        "field is emitted from `midiChannel`, not a track index.")
 
-    if review_ok is True:
+    if dump["present"] and dump["slot"] != slot_c:
+        add("L7_successor_recorded_expected_midi", FAIL,
+            f"the content dump is for slot {dump['slot']}, not the successor slot {slot_c}: it cannot speak "
+            "for the successor's take", "retention", "L7")
+    elif dump["present"] and expect_successor_notes and dump["notes_match"] is False:
+        add("L7_successor_recorded_expected_midi", FAIL,
+            f"the content dump for slot {dump['slot']} does not contain the expected note(s) "
+            f"{dump['expected_absent']} (note-ons present: {dump['note_ons']})", "retention", "L7")
+    elif dump["present"] and not expect_successor_notes:
+        add("L7_successor_recorded_expected_midi", UNKNOWN,
+            f"a content dump for slot {dump['slot']} is present with note-ons {dump['note_ons']}, but no "
+            "expected note was given (--expect-successor-note), so 'the expected MIDI' is undefined here",
+            "evidence", "L7")
+    elif dump["present"] and dump["notes_match"] and review["present"] and review["parity_ok"]:
         add("L7_successor_recorded_expected_midi", OK,
-            "content review reports inventory_equal on every cycle (pitch-level)", "retention", "L7")
+            f"content dump for slot {dump['slot']} contains the expected note(s) {list(expect_successor_notes)} "
+            f"(note-ons {dump['note_ons']}), and the content review reports inventory_equal on every cycle "
+            f"({review['result']})", "retention", "L7")
+    elif dump["present"] and dump["notes_match"] and not review["present"]:
+        add("L7_successor_recorded_expected_midi", UNKNOWN,
+            f"the dump for slot {dump['slot']} contains the expected note(s), but no content review was "
+            "supplied: pitch presence alone does not establish storage<->effective parity", "evidence", "L7")
+    elif review["present"] and not review["parity_ok"]:
+        add("L7_successor_recorded_expected_midi", FAIL,
+            f"the content review reports a storage<->effective parity failure ({review['result']}): the "
+            "successor's recorded content does not reach playback row for row", "retention", "L7")
+    elif review["present"] and not dump["present"]:
+        add("L7_successor_recorded_expected_midi", UNKNOWN,
+            f"a content review is present and reports parity ({review['result']}), but parity is not "
+            "note-level: it cannot say *which* notes were recorded. Supply the pipeline's dump "
+            "(--content-dump) so the successor slot's actual notes can be checked", "evidence", "L7")
     elif seal is not None:
         fields = seal.body.split(",")
         try:
@@ -465,20 +588,20 @@ def analyse(
         detail = (f"sealed take for slot {slot_c} reports eventCount={event_count}"
                   + (f" (expected {expect_successor_events})" if expect_successor_events is not None else "")
                   + "; event-count granularity, not pitch-level")
-        if matches and accept_event_count_only:
+        if not matches:
+            add("L7_successor_recorded_expected_midi", FAIL, detail, "retention", "L7")
+        elif accept_event_count_only:
             concessions.append(f"L7 accepted on event-count evidence (operator concession): {detail}")
             add("L7_successor_recorded_expected_midi", OK, detail + " [operator concession]",
                 "retention", "L7")
-        elif matches:
-            add("L7_successor_recorded_expected_midi", UNKNOWN,
-                detail + " -- pitch-level verification needs the content pipeline "
-                "(--content-review), which this run did not supply", "evidence", "L7")
         else:
-            add("L7_successor_recorded_expected_midi", FAIL, detail, "retention", "L7")
+            add("L7_successor_recorded_expected_midi", UNKNOWN,
+                detail + " -- run the content pipeline (--content-dump/--content-review) to show the "
+                "expected notes were recorded; event count alone cannot", "evidence", "L7")
     else:
         add("L7_successor_recorded_expected_midi", UNKNOWN,
-            f"no sealed take found for slot {slot_c} after its start, and no content review supplied: "
-            "cannot show C recorded anything", "evidence", "L7")
+            f"no sealed take and no content dump for slot {slot_c}: cannot show C recorded anything",
+            "evidence", "L7")
 
     # ---------------- L8: bounded follow-up, no duplicate execution ----------------
     required = [e for e in (window_open, release, denial, *starts, *([seal] if seal else []),
@@ -521,6 +644,11 @@ def analyse(
         verdict = "RETENTION_FAIL"
     elif any(c.status == UNKNOWN for c in checks):
         verdict = "INSUFFICIENT_EVIDENCE"
+    elif concessions:
+        # Every link is satisfied, but at least one only on a weaker operator-conceded basis. That is not
+        # full acceptance: an automated consumer must not treat it as a pass, so it gets its own verdict and
+        # can never exit 0.
+        verdict = "RETENTION_PARTIAL"
     else:
         verdict = "RETENTION_PASS"
     return Analysis(verdict, checks, episode, evidence, limitations, concessions)
@@ -563,6 +691,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--min-window-us", type=int, default=DEFAULT_MIN_WINDOW_US)
     p.add_argument("--followup-us", type=int, default=DEFAULT_FOLLOWUP_US)
     p.add_argument("--expect-successor-events", type=int, default=None)
+    p.add_argument("--content-dump", type=Path, default=None,
+                   help="serial.log from dump_and_capture.py (carries the !CAPTURE_CONTENT dump)")
+    p.add_argument("--expect-successor-note", action="append", type=int, default=[],
+                   help="a MIDI note the successor take must contain (repeatable)")
     p.add_argument("--allow-setup-issue", action="append", default=[])
     p.add_argument("--accept-slot-scoped-bind", action="store_true")
     p.add_argument("--accept-event-count-only", action="store_true")
@@ -577,6 +709,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         expect_successor_events=args.expect_successor_events,
         base_report=_read_json(base_report_path), metadata=_read_json(metadata_path),
         content_review=_read_json(args.content_review),
+        content_dump=(args.content_dump.read_text(errors="replace") if args.content_dump
+                      and args.content_dump.exists() else None),
+        expect_successor_notes=tuple(args.expect_successor_note),
         allow_setup_issues=tuple(args.allow_setup_issue),
         accept_slot_scoped_bind=args.accept_slot_scoped_bind,
         accept_event_count_only=args.accept_event_count_only,

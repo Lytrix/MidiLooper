@@ -53,9 +53,12 @@ def chain_log(*, retained: bool = True, start_us: int = START_US, seal_events: i
                  "successor_stop_denied_capacity")
     if retained:
         # A human log row: no #CAP timestamp, ordered by position between the denial and the release.
-        lines.append("[INFO] [LOOP] Loop 3: Switch and record start retained (stop not yet admitted)")
+        lines.append("[INFO] [LOOP] Track 0 loop 3: switch and record start retained "
+                     "(stop not yet admitted)")
     lines.append(f"#CAP,{release_us},DIAG,canonical_release,0,1536,8")
     if bind_evidence:
+        # The identity-grade binding record: same slot and interval as the denial.
+        lines.append(f"#CAP,{release_us + 5_000},DIAG,reentry,bound,17000,7,1,0")
         lines.append(f"#CAP,{release_us + 10_000},DIAG,reentry_window_open,1,17000,1536")
         lines.append(f"#CAP,{release_us + 20_000},DIAG,stop_phase,0,1,2,4242,9,0,5,0,0,"
                      f"{release_us + 20_000},{release_us + 20_000},0")
@@ -68,6 +71,21 @@ def chain_log(*, retained: bool = True, start_us: int = START_US, seal_events: i
     lines.append(f"#CAP,{tail_us},DIAG,reentry,admit,20000,8,2,0")
     lines.extend(extra or [])
     return "\n".join([BOOT, TEMPO] + lines) + "\n"
+
+
+def content_dump(*, slot: int = 2, notes: tuple[int, ...] = (67,), expected_slot: int | None = None) -> str:
+    """A `!CAPTURE_CONTENT` dump as dump_and_capture.py records it in serial.log."""
+    out = [f"CAPTURE_CONTENT,begin,track=1,slot={slot},length=1536"]
+    out.append(f"CAPTURE_CONTENT,rows,record,0,{2 * len(notes)}")
+    for n in notes:
+        for tick, etype, vel in ((10, 144, 100), (40, 128, 0)):
+            out.append(f"CAPTURE_CONTENT,event,record,0,{tick},{etype},1,{n},{vel},7")
+    out.append("CAPTURE_CONTENT,end")
+    return "\n".join(out) + "\n"
+
+
+REVIEW_OK = {"result": "PASS", "storage_matches_effective": True,
+             "cycles": [{"inventory_equal": True}, {"inventory_equal": True}]}
 
 
 def run(text: str, **kw):
@@ -85,12 +103,14 @@ def by_name(result) -> dict:
 
 
 class RetentionProbeChainTests(unittest.TestCase):
-    def test_the_complete_ordered_chain_reaches_a_pass_on_conceded_links(self):
+    def test_conceded_links_yield_partial_never_a_pass(self):
+        """A conceded link is not full acceptance: an automated consumer must not close the gate on it."""
         result = run(chain_log(), accept_slot_scoped_bind=True, accept_event_count_only=True)
-        self.assertEqual("RETENTION_PASS", result.verdict,
+        self.assertEqual("RETENTION_PARTIAL", result.verdict,
                          [(c.name, c.status, c.detail) for c in result.checks])
-        self.assertEqual(0, result.exit_code)
-        self.assertEqual(2, len(result.concessions), result.concessions)
+        self.assertEqual(5, result.exit_code)
+        self.assertNotEqual(0, result.exit_code)
+        self.assertGreaterEqual(len(result.concessions), 1, result.concessions)
         for name in ("L1_finalizer_outstanding", "L2_denial_identified_for_b", "L3_request_retained_for_c",
                      "L4_capacity_released", "L5_same_b_stop_bound", "L6_successor_started_once",
                      "L7_successor_recorded_expected_midi", "L8_bounded_followup_clean"):
@@ -100,7 +120,9 @@ class RetentionProbeChainTests(unittest.TestCase):
         result = run(chain_log())
         self.assertEqual("INSUFFICIENT_EVIDENCE", result.verdict)
         self.assertEqual(4, result.exit_code)
-        self.assertEqual("unknown", by_name(result)["L5_same_b_stop_bound"].status)
+        # The default chain now carries the identity-grade bind record, so only L7 lacks evidence:
+        # event count cannot show the expected notes.
+        self.assertEqual("ok", by_name(result)["L5_same_b_stop_bound"].status)
         self.assertEqual("unknown", by_name(result)["L7_successor_recorded_expected_midi"].status)
 
     # --- the two reproduced false passes -------------------------------------------------------------
@@ -154,7 +176,7 @@ class RetentionProbeChainTests(unittest.TestCase):
                      accept_event_count_only=True)
         self.assertEqual("INSUFFICIENT_EVIDENCE", result.verdict)
         self.assertEqual("unknown", by_name(result)["L3_request_retained_for_c"].status)
-        self.assertIn("no #CAP record for a retained successor request",
+        self.assertIn("must name both the track and the slot",
                       by_name(result)["L3_request_retained_for_c"].detail)
 
     def test_a_start_that_was_not_held_fails_retention(self):
@@ -194,11 +216,64 @@ class RetentionProbeChainTests(unittest.TestCase):
         self.assertEqual("RETENTION_FAIL", result.verdict)
         self.assertIn("expected 2", by_name(result)["L7_successor_recorded_expected_midi"].detail)
 
-    def test_a_pitch_level_content_review_upgrades_the_recording_link(self):
-        result = run(chain_log(), content_review={"cycles": [{"inventory_equal": True}]},
-                     accept_slot_scoped_bind=True)
-        self.assertEqual("ok", by_name(result)["L7_successor_recorded_expected_midi"].status)
-        self.assertIn("pitch-level", by_name(result)["L7_successor_recorded_expected_midi"].detail)
+    def test_a_content_review_alone_is_parity_only_not_note_level(self):
+        """A review proves storage<->effective parity; it cannot say *which* notes were recorded."""
+        result = run(chain_log(), content_review=REVIEW_OK, accept_slot_scoped_bind=True)
+        self.assertEqual("unknown", by_name(result)["L7_successor_recorded_expected_midi"].status)
+        self.assertIn("parity is not note-level",
+                      by_name(result)["L7_successor_recorded_expected_midi"].detail)
+
+    def test_the_complete_unconceded_chain_passes(self):
+        """The acceptance target: every link on its own evidence, no concession, exit 0."""
+        result = run(chain_log(), content_dump=content_dump(), content_review=REVIEW_OK,
+                     expect_successor_notes=(67,))
+        self.assertEqual("RETENTION_PASS", result.verdict,
+                         [(c.name, c.status, c.detail) for c in result.checks if c.status != "ok"])
+        self.assertEqual(0, result.exit_code)
+        self.assertEqual([], result.concessions)
+        self.assertEqual("ok", by_name(result)["L5_same_b_stop_bound"].status)
+        self.assertIn("contains the expected note", by_name(result)["L7_successor_recorded_expected_midi"].detail)
+
+    def test_a_dump_for_the_wrong_slot_fails_the_recording_link(self):
+        result = run(chain_log(), content_dump=content_dump(slot=1), content_review=REVIEW_OK,
+                     expect_successor_notes=(67,))
+        self.assertEqual("RETENTION_FAIL", result.verdict)
+        self.assertIn("not the successor slot",
+                      by_name(result)["L7_successor_recorded_expected_midi"].detail)
+
+    def test_a_dump_without_the_expected_note_fails_the_recording_link(self):
+        result = run(chain_log(), content_dump=content_dump(notes=(60, 62)), content_review=REVIEW_OK,
+                     expect_successor_notes=(67,))
+        self.assertEqual("RETENTION_FAIL", result.verdict)
+        self.assertIn("does not contain the expected note",
+                      by_name(result)["L7_successor_recorded_expected_midi"].detail)
+
+    def test_a_dump_without_a_review_is_not_a_full_pass(self):
+        result = run(chain_log(), content_dump=content_dump(), expect_successor_notes=(67,))
+        self.assertEqual("INSUFFICIENT_EVIDENCE", result.verdict)
+        self.assertIn("parity", by_name(result)["L7_successor_recorded_expected_midi"].detail)
+
+    def test_the_identity_bind_record_removes_the_L5_concession(self):
+        result = run(chain_log(), content_dump=content_dump(), content_review=REVIEW_OK,
+                     expect_successor_notes=(67,))
+        self.assertEqual([], result.concessions)
+        self.assertEqual("ok", by_name(result)["L5_same_b_stop_bound"].status)
+
+    def test_binding_before_the_release_contradicts_the_capacity_model(self):
+        text = chain_log().replace(f"#CAP,{RELEASE_US + 5_000},DIAG,reentry,bound,17000,7,1,0",
+                                   f"#CAP,{OPEN_US + 50_000},DIAG,reentry,bound,17000,7,1,0")
+        result = run(text, content_dump=content_dump(), content_review=REVIEW_OK,
+                     expect_successor_notes=(67,))
+        self.assertEqual("RETENTION_FAIL", result.verdict)
+        self.assertIn("before* capacity was released",
+                      by_name(result)["L5_same_b_stop_bound"].detail)
+
+    def test_a_slot_only_bind_record_is_a_weaker_link(self):
+        text = "\n".join(l for l in chain_log().splitlines() if "DIAG,reentry,bound" not in l) + "\n"
+        result = run(text, content_dump=content_dump(), content_review=REVIEW_OK,
+                     expect_successor_notes=(67,))
+        self.assertEqual("INSUFFICIENT_EVIDENCE", result.verdict)
+        self.assertIn("identity-grade", by_name(result)["L5_same_b_stop_bound"].detail)
 
     def test_a_short_followup_fails_the_duplicate_bound(self):
         result = run(chain_log(tail_us=STOP_US + 1000), accept_slot_scoped_bind=True,
@@ -277,7 +352,8 @@ class RetentionProbeChainTests(unittest.TestCase):
                                  "issues": ["overdub_out_of_range_notes"]}}
         result = run(chain_log(), base_report=report, allow_setup_issues=("overdub_out_of_range_notes",),
                      accept_slot_scoped_bind=True, accept_event_count_only=True)
-        self.assertEqual("RETENTION_PASS", result.verdict)
+        self.assertEqual("RETENTION_PARTIAL", result.verdict)
+        self.assertEqual(5, result.exit_code)
         self.assertIn("operator claim", by_name(result)["reported_issues_resolved"].detail)
 
     def test_a_missing_tempo_readback_is_a_setup_failure(self):
