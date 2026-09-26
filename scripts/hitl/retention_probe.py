@@ -53,6 +53,11 @@ Usage:
                        [--tempo-bpm 120] [--min-window-us 150000] [--followup-us 500000]
                        [--expect-successor-events N] [--allow-setup-issue NAME]...
                        [--accept-slot-scoped-bind] [--accept-event-count-only]
+
+**Every slot and track argument is 0-based, exactly as the firmware's own records name them** -- which is
+NOT how the HITL driver's CLI numbers them. The driver takes 1-based slots and tracks (its `--slot-b 5` is
+this oracle's `--slot-b 4`, its `--track 8` is `--track-b 7`); passing the driver's numbers here judges a
+correct run as having no denial and no retained request at all (measured on device 2026-09-27).
 """
 from __future__ import annotations
 
@@ -86,6 +91,13 @@ STOP_SLOT_RE = re.compile(r"^DIAG,(?:stop_phase|stop_grain),(\d+),(\d+),")
 DENIAL_STAGE_RE = re.compile(r"^ODUB,stop,admission,.*,successor_stop_denied_capacity$")
 # The denial's own human row carries its identity since the logging fix: the deferred `#CAP` row can be
 # dropped by the timing-critical shed, and this row is the timely edge for the same admission decision.
+#
+# Base convention, and it is a trap: the firmware's `slot=` fields are **0-based** (matching the `#CAP`
+# identity and the census), while this oracle's `--slot-b` is the 1-based number the CLI and the action layer
+# use. Verified on device 2026-09-27 -- the denial that refused the stop for the slot the driver selected as
+# its 1-based slot 5 logged `slot=4`, and "Loop 5: Stop Overdub" named the same press. The conversion
+# therefore lives here, and only here, exactly as `hitl_retention_handoff.cleared_slot_from_lines` does it for
+# the clear identity: comparing the raw values judges every correct run a mismatch.
 HUMAN_DENIAL_ID_RE = re.compile(r"Overdub stop refused:.* slot=(\d+) interval=(\d+)")
 TEMPO_FEEDBACK_RE = re.compile(r"Sent tempo CC feedback: ([0-9.]+) BPM")
 TEMPO_APPLIED_RE = re.compile(r"TEMPO: CC=\d+ -> ([0-9.]+) BPM")
@@ -134,6 +146,9 @@ class Episode:
     window_open_loop_len: int
     capacity_release_us: int
     window_us: int
+    # The observed interval from the window opening to the successor's denial, i.e. the lower bound the
+    # exposure gate reads. None when no device-timestamped denial exists to bound the window.
+    bounded_us: Optional[int] = None
 
 
 @dataclass
@@ -474,7 +489,6 @@ def analyse(
             f"slot {m_rel.group(1)}, generation {m_rel.group(2)}, loop {m_rel.group(3)} ticks, "
             f"{m_rel.group(4)} chunks free", "retention", "L4")
     window_us = release.us - window_open.us
-    episode = Episode(slot_a, window_open.us, window_open_loop_len, release.us, window_us)
     # The window WIDTH is not gated here, and the reason is measured rather than stylistic: the release edge
     # is `canonical_finalization_capacity_released`, emitted by the deferred-maintenance turn that services
     # the `canonicalReleaseMarker` -- so `window_us` is an **upper bound** on how long the window stayed open,
@@ -490,7 +504,7 @@ def analyse(
         "and the window width it implies is an upper bound only.", "retention", "L4")
 
     def in_window(us: int) -> bool:
-        return episode.window_open_us < us < episode.capacity_release_us
+        return window_open.us < us < release.us
 
     # ---------------- L2: B's identified stop denied ----------------
     denials = [e for e in entries
@@ -532,18 +546,20 @@ def analyse(
             human_denied = True
             human_at_us, human_text = hit
             m = HUMAN_DENIAL_ID_RE.search(human_text)
-            if m is not None and int(m.group(1)) != slot_b:
+            # The row's slot is 0-based (see HUMAN_DENIAL_ID_RE); `--slot-b` is 1-based.
+            denied_slot_1based = int(m.group(1)) + 1 if m is not None else None
+            if m is not None and denied_slot_1based != slot_b:
                 add("L2_denial_identified_for_b", FAIL,
-                    f"the denial names slot {m.group(1)} with interval {m.group(2)}, but B holds slot "
-                    f"{slot_b}: a different slot's stop was denied, so B's stop was not the one refused",
-                    "retention", "L2")
+                    f"the denial names slot {denied_slot_1based} (the row's own 0-based field is "
+                    f"{m.group(1)}) with interval {m.group(2)}, but B holds slot {slot_b}: a different slot's "
+                    "stop was denied, so B's stop was not the one refused", "retention", "L2")
             elif m is not None:
                 add("L2_denial_identified_for_b", UNKNOWN,
-                    f"the timely human denial row names B's slot {slot_b} and interval {m.group(2)} "
-                    f"({human_text[:120]} at {human_at_us} us), but the device-timestamped "
-                    "DIAG,reentry,deny,<tick>,<interval>,<slot>,<depth> row is absent from this log, so the "
-                    "denial cannot be placed in device time; L5's ordering needs that anchor",
-                    "evidence", "L2")
+                    f"the timely human denial row names B's slot {slot_b} (the row's own 0-based field is "
+                    f"{m.group(1)}) and interval {m.group(2)} ({human_text[:120]} at {human_at_us} us), but "
+                    "the device-timestamped DIAG,reentry,deny,<tick>,<interval>,<slot>,<depth> row is absent "
+                    "from this log, so the denial cannot be placed in device time; L5's ordering needs that "
+                    "anchor", "evidence", "L2")
             else:
                 add("L2_denial_identified_for_b", UNKNOWN,
                     f"the denial happened ({human_text[:120]} at {human_at_us} us) but its human row carries "
@@ -562,20 +578,21 @@ def analyse(
     # open -- it is directly observed, and no deferred turn can inflate it. The release-turn upper bound
     # (`window_us`) is reported beside it for the width's order of magnitude and never gates on its own,
     # because a late maintenance turn makes it read arbitrarily small (see L4 above).
+    bounded_us: Optional[int] = None
     if denial is not None:
         # The device-timestamped denial is the bounded edge, so this is a real floor verdict -- and on a real
         # FAIL the run is genuinely unusable evidence, which is what `setup` asserts.
-        exposure_us = denial.us - window_open.us
-        if exposure_us >= min_window_us:
+        bounded_us = denial.us - window_open.us
+        if bounded_us >= min_window_us:
             add("capacity_denied_window_wide_enough", OK,
-                f"the window was open at least {exposure_us} us ({exposure_us/1000:.1f} ms) -- from A's window "
+                f"the window was open at least {bounded_us} us ({bounded_us/1000:.1f} ms) -- from A's window "
                 f"opening to the successor's denial (device timestamp) -- against a "
                 f"{min_window_us} us floor; the successor's stop was denied against it, which bounds it below. "
                 f"The release-turn upper bound is {window_us} us ({window_us/1000:.1f} ms), which is a "
                 "servicing latency, not the closure", "setup", "L1")
         else:
             add("capacity_denied_window_wide_enough", FAIL,
-                f"the window was open for at most {exposure_us} us ({exposure_us/1000:.1f} ms) before the "
+                f"the window was open for at most {bounded_us} us ({bounded_us/1000:.1f} ms) before the "
                 f"successor's denial, against a {min_window_us} us floor: too narrow to stage two host "
                 "gestures -- an exposure problem, not a retention result", "setup", "L1")
     elif human_denied:
@@ -595,6 +612,8 @@ def analyse(
         # No denial was identified at all: L2 has already failed for that reason, so no floor check is added
         # (a second failure for the same cause would only make the report harder to read).
         pass
+
+    episode = Episode(slot_a, window_open.us, window_open_loop_len, release.us, window_us, bounded_us)
 
     if denial is None:
         # Distinguish "never entered" from "entered but unidentifiable" -- and never let either of those
@@ -926,6 +945,9 @@ def analyse(
 def report_dict(analysis: Analysis, identity: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {
         "verdict": analysis.verdict,
+        # The authoritative code the process exits with. It was a computed property only, so every review file
+        # omitted it and a consumer reading the record could not tell a pass from a partial.
+        "exit_code": analysis.exit_code,
         "identity": identity,
         "checks": [{"name": c.name, "kind": c.kind, "status": c.status, "link": c.link,
                     "detail": c.detail} for c in analysis.checks],
@@ -939,8 +961,15 @@ def report_dict(analysis: Analysis, identity: dict[str, Any]) -> dict[str, Any]:
             "slot_a": e.slot_a, "window_open_us": e.window_open_us,
             "window_open_loop_len_ticks": e.window_open_loop_len,
             "capacity_release_us": e.capacity_release_us,
-            "capacity_denied_window_us": e.window_us,
-            "capacity_denied_window_ms": round(e.window_us / 1000.0, 1),
+            # Two different quantities, named apart on purpose. The release-turn delta is an UPPER bound (a
+            # maintenance turn services the marker, possibly long after the window closed, and possibly for
+            # several slots at once), while the bounded value is the observed interval from the window opening
+            # to the successor's denial -- the only one of the two that may be read as "the window was open at
+            # least this long".
+            "release_turn_delta_us": e.window_us,
+            "release_turn_delta_ms": round(e.window_us / 1000.0, 1),
+            "bounded_open_to_denial_us": e.bounded_us,
+            "bounded_open_to_denial_ms": round(e.bounded_us / 1000.0, 1) if e.bounded_us is not None else None,
         }
     return out
 
@@ -952,10 +981,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--metadata", type=Path, default=None)
     p.add_argument("--content-review", type=Path, default=None)
     p.add_argument("--out", type=Path, default=None)
-    p.add_argument("--slot-a", type=int, default=0)
-    p.add_argument("--slot-b", type=int, default=1)
-    p.add_argument("--slot-c", type=int, default=2)
-    p.add_argument("--track-b", type=int, default=0)
+    # Base convention, matching the firmware's own fields and the native fixtures -- NOT the 1-based numbers
+    # the HITL driver and its CLI take. Mixing them is a real trap: running this oracle with the driver's
+    # numbers judges a correct run as having no denial for B at all (measured 2026-09-27).
+    p.add_argument("--slot-a", type=int, default=0,
+                   help="A's slot as the FIRMWARE names it (0-based): the driver's --slot-a minus 1")
+    p.add_argument("--slot-b", type=int, default=1,
+                   help="B's slot as the FIRMWARE names it (0-based): the driver's --slot-b minus 1")
+    p.add_argument("--slot-c", type=int, default=2,
+                   help="C's slot as the FIRMWARE names it (0-based): the driver's --slot-c minus 1")
+    p.add_argument("--track-b", type=int, default=0,
+                   help="B's track as the firmware's rows name it (0-based): the driver's --track minus 1")
     p.add_argument("--tempo-bpm", type=float, default=120.0)
     p.add_argument("--min-window-us", type=int, default=DEFAULT_MIN_WINDOW_US)
     p.add_argument("--followup-us", type=int, default=DEFAULT_FOLLOWUP_US)
@@ -992,7 +1028,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"retention verdict: {analysis.verdict}")
     if "episode" in payload:
         ep = payload["episode"]
-        print(f"  capacity-denied window: {ep['capacity_denied_window_ms']} ms (slot {ep['slot_a']})")
+        # Both quantities, named apart: the bounded one is evidence, the release-turn delta is not.
+        bounded = ep["bounded_open_to_denial_ms"]
+        print(f"  window (slot {ep['slot_a']}): bounded open->denial "
+              f"{'unknown' if bounded is None else f'{bounded} ms'}; "
+              f"release-turn delta {ep['release_turn_delta_ms']} ms (servicing latency, upper bound only)")
     for c in analysis.checks:
         mark = {OK: "ok  ", FAIL: "FAIL", UNKNOWN: "????"}[c.status]
         print(f"  [{mark}] ({c.kind}{'/' + c.link if c.link else ''}) {c.name}: {c.detail}")

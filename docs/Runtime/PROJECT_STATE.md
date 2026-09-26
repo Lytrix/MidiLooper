@@ -1,6 +1,36 @@
 # Project state (execution context)
 
-**Current handoff — first authorized device campaign for the two owed device legs: executed, not accepted
+**Current handoff — S4f.3's no-concession device gate CLOSED (`RETENTION_PASS`); S4.1's lease row still owed
+with its route corrected (2026-09-27).** The re-run the first campaign called for, on the same authorized
+targets (**track 8, A=4, B=5, C=8**) with both fixes committed (`675a115a`) so the flashed image is pinned to
+them. **Result: `RETENTION_PASS`, exit 0, 20/20 checks `ok`, `concessions: []`**, identity `git_commit
+675a115a8225` / `firmware_hex_sha256 e76e1818e069`. Every link is on its own evidence — L1
+`DIAG,reentry_window_open,3,1117,2304`; the exposure gate **bounded at 531.1 ms** (the old release-turn
+formula would have said 34.8 ms, so the two quantities are now separate report fields and only the bounded one
+gates); L2 the **device-timestamped** `DIAG,reentry,deny,1321,2,4,1` (slot 4, interval 2) instead of
+`UNKNOWN`; L3 the retained row between denial and release; L4 `canonical_release,3,40,2304,8`; L5
+`DIAG,reentry,bound,1717,2,4,0` on the denied interval; L6 exactly one `RECA,7` after the release; L7 note 67
+in storage **and** effective agreeing on the full MIDI fields; L8 a clean bounded follow-up — and the content
+pipeline reports `storage_matches_effective: true`. **Both fixes are what made it pass:** the
+`stop_job_pending` branch now names its slot and interval (FLASH-resident, so `code 392,360 / padding 856` is
+byte-identical), and the width gate reads a bounded, directly-observed interval. **Three host defects were
+found by running and fixed:** `exit_code` was a computed property never serialized into the review file; the
+oracle's CLI is **0-based** for slots *and* tracks while the driver's is 1-based (a real trap that makes a
+correct run look like it had no denial — now documented and converted explicitly); and the first cut of the
+exposure fix produced a *negative* window by subtracting host seconds from device micros. **S4.1's
+lease-release device row remains owed, but its cross-track route is retired as structurally impossible:** a
+lease is acquired only when `prewarmPlaybackForSlot` receives `prepareCapture == true` (the record arm and the
+boot-cold overdub start; boot's pass uses `false`), and the cross-track sweep excludes the capturing track — so
+a **same-track switch after retirement** is the reachable protocol. Oracle tests 43/43; full native **2,469
+passed / 7 skipped**; capture-serial SUCCESS; device shutdown `complete`, no latch; no user content touched by
+the re-run (preparation cleared campaign-authored test data only). Records:
+[`ARCHITECTURE-REVIEW.md`](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)
+§ "S4f.3 no-concession device gate — CLOSED" and § "S4.1's lease-release device row: the cross-track route is
+a structural dead end". Recovery hardware content/Undo/Redo acceptance and the parked DMA repair remain open
+and unchanged.
+
+
+**Previous handoff — first authorized device campaign for the two owed device legs: executed, not accepted
 (2026-09-27).** The session committed the verified checkpoint `5849d620` (F4/DEC-091 plus the two S4.1
 verification slices), then ran the first authorized attempt at S4.1's lease-release row and S4f.3's
 no-concession retention run. A **read-only library census came first and changed the plan**: the device holds
