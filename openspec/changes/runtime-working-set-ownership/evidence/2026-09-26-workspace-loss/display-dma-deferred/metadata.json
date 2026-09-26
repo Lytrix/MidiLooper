@@ -1,0 +1,12 @@
+{
+  "purpose": "OLED frozen-first-frame diagnostic comparator",
+  "env": "teensy41-capture-serial",
+  "override": "MIDILOOPER_DISPLAY_DMA=0",
+  "firmware_hex_sha256": "0c5bdd51aea0c42105d593acb5ded49518d792204bb55067d1cd0830dfe195da",
+  "uploaded": true,
+  "source_code_changed": false,
+  "upload_authorized": true,
+  "uploaded_firmware_hex_sha256": "0c5bdd51aea0c42105d593acb5ded49518d792204bb55067d1cd0830dfe195da",
+  "visual_result": "PASS: user confirms screen updates with blocking SPI",
+  "user_observation": "Yes, the screen updates now"
+}

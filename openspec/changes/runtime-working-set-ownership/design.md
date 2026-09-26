@@ -1297,3 +1297,11 @@ is normative for prerequisites, candidate/backup publication, replacement settin
 write blocking and cold-setup bounds. The execution packet and host evidence are in
 [ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md#automatic-boot-repair--execution-packet-2026-09-26).
 Device installation and recovery acceptance remain separate gates under the incident hold.
+
+## Deferred display transport fault
+
+User-directed scheduling: repair DMA's frozen-first-frame fault after completion of
+this change. The blocking-SPI diagnostic currently updates the panel; it does not
+waive visual/timing acceptance. Preserve transport identity in device evidence and
+keep the default-DMA versus installed-blocking distinction explicit. Details and
+next work: [NEXT-STEPS.md](NEXT-STEPS.md).

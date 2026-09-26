@@ -1,3 +1,6 @@
 # Preserved evidence must stay byte-exact: the manifest records sha256 per file, and line-ending
 # normalisation would silently invalidate those hashes.
 openspec/changes/runtime-working-set-ownership/evidence/** -text
+
+# Byte-exact device receipts intentionally retain CRLF and emitted whitespace.
+openspec/changes/runtime-working-set-ownership/evidence/** -whitespace

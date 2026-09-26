@@ -1,5 +1,18 @@
 # Project state (execution context)
 
+**Current handoff — recovery committed; DMA deferred (2026-09-26).**
+Recovery/loaded undo is committed in `f29539e3`. Automatic repair and healthy boot
+completed on hardware; full device content/Undo/Redo acceptance remains open.
+Blocking-SPI display update is user-confirmed. **User parks DMA repair until after
+`runtime-working-set-ownership` completes.** Default firmware still enables DMA;
+use the preserved comparator profile when an explicitly approved upload must retain
+the working display. No timing gate is waived. Next recommended native work:
+**S4.1 — persistence identity during handoff**, starting with a paused-worker
+contract fixture, not an assumed active-slot replacement. See
+[continuation packet](../../openspec/changes/runtime-working-set-ownership/NEXT-STEPS.md).
+
+## Earlier session checkpoints
+
 
 **2026-09-26 — blocking-SPI visual comparison PASS (user observed).**
 User confirms “Yes, the screen updates now.” Same recovery/renderer source, existing

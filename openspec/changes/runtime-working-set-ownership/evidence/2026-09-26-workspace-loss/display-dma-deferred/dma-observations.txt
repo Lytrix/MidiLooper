@@ -1,0 +1,15 @@
+#CAP,328610833,DISP,0,STOPPED,768,306,354,306,306,1,0,1,306
+#CAP,328692330,DISP,0,STOPPED,768,17,354,17,17,1,0,1,17
+#CAP,330795313,ST,Track,STOPPED,PLAYING
+#CAP,330828090,DISP,0,PLAYING,768,17,354,17,17,1,0,1,17
+#CAP,336742919,ST,Track,PLAYING,OVERDUBBING
+#CAP,336756759,DISP,0,OVERDUBBING,768,17,354,17,17,1,0,1,17
+#CAP,341364966,ST,Track,OVERDUBBING,STOPPED
+#CAP,341425540,DISP,0,STOPPED,768,17,354,17,17,1,0,1,17
+#CAP,341625303,DISP,0,STOPPED,768,17,354,17,17,1,0,1,17
+#DMA_XFER,182911,init=1,degraded=0,active=0,dma_frames=1944,blocking_frames=0,timeouts=0,rejections=0,recoveries=0
+#DMA_XFER,183936,init=1,degraded=0,active=0,dma_frames=1955,blocking_frames=0,timeouts=0,rejections=0,recoveries=0
+#DMA_XFER,184955,init=1,degraded=0,active=0,dma_frames=1967,blocking_frames=0,timeouts=0,rejections=0,recoveries=0
+#DMA_XFER,1550551,init=1,degraded=0,active=0,dma_frames=15895,blocking_frames=0,timeouts=0,rejections=0,recoveries=0
+#DMA_XFER,1551553,init=1,degraded=0,active=0,dma_frames=15905,blocking_frames=0,timeouts=0,rejections=0,recoveries=0
+#DMA_XFER,1552578,init=1,degraded=0,active=0,dma_frames=15916,blocking_frames=0,timeouts=0,rejections=0,recoveries=0
