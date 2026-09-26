@@ -93,7 +93,10 @@ public:
   void handlePendingRecordStart(uint32_t currentTick);
   void handleQuantizedStop(uint32_t currentTick);
   /// Stop recording/overdub on current slot, select newSlot, then play if that slot has a loop.
-  void finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newSlot, uint32_t currentTick);
+  /// S4f.3/S4f.6: returns whether the switch **committed**. It does not commit while the interval's stop
+  /// is accepted-but-unexecuted (S4f.5 requires the active slot not to move there), so a caller that also
+  /// requested a start can tell "the target is active now" from "the request still has to wait".
+  bool finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newSlot, uint32_t currentTick);
 
   // --- Playback / Overdub ---
   void startPlayingTrack(uint8_t trackIndex);
