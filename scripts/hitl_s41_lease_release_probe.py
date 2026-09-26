@@ -134,6 +134,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--notes", type=int, default=16)
     p.add_argument("--phase-timeout-s", type=float, default=20.0)
     p.add_argument("--retire-timeout-s", type=float, default=25.0)
+    p.add_argument("--settle-s", type=float, default=12.0,
+                   help="transport-running settle after the switch, so a quantized switch commits and the "
+                        "maintenance lane can run the release sweep inside the window")
     p.add_argument("--capture-port", default=DEFAULT_CAPTURE_SERIAL_PORT)
     p.add_argument("--boot-wait-s", type=float, default=0.0,
                    help="0 by default: this run must NOT reset the device")
@@ -156,16 +159,16 @@ def main(argv: list[str] | None = None) -> int:
         if capture_log is None:
             raise RuntimeError("managed capture did not publish a session log")
 
-        # The device-time anchor: everything before this is another session's traffic, and the ring has been
-        # running long enough to matter (the pre-run census showed Tier-A eviction), so the window is bounded
-        # by the newest timestamp observed at attach rather than by file position.
-        anchor_us = 0
-        for line in _lines(capture_log):
-            m = CAP_RE.match(line.strip())
-            if m:
-                anchor_us = max(anchor_us, int(m.group(1)))
-        report["anchor_us"] = anchor_us
-        print(f"[s41] attached; device-time anchor {anchor_us} us ({anchor_us/1e6:.1f} s uptime)")
+        # The run window is bounded by the CAPTURE FILE's own row count at attach, deliberately NOT by a
+        # device timestamp. The device emits at least two timestamp domains -- `#CAP,<us>` and the
+        # `#DMA_XFER,<ms>` census run at different bases -- so "the newest timestamp" is not comparable across
+        # rows, and anchoring on it silently excluded this run's own telemetry (measured 2026-09-27: a window
+        # of 0 rows while the run logged 21,319 lines). A capture session starts recording when this script
+        # starts it, so the file offset at attach is exactly the boundary between the pre-existing buffer and
+        # this run.
+        anchor_row = len(_lines(capture_log))
+        report["anchor_row"] = anchor_row
+        print(f"[s41] attached; run window starts at capture row {anchor_row}")
 
         out_port = mido.open_output(_find_midi_port("Teensy", is_input=False))
         ctx = _Ctx(out_port)
@@ -251,10 +254,20 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(0.3)
             slots.press_slot_record(ctx, args.slot_b, press_ms=args.press_ms)
             events.append({"event": "switched_to_slot_b", "slot": args.slot_b})
-            _wait_for(capture_log, switch_mark, ("Playback started", ",ST,Track,", "Switch gesture", "Loop "),
-                      timeout_s=args.phase_timeout_s)
-            # Give the maintenance lane room to run the release sweep.
-            time.sleep(3.0)
+            # A switch can be **quantized** -- the run of 2026-09-27 logged "Queued playback switch" and the
+            # 3 s that followed were not enough for it to commit, so nothing was released inside the window.
+            # Keep the transport running until the switch actually reports, bounded by the phase timeout, and
+            # then let the maintenance lane run the release sweep.
+            switch_deadline = time.monotonic() + args.phase_timeout_s
+            switch_seen = False
+            while time.monotonic() < switch_deadline:
+                tail = " ".join(_lines(capture_log)[switch_mark:])
+                if "Playback started" in tail or "Switch gesture from slot" in tail:
+                    switch_seen = True
+                    break
+                time.sleep(0.2)
+            events.append({"event": "slot_b_switch_committed", "confirmed": switch_seen})
+            time.sleep(args.settle_s)
 
             _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
                               events=events, label="final")
@@ -267,21 +280,22 @@ def main(argv: list[str] | None = None) -> int:
     # --- the oracle: the device row, in the window this run created --------------------------------
     releases: list[dict] = []
     window_rows = 0
-    for line in _lines(capture_log):
+    switch_human: list[str] = []
+    for line in _lines(capture_log)[anchor_row:]:
         m = CAP_RE.match(line.strip())
-        if not m:
-            continue
-        us, body = int(m.group(1)), m.group(2)
-        if us <= anchor_us:
-            continue
-        window_rows += 1
-        w = WS_RELEASE_RE.match(body)
-        if w:
-            releases.append({"us": us, "slot0": int(w.group(1)), "generation": int(w.group(2)),
-                             "outcome": w.group(3), "raw": body})
+        if m:
+            window_rows += 1
+            w = WS_RELEASE_RE.match(m.group(2))
+            if w:
+                releases.append({"us": int(m.group(1)), "slot0": int(w.group(1)),
+                                 "generation": int(w.group(2)), "outcome": w.group(3),
+                                 "raw": m.group(2)})
+        elif "Switch gesture from slot" in line or "Playback started" in line:
+            switch_human.append(line.strip()[:150])
 
-    report["anchor_us"] = anchor_us
+    report["anchor_row"] = anchor_row
     report["window_rows"] = window_rows
+    report["switch_human"] = switch_human[-6:]
     report["ws_release_rows"] = releases
     target0 = args.slot_a - 1
     hit = [r for r in releases if r["slot0"] == target0 and r["outcome"] == "released"]
