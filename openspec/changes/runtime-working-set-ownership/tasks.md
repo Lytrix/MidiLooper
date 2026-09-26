@@ -1630,6 +1630,37 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       carrying the target in two owners contradicts "avoid another target owner". The pending-start owner is
       the single home; the switch is still executed by the existing switch path. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3 (retention).
+      **DEVICE STIMULUS PREPARED, NOT RUN (2026-09-26).** Per the owner's direction the temporary retention
+      stimulus and its evidence oracle are prepared and the device run is **not** authorized, so nothing was
+      executed and no target slot is assumed authorized. Assessment: the requirement is decidable from
+      **existing** telemetry keyed on slot and interval identity — `DIAG,reentry_window_open,<slot>,…`
+      (DEC-067 `successor_start_window_open`, = the predecessor's finalizer admitted and outstanding, named by
+      slot), `DIAG,canonical_release,<slot>,…` `canonical_finalization_capacity_released` (= the denied window
+      closes), `DIAG,reentry,deny/deny_resource,<tick>,<interval>,<slot>,<depth>` (the denial, from the decision
+      owner) plus `ODUB,stop,admission,…,successor_stop_denied_capacity`, and `RECA,<slot>,<tick>` (the start,
+      so exactly-once is a count) — never on the 21 µs `OVERDUB_STOPPING` state. Exposure is **measured** from
+      real device records: `reentry_window_open,0,16387,1536` at 136,629,769 µs to
+      `canonical_release,0,1536,8` at 137,965,158 µs = **1,335,389 µs (1.335 s)** for a 2-bar loop, so a
+      natural workload suffices and **no finalizer-pause control is needed** (its bounded, compile-gated
+      design is recorded as contingency only, not implemented, so the RAM1 floor is untouched). That session
+      has **no boot banner** (108 s uptime), so the figure is a timing observation to reconfirm under a fresh
+      boot, not a verdict. Stimulus authored in the sanctioned form
+      (`STIM-BASE-2-ONE-OD-01-TEMP-RETENTION-A`, forked, **not registered**, sidecar under the change
+      directory); pass criteria live in the oracle, not the sidecar. Oracle `scripts/hitl/retention_probe.py`
+      → `retention-review.json` with setup **distinct** from retention by verdict and exit code
+      (`SETUP_INCOMPLETE` 3, `RETENTION_NOT_EXERCISED` 2, `RETENTION_FAIL` 2, `RETENTION_PASS` 0); setup
+      checks `fresh_boot`, `tempo_verified` (read-back required), `seed_content_on_a`,
+      `finalizer_admitted_on_a`, `capacity_released_after_a`, `capacity_denied_window_wide_enough` (150 ms
+      floor); retention checks `successor_stop_admission_denied` (must fall *inside* A's window),
+      `successor_started_exactly_once`, `activation_invariant_held`, `no_stop_obligation_replay`. Validated
+      **without a device**: 11 host tests green (`scripts/test_retention_probe.py`) and a run against the real
+      log returns `SETUP_INCOMPLETE` while still measuring the window — a non-staged run is never reported as a
+      retention result. **Setup determinism:** the three targets are **not yet authorized** (the documented
+      scratch slot is one slot, track 5 / slot 1); tempo is applied and read back after the final serial open;
+      freshness is enforced by the oracle. Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3
+      (device-retention stimulus and oracle). **Adjacent defect found, reported not fixed:**
+      `scripts/hitl/stimuli/yaml_view.py` `dump_yaml` emits invalid YAML because the dict branch tests
+      `isinstance(item, list)` while `StimulusSpec`'s list-ish fields are tuples.
       **HITL (2026-09-26) — the registered entry points were run and produced no pass; the new path is
       uncovered.** Firmware flashed from the verified tree (`firmware_hex_sha256 14a1aea7…`,
       `git_commit e743b97c…`), device prep per the hitl-content-verification skill (fresh upload, documented

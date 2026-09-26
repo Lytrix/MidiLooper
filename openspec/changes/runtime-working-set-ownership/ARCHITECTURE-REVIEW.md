@@ -6085,3 +6085,222 @@ capacity-denied -- so these runs are regression context only. Device coverage of
 new stimulus; per the repo rule that is a **temporary variant** first, promoted to a new `STIM-...-02` only
 once the owner accepts it as the reproducer. The owner declined the variant for this session, so the
 retention path remains **host-verified only** and that limitation is recorded here rather than papered over.
+
+## S4f.3 — device-retention stimulus and oracle: prepared, NOT run (2026-09-26)
+
+Prepared under the owner's direction. The recorded refusal of a temporary variant **still stands**: nothing
+here was run on the device, and no target slot is assumed authorized.
+
+### Assessment (step 2a): the telemetry and the exposure both already exist
+
+Two purpose-built records already carry the requirement's two edges, and both were confirmed on the wire in
+this session:
+
+- `DIAG,reentry_window_open,<slot>,<stopTick>,<loopLengthTicks>` — DEC-067 `successor_start_window_open`,
+  documented as *"the deferred predecessor stop has frozen its interval and handed the live capture role
+  back, so a successor interval may start ... one shot per deferred stop"*. This is **A's finalizer admitted
+  and outstanding, named by slot**.
+- `DIAG,canonical_release,<slot>,<loopLengthTicks>,<availableChunks>` — DEC-067
+  `canonical_finalization_capacity_released`, *"one shot per retired stop"*. This is the moment a successor's
+  stop *may* be admitted, i.e. the end of the capacity-denied window.
+- The denial itself is already recorded per identity: `DIAG,reentry,deny,<tick>,<interval>,<slot>,<depth>`
+  (and `deny_resource`), one shot per decision **from the decision owner**, plus the stop-side
+  `ODUB,stop,admission,...,successor_stop_denied_capacity`; waiting is `accepted_stop_finalizer_wait` /
+  `accepted_stop_park_terminal` with the queue depth.
+- The successor's start is recorded per slot: `RECA,<slot>,<tick>`, so exactly-once is a count.
+
+So the requirement is decidable from **existing** telemetry keyed on slot and interval identity -- never on
+the 21 us `OVERDUB_STOPPING` state that defeated the interruption fixture.
+
+**Exposure is measured, and comfortable.** From the real device session
+`captures/s4f3-stop-t5s1-120bpm-20260926_141559`:
+
+```
+136629769  DIAG,reentry_window_open,0,16387,1536
+137965158  DIAG,canonical_release,0,1536,8
+```
+
+A capacity-denied window of **1,335,389 us (1.335 s)** for a 1536-tick (2-bar) loop. Two host gestures need
+tens of milliseconds, so the state is reachable with a **natural workload** and **no finalizer-pause control
+is required**. The gated pause is therefore *not* proposed for implementation; its design is kept below only
+so the option is not lost.
+
+Caveat, because it decides how the number may be cited: that session's log has **no boot banner** and 108 s
+of uptime, so it is not verdict-grade -- the oracle fails `fresh_boot` on it, correctly. The 1.335 s figure is
+a timing observation to be **reconfirmed under a fresh boot** in the authorized run.
+
+### The stimulus (temporary; prepared, not authorized to run)
+
+Authored in the sanctioned form -- `STIM-BASE-2-ONE-OD-01-TEMP-RETENTION-A`, forked from
+`STIM-BASE-2-ONE-OD-01` with `host_midi_hitl.py stimulus temp` (explicitly **not registered**), sidecar at
+`openspec/changes/runtime-working-set-ownership/stimuli/`.
+
+Recipe: seed slot A with a 2-bar take; overdub A; stop A and let the deferred finalizer run; verify the
+window is open (`reentry_window_open,<A>`); **while it is open** start B's overdub, request B's stop (expect
+`deny` for slot B), and request the switch/start on C, confirming the request survives repeated host
+dispatch; after `canonical_release,<A>`, confirm B's stop binds, C starts (**exactly one** `RECA,<C>`), C
+records the injected MIDI, and later dispatch executes neither request twice.
+
+The pass criteria are **the oracle's checks**, not the sidecar's `must_prove`: the sidecar inherits the
+parent's criteria verbatim (the fork mechanism copies them) and the exporter defect below makes it
+unreadable anyway.
+
+### The oracle (step 1)
+
+`scripts/hitl/retention_probe.py` writes `retention-review.json`. Verdict vocabulary and **distinct exit
+codes** keep setup apart from retention:
+
+| Verdict | Exit | Meaning |
+|---|---|---|
+| `SETUP_INCOMPLETE` | 3 | the scenario was not staged; says nothing about retention |
+| `RETENTION_NOT_EXERCISED` | 2 | staged, but the capacity-denied state was never entered |
+| `RETENTION_FAIL` | 2 | denied state entered, requirement violated |
+| `RETENTION_PASS` | 0 | every check below holds |
+
+Setup checks: `fresh_boot`, `tempo_verified` (a **read-back** is required), `seed_content_on_a`,
+`finalizer_admitted_on_a`, `capacity_released_after_a`, `capacity_denied_window_wide_enough` (floor 150 ms for
+staging, far below the measured 1,335 ms).
+Retention checks: `successor_stop_admission_denied` (the denial must fall **inside** A's window),
+`successor_started_exactly_once`, `activation_invariant_held`, `no_stop_obligation_replay`.
+
+**Validated without a device**, which is the point of building it first:
+- `scripts/test_retention_probe.py` -- 11 host tests, all green. They include: a complete sequence passes and
+  reports the measured window; a missing tempo read-back is `SETUP_INCOMPLETE` **with no retention check
+  deciding**; a missing boot banner is `SETUP_INCOMPLETE`; no denial is `RETENTION_NOT_EXERCISED`; a denial
+  *outside* the window does not count as staged; two successor starts fail exactly-once; a start on the wrong
+  slot does not satisfy the requirement; an activation-invariant violation fails loudly; a narrow window is an
+  exposure/setup failure; an empty log is `SETUP_INCOMPLETE`; a replayed stop obligation after release fails.
+  One of these caught a **bug in the test fixture itself** (it moved the denial's tick but not its timestamp),
+  which is recorded rather than quietly corrected.
+- Run against the **real** device log above: `SETUP_INCOMPLETE` (no boot banner, no tempo read-back) while
+  still parsing `finalizer_admitted_on_a` and `capacity_released_after_a` from real lines and measuring the
+  1.335 s window -- i.e. a non-staged run is reported as setup/not-exercised and **never** as a retention
+  result.
+
+### Setup determinism (step 3)
+
+- **Authorized targets: not yet established, and not assumed.** The documented scratch slot is track 5 /
+  slot 1, which authorizes *one* slot; this scenario needs three targets on one track (A, B, C). The owner
+  must authorize them before any run.
+- Tempo is applied and **read back after the final serial open** (the pin does not survive the reset), enforced
+  by `tempo_verified`.
+- Freshness: re-upload and wait for the port, enforced by `fresh_boot`.
+- Per-transition confirmation: A's window open, the denial inside it, and the release are each required; a
+  missing step yields `SETUP_INCOMPLETE`, and setup failures exit 3 against retention failures at 2, so the two
+  cannot be conflated.
+
+### Contingency: bounded, gated finalizer pause (design only, NOT implemented)
+
+If a future workload narrows the window below the staging floor, the control must (a) hold the deferred stop
+outstanding, (b) keep MIDI input and the scheduler running -- no blocking delay or busy-wait, (c) be bounded,
+auto-releasing after a deadline, and (d) be **compile-time gated off by default** so the shipped image and the
+RAM1 floor (`padding` is exactly 840) are untouched. Sketch: `#if defined(HITL_FINALIZER_PAUSE)` around a
+skip in the deferred-stop grain owner while a deadline-bounded flag is set, the flag set only by a
+capture-build command. **Not implemented**: the measurement above shows it is unnecessary, and adding code at
+the RAM1 floor needs its own justification.
+
+### Found defect, reported not fixed (adjacent to this deliverable)
+
+`scripts/hitl/stimuli/yaml_view.py`'s `dump_yaml` emits **invalid YAML**. The dict branch tests
+`isinstance(item, list)`, but `StimulusSpec`'s list-ish fields are **tuples**, so they fall to the `else`
+branch and are inlined after the key: the generated sidecar contains `overdubs: - name: "OD1"` on one line and
+detaches the second `must_prove` entry to column 0. Nothing reads the YAML back, which is why it survived.
+**Not fixed here** -- it changes a canonical stimulus view, and silently rewriting an authority-adjacent
+artifact is not this slice's call.
+
+## S4b.1 check 7 and check 6 — cross-track, cleared, populated and the committed-start exactly-once half (2026-09-26, landed)
+
+Native-only slice (commit `27b537e6`, tests plus two guarded observable stubs; `src/` and `include/` byte-identical
+to HEAD, no firmware build needed, RAM1 floor untouched). This closes the coverage gaps this packet had been
+carrying as "open" under check 7 and check 6.
+
+| Fixture | Contract item |
+|---|---|
+| `test_a_cross_track_successor_starts_while_the_predecessor_finalizes` | check 7 -- cross-track |
+| `test_a_cleared_successor_is_a_record_target_while_the_predecessor_finalizes` | check 7 -- cleared |
+| `test_a_populated_successor_overdubs_on_its_own_phase_while_the_predecessor_finalizes` | check 7 -- populated |
+| `test_the_switch_carried_start_executes_exactly_once` | check 6 |
+
+Two modelling details worth keeping, because they are what make the fixtures falsifiable:
+
+- The **populated** variant must switch **while still capturing**. Pressing stop first leaves the track
+  PLAYING, and the gesture then routes down the *playback*-switch lane instead of
+  `finalizeCaptureAndSelectSlot` -- so the naive version would have tested a different path entirely.
+- Its successor is given a **different loop length** (768 predecessor vs 1,536 successor) so that "the
+  successor overdubbed on its own phase" is a falsifiable claim rather than an assumption.
+
+**The exactly-once gap identified and now covered.** The blocked fixture proves exactly-once for a request
+that *waited* for admission. The **switch-carried committed start** had no consumption assertion and was never
+re-dispatched after the start. `test_the_switch_carried_start_executes_exactly_once` asserts consumption
+(`recordQueuedForSlot` / `anyRecordQueued` false), no re-arm, still recording, an unchanged active slot, and an
+unchanged captured-event count across **two further bar boundaries**.
+
+**Red-proofs** (each mutation reverted; tree verified clean; production diff empty):
+
+| Mutation | Failure line |
+|---|---|
+| refusal while *any* track has a stop in flight | "the successor track must start while the predecessor finalizes" |
+| `Track::clear()` no longer drops pass ownership | "a cleared slot must be a record target" |
+| carry a start even onto a populated target | "a populated target must NOT be armed for a record start" |
+| a successful start does not consume its request | "the executed start must be consumed exactly once" |
+
+The cross-track one is recorded honestly as a **mutation rather than a revert**: the fixture guards against
+cross-track coupling, and no earlier version of the code had coupling to revert.
+
+**Finding: the populated-target negative is defended twice, so it proves the property without attributing it.**
+The refusal is enforced both by the carrier's own `!hasCommittedPassesInSlot` predicate and independently by
+`queueRecordingTrack`'s committed-passes refusal. Disabling **either alone** leaves the suite fully green; the
+red-proof required disabling both. The fixture records this rather than implying the carrier is what enforces
+it, and no production change was made.
+
+**Checked and recorded as not a defect:** the ordinary immediate start cannot leave a stale request behind --
+`handleArmedRecordPress` cancels any queued arm and returns before the immediate `startRecordingTrack` call is
+reached.
+
+**Counts:** suite 16/16 in default mode and 16/16 under `S4B_ACCEPTANCE=1`; full native **2,452 passed /
+1 skipped** (2,448 + 4). Runs were sequential, never concurrent.
+
+**Still open, and recorded in-fixture rather than implied away:** the **arm-and-wait re-queue** path
+(`startRecordingTrack` -> `!shouldQuantizeRecordStart()` re-queues and returns false) and a committed start
+that **fails and is retried** still have no exactly-once fixture of their own. Two observable stubs were added
+to this suite's `off_path_deps.h` (`HARNESS_OBSERVABLE_TRACK_SELECT`, `HARNESS_OBSERVABLE_SLOT_CLEAR`); both
+stay `OFF_PATH()` when their macro is undefined, so no other suite's fail-closed semantics moved.
+
+## HITL stimulus YAML export — latent invalid-YAML defect found and fixed (2026-09-26)
+
+Found while authoring the retention stimulus sidecar, reported, then fixed as approved hygiene with a
+red-proved regression test.
+
+**Defect.** `scripts/hitl/stimuli/yaml_view.py`'s `dump_yaml` emitted **invalid YAML** for every list-ish
+`StimulusSpec` field. `spec_to_mapping` is `dataclasses.asdict(spec)`, which preserves **tuples** as tuples
+(`overdubs`, `must_prove`, `human_checks`, `interactions`), but the mapping branch tested
+`isinstance(item, list)` only. Tuples therefore fell through to the scalar `else` branch and were inlined
+after their key:
+
+```yaml
+overdubs: - name: "OD1"     # a block sequence may not start on its key's line
+  bars: 2
+must_prove: - "base_recorded"
+- "committed_od1"           # detached to column 0: no longer a value of must_prove
+```
+
+Nothing reads the YAML back, which is why it survived.
+
+**Fix.** Both sequence tests in `dump_yaml` now treat tuples as sequences
+(`isinstance(item, (list, tuple))`), and the mapping branch normalises the tuple to a list before recursing.
+The regenerated sidecar is structurally valid (`overdubs:` then indented `- name: …`; `must_prove:` then
+indented entries).
+
+**Regression test.** `scripts/test_stimulus_yaml_view.py` -- 3 tests, no YAML parser needed (none is installed
+in this environment, which is why the defect was latent): over **every** registered spec and the full registry
+export it asserts that no block sequence starts on its key's line and that no sequence entry is detached to
+column 0, plus a positive control that the previously broken fields still emit indented entries and that the
+literal historical symptom `overdubs: - name:` is absent. **Red-proved** by reverting the fix: all 3 fail.
+
+## Authorized targets for the retention stimulus (owner, 2026-09-26)
+
+The owner authorized **track 5, slots 1 / 2 / 3** as A / B / C for the prepared retention stimulus, replacing
+the assumption that a single documented scratch slot covered three targets. Recorded here as authorization for
+the *next* device session only: the recorded refusal of a temporary variant still stands, so the stimulus
+remains prepared-and-not-run, and each target must still be verified empty (or cleared with permission) before
+the run.
