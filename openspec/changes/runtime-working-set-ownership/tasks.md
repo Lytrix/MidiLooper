@@ -1548,6 +1548,20 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       Dispatch the switch after the interval's stop binds. Replace the unconditional pending-switch clear in
       `TrackManagerTransportTick` with consumption at successful switch commit. Fixture: queued
       switch + undo + stop admission in one window → the target is never lost.
+      **PARTIAL 2026-09-25 — the admitted-stop half landed; the carrier's dispatch half is open.**
+      `finalizeCaptureAndSelectSlot` no longer refuses the move when the stop is **admitted**: the
+      `hasStopInFlight()` early return is gone, while the `hasAcceptedUnexecutedInteraction()` guard stays
+      (S4f.5 requires the active slot not to move under an accepted-but-unexecuted stop). Safe because the
+      deferred job already finalizes from `*job.owner` / `slotIfAllocated(job.slot)` with an explicit identity
+      guard, not from the active slot. `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`
+      asserted the *old* rule and now asserts the corrected one (unadmitted still refuses; admitted moves and
+      finalizes from the job's own identity) — 101/101. **Still open, exactly as specified above:** the
+      `SlotStateMachine` pending switch as the authoritative carrier, dispatch **at the switch's commit
+      point**, and replacing the unconditional `clearPendingSlotSwitch` with consumption at successful
+      commit; plus the "queued switch + undo + stop admission in one window" fixture. Consequence today: the
+      per-slot gesture returns after committing the switch, so the requested **start is not dispatched to the
+      target** and `S4b.1`'s acceptance stays red. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4f.3.
 - [x] S4f.4 **Transport/clock timing validity (B2, T2).** (**REVISED 2026-09-23 by architect decision --
       `design.md` Revision 24; the stored-epoch requirement is WITHDRAWN.** The latch's `transportEpoch`
       field is **removed** (latch 40 -> 32 bytes, `CaptureStopJobs` 2,736 -> 2,728, both pins updated and

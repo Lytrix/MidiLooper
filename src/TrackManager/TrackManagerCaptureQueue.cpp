@@ -343,11 +343,13 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     // after the stop binds. S4b.1's handoff depends on that carrier: without it, moving the active
     // slot here breaks `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes`.
     if (t.hasAcceptedUnexecutedInteraction()) return;
-  } else if (t.hasStopInFlight()) {
-    // The pending finalizer owns its active slot until it resolves the
-    // requested destination. Slot selection cannot preempt that ownership.
-    return;
   }
+  // S4f.3: an **admitted** stop does not hold the active slot. The deferred job carries its own
+  // identity -- `job.owner`, `job.slot`, `job.loopId`, the interval latch and `captureStopOwner` -- and
+  // `processDeferredOverdubStopGrain` finalizes from `*job.owner` / `slotIfAllocated(job.slot)`, so the
+  // handoff can commit and the successor can start while the predecessor still finalizes. The
+  // *unadmitted* stop is still refused above: S4f.5 requires the active slot not to move under an
+  // accepted-but-unexecuted stop, whose interval slot the latch has not yet bound.
 
   t.setActiveLoopIndex(newSlot);
   // A captured slot becomes part of the enabled playback set.

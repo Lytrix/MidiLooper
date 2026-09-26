@@ -72,7 +72,13 @@ uint8_t resolveTrackIndexForPersistence(const Track& track) {
 void EditManager::onSelectedSlotChanged(Track&, uint8_t) { OFF_PATH(); }
 void EditManager::beforeSelectedSlotChange(Track&) { OFF_PATH(); }
 #endif
+// A switch that commits invalidates the display cache. The display is not the behavior under test, so
+// suites that assert a committed switch keep this observable.
+#if defined(HARNESS_OBSERVABLE_SLOT_CHANGE)
+void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) {}
+#else
 void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) { OFF_PATH(); }
+#endif
 // A suite that links the real StorageManager load path (which defines these two) opts out with
 // `HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD`; everything else keeps the fail-closed route.
 #if !defined(HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD) && !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
