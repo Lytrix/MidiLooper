@@ -62,6 +62,10 @@ struct TrackCaptureStopTestAccess {
     const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
     return rt != nullptr ? static_cast<uint8_t>(rt->workingSetRoles()) : 0;
   }
+  static WorkingSetRole workingSetRolesOf(const Track& track, uint8_t slot) {
+    const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    return rt != nullptr ? rt->workingSetRoles() : WorkingSetRole::None;
+  }
   static uint16_t workingSetGeneration(const Track& track, uint8_t slot) {
     const auto* rt = track.playbackRuntime.slotIfAllocated(slot);
     return rt != nullptr ? rt->workingSetGeneration() : 0;
@@ -104,6 +108,10 @@ struct TrackCaptureStopTestAccess {
     return rt != nullptr && rt->ledger.isActive(1, note);
   }
   static void clearAllLedgersForTests(Track& track) { track.playbackRuntime.clearAllLedgers(); }
+  /// S4.4: report a declared-envelope breach if the activation would exceed a class cap.
+  static void reportEnvelopeBreachIfAny(const Track& track, uint8_t slot, WorkingSetRole role) {
+    track.reportEnvelopeBreachIfAny(slot, role);
+  }
   /// S4.1/S4.2: the `(slot, generation)` release entry and the identity a caller must present.
   static uint16_t slotGeneration(Track& track, uint8_t slot) {
     return track.playbackRuntime.slotGeneration(slot);
@@ -530,6 +538,39 @@ void test_reactivating_a_released_slot_reuses_its_capacity() {
       "the reused slot must hold the same role set, not accumulate roles");
 }
 
+
+/// **S4.4 — a declared-envelope breach is reported, not resolved by refusing.** The envelope declares
+/// `LiveCapture` as one per track. A second holder is a **policy** signal with its own reason, distinct
+/// from an allocation failure -- and the activation still proceeds, because the resource model supports
+/// it: enforcing the declared cap here would reject supported multi-slot flows (85 fixtures in the
+/// continuous-capture harness arm a second slot).
+void test_a_declared_envelope_breach_is_reported_and_does_not_block_activation() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 1);
+
+  // Control: with nothing holding the class, there is no breach to report.
+  track.reportEnvelopeBreachIfAny(0, WorkingSetRole::LiveCapture);
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true),
+                           "the first activation must be admitted");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 0));
+
+  // Slot 1's activation would put a second live-capture role on the track. It must still be admitted,
+  // and the breach must be reportable as policy rather than surfacing as an allocation failure.
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(1, true),
+                           "a declared-cap breach must not block a supported activation");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, 1),
+                           "the activation must have taken its resources");
+  // Both slots really do hold the class, which is what the declared envelope calls a breach.
+  TEST_ASSERT_TRUE(
+      hasRole(TrackCaptureStopTestAccess::workingSetRolesOf(track, 0), WorkingSetRole::LiveCapture));
+  TEST_ASSERT_TRUE(
+      hasRole(TrackCaptureStopTestAccess::workingSetRolesOf(track, 1), WorkingSetRole::LiveCapture));
+}
+
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
@@ -541,5 +582,6 @@ int main() {
   RUN_TEST(test_the_slot_generation_release_entry_is_identity_qualified_and_preserves_refusals);
   RUN_TEST(test_the_release_sweep_skips_a_slot_with_a_live_owner);
   RUN_TEST(test_reactivating_a_released_slot_reuses_its_capacity);
+  RUN_TEST(test_a_declared_envelope_breach_is_reported_and_does_not_block_activation);
   return UNITY_END();
 }

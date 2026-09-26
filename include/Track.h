@@ -249,6 +249,13 @@ public:
   bool hasLiveCaptureStopJobForSlot(uint8_t slot) const;
   /// S3.2 owner kind: an accepted-but-not-yet-executed interaction latched for `slot` (S4f.1).
   bool hasAcceptedInteractionForSlot(uint8_t slot) const;
+  /// S4.4: report when an activation would exceed a **declared** envelope cap, so a class held beyond
+  /// its declared cardinality is visible as a policy signal rather than silent. It does **not** refuse:
+  /// the resource model still supports the request, and refusing here would be stricter than the
+  /// implementation and would reject supported multi-slot flows. The enforcing caps are the lease's own
+  /// (`WorkingSetLeaseTable`, `test_working_set_lease`), which refuse at the point of custody.
+  /// No storage: the census is read from the per-slot lease state.
+  void reportEnvelopeBreachIfAny(uint8_t slot, WorkingSetRole role) const;
   /// S4.1: release every slot whose liveness predicate reports no live owner, through the
   /// `(slot, generation)` entry. The predicate-free `TrackPlaybackRuntime::resetAll` discarded each
   /// slot's refusal; this preserves it.

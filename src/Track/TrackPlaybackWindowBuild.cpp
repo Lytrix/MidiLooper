@@ -472,6 +472,32 @@ void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
   invalidatePlaybackMergedMidiEvents(true);
 }
 
+TRACK_COLD_MEM void Track::reportEnvelopeBreachIfAny(uint8_t slot, WorkingSetRole role) const {
+  // S4.4: the declared caps are the measured envelope (design.md role classes). A role class held
+  // beyond its declared cardinality is reported as a policy signal -- `reason=cap_reached`, distinct
+  // from an allocation failure -- and the activation proceeds, because the resource model still
+  // supports it. Enforcing here would reject supported multi-slot flows.
+  static constexpr WorkingSetLeaseCaps kDeclaredCaps{};
+  if (slot >= Config::MAX_LOOPS_PER_TRACK) return;
+  const WorkingSetRole held = playbackRuntime.workingSetRolesAt(slot);
+  const WorkingSetRole added = role & static_cast<WorkingSetRole>(~static_cast<uint8_t>(held));
+  if (added == WorkingSetRole::None) return;  // idempotent re-admission is not a breach
+  for (uint8_t bit = 0; bit < 4; ++bit) {
+    const WorkingSetRole single = static_cast<WorkingSetRole>(1u << bit);
+    if (!hasRole(added, single)) continue;
+    uint8_t heldElsewhere = 0;
+    for (uint8_t other = 0; other < Config::MAX_LOOPS_PER_TRACK; ++other) {
+      if (other != slot && hasRole(playbackRuntime.workingSetRolesAt(other), single)) {
+        ++heldElsewhere;
+      }
+    }
+    if (heldElsewhere >= workingSetCapFor(kDeclaredCaps, single)) {
+      MemoryMonitor::reportDeclaredCapDenied(MemoryMonitor::OperationKind::RecordStart, bit);
+      return;
+    }
+  }
+}
+
 TRACK_COLD_MEM void Track::releaseEligiblePlaybackRuntimeSlots(bool preserveLedger) {
   // S4.1: the (slot, generation) release entry, evaluated through the liveness predicate. This
   // replaces the track-global `TrackPlaybackRuntime::resetAll`, which was predicate-free and
@@ -517,6 +543,12 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   // deferred stop grains allocation-free must have been established. Callers that are
   // admitting a take must act on it; the boot/load caller may ignore it.
   bool ok = true;
+  // S4.4: surface a declared-envelope breach before the resources are taken. Reported, not refused --
+  // see `reportEnvelopeBreachIfAny`.
+  if (prepareCapture) {
+    reportEnvelopeBreachIfAny(slotIndex,
+                              WorkingSetRole::PlaybackWindow | WorkingSetRole::LiveCapture);
+  }
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStopJobs);
   ok = prewarmCaptureStopJobs() && ok;
   ExternalPoolAccounting::endTag();

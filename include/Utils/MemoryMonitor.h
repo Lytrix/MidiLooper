@@ -174,6 +174,15 @@ bool admitOperationMemory(OperationKind operation, uint32_t marginBytes);
 void reportPrewarmAdmissionDenied(OperationKind operation);
 
 /**
+ * @brief Report that an operation was denied by a **declared** working-set envelope cap.
+ *
+ * S4.4: a refusal at a declared cap is a policy outcome, not an allocation failure, so it is
+ * reported with its own reason (`cap_reached`) and the class index that is full. Reporting it separately
+ * keeps "we declined to exceed the envelope" from being read as "the pool ran out".
+ */
+void reportDeclaredCapDenied(OperationKind operation, uint8_t roleClassIndex);
+
+/**
  * @brief Advisory pressure signal (Phase 1A — compute + telemetry only).
  * Subsystems consult; owners decide safe actions. Updated once per main-loop turn.
  */

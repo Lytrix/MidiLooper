@@ -723,6 +723,13 @@ class TrackPlaybackRuntime {
   /// The identity a caller must present to `releaseSlot`.
   uint16_t slotGeneration(uint8_t slotIndex) const;
 
+  /// S4.4: the roles this slot currently holds. Read-only; the declared-cap check needs the track's
+  /// holder census and nothing new is stored for it.
+  WorkingSetRole workingSetRolesAt(uint8_t slotIndex) const {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return WorkingSetRole::None;
+    const LoopPlaybackRuntimePtr& rt = runtimeBySlot_[slotIndex];
+    return rt ? rt->workingSetRoles() : WorkingSetRole::None;
+  }
  private:
   std::array<LoopPlaybackRuntimePtr, Config::MAX_LOOPS_PER_TRACK> runtimeBySlot_{};
 };

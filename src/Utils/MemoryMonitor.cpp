@@ -235,6 +235,17 @@ FLASHMEM const char* operationName(OperationKind operation) {
 }
 }  // namespace
 
+FLASHMEM FLASHMEM void reportDeclaredCapDenied(OperationKind operation, uint8_t roleClassIndex) {
+  Serial.printf_P(PSTR("#MEM_DENIED,%lu,op=%s,reason=cap_reached,class=%u,need=0B,"
+                       "heap_free=%luKB,pool_refused=%lu/%luB\n"),
+                  static_cast<unsigned long>(micros()), operationName(operation),
+                  static_cast<unsigned>(roleClassIndex),
+                  static_cast<unsigned long>(getInternalHeapFreeBytes() / 1024),
+                  static_cast<unsigned long>(ExternalPoolAccounting::counters().poolRefusedCount),
+                  static_cast<unsigned long>(
+                      ExternalPoolAccounting::counters().poolRefusedLargestBytes));
+}
+
 FLASHMEM void reportPrewarmAdmissionDenied(OperationKind operation) {
   const ExternalPoolAccounting::Counters& pool = ExternalPoolAccounting::counters();
   Serial.printf_P(
@@ -582,6 +593,7 @@ void logStatus(bool) {}
 void logExternalPoolAccounting(const char*) {}
 void logWorkingSetOwners(const char*) {}
 void reportPrewarmAdmissionDenied(OperationKind) {}
+void reportDeclaredCapDenied(OperationKind, uint8_t) {}
 // Native/other-platform stub: the gate has no pool to consult and must not
 // change host-test behaviour, so it always admits.
 namespace {
@@ -687,6 +699,7 @@ void logStatus(bool) {}
 void logExternalPoolAccounting(const char*) {}
 void logWorkingSetOwners(const char*) {}
 void reportPrewarmAdmissionDenied(OperationKind) {}
+void reportDeclaredCapDenied(OperationKind, uint8_t) {}
 // Native/other-platform stub: the gate has no pool to consult and must not
 // change host-test behaviour, so it always admits.
 bool admitOperationMemory(OperationKind, uint32_t) { return true; }
