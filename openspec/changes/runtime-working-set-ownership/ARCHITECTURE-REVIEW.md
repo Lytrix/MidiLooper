@@ -7042,3 +7042,42 @@ request survives until capacity frees, not that the successor starts within the 
 
 **Closed at this scope: retention plus successor capture.** Kept open exactly as before: A/B preservation,
 the raw-only companion fallback, and playback-output parity.
+
+### Rerun (2026-09-26, 17:43): the oracle refuses it -- the carrier was never engaged
+
+A second authorized run on the same targets. The chain's first half reproduced, and then it stopped:
+
+```
+[62.431] Reentry window open slot=4                     L1  A's finalizer outstanding
+[62.520] Loop 6: Switch gesture from slot 5                 capture-switch
+[62.946] Overdub stop refused: stop_job_pending ...     L2  B's stop DENIED on capacity
+[63.161] Loop 7: Switch gesture from slot 6                 C's switch gesture (capture branch)
+[63.773] Reentry window open slot=5                     L5  B's stop bound
+[63.785] Reentry released slot=4 generation=40 / slot=5 generation=0   the release fix, working
+```
+
+and then **no `RECA,6`, no `Recording started`**, and -- the diagnostic that matters -- **no carrier line at all**:
+neither `Record start carried on the switch` nor `switch and record start retained`. The oracle reports
+`RETENTION_FAIL` with `L3_request_retained_for_c` insufficient and `L6_successor_started_once`: *"no RECA,6:
+the retained successor start never executed"*. **The oracle refused a run that failed, which is the point of
+having it.**
+
+**The finding.** The C gesture did take the capture-switch branch -- the neutral `Loop 7: Switch gesture from
+slot 6` line is emitted only there -- yet neither carrier message followed, and the carrier messages are
+guarded by `!track.hasCommittedPassesInSlot(slotIndex)`. So at that moment C was **not seen as a record
+target**, and therefore **no start was carried at all**: there was nothing to retain and nothing to execute.
+That is a different failure from the earlier empty-successor take (where the start executed and the harness
+sent no notes), and it is a *staging-vs-behaviour* question that the next run must separate: the prepare phase
+did report the slot cleared (`Track cleared @ tick 0` twice plus one `Clear ignored -- selected slot is
+empty`), so either C was not actually a record target at the gesture, or the branch that carries the start was
+skipped.
+
+**Harness-state note for the next attempt.** `_clear_slot` ends with the slot *selected* and a short press on
+that slot's own button performed before the long-press clear leaves a transport-stopped, previously-armed
+state. Two runs on the same targets now differ in whether C carries a start, so the recommendation is to
+re-census the targets and to have the driver assert C is a record target (`!hasCommittedPassesInSlot` and no
+live capture) *before* the critical window, rather than assuming the clear left it so.
+
+**Status.** Unchanged in scope: the previous run closed **retention plus successor capture** (`RETENTION_PASS`,
+zero concessions, verdict-grade); this rerun is a `RETENTION_FAIL` and closes nothing. The variance is itself
+the finding. A/B preservation, the raw-only companion fallback and playback-output parity remain open.
