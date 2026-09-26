@@ -35,6 +35,7 @@ import argparse
 import json
 import sys
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -51,6 +52,7 @@ from hitl.control_constants import (  # noqa: E402
     LOOP_SELECT_NOTE_BASE,
     TRACK_SELECT_NOTE_BASE,
 )
+from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT  # noqa: E402
 from hitl.managed_capture import ManagedCaptureSession  # noqa: E402
 from hitl.midi_io import _find_midi_port, _send_short_press  # noqa: E402
 
@@ -180,7 +182,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help="pin and VERIFY the device tempo after this run's own boot; the flow aborts if the "
                         "read-back does not match, because every timing in it is calibrated for this tempo")
     p.add_argument("--tempo-cc", type=int, default=102)
-    p.add_argument("--capture-port", default=None)
+    p.add_argument("--capture-port", default=DEFAULT_CAPTURE_SERIAL_PORT)
     p.add_argument("--boot-wait-s", type=float, default=10.0)
     args = p.parse_args(argv)
 
@@ -210,7 +212,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     t0 = args.track - 1
 
     with ManagedCaptureSession(port=args.capture_port, boot_wait_s=args.boot_wait_s,
-                              out_dir=out_dir, run_token=f"retention-{int(time.time())}") as capture:
+                              out_dir=out_dir, run_token=uuid.uuid4().hex) as capture:
         capture_log = capture.session_log
         if capture_log is None:
             raise RuntimeError("managed capture did not publish a session log")
@@ -224,12 +226,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         before_tempo = len(_lines(capture_log))
         slots.press_track(_Ctx(out_port), args.track, press_ms=args.press_ms)
         slots.press_slot_record(_Ctx(out_port), args.slot_a, press_ms=args.press_ms)
-        time.sleep(1.0)
+        # Entering LOOP_EDIT for the selected track is not instant: the proven probe drains 6 s after the
+        # loop-row select before it sends the CC, so match that and allow two attempts.
+        time.sleep(6.0)
         cc_value = int(round(args.tempo_bpm - 60.0))
-        out_port.send(mido.Message("control_change", channel=CONTROL_CHANNEL_1BASED - 1,
-                                   control=args.tempo_cc, value=max(0, min(127, cc_value))))
-        pinned = _wait_for_any(capture_log, after=before_tempo,
-                              markers=(f"-> {args.tempo_bpm:.1f} BPM",), timeout_s=6.0)
+        pinned = False
+        for _attempt in range(2):
+            out_port.send(mido.Message("control_change", channel=CONTROL_CHANNEL_1BASED - 1,
+                                       control=args.tempo_cc, value=max(0, min(127, cc_value))))
+            pinned = _wait_for_any(capture_log, after=before_tempo,
+                                   markers=(f"-> {args.tempo_bpm:.1f} BPM",), timeout_s=4.0)
+            if pinned:
+                break
         events.append({"event": "tempo_pinned", "requested_bpm": args.tempo_bpm, "confirmed": pinned})
         if not pinned:
             raise SystemExit(
