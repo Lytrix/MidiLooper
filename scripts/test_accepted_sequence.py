@@ -104,8 +104,16 @@ class GesturePlanTests(unittest.TestCase):
     def test_the_record_leg_uses_the_transport_for_its_stops(self):
         plan = leg_gestures("rec", track=8, a=4, b=5)
         notes = emit_all(plan).note_sequence()
-        self.assertEqual(2, notes.count(GLOBAL_TRANSPORT_NOTE),
-                         "both stops in the record leg are transport gestures, one press each")
+        self.assertEqual(1, notes.count(GLOBAL_TRANSPORT_NOTE),
+                         "A is stopped by the transport; B by the record button, one press each")
+
+    def test_b_is_stopped_with_the_record_button_not_its_loop_button(self):
+        """A loop-button press on a filled playing slot reaches the switch/mute branch, never
+        `Track::stopOverdubbing` -- measured 2026-09-27, where it produced "Reaffirmed playback switch"."""
+        for leg in ("rec", "od"):
+            plan = leg_gestures(leg, track=8, a=4, b=5)
+            b_stop = next(g for g in plan if g.step == "b_stop")
+            self.assertEqual("record", b_stop.kind, f"{leg}: B must be stopped with the record button")
 
     def test_slot_conversion_is_the_only_base_change(self):
         self.assertEqual(3, to_firmware_slot(4))
