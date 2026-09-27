@@ -2304,6 +2304,12 @@ own execution packet and records fixture/native/build/device results separately.
       Controlled consumer fixtures include 257 held notes without overdub staging. Production
       Record dispatch/admission, normalization and pass construction remain open; see
       [output execution evidence](S4F18-OUTPUT-EXECUTION.md).
+      **2026-09-28 normalization oracle:** real stopped/playing Record stop fixtures pin
+      overflow projection, tail repair, minimum-length enabled/disabled, filtered-empty
+      geometry and the full 2,056-row inventory beyond overdub staging. The playing case
+      links real playback reanchoring/ledger-clear ownership via an independent harness
+      opt-in. Bounded normalization and pass construction remain open; see
+      [normalization execution evidence](S4F18-NORMALIZATION-EXECUTION.md).
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,

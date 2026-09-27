@@ -84,7 +84,9 @@ CommitResult Track::commitCaptureForStop(CommitReason, uint32_t, uint32_t, uint8
 // destinations, so failing closed here left the whole `Stopped`-destination deferred drain without any
 // native coverage (see B03). Counting it instead keeps it observable -- a fixture can assert the track
 // was silenced -- without pretending the silence itself is under test. Reset in setUp.
+#if !defined(HARNESS_REAL_PLAYBACK_HOT_PATH)
 void Track::silenceTrackMidiOutput() { ++g_nativeSilenceTrackCalls; }
+#endif
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
 void Track::clearQueuedPlaybackStart() { OFF_PATH(); }
 void Track::queuePlaybackStartAtGrid(int32_t, uint32_t) { OFF_PATH(); }
@@ -161,15 +163,17 @@ void StorageManager::requestWorkspaceFooterPersistWhenSafe() { OFF_PATH(); }
 // ledger being cleared by a stop would have to link the playback TU and rework B03. Gated on the stop-commit
 // family (not the transport one) because that is the family that newly makes this call reachable; a suite on
 // the broad transport macro supplies its own, as the drain suite does.
-// Ungated at HEAD and kept that way: every suite gets this definition, because the playback TU that owns it
-// is not linked anywhere in this boundary set.
+// The shared-finalization suite opts into the real playback TU. Other suites keep
+// their existing silence observations and fail-closed projection boundary.
+#if !defined(HARNESS_REAL_PLAYBACK_HOT_PATH)
 void Track::silenceSlotMidiOutput(uint8_t) { OFF_PATH(); }
+#endif
 // New with the stop-commit family: the real stop-commit route reaches the wire-silence call, and its owner
 // lives in `TrackPlaybackHotPath.cpp` beside the MIDI-silence boundary above -- whose silence owners are what
 // B03 counts. Linking that TU would replace them, so this is an inert stand-in and the wire side is not under
 // test. What it omits is precisely the per-slot ledger/LED clearing: a fixture that depends on *that* would
 // have to link the playback TU and rework B03's instrumentation.
-#if defined(A34A_LINKS_REAL_TRACK_STOP_COMMIT) && !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+#if defined(A34A_LINKS_REAL_TRACK_STOP_COMMIT) && !defined(A34A_LINKS_REAL_TRACK_TRANSPORT) && !defined(HARNESS_REAL_PLAYBACK_HOT_PATH)
 void Track::sendAllNotesOff() {}
 #endif
 #if defined(A34A_LINKS_REAL_TRACK_STOP_COMMIT) && !defined(A34A_LINKS_REAL_STORAGE_PERSIST)
