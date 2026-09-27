@@ -1,5 +1,17 @@
 # Current work (implementation scope)
 
+**2026-09-28 — S4f.18 — job-owned Record closure output verified.**
+A bounded consumer appends one held-note Off per grain to reserved canonical output,
+using the job's saved NoteId and geometry. It preserves a live successor, retains
+obligations on denial, and rejects stale raw/output/job identities. Five new fixtures
+include 257 held notes and exactly-once retry; four guard-removal mutations fail.
+Full native **2,513 passed / 7 skipped**; focused **24/24**; capture-serial build passes.
+The owner+generation receipt adds **8 bytes per allocated playback runtime** (6,352 bytes
+on ARM); Track/job layouts and static RAM remain unchanged, RAM1 padding **840 bytes**.
+Record still finalizes inline. Normalization, pass construction, admission and playback
+handoff remain open; no parent checkoff, upload or device acceptance.
+[Record output evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-OUTPUT-EXECUTION.md).
+
 **2026-09-27 — S4f.20 — deferred publication persistence handoff implemented.**
 Successful deferred transfers now use the existing persistence helper with their validated
 job slot, including stopped and superseded-source paths. Cleanup does not replay the request.
@@ -3315,6 +3327,13 @@ Full native **2,508 passed / 7 skipped**, focused **19/19**, capture-serial buil
 RAM1 padding **840 bytes**. S4f.18 — bounded record preparation remains open for job-owned
 closure output, full normalization and pass construction; Record still finalizes inline.
 [Closure receipt evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-CLOSURE-EXECUTION.md).
+
+Job-owned closure output is now verified with one reserved row per grain, unchanged
+successor capture, and owner/generation-qualified retry. Full native **2,513 passed /
+7 skipped**, focused **24/24**; build passes at **840 bytes** RAM1 padding. Per-slot
+runtime grows by eight extmem bytes for the output receipt. Record normalization,
+pass construction and production integration remain open; no admission switch.
+[Output consumer evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-OUTPUT-EXECUTION.md).
 
 ### Continuation after recovery (2026-09-26)
 

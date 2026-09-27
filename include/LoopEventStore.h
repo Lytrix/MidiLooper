@@ -65,6 +65,11 @@ struct LoopEventStoreRewriteCursor {
   uint16_t eventIndexInChunk = 0;
   bool trimming = false;
   bool active = false;
+  /// Optional source-owner receipt for consumers that reuse this output cursor.
+  /// Both parts are needed: separate descriptors can share a generation, and
+  /// the same descriptor address can be reused by a later generation.
+  uint32_t sourceGeneration = 0;
+  const void* sourceOwner = nullptr;
 };
 
 enum class LoopEventStoreRewriteResult : uint8_t { Pending, Complete, Denied };

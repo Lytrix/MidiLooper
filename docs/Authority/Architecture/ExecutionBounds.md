@@ -1335,3 +1335,20 @@ static RAM are unchanged. The host layout uses existing padding (1,072 bytes).
 This does not reclassify append/dedup/preview work or the rest of finalization;
 raw-event callers without a pending key and overdub retain existing resolution.
 Evidence: [closure execution packet](../../../openspec/changes/runtime-working-set-ownership/S4F18-CLOSURE-EXECUTION.md).
+
+
+### Job-owned Record closure output consumer (2026-09-28)
+
+`Track::stepDeferredRecordClosure` validates the saved slot/LoopId, mode, raw-range
+borrow generation, admission/runtime binding, and canonical output cursor. It appends
+at most one terminal Off from the job's pending-note map into the existing reserved
+canonical output, then erases that entry and consumes one closure credit. Resource
+denial retains the obligation. It never searches raw content or resolves the selected
+slot. The output cursor stores a source-owner pointer and generation, adding eight bytes
+per allocated playback runtime (6,344 to 6,352 bytes on ARM); Track/job sizes are
+unchanged. No new allocation operation or content-sized buffer is introduced. Map entry retirement uses the
+existing one-entry cleanup pattern. Output uses pre-reserved chunks/directory capacity.
+This consumer is not yet dispatched by production Record admission. It does not prove
+normalization, pass construction, publication, first-bar/onward deadlines, or expand the
+current overdub-specific admission contract. Evidence:
+[Record output execution packet](../../../openspec/changes/runtime-working-set-ownership/S4F18-OUTPUT-EXECUTION.md).
