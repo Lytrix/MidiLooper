@@ -176,6 +176,10 @@ void Track::sendAllNotesOff() {}
 // Legacy capture suites isolate persistence deliberately. Suites claiming persistence
 // evidence must define A34A_LINKS_REAL_STORAGE_PERSIST and link the real owner;
 // the native environment does not itself enable BYPASS_STOP_UNDO_SAVE.
+// Deferred publication now reaches the same outbound persistence boundary.
+// This legacy suite does not prove persistence; the shared finalization suite
+// links the real helper and storage owner with A34A_LINKS_REAL_STORAGE_PERSIST.
+void requestLoopSlotPersistAndSaveState(Track&, uint8_t, uint32_t) {}
 void StorageManager::markLoopSlotMaterialDirty(uint8_t, uint8_t) {}
 void StorageManager::admitLoopSlotPersist(uint8_t, uint8_t) {}
 void StorageManager::requestDeferredSaveState(const LooperState&, uint32_t, bool) {}

@@ -4,6 +4,14 @@ Agent-oriented map of how loop state is written to SD after runtime events (reco
 
 For the unified RAM + SD mental model and proposed continuous-runtime-persistence evolution, see [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](RUNTIME_STORAGE_AND_PERSISTENCE.md). For the in-RAM chunk pool, capture lifecycle, and undo COW rules, see [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md).
 
+Deferred capture-stop publication: `Track::processDeferredOverdubStopGrain` requests persistence
+through the existing `requestLoopSlotPersistAndSaveState` helper only after a successful atomic transfer. It marks and
+admits the validated job's Track/slot, then wakes the deferred writer. Playing, Stopped,
+retargeted raw-only and superseded-causal-base transfers use this boundary; cleanup cannot
+replay it. Live successor capture or UI selection does not redirect the request. Queue admission
+is a request for later serialization, not proof that the committed revision has reached SD.
+Record still uses its synchronous publication route pending the shared-finalization migration.
+
 ---
 
 ## Problem this solves
