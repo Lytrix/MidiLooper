@@ -2330,6 +2330,30 @@ and captures/s13-slope-evidence/extended-slope.json. -->
         `Reentry released slot=3`) — the `#CAP,DIAG,reentry_window_open,3,…` and
         `DIAG,canonical_release,3,…` rows are absent in these runs, which is itself worth a look before the
         ordering can be claimed in device time.
+      **THE DOUBLE COUNTDOWN CAME BACK, AND THE CAUSE IS THE SD-AWARE FILLED PREDICATE (2026-09-27).** Routed
+      B's start through the switch-carried start as directed, and the reassessment found why it had worked in
+      the retention run but not here: **`slotHasDataForPlaybackSwitch` is SD-aware**
+      (`TrackManager::slotHasLoopContent(..., true)`), and **every slot on this device retains an SD payload** —
+      the library observation reports `payload_inventory=64` while only 59 slots are committed. So an *empty*
+      slot is **not** automatically a record target: the switch to it takes the **playback-switch branch** and
+      waits on a quantized countdown instead of carrying a start. The carrier's own predicate
+      (`if (!track.hasCommittedPassesInSlot(slotIndex))`) is satisfied, but it is never reached, because the
+      playing/filled branch is entered first.
+      **That is exactly how the second countdown is produced**, and it is now understood end to end: the
+      switch is pending → the record press lands → `handleToggleRecord` sees
+      `!hasCommittedPassesInSlot(selectedSlot)` (the *selected* slot is the empty one) → routes to
+      `handleToggleRecordForSlot` → `slotIndex == selectedSlot` and `playingSlot != slotIndex` →
+      `queuePlayingSlotSwitch` → **`Reaffirmed playback switch`**. A second countdown for one switch.
+      **Driver fix, and it is a safety property rather than a timing tweak:** the driver now waits
+      **unconditionally** for a pending switch to execute before any further press, and when the switch never
+      runs it **aborts the leg** (`PENDING_SWITCH_NEVER_RAN`) instead of pressing into it. A leg that presses
+      there is not testing the acceptance; it is manufacturing the reported bug. Pinned by two tests
+      (`_wait_switch_executed` detects a never-running switch, and detects one that runs) — suite **26/26**.
+      **Consequence for the leg's design, recorded so the next attempt starts from the right shape:** the
+      carrier needs a successor that is a **record** target in the SD-aware sense. The retention run satisfied
+      that for **slot 8** while A=4 and B=5 were filled; the `od` leg cannot use a merely-cleared slot 5. Either
+      the leg's successor must be a slot with no playback content at all, or the leg must accept the
+      playback-switch path and prove the acceptance through a different shape.
       Two legs, each a managed run (`scripts/host_midi_hitl.py run --preset base`, or the
       `scripts/hitl_stop_interruption.py` wrapper for the interruption variant — **never** a captured
       `command.json`; bounded by `HITL_MANAGED_RUN_TIMEOUT_S`):
