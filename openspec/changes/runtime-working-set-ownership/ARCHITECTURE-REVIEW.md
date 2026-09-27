@@ -8554,3 +8554,55 @@ this re-run (preparation cleared campaign-authored test data only).
     --expect-successor-note 67 --out captures/<run>/retention-review.json
 ```
 
+## Shared record/overdub finalization — contract review (2026-09-27)
+
+Scope: [firmware contract](SHARED-CAPTURE-FINALIZATION.md), design Revision 25;
+S4f.15 — contract through S4f.22 — integration gates. Read-only code trace and documentation
+amendment; no new firmware or test execution. Existing 2,486 native / 33 Python fixture results
+belong to the preceding HITL slice and are not proof of this lifecycle.
+
+**Intent audit:** already planned at proposal live-capture role/cardinality, spec accepted
+interactions/finalization rotation and design Revision 23 item 6 (record A then overdub B
+stops while A finalizes). Missing: mode-complete implementation contract. The earlier suggestion
+to weaken the record oracle is withdrawn; DEC-093 — shared capture finalization preserves intent.
+
+### Adversarial findings and resolutions
+
+- **BLOCKER addressed — raw record input is not overdub staging.** `recordMidiEvents` reserves
+  staging only for overdub. Contract requires job-owned frozen raw record source and bounded
+  normalization/preparation; copying the whole take or pretending staging is populated is
+  forbidden. S4f.18 tests exact content and capacity/quantum behavior.
+- **BLOCKER addressed — record identity and undo are not mode-neutral today.** `captureInterval_`
+  advances only for overdub; current worker creates session undo. Contract extends actual-start
+  identity and job-owned mode/geometry, with record-specific entry/pruning inside the existing
+  protected publication. COMMON-IDENTITY and UNDO/STORAGE detect aliasing/incorrect grouping.
+- **BLOCKER addressed — record callers assume synchronous completion.** Manager stop/switch/global
+  Stop consume length, persist or clear notes immediately. Contract migrates every caller and
+  carries geometry readiness separately from terminal publication. TRANSPORT/GEOMETRY verifies
+  delayed admission, once-only updates, held notes and no early active-slot move.
+- **BLOCKER addressed — prepared first bar need not be current at stop.** Raw coverage may need
+  final-length normalization or still be building. Contract requires matching generation and
+  normalized geometry, retained source lifetime and onward coverage before deadlines. No stale
+  flag promotion or full-loop launch build. PLAYBACK-COVERAGE holds finalization across wrap.
+- **BLOCKER addressed — delayed record undo pruning could destroy B's history.** Job stores its
+  own baseline/pass and pruning is staged in protected publication; after-snapshot attachment
+  identifies the entry, not the later stack tip. UNDO/STORAGE asserts exact per-interval effects.
+- **TIGHTENING incorporated — same-slot restart and background readers.** Record start currently
+  resets the producer; contract requires gating before mutation and rebinds immutable readers
+  to their owning receipt. MODE-ROTATION and replacement cases cover stale pointers/leases.
+- **TIGHTENING incorporated — claim of boundedness without per-unit evidence.** Full stop scans,
+  normalization, map walks and slot-history pruning cannot be moved wholesale to an idle call.
+  Contract assigns bounded work, with exact counters/byte accounting required in each packet.
+
+Remaining attack surface is covered by explicit cases, not claimed as implemented:
+other tracks and slot changes; concurrent live/frozen roles; record→stop→record and
+OD→stop→OD; transport/clock changes; undo/redo; clear/load/save and persistence in flight;
+long/dense loops and maximum supported working set; RAM1/PSRAM/source lifetime; MIDI starvation;
+display/playback generations; compatibility wrappers and runtime regeneration. No new full
+validate at stop and no second authority for activation or finalization.
+
+**G2 review: PASS WITH TIGHTENING for the contract.** Required tightening is written into the
+contract/tasks: actual per-slice closure, scalar/role byte accounting, production fixtures and
+bounded-grain assertions before behavior edits. No unresolved product alternative remains.
+This is not blanket firmware readiness: each execution packet must prove its own prerequisites;
+resource/readiness/timing failures remain failures and cannot waive the shared-mode acceptance.

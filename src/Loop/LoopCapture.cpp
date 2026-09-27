@@ -1645,7 +1645,7 @@ LOOP_COLD_MEM void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhase
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
   captureHasLastAppendTick_ = false;
-  captureLastAppendTick_ = 0;
+  captureMaximumTick_ = 0;
   captureDedupEventsDropped_ = 0;
   ++captureDisplayRevision;
   if (phase == CapturePhase::Overdub) {
@@ -1667,7 +1667,7 @@ LOOP_COLD_MEM bool Loop::retireCopiedCaptureSourceGrain(bool closeCapture) {
     captureNextEventIndex = 0;
     captureEventsSortDirty = false;
     captureHasLastAppendTick_ = false;
-    captureLastAppendTick_ = 0;
+    captureMaximumTick_ = 0;
   }
   return complete;
 }
@@ -1802,7 +1802,7 @@ LOOP_COLD_MEM void Loop::closeProducerCapturePhase() {
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
   captureHasLastAppendTick_ = false;
-  captureLastAppendTick_ = 0;
+  captureMaximumTick_ = 0;
 }
 
 void Loop::discardCapture() {
@@ -1811,7 +1811,7 @@ void Loop::discardCapture() {
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
   captureHasLastAppendTick_ = false;
-  captureLastAppendTick_ = 0;
+  captureMaximumTick_ = 0;
   capturePreview.clear();
   captureDedupEventsDropped_ = 0;
   clearOverdubSourceView();
@@ -1858,13 +1858,13 @@ CaptureAppendResult Loop::appendCaptureEventWithResult(const MidiEvent& evt) {
     return result;
   }
   if (captureHasLastAppendTick_) {
-    if (evt.tick < captureLastAppendTick_) {
+    if (evt.tick < captureMaximumTick_) {
       captureEventsSortDirty = true;
     }
   } else {
     captureHasLastAppendTick_ = true;
   }
-  captureLastAppendTick_ = evt.tick;
+  captureMaximumTick_ = std::max(captureMaximumTick_, evt.tick);
   // Preview identity must mirror the stored capture event. `toAppend` carries
   // assigned NoteIds for NoteOn/NoteOff; using the raw input event drops that
   // identity and lets same-start siblings collide in tail growth.
@@ -1917,6 +1917,9 @@ bool Loop::removeOpenCaptureNoteOn(uint8_t channel, uint8_t note) {
   SessionMidiEventVec kept;
   kept.reserve(flat.size() - 1);
   bool removed = false;
+  uint32_t maximumTick = 0;
+  uint32_t previousTick = 0;
+  bool sortDirty = false;
   for (const MidiEvent& evt : flat) {
     if (!removed && evt.isNoteOn() && evt.channel == channel &&
         evt.data.noteData.note == note && evt.tick == openTick &&
@@ -1924,6 +1927,9 @@ bool Loop::removeOpenCaptureNoteOn(uint8_t channel, uint8_t note) {
       removed = true;
       continue;
     }
+    if (!kept.empty() && evt.tick < previousTick) sortDirty = true;
+    previousTick = evt.tick;
+    maximumTick = std::max(maximumTick, evt.tick);
     kept.push_back(evt);
   }
   if (!removed) {
@@ -1934,7 +1940,9 @@ bool Loop::removeOpenCaptureNoteOn(uint8_t channel, uint8_t note) {
   if (!kept.empty()) {
     capture.store.loadFromEvents(kept);
   }
-  captureEventsSortDirty = false;
+  captureEventsSortDirty = sortDirty;
+  captureHasLastAppendTick_ = !kept.empty();
+  captureMaximumTick_ = maximumTick;
   rebuildCapturePreviewFromStore(*this);
   ++captureDisplayRevision;
   return true;
@@ -1984,14 +1992,14 @@ bool Loop::ensureCaptureEventsSorted() {
   uint32_t sortedLastTick = 0;
   sortCaptureStoreByTick(capture.store, &sortedLastTick);
   captureHasLastAppendTick_ = !capture.store.empty();
-  captureLastAppendTick_ = sortedLastTick;
+  captureMaximumTick_ = sortedLastTick;
   captureEventsSortDirty = false;
   return true;
 }
 
 void Loop::noteCaptureEventsCanonicalized(uint32_t lastTick) {
   captureHasLastAppendTick_ = !capture.store.empty();
-  captureLastAppendTick_ = captureHasLastAppendTick_ ? lastTick : 0;
+  captureMaximumTick_ = captureHasLastAppendTick_ ? lastTick : 0;
   captureEventsSortDirty = false;
 }
 
@@ -2533,7 +2541,7 @@ void Loop::completePreparedCapturePassAtomic(bool retiresLiveCapture) {
     captureNextEventIndex = 0;
     captureEventsSortDirty = false;
     captureHasLastAppendTick_ = false;
-    captureLastAppendTick_ = 0;
+    captureMaximumTick_ = 0;
   }
   notifyCommittedContentChanged();
 }

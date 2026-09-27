@@ -615,6 +615,7 @@ private:
     Loop* owner = nullptr;
     LoopId loopId = kInvalidLoopId;
     uint8_t slot = 0;
+    CapturePhase mode = CapturePhase::None;
     uint32_t phaseTick = 0;
     uint32_t loopLengthTicks = 0;
     uint64_t interval = 0;
@@ -677,6 +678,7 @@ private:
     PendingStopDestination destination = PendingStopDestination::Playing;
     uint8_t slot = 0;
     uint8_t switchTarget = 0;
+    LoopId loopId = kInvalidLoopId;
     uint64_t interval = 0;
     uint32_t phaseTick = 0;
     /// NO transport epoch (architect decision 2026-09-23). The drive re-derives the destination from
@@ -690,6 +692,7 @@ private:
     uint32_t waitCount = 0;
     /// S4f.2/S2b.6: report the wait once per episode rather than once per deferred turn.
     bool waitReported = false;
+    CapturePhase mode = CapturePhase::None;
     bool isSet() const { return kind != Kind::None; }
     /// A repeat of the same accepted interaction is a no-op (S4f.1). A distinct operation is
     /// not a duplicate merely because the interval matches.
@@ -822,6 +825,8 @@ private:
   /// true once the transaction is back to Idle.
   bool stepProtectedUndoDrain();
   uint64_t captureInterval_ = 0;
+  /// Advance identity only after the capture state transition succeeds.
+  bool beginCaptureInterval(TrackState nextState);
   GlobalUndoStack undoStack;
   UndoLoopGeometry recordCaptureBaselineGeometry_{};
   bool hasRecordCaptureBaselineGeometry_ = false;

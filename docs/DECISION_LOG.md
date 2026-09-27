@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-093](#dec-093--record-and-overdub-share-the-existing-deferred-finalization-lifecycle) | 2026-09-27 | Record and overdub share existing deferred finalization; preserve original overlap acceptance | Accepted implementation contract; firmware/device proof open |
 | [DEC-086](#dec-086--loop-edit-tempo-fader-is-a-global-bpm-control-on-cc102) | 2026-09-25 | Loop-edit fader 4: a global BPM control on ch16 CC102 (60–187 BPM, one BPM per step) | Accepted — implemented, native + device verified |
 | [DEC-091](#dec-091--a-failed-workspace-completion-is-discharged-and-reported-not-retried-at-the-queue-head) | 2026-09-26 | A failed workspace completion is **discharged and reported**, not re-queued at the head (it blocked every other item and kept the owed-save guard true) | Accepted — implemented, native verified (fixture red-proved); device fault path has no injection, evidence owed |
 | [DEC-090](#dec-090--the-deferred-save-records-workspace-focus-at-footer-write-time-not-at-admission) | 2026-09-26 | The deferred save records workspace **focus** at footer-write time; content identity stays the interval's slot (snapshot-at-admission rejected) | Accepted — implemented behavior, **native verified** (`test_storage_drain_restore`, red-proved); no firmware change |
@@ -5264,3 +5265,65 @@ pre-slice build — the discharge helper is `STORAGE_PERSIST_MEM` (FLASH), so th
 for the whole assertion window. The S2b.7 parked-instance drain fixture was re-premised on the drain's
 **ownership transfer** (its progress-counter oracle needed the removed spin) and pins the corrected `Failed`
 verdict. No device evidence: this is an SD fault path and no device fault injection exists for it.
+
+## DEC-093 — Record and overdub share the existing deferred finalization lifecycle
+
+**Date:** 2026-09-27
+**Owner:** Track / existing capture finalization owners
+**Status:** Accepted — implementation contract requested by the user; firmware/device proof open.
+
+### Problem
+
+The runtime proposal, accepted-interaction spec and design Revision 23 item 6 already require
+record A to finalize while a successor captures. Detailed implementation remained overdub-specific:
+record seals/publishes inline, lacks common interval advancement and does not populate overdub's
+reservation staging. Splitting the HITL oracle would accommodate an implementation omission.
+
+### Decision
+
+Retain the original requirement. Extend the existing Track-owned latch/job/worker and
+publication/retirement lifecycle to record and overdub, with mode-specific source/geometry/undo
+preparation. First-bar readiness enables playback before finalization but must be generation/
+geometry correct, and later coverage must meet playback deadlines. The concrete contract and
+verification matrix live in the linked runtime OpenSpec; no separate finalizer or weaker record
+overlap criterion is introduced.
+
+### Rationale
+
+The user asks for identical deferred lifecycle and continuous playback. Existing raw-range
+receipts, prepared first bar, job-owned passes and protected undo publication provide extension
+points, but require explicit record adapters and conversion of synchronous caller assumptions.
+This resolves the temporary separate-oracle question without changing the original product intent.
+
+### Alternatives considered
+
+- Weaker record oracle: rejects the existing mixed record-A → overdub-B acceptance intent.
+- Call overdub stop unchanged: record staging/interval/undo preconditions do not match.
+- Separate record finalizer: duplicates capacity, ownership and accepted-interaction mechanisms.
+- Copy whole record into overdub staging: adds content-size work/residency and risks narrowing
+  the already-supported record input envelope.
+
+### Affected modules
+
+Track capture input/stop/lifecycle/maintenance; existing prepared stop commit and playback views;
+Loop capture preparation; TrackUndo/protected publication; manager stop/switch/global-Stop callers;
+persistence and snapshot consumers; native and response-driven HITL fixtures.
+
+### Constraints created
+
+Preserve DEC-078 — accepted interactions and current role cardinalities; no full input-edge
+scan, new undo kind, storage schema, Manager or second activation authority. Record/overdub
+mode matrix and mixed hardware sequence must pass; memory/readiness/timing failures are not
+exemptions. The contract's per-slice fixture/bounds gates precede firmware behavior changes.
+
+### Related OpenSpec
+
+[Shared capture finalization contract](../openspec/changes/runtime-working-set-ownership/SHARED-CAPTURE-FINALIZATION.md),
+runtime design Revision 25 and S4f.15–S4f.22; `response-driven-hitl-acceptance` remains the harness dependency.
+
+### Migration notes
+
+Documentation only this turn. Existing synchronous record entry points become wrappers into the
+common lifecycle once the staged implementation is verified; compatibility names cannot conceal
+mode-specific bypasses. Existing native input/corpus fixtures remain valid. No firmware or device
+acceptance is implied, and no data operation is authorized by this record.

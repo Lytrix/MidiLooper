@@ -1,5 +1,17 @@
 # Current work (implementation scope)
 
+**2026-09-27 — connected S4f.17–S4f.21 implementation in progress; identity/length prerequisites verified.**
+Record and overdub starts now share interval stamping; invalid Record starts reject before
+slot reset. Accepted stops bind LoopId and Capture mode and supersede changed identities.
+Record-length calculation uses a maintained maximum tick, reusing the existing Loop scalar.
+Production fixtures cover duplicate/invalid starts, pool-denied preflight/recovery, stale
+LoopId/mode, and out-of-order/removal length cases. Record stop still publishes inline;
+bounded source preparation, first-bar/onward handoff, publication/undo and caller migration
+remain open. Full native: **2,497 passed / 7 skipped**; focused: **11/11**.
+Capture-serial build passed, RAM1 padding **840 bytes**. Strict contract retains four
+expected implementation-gap failures. No task completion or device acceptance claimed.
+[Connected execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F17-EXECUTION.md).
+
 **2026-09-27 — S4f.3's no-concession device gate CLOSED: `RETENTION_PASS`, exit 0, zero concessions.** The
 re-run the first campaign called for, on the same authorized targets (**track 8, A=4, B=5, C=8**) with both
 fixes in the flashed image (`675a115a`), identity `git_commit 675a115a8225` / `firmware_hex_sha256
@@ -3266,6 +3278,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ---
 
 ## Now implementing
+
+### S4f.17–S4f.21 — connected shared capture finalization (authorized; 2026-09-27)
+
+User-requested firmware contract is recorded in the existing runtime OpenSpec:
+[shared capture finalization](../../openspec/changes/runtime-working-set-ownership/SHARED-CAPTURE-FINALIZATION.md).
+S4f.15 — contract and S4f.16 — production finalization fixtures are complete.
+S4f.17–S4f.22 remain open. Next extend the existing interval/latch/job admission to both
+modes against the linked fixtures; retain the strict deferred-ownership oracle. No weaker record
+oracle is authorized. Response-driven HITL tasks remain the automation dependency.
 
 ### Continuation after recovery (2026-09-26)
 

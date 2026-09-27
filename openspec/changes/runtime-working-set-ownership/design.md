@@ -1305,3 +1305,25 @@ this change. The blocking-SPI diagnostic currently updates the panel; it does no
 waive visual/timing acceptance. Preserve transport identity in device evidence and
 keep the default-DMA versus installed-blocking distinction explicit. Details and
 next work: [NEXT-STEPS.md](NEXT-STEPS.md).
+
+## Revision 25 — shared record/overdub deferred finalization (2026-09-27)
+
+The original intent already covers both capture modes: the proposal's live-capture role,
+accepted-interaction spec and Revision 23 item 6 require record A to finalize while a
+successor captures. Implementation remained overdub-specific. Inline record publication
+is an implementation gap, not authority to weaken the record acceptance leg.
+
+[Shared capture finalization — firmware implementation contract](SHARED-CAPTURE-FINALIZATION.md)
+is the targeted executable extension of S4f: common Track-owned interval identity/latch/job,
+bounded worker and publication/retirement; mode-specific input source preparation, record
+length/first-bar coverage and record undo. It explicitly covers all record-stop callers,
+manager geometry/persistence assumptions, protected undo pruning, snapshot/display borrowers,
+transport retargeting, record↔overdub transitions and resource bounds. No second finalizer,
+new undo kind, storage format or whole-take staging copy is authorized.
+
+DEC-093 — shared capture finalization records the correction. S4f.15–S4f.22 implement and
+verify it before S4f.13 — accepted-sequence acceptance can close. The response-driven HITL
+sibling keeps the overlap oracle for both modes and adds the existing mixed record-A →
+overdub-B shape. This revision supersedes the temporary proposal to separate weaker oracles.
+Production fixtures and identity/length prerequisites are verified; shared deferred record
+finalization and device proof remain open. See [execution evidence](S4F17-EXECUTION.md).

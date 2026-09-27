@@ -701,3 +701,47 @@ retain the existing fresh/legacy boot policy.
 #### Scenario: Healthy second boot
 - **WHEN** the repaired runtime bundle is valid on the next boot
 - **THEN** the normal load path retains its settings without reconstructing metadata
+
+### Requirement: Record and overdub share deferred capture finalization
+
+Record and overdub SHALL use the same accepted-interaction and deferred-finalization lifecycle.
+Both SHALL allow a live successor alongside an admitted predecessor and accept the successor's
+stop while shared resources are occupied. Record SHALL NOT satisfy this requirement through
+synchronous full-take publication or a weaker acceptance oracle. Mode-specific record geometry,
+record-pass undo and overdub-session undo semantics SHALL be preserved.
+
+#### Scenario: Record predecessor with a live successor
+- **WHEN** a record interval A stops and a provisioned successor B starts while A finalizes
+- **THEN** A's captured content remains owned by A's identified job, independently of B's live input
+- **AND** B's single stop is accepted while A owns the required shared capacity and executes once
+  that capacity becomes available
+- **AND** transport and sounding playback continue without a second press
+
+#### Scenario: All capture-mode transitions use the same lifecycle
+- **WHEN** record-to-record, record-to-overdub, overdub-to-record or overdub-to-overdub transitions occur
+- **THEN** each interval has a distinct identity and follows acceptance, admission, bounded preparation,
+  exactly-once publication and retirement under the existing capacity model
+- **AND** no second finalizer or queue of stopped captures is introduced
+
+#### Scenario: Prepared first bar survives deferred record publication
+- **WHEN** record-stop launches playback before canonical finalization finishes
+- **THEN** its prepared first-bar view matches the frozen interval's final length and normalized content
+- **AND** later playback coverage is supplied before its deadlines from valid owned sources
+- **AND** stale generations, held-note closure, short takes and wrap boundaries cause no missing or duplicate notes
+
+#### Scenario: A record stop waits for resources
+- **WHEN** record-stop cannot bind because finalization capacity or valid playback preparation is unavailable
+- **THEN** the accepted obligation and its live capture remain authoritative until the earliest valid execution boundary
+- **AND** no partial freeze, synchronous full-stop fallback, input loss or misleading completed switch occurs
+- **AND** execution deadlines remain binding and missed budgets are reported as failures
+
+#### Scenario: Record publication retains record semantics
+- **WHEN** a deferred record job publishes after selection or active capture changed
+- **THEN** the record pass, record undo with its geometry and matching source handoff become visible consistently
+- **AND** persistence and deferred snapshot attachment use that job's committed identity
+- **AND** geometry updates and resource release occur once without altering the successor's interval
+
+#### Scenario: Transport stops during either finalizer
+- **WHEN** global transport Stop arrives during record or overdub finalization
+- **THEN** the existing job retargets to Stopped without losing captured notes, replaying publication or releasing live readers
+- **AND** pending starts are superseded according to the existing accepted-interaction rules

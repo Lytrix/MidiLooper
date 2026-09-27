@@ -371,6 +371,8 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::collectOverlapHoldPlaybackN
 }
 
 void Track::startRecording(uint32_t currentTick) {
+  // A repeated/ineligible start must not reset a live capture before setState rejects it.
+  if (!isValidStateTransition(TRACK_RECORDING)) return;
   // Capture admission, and it sits before every mutation on purpose - including the
   // take reset below, which clears the slot's passes. The required reserves do not
   // depend on the new take's timeline (only their generation stamp does, which the
@@ -432,7 +434,7 @@ void Track::startRecording(uint32_t currentTick) {
                  runtime->firstRecordingBarDenialLabel());
     }
   }
-  if (!setState(TRACK_RECORDING)) {
+  if (!beginCaptureInterval(TRACK_RECORDING)) {
     armedPreRollNotes = std::move(preRoll);
     return;
   }

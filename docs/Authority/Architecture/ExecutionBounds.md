@@ -1285,3 +1285,15 @@ refs).
 `MemoryMonitor::emitStoppedHeapStats` is a synchronous, explicit session-capture diagnostic (DEC-084 — explicit stopped heap inspection), never a scheduled runtime/admission operation. The serial entry rejects transport, external clock, active track/capture/stop work and deferred save/load/prewarm before inspecting allocator state. Internal traversal caps at 4096 nodes; external traversal is bounded by pool size / 12 header positions (plus allocator trailer validation). It can block main-loop service: the host must keep MIDI clock/transport quiet throughout. Completeness and elapsed microseconds are returned; no allocation probes or metadata mutations occur.
 
 The diagnostic clock guard also requires one second without a received MIDI clock pulse, tracked before ClockManager’s stopped-transport early return. This capture-only timestamp bookkeeping performs no allocation or heap inspection. Diagnostic timestamps are initialized during ClockManager setup.
+
+### Shared capture identity and record-length prerequisites (2026-09-27)
+
+`Track::beginCaptureInterval` adds one scalar identity increment after the existing successful
+state transition. Record eligibility is checked before destructive preparation. Accepted-stop
+identity validation adds fixed slot/LoopId/mode checks, with no allocation on stale/unallocated
+owners. These added units are structurally bounded; they do not reclassify all start admission.
+`Loop::captureMaximumTick` is a scalar read plus the store's constant-time empty check; accepted
+append maintains the maximum with one comparison, reusing the former append-order field.
+`prepareRecordStop` uses it for Record length calculation. Remaining record normalization,
+closure, validation and publication work retains its existing bound classification until the
+connected S4f.18–S4f.21 changes are verified. No claim that the full record-stop edge is bounded.
