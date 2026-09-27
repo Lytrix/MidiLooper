@@ -7,6 +7,12 @@
 #endif
 
 struct TrackCaptureStopTestAccess {
+  static size_t heldCount(const Track& t) { return t.pendingNotes.size(); }
+  static NoteId recordIdentity(const Track& t, uint8_t channel, uint8_t note) {
+    const auto found = t.pendingNotes.find({note, channel});
+    return found == t.pendingNotes.end() ? kInvalidNoteId : found->second.recordNoteId;
+  }
+
   static uint64_t interval(const Track& t) { return t.captureInterval_; }
   static size_t jobs(const Track& t) { return t.captureStopQueueDepth(); }
   static void step(Track& t) {
@@ -396,8 +402,134 @@ void test_deferred_publication_requests_own_slot_once() { deferredPersistence(fa
 void test_stopped_publication_requests_own_slot_once() { deferredPersistence(true, false, false); }
 void test_superseded_publication_requests_own_slot_once() { deferredPersistence(false, true, false); }
 void test_stale_publication_waits_before_persistence() { deferredPersistence(false, false, true); }
+void test_record_closures_keep_identity_after_raw_source_freezes() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  t.noteOn(2, 60, 90, 120);
+  Loop& loop = t.getLoop(0);
+  const NoteId physicalId = loop.capture.store.at(0).noteId;
+  const NoteId stopId = loop.capture.store.at(1).noteId;
+  TEST_ASSERT_NOT_EQUAL(physicalId, stopId);
+  t.noteOn(1, 60, 80, 130); // rejected duplicate must not replace the receipt
+  TEST_ASSERT_EQUAL(2, loop.capture.store.size());
+  LoopEventStore::CaptureRange frozen;
+  TEST_ASSERT_TRUE(frozen.reserveTail());
+  TEST_ASSERT_TRUE(loop.capture.store.sealCaptureRange(frozen));
+  // Another producer row cannot supply the frozen interval's closure identity.
+  MidiEvent other = MidiEvent::NoteOn(30, 1, 60, 70);
+  other.noteId = loop.allocateNoteId();
+  TEST_ASSERT_TRUE(loop.capture.store.append(other));
+  t.noteOff(1, 60, 0, 180);
+  TEST_ASSERT_EQUAL(physicalId, loop.capture.store.at(1).noteId);
+  loop.loopLengthTicks = 192;
+  t.finalizePendingNotes(400);
+  TEST_ASSERT_EQUAL(3, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(stopId, loop.capture.store.at(2).noteId);
+  TEST_ASSERT_EQUAL(191, loop.capture.store.at(2).tick);
+  TEST_ASSERT_EQUAL(2, loop.capture.store.at(2).channel);
+  TEST_ASSERT_EQUAL(2, frozen.size());
+  MidiEvent original; bool end = false;
+  TEST_ASSERT_TRUE(frozen.read(frozen.generation(), 0, 0, original, end));
+  TEST_ASSERT_EQUAL(physicalId, original.noteId);
+}
+
+void test_record_stop_commits_exact_held_note_closures() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  t.noteOn(2, 61, 90, 300);
+  Loop& loop = t.getLoop(0);
+  const NoteId first = loop.capture.store.at(0).noteId;
+  const NoteId second = loop.capture.store.at(1).noteId;
+  t.stopRecordingToStopped(868);
+  TEST_ASSERT_EQUAL(768, loop.loopLengthTicks);
+  TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::heldCount(t));
+  SessionMidiEventVec rows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds, rows);
+  // The existing stopped-record transition projects this boundary to phase zero;
+  // full stop normalization adds invalid-ID terminal Offs at length-1. Preserve
+  // that current six-row content here; this slice changes identity lookup only.
+  TEST_ASSERT_EQUAL(6, rows.size());
+  unsigned ons[2] = {}, offs[2] = {};
+  for (const auto& row : rows) {
+    TEST_ASSERT_TRUE(row.channel == 1 || row.channel == 2);
+    const unsigned channel = row.channel - 1;
+    TEST_ASSERT_EQUAL(channel == 0 ? 60 : 61, row.data.noteData.note);
+    if (row.isNoteOn()) {
+      ++ons[channel];
+      TEST_ASSERT_EQUAL(channel == 0 ? 12 : 200, row.tick);
+      TEST_ASSERT_EQUAL(channel == 0 ? first : second, row.noteId);
+    } else {
+      TEST_ASSERT_TRUE(row.isNoteOff());
+      ++offs[channel];
+      TEST_ASSERT_TRUE(row.tick == 0 || row.tick == 767);
+      TEST_ASSERT_EQUAL(row.tick == 767 ? kInvalidNoteId : (channel == 0 ? first : second), row.noteId);
+    }
+  }
+  TEST_ASSERT_EQUAL(1, ons[0]); TEST_ASSERT_EQUAL(1, ons[1]);
+  TEST_ASSERT_EQUAL(2, offs[0]); TEST_ASSERT_EQUAL(2, offs[1]);
+}
+
+void test_record_identity_requires_accepted_input_and_handles_preroll() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  TEST_ASSERT_TRUE(t.setState(TRACK_ARMED));
+  t.noteOn(1, 60, 100, 12);
+  t.startRecording(100);
+  Loop& loop = t.getLoop(0);
+  TEST_ASSERT_EQUAL(1, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(0, loop.capture.store.at(0).tick);
+  TEST_ASSERT_EQUAL(loop.capture.store.at(0).noteId,
+      TrackCaptureStopTestAccess::recordIdentity(t, 1, 60));
+  const NoteId first = loop.capture.store.at(0).noteId;
+  // Existing phase-denial seam: rejected input must not leave a closure receipt.
+  loop.capture.phase = CapturePhase::None;
+  t.noteOn(1, 62, 100, 120);
+  TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::heldCount(t));
+  TEST_ASSERT_EQUAL(kInvalidNoteId, TrackCaptureStopTestAccess::recordIdentity(t, 1, 62));
+  loop.capture.phase = CapturePhase::Record;
+  t.noteOn(1, 62, 100, 130);
+  const NoteId retried = loop.capture.store.at(1).noteId;
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, retried);
+  TEST_ASSERT_NOT_EQUAL(first, retried);
+  TEST_ASSERT_EQUAL(retried, TrackCaptureStopTestAccess::recordIdentity(t, 1, 62));
+  t.noteOff(1, 62, 0, 160);
+  TEST_ASSERT_EQUAL(retried, loop.capture.store.at(2).noteId);
+  TEST_ASSERT_EQUAL(kInvalidNoteId, TrackCaptureStopTestAccess::recordIdentity(t, 1, 62));
+  printf("PendingNote bytes=%zu recordId offset=%zu\n", sizeof(PendingNote), offsetof(PendingNote, recordNoteId));
+}
+
+void test_record_stop_closure_does_not_search_reused_producer() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  Loop& loop = t.getLoop(0);
+  const NoteId identity = loop.capture.store.at(0).noteId;
+  LoopEventStore::CaptureRange frozen;
+  TEST_ASSERT_TRUE(frozen.reserveTail());
+  TEST_ASSERT_TRUE(loop.capture.store.sealCaptureRange(frozen));
+  MidiEvent unrelated = MidiEvent::NoteOn(40, 1, 60, 90);
+  unrelated.noteId = loop.allocateNoteId();
+  TEST_ASSERT_TRUE(loop.capture.store.append(unrelated));
+  loop.loopLengthTicks = 192;
+  t.finalizePendingNotes(400);
+  TEST_ASSERT_EQUAL(2, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(identity, loop.capture.store.at(1).noteId);
+  TEST_ASSERT_EQUAL(191, loop.capture.store.at(1).tick);
+  TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::heldCount(t));
+  TEST_ASSERT_EQUAL(1, frozen.size());
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_record_stop_closure_does_not_search_reused_producer);
+  RUN_TEST(test_record_stop_commits_exact_held_note_closures);
+  RUN_TEST(test_record_identity_requires_accepted_input_and_handles_preroll);
+  RUN_TEST(test_record_closures_keep_identity_after_raw_source_freezes);
   RUN_TEST(test_deferred_publication_requests_own_slot_once);
   RUN_TEST(test_stopped_publication_requests_own_slot_once);
   RUN_TEST(test_superseded_publication_requests_own_slot_once);

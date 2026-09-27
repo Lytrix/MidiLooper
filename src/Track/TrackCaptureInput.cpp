@@ -561,7 +561,11 @@ TRACK_CAPTURE_ADMISSION_MEM bool Track::appendCaptureNoteOffAtPhase(
   // the admitted job's sealed extent when one is bound, otherwise the producer.
   // A capture that has been sealed no longer has producer rows to scan.
   NoteId closedNoteId = kInvalidNoteId;
-  if (loop.findLastCaptureNoteOnIdentity(channel, note, closedNoteId)) {
+  const auto held = pendingNotes.find({note, channel});
+  if (loop.capture.phase == CapturePhase::Record && held != pendingNotes.end()) {
+    if (held->second.recordNoteId == kInvalidNoteId) return false;
+    newEvt.noteId = held->second.recordNoteId;
+  } else if (loop.findLastCaptureNoteOnIdentity(channel, note, closedNoteId)) {
     newEvt.noteId = closedNoteId;
   }
   CaptureAdmissionStaging* staging = nullptr;
@@ -770,7 +774,12 @@ TRACK_CAPTURE_ADMISSION_MEM __attribute__((noinline)) bool Track::recordMidiEven
 
     if (!eventAdded) return false;
 
-    if (type == midi::NoteOff) {
+    const auto heldRecord = type == midi::NoteOff && loop.capture.phase == CapturePhase::Record
+        ? pendingNotes.find({data1, channel}) : pendingNotes.end();
+    if (heldRecord != pendingNotes.end()) {
+      if (heldRecord->second.recordNoteId == kInvalidNoteId) return false;
+      newEvt.noteId = heldRecord->second.recordNoteId;
+    } else if (type == midi::NoteOff) {
       const LoopEventStore& capture = loop.capture.store;
       for (size_t i = capture.size(); i > 0; --i) {
         const MidiEvent& prior = capture.at(i - 1);
@@ -874,6 +883,11 @@ TRACK_CAPTURE_ADMISSION_MEM __attribute__((noinline)) bool Track::recordMidiEven
       logCaptureAppendDeny(loop, appendResult, channel, data1, newEvt.tick);
 #endif
       return false;
+    }
+
+    if (type == midi::NoteOn && loop.capture.phase == CapturePhase::Record) {
+      const auto held = pendingNotes.find({data1, channel});
+      if (held != pendingNotes.end()) held->second.recordNoteId = newEvt.noteId;
     }
 
     bool retainStagedPair = true;

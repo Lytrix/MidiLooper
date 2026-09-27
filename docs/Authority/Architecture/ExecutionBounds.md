@@ -1321,3 +1321,17 @@ Total window scanning is still linear in source extent. This consumer does not p
 playback deadlines or make the current inline record-stop edge bounded. Held-note closure,
 pass preparation and record admission integration remain open. Evidence:
 [source execution packet](../../../openspec/changes/runtime-working-set-ownership/S4F18-SOURCE-EXECUTION.md).
+
+
+### Record held-note identity receipt (2026-09-27)
+
+Accepted Record NoteOn input stamps `PendingNote::recordNoteId`. A physical or
+synthetic Off with a pending Record key uses that scalar rather than walking raw
+capture rows to discover an identity. Lookup uses the existing channel/pitch map,
+whose domain is MIDI key/channel identities, independent of take length. No new
+allocation or source scan is introduced by the receipt. ARM PendingNote grows
+from 1,052 to 1,056 bytes per existing held-note node; Track/job descriptors and
+static RAM are unchanged. The host layout uses existing padding (1,072 bytes).
+This does not reclassify append/dedup/preview work or the rest of finalization;
+raw-event callers without a pending key and overdub retain existing resolution.
+Evidence: [closure execution packet](../../../openspec/changes/runtime-working-set-ownership/S4F18-CLOSURE-EXECUTION.md).

@@ -201,7 +201,18 @@ NoteOn@tailTick   (e.g. 1920)
 NoteOff@headTick  (e.g. 55)   ← head < tail in linear loop-relative space
 ```
 
-Tests: `test/test_capture_note_off_rules/`, `test/test_noteutils_reconstruct/`.
+Record held-note identity is retained in `PendingNote::recordNoteId` only after the
+NoteOn is accepted by canonical capture. Physical Record Offs and stop closure use
+that channel/pitch-keyed receipt, so transferring raw chunks cannot make them select
+a later producer's NoteOn. An invalid receipt on an existing pending Record key
+rejects closure; raw-event callers without a pending key retain their existing lookup.
+Overdub wrap still uses its staging reservation and existing identity resolution.
+The map can transfer the receipt with the interval; this does not yet enable deferred
+Record closure/output or change stop coordinates, minimum-length rules or validation.
+
+Tests: `test/test_capture_note_off_rules/`, `test/test_noteutils_reconstruct/`,
+`test/test_shared_capture_finalization/` (frozen-source physical/stop closure,
+normal-stop content, pre-roll and rejected-input recovery).
 
 ---
 

@@ -3309,6 +3309,13 @@ RAM1 padding **840 bytes**. No admission switch or task checkoff. Next complete 
 held-note/record-pass preparation and integrate the generation-correct playback handoff.
 [Consumer evidence and remaining gates](../../openspec/changes/runtime-working-set-ownership/S4F18-SOURCE-EXECUTION.md).
 
+The Record held-note identity prerequisite is now verified: accepted input stamps the existing
+pending-note entry, and physical/stop Offs preserve that identity after raw ownership moves.
+Full native **2,508 passed / 7 skipped**, focused **19/19**, capture-serial build passes with
+RAM1 padding **840 bytes**. S4f.18 — bounded record preparation remains open for job-owned
+closure output, full normalization and pass construction; Record still finalizes inline.
+[Closure receipt evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-CLOSURE-EXECUTION.md).
+
 ### Continuation after recovery (2026-09-26)
 
 DMA fault investigation/repair is parked until after the whole active OpenSpec by
