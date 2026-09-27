@@ -232,8 +232,12 @@ uint8_t TrackManager::getPlayingSlotIndex(uint8_t) const { return 0; }
 uint8_t TrackManager::getPreviewSlotIndex(uint8_t) const { return 0; }
 uint8_t TrackManager::getPendingSlotIndex(uint8_t) const { return Config::INVALID_LOOP_SLOT; }
 bool TrackManager::hasPendingSlotSwitch(uint8_t) const { return false; }
+#if defined(HARNESS_REAL_PLAYBACK_HOT_PATH)
+#include "../../src/Track/TrackPlaybackHotPath.cpp"
+#else
 void Track::reanchorPlaybackProjection(uint32_t, bool) { A34A_OFF_PATH(); }
 void Track::sendAllNotesOff() { ++g_nativeSilenceTrackCalls; }
+#endif
 #if !defined(HARNESS_REAL_CAPTURE_STOP)
 void Track::stopRecording(uint32_t) { A34A_OFF_PATH(); }
 void Track::stopRecordingToStopped(uint32_t) { A34A_OFF_PATH(); }

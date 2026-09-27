@@ -1,5 +1,17 @@
 # Current work (implementation scope)
 
+**2026-09-28 — S4f.18 — Record normalization oracle verified.**
+Five real-stop fixtures pin overflow NoteOn projection, tail repair, minimum-length
+policy, filtered-empty geometry and all 2,056 rows of a Record take beyond overdub
+staging. Playing and stopped destinations produce the same expected inventory.
+The shared suite now links real playback reanchoring and ledger clearing through
+an independent harness opt-in; other suites retain their existing boundaries.
+Focused **29/29**; four policy/capacity mutations are rejected; full native
+**2,518 passed / 7 skipped**. No production firmware changed, build/upload or
+hardware timing claim. Bounded normalization/pass construction and connected
+admission/playback integration remain open; no parent task checkoff.
+[Normalization evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-NORMALIZATION-EXECUTION.md).
+
 **2026-09-28 — S4f.18 — job-owned Record closure output verified.**
 A bounded consumer appends one held-note Off per grain to reserved canonical output,
 using the job's saved NoteId and geometry. It preserves a live successor, retains
@@ -3334,6 +3346,13 @@ successor capture, and owner/generation-qualified retry. Full native **2,513 pas
 runtime grows by eight extmem bytes for the output receipt. Record normalization,
 pass construction and production integration remain open; no admission switch.
 [Output consumer evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-OUTPUT-EXECUTION.md).
+
+Normalization's real-stop content oracle now covers both destinations, overflow,
+minimum-length policy and a 2,056-row take beyond overdub staging. **29/29** focused,
+**2,518 passed / 7 skipped** full native; four mutations fail. Production bounded
+normalization/pass construction remain the next implementation work. No firmware
+behavior changed or task closed by this fixture checkpoint.
+[Normalization evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-NORMALIZATION-EXECUTION.md).
 
 ### Continuation after recovery (2026-09-26)
 

@@ -1,4 +1,5 @@
 // S4f.16: actual stop/worker/undo/storage owners; no copied stop implementation.
+#define HARNESS_REAL_PLAYBACK_HOT_PATH
 #define HARNESS_REAL_CAPTURE_STOP
 #include "../test_support/capture_storage_harness.inc"
 #include <cstdlib>
@@ -107,6 +108,8 @@ struct TrackCaptureStopTestAccess {
 void TrackManager::beginSlotSelectionHold(uint8_t, uint8_t) { A34A_OFF_PATH(); }
 void TrackManager::endSlotSelectionHold(uint8_t, uint8_t, uint32_t) { A34A_OFF_PATH(); }
 void setUp() {
+  noteMinLengthTicks = Config::DEFAULT_NOTE_MIN_LENGTH_TICKS;
+  noteMinLengthRemoveEnabled = Config::DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED;
   PersistenceWorkQueue::resetForTests();
   StorageManagerInternal::storageSession.currentWorkspaceSave.pending = false;
   StorageManagerInternal::storageSession.currentWorkspaceSave.urgentRequested = false;
@@ -708,8 +711,113 @@ void test_record_job_without_held_notes_emits_no_closures() {
   TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, TrackCaptureStopTestAccess::closureGrain(t));
 }
 
+// Independent inventories for the deferred Record normalizer migration. These
+// call the real stop entry points; they do not copy normalization into a fixture.
+void assertRecordRows(const Loop& loop, const SessionMidiEventVec& expected) {
+  SessionMidiEventVec rows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds, rows);
+  TEST_ASSERT_EQUAL(expected.size(), rows.size());
+  for (const auto& want : expected) {
+    size_t matches = 0;
+    for (const auto& actual : rows) {
+      const bool payload = want.type == midi::ControlChange
+          ? actual.data.ccData.cc == want.data.ccData.cc && actual.data.ccData.value == want.data.ccData.value
+          : actual.data.noteData.note == want.data.noteData.note && actual.data.noteData.velocity == want.data.noteData.velocity;
+      if (actual.type == want.type && actual.tick == want.tick &&
+          actual.channel == want.channel && actual.noteId == want.noteId && payload) ++matches;
+    }
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(1, matches, "record normalization inventory mismatch");
+  }
+}
+
+void recordNormalizationInventory(bool playing, bool removeShort) {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  noteMinLengthTicks = 48; noteMinLengthRemoveEnabled = removeShort;
+  constexpr uint32_t origin = 768;
+  t.startRecording(origin);
+  Loop& loop = t.getLoop(0);
+  SessionMidiEventVec expected;
+  auto pair = [&](uint8_t channel, uint8_t note, uint32_t on, uint32_t off,
+                  uint32_t expectedOn, uint32_t expectedOff, bool synthetic, bool keep) {
+    t.noteOn(channel, note, 100, origin + on);
+    const NoteId id = TrackCaptureStopTestAccess::recordIdentity(t, channel, note);
+    TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, id);
+    t.noteOff(channel, note, 0, origin + off);
+    if (!keep) return;
+    auto a = MidiEvent::NoteOn(expectedOn, channel, note, 100); a.noteId = id;
+    auto b = MidiEvent::NoteOff(expectedOff, channel, note, 0); b.noteId = synthetic ? kInvalidNoteId : id;
+    expected.push_back(a); expected.push_back(b);
+  };
+  pair(1, 60, 780, 820, 12, 132, true, true);
+  pair(2, 61, 700, 800, 700, 767, true, true);
+  pair(3, 62, 50, 70, 50, 70, false, !removeShort);
+  pair(4, 63, 100, 148, 100, 148, false, true);
+  const auto cc = MidiEvent::ControlChange(30, 1, 7, 91);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(cc)); expected.push_back(cc);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(780, 1, 7, 19)));
+  TEST_ASSERT_EQUAL(10, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::heldCount(t));
+  clockManager.assignCurrentTickSilently(origin + 900);
+  if (playing) t.stopRecording(origin + 900); else t.stopRecordingToStopped(origin + 900);
+  TEST_ASSERT_EQUAL(768, loop.loopLengthTicks);
+  TEST_ASSERT_TRUE(loop.passes.hasRecordPass());
+  TEST_ASSERT_EQUAL(0, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL(playing ? TRACK_PLAYING : TRACK_STOPPED, t.getState());
+  assertRecordRows(loop, expected);
+}
+void test_record_normalization_stopped_inventory() { recordNormalizationInventory(false, true); }
+void test_record_normalization_playing_inventory() { recordNormalizationInventory(true, true); }
+void test_record_normalization_disabled_minimum_inventory() { recordNormalizationInventory(false, false); }
+
+void test_record_normalization_preserves_take_larger_than_overdub_staging() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false); t.startRecording(768);
+  noteMinLengthRemoveEnabled = false;
+  constexpr size_t pairs = RuntimePlaybackViewConfig::kCaptureStagingEvents / 2 + 4;
+  static_assert(pairs * 2 > RuntimePlaybackViewConfig::kCaptureStagingEvents, "cross staging envelope");
+  SessionMidiEventVec expected;
+  for (size_t i = 0; i < pairs; ++i) {
+    const uint32_t on = static_cast<uint32_t>(i * 48 + 12);
+    const auto channel = static_cast<uint8_t>(1 + (i / 128) % 16);
+    const auto note = static_cast<uint8_t>(i % 128);
+    t.noteOn(channel, note, 100, 768 + on);
+    const NoteId id = TrackCaptureStopTestAccess::recordIdentity(t, channel, note);
+    TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, id);
+    t.noteOff(channel, note, 0, 768 + on + 24);
+    auto a = MidiEvent::NoteOn(on, channel, note, 100); a.noteId = id;
+    auto b = MidiEvent::NoteOff(on + 24, channel, note, 0); b.noteId = id;
+    expected.push_back(a); expected.push_back(b);
+  }
+  TEST_ASSERT_EQUAL(pairs * 2, t.getLoop(0).capture.store.size());
+  const uint32_t length = static_cast<uint32_t>(((pairs * 48 + 767) / 768) * 768);
+  clockManager.assignCurrentTickSilently(768 + length);
+  t.stopRecordingToStopped(768 + length);
+  TEST_ASSERT_EQUAL(length, t.getLoop(0).loopLengthTicks);
+  assertRecordRows(t.getLoop(0), expected);
+}
+
+void test_record_normalization_filtered_empty_resets_geometry() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false); t.startRecording(768);
+  noteMinLengthTicks = 48; noteMinLengthRemoveEnabled = true;
+  t.noteOn(1, 60, 100, 780); t.noteOff(1, 60, 0, 800);
+  TEST_ASSERT_EQUAL(2, t.getLoop(0).capture.store.size());
+  clockManager.assignCurrentTickSilently(1536);
+  t.stopRecordingToStopped(1536);
+  TEST_ASSERT_FALSE(t.getLoop(0).passes.hasRecordPass());
+  TEST_ASSERT_EQUAL(0, t.getLoop(0).loopLengthTicks);
+  TEST_ASSERT_EQUAL(0, t.getLoop(0).capture.store.size());
+  TEST_ASSERT_EQUAL(TRACK_EMPTY, t.getState());
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_record_normalization_stopped_inventory);
+  RUN_TEST(test_record_normalization_playing_inventory);
+  RUN_TEST(test_record_normalization_disabled_minimum_inventory);
+  RUN_TEST(test_record_normalization_preserves_take_larger_than_overdub_staging);
+  RUN_TEST(test_record_normalization_filtered_empty_resets_geometry);
   RUN_TEST(test_record_job_closure_rejects_reused_raw_and_replaced_output);
   RUN_TEST(test_record_job_closures_exceed_overdub_hold_limit_without_staging);
   RUN_TEST(test_record_job_without_held_notes_emits_no_closures);
