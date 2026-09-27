@@ -398,7 +398,7 @@ LOOP_COLD_MEM bool Loop::commitPreparedCaptureAndCompanionsAtomic(
     captureNextEventIndex = 0;
     captureEventsSortDirty = false;
     captureHasLastAppendTick_ = false;
-    captureLastAppendTick_ = 0;
+    captureMaximumTick_ = 0;
   }
   visualCacheDirty = true;
   invalidatePlaybackCaches();

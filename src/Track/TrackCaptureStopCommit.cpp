@@ -354,7 +354,10 @@ uint32_t Track::prepareRecordStop(uint32_t currentTick, const char* guardLabel) 
                    static_cast<unsigned long>(currentTick),
                    static_cast<unsigned long>(loop.startLoopTick));
   }
-  const uint32_t lastEventTick = findLastEventTick();
+  // First-record input maintains its maximum as rows are accepted. Do not materialize
+  // the growing take just to compute one scalar on the stop edge.
+  const uint32_t lastEventTick = loop.capture.phase == CapturePhase::Record
+                                     ? loop.captureMaximumTick() : findLastEventTick();
   loop.loopLengthTicks = computeRecordStopLengthTicks(rawLength, lastEventTick);
 
   if (loop.loopLengthTicks > 0) {

@@ -2249,7 +2249,89 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       mitigation review shows the budget cannot be met by scheduling, prewarm or windowing.** Rules when taken: it
       presents an *accepted* action (never a denial, never a cue to press again) and never justifies a widened
       budget. Do not start before the gate.
+### Shared record/overdub finalization prerequisite (2026-09-27)
+
+[Implementation contract](SHARED-CAPTURE-FINALIZATION.md), design Revision 25,
+DEC-093 — shared capture finalization. These tasks close an implementation omission in the
+existing requirement; they precede accepted-sequence device closure. Each slice requires its
+own execution packet and records fixture/native/build/device results separately.
+
+- [x] S4f.15 **Shared capture finalization contract.** Trace existing intent versus record's inline route;
+      specify owner/identity, ingress, first-bar/onward playback, undo, persistence, caller migration and
+      bounded verification matrix. Verification: contract + adversarial review recorded; strict OpenSpec
+      valid. This checkbox represents documentation only, not firmware readiness or acceptance.
+- [x] S4f.16 **Production finalization fixtures.** Establish controllable real record-stop/worker/undo/storage
+      linkage for the contract's COMMON-IDENTITY and MODE-ROTATION cases. No stop-owner stand-in. If shared
+      harness gates need splitting, separate transport/storage/edit families and rerun dependent suites.
+      Verify inline record stop fails the deferred-ownership oracle; pin actual closure and per-slice bounds.
+      **DONE 2026-09-27:** real stop/cold-helper/worker/undo/storage closure shared with drain fixtures;
+      four rotation baselines pass, strict contract mode produces four expected failures (record deferred
+      ownership, record interval stamp, deferred persistence). Full native: 2,490 passed / 7 skipped;
+      final focused suite 4/4. Closure, bounds, retained-state measurements and limitations:
+      [S4F16-EXECUTION.md](S4F16-EXECUTION.md). Fixture completion only; shared firmware behavior remains open.
+- [ ] S4f.17 **Common interval and stop admission.** Extend Track's existing latch/job/drive to both modes;
+      stamp every actual start, carry mode/geometry/raw/held-note receipts, preserve failed-preflight ownership
+      and accept busy-owner stops. Verify R→R, R→OD, OD→R, OD→OD at controlled grains, repeated drive,
+      stale identity, empty capture, terminal wait and runtime regeneration; no new ring/capacity owner.
+      **2026-09-27 preflight:** production enablement depends on record preparation, source handoff,
+      publication and caller conversion in S4f.18–S4f.21. A standalone record-admission switch would
+      feed an overdub-only worker or expose premature manager continuations. Connected S4f.17–S4f.21 scope approved by the user;
+      implementation in progress, with individual checkoffs retained. See [S4F17-EXECUTION.md](S4F17-EXECUTION.md).
+      **Prerequisites implemented:** successful record/overdub starts share interval stamping;
+      rejected record transitions preserve content; accepted stops validate LoopId/mode; jobs carry
+      Capture mode without layout growth. Record binding/geometry/held-note receipts and common
+      worker execution remain open. S4f.18's maximum-tick prerequisite is implemented; normalization
+      and closure still await the bounded Record source path. No admission/publication gate checked.
+- [ ] S4f.18 **Bounded record preparation.** Add the record source mode to existing preparation, using
+      frozen canonical raw ranges and maintained length summaries; defer normalization/closure/order/pass
+      construction without a full-take staging copy or changed input capacity. Verify exact short/dense/long
+      content, held notes, stop-length edges, resource failure and bounded units; mutation restoring an
+      input-edge full walk or wrong capture mode must fail the production fixtures.
+- [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
+      preserve source borrowers through successor start, and prepare later windows from the owned frozen
+      source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,
+      playback beyond bar one and wrap before finalization completes, plus multiple sounding tracks.
+- [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
+      pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
+      to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,
+      note edit, failed preparation, stale cleanup, replacement/load/clear/save, exact persisted content and
+      bounded retirement. Preserve overdub session undo; do not add a new undo kind.
+- [ ] S4f.21 **Migrate all record-stop continuations.** Convert stopRecordingTrack, finalizeCaptureAndSelectSlot,
+      stopAllTracks and direct stop entry points to identity-qualified execution/geometry results; remove
+      synchronous full-record fallback and caller-side duplicate save. Guard same-slot destructive start;
+      retain different-slot successors. Verify master length/auto-align/rewind once, both destinations,
+      transport Stop in each phase, internal/external clock, mixed starts and common in-flight guards.
+- [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
+      full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
+      all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with
+      natural overlap, continuous transport, one press, content/undo/persistence parity and existing timing
+      gates. Missing overlap is NOT_EXERCISED. Link evidence to S4f.13; do not close from host results.
+
 - [~] S4f.13 **HITL — record/overdub stop → slot switch → record/overdub stop (the accepted-sequence reproducer).**
+      **Resolved direction (2026-09-27):** the record-overlap requirement already exists and is retained.
+      Implement S4f.16–S4f.22 under the shared-finalization contract before expecting this gate to pass.
+      The separate weaker record oracle proposed during HITL work is not adopted. Response-driven HITL
+      remains required for both modes and the mixed record-A → overdub-B acceptance.
+      **2026-09-27 implementation finding:** response-driven fixture tasks 1.2/1.3 verified (full native
+      2,486 passed / 7 skipped; Python 33). Its shared overlap oracle is blocked: record-stop publishes
+      inline, while the specified deferred capture-stop window belongs to overdub. User contract decision
+      pending; no acceptance criterion waived. See the sibling change's `EXECUTION-REVIEW.md`.
+      **2026-09-27 next-step contract:** [response-driven-hitl-acceptance](../response-driven-hitl-acceptance/tasks.md)
+      owns the harness prerequisite. Use DROID-equivalent capture-switch gestures with transport continuously
+      playing, distinct record/overdub fixtures, response-correlated identities, and same-boot scoped preparation.
+      No manual reference pass. Historical fresh-boot and literal zero-denial-log checks below are replaced by
+      fresh run/boot identity and proof of no rejected/lost interaction: DEC-078 — accept-and-latch requires
+      distinguishing a matched accepted obligation from compatibility denial vocabulary. A real rejection
+      still fails. Existing content/timing obligations remain; no task checkoff from host-only tests.
+      **2026-09-27 host correction (supersedes the carrier/SD-only diagnosis below):** the capture-switch
+      branch runs BEFORE the SD-aware playback branch, but only while capturing. Reuse the proven retention
+      prefix: B’s loop press is A’s stop plus switch; B is seeded for overdub, and gets a separate start.
+      No empty C record is substituted for B’s overdub. Driver aborts on unexpected playback queue without
+      another press, preserves report/shutdown and nonzero exit; confirms starts and seed commits and sends
+      notes into both overdubs. Accepted-sequence tests 30, retention plan 23, shutdown 15; old guard
+      red-proved; OpenSpec strict valid. Oracle rejects wrong-slot/late starts and window-as-release;
+      overdub identity and input-press counts are explicitly unknown with record-only evidence. No device
+      run or task checkoff. See ARCHITECTURE-REVIEW.md § “S4f.13 — accepted-sequence driver correction”.
       **REPRODUCER BUILT 2026-09-27; the first device leg ran and did NOT pass — the oracle found two real
       gaps rather than a staging problem.** The shape is now executable and its assertions are testable
       without a device:

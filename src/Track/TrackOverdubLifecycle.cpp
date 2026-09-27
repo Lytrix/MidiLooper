@@ -153,12 +153,16 @@ TRACK_COLD_MEM uint32_t Track::acceptedStopWaitCount() const {
 TRACK_COLD_MEM void Track::latchAcceptedStop(PendingStopDestination destination, uint8_t slot,
                                              uint64_t interval) {
   PendingInteractionLatch* latch = interactionLatch();
-  if (latch == nullptr) return;
-  if (latch->matches(PendingInteractionLatch::Kind::Stop, slot, 0, interval)) return;
+  if (latch == nullptr || !loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) return;
+  const Loop& owner = getLoop(slot);
+  if (latch->matches(PendingInteractionLatch::Kind::Stop, slot, 0, interval) &&
+      latch->loopId == owner.loopId && latch->mode == owner.capture.phase) return;
   latch->clear();
   latch->kind = PendingInteractionLatch::Kind::Stop;
   latch->destination = destination;
   latch->slot = slot;
+  latch->loopId = owner.loopId;
+  latch->mode = owner.capture.phase;
   latch->interval = interval;
   latch->phaseTick = capturePhaseTick(clockManager.getCurrentTick());
 }
@@ -233,7 +237,10 @@ TRACK_COLD_MEM bool Track::driveAcceptedInteraction() {
   // unchanged while the interval the request identified is gone. Such a request must not bind to the
   // replacement content, and it must not park either -- parking would wait forever for an interval that can
   // never return. It is **superseded**: reported and retired, exactly once.
-  if (request.slot >= Config::MAX_LOOPS_PER_TRACK || request.interval != captureInterval_) {
+  if (!loopsAllocated() || request.slot >= Config::MAX_LOOPS_PER_TRACK ||
+      request.interval != captureInterval_ ||
+      getLoop(request.slot).loopId != request.loopId ||
+      getLoop(request.slot).capture.phase != request.mode) {
     logger.log(CAT_TRACK, LOG_INFO,
                "Accepted stop superseded: its interval is no longer live (slot=%u)",
                static_cast<unsigned>(request.slot));
@@ -727,7 +734,9 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
 #endif
   deferredStopStallNoted_ = false;
   job.loopId = loop.loopId;
-  job.slot = slot;  job.phaseTick = capturePhaseTick(currentTick);
+  job.slot = slot;
+  job.mode = loop.capture.phase;
+  job.phaseTick = capturePhaseTick(currentTick);
   job.loopLengthTicks = loop.loopLengthTicks;
   job.interval = interval;
   job.admission.sessionExitReceiptRing = sessionExitReceiptRing;
@@ -1495,6 +1504,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   }
   job.owner = nullptr;
   job.loopId = kInvalidLoopId;
+  job.mode = CapturePhase::None;
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;
   --captureStopJobs_->count;
   if (!ownsTrackState) return true;
@@ -1700,13 +1710,13 @@ void Track::startOverdubbing(uint32_t currentTick) {
     forceSetState(TRACK_STOPPED);
   }
   const uint32_t stateAdvanceStartUs = micros();
-  if (!setState(TRACK_OVERDUBBING)) {
+  if (!beginCaptureInterval(TRACK_OVERDUBBING)) {
     SC_ODUB_STAGE("set_state", micros() - stateAdvanceStartUs,
                   DebugSessionCapture::kUnsampledHeapBytes,
                   DebugSessionCapture::kUnsampledHeapBytes, "failed");
     return;
   }
-  ++captureInterval_;
+
 #if defined(SESSION_CAPTURE)
   // OpenSpec 5.6: one compact admission record per reentry decision, emitted by the decision
   // owner (`reentryDecision`), so a capture shows the admitted interval identity and the queue

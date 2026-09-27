@@ -133,7 +133,10 @@ struct Loop {
   uint16_t captureNextEventIndex = 0;
   bool captureEventsSortDirty = false;
   bool captureHasLastAppendTick_ = false;
-  uint32_t captureLastAppendTick_ = 0;
+  // Maximum of accepted live rows, also used to conservatively detect out-of-order input.
+  // Reuses the append-order scalar; no extra per-Loop storage.
+  uint32_t captureMaximumTick_ = 0;
+  uint32_t captureMaximumTick() const { return capture.store.empty() ? 0 : captureMaximumTick_; }
   uint16_t captureDisplayRevision = 0;
   uint32_t captureDedupEventsDropped_ = 0;
 

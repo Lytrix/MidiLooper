@@ -120,6 +120,18 @@ flowchart LR
 
 **Files:** `include/Loop.h`, `src/Loop.cpp`, `src/Track.cpp`
 
+Shared-finalization prerequisites (2026-09-27): `Track::beginCaptureInterval` advances the
+interval identity once after a successful record/overdub state transition. Record start rejects
+an ineligible transition before resetting the slot. Accepted stops carry their LoopId and Capture
+mode as well as slot/interval; re-drive supersedes a changed identity without touching replacement
+content. This does not yet route record stops through the deferred worker.
+
+For an ordinary live Record capture, `prepareRecordStop` gets the maximum event tick from
+`Loop::captureMaximumTick()`. Accepted appends maintain that scalar; capture reset, canonicalization
+and open-note removal maintain it too. This removes the full-take length scan only: existing
+record normalization, pending-note closure and inline publication still await the connected
+shared-finalization implementation.
+
 1. **`beginCapture(Record | Overdub)`** — clears `capture.store`, sets `capture.phase`.
 2. **`appendCaptureEvent`** — writes to `capture.store`; dedupes near-duplicates and (on overdub) against merged capture passes in a tick window.
 3. **`commitCapturePass`** at record/overdub stop:

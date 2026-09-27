@@ -49,6 +49,12 @@ bool Track::isValidStateTransition(TrackState newState) const {
   return TrackStateMachine::isValidTransition(trackState, newState);
 }
 
+TRACK_COLD_MEM bool Track::beginCaptureInterval(TrackState nextState) {
+  if (!setState(nextState)) return false;
+  ++captureInterval_;
+  return true;
+}
+
 bool Track::setState(TrackState newState) {
   if (!TrackStateMachine::isValidTransition(trackState, newState)) {
     logger.log(CAT_STATE, LOG_WARNING, "Invalid state transition from %s to %s",

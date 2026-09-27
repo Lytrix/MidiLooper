@@ -169,14 +169,13 @@ void Track::silenceSlotMidiOutput(uint8_t) { OFF_PATH(); }
 // B03 counts. Linking that TU would replace them, so this is an inert stand-in and the wire side is not under
 // test. What it omits is precisely the per-slot ledger/LED clearing: a fixture that depends on *that* would
 // have to link the playback TU and rework B03's instrumentation.
-#if defined(A34A_LINKS_REAL_TRACK_STOP_COMMIT)
+#if defined(A34A_LINKS_REAL_TRACK_STOP_COMMIT) && !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
 void Track::sendAllNotesOff() {}
-// The real stop route persists the slot it just committed. These three are **inert by configuration**, not
-// by stubbing: `src/StorageManager/PersistenceAdmit.cpp` compiles each of them to an immediate `return` when
-// `BYPASS_STOP_UNDO_SAVE` is set, and the native env sets it (`platformio.ini`, the diagnostic flag that
-// skips the deferred runtime save and the undo snapshot copy on a record/overdub stop). So these match the
-// production behaviour this suite runs under, and enabling the stop-commit family does not make this suite
-// exercise the persistence path.
+#endif
+#if defined(A34A_LINKS_REAL_TRACK_STOP_COMMIT) && !defined(A34A_LINKS_REAL_STORAGE_PERSIST)
+// Legacy capture suites isolate persistence deliberately. Suites claiming persistence
+// evidence must define A34A_LINKS_REAL_STORAGE_PERSIST and link the real owner;
+// the native environment does not itself enable BYPASS_STOP_UNDO_SAVE.
 void StorageManager::markLoopSlotMaterialDirty(uint8_t, uint8_t) {}
 void StorageManager::admitLoopSlotPersist(uint8_t, uint8_t) {}
 void StorageManager::requestDeferredSaveState(const LooperState&, uint32_t, bool) {}

@@ -1,5 +1,17 @@
 # Project state (execution context)
 
+**2026-09-27 — connected S4f.17–S4f.21 implementation in progress; identity/length prerequisites verified.**
+Record and overdub starts now share interval stamping; invalid Record starts reject before
+slot reset. Accepted stops bind LoopId and Capture mode and supersede changed identities.
+Record-length calculation uses a maintained maximum tick, reusing the existing Loop scalar.
+Production fixtures cover duplicate/invalid starts, pool-denied preflight/recovery, stale
+LoopId/mode, and out-of-order/removal length cases. Record stop still publishes inline;
+bounded source preparation, first-bar/onward handoff, publication/undo and caller migration
+remain open. Full native: **2,497 passed / 7 skipped**; focused: **11/11**.
+Capture-serial build passed, RAM1 padding **840 bytes**. Strict contract retains four
+expected implementation-gap failures. No task completion or device acceptance claimed.
+[Connected execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F17-EXECUTION.md).
+
 **Current handoff — S4f.3's no-concession device gate CLOSED (`RETENTION_PASS`); S4.1's lease row still owed
 with its route corrected (2026-09-27).** The re-run the first campaign called for, on the same authorized
 targets (**track 8, A=4, B=5, C=8**) with both fixes committed (`675a115a`) so the flashed image is pinned to
