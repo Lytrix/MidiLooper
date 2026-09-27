@@ -818,6 +818,10 @@ private:
   /// Retire one grain of a job's raw capture input. Uses the job-owned sealed
   /// range when the job owns one, else the legacy producer path.
   bool retireJobCaptureSourceGrain(CaptureStopJob& job, Loop& loop, bool closeCapture);
+  /// Prepare at most one job-owned Record terminal Off into reserved output.
+  /// Does not admit Record stops, publish, or touch the live capture producer.
+  LoopEventStoreRewriteResult stepDeferredRecordClosure(CaptureStopJob& job);
+
   /// One bounded turn of the deferred undo-identity collection. Returns true when
   /// the job's prepared entry is ready (or the session had nothing to record).
   bool stepDeferredUndoCollection(CaptureStopJob& job, Loop& loop, PendingStopAdmission& stop);

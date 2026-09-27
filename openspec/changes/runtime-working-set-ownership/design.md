@@ -760,7 +760,7 @@ DEC-078 (amending DEC-067 and DEC-076 point 2); this revision is the design that
 | B8 | A load can destroy a pinned finalization's owner and wedge it (`LoadLoopJob.cpp:237` has no pending-stop guard) | Load admission uses the same per-slot liveness predicate and defers/refuses for a pinned slot. |
 | B9 | Persistence guards and `resolveCaptureTrackSlotForMidPass` do not know the accepted-but-unexecuted stop and fall back to selected/active slot (`PersistenceAdmit.cpp:259`, `MidPassChunkPersist.cpp:51-55`) | One shared in-flight predicate including the latch; the mid-pass resolver resolves from the interval with no selected/active fallback. |
 | B10 | Cold undo descriptors pin canonical chunks via `SlotPassReferences`; ClearSlot has no snapshot-free reconstruction; a stale body silently consumes the descriptor (`TrackUndo.cpp:986-989`) | Cold-descriptor pin lease + byte accounting charges pinned canonical bytes; ClearSlot is excluded from the cold tier; the stale path defers (`undo_resource_denied`) and never erases. |
-| B11 | New per-slot/per-track fields land in DTCM: ~1.4 KB against 872 B of usable padding; a bank cross costs 32,768 B and the documented silent boot hang | All new per-slot state lives in the external `LoopPlaybackRuntime` (6,344 B extmem) or the `LoopPool`; per-track state is externally held or out-of-line `TRACK_COLD_MEM`; `static_assert` size pins. |
+| B11 | New per-slot/per-track fields land in DTCM: ~1.4 KB against 872 B of usable padding; a bank cross costs 32,768 B and the documented silent boot hang | All new per-slot state lives in the external `LoopPlaybackRuntime` (6,352 B extmem) or the `LoopPool`; per-track state is externally held or out-of-line `TRACK_COLD_MEM`; `static_assert` size pins. |
 
 ### 1. The interaction latch and the switch rule
 
@@ -826,7 +826,7 @@ claimed as the memory law until that sibling lands.
 
 ### 5. Placement rules (RAM1/DTCM)
 
-- Per-slot state → the external `LoopPlaybackRuntime` (6,344 B, `extmem_malloc`) or the `LoopPool` `Loop`
+- Per-slot state → the external `LoopPlaybackRuntime` (6,352 B, `extmem_malloc`) or the `LoopPool` `Loop`
   (536 B each, 64 total).
 - Per-track state → an externally held container (`std::unique_ptr`, as `captureStopJobs_` is) or out-of-line
   `TRACK_COLD_MEM` constructors/destructors. A new by-value non-trivial array inside `Track` emits implicit

@@ -1043,6 +1043,71 @@ namespace {
 constexpr uint16_t kRetargetStallGrainLimit = 512;
 }  // namespace
 
+TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordClosure(CaptureStopJob& job) {
+  auto& stop = job.admission;
+  if (!stop.pending || job.mode != CapturePhase::Record || !job.owner ||
+      job.loopId == kInvalidLoopId ||
+      !job.loopLengthTicks || !job.ownsRawRange || !loopsAllocated() ||
+      job.slot >= Config::MAX_LOOPS_PER_TRACK || loopIdForSlot(job.slot) != job.loopId ||
+      &getLoop(job.slot) != job.owner || job.owner->loopId != job.loopId ||
+      stop.remainingClosureGrains != job.pendingNotes.size() ||
+      (stop.phase != PendingStopPhase::ReservedClosure &&
+       !(stop.phase == PendingStopPhase::CanonicalOrder && job.pendingNotes.empty())))
+    return LoopEventStoreRewriteResult::Denied;
+  const auto source = job.owner->captureReadSource();
+  if (source.finalizing != &job.rawRange || !source.finalizingReady() ||
+      source.finalizingGeneration != job.rawRange.generation())
+    return LoopEventStoreRewriteResult::Denied;
+  auto* runtime = playbackRuntime.slotIfAllocated(job.slot);
+  if (!runtime || runtime->captureStopOwner != &stop ||
+      runtime->captureStopOwnerGeneration != stop.frozenGeneration)
+    return LoopEventStoreRewriteResult::Denied;
+  const auto pending = job.pendingNotes.begin();
+  if (pending != job.pendingNotes.end() &&
+      (pending->second.recordNoteId == kInvalidNoteId ||
+       pending->first.first != pending->second.note ||
+       pending->first.second != pending->second.channel))
+    return LoopEventStoreRewriteResult::Denied;
+
+  auto& output = runtime->canonicalCaptureOutput;
+  auto& cursor = runtime->frozenCaptureRewrite;
+  if (!runtime->frozenCaptureRewriteOwner) {
+    if (!output.store.empty() || !output.store.reservedAppendReady() ||
+        !output.store.beginRewriteFromOrderedSource(cursor, 0))
+      return LoopEventStoreRewriteResult::Denied;
+    cursor.targetCount = job.pendingNotes.size();
+    cursor.sourceGeneration = stop.frozenGeneration;
+    cursor.sourceOwner = &stop;
+    cursor.active = !job.pendingNotes.empty();
+    runtime->frozenCaptureRewriteOwner = &output.store;
+    runtime->frozenCaptureRewriteIsCopy = true;
+    output.phase = CapturePhase::Record;
+  }
+  if (runtime->frozenCaptureRewriteOwner != &output.store ||
+      !runtime->frozenCaptureRewriteIsCopy || output.phase != CapturePhase::Record ||
+      cursor.sourceOwner != &stop || cursor.sourceGeneration != stop.frozenGeneration ||
+      !output.store.ownsRewriteCursor(cursor) || output.store.size() != cursor.sourceIndex ||
+      cursor.sourceIndex > cursor.targetCount ||
+      cursor.targetCount - cursor.sourceIndex != job.pendingNotes.size())
+    return LoopEventStoreRewriteResult::Denied;
+  if (pending == job.pendingNotes.end()) {
+    cursor.active = false;
+    stop.setPhase(PendingStopPhase::CanonicalOrder);
+    return LoopEventStoreRewriteResult::Complete;
+  }
+  const auto& held = pending->second;
+  MidiEvent terminal = MidiEvent::NoteOff(
+      std::min(job.phaseTick, job.loopLengthTicks - 1), held.channel, held.note, 0);
+  terminal.noteId = held.recordNoteId;
+  if (!output.store.appendReserved(terminal, runtime->canonicalCaptureChunks))
+    return LoopEventStoreRewriteResult::Denied;
+  ++cursor.sourceIndex;
+  job.pendingNotes.erase(pending);
+  (void)stop.consumeClosureGrain(); // credit preflight above makes this infallible
+  cursor.active = !job.pendingNotes.empty();
+  return cursor.active ? LoopEventStoreRewriteResult::Pending : LoopEventStoreRewriteResult::Complete;
+}
+
 TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   // Bind the FIFO head once for the whole grain. The head only advances at the
   // end of this function, so a single stable reference is the contract: no

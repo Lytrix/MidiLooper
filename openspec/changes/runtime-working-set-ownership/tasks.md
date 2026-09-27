@@ -1146,7 +1146,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       for every new member added by this change** (the latch `PendingInteractionRequest`, **`PendingStopAdmission::slot`**,
       **the per-slot runtime generation**, the new TrackManager transport epoch, the envelope, the standby/cold-undo
       stores); all new per-slot state in the external
-      `LoopPlaybackRuntime` (6,344 B extmem) or the `LoopPool` `Loop`; **per-track state — including the latch —
+      `LoopPlaybackRuntime` (6,352 B extmem; owner receipt remeasured 2026-09-28) or the `LoopPool` `Loop`; **per-track state — including the latch —
       externally held (`std::unique_ptr`) or with out-of-line `TRACK_COLD_MEM` ctors/dtors**, because `.bss`
       routes to DTCM and a by-value scalar latch would land there. Re-measure the padding baseline at S3.0 (the
       cursor rule still cites 1,256; the recorded line is 872). Evidence: the RAM1 line stays `padding >= 840` (re-based from 872 on 2026-09-23 by the reviewed
@@ -2298,6 +2298,12 @@ own execution packet and records fixture/native/build/device results separately.
       Overdub wrap stays reservation-owned. Frozen-source, stop-content, pre-roll and rejected
       input fixtures cover this prerequisite. Deferred closure output and pass preparation
       remain open; [closure execution evidence](S4F18-CLOSURE-EXECUTION.md).
+      **2026-09-28 closure-output consumer:** a job-qualified bounded helper writes one
+      reserved canonical closure row per grain, preserving successor capture and retrying
+      denied output without consuming obligations. Raw/output/binding generations are checked.
+      Controlled consumer fixtures include 257 held notes without overdub staging. Production
+      Record dispatch/admission, normalization and pass construction remain open; see
+      [output execution evidence](S4F18-OUTPUT-EXECUTION.md).
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,

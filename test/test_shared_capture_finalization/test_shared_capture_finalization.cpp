@@ -7,6 +7,37 @@
 #endif
 
 struct TrackCaptureStopTestAccess {
+  static auto& bindRecordClosure(Track& t, uint8_t slot, uint32_t phaseTick, uint32_t length) {
+    TEST_ASSERT_TRUE(t.prewarmCaptureStopJobs());
+    auto* job = t.captureStopJobTail();
+    TEST_ASSERT_NOT_NULL(job);
+    job->owner = &t.getLoop(slot);
+    job->slot = slot; job->loopId = job->owner->loopId;
+    job->mode = CapturePhase::Record; job->interval = t.captureInterval_;
+    job->phaseTick = phaseTick; job->loopLengthTicks = length;
+    TEST_ASSERT_TRUE(job->owner->capture.store.sealCaptureRange(job->rawRange));
+    job->ownsRawRange = true;
+    TEST_ASSERT_TRUE(job->owner->borrowSealedCaptureRange(job->rawRange, &job->admission));
+    job->pendingNotes.swap(t.pendingNotes);
+    // Controlled binding only: production Record admission is a separate open gate.
+    job->admission.pending = true;
+    job->admission.frozenGeneration = 1;
+    job->admission.stopTick = 1000;
+    job->admission.phase = PendingStopPhase::ReservedClosure;
+    job->admission.remainingClosureGrains = job->pendingNotes.size();
+    auto* runtime = t.playbackRuntime.slotIfAllocated(slot);
+    TEST_ASSERT_NOT_NULL(runtime);
+    TEST_ASSERT_TRUE(runtime->prewarmCanonicalCaptureOutput());
+    runtime->setCaptureStopOwner(job->admission, job->admission.frozenGeneration);
+    ++t.captureStopJobs_->count;
+    return *job;
+  }
+  static auto closureGrain(Track& t) {
+    return t.stepDeferredRecordClosure(*t.captureStopJobHead());
+  }
+  static auto& closureRuntime(Track& t) {
+    return *t.playbackRuntime.slotIfAllocated(t.captureStopJobHead()->slot);
+  }
   static size_t heldCount(const Track& t) { return t.pendingNotes.size(); }
   static NoteId recordIdentity(const Track& t, uint8_t channel, uint8_t note) {
     const auto found = t.pendingNotes.find({note, channel});
@@ -524,8 +555,166 @@ void test_record_stop_closure_does_not_search_reused_producer() {
   TEST_ASSERT_EQUAL(1, frozen.size());
 }
 
+void test_record_job_closures_preserve_a_live_successor() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false); prepareSlot(t, 1, false);
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112); t.noteOn(2, 61, 90, 120);
+  const NoteId first = t.getLoop(0).capture.store.at(0).noteId;
+  const NoteId second = t.getLoop(0).capture.store.at(1).noteId;
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 1000, 768);
+  auto& runtime = TrackCaptureStopTestAccess::closureRuntime(t);
+  t.forceSetState(TRACK_PLAYING); // binding transition controlled by fixture
+  t.setActiveLoopIndex(1); t.startRecording(1100);
+  TEST_ASSERT_TRUE(t.isRecording());
+  t.noteOn(3, 76, 80, 1112);
+  const auto chunks = LoopEventStore::usedChunkCount();
+  for (unsigned i = 0; i < 2; ++i) {
+    job.admission.destination = i == 0 ? PendingStopDestination::Playing : PendingStopDestination::Stopped;
+    TEST_ASSERT_EQUAL(i == 0 ? LoopEventStoreRewriteResult::Pending : LoopEventStoreRewriteResult::Complete,
+        TrackCaptureStopTestAccess::closureGrain(t));
+    TEST_ASSERT_EQUAL(i + 1, runtime.canonicalCaptureOutput.store.size());
+    TEST_ASSERT_EQUAL(1 - i, job.pendingNotes.size());
+    TEST_ASSERT_EQUAL(1 - i, job.admission.remainingClosureGrains);
+    TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::heldCount(t));
+    TEST_ASSERT_EQUAL(1, t.getLoop(1).capture.store.size());
+    TEST_ASSERT_EQUAL(chunks, LoopEventStore::usedChunkCount());
+    TEST_ASSERT_EQUAL(2, job.rawRange.size());
+    for (size_t raw = 0; raw < 2; ++raw) {
+      MidiEvent event; bool end = false;
+      TEST_ASSERT_TRUE(job.rawRange.read(job.rawRange.generation(), 0, raw, event, end));
+      TEST_ASSERT_FALSE(end); TEST_ASSERT_TRUE(event.isNoteOn());
+      TEST_ASSERT_EQUAL(raw == 0 ? first : second, event.noteId);
+      TEST_ASSERT_EQUAL(raw == 0 ? 12 : 20, event.tick);
+    }
+    if (i == 0) {
+      // Rebinding the runtime at the same address must not adopt old output.
+      ++job.admission.frozenGeneration; ++runtime.captureStopOwnerGeneration;
+      TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied, TrackCaptureStopTestAccess::closureGrain(t));
+      TEST_ASSERT_EQUAL(1, runtime.canonicalCaptureOutput.store.size());
+      TEST_ASSERT_EQUAL(1, job.pendingNotes.size());
+      --job.admission.frozenGeneration; --runtime.captureStopOwnerGeneration;
+      PendingStopAdmission anotherDescriptor;
+      anotherDescriptor.frozenGeneration = job.admission.frozenGeneration;
+      runtime.frozenCaptureRewrite.sourceOwner = &anotherDescriptor;
+      TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied, TrackCaptureStopTestAccess::closureGrain(t));
+      TEST_ASSERT_EQUAL(1, runtime.canonicalCaptureOutput.store.size());
+      TEST_ASSERT_EQUAL(1, job.pendingNotes.size());
+      runtime.frozenCaptureRewrite.sourceOwner = &job.admission;
+    }
+  }
+  TEST_ASSERT_EQUAL(CapturePhase::Record, runtime.canonicalCaptureOutput.phase);
+  TEST_ASSERT_EQUAL(PendingStopPhase::CanonicalOrder, job.admission.phase);
+  for (size_t i = 0; i < 2; ++i) {
+    const auto& row = runtime.canonicalCaptureOutput.store.at(i);
+    TEST_ASSERT_TRUE(row.isNoteOff()); TEST_ASSERT_EQUAL(767, row.tick);
+    TEST_ASSERT_EQUAL(row.channel == 1 ? first : second, row.noteId);
+    TEST_ASSERT_EQUAL(row.channel == 1 ? 60 : 61, row.data.noteData.note);
+  }
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, TrackCaptureStopTestAccess::closureGrain(t));
+  TEST_ASSERT_EQUAL(2, runtime.canonicalCaptureOutput.store.size());
+}
+
+void test_record_job_closure_denial_retains_obligation_for_retry() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false); t.startRecording(100); t.noteOn(1, 60, 100, 112);
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 96, 768);
+  auto& runtime = TrackCaptureStopTestAccess::closureRuntime(t);
+  auto denied = [&]() {
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied, TrackCaptureStopTestAccess::closureGrain(t));
+    TEST_ASSERT_EQUAL(1, job.pendingNotes.size());
+    TEST_ASSERT_EQUAL(1, job.admission.remainingClosureGrains);
+    TEST_ASSERT_EQUAL(0, runtime.canonicalCaptureOutput.store.size());
+  };
+  job.mode = CapturePhase::Overdub; denied(); job.mode = CapturePhase::Record;
+  ++runtime.captureStopOwnerGeneration; denied(); --runtime.captureStopOwnerGeneration;
+  ++job.loopId; denied(); --job.loopId;
+  const auto id = job.pendingNotes.begin()->second.recordNoteId;
+  job.pendingNotes.begin()->second.recordNoteId = kInvalidNoteId; denied();
+  job.pendingNotes.begin()->second.recordNoteId = id;
+  TEST_ASSERT_TRUE(runtime.canonicalCaptureChunks.releaseGrain(LoopEventStoreConfig::POOL_CHUNK_COUNT));
+  denied();
+  TEST_ASSERT_TRUE(runtime.canonicalCaptureChunks.reserveChunks(1));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, TrackCaptureStopTestAccess::closureGrain(t));
+  TEST_ASSERT_EQUAL(id, runtime.canonicalCaptureOutput.store.at(0).noteId);
+  TEST_ASSERT_EQUAL(96, runtime.canonicalCaptureOutput.store.at(0).tick);
+}
+
+void test_record_job_closure_rejects_reused_raw_and_replaced_output() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false); t.startRecording(100);
+  t.noteOn(1, 60, 100, 112); t.noteOn(1, 61, 100, 120);
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 96, 768);
+  auto& runtime = TrackCaptureStopTestAccess::closureRuntime(t);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Pending, TrackCaptureStopTestAccess::closureGrain(t));
+  runtime.canonicalCaptureOutput.store.clear();
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied, TrackCaptureStopTestAccess::closureGrain(t));
+  TEST_ASSERT_EQUAL(1, job.pendingNotes.size());
+  TEST_ASSERT_EQUAL(1, job.admission.remainingClosureGrains);
+  TEST_ASSERT_TRUE(job.rawRange.releaseGrain(1));
+  TEST_ASSERT_TRUE(job.rawRange.reserveTail());
+  TEST_ASSERT_TRUE(job.owner->capture.store.append(MidiEvent::NoteOn(12, 1, 60, 90)));
+  TEST_ASSERT_TRUE(job.owner->capture.store.sealCaptureRange(job.rawRange));
+  // Remove the output fault so the saved raw generation is the remaining denial.
+  runtime.discardFrozenCaptureCanonicalOrder();
+  TEST_ASSERT_TRUE(runtime.canonicalCaptureOutput.store.prewarmCaptureDirectory());
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied, TrackCaptureStopTestAccess::closureGrain(t));
+  TEST_ASSERT_EQUAL(1, job.pendingNotes.size());
+  TEST_ASSERT_EQUAL(1, job.admission.remainingClosureGrains);
+}
+
+void test_record_job_closures_exceed_overdub_hold_limit_without_staging() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false); t.startRecording(100);
+  constexpr unsigned count = LoopEventStoreConfig::CHUNK_CAPACITY + 1;
+  static_assert(count > RuntimePlaybackViewConfig::kMaxCaptureNoteReservations, "exercise Record envelope");
+  std::array<NoteId, count> identities{};
+  for (unsigned i = 0; i < count; ++i) {
+    t.noteOn(1 + i / 128, i % 128, 100, 112 + i);
+    identities[i] = t.getLoop(0).capture.store.at(i).noteId;
+  }
+  TEST_ASSERT_EQUAL(count, TrackCaptureStopTestAccess::heldCount(t));
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 700, 768);
+  auto& runtime = TrackCaptureStopTestAccess::closureRuntime(t);
+  const auto chunks = LoopEventStore::usedChunkCount();
+  for (unsigned i = 0; i < count; ++i) {
+    TEST_ASSERT_EQUAL(i + 1 == count ? LoopEventStoreRewriteResult::Complete : LoopEventStoreRewriteResult::Pending,
+        TrackCaptureStopTestAccess::closureGrain(t));
+    TEST_ASSERT_EQUAL(i + 1, runtime.canonicalCaptureOutput.store.size());
+    TEST_ASSERT_EQUAL(count - i - 1, job.pendingNotes.size());
+    TEST_ASSERT_EQUAL(chunks, LoopEventStore::usedChunkCount());
+  }
+  TEST_ASSERT_EQUAL(count, job.rawRange.size());
+  std::array<bool, count> seen{};
+  for (unsigned i = 0; i < count; ++i) {
+    const auto& row = runtime.canonicalCaptureOutput.store.at(i);
+    const size_t input = (row.channel - 1) * 128 + row.data.noteData.note;
+    TEST_ASSERT_LESS_THAN(count, input);
+    TEST_ASSERT_FALSE(seen[input]); seen[input] = true;
+    TEST_ASSERT_TRUE(row.isNoteOff()); TEST_ASSERT_EQUAL(700, row.tick);
+    TEST_ASSERT_EQUAL(identities[input], row.noteId);
+  }
+}
+
+void test_record_job_without_held_notes_emits_no_closures() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false); t.startRecording(100);
+  t.noteOn(1, 60, 100, 112); t.noteOff(1, 60, 0, 180);
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 96, 768);
+  auto& runtime = TrackCaptureStopTestAccess::closureRuntime(t);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, TrackCaptureStopTestAccess::closureGrain(t));
+  TEST_ASSERT_EQUAL(0, runtime.canonicalCaptureOutput.store.size());
+  TEST_ASSERT_EQUAL(0, job.admission.remainingClosureGrains);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, TrackCaptureStopTestAccess::closureGrain(t));
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_record_job_closure_rejects_reused_raw_and_replaced_output);
+  RUN_TEST(test_record_job_closures_exceed_overdub_hold_limit_without_staging);
+  RUN_TEST(test_record_job_without_held_notes_emits_no_closures);
+  RUN_TEST(test_record_job_closures_preserve_a_live_successor);
+  RUN_TEST(test_record_job_closure_denial_retains_obligation_for_retry);
   RUN_TEST(test_record_stop_closure_does_not_search_reused_producer);
   RUN_TEST(test_record_stop_commits_exact_held_note_closures);
   RUN_TEST(test_record_identity_requires_accepted_input_and_handles_preroll);
