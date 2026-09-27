@@ -22,6 +22,7 @@ from hitl_accepted_sequence import (  # noqa: E402
     Gesture,
     _emit,
     _switch_pending,
+    _wait_switch_executed,
     leg_gestures,
     to_firmware_slot,
 )
@@ -76,7 +77,7 @@ class GesturePlanTests(unittest.TestCase):
     def test_the_overdub_leg_order_is_the_requirement(self):
         plan = leg_gestures("od", track=8, a=4, b=5)
         self.assertEqual(
-            ["select_track", "a_overdub_start", "a_stop", "b_switch", "b_overdub_start", "b_stop"],
+            ["select_track", "a_overdub_start", "a_stop", "b_switch_start", "b_stop"],
             [g.step for g in plan])
 
     def test_each_stop_appears_exactly_once_per_leg(self):
@@ -85,11 +86,16 @@ class GesturePlanTests(unittest.TestCase):
             stops = [g for g in plan if g.step.endswith("_stop")]
             self.assertEqual(2, len(stops), f"{leg}: one stop per interval, no more")
 
-    def test_the_switch_comes_after_a_stop_and_before_b_start(self):
-        plan = leg_gestures("od", track=8, a=4, b=5)
-        steps = [g.step for g in plan]
-        self.assertLess(steps.index("a_stop"), steps.index("b_switch"))
-        self.assertLess(steps.index("b_switch"), steps.index("b_overdub_start"))
+    def test_the_switch_comes_after_a_stop_and_carries_b_start(self):
+        """B's start is the switch gesture, not a later press (S4f.3/S4f.6 carrier)."""
+        for leg in ("rec", "od"):
+            plan = leg_gestures(leg, track=8, a=4, b=5)
+            steps = [g.step for g in plan]
+            self.assertLess(steps.index("a_stop"), steps.index("b_switch_start"))
+            # No record/overdub press between the switch and B's stop: the carrier already started B.
+            after_switch = steps[steps.index("b_switch_start") + 1:]
+            self.assertEqual(["b_stop"], after_switch,
+                             f"{leg}: nothing may press between the carrier and B's stop")
 
     def test_the_wire_gets_the_loop_and_record_notes_the_firmware_maps(self):
         plan = leg_gestures("od", track=8, a=4, b=5)
@@ -106,6 +112,15 @@ class GesturePlanTests(unittest.TestCase):
         notes = emit_all(plan).note_sequence()
         self.assertEqual(1, notes.count(GLOBAL_TRANSPORT_NOTE),
                          "A is stopped by the transport; B by the record button, one press each")
+
+    def test_the_carrier_is_the_only_thing_that_starts_b(self):
+        """The leg proves one press suffices, so the plan must not contain a start for B at all."""
+        for leg in ("rec", "od"):
+            plan = leg_gestures(leg, track=8, a=4, b=5)
+            b_start_like = [g for g in plan
+                            if g.value == 5 and g.kind == "record"]
+            self.assertEqual([], b_start_like,
+                             f"{leg}: B's start must come from the switch gesture, not a record press")
 
     def test_b_is_stopped_with_the_record_button_not_its_loop_button(self):
         """A loop-button press on a filled playing slot reaches the switch/mute branch, never
@@ -206,6 +221,28 @@ class SwitchRepeatGuardTests(unittest.TestCase):
     def test_the_tap_window_is_at_least_the_firmware_window(self):
         # The firmware holds a second tap for ~300 ms before deciding short/double; pressing sooner merges.
         self.assertGreaterEqual(DEFAULT_TAP_WINDOW_S, 0.30)
+
+
+    def test_a_pending_switch_that_never_runs_is_detected(self):
+        """`_wait_switch_executed` returning False is what makes the driver abort instead of pressing.
+
+        Pressing there is the defect: with an empty *selected* slot behind a pending switch, a record press
+        routes to the per-slot handler and reaffirms the switch -- the second countdown the owner reported
+        twice.
+        """
+        log = self._log("s.log", [
+            "[26.217] [INFO] Loop 5: Queued playback switch",
+            "[26.903] [INFO] Loop 5: Reaffirmed playback switch",
+        ])
+        self.assertFalse(_wait_switch_executed(log, 0, timeout_s=0.3),
+                         "a switch that never logs an execution must read as not-run, so the leg aborts")
+
+    def test_a_switch_that_runs_is_detected(self):
+        log = self._log("s.log", [
+            "[26.217] [INFO] Loop 5: Queued playback switch",
+            "[27.100] [DEBUG] [TRACK] Playback started @ tick 1536",
+        ])
+        self.assertTrue(_wait_switch_executed(log, 0, timeout_s=1.0))
 
 
 class OracleTests(unittest.TestCase):

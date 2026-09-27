@@ -90,12 +90,21 @@ def leg_gestures(leg: str, *, track: int, a: int, b: int) -> list[Gesture]:
             Gesture("select_track", "track", track),
             Gesture("a_overdub_start", "record", 0),
             Gesture("a_stop", "slot_record", a),         # ONE press: A's own loop button
-            Gesture("b_switch", "slot_record", b),       # switch to B
-            Gesture("b_overdub_start", "record", 0),
-            # ONE press, while A still finalizes. The **record button**, not B's loop button: on a filled,
-            # playing slot a loop-button press routes to the switch/mute branch (`queuePlayingSlotSwitch`,
-            # "Reaffirmed playback switch") and never reaches `Track::stopOverdubbing`. The record button is
-            # the route that stops B's session -- and it is also what a user actually presses.
+            # The switch gesture **is** B's start, and only when B is a **record** target: the
+            # capture-switch branch runs before the playing/filled branch and carries the start itself --
+            # `queueRecordingTrack` when the switch committed, `retainRecordStartForSlot` when it did not
+            # (S4f.6 / S4f.3). So there is deliberately **no record press after the switch**: pressing again
+            # is the second gesture this leg exists to prove is unnecessary.
+            #
+            # CAUTION, measured twice on device: `slotHasDataForPlaybackSwitch` is **SD-aware**, and every
+            # slot on this device retains an SD payload, so an *empty* slot is not automatically a record
+            # target -- B takes the playback-switch branch and waits on a quantized countdown instead of
+            # carrying a start. When that happens the leg's premise does not hold, and the driver now aborts
+            # rather than pressing into a pending switch.
+            Gesture("b_switch_start", "slot_record", b),
+            # ONE press, while A still finalizes. The **record button**: it is the route that stops B's
+            # session, and a loop-button press on a filled playing slot routes to the switch/mute branch
+            # instead of `Track::stopOverdubbing`.
             Gesture("b_stop", "record", 0),
         ]
     raise ValueError(f"unknown leg {leg!r}")
@@ -298,12 +307,12 @@ def main(argv: list[str] | None = None) -> int:
             def seed(slot_number: int, label: str, note_base: int) -> None:
                 """Record a short take into `slot_number`, committed, so it is a *filled* slot afterwards.
 
-                Both A and B are seeded, and B's seeding is load-bearing rather than symmetry: with an **empty
-                selected slot** behind a pending switch, a record press never reaches the overdub stop at all.
-                Measured 2026-09-27 -- `handleToggleRecord` sees `!hasCommittedPassesInSlot(selectedSlot)` and
-                routes to the per-slot handler, which reaffirms the pending switch and emits another
-                `Reaffirmed playback switch`, so the record press produced a *second countdown* instead of
-                stopping anything. A filled B makes the selected slot a real overdub target.
+                Only A is seeded. **B must stay empty**: that is what makes it a *record* target, and the
+                switch-carried start only exists for a slot with no committed passes
+                (`if (!track.hasCommittedPassesInSlot(slotIndex))` in `handleToggleRecordForSlot`). Seeding B
+                was tried on 2026-09-27 and is wrong in two ways: a filled B takes the playback-switch branch
+                instead of carrying a start, and with an empty selected slot behind a pending switch a record
+                press reaffirms the switch rather than reaching anything.
                 """
                 slots.press_track(ctx, args.track, press_ms=args.press_ms)
                 time.sleep(0.4)
@@ -339,9 +348,7 @@ def main(argv: list[str] | None = None) -> int:
                 _wait_for(capture_log, before, (",RECS,stop",), timeout_s=args.phase_timeout_s)
                 events.append({"event": f"seed_{label}_committed", "confirmed": True})
 
-            # Seed B first, then A: seeding A last leaves A as the active/selected slot, which is the state the
-            # leg's first gesture expects, and B is filled so it is a genuine overdub target.
-            seed(args.slot_b, "b", 62)
+            # Seed A only, and last, so A is the active/selected slot when the leg's first gesture runs.
             seed(args.slot_a, "a", 60)
 
             # --- the leg's own plan ---------------------------------------------------------------
@@ -350,11 +357,26 @@ def main(argv: list[str] | None = None) -> int:
             report["plan"] = [{"step": g.step, "kind": g.kind, "value": g.value} for g in plan]
             last_slot_press_at = 0.0
             for gesture in plan:
-                # A queued switch owns the slot buttons until it executes. Pressing anything on the same
-                # buttons before then is what produced the double countdown, so wait it out first.
+                # A pending switch owns the buttons until it executes, and pressing into it is the defect: a
+                # record press with an empty *selected* slot behind a pending switch routes to
+                # `!hasCommittedPassesInSlot(selectedSlot)` -> `queuePlayingSlotSwitch` -> "Reaffirmed
+                # playback switch", i.e. a SECOND countdown for the same switch. So this waits
+                # unconditionally, and when the switch never runs it aborts the leg instead of pressing into
+                # an unfinished switch -- a leg that presses there is not testing the acceptance, it is
+                # manufacturing the bug.
                 if _switch_pending(capture_log, leg_mark, args.slot_b):
                     ran = _wait_switch_executed(capture_log, leg_mark, timeout_s=args.phase_timeout_s)
                     events.append({"event": f"{gesture.step}_waited_for_pending_switch", "confirmed": ran})
+                    if not ran:
+                        events.append({"event": "leg_aborted_pending_switch_never_ran",
+                                       "gesture": gesture.step})
+                        report["result"] = "PENDING_SWITCH_NEVER_RAN"
+                        report["aborted_at"] = gesture.step
+                        raise RuntimeError(
+                            f"the queued switch to slot {args.slot_b} never executed, so '{gesture.step}' was "
+                            "not pressed: pressing there reaffirms the pending switch and produces the double "
+                            "countdown. The leg's premise did not hold -- the switch to B must commit before "
+                            "anything else is pressed.")
                 mark = len(_lines(capture_log))
                 if gesture.step.endswith("_start") and gesture.kind != "transport":
                     # A start/switch needs a running transport; the plan's transport gestures are explicit.
