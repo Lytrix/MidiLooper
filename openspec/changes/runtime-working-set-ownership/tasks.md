@@ -2301,6 +2301,35 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       a queued-but-unexecuted switch reads as pending, the *reaffirm* row also reads as pending, an executed
       switch frees the buttons, another slot's switch does not hold this one, and the tap window is at least
       the firmware's). Suite 22/22.
+      **SECOND AND THIRD RETESTS 2026-09-27 — two defects fixed, one acceptance link still open.** Suite now
+      **23/23.**
+      * **The upload was not retried, and its failure was raised instead of reported (fixed).** `teensy-gui`
+        intermittently fails with *"Teensy Loader is unable to read your compiled sketch (r)"* and then
+        succeeds on the very next attempt (measured: a retest aborted on the first try, and a direct
+        `pio run -t upload` immediately afterwards succeeded). The driver now retries the upload
+        (`--upload-attempts`, default 3), records each attempt's return code, and returns
+        **`UPLOAD_FAILED` (exit 5)** with a written report rather than raising a traceback.
+      * **B must be seeded before the leg — and that is structural, not symmetry (fixed).** With an **empty
+        selected slot** behind a pending switch, a record press never reaches the overdub stop:
+        `handleToggleRecord` sees `!hasCommittedPassesInSlot(selectedSlot)` and routes to the per-slot handler,
+        which **reaffirms the pending switch and emits another `Reaffirmed playback switch`** — a second
+        countdown. The driver now seeds **both** slots (B first, then A, leaving A active/selected), and the
+        double countdown is **gone: `Reaffirmed` count 0** in the latest run, against 2 before.
+      * **The one open link is L5 — nothing succeeds A.** In the latest run (`captures/s4f13-od4-…`) A's
+        overdub opens (`Overdub session opened`), `Loop 4: Stop Overdub` opens A's window, A retires
+        (`Reentry released slot=3`), then `Loop 5: Queued playback switch` — and the switch **still does not
+        execute**, so the subsequent record press opens a *second overdub session on the same active slot*
+        rather than starting B. L1, L2, L3, L4, L6 and L7 all pass; there is no `RECA,4` at all. **The next
+        step is to drive B's start through the switch-carried start** (the mechanism S4f.3/S4f.6 built for
+        exactly this) instead of expecting a queued switch plus a record press to compose.
+      * **Setup-gate finding, recorded rather than relaxed:** `overflow_free` FAILs on **every** fresh-boot run
+        with a `RING,shed,1` row at ~22-27 s uptime, while the identity-grade rows are all present. A *shed* is
+        not an *eviction*, so this gate needs to distinguish them before it can be a pass condition; it is
+        currently over-strict rather than the run being bad.
+      * **Telemetry note:** L3/L4 passed on the **human** rows only (`Reentry window open slot=3`,
+        `Reentry released slot=3`) — the `#CAP,DIAG,reentry_window_open,3,…` and
+        `DIAG,canonical_release,3,…` rows are absent in these runs, which is itself worth a look before the
+        ordering can be claimed in device time.
       Two legs, each a managed run (`scripts/host_midi_hitl.py run --preset base`, or the
       `scripts/hitl_stop_interruption.py` wrapper for the interruption variant — **never** a captured
       `command.json`; bounded by `HITL_MANAGED_RUN_TIMEOUT_S`):

@@ -83,7 +83,7 @@ def leg_gestures(leg: str, *, track: int, a: int, b: int) -> list[Gesture]:
             Gesture("a_record_start", "record", 0),      # arm/start the take on A
             Gesture("a_stop", "transport", 0),           # ONE press: stop A
             Gesture("b_switch_start", "slot_record", b),  # switch to B; B starts recording
-            Gesture("b_stop", "transport", 0),           # ONE press: stop B
+            Gesture("b_stop", "record", 0),              # ONE press: stop B's session
         ]
     if leg == "od":
         return [
@@ -92,7 +92,11 @@ def leg_gestures(leg: str, *, track: int, a: int, b: int) -> list[Gesture]:
             Gesture("a_stop", "slot_record", a),         # ONE press: A's own loop button
             Gesture("b_switch", "slot_record", b),       # switch to B
             Gesture("b_overdub_start", "record", 0),
-            Gesture("b_stop", "slot_record", b),         # ONE press, while A still finalizes
+            # ONE press, while A still finalizes. The **record button**, not B's loop button: on a filled,
+            # playing slot a loop-button press routes to the switch/mute branch (`queuePlayingSlotSwitch`,
+            # "Reaffirmed playback switch") and never reaches `Track::stopOverdubbing`. The record button is
+            # the route that stops B's session -- and it is also what a user actually presses.
+            Gesture("b_stop", "record", 0),
         ]
     raise ValueError(f"unknown leg {leg!r}")
 
@@ -216,6 +220,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--boot-wait-s", type=float, default=10.0)
     p.add_argument("--upload", dest="upload", action="store_true", default=True)
     p.add_argument("--no-upload", dest="upload", action="store_false")
+    p.add_argument("--upload-attempts", type=int, default=3,
+                   help="`teensy-gui` fails intermittently and succeeds on a retry, so the upload is retried")
+    p.add_argument("--upload-retry-delay-s", type=float, default=3.0)
     args = p.parse_args(argv)
 
     if args.slot_a == args.slot_b:
@@ -239,9 +246,33 @@ def main(argv: list[str] | None = None) -> int:
             report["result"] = "RESET_REFUSED_AFTER_INCOMPLETE_SHUTDOWN"
             (out_dir / "accepted-sequence.json").write_text(json.dumps(report, indent=2) + "\n")
             return 4
+        # The upload is a **retried** step, and its failure is reported rather than raised. Measured
+        # 2026-09-27: `teensy-gui` intermittently fails with "Teensy Loader is unable to read your compiled
+        # sketch (r)" and then succeeds on the very next attempt, so a single failed attempt is not a reason
+        # to abort a device session -- and `check=True` turned it into an unhandled traceback instead of a
+        # legible result, which is the defect this replaces.
         import subprocess
-        print("[s4f13] re-uploading teensy41-capture-serial to force a real reset before the leg")
-        subprocess.run(["pio", "run", "-e", "teensy41-capture-serial", "-t", "upload"], check=True)
+        upload_ok = False
+        attempts: list[dict] = []
+        for attempt in range(1, args.upload_attempts + 1):
+            print(f"[s4f13] re-uploading teensy41-capture-serial to force a real reset "
+                  f"(attempt {attempt}/{args.upload_attempts})")
+            proc = subprocess.run(["pio", "run", "-e", "teensy41-capture-serial", "-t", "upload"],
+                                  capture_output=True, text=True)
+            attempts.append({"attempt": attempt, "returncode": proc.returncode})
+            if proc.returncode == 0:
+                upload_ok = True
+                break
+            tail = "\n".join((proc.stdout or "").splitlines()[-6:])
+            print(f"[s4f13] upload attempt {attempt} failed (rc={proc.returncode}); tail:\n{tail}")
+            time.sleep(args.upload_retry_delay_s)
+        report["upload_attempts"] = attempts
+        if not upload_ok:
+            report["result"] = "UPLOAD_FAILED"
+            report["session_log"] = None
+            (out_dir / "accepted-sequence.json").write_text(json.dumps(report, indent=2) + "\n")
+            print("[s4f13] every upload attempt failed; no leg was driven and the device was left as it was")
+            return 5
         time.sleep(1.0)
 
     with ManagedCaptureSession(port=args.capture_port, boot_wait_s=args.boot_wait_s,
@@ -264,41 +295,54 @@ def main(argv: list[str] | None = None) -> int:
                 context=f"accepted-sequence-{args.leg}",
                 events=events) as shutdown_session:
 
-            # Seed the predecessor's content first: the leg is about what follows an *existing* interval.
-            slots.press_track(ctx, args.track, press_ms=args.press_ms)
-            time.sleep(0.4)
-            if not _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
-                                     events=events, label="seed_stop"):
-                raise RuntimeError("could not stop the transport before seeding")
+            def seed(slot_number: int, label: str, note_base: int) -> None:
+                """Record a short take into `slot_number`, committed, so it is a *filled* slot afterwards.
 
-            before = len(_lines(capture_log))
-            slots.press_slot_record(ctx, args.slot_a, press_ms=args.press_ms)
-            if not _wait_for(capture_log, before,
-                             (",ST,Track,STOPPED,ARMED", "Start Recording", ",ST,Track,STOPPED,RECORDING"),
-                             timeout_s=4.0):
-                slots.press_slot_record(ctx, args.slot_a, press_ms=args.press_ms)
-                events.append({"event": "seed_second_press"})
-            _ensure_transport(out_port, capture_log, running=True, press_ms=args.press_ms,
-                              events=events, label="seed_start")
-            recording = _wait_for(capture_log, before, ("Recording started", ",RECA,"),
-                                  timeout_s=args.phase_timeout_s)
-            events.append({"event": "seed_recording", "confirmed": recording})
-            if not recording:
-                raise RuntimeError(
-                    f"slot {args.slot_a} never started recording; it is probably not an empty target. This "
-                    "script does not clear it -- pick an empty slot from the pre-run observation.")
-            span_s = max(args.bars, 1) * 2.0
-            gap_s = span_s / (args.notes + 1)
-            for i in range(args.notes):
-                pitch = 60 + (i % 12)
-                out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=t0))
-                time.sleep(0.03)
-                out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=t0))
-                time.sleep(max(gap_s - 0.03, 0.01))
-            _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
-                              events=events, label="seed_commit")
-            _wait_for(capture_log, before, (",RECS,stop",), timeout_s=args.phase_timeout_s)
-            events.append({"event": "seed_committed", "confirmed": True})
+                Both A and B are seeded, and B's seeding is load-bearing rather than symmetry: with an **empty
+                selected slot** behind a pending switch, a record press never reaches the overdub stop at all.
+                Measured 2026-09-27 -- `handleToggleRecord` sees `!hasCommittedPassesInSlot(selectedSlot)` and
+                routes to the per-slot handler, which reaffirms the pending switch and emits another
+                `Reaffirmed playback switch`, so the record press produced a *second countdown* instead of
+                stopping anything. A filled B makes the selected slot a real overdub target.
+                """
+                slots.press_track(ctx, args.track, press_ms=args.press_ms)
+                time.sleep(0.4)
+                if not _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
+                                         events=events, label=f"seed_{label}_stop"):
+                    raise RuntimeError("could not stop the transport before seeding")
+                before = len(_lines(capture_log))
+                slots.press_slot_record(ctx, slot_number, press_ms=args.press_ms)
+                if not _wait_for(capture_log, before,
+                                 (",ST,Track,STOPPED,ARMED", "Start Recording",
+                                  ",ST,Track,STOPPED,RECORDING"), timeout_s=4.0):
+                    slots.press_slot_record(ctx, slot_number, press_ms=args.press_ms)
+                    events.append({"event": f"seed_{label}_second_press"})
+                _ensure_transport(out_port, capture_log, running=True, press_ms=args.press_ms,
+                                  events=events, label=f"seed_{label}_start")
+                recording = _wait_for(capture_log, before, ("Recording started", ",RECA,"),
+                                      timeout_s=args.phase_timeout_s)
+                events.append({"event": f"seed_{label}_recording", "confirmed": recording})
+                if not recording:
+                    raise RuntimeError(
+                        f"slot {slot_number} never started recording; it is probably not an empty target. "
+                        "This script does not clear it -- pick an empty slot from the pre-run observation.")
+                span_s = max(args.bars, 1) * 2.0
+                gap_s = span_s / (args.notes + 1)
+                for i in range(args.notes):
+                    pitch = note_base + (i % 12)
+                    out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=t0))
+                    time.sleep(0.03)
+                    out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=t0))
+                    time.sleep(max(gap_s - 0.03, 0.01))
+                _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
+                                  events=events, label=f"seed_{label}_commit")
+                _wait_for(capture_log, before, (",RECS,stop",), timeout_s=args.phase_timeout_s)
+                events.append({"event": f"seed_{label}_committed", "confirmed": True})
+
+            # Seed B first, then A: seeding A last leaves A as the active/selected slot, which is the state the
+            # leg's first gesture expects, and B is filled so it is a genuine overdub target.
+            seed(args.slot_b, "b", 62)
+            seed(args.slot_a, "a", 60)
 
             # --- the leg's own plan ---------------------------------------------------------------
             leg_mark = len(_lines(capture_log))
