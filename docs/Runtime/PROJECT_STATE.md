@@ -1,5 +1,16 @@
 # Project state (execution context)
 
+**2026-09-27 — S4f.18 — Record held-note identity prerequisite verified.**
+Accepted Record NoteOns now retain their NoteId in the existing pending-note map.
+Physical and stop closures use that receipt after raw freezing, without searching a reused
+producer. Overdub wrap ownership and existing record-stop content remain unchanged.
+Full native **2,508 passed / 7 skipped**; focused **19/19**; reverting to raw lookup fails
+both identity fixtures. Capture-serial build passed with RAM1 padding **840 bytes**.
+ARM held-note entries grow by four bytes; Track/job layouts and static RAM do not grow.
+Record still stops inline. Job-owned closure output, bounded pass preparation and playback
+handoff remain open; no parent task checkoff or device acceptance.
+[Closure prerequisite evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-CLOSURE-EXECUTION.md).
+
 **2026-09-27 — S4f.18 — frozen record source consumer implemented.**
 The bounded playback fill can read an exclusive CaptureRange without flattening the take.
 RecordCoverage shares the existing record tick projection, charges every examined row to

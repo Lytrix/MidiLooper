@@ -36,6 +36,9 @@ struct PendingNote {
   uint8_t channel;         // MIDI channel
   uint32_t startNoteTick;  // tick when note-on occurred
   uint8_t velocity;        // note-on velocity
+  /// Accepted Record NoteOn identity; moves with the owning pending-note map.
+  /// Overdub wrap continues to use its generation-qualified staging reservation.
+  NoteId recordNoteId = kInvalidNoteId;
   OverlapNoteIdSet overlapNoteIds;  // hold-duration candidates; keep after playback off
   /// Identities resolved at this hold's NoteOn. NoteOff skips them by identity.
   OverlapNoteIdSet occupancyResolvedNoteIds;

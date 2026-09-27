@@ -2293,6 +2293,11 @@ own execution packet and records fixture/native/build/device results separately.
       Source reuse, pool expiry and read failure deny. This prerequisite does not enable record
       stop, synthesize closures, build passes, or prove onward-window deadlines. Parent remains
       open; see [source execution evidence](S4F18-SOURCE-EXECUTION.md).
+      **Held-note identity prerequisite:** accepted Record input retains its NoteId in the
+      existing pending-note map; physical and stop Offs use that receipt after raw freezing.
+      Overdub wrap stays reservation-owned. Frozen-source, stop-content, pre-roll and rejected
+      input fixtures cover this prerequisite. Deferred closure output and pass preparation
+      remain open; [closure execution evidence](S4F18-CLOSURE-EXECUTION.md).
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,
