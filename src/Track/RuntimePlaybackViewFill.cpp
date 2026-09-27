@@ -5,6 +5,36 @@
 #include "Utils/NoteEditMem.h"
 #include "Utils/IntervalProjection.h"
 
+namespace {
+NOTE_EDIT_MEM size_t frozenCaptureSize(const void* context) {
+  return static_cast<const LoopEventStore::CaptureRange*>(context)->size();
+}
+NOTE_EDIT_MEM uint64_t frozenCaptureGeneration(const void* context) {
+  const auto& range = *static_cast<const LoopEventStore::CaptureRange*>(context);
+  return range.ready() ? range.generation() : 0;
+}
+NOTE_EDIT_MEM bool readFrozenCaptureEvent(const void* context, size_t index, MidiEvent& event) {
+  const auto& range = *static_cast<const LoopEventStore::CaptureRange*>(context);
+  bool atEnd = false;
+  return range.read(range.generation(), index / LoopEventStoreConfig::CHUNK_CAPACITY,
+                    index % LoopEventStoreConfig::CHUNK_CAPACITY, event, atEnd) && !atEnd;
+}
+}
+
+NOTE_EDIT_MEM RuntimePlaybackViewSource RuntimePlaybackViewSource::fromCaptureRange(
+    const LoopEventStore::CaptureRange& range) {
+  RuntimePlaybackViewSource source;
+  if (!range.ready()) return source;
+  source.context = &range;
+  source.size = frozenCaptureSize;
+  source.readsByCopy = true;
+  source.readEventAt = readFrozenCaptureEvent;
+  source.generation = frozenCaptureGeneration;
+  source.count = range.size();
+  source.generationToken = range.generation();
+  return source;
+}
+
 NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
     RuntimePlaybackView& destination, const MidiEvent* source, size_t sourceCount,
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
@@ -16,6 +46,7 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
   source_ = nullptr;
   sourceSize_ = nullptr;
   sourceEventAt_ = nullptr;
+  sourceReadsByCopy_ = false;
   sourceGeneration_ = nullptr;
   sourceContext_ = nullptr;
   sourceGenerationToken_ = 0;
@@ -53,7 +84,9 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
     const PlaybackViewSourceIdentity& sourceIdentity,
     const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
     const LedgerBoundarySummary& ledgerBoundary, RuntimePlaybackViewFillScope scope) {
-  if (source.context == nullptr || source.size == nullptr || source.eventAt == nullptr ||
+  if (source.context == nullptr || source.size == nullptr ||
+      (source.readsByCopy ? source.readEventAt == nullptr : source.eventAt == nullptr) ||
+      source.size(source.context) != source.count ||
       (source.generation != nullptr && source.generation(source.context) != source.generationToken)) {
     return false;
   }
@@ -61,7 +94,9 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
              coverage, cursorAnchor, ledgerBoundary, scope)) return false;
   sourceContext_ = source.context;
   sourceSize_ = source.size;
-  sourceEventAt_ = source.eventAt;
+  sourceReadsByCopy_ = source.readsByCopy;
+  if (sourceReadsByCopy_) sourceReadEventAt_ = source.readEventAt;
+  else sourceEventAt_ = source.eventAt;
   sourceGeneration_ = source.generation;
   sourceGenerationToken_ = source.generationToken;
   return true;
@@ -74,7 +109,8 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
     RuntimePlaybackViewFillScope scope) {
   if (!baseline.uneditedBaseline(sourceIdentity) || destination.passOrigins == nullptr ||
       destination.canonicalRanks == nullptr || baseline.size() > UINT16_MAX ||
-      scope == RuntimePlaybackViewFillScope::RawCoverage ||
+      (scope == RuntimePlaybackViewFillScope::RawCoverage ||
+       scope == RuntimePlaybackViewFillScope::RecordCoverage) ||
       (scope == RuntimePlaybackViewFillScope::AllSource &&
        coverage.lengthTicks != coverage.loopLengthTicks)) return false;
   if (!begin(destination, baseline.data(), baseline.size(), sourceIdentity, coverage,
@@ -91,7 +127,7 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
   }
   if (destination_->published || !(destination_->source == expected_) ||
       destination_->storage.eventCount != copied_ ||
-      (sourceEventAt_ != nullptr && sourceSize_(sourceContext_) != sourceCount_) ||
+      (sourceContext_ != nullptr && sourceSize_(sourceContext_) != sourceCount_) ||
       (sourceGeneration_ != nullptr && sourceGeneration_(sourceContext_) != sourceGenerationToken_) ||
       (baseline_ != nullptr && (baseline_->generation() != baselineGeneration_ || !baseline_->uneditedBaseline(expected_)))) {
     if (!destination_->published) { destination_->sourceFilled = false; destination_->passOriginsReady = false; }
@@ -99,14 +135,24 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
   }
   size_t remaining = entryQuantum;
   while (remaining > 0 && cursor_ < sourceCount_) {
-    const MidiEvent& event = sourceEventAt_ != nullptr
-        ? sourceEventAt_(sourceContext_, cursor_) : source_[cursor_];
-    const bool retain = scope_ == RuntimePlaybackViewFillScope::AllSource ||
+    MidiEvent event;
+    if (sourceReadsByCopy_) {
+      if (!sourceReadEventAt_(sourceContext_, cursor_, event)) {
+        destination_->sourceFilled = false;
+        destination_ = nullptr;
+        return RuntimePlaybackViewFillResult::Denied;
+      }
+    } else {
+      event = sourceEventAt_ != nullptr ? sourceEventAt_(sourceContext_, cursor_) : source_[cursor_];
+    }
+    const bool inRecord = scope_ != RuntimePlaybackViewFillScope::RecordCoverage ||
+        LoopEventStore::projectRecordStopTick(event, destination_->coverage.loopLengthTicks);
+    const bool retain = inRecord && (scope_ == RuntimePlaybackViewFillScope::AllSource ||
         (scope_ == RuntimePlaybackViewFillScope::RawCoverage
           ? event.tick >= destination_->coverage.startPhase &&
             event.tick - destination_->coverage.startPhase < destination_->coverage.lengthTicks
           : destination_->coverage.contains(IntervalProjection::playbackEventPhase(
-              event.tick, destination_->coverage.loopLengthTicks)));
+              event.tick, destination_->coverage.loopLengthTicks))));
     if (retain) {
       if (!destination_->storage.append(event)) {
         destination_->sourceFilled = false;

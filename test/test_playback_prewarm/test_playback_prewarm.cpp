@@ -6548,6 +6548,117 @@ void test_session_exit_receipt_ring_is_fifo_and_not_serialized() {
   TEST_ASSERT_NULL(loop.sessionExitReceiptAt(Loop::kSessionExitReceiptCapacity));
 }
 
+void test_frozen_record_source_is_windowed_quantized_and_immutable() {
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange frozen;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(frozen.reserveTail());
+  const size_t count = RuntimePlaybackViewConfig::kRecordsPerBridge + 257;
+  for (size_t i = 0; i < count; ++i)
+    TEST_ASSERT_TRUE(producer.append(MidiEvent::ControlChange(500, 1, 1, 2)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(778, 1, 60, 100)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOff(778, 1, 60)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::ControlChange(778, 1, 2, 3)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOff(10, 1, 61)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(frozen));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(10, 1, 70, 100)));
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(2));
+  RuntimePlaybackViewBuild build;
+  TEST_ASSERT_TRUE(build.begin(view, RuntimePlaybackViewSource::fromCaptureRange(frozen),
+      PlaybackViewSourceIdentity{1, 1, nullptr}, PlaybackCoverageInterval{0, 20, 768},
+      EmissionCursor{}, LedgerBoundarySummary{}, RuntimePlaybackViewFillScope::RecordCoverage));
+  const auto chunks = LoopEventStore::usedChunkCount();
+  const size_t grains = (count + 4 + 31) / 32;
+  for (size_t i = 0; i < grains; ++i) {
+    TEST_ASSERT_EQUAL(i + 1 == grains ? RuntimePlaybackViewBuildGrain::Order :
+        RuntimePlaybackViewBuildGrain::Fill, build.stepFill(32));
+    TEST_ASSERT_EQUAL(chunks, LoopEventStore::usedChunkCount());
+  }
+  TEST_ASSERT_EQUAL(2, view.storage.eventCount);
+  TEST_ASSERT_EQUAL(10, view.storage.events[0].tick);
+  TEST_ASSERT_TRUE(view.storage.events[0].isNoteOn());
+  TEST_ASSERT_TRUE(view.storage.events[1].isNoteOff());
+  MidiEvent original; bool end = false;
+  TEST_ASSERT_TRUE(frozen.read(frozen.generation(), count / 256, count % 256, original, end));
+  TEST_ASSERT_EQUAL(778, original.tick);
+  // Once copied, ordering owns its rows and no longer borrows the capture.
+  const size_t releaseGrains = frozen.chunkCount();
+  for (size_t i = 0; i < releaseGrains; ++i)
+    TEST_ASSERT_EQUAL(i + 1 == releaseGrains, frozen.releaseGrain(1));
+  for (size_t i = 0; i < 32 && build.active(); ++i) build.stepOrder(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.nextGrain());
+  TEST_ASSERT_EQUAL(1, view.storage.order[0]);
+  TEST_ASSERT_EQUAL(0, view.storage.order[1]);
+}
+
+void test_frozen_record_source_denies_expiry_and_window_overflow() {
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange frozen;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(frozen.reserveTail());
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(2));
+  RuntimePlaybackViewFill fill;
+  auto begin = [&]() {
+    return fill.begin(view, RuntimePlaybackViewSource::fromCaptureRange(frozen),
+        PlaybackViewSourceIdentity{}, PlaybackCoverageInterval{0, 768, 768},
+        EmissionCursor{}, LedgerBoundarySummary{}, RuntimePlaybackViewFillScope::RecordCoverage);
+  };
+  TEST_ASSERT_FALSE(begin());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(1, 1, 60, 100)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(2, 1, 61, 100)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(3, 1, 62, 100)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(frozen));
+  TEST_ASSERT_TRUE(begin());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Pending, fill.step(1));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Denied, fill.step(2));
+  TEST_ASSERT_FALSE(view.complete);
+  TEST_ASSERT_FALSE(view.sourceFilled);
+  // Ensure the expiry assertion cannot pass merely due to window overflow.
+  TEST_ASSERT_TRUE(begin());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Pending, fill.step(1));
+  TEST_ASSERT_TRUE(frozen.releaseGrain(1));
+  TEST_ASSERT_TRUE(frozen.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(3, 1, 62, 100)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(4, 1, 63, 100)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(5, 1, 64, 100)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(frozen)); // same extent, new generation
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Denied, fill.step(1));
+  TEST_ASSERT_FALSE(view.sourceFilled);
+  TEST_ASSERT_TRUE(frozen.releaseGrain(1));
+  TEST_ASSERT_TRUE(frozen.reserveTail());
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(frozen));
+  TEST_ASSERT_TRUE(begin()); // sealed empty range is valid
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Complete, fill.step(1));
+}
+
+void test_frozen_record_source_rejects_pool_reset_and_failed_row_reads() {
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange frozen;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(frozen.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(1, 1, 60, 100)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(frozen));
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(2));
+  RuntimePlaybackViewFill fill;
+  auto source = RuntimePlaybackViewSource::fromCaptureRange(frozen);
+  // Fault injection at the fallible reader boundary: no row may publish.
+  source.readEventAt = [](const void*, size_t, MidiEvent&) { return false; };
+  TEST_ASSERT_TRUE(fill.begin(view, source, PlaybackViewSourceIdentity{},
+      PlaybackCoverageInterval{0, 768, 768}, EmissionCursor{}, LedgerBoundarySummary{}));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Denied, fill.step(1));
+  TEST_ASSERT_EQUAL(0, view.storage.eventCount);
+  TEST_ASSERT_FALSE(view.sourceFilled);
+  source = RuntimePlaybackViewSource::fromCaptureRange(frozen);
+  TEST_ASSERT_TRUE(fill.begin(view, source, PlaybackViewSourceIdentity{},
+      PlaybackCoverageInterval{0, 768, 768}, EmissionCursor{}, LedgerBoundarySummary{}));
+  LoopEventStore::resetPoolForTests();
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Denied, fill.step(1));
+  TEST_ASSERT_FALSE(view.sourceFilled);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_shared_raw_preparation_rotates_then_returns_only_after_final_binding);
@@ -6730,5 +6841,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_windowed_only_slot_reserves_no_whole_take_representation);
   RUN_TEST(test_windowed_only_slot_refuses_the_whole_take_publishers);
   RUN_TEST(test_windowed_slot_upgrades_to_whole_take_at_a_cold_admission);
+  RUN_TEST(test_frozen_record_source_is_windowed_quantized_and_immutable);
+  RUN_TEST(test_frozen_record_source_denies_expiry_and_window_overflow);
+  RUN_TEST(test_frozen_record_source_rejects_pool_reset_and_failed_row_reads);
   return UNITY_END();
 }

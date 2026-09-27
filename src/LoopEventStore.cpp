@@ -1229,9 +1229,7 @@ LOOP_EVENT_STORE_COLD_MEM void LoopEventStore::mapNoteOnsAtOrBeyondTickIntoLoop(
       MidiEventVec flat;
       copyEventsTo(flat);
       for (MidiEvent& evt : flat) {
-        if (evt.isNoteOn() && evt.tick >= loopLength) {
-          evt.tick %= loopLength;
-        }
+        projectRecordStopTick(evt, loopLength);
       }
       clear();
       loadFromEvents(flat);
@@ -1246,9 +1244,7 @@ LOOP_EVENT_STORE_COLD_MEM void LoopEventStore::mapNoteOnsAtOrBeyondTickIntoLoop(
     }
     EventChunk& c = chunk(id);
     for (uint16_t i = 0; i < c.used; ++i) {
-      if (c.events[i].isNoteOn() && c.events[i].tick >= loopLength) {
-        c.events[i].tick %= loopLength;
-      }
+      projectRecordStopTick(c.events[i], loopLength);
     }
     if (c.used > 0) {
       c.firstTick = c.events[0].tick;

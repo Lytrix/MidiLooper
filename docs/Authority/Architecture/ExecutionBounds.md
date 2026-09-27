@@ -1307,3 +1307,17 @@ Track resolution is capped by `NUM_TRACKS`; queue admission uses the existing 25
 work are added. The reused helper is FLASH-resident. This does not reclassify storage allocation,
 serialization, the entire atomic-transfer turn, or prove device MIDI timing. Evidence and
 integration limits: [persistence execution packet](../../../openspec/changes/runtime-working-set-ownership/S4F20-PERSISTENCE-EXECUTION.md).
+
+### Frozen record source window consumer (2026-09-27)
+
+`RuntimePlaybackViewSource::fromCaptureRange` borrows the sealed directory without copying
+chunks. `RuntimePlaybackViewFill::step` checks extent/generation and reads at most its supplied
+row quantum, including rows outside coverage. `RecordCoverage` projects overflow NoteOn ticks
+and rejects other overflow rows before copying into prewarmed window storage. Projection and
+range reads are constant-time per row; fill performs no allocation or full-source normalization.
+Matching-window overflow or an invalid read denies the unpublished build. Ordering remains a
+separate existing bounded grain after copying; the frozen source is no longer borrowed then.
+Total window scanning is still linear in source extent. This consumer does not prove onward
+playback deadlines or make the current inline record-stop edge bounded. Held-note closure,
+pass preparation and record admission integration remain open. Evidence:
+[source execution packet](../../../openspec/changes/runtime-working-set-ownership/S4F18-SOURCE-EXECUTION.md).

@@ -1,5 +1,15 @@
 # Project state (execution context)
 
+**2026-09-27 — S4f.18 — frozen record source consumer implemented.**
+The bounded playback fill can read an exclusive CaptureRange without flattening the take.
+RecordCoverage shares the existing record tick projection, charges every examined row to
+its quantum, and rejects source expiry/read failure or matching-window overflow.
+Native regression: **2,504 passed / 7 skipped**. Capture-serial build passed with unchanged
+runtime layout pins and RAM1 padding **840 bytes**. This is a preparation prerequisite:
+record still stops inline; held-note closure, pass construction, first-bar/onward deadlines
+and common admission remain open. No upload or device acceptance.
+[Source execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-SOURCE-EXECUTION.md).
+
 **2026-09-27 — S4f.20 — deferred publication persistence handoff implemented.**
 Successful deferred transfers now use the existing persistence helper with their validated
 job slot, including stopped and superseded-source paths. Cleanup does not replay the request.
