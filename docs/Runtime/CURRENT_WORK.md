@@ -3302,6 +3302,13 @@ S4f.17–S4f.22 remain open. Next extend the existing interval/latch/job admissi
 modes against the linked fixtures; retain the strict deferred-ownership oracle. No weaker record
 oracle is authorized. Response-driven HITL tasks remain the automation dependency.
 
+S4f.18 — frozen-source consumer prerequisite is implemented: the existing bounded playback
+fill reads exclusive raw chunks, projects record-stop ticks and denies stale or failed reads.
+Full native **2,504 passed / 7 skipped**; capture-serial build and layout pins pass with
+RAM1 padding **840 bytes**. No admission switch or task checkoff. Next complete bounded
+held-note/record-pass preparation and integrate the generation-correct playback handoff.
+[Consumer evidence and remaining gates](../../openspec/changes/runtime-working-set-ownership/S4F18-SOURCE-EXECUTION.md).
+
 ### Continuation after recovery (2026-09-26)
 
 DMA fault investigation/repair is parked until after the whole active OpenSpec by

@@ -2287,6 +2287,12 @@ own execution packet and records fixture/native/build/device results separately.
       construction without a full-take staging copy or changed input capacity. Verify exact short/dense/long
       content, held notes, stop-length edges, resource failure and bounded units; mutation restoring an
       input-edge full walk or wrong capture mode must fail the production fixtures.
+      **2026-09-27 source-consumer slice:** the existing playback fill accepts a fallible,
+      generation-qualified frozen CaptureRange reader and RecordCoverage tick projection.
+      Every examined row consumes quantum; only matching rows consume window capacity.
+      Source reuse, pool expiry and read failure deny. This prerequisite does not enable record
+      stop, synthesize closures, build passes, or prove onward-window deadlines. Parent remains
+      open; see [source execution evidence](S4F18-SOURCE-EXECUTION.md).
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,

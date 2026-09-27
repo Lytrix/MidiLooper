@@ -7,22 +7,30 @@
 #include <cstdint>
 
 #include "RuntimePlaybackView.h"
+#include "LoopEventStore.h"
 #include "RuntimeCompanionPasses.h"
 
-enum class RuntimePlaybackViewFillScope : uint8_t { AllSource, PlaybackCoverage, RawCoverage };
+enum class RuntimePlaybackViewFillScope : uint8_t { AllSource, PlaybackCoverage, RawCoverage, RecordCoverage };
 
 enum class RuntimePlaybackViewFillResult : uint8_t { Pending, Complete, Denied };
 
 struct RuntimePlaybackViewSource {
   using SizeFn = size_t (*)(const void*);
   using EventAtFn = const MidiEvent& (*)(const void*, size_t);
+  using ReadEventAtFn = bool (*)(const void*, size_t, MidiEvent&);
   using GenerationFn = uint64_t (*)(const void*);
   const void* context = nullptr;
   SizeFn size = nullptr;
-  EventAtFn eventAt = nullptr;
+  union {
+    EventAtFn eventAt = nullptr;
+    ReadEventAtFn readEventAt;
+  };
   GenerationFn generation = nullptr;
   size_t count = 0;
   uint64_t generationToken = 0;
+  bool readsByCopy = false;
+  /// Borrows the sealed range until fill completion. Never flattens its chunks.
+  static RuntimePlaybackViewSource fromCaptureRange(const LoopEventStore::CaptureRange& range);
 };
 
 /// Copies an already immutable source into a prewarmed view in fixed entry
@@ -64,7 +72,10 @@ class RuntimePlaybackViewFill {
   PlaybackViewSourceIdentity expected_;
   const MidiEvent* source_ = nullptr;
   RuntimePlaybackViewSource::SizeFn sourceSize_ = nullptr;
-  RuntimePlaybackViewSource::EventAtFn sourceEventAt_ = nullptr;
+  union {
+    RuntimePlaybackViewSource::EventAtFn sourceEventAt_ = nullptr;
+    RuntimePlaybackViewSource::ReadEventAtFn sourceReadEventAt_;
+  };
   RuntimePlaybackViewSource::GenerationFn sourceGeneration_ = nullptr;
   const void* sourceContext_ = nullptr;
   uint64_t sourceGenerationToken_ = 0;
@@ -72,4 +83,5 @@ class RuntimePlaybackViewFill {
   size_t cursor_ = 0;
   size_t copied_ = 0;
   RuntimePlaybackViewFillScope scope_ = RuntimePlaybackViewFillScope::AllSource;
+  bool sourceReadsByCopy_ = false;
 };

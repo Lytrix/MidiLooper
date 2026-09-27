@@ -293,6 +293,14 @@ class LoopEventStore {
   /// that already landed in-loop keeps its matching On. Then drop remaining
   /// overflow events.
   void mapNoteOnsAtOrBeyondTickIntoLoop(uint32_t loopLength);
+  /// Tick projection only: closure/pair normalization remains the caller's job.
+  /// Returns whether a row belongs to the finalized record interval.
+  static bool projectRecordStopTick(MidiEvent& event, uint32_t loopLength) {
+    if (loopLength == 0) return true;
+    if (event.isNoteOn() && event.tick >= loopLength) event.tick %= loopLength;
+    return event.tick < loopLength;
+  }
+
 
   std::shared_ptr<LoopEventStore> cloneShared() const;
 
