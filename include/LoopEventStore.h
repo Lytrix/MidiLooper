@@ -74,6 +74,31 @@ struct LoopEventStoreRewriteCursor {
 
 enum class LoopEventStoreRewriteResult : uint8_t { Pending, Complete, Denied };
 
+/// Borrowed control state for the existing prepared-store -> committed-directory
+/// transition. Both containers and the owner generation outlive the cursor.
+/// Partial destination contents are owned, but not ordered/publishable yet.
+class LoopEventStoreCommitCursor {
+ public:
+  bool active() const { return active_; }
+  bool complete() const { return complete_; }
+ private:
+  friend class LoopEventStore;
+  const LoopEventStore* owner_ = nullptr;
+  CommittedChunkIdList* destination_ = nullptr;
+  const uint16_t* destinationData_ = nullptr;
+  const uint64_t* generation_ = nullptr;
+  uint64_t expectedGeneration_ = 0;
+  uint64_t ownershipGeneration_ = 0;
+  uint64_t poolLifetime_ = 0;
+  size_t remainingChunks_ = 0;
+  size_t remainingEvents_ = 0;
+  size_t transferred_ = 0;
+  size_t reverseIndex_ = 0;
+  bool active_ = false;
+  bool complete_ = false;
+};
+
+
 enum class LoopEventStoreReadResult : uint8_t { Pending, Complete, Denied };
 
 /// Unpublished raw input for one pass. The owner retains immutable chunk refs,
@@ -317,6 +342,19 @@ class LoopEventStore {
   /// Seal and move chunk refs into committed list (this store cleared). Fails without abort when
   /// extmem and internal heap cannot admit the committed vector.
   bool detachChunksToCommittedChunkIds(CommittedChunkIdList& dest);
+  /// Exclusive prepared output only; never a borrowed raw CaptureRange. Scalar
+  /// preflight requires prewarmCaptureDirectory() on a nonempty source (including
+  /// persistence admission) and an empty, prewarmed destination. Caller must change the
+  /// external generation before replacing either borrowed owner/container.
+  bool beginCommittedChunkTransfer(LoopEventStoreCommitCursor& cursor,
+                                   CommittedChunkIdList& destination,
+                                   const uint64_t& generation);
+  /// At most quantum reference moves or directory swaps. No event copies or
+  /// allocations. Complete restores original chunk order. On cancellation each
+  /// container releases only its own references through existing grain APIs.
+  LoopEventStoreRewriteResult stepCommittedChunkTransfer(
+      LoopEventStoreCommitCursor& cursor, size_t quantum);
+
 
   /// Take ownership of capture chunk refs from ids (ids cleared). CaptureBuilder only.
   void adoptChunkIds(CaptureChunkIdList& ids);

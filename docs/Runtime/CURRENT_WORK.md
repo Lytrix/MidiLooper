@@ -1,5 +1,18 @@
 # Current work (implementation scope)
 
+**2026-09-28 — S4f.18 — bounded prepared-pass chunk transfer verified.**
+The existing store-to-committed-directory transition supports resumable reference
+moves and order-restoring swaps. Each grain respects its quantum, allocates no
+chunks or directory storage, and preserves source/destination ownership on denial.
+It requires source/persistence prewarming and rejects stale owner/pool receipts.
+Fully prewarmed synchronous callers reuse it; legacy callers retain their path.
+Focused **40/40**, five mutations rejected, full native **2,525 passed / 7 skipped**.
+Cursor is **64 bytes ARM / 96 bytes native**; no new Track/job/runtime field.
+Capture-serial build and layout pins pass; RAM1 padding remains **840 bytes**.
+Record normalization and worker integration remain open; no upload, hardware
+acceptance or parent task checkoff.
+[Transfer evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-TRANSFER-EXECUTION.md).
+
 **2026-09-28 — S4f.18 — Record normalization oracle verified.**
 Five real-stop fixtures pin overflow NoteOn projection, tail repair, minimum-length
 policy, filtered-empty geometry and all 2,056 rows of a Record take beyond overdub
@@ -3353,6 +3366,14 @@ minimum-length policy and a 2,056-row take beyond overdub staging. **29/29** foc
 normalization/pass construction remain the next implementation work. No firmware
 behavior changed or task closed by this fixture checkpoint.
 [Normalization evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-NORMALIZATION-EXECUTION.md).
+
+Prepared canonical output can now transfer its chunk directory in bounded moves/
+swaps through the existing store owner, with no event copy or reference churn.
+Fully prewarmed synchronous callers share the implementation. **40/40** focused,
+**2,525 passed / 7 skipped** native; capture-serial build keeps **840 bytes** RAM1
+padding. The 64-byte ARM cursor adds no resident Track/job/runtime field.
+Full normalization and Record worker phase integration remain open.
+[Transfer evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-TRANSFER-EXECUTION.md).
 
 ### Continuation after recovery (2026-09-26)
 

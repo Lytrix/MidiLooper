@@ -719,9 +719,90 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksTo(CaptureChunkIdList
   }
 }
 
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginCommittedChunkTransfer(
+    LoopEventStoreCommitCursor& cursor, CommittedChunkIdList& destination,
+    const uint64_t& generation) {
+  if (cursor.active_ || !destination.empty() || destination.capacity() < chunkIds_.size() ||
+      (!chunkIds_.empty() && !reservedAppendReady()) ||
+      (capturePoolLifetime_ && capturePoolLifetime_ != poolLifetime_)) return false;
+  cursor = LoopEventStoreCommitCursor{};
+  cursor.owner_ = this;
+  cursor.destination_ = &destination;
+  cursor.destinationData_ = destination.data();
+  cursor.generation_ = &generation;
+  cursor.expectedGeneration_ = generation;
+  cursor.poolLifetime_ = poolLifetime_;
+  cursor.ownershipGeneration_ = ++ownershipGeneration_;
+  cursor.remainingChunks_ = chunkIds_.size();
+  cursor.remainingEvents_ = eventCount_;
+  cursor.active_ = true;
+  return true;
+}
+
+LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepCommittedChunkTransfer(
+    LoopEventStoreCommitCursor& cursor, size_t quantum) {
+  if (cursor.owner_ != this || !cursor.destination_ || !cursor.generation_ ||
+      *cursor.generation_ != cursor.expectedGeneration_ ||
+      cursor.ownershipGeneration_ != ownershipGeneration_ || cursor.poolLifetime_ != poolLifetime_ ||
+      cursor.destination_->data() != cursor.destinationData_ ||
+      cursor.destination_->size() != cursor.transferred_ ||
+      chunkIds_.size() != cursor.remainingChunks_ || eventCount_ != cursor.remainingEvents_)
+    return LoopEventStoreRewriteResult::Denied;
+  if (cursor.complete_) return LoopEventStoreRewriteResult::Complete;
+  if (!cursor.active_ || quantum == 0) return LoopEventStoreRewriteResult::Denied;
+  auto& destination = *cursor.destination_;
+  while (quantum) {
+    if (!chunkIds_.empty()) {
+      const uint16_t id = chunkIds_.back();
+      if (!poolReady_ || id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolUsed_[id] ||
+          poolChunkRefCount_[id] == 0 || destination.size() == destination.capacity())
+        return LoopEventStoreRewriteResult::Denied;
+      const auto& source = chunk(id);
+      if (source.used > eventCount_) return LoopEventStoreRewriteResult::Denied;
+      if (source.used) sealChunk(id);
+      // Existing reference ownership moves; no release/retain churn and no row copy.
+      destination.push_back(id);
+      chunkIds_.pop_back();
+      eventCount_ -= source.used;
+      --cursor.remainingChunks_;
+      cursor.remainingEvents_ = eventCount_;
+      ++cursor.transferred_;
+      cursor.ownershipGeneration_ = ++ownershipGeneration_;
+      lastAppendedTick_ = chunkIds_.empty() ? 0 : chunk(chunkIds_.back()).lastTick;
+      markBarIndexDirty();
+    } else if (cursor.reverseIndex_ < destination.size() / 2) {
+      std::swap(destination[cursor.reverseIndex_],
+                destination[destination.size() - 1 - cursor.reverseIndex_]);
+      ++cursor.reverseIndex_;
+      cursor.ownershipGeneration_ = ++ownershipGeneration_;
+    } else {
+      break;
+    }
+    --quantum;
+  }
+  if (chunkIds_.empty() && cursor.reverseIndex_ == destination.size() / 2) {
+    cursor.active_ = false;
+    cursor.complete_ = true;
+    return LoopEventStoreRewriteResult::Complete;
+  }
+  return LoopEventStoreRewriteResult::Pending;
+}
+
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksToCommittedChunkIds(CommittedChunkIdList& dest) {
   releaseChunkRefs(dest);
   dest.clear();
+
+  // Prepared callers already own directory capacity. Keep the synchronous API
+  // until their worker phases migrate, but share the bounded transfer primitive.
+  if (dest.capacity() >= chunkIds_.size() && (chunkIds_.empty() || reservedAppendReady())) {
+    const uint64_t generation = ownershipGeneration_;
+    LoopEventStoreCommitCursor cursor;
+    if (!beginCommittedChunkTransfer(cursor, dest, generation)) return false;
+    LoopEventStoreRewriteResult result;
+    do { result = stepCommittedChunkTransfer(cursor, 1); }
+    while (result == LoopEventStoreRewriteResult::Pending);
+    return result == LoopEventStoreRewriteResult::Complete;
+  }
 
   for (uint16_t id : chunkIds_) {
     if (chunk(id).used > 0) {
@@ -737,19 +818,13 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksToCommittedChunkIds(C
     return true;
   }
 
-  // An active-stop candidate arrives with this exact capacity prewarmed. Keep
-  // that storage in place so detachment cannot hide a vector allocation behind
-  // a seemingly small ownership handoff. Legacy callers retain the previous
-  // cold allocation path when no prepared capacity was supplied.
+  // Legacy stores without complete capture/persistence prewarming retain their
+  // synchronous path, including the existing preallocated-directory shortcut.
   if (dest.capacity() >= count) {
-    for (uint16_t id : chunkIds_) {
-      dest.push_back(id);
-    }
+    for (uint16_t id : chunkIds_) dest.push_back(id);
   } else {
     CommittedChunkIdList committedChunkIds;
-    if (!tryAssignCommittedChunkIds(committedChunkIds, chunkIds_.data(), count)) {
-      return false;
-    }
+    if (!tryAssignCommittedChunkIds(committedChunkIds, chunkIds_.data(), count)) return false;
     dest = std::move(committedChunkIds);
   }
 

@@ -2310,6 +2310,11 @@ own execution packet and records fixture/native/build/device results separately.
       links real playback reanchoring/ledger-clear ownership via an independent harness
       opt-in. Bounded normalization and pass construction remain open; see
       [normalization execution evidence](S4F18-NORMALIZATION-EXECUTION.md).
+      **2026-09-28 bounded pass-directory transfer:** the existing store transition now
+      supports one prewarmed reference move or order-restoring swap per grain, with
+      owner/pool/destination receipts and partial-cancellation ownership. Fully prewarmed
+      synchronous callers share the primitive; Record worker phase integration and full
+      normalization remain open. [Transfer execution evidence](S4F18-TRANSFER-EXECUTION.md).
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,

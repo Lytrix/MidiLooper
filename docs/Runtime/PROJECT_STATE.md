@@ -1,5 +1,18 @@
 # Project state (execution context)
 
+**2026-09-28 — S4f.18 — bounded prepared-pass chunk transfer verified.**
+The existing store-to-committed-directory transition supports resumable reference
+moves and order-restoring swaps. Each grain respects its quantum, allocates no
+chunks or directory storage, and preserves source/destination ownership on denial.
+It requires source/persistence prewarming and rejects stale owner/pool receipts.
+Fully prewarmed synchronous callers reuse it; legacy callers retain their path.
+Focused **40/40**, five mutations rejected, full native **2,525 passed / 7 skipped**.
+Cursor is **64 bytes ARM / 96 bytes native**; no new Track/job/runtime field.
+Capture-serial build and layout pins pass; RAM1 padding remains **840 bytes**.
+Record normalization and worker integration remain open; no upload, hardware
+acceptance or parent task checkoff.
+[Transfer evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-TRANSFER-EXECUTION.md).
+
 **2026-09-28 — S4f.18 — Record normalization oracle verified.**
 Five real-stop fixtures pin overflow NoteOn projection, tail repair, minimum-length
 policy, filtered-empty geometry and all 2,056 rows of a Record take beyond overdub
