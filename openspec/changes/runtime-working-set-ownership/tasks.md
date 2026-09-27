@@ -2296,6 +2296,13 @@ own execution packet and records fixture/native/build/device results separately.
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,
       note edit, failed preparation, stale cleanup, replacement/load/clear/save, exact persisted content and
       bounded retirement. Preserve overdub session undo; do not add a new undo kind.
+      **2026-09-27 handoff slice:** successful deferred atomic transfers request dirty/persist/save
+      for their validated job slot once; stale Loop identity cannot advance publication. Production
+      fixtures cover Playing, Stopped, superseded source and stale/recovered identity with a live
+      successor and different selected track. Record undo/publication and device/durability gates
+      remain open. Full native **2,501 passed / 7 skipped**, focused **15/15**; capture-serial
+      passes with padding **840 bytes**. Strict OD→OD now passes; three Record cases remain red.
+      [Execution packet](S4F20-PERSISTENCE-EXECUTION.md).
 - [ ] S4f.21 **Migrate all record-stop continuations.** Convert stopRecordingTrack, finalizeCaptureAndSelectSlot,
       stopAllTracks and direct stop entry points to identity-qualified execution/geometry results; remove
       synchronous full-record fallback and caller-side duplicate save. Guard same-slot destructive start;

@@ -1297,3 +1297,13 @@ append maintains the maximum with one comparison, reusing the former append-orde
 `prepareRecordStop` uses it for Record length calculation. Remaining record normalization,
 closure, validation and publication work retains its existing bound classification until the
 connected S4f.18–S4f.21 changes are verified. No claim that the full record-stop edge is bounded.
+
+### Deferred capture publication persistence request (2026-09-27)
+
+`requestLoopSlotPersistAndSaveState` runs once after a successful atomic transfer, using the
+validated job slot. It reuses StorageManager's dirty/admit/request path without SD dispatch.
+Track resolution is capped by `NUM_TRACKS`; queue admission uses the existing 256-entry table;
+`getInternalHeapFreeBytes` reads the arena-tail scalar. No job/Track fields or content-sized
+work are added. The reused helper is FLASH-resident. This does not reclassify storage allocation,
+serialization, the entire atomic-transfer turn, or prove device MIDI timing. Evidence and
+integration limits: [persistence execution packet](../../../openspec/changes/runtime-working-set-ownership/S4F20-PERSISTENCE-EXECUTION.md).

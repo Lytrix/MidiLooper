@@ -1065,7 +1065,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   // Never reinterpret a saved job through the currently selected slot.
   if (!job.owner || !loopsAllocated() ||
       loopIdForSlot(job.slot) != job.loopId ||
-      &getLoop(job.slot) != job.owner ||
+      &getLoop(job.slot) != job.owner || job.owner->loopId != job.loopId ||
       job.owner->loopLengthTicks != job.loopLengthTicks) {
     noteStallOnce("job owner or loop geometry no longer matches");
     return false;
@@ -1373,6 +1373,8 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
               supersededPublishable ? supersededUndo : nullptr,
               job.ownsPendingPass ? &job.pendingPass : nullptr))
         return false;
+      requestLoopSlotPersistAndSaveState(*this, job.slot,
+                                         MemoryMonitor::getInternalHeapFreeBytes());
       // The unpublished companion preparation returns to its prewarmed horizon
       // here, so the next interval never needs a STOPPED-only re-prewarm.
       if (!loop.restoreSupersededPreparedCompanionHistory(job.admission.intervalToken())) {
@@ -1396,8 +1398,9 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
                                                      : loop.pendingCapturePass().id;
     const bool publishable = job.undoPublicationReady && undo != nullptr &&
         undo->canPublish(getGlobalUndoStack(), loop.loopId, jobFinalPassId);
+    bool committed = false;
     if (publishable) {
-      (void)TrackPreparedStopCommit::advanceAtomicTransferWithUndo(
+      committed = TrackPreparedStopCommit::advanceAtomicTransferWithUndo(
           loop, *runtime, stop, playbackGeneration, anchor, transferred,
           getGlobalUndoStack(), *undo, jobPass);
     } else {
@@ -1405,8 +1408,14 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
         SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                            job.undoPublicationReady, undo != nullptr, "undo_not_publishable");
       }
-      (void)TrackPreparedStopCommit::advanceAtomicTransfer(
+      committed = TrackPreparedStopCommit::advanceAtomicTransfer(
           loop, *runtime, stop, playbackGeneration, anchor, transferred, jobPass);
+    }
+    // Publication consumed this job's receipt. Cleanup must not replay admission,
+    // and the current active/selected slot may already belong to a successor.
+    if (committed) {
+      requestLoopSlotPersistAndSaveState(*this, job.slot,
+                                         MemoryMonitor::getInternalHeapFreeBytes());
     }
     return false;
   }

@@ -46,6 +46,19 @@ void EditManager::foldLiveCaptureIntoNoteEditSession(Track&) { LOAD_HARNESS_OFF_
 void Track::silenceTrackMidiOutput() { ++g_nativeSilenceTrackCalls; }
 
 #ifndef HARNESS_LINKS_REAL_STOP_TELEMETRY
+// Load ownership fixtures retire a real capture job before retrying a restore.
+// They observe this outbound request only; persistence admission itself is tested
+// with the real storage owner in test_shared_capture_finalization.
+namespace LoadHarnessPersistence {
+unsigned requests = 0;
+Track* lastTrack = nullptr;
+uint8_t lastSlot = Config::INVALID_LOOP_SLOT;
+}
+void requestLoopSlotPersistAndSaveState(Track& track, uint8_t slot, uint32_t) {
+  ++LoadHarnessPersistence::requests;
+  LoadHarnessPersistence::lastTrack = &track;
+  LoadHarnessPersistence::lastSlot = slot;
+}
 /// Supplied here because the load suite's linked set never resolves the stop-telemetry TU. A suite that
 /// **does** link it (the S4.1 persistence-identity fixture drives the production slot-keyed persistence
 /// admission, which lives there) defines `HARNESS_LINKS_REAL_STOP_TELEMETRY` and gets the real identity

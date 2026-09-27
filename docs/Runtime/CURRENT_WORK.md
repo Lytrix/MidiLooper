@@ -1,5 +1,19 @@
 # Current work (implementation scope)
 
+**2026-09-27 — S4f.20 — deferred publication persistence handoff implemented.**
+Successful deferred transfers now use the existing persistence helper with their validated
+job slot, including stopped and superseded-source paths. Cleanup does not replay the request.
+A stale Loop object identity also blocks publication. Four transition fixtures cover these
+paths with a live successor and a different selected track; the load fixture observes its
+legitimate outgoing request separately from real storage admission tests.
+Full native: **2,501 passed / 7 skipped**; final publication suite: **15/15**.
+Strict contract now has three record-related failures; OD→OD passes with persistence.
+Final capture-serial build passed with unchanged RAM1
+padding **840 bytes** and no field growth. Full regression/strict contract evidence is recorded in
+[the execution packet](../../openspec/changes/runtime-working-set-ownership/S4F20-PERSISTENCE-EXECUTION.md).
+No upload or device acceptance. Record still finalizes inline; S4f.17–S4f.21 — connected
+shared finalization remain open, including record preparation, playback, undo and callers.
+
 **2026-09-27 — connected S4f.17–S4f.21 implementation in progress; identity/length prerequisites verified.**
 Record and overdub starts now share interval stamping; invalid Record starts reject before
 slot reset. Accepted stops bind LoopId and Capture mode and supersede changed identities.

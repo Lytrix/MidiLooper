@@ -59,6 +59,9 @@ bool sequencerRunning = false;
 #include "../../src/StorageManager/PersistenceDrainGuard.cpp"
 
 void setUp() {
+  LoadHarnessPersistence::requests = 0;
+  LoadHarnessPersistence::lastTrack = nullptr;
+  LoadHarnessPersistence::lastSlot = Config::INVALID_LOOP_SLOT;
   StorageManagerInternal::clearPendingLoopSlotRestoresAtBoot();
   StorageManagerInternal::resetAllLoopSlotRestoreAttempted();
   // The job instances are function-local statics in `LoadLoopJob.cpp` and are **not** cleared by the
@@ -219,6 +222,9 @@ void test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned() {
     TrackCaptureStopTestAccess::step(track);
   }
   TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_UINT(1, LoadHarnessPersistence::requests);
+  TEST_ASSERT_EQUAL_PTR(&track, LoadHarnessPersistence::lastTrack);
+  TEST_ASSERT_EQUAL_UINT(0, LoadHarnessPersistence::lastSlot);
   TEST_ASSERT_TRUE_MESSAGE(track.noLiveOwnerForSlot(0),
                            "the retired slot has no live owner, so the load may proceed");
   TEST_ASSERT_EQUAL_UINT16(1, StorageManagerInternal::pendingLoopSlotRestores_.count);

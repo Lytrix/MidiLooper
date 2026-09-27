@@ -20,6 +20,11 @@ struct TrackCaptureStopTestAccess {
     }
     t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::VisualCache, 1);
   }
+  static PendingStopPhase phase(const Track& t) {
+    const auto* j = t.captureStopJobHead();
+    TEST_ASSERT_NOT_NULL(j);
+    return j->admission.phase;
+  }
   static uint64_t headInterval(const Track& t) {
     const auto* j = t.captureStopJobHead();
     return j ? j->interval : 0;
@@ -66,6 +71,8 @@ void TrackManager::beginSlotSelectionHold(uint8_t, uint8_t) { A34A_OFF_PATH(); }
 void TrackManager::endSlotSelectionHold(uint8_t, uint8_t, uint32_t) { A34A_OFF_PATH(); }
 void setUp() {
   PersistenceWorkQueue::resetForTests();
+  StorageManagerInternal::storageSession.currentWorkspaceSave.pending = false;
+  StorageManagerInternal::storageSession.currentWorkspaceSave.urgentRequested = false;
   trackManager.~TrackManager();
   LoopEventStore::resetPoolForTests();
   new (&trackManager) TrackManager();
@@ -115,13 +122,8 @@ void assertContent(Track& t, uint8_t slot, bool overdub, uint8_t note) {
   TEST_ASSERT_EQUAL_UINT8(note, rows[1].data.noteData.note);
   TEST_ASSERT_EQUAL_UINT32(12, rows[0].tick);
   TEST_ASSERT_EQUAL_UINT32(96, rows[1].tick);
-  if (std::getenv("S4F16_REQUIRE_CONTRACT") || !overdub) {
-    TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::currentSetLoopSlotDirty[0][slot],
-      "completed interval must request persistence for its own slot");
-  } else {
-    // Existing deferred worker lacks the persistence handoff; S4f.20 owns this gap.
-    TEST_ASSERT_FALSE(StorageManagerInternal::currentSetLoopSlotDirty[0][slot]);
-  }
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::currentSetLoopSlotDirty[0][slot],
+    "completed interval must request persistence for its own slot");
 }
 void rotation(bool aOverdub, bool bOverdub) {
   LoopEventStore::initPool();
@@ -186,10 +188,8 @@ void rotation(bool aOverdub, bool bOverdub) {
       const bool overdub = slot == 0 ? aOverdub : bOverdub;
       TEST_ASSERT_EQUAL(overdub ? UndoEntryKind::OverdubPassAdded : UndoEntryKind::RecordPassAdded,
                         entry.kind);
-      if (!overdub) {
-        TEST_ASSERT_EQUAL(PersistWorkState::Queued, PersistenceWorkQueue::workState(
-          PersistWorkType::LoopPersist, persistKeyForSlot(0, slot)));
-      }
+      TEST_ASSERT_EQUAL(PersistWorkState::Queued, PersistenceWorkQueue::workState(
+        PersistWorkType::LoopPersist, persistKeyForSlot(0, slot)));
     }
     TEST_ASSERT_TRUE_MESSAGE(found, "undo must retain each interval's LoopId");
   }
@@ -318,8 +318,90 @@ void test_denied_record_preflight_preserves_content_and_interval_then_retries() 
   TEST_ASSERT_FALSE(loop.hasCommittedPasses());
   TEST_ASSERT_EQUAL_UINT32(1200, loop.startLoopTick);
 }
+// Publication is observed by phase, not an arbitrary count of maintenance turns.
+void advanceToPhase(Track& t, PendingStopPhase phase) {
+  const uint64_t budget = TrackCaptureStopTestAccess::budget(t);
+  for (uint64_t grain = 0; grain < budget && grain < 20000; ++grain) {
+    if (TrackCaptureStopTestAccess::phase(t) == phase) return;
+    TrackCaptureStopTestAccess::step(t);
+  }
+  TrackCaptureStopTestAccess::diagnostic(t);
+  TEST_FAIL_MESSAGE("publication phase not reached within admitted work");
+}
+void assertNoPersistenceRequest() {
+  TEST_ASSERT_FALSE(StorageManagerInternal::storageSession.currentWorkspaceSave.pending);
+  TEST_ASSERT_EQUAL_UINT(0, PersistenceWorkQueue::queueDepth());
+  for (const auto& row : StorageManagerInternal::currentSetLoopSlotDirty)
+    for (bool dirty : row) TEST_ASSERT_FALSE(dirty);
+}
+void deferredPersistence(bool stopped, bool superseded, bool stale) {
+  LoopEventStore::initPool();
+  // Use a non-selected track: persistence must resolve the owner, not UI focus.
+  Track& t = trackManager.getTrack(2);
+  t.ensureLoopsAllocated();
+  prepareSlot(t, 0, true);
+  prepareSlot(t, 1, true);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  clockManager.assignCurrentTickSilently(768);
+  if (stopped) t.stopOverdubbingToStopped(); else t.stopOverdubbing();
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
+  if (stopped) t.forceSetState(TRACK_PLAYING);
+  start(t, 1, true, 768, 62);
+  assertNoPersistenceRequest();
+  advanceToPhase(t, PendingStopPhase::AtomicTransfer);
+  assertNoPersistenceRequest();
+  Loop& owner = t.getLoop(0);
+  TEST_ASSERT_EQUAL_UINT(0, owner.passes.overdubPasses.size());
+  if (stale) {
+    const LoopId original = owner.loopId;
+    ++owner.loopId;
+    for (unsigned i = 0; i < 3; ++i) TrackCaptureStopTestAccess::step(t);
+    const auto phaseWhileStale = TrackCaptureStopTestAccess::phase(t);
+    owner.loopId = original; // restore even when the assertion below aborts this case
+    assertNoPersistenceRequest();
+    TEST_ASSERT_EQUAL(PendingStopPhase::AtomicTransfer, phaseWhileStale);
+    TEST_ASSERT_EQUAL_UINT(0, owner.passes.overdubPasses.size());
+  }
+  if (superseded) ++owner.playbackRevision; // fault-inject a replaced causal base
+  advanceToPhase(t, PendingStopPhase::DeferredCleanup);
+  TEST_ASSERT_EQUAL_UINT(1, owner.passes.overdubPasses.size());
+  TEST_ASSERT_TRUE(StorageManagerInternal::currentSetLoopSlotDirty[2][0]);
+  TEST_ASSERT_FALSE(StorageManagerInternal::currentSetLoopSlotDirty[2][1]);
+  TEST_ASSERT_FALSE(StorageManagerInternal::currentSetLoopSlotDirty[0][0]);
+  TEST_ASSERT_TRUE(StorageManagerInternal::storageSession.currentWorkspaceSave.pending);
+  TEST_ASSERT_TRUE(StorageManagerInternal::storageSession.currentWorkspaceSave.urgentRequested);
+  TEST_ASSERT_EQUAL_UINT(2, PersistenceWorkQueue::queueDepth());
+  for (auto type : {PersistWorkType::SlotMeta, PersistWorkType::LoopPersist})
+    TEST_ASSERT_EQUAL(PersistWorkState::Queued,
+      PersistenceWorkQueue::workState(type, persistKeyForSlot(2, 0)));
+  // Acknowledge work at the I/O boundary so coalescing cannot hide repeat requests.
+  PersistWorkItem item;
+  while (PersistenceWorkQueue::beginWriteQueuedItem(item)) PersistenceWorkQueue::markItemPersisted(item);
+  StorageManagerInternal::storageSession.currentWorkspaceSave.pending = false;
+  StorageManagerInternal::currentSetLoopSlotDirty[2][0] = false;
+  const uint64_t budget = TrackCaptureStopTestAccess::budget(t);
+  for (uint64_t grain = 0; t.hasStopInFlight() && grain < budget && grain < 20000; ++grain)
+    TrackCaptureStopTestAccess::step(t);
+  TEST_ASSERT_FALSE(t.hasStopInFlight());
+  for (unsigned i = 0; i < 10; ++i) TrackCaptureStopTestAccess::step(t);
+  assertNoPersistenceRequest();
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  TEST_ASSERT_EQUAL_UINT(2, t.getLoop(1).capture.store.size());
+  TEST_ASSERT_EQUAL_UINT(1, owner.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL(PersistWorkState::Persisted,
+    PersistenceWorkQueue::workState(PersistWorkType::LoopPersist, persistKeyForSlot(2, 0)));
+}
+void test_deferred_publication_requests_own_slot_once() { deferredPersistence(false, false, false); }
+void test_stopped_publication_requests_own_slot_once() { deferredPersistence(true, false, false); }
+void test_superseded_publication_requests_own_slot_once() { deferredPersistence(false, true, false); }
+void test_stale_publication_waits_before_persistence() { deferredPersistence(false, false, true); }
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_deferred_publication_requests_own_slot_once);
+  RUN_TEST(test_stopped_publication_requests_own_slot_once);
+  RUN_TEST(test_superseded_publication_requests_own_slot_once);
+  RUN_TEST(test_stale_publication_waits_before_persistence);
   RUN_TEST(test_denied_record_preflight_preserves_content_and_interval_then_retries);
   RUN_TEST(test_replaced_loop_supersedes_accepted_stop);
   RUN_TEST(test_changed_capture_mode_supersedes_accepted_stop);
