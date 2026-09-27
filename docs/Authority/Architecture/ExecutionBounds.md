@@ -1352,3 +1352,22 @@ This consumer is not yet dispatched by production Record admission. It does not 
 normalization, pass construction, publication, first-bar/onward deadlines, or expand the
 current overdub-specific admission contract. Evidence:
 [Record output execution packet](../../../openspec/changes/runtime-working-set-ownership/S4F18-OUTPUT-EXECUTION.md).
+
+
+### Prepared canonical chunk-directory transfer (2026-09-28)
+
+`LoopEventStore::beginCommittedChunkTransfer` checks the exclusive prepared source,
+prewarmed destination and owner generation in scalar work. Nonempty source
+`reservedAppendReady()` also proves persistence prewarming; a cold source denies.
+`stepCommittedChunkTransfer` performs at most Q tail-reference moves or directory
+swaps. Each move seals one fixed chunk, moves its existing reference without a
+release/retain walk, and updates scalar source metadata. Completion never performs
+an unbounded reverse. Destination is incomplete/unpublishable until Complete;
+source and destination own disjoint reference sets throughout cancellation.
+No event rows are copied, source/destination directory capacity never grows, and
+immutable raw CaptureRange input is not touched. Cursor footprint is 64 B ARM /
+96 B native, caller-owned; no Track/job/runtime field is added. The legacy
+`detachChunksToCommittedChunkIds` wrapper still drains synchronously, using this
+primitive only for fully prewarmed stores. This does not reclassify the entire
+legacy stop path or close Record normalization/admission/playback deadlines.
+[Transfer execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-TRANSFER-EXECUTION.md).
