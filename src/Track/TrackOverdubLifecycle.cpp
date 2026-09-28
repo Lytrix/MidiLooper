@@ -1075,11 +1075,24 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordClosure(Capt
 
   // S4f.19: bind this interval's retained bar-1 window to its frozen source and final
   // geometry, so the launch and the unpublished interval stay audible until committed
-  // content replaces it. Best-effort and idempotent: a refusal (stale source, or a
-  // sub-bar take whose raw rows still need projection) leaves the window untouched and
-  // never fails the job -- playback then simply has no unpublished source, as today.
-  (void)runtime->bindDeferredRecordReturnWindow(job.rawRange, source.finalizingGeneration,
-                                                job.loopLengthTicks);
+  // content replaces it. `job.pendingNotes` is the authoritative open-at-stop set (this
+  // grain runs before any terminal closure is emitted), so the projection closes only a
+  // lane that was genuinely open at the stop; a note whose real Off lies further in the
+  // take stays open for the onward window to end at its actual tick. Best-effort and
+  // idempotent: a refusal (stale source, or a window that cannot hold its closures)
+  // leaves the window untouched and never fails the job.
+  {
+    std::array<uint64_t, RuntimePlaybackView::kOpenLaneWords> openAtStopLanes{};
+    for (const auto& pending : job.pendingNotes) {
+      const uint8_t note = pending.first.first;
+      const uint8_t channel = pending.first.second;
+      if (channel == 0 || channel > 16 || note >= 128) continue;
+      const size_t lane = static_cast<size_t>(channel - 1) * 128 + note;
+      openAtStopLanes[lane >> 6] |= static_cast<uint64_t>(1) << (lane & 63u);
+    }
+    (void)runtime->bindDeferredRecordReturnWindow(job.rawRange, source.finalizingGeneration,
+                                                  job.loopLengthTicks, openAtStopLanes.data());
+  }
 
   auto& output = runtime->canonicalCaptureOutput;
   auto& cursor = runtime->frozenCaptureRewrite;

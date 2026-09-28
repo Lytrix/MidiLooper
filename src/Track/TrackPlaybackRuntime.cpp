@@ -1742,7 +1742,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindFirstRecordingBar(
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindDeferredRecordReturnWindow(
     const LoopEventStore::CaptureRange& range, uint64_t expectedGeneration,
-    uint32_t loopLengthTicks) {
+    uint32_t loopLengthTicks, const uint64_t* openAtStopLanes) {
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
   if (set == nullptr || loopLengthTicks == 0 || !range.ready() ||
       range.generation() != expectedGeneration) {
@@ -1761,7 +1761,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindDeferredRecordRetu
   // open at the loop end, and re-order canonically. A shorter final length (a sub-bar
   // take) is the normal case here, not a refusal: binding raw rows past the length
   // would emit out-of-loop content. A refusal leaves the window untouched.
-  if (!retained.projectRawCoverageToLoopLength(loopLengthTicks)) {
+  if (!retained.projectRawCoverageToLoopLength(loopLengthTicks, openAtStopLanes)) {
     return false;
   }
   return retained.bindRawCoverage(loopLengthTicks) &&

@@ -2633,6 +2633,18 @@ own execution packet and records fixture/native/build/device results separately.
       capture-serial PASS, padding **888** (one legacy note-edit accessor moved to FLASH to keep
       the new call site inside the floor). Remaining: the crossing-note actual endpoint,
       continuity-gated retirement and ownership through successor start.
+      **2026-09-28 round 7 — crossing-note endpoint.** `projectRawCoverageToLoopLength` and
+      `bindDeferredRecordReturnWindow` take an optional `openAtStopLanes` bitmap (16 x 128 bits):
+      the projection closes a lane left open at the window end **only** when it was open at the
+      stop, so a note whose real Off lies further inside the take stays open for the onward window
+      to end at its actual tick instead of being cut at `loopLengthTicks - 1`.
+      `Track::stepDeferredRecordClosure` builds the bitmap from `job.pendingNotes` (the
+      authoritative open-at-stop set at that grain). Fixture
+      `test_projection_closes_only_lanes_open_at_the_stop`: with the bitmap only the open-at-stop
+      lane closes at 767 and the crossing lane stays open; with no bitmap both close, so the gate
+      is discriminated by construction. Focused **269/269**; full native **2,603 passed /
+      7 skipped**; capture-serial PASS, padding **888**. Remaining: continuity-gated retirement
+      and ownership through successor start.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,
