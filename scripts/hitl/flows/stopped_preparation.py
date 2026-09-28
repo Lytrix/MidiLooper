@@ -137,6 +137,7 @@ def clear_slot(
     noop_settle_s: float = 1.5,
     timeout_s: float = DEFAULT_CLEAR_TIMEOUT_S,
     lines_reader: Optional[Callable[[Path], list[str]]] = None,
+    emptiness_reader: Optional[Callable[[], Optional[bool]]] = None,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
 ) -> ClearOutcome:
@@ -152,10 +153,13 @@ def clear_slot(
         never used here as a harmless "select".
 
     `long_press_ms` is the clear long press and must exceed the firmware's
-    short/long discriminator. A recognized long press with no clear evidence is
-    reported as `ALREADY_EMPTY` (selected empty no-op, or an unselected empty
-    target); a switch row is `NOT_SELECTED`; an unrecognized press is
-    `UNCONFIRMED`. Bounded by `timeout_s`.
+    short/long discriminator. A recognized long press is **not** completion: the
+    gesture is acknowledged before the firmware decides, so an absent clear row
+    could equally be a lost refusal or switch. `ALREADY_EMPTY` is therefore
+    returned only when `emptiness_reader` independently confirms the target is
+    empty (the census tri-state); with no confirmation the outcome is
+    `UNCONFIRMED`, never an elapsed-time success. A switch row is `NOT_SELECTED`;
+    an unrecognized press is `UNCONFIRMED`. Bounded by `timeout_s`.
     """
     if long_press_ms < slots.DEFAULT_LONG_PRESS_MS:
         raise ValueError(
@@ -174,7 +178,16 @@ def clear_slot(
         if recognized_at is None and _long_press_recognized(lines, before, slot0 + 1):
             recognized_at = now()
         if recognized_at is not None and now() - recognized_at >= noop_settle_s:
-            return ClearOutcome(slot0 + 1, ClearStatus.ALREADY_EMPTY,
-                                "recognized long press on the selected slot: empty no-op")
+            # The press was recognized; that proves the gesture, not the outcome.
+            # Only independently confirmed emptiness may be read as ALREADY_EMPTY.
+            confirmed_empty = emptiness_reader() if emptiness_reader is not None else None
+            if confirmed_empty is True:
+                return ClearOutcome(slot0 + 1, ClearStatus.ALREADY_EMPTY,
+                                    "recognized long press; census confirms the target is empty")
+            return ClearOutcome(
+                slot0 + 1, ClearStatus.UNCONFIRMED,
+                "recognized long press with no clear/refusal evidence and no confirmed emptiness"
+                + ("" if emptiness_reader is None else
+                   f" (census state={confirmed_empty!r})"))
         sleep(0.05)
     return ClearOutcome(slot0 + 1, ClearStatus.UNCONFIRMED)

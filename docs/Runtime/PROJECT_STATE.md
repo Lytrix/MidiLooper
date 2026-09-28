@@ -1,5 +1,21 @@
 # Project state (execution context)
 
+**2026-09-28 — review follow-ups on `2c71b1a3` (one firmware P1, three HITL P1/P2).**
+(1) The transfer-row capacity admission grew the prewarmed ownership row with an unguarded
+`std::vector::push_back`, so a refused allocation wrote through the null block (ASan null-write);
+growth now goes through the new flash-resident `LoopEventStore::prewarmCommittedChunkIdCapacity`,
+which probes the exact next growth block first and fails closed — RAM1 padding stays **840**, with
+a native refusal hook and a red-proved fixture. (2) The HITL census classified a verified SD
+payload with `k=0` as empty, skipping the clear; occupancy is now tri-state (`populated` if either
+representation is present, `empty` only when both were observed absent, `None` otherwise) and the
+report preserves `None`. (3) The capture-ring drain wrote a bare `!TRACE_DRAIN`, which the capture
+owner refuses as malformed and never forwards; it is now a framed request with fresh fence tokens
+and the command is allowlisted. (4) `clear_slot` returned `ALREADY_EMPTY` after a recognized long
+press plus a settle delay; it now requires an independent confirmed-emptiness reader and otherwise
+returns `UNCONFIRMED`. Focused **79/79**; full native **2,592 passed / 7 skipped**;
+capture-serial build PASS padding **840**; host Python suites green.
+[Closure-boundaries evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-CLOSURE-BOUNDARIES-EXECUTION.md).
+
 **2026-09-28 — S4F closure-plan Step 1 — preparation/publication boundaries repaired.**
 Six source-verified boundary defects from [S4F-CLOSURE-PLAN](S4F-CLOSURE-PLAN.md) §1 are closed
 with production-worker fixtures: (1) the global ephemeral seal is entered and left inside each

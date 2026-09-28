@@ -30,6 +30,19 @@ Stage owner: existing serial command/capture service and operation owners. Preco
       (malformed/busy, disabled capture, partial writes, stalled reader, per-turn bounds in
       native tests) and the identity-snapshot correlation 2.2 builds on. See the execution
       review.
+      **2026-09-28 review follow-up — the drain reaches firmware, and SD-only slots are
+      populated:** `ManagedCaptureSession.drain_capture_ring` wrote a bare `!TRACE_DRAIN`, which
+      `capture_session.py` refuses as `malformed request` and never forwarded (the sender still
+      reported success), so a completed observation could stay invisible; the drain is now a
+      framed request with fresh 32-char fence tokens and `!TRACE_DRAIN` is allowlisted
+      (read-only ring flush). Separately, `library_observation.observation_window` classified
+      occupancy on `has_committed_content` alone, so a verified SD payload with `k=0` read as
+      empty and scoped preparation skipped the clear; occupancy is now the tri-state
+      `slot_content_state` (populated if either representation is present, empty only when both
+      were observed absent, `None` otherwise) and the census report preserves `None`.
+      `test_hitl_command_forwarding` **26/26**, `test_accepted_sequence` **52/52**,
+      `test_library_observation_classifier` **18/18**.
+      [Closure-boundaries review follow-ups](../runtime-working-set-ownership/S4F18-CLOSURE-BOUNDARIES-EXECUTION.md).
 - [ ] 2.2 Add compact sequenced gesture/accepted-stop/start/switch/publication/retirement evidence at actual owners, including record and overdub interval identity; verify accepted-latch consumption between polls remains provable, required event loss is detectable, and unrelated slot/track events cannot substitute.
 - [x] 2.3 Forward allowlisted requests through `capture_session.py` and decode responses once in `serial/protocol.py`; verify one serial owner, one outstanding request, nonce mismatch, partial/coalesced lines, duplicates, delayed delivery and reset/epoch changes using transport fakes.
       **DONE 2026-09-28:** `capture_session.py` gained an opt-in `--command-stdin` channel that
@@ -44,6 +57,10 @@ Stage owner: existing serial command/capture service and operation owners. Preco
       session log. The `LIBOBS` family did not settle within 60 s on that idle boot, so the
       decoder returned loss rather than an empty census — observation *serving* is task 2.1/2.2.
       [Execution evidence](COMMAND-FORWARDING-EXECUTION.md).
+      **2026-09-28 review follow-up:** the ring drain now uses this same framed allowlist
+      (`!TRACE_DRAIN`), because the bare command the drain previously wrote was refused as
+      malformed and never reached the device. `test_hitl_command_forwarding` **26/26** pins the
+      framed drain and the allowlist.
 - [ ] 2.4 Run native tests and build `teensy41-capture-serial`; record image/config hashes and code/RAM1 deltas against the packet's floor and fixed buffer ceiling. Do not check off on a skipped fixture or failed resource gate; instrumentation latency measurement remains task 6.2.
 
 ## 3. Build response-driven actions and bounded lifecycle
@@ -84,6 +101,15 @@ Stage owner: stateless flows, registered scenarios and compatibility wrapper. Pr
       `SETUP_INCOMPLETE` with named causes (no fresh boot, 2 ring-shed rows, overdub identity =
       task 2.2) and L2/L3/L4 green. Remaining: a fresh-boot shed-free run of both legs and the
       mixed sequence. See the execution review.
+      **2026-09-28 review follow-up — completion is evidence, not elapsed time:** a recognized
+      long press is only acknowledgement (the firmware logs it before deciding), so the settle
+      path no longer returns `ALREADY_EMPTY` after a delay. `clear_slot` now takes an
+      `emptiness_reader` and reports `ALREADY_EMPTY` only when it independently confirms the
+      target empty; otherwise `UNCONFIRMED` (never success). The driver supplies a fresh census
+      tri-state, so a lost refusal/switch is no longer read as successful preparation. The
+      census itself is also SD-aware now (an SD-only slot is populated; unknown evidence stays
+      unknown), so preparation clears it instead of skipping. `test_accepted_sequence` **52/52**
+      including the confirmed/populated/unavailable cases.
 - [ ] 4.2 Implement record recipe with genuinely empty SD-aware A/B, real record mode, switch-carried B start and one stop per interval; verify production dispatch and host scheduling with delayed observations, premature retirement and wrong-mode routes. A populated-A mutation must fail.
 - [ ] 4.3 Implement overdub recipe using confirmed seeds and the proven single capture-switch gesture, followed by B's recognized overdub start and stop; verify no separate A stop, no playback re-affirmation and no wait for predecessor retirement in the critical window.
 - [ ] 4.4 Register both scenarios and route the standalone CLI through the same runner; verify legacy argument translation, explicit unsupported combinations, scenario listing, identical verdicts via both entry points and unchanged base/edit_full behavior.

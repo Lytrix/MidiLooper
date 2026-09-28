@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -270,18 +271,21 @@ class ManagedCaptureSession:
             self.complete_command(nonce)
 
     def drain_capture_ring(self) -> bool:
-        """Ask the owner to flush the capture ring. Read-only and fire-and-forget.
+        """Ask the owner to flush the capture ring. Read-only and self-framed.
 
-        The observation family is emitted through the capture ring, so on an idle
-        device it can sit unflushed; the status diagnostic proved the observation
-        itself completes (64/64 emitted) while no row was visible. This is not a
-        fenced request, so it does not consume the outstanding-request slot.
+        The capture owner forwards only *allowlisted, fenced* requests: a bare
+        command is refused as `malformed request` and never reaches the device, so
+        a completed observation could stay invisible. The drain therefore goes out
+        as a normal request line with its own fresh fence tokens. It is read-only,
+        so it does not consume or require the outstanding-request slot; the
+        observation's fenced window ignores these tokens.
         """
         process = self._process
         if process is None or process.poll() is not None or process.stdin is None:
             return False
+        nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
         try:
-            process.stdin.write("!TRACE_DRAIN\n")
+            process.stdin.write(format_command_request("!TRACE_DRAIN", nonce, end_nonce))
             process.stdin.flush()
         except (BrokenPipeError, ValueError, OSError):
             return False

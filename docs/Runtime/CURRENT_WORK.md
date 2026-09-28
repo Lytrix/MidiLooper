@@ -1,5 +1,15 @@
 # Current work (implementation scope)
 
+**2026-09-28 — review follow-ups on `2c71b1a3`.** Four defects fixed: the transfer-row capacity
+admission is now failure-aware (`LoopEventStore::prewarmCommittedChunkIdCapacity`, exact-block
+probe before growth; RAM1 padding 840; native refusal hook); the HITL census is SD-aware and
+tri-state so an SD-only slot is populated and unknown stays unknown; the capture-ring drain is a
+framed allowlisted `!TRACE_DRAIN` instead of a bare command the owner refuses; and scoped clear
+preparation requires confirmed emptiness or explicit completion instead of treating a recognized
+press plus elapsed time as success. Focused **79/79**; full native **2,592 passed / 7 skipped**;
+capture-serial build PASS padding **840**; host Python suites green.
+[Closure-boundaries evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-CLOSURE-BOUNDARIES-EXECUTION.md).
+
 **2026-09-28 — S4F closure-plan Step 1 — preparation/publication boundaries repaired.**
 The six source-verified boundary defects in
 [S4F-CLOSURE-PLAN](S4F-CLOSURE-PLAN.md) §1 are closed: turn-local ephemeral seal (interleaved

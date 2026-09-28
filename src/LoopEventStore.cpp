@@ -48,10 +48,20 @@ void poolFree(void* p) {
   std::free(p);
 }
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+/// Native-only resource-boundary fixture flag (never compiled into firmware).
+bool committedChunkIdProbeRefusedForTests = false;
+#endif
+
 bool probeCommittedChunkIdBytes(size_t count) {
   if (count == 0) {
     return true;
   }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  if (committedChunkIdProbeRefusedForTests) {
+    return false;
+  }
+#endif
   const size_t bytes = count * sizeof(uint16_t);
   void* mem = poolAlloc(bytes);
   if (!mem) {
@@ -148,8 +158,17 @@ void LoopEventStore::resetPoolForTests() {
   std::memset(poolChunkRefCount_, 0, sizeof(poolChunkRefCount_));
   sdLoadStagingDepth_ = 0;
   ephemeralSealDepth_ = 0;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  committedChunkIdProbeRefusedForTests = false;
+#endif
   PersistenceQueue::resetForTests();
 }
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+void LoopEventStore::setCommittedChunkIdProbeRefusedForTests(bool refused) {
+  committedChunkIdProbeRefusedForTests = refused;
+}
+#endif
 
 uint16_t LoopEventStore::poolBlockCount() {
   uint16_t count = 0;
@@ -279,6 +298,36 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::tryAssignCommittedChunkIds(Commit
     }
   }
   dest = std::move(built);
+  return true;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::prewarmCommittedChunkIdCapacity(
+    CommittedChunkIdList& dest, size_t count) {
+  if (count == 0) {
+    return true;
+  }
+  if (dest.capacity() >= count) {
+    return true;
+  }
+  if (!dest.empty()) {
+    return false;  // capacity admission owns an empty receipt only
+  }
+  // `std::vector` has no failure-reporting push_back: if the allocator returns null,
+  // `_M_realloc_insert` writes through it. Probe the exact block the next growth will
+  // request (libstdc++ `_M_check_len(1)` grows size 0 -> 1 then doubles) immediately
+  // before the push_back that needs it, so a refusal is reported without any write.
+  const uint16_t zero = 0;
+  while (dest.capacity() < count) {
+    if (dest.size() == dest.capacity()) {
+      const size_t nextCapacity = dest.size() == 0 ? 1 : dest.size() * 2;
+      if (!probeCommittedChunkIdBytes(nextCapacity)) {
+        dest.clear();
+        return false;
+      }
+    }
+    dest.push_back(zero);
+  }
+  dest.clear();
   return true;
 }
 

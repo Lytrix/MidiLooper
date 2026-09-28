@@ -507,12 +507,38 @@ def state_names_from_mask(mask: int) -> list[str]:
     return names
 
 
+def slot_content_state(record: dict[str, Any]) -> Optional[bool]:
+    """Tri-state content classification for one observed slot.
+
+    ``True`` — populated by **either** representation: loaded committed content
+    (`k`) or a verified SD payload (`p=3`, which the firmware treats as populated
+    even with no loaded content).
+    ``False`` — **confirmed** empty: the committed-content field was observed
+    absent *and* the SD payload was observed absent.
+    ``None`` — evidence unavailable (either field was not observed, or the payload
+    token is unknown/invalid). Absence that was not observed must never be read as
+    empty, and a slot that cannot be classified must be cleared, not skipped.
+    """
+    content_observed = bool(record.get("content_field_observed"))
+    payload_observed = bool(record.get("payload_field_observed"))
+    if (content_observed and record.get("has_committed_content")) or \
+            record.get("payload") == "present_verified":
+        return True
+    if content_observed and not record.get("has_committed_content") and \
+            payload_observed and record.get("payload") == "absent":
+        return False
+    return None
+
+
 def observation_window(lines: Iterable[str]):
     """``(occupancy, device_complete)`` for the first observed family, else ``(None, None)``.
 
-    Occupancy is the device classifier's union content signal (`has_committed_content`),
-    keyed by the device's **0-based** `(track, slot)`. A family whose terminal row never
-    arrived returns ``(None, None)``: a lost window is not an empty library.
+    Occupancy classifies each slot's union content from **all** the evidence it
+    carries: loaded committed content (`has_committed_content`) and the verified SD
+    payload token. An SD-only slot (verified payload, `k=0`) is populated, not
+    empty; a slot is empty only when both representations were observed absent;
+    anything else is unknown (``None``). A family whose terminal row never arrived
+    returns ``(None, None)``: a lost window is not an empty library.
 
     ``device_complete`` is the device's own settle flag (`LIBOBS,E,…,x=`). A sweep that
     spans more than one service turn reports ``False`` even though every slot row is
@@ -524,14 +550,17 @@ def observation_window(lines: Iterable[str]):
     if not observation.get("window"):
         return None, None
     occupancy = {
-        (int(record["track"]), int(record["slot"])): bool(record["has_committed_content"])
+        (int(record["track"]), int(record["slot"])): slot_content_state(record)
         for record in observation["slots"]
     }
     return occupancy, bool(observation.get("complete"))
 
 
-def occupied_slots(lines: Iterable[str]) -> Optional[dict[tuple[int, int], bool]]:
-    """Per-slot content occupancy for this window, or None when the window was lost."""
+def occupied_slots(lines: Iterable[str]) -> Optional[dict[tuple[int, int], Optional[bool]]]:
+    """Per-slot content occupancy for this window, or None when the window was lost.
+
+    Each value is tri-state: True populated, False confirmed empty, None unknown.
+    """
     occupancy, _ = observation_window(lines)
     return occupancy
 
@@ -584,6 +613,10 @@ def parse_observation_lines(lines: Iterable[str]) -> dict[str, Any]:
                     "has_root_content": fields.get("kr", "0") == "1",
                     "root_is_current": fields.get("kc", "0") == "1",
                     "content_representation_observed": representation_observed,
+                    # Field *presence*: a missing `k`/`p` is unavailable evidence, not an observed
+                    # absence. `slot_content_state` needs both to prove emptiness.
+                    "content_field_observed": "k" in fields,
+                    "payload_field_observed": "p" in fields,
                     "committed_pass_count": int(fields.get("a", "0")),
                     "highest_committed_pass_id": int(fields.get("h", "0")),
                     "loop_length_ticks": int(fields.get("l", "0")),

@@ -84,8 +84,18 @@ class RequestParsingTests(unittest.TestCase):
         self.assertIn("!LIB_OBSERVE", capture_session.ALLOWED_HITL_COMMANDS)
         self.assertIn("!STOP_STATUS", capture_session.ALLOWED_HITL_COMMANDS)
         self.assertIn("!LIB_OBSERVE_STATUS", capture_session.ALLOWED_HITL_COMMANDS)
+        self.assertIn("!TRACE_DRAIN", capture_session.ALLOWED_HITL_COMMANDS)
         for mutating in ("!CLEAR", "!QUARANTINE_WORKSPACE", "!REV_NUKE_SETS", "!RESTORE_WORKSPACE 1 2"):
             self.assertNotIn(mutating, capture_session.ALLOWED_HITL_COMMANDS)
+
+    def test_the_ring_drain_is_a_framed_allowlisted_request(self):
+        # A bare `!TRACE_DRAIN` is refused as `malformed request` by the receiver and
+        # never reaches the device, so a completed observation could stay invisible.
+        request = format_command_request("!TRACE_DRAIN", START, END)
+        self.assertEqual(f"{START} {END} !TRACE_DRAIN\n", request)
+        self.assertEqual((START, END, "!TRACE_DRAIN"),
+                         capture_session.parse_command_request(request))
+        self.assertIn("!TRACE_DRAIN", capture_session.ALLOWED_HITL_COMMANDS)
 
     def test_request_formatting_is_one_line(self):
         self.assertEqual(f"{START} {END} !LIB_OBSERVE\n",
@@ -229,6 +239,29 @@ class ManagedSenderTests(unittest.TestCase):
         session = make_session(FakeStdin())
         session._session_log = None
         self.assertIsNone(session.fenced_response(START, END, timeout_s=0.01, poll_s=0.005))
+        self.assertIsNone(session.pending_command_nonce)
+
+    def test_the_ring_drain_is_framed_and_does_not_consume_the_request_slot(self):
+        stdin = FakeStdin()
+        session = make_session(stdin)
+        accepted, _ = session.send_command("!LIB_OBSERVE", nonce=START, end_nonce=END)
+        self.assertTrue(accepted)
+        self.assertTrue(session.drain_capture_ring())
+        line = stdin.written[-1]
+        start, end, command = capture_session.parse_command_request(line)
+        self.assertEqual("!TRACE_DRAIN", command)
+        self.assertNotEqual(start, end)
+        self.assertEqual(32, len(start))
+        self.assertEqual(32, len(end))
+        # The drain is read-only and self-framed: it neither needs nor releases the
+        # outstanding observation request.
+        self.assertEqual(START, session.pending_command_nonce)
+
+    def test_a_closed_pipe_refuses_the_ring_drain(self):
+        stdin = FakeStdin()
+        stdin.fail = True
+        session = make_session(stdin)
+        self.assertFalse(session.drain_capture_ring())
         self.assertIsNone(session.pending_command_nonce)
 
 

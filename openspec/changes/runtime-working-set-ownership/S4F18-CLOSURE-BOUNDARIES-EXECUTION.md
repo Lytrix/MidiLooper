@@ -109,3 +109,51 @@ RAM1 padding >= 840; strict OpenSpec validation. No device run, upload or checko
   site, so the geometry receipt and the transfer-row capacity are established at that bind
   rather than at the first transfer grain; the deferred revts validation and
   `invalidateCaches()` parity (S4f.20); S4f.19 playback handoff. Record stop is still inline.
+
+## Review follow-ups (post-commit `2c71b1a3`)
+
+Four defects found in review of this slice and the HITL driver; all fixed and verified.
+
+1. **Allocation refusal crashed the transfer capacity admission (P1).**
+   `Loop::prewarmPreparedPassTransferChunks` grew the prewarmed ownership row with
+   `std::vector::push_back` and then tested whether its size had changed. `std::vector`
+   cannot report a null allocate, so `_M_realloc_insert` writes through the refused block
+   before that test — reproduced as an ASan null-write with the production allocator.
+   Growth now goes through the new flash-resident
+   `LoopEventStore::prewarmCommittedChunkIdCapacity`, which probes the **exact** block the
+   next growth will request (`probeCommittedChunkIdBytes`) immediately before the
+   `push_back` that needs it, and returns false with the row unmodified when refused.
+   A native-only refusal hook (`setCommittedChunkIdProbeRefusedForTests`) exercises the
+   path; the fixture `test_record_pass_transfer_capacity_refusal_fails_closed` proves the
+   denial leaves the job-owned state intact and that the same binding retries to
+   `RecordPassReady`. Red-proved by removing the probe guard (the admission then proceeds
+   and the fixture fails). RAM1 padding is unchanged at **840**.
+
+2. **SD-only slots were classified empty (P1) — HITL.** `library_observation.observation_window`
+   keyed occupancy on `has_committed_content` alone, so a verified SD payload
+   (`p=3`, `k=0`) read as empty and scoped preparation skipped the clear even though the
+   firmware treats the slot as populated. Occupancy is now the tri-state
+   `slot_content_state`: populated if **either** representation is present; empty only when
+   the committed-content field **and** the SD payload were both observed absent; otherwise
+   `None` (unknown). The census report preserves `None` instead of coercing it to `False`.
+
+3. **The capture-ring drain never reached firmware (P2) — HITL.** `drain_capture_ring` wrote
+   a bare `!TRACE_DRAIN`, which the capture owner refuses as `malformed request`; the
+   command was also absent from the allowlist, so a completed observation could stay
+   invisible. The drain is now a normal framed request with fresh 32-char fence tokens, and
+   `!TRACE_DRAIN` is allowlisted (read-only ring flush). It remains outside the
+   one-outstanding-request slot because it is self-framed and independent of the
+   observation window.
+
+4. **Elapsed time was read as successful clear preparation (P2) — HITL.** `clear_slot`
+   returned `ALREADY_EMPTY` after a recognized long press plus a settle delay, so a lost
+   refusal or switch became success. A recognized press is only acknowledgement; the
+   settle path now returns `ALREADY_EMPTY` **only** when an independent `emptiness_reader`
+   confirms the target empty (a fresh census tri-state), and `UNCONFIRMED` otherwise. The
+   accepted-sequence driver supplies that reader.
+
+Verification: focused **79/79** (shared-finalization 39, preparation 18, staging 7,
+library-observation 15); full `pio test -e native` **2,592 passed / 7 skipped**;
+`teensy41-capture-serial` build PASS with RAM1 padding **840** (ITCM byte-identical);
+host HITL Python suites green including `test_hitl_command_forwarding` (26) and
+`test_accepted_sequence` (52).
