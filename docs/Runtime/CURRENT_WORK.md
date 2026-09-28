@@ -1,5 +1,18 @@
 # Current work (implementation scope)
 
+**2026-09-28 — HITL continuation — verdict-grade device sessions; L5 named as the runtime gap.**
+Post-commit work closed two structural oracle gaps and corrected the census. `capture_session.py
+--boot-reset` now owns a real boot inside the capture via a new stopped-only `!REBOOT` command (a
+1200-baud touch is not honoured on this board — measured), so `fresh_boot` passes; the driver
+writes `metadata.json` (git commit + firmware hex sha256) so `identity_pinned` passes; and the
+census decodes only the requested fenced family, distinguishing a lost window from an unsettled
+sweep (`device_settled`), with the selection press restricted to census-confirmed filled targets.
+Record leg run (`20260928-rec-verdict3`): census 64 slots / 22 occupied / settled, slot cleared
+after one `post_load_holdoff` refusal, `DROVE_LEG`; oracle `ACCEPTED_SEQUENCE_FAIL` with L1/L2/L3/L4
+green — including a device-timestamped deferral window — and **L5 the named gap: no successor
+start**, i.e. the production record stop is still inline (S4f.19/S4f.21). Host 47/47.
+[HITL execution review](../../openspec/changes/response-driven-hitl-acceptance/EXECUTION-REVIEW.md).
+
 **2026-09-28 — goal-round closeout (12/12) — objective not complete; precise handoff below.**
 Whole tree green: focused **57/57**; host HITL suites 46/23/23/15; full `pio test -e native`
 **2,585 passed / 7 skipped**; capture-serial build PASS with RAM1 padding **840**; both

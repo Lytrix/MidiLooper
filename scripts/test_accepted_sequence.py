@@ -35,7 +35,7 @@ from hitl.control_constants import (  # noqa: E402
     TRACK_SELECT_NOTE_BASE,
 )
 from hitl.flows import stopped_preparation  # noqa: E402
-from hitl.library_observation import occupied_slots  # noqa: E402
+from hitl.library_observation import observation_window, occupied_slots  # noqa: E402
 from hitl.flows.stopped_preparation import ClearStatus  # noqa: E402
 
 BOOT = "BOOT,usb_host,deferred"
@@ -512,8 +512,18 @@ class CensusPreparationTests(unittest.TestCase):
         self.assertEqual({(7, 3): True, (7, 4): False},
                          occupied_slots(self.family((7, 3, 1), (7, 4, 0))))
 
-    def test_an_incomplete_window_is_unknown_not_empty(self):
+    def test_a_lost_window_is_unknown_not_empty(self):
         self.assertIsNone(occupied_slots(self.family((7, 3, 1))[:-1]))
+        self.assertEqual((None, None), observation_window(self.family((7, 3, 1))[:-1]))
+
+    def test_an_unsettled_sweep_still_yields_occupancy_with_its_flag(self):
+        # The device flags a multi-turn sweep as not settled (x=0) while every slot row is
+        # present; preparation may use the occupancy, a settled census must not.
+        lines = self.family((7, 3, 1), (7, 4, 0))
+        lines = [line.replace("P=1,R=1,x=1", "P=1,R=1,x=0") for line in lines]
+        occupancy, settled = observation_window(lines)
+        self.assertEqual({(7, 3): True, (7, 4): False}, occupancy)
+        self.assertFalse(settled)
 
     def test_a_census_that_says_empty_skips_the_clear_gesture(self):
         import contextlib, json, tempfile
@@ -539,7 +549,7 @@ class CensusPreparationTests(unittest.TestCase):
                 mock("_find_midi_port", return_value="fake")
                 mock("slots.press_track"); mock("slots.press_slot_record")
                 clear = mock("stopped_preparation.clear_slot")
-                mock("occupied_slots", return_value={(7, 3): False, (7, 4): False})
+                mock("observation_window", return_value=({(7, 3): False, (7, 4): False}, True))
                 mock("_ensure_transport", return_value=True); mock("_wait_for", return_value=True)
                 mock("_run_plan", return_value="DROVE_LEG"); mock("time.sleep")
                 stack.enter_context(patch("builtins.print"))
@@ -579,7 +589,7 @@ class CensusPreparationTests(unittest.TestCase):
                 mock("slots.press_track")
                 select = mock("slots.press_slot_record")
                 mock("stopped_preparation.clear_slot", return_value=cleared)
-                mock("occupied_slots", return_value={(7, 3): True})
+                mock("observation_window", return_value=({(7, 3): True}, True))
                 mock("_ensure_transport", return_value=True); mock("_wait_for", return_value=True)
                 mock("_run_plan", return_value="DROVE_LEG"); mock("time.sleep")
                 stack.enter_context(patch("builtins.print"))

@@ -507,20 +507,33 @@ def state_names_from_mask(mask: int) -> list[str]:
     return names
 
 
-def occupied_slots(lines: Iterable[str]) -> Optional[dict[tuple[int, int], bool]]:
-    """Per-slot content occupancy from one observation, or None when it is incomplete.
+def observation_window(lines: Iterable[str]):
+    """``(occupancy, device_complete)`` for the first observed family, else ``(None, None)``.
 
-    Occupancy is the device classifier's union content signal
-    (`has_committed_content`), keyed by the device's **0-based** `(track, slot)`. An
-    incomplete window returns None: a lost terminal row is not an empty library.
+    Occupancy is the device classifier's union content signal (`has_committed_content`),
+    keyed by the device's **0-based** `(track, slot)`. A family whose terminal row never
+    arrived returns ``(None, None)``: a lost window is not an empty library.
+
+    ``device_complete`` is the device's own settle flag (`LIBOBS,E,…,x=`). A sweep that
+    spans more than one service turn reports ``False`` even though every slot row is
+    present and individually re-checked before emission — measured on device, where the
+    64-slot sweep reports ``x=0``. Callers that only need per-slot content (target
+    preparation) use the occupancy; a *settled* census must additionally require the flag.
     """
     observation = parse_observation_lines(lines)
-    if not observation.get("complete"):
-        return None
-    return {
+    if not observation.get("window"):
+        return None, None
+    occupancy = {
         (int(record["track"]), int(record["slot"])): bool(record["has_committed_content"])
         for record in observation["slots"]
     }
+    return occupancy, bool(observation.get("complete"))
+
+
+def occupied_slots(lines: Iterable[str]) -> Optional[dict[tuple[int, int], bool]]:
+    """Per-slot content occupancy for this window, or None when the window was lost."""
+    occupancy, _ = observation_window(lines)
+    return occupancy
 
 
 def parse_observation_lines(lines: Iterable[str]) -> dict[str, Any]:

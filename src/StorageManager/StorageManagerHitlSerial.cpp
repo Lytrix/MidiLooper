@@ -727,6 +727,18 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 // Stopped-only and outside the record-stop path: it neither records nor writes.
                 DebugSessionCapture::emitIdentityPathStats();
 #if defined(__IMXRT1062__)
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!REBOOT") == 0 &&
+                       !clockManager.isTransportRunning()) {
+                // Host-requested reset, issued by the capture owner at its first open so a
+                // fresh-boot capture owns the boot banner (verdict-grade evidence). Never
+                // automatic, and stopped-only. The acknowledgement is flushed before the
+                // reset so the request is visible in the capture.
+                Serial.println("[StorageManager] host-requested reboot");
+                Serial.flush();
+                delay(20);
+#if defined(__IMXRT1062__)
+                SCB_AIRCR = 0x05FA0004;  // VECTKEY | SYSRESETREQ
+#endif
             } else if (std::strcmp(sHitlSerialLineBuffer, "!LIB_OBSERVE_STATUS") == 0 &&
                        !clockManager.isTransportRunning()) {
                 // Read-only diagnostic for the on-demand library observation. Emitted

@@ -39,7 +39,9 @@ conversion site is `to_firmware_slot`.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import subprocess
 import sys
 import time
 import uuid
@@ -60,7 +62,7 @@ from hitl.control_constants import (  # noqa: E402
 )
 from hitl.device_shutdown import DeviceSession, refuse_reset_if_latched  # noqa: E402
 from hitl.flows import stopped_preparation  # noqa: E402
-from hitl.library_observation import occupied_slots  # noqa: E402
+from hitl.library_observation import observation_window  # noqa: E402
 from hitl.managed_capture import ManagedCaptureSession  # noqa: E402
 from hitl.midi_io import _find_midi_port, _send_short_press  # noqa: E402
 
@@ -258,6 +260,32 @@ def _emit(out_port, gesture: Gesture, *, press_ms: int) -> None:
         raise ValueError(f"unknown gesture kind {gesture.kind!r}")
 
 
+def _build_identity() -> dict:
+    """Best-effort build identity for the oracle's fresh-boot/identity gates.
+
+    Same source of truth as the retention driver: the git commit plus the newest
+    built `firmware.hex` under the PlatformIO cache for this env.
+    """
+    identity: dict = {}
+    try:
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                                cwd=str(ROOT), check=True).stdout.strip()
+        if commit:
+            identity["git_commit"] = commit
+    except Exception:
+        pass
+    cache = Path.home() / "Library" / "Caches"
+    candidates = sorted(cache.glob("pio-build-*/teensy41-capture-serial/firmware.hex"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)
+    if candidates:
+        digest = hashlib.sha256()
+        with candidates[0].open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+        identity["firmware_hex_sha256"] = digest.hexdigest()
+    return identity
+
+
 def _run_census(capture, capture_log: Path, events: list[dict]) -> Optional[dict]:
     """Read-only per-slot occupancy for scoped preparation; None when it cannot be trusted.
 
@@ -274,10 +302,14 @@ def _run_census(capture, capture_log: Path, events: list[dict]) -> Optional[dict
     if family is None:
         events.append({"event": "census_lost"})
         return None
-    occupied = occupied_slots(_lines(capture_log))
+    # Decode ONLY this request's fenced family. Re-parsing the whole log can pick an
+    # earlier family (a boot-time census or a superseded request) and report the wrong
+    # library, which then mis-drives target preparation.
+    occupied, device_complete = observation_window(family.rows)
     events.append({"event": "census",
                    "slots": 0 if occupied is None else len(occupied),
-                   "occupied": 0 if occupied is None else sum(1 for v in occupied.values() if v)})
+                   "occupied": 0 if occupied is None else sum(1 for v in occupied.values() if v),
+                   "device_settled": bool(device_complete)})
     return occupied
 
 
@@ -301,6 +333,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--upload-attempts", type=int, default=3,
                    help="`teensy-gui` fails intermittently and succeeds on a retry, so the upload is retried")
     p.add_argument("--upload-retry-delay-s", type=float, default=3.0)
+    p.add_argument("--boot-reset", action="store_true",
+                   help="Reset the board inside the capture so the boot banner makes this run "
+                        "verdict-grade (the oracle's fresh-boot gate)")
     p.add_argument("--clear-attempts", type=int, default=4,
                    help="Bounded retries when the firmware refuses a clear while a save is in flight")
     p.add_argument("--clear-retry-delay-s", type=float, default=4.0)
@@ -317,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=False)
     a0, b0, t0 = (to_firmware_slot(args.slot_a), to_firmware_slot(args.slot_b), args.track - 1)
 
+    identity = _build_identity()
+    (out_dir / "metadata.json").write_text(json.dumps(identity, indent=2) + "\n")
     events: list[dict] = []
     preparation: list[dict] = []
     report: dict = {"leg": args.leg, "track": args.track, "slot_a": args.slot_a, "slot_b": args.slot_b,
@@ -324,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
                     "stimulus": (f"STIM-BASE-2-ONE-OD-01-TEMP-ACCEPTED-SEQ-"
                                  f"{'REC' if args.leg == 'rec' else 'OD'}"),
                     "clear_targets": bool(args.clear_targets), "preparation": preparation,
-                    "census": None,
+                    "census": None, "identity": identity,
                     "events": events, "result": "INCOMPLETE", "upload": bool(args.upload)}
 
     if args.upload:
@@ -364,7 +401,8 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(1.0)
 
     with ManagedCaptureSession(port=args.capture_port, boot_wait_s=args.boot_wait_s,
-                              out_dir=out_dir, run_token=uuid.uuid4().hex) as capture:
+                              out_dir=out_dir, run_token=uuid.uuid4().hex,
+                              boot_reset=args.boot_reset) as capture:
         capture_log = capture.session_log
         if capture_log is None:
             raise RuntimeError("managed capture did not publish a session log")
@@ -416,7 +454,9 @@ def main(argv: list[str] | None = None) -> int:
                         if known_occupied is True:
                             # A filled target that is not the selected slot would switch
                             # playback on a long press instead of clearing, so select it
-                            # first (the operator's own gesture).
+                            # first (the operator's own gesture). An unavailable census stays
+                            # fail-closed: long-press only, which clears a selected slot and
+                            # otherwise refuses without arming an empty one.
                             slots.press_slot_record(ctx, slot_number, press_ms=args.press_ms)
                             time.sleep(0.45)
                         # A refused or aborted clear means the firmware could not
@@ -523,7 +563,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {e}")
     print(f"[s4f13] leg {args.leg}: {report['result']}; inspect with the oracle:")
     print(f"  .venv/bin/python scripts/hitl/accepted_sequence_probe.py --session-log {capture_log} "
-          f"--slot-a {args.slot_a} --slot-b {args.slot_b} --leg {args.leg}")
+          f"--slot-a {args.slot_a} --slot-b {args.slot_b} --leg {args.leg} "
+          f"--metadata {out_dir / 'metadata.json'}")
     return 0 if report["result"] == "DROVE_LEG" else 3
 
 

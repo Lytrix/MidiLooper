@@ -128,6 +128,7 @@ class ManagedCaptureSession:
         python_executable: Optional[str] = None,
         arm_snapshot_yield: bool = False,
         run_token: str | None = None,
+        boot_reset: bool = False,
     ) -> None:
         self._port = port
         self._boot_wait_s = max(boot_wait_s, 0.0)
@@ -135,6 +136,7 @@ class ManagedCaptureSession:
         self._python = python_executable or sys.executable
         self._arm_snapshot_yield = arm_snapshot_yield
         self._run_token = run_token
+        self._boot_reset = boot_reset
         self._process: subprocess.Popen[str] | None = None
         self._output_thread: threading.Thread | None = None
         self._session_log: Path | None = None
@@ -173,6 +175,8 @@ class ManagedCaptureSession:
             command.append("--arm-snapshot-yield")
         # Allowlisted, fenced read-only requests on stdin (task 2.3).
         command.append("--command-stdin")
+        if self._boot_reset:
+            command.append("--boot-reset")
         # Parent-death pipe: the child exits when this process closes the write
         # end, which happens even if the harness is SIGKILLed. That guarantees a
         # leaked capture session can never keep the USB serial port open.

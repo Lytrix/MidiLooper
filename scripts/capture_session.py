@@ -131,6 +131,18 @@ def main() -> int:
         help="Write !SNAPSHOT_YIELD once after the first timing-critical ST line",
     )
     parser.add_argument(
+        "--boot-reset",
+        action="store_true",
+        help="Reset the board with a 1200-baud touch before settling, so the boot banner "
+             "lands inside this capture (verdict-grade fresh-boot evidence)",
+    )
+    parser.add_argument(
+        "--boot-reset-settle",
+        type=float,
+        default=2.0,
+        help="Delay after the 1200-baud touch before the reconnect loop reopens the port",
+    )
+    parser.add_argument(
         "--command-stdin",
         action="store_true",
         help="Forward allowlisted read-only HITL requests read from stdin, fenced by nonce",
@@ -213,6 +225,8 @@ def main() -> int:
             print("[capture] armed snapshot yield", flush=True)
             return
 
+    boot_reset_done = False
+
     with out_path.open("ab") as log:
         try:
             while True:
@@ -231,6 +245,31 @@ def main() -> int:
                         time.sleep(args.reconnect_delay)
                         continue
 
+                    if args.boot_reset and not boot_reset_done:
+                        # A 1200-baud touch reboots the board, so this session owns a real
+                        # boot: the banner lands inside this capture instead of before any
+                        # owner attached, which is what the accepted-sequence oracle's
+                        # fresh-boot gate requires.
+                        # The capture owner asks the running firmware to reset, then drops
+                        # the port so the reconnect path reopens it and the boot banner
+                        # starts this capture. A 1200-baud touch is not honoured on this
+                        # board (measured, 2026-09-28), and the oracle requires the banner in
+                        # the first lines, so the reset must happen before the boot settle.
+                        try:
+                            ser.write(b"!REBOOT\n")
+                            ser.flush()
+                            time.sleep(0.2)
+                        except (serial.SerialException, OSError):
+                            pass
+                        try:
+                            ser.close()
+                        except (serial.SerialException, OSError):
+                            pass
+                        ser = None
+                        boot_reset_done = True
+                        print("[capture] boot reset requested (1200-baud touch)", flush=True)
+                        time.sleep(max(args.boot_reset_settle, 0.0))
+                        continue
                     if not boot_wait_done:
                         deadline = time.monotonic() + args.boot_wait
                         while time.monotonic() < deadline:
