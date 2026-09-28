@@ -1336,6 +1336,24 @@ void test_deferred_record_interval_is_audible_only_with_a_bound_window() {
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, ons, trace);
   TEST_ASSERT_EQUAL_UINT32(1, offs);
 
+  // S4f.19 successor start: a successor record on another slot must not disturb the
+  // predecessor's ownership. The contract's requirement here is that B's start freezes the
+  // job-owned source rather than invalidating it: the frozen range stays sealed and owned,
+  // the servable view survives, and retirement still waits. Audibility is deliberately not
+  // asserted: playback emission is suppressed while the track is RECORDING by design
+  // (`isAudiblePlaybackActive` excludes it), so only ownership must survive the start.
+  prepareSlot(t, 1, false);
+  TrackCaptureStopTestAccess::selectSlot(t, 1);
+  t.startRecording(400);
+  t.noteOn(1, 70, 100, 412);
+  TEST_ASSERT_TRUE(job.ownsRawRange);
+  TEST_ASSERT_TRUE(job.rawRange.ready());
+  TEST_ASSERT_EQUAL(static_cast<int>(CapturePhase::Record), static_cast<int>(job.mode));
+  TEST_ASSERT_TRUE(runtime.hasServableDeferredRecordView());
+  TEST_ASSERT_FALSE(runtime.frozenWindowBuildActive());
+  const size_t depthUnderSuccessor = TrackCaptureStopTestAccess::stopQueueDepth(t);
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(depthUnderSuccessor));
+
   // A stale/unready interval emits nothing: retiring the pending owner ends the
   // unpublished interval's eligibility, and another slot never had a source.
   job.admission.pending = false;
