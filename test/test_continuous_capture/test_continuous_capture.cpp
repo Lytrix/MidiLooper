@@ -1333,10 +1333,10 @@ void test_superseded_predecessor_retires_without_touching_a_live_successor() {
 /// checkpoints now run in the default gate; 5.5's parameterized coverage is complete.
 ///
 /// `pauseAtStagedPassOwnership` is the D8 boundary itself: the phase enum is *not* execution order
-/// (`PrepareTransfer` dispatches before `CanonicalTail`), and the grain that enters
-/// `PrepareTransfer` also stages the pass and leaves the phase, so that checkpoint cannot be
-/// expressed as a phase threshold. It is instead "the turn on which the job first owns its staged
-/// pass", which is exactly the state a successor's `beginCapture` used to destroy.
+/// (`PrepareTransfer` dispatches before `CanonicalTail`). The admission grain creates an
+/// unready job-owned receipt and later turns transfer chunks and restore their order.
+/// Pause on the first ownership turn, before any chunks move, to prove that a successor
+/// cannot destroy or publish the predecessor's incomplete pass.
 void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpointName,
                                    bool pauseAtStagedPassOwnership = false) {
   Track& track = preparePlayingTrack();
@@ -1355,11 +1355,14 @@ void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpoi
     }
     TEST_ASSERT_NOT_NULL_MESSAGE(TrackCaptureStopTestAccess::jobPass(track),
         "the ownership checkpoint requires the predecessor to own its staged pass");
-    // Staging, taking the receipt and advancing the phase are one non-yielding grain, so the pause
-    // lands on the phase that follows `PrepareTransfer` (`CanonicalTail`: the capture is populated).
-    TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PendingStopPhase::CanonicalTail),
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PendingStopPhase::PrepareTransfer),
         TrackCaptureStopTestAccess::jobPhase(track),
-        "the ownership checkpoint must pause on the turn the staged pass moved into the job");
+        "the ownership checkpoint must pause before resumable transfer completes");
+    const auto* candidate = TrackCaptureStopTestAccess::jobPass(track);
+    TEST_ASSERT_TRUE(candidate->preparationPending);
+    TEST_ASSERT_TRUE(candidate->committedChunkIds.empty());
+    TEST_ASSERT_FALSE(loop.canTransferCapturePassWithoutAllocation(*candidate));
+    TEST_ASSERT_NULL(TrackCaptureStopTestAccess::loopPass(track));
   } else {
     for (unsigned grain = 0; grain < 20000; ++grain) {
       if (TrackCaptureStopTestAccess::jobPhase(track) >= checkpointPhase) break;
@@ -1417,9 +1420,9 @@ void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpoi
 /// strongest D8 regression because it proves the shared-slot dependency is *gone* rather than
 /// merely deferred in time.
 ///
-/// A reaches `CompanionHistory`, so A's pass has been staged and moved into job A while the Loop
-/// pending slot is empty again. B (the live successor) then stages its own pass into that slot --
-/// exactly the staging a successor's `PrepareTransfer` performs. The old shared scalar answered
+/// A reaches `CompanionHistory`, so A's pass is complete in job A while the Loop pending
+/// slot remains empty. B (the live successor) then uses the legacy synchronous staging API
+/// to put its own pass into that slot. The old shared scalar answered
 /// `AlreadyPending` here, and the "protect the shared pass" attempt could only buy A's survival by
 /// denying B. With D8 both receipts exist concurrently with distinct identities and chunk storage.
 ///
@@ -1460,8 +1463,8 @@ void test_simultaneous_interval_owned_staged_passes() {
   midiButtonActions.handleToggleRecord();
   TEST_ASSERT_TRUE(track.isOverdubbing());
   inputNote(62, 193, 216);
-  // B's own `PrepareTransfer` staging: the Loop slot it uses is free *because* A's receipt moved
-  // into the job, which is what makes concurrent ownership possible at all.
+  // The legacy producer staging API can use the Loop slot while A's complete pass
+  // lives in the job. Deferred successors now construct directly in their own jobs.
   Capture bCapture;
   bCapture.phase = CapturePhase::Overdub;
   TEST_ASSERT_TRUE(bCapture.store.append(MidiEvent::NoteOn(193, 1, 62, 100)));

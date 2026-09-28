@@ -242,6 +242,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::retireCompletedPrepar
   switch (phase) {
     case PendingStopPhase::PrepareTransfer: remainingOrderGrains = 0; break;
     case PendingStopPhase::CompanionHistory: remainingCanonicalPreparationGrains = 0; break;
+    case PendingStopPhase::UndoCollection: remainingUndoCollectionGrains = 0; break;
     case PendingStopPhase::CompanionBridge: remainingRankedPreparationGrains = 0; break;
     default: return false;
   }

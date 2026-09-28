@@ -45,6 +45,49 @@ struct TrackCaptureStopTestAccess {
     return found == t.pendingNotes.end() ? kInvalidNoteId : found->second.recordNoteId;
   }
 
+  static void assertDeniedUndoRetainsObligation(Track& t) {
+    auto& job = *t.captureStopJobHead();
+    const auto phase = job.undoCollection.phase;
+    const bool started = job.undoCollectionStarted, collected = job.undoCollected;
+    const auto credits = job.admission.remainingUndoCollectionGrains;
+    TEST_ASSERT_GREATER_THAN(0, credits);
+    job.undoCollectionStarted = job.undoCollected = true;
+    job.undoCollection.phase = Loop::SessionUndoCollection::Phase::Denied;
+    step(t);
+    const auto actualPhase = job.admission.phase;
+    const auto actualCredits = job.admission.remainingUndoCollectionGrains;
+    job.undoCollection.phase = phase;
+    job.undoCollectionStarted = started; job.undoCollected = collected;
+    TEST_ASSERT_EQUAL(PendingStopPhase::UndoCollection, actualPhase);
+    TEST_ASSERT_EQUAL(credits, actualCredits);
+    TEST_ASSERT_FALSE(job.undoPublicationStarted);
+  }
+  static void assertDeniedUndoPublicationRetries(Track& t) {
+    auto& job = *t.captureStopJobHead();
+    auto& stack = t.getGlobalUndoStack();
+    const auto nextId = stack.nextEntryId;
+    stack.nextEntryId = 0; // Refuse begin without moving the prepared entry.
+    for (unsigned i = 0; i < 64 && !job.undoCollected; ++i) step(t);
+    step(t); // A second refusal must remain in the same phase.
+    const auto phase = job.admission.phase;
+    const bool ready = job.undoPublicationReady, started = job.undoPublicationStarted;
+    const auto retainedPass = job.undoEntry.passId;
+    stack.nextEntryId = nextId; // Restore the admission before assertions/retry.
+    TEST_ASSERT_EQUAL(PendingStopPhase::UndoCollection, phase);
+    TEST_ASSERT_FALSE(ready); TEST_ASSERT_FALSE(started);
+    TEST_ASSERT_EQUAL(job.pendingPass.id, retainedPass);
+  }
+  static PendingCapturePass& pass(Track& t) { return t.captureStopJobHead()->pendingPass; }
+  static Capture& output(Track& t) {
+    return t.playbackRuntime.slotIfAllocated(t.captureStopJobHead()->slot)->canonicalCaptureOutput;
+  }
+  static void assertRetiredCursors(const Track& t) {
+    for (const auto& job : t.captureStopJobs_->entries) {
+      TEST_ASSERT_FALSE(job.passTransfer.active());
+      TEST_ASSERT_FALSE(job.passTransfer.complete());
+    }
+  }
+  static bool hasReadablePass(Track& t) { return t.ownedPendingCapturePass() != nullptr; }
   static uint64_t interval(const Track& t) { return t.captureInterval_; }
   static size_t jobs(const Track& t) { return t.captureStopQueueDepth(); }
   static void step(Track& t) {
@@ -99,6 +142,22 @@ struct TrackCaptureStopTestAccess {
       j ? static_cast<unsigned>(j->admission.phase) : 0,
       sizeof(Track::CaptureStopJob), sizeof(Track::CaptureStopJobs));
     if (j) {
+      printf("credits closure=%u order=%llu ranked=%llu canonical=%llu undo=%llu history=%llu\n",
+        j->admission.remainingClosureGrains,
+        (unsigned long long)j->admission.remainingOrderGrains,
+        (unsigned long long)j->admission.remainingRankedPreparationGrains,
+        (unsigned long long)j->admission.remainingCanonicalPreparationGrains,
+        (unsigned long long)j->admission.remainingUndoCollectionGrains,
+        (unsigned long long)j->admission.remainingHistoryRecycleGrains);
+      auto* rt = t.playbackRuntime.slotIfAllocated(j->slot);
+      auto& loop = *j->owner;
+      printf("commit=%u joint=%u verified=%u matches=%u gen=%u prefixGen=%u pending=%u\n",
+        j->admission.canCommit(j->admission.transportCommandEpoch, j->admission.destination),
+        loop.canCommitPreparedCaptureAndCompanions(j->admission.intervalToken(), &j->pendingPass),
+        loop.preparedCompanionCaptureVerified(rt->canonicalPassInputs,j->admission.intervalToken()),
+        rt->canonicalPassInputs.matchesCanonicalOwner(loop.passes,
+          {loop.playbackRevision, t.playbackGeneration, loop.loopLengthTicks, loop.canonicalStorageGeneration}),
+        t.playbackGeneration,rt->canonicalPrefixSource.sourceGeneration,j->pendingPass.preparationPending);
       printf("slot=%u loop=%lu raw=%u pass=%u credits=%llu free_chunks=%u\n", j->slot,
         static_cast<unsigned long>(j->loopId), j->ownsRawRange, j->ownsPendingPass,
         static_cast<unsigned long long>(budget(t)), LoopEventStore::freeChunkCount());
@@ -811,8 +870,126 @@ void test_record_normalization_filtered_empty_resets_geometry() {
   TEST_ASSERT_EQUAL(TRACK_EMPTY, t.getState());
 }
 
+void test_job_pass_staging_yields_and_preserves_successor() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true); prepareSlot(t, 1, false);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 0, 60);
+  for (unsigned i = 0; i < 140; ++i) {
+    const uint8_t channel = 2 + i / 128, note = i % 128;
+    t.noteOn(channel, note, 100, 12); t.noteOff(channel, note, 0, 96);
+  }
+  stop(t, true, 768);
+  advanceToPhase(t, PendingStopPhase::PrepareTransfer);
+  auto& source = TrackCaptureStopTestAccess::output(t);
+  const size_t chunks = source.store.chunkIds().size();
+  TEST_ASSERT_GREATER_THAN(1, chunks);
+  const size_t rows = source.store.size();
+  TEST_ASSERT_EQUAL(282, rows);
+  TrackCaptureStopTestAccess::step(t); // scalar admission
+  auto& pass = TrackCaptureStopTestAccess::pass(t);
+  const PassId id = pass.id;
+  TEST_ASSERT_TRUE(pass.preparationPending);
+  TEST_ASSERT_TRUE(pass.committedChunkIds.empty());
+  TEST_ASSERT_EQUAL(rows, source.store.size());
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasReadablePass(t));
+  TEST_ASSERT_FALSE(t.getLoop(0).hasPendingCapturePass());
+  start(t, 1, false, 768, 72);
+  const auto successor = TrackCaptureStopTestAccess::interval(t);
+  for (size_t grain = 0; grain < chunks + chunks / 2; ++grain) {
+    const auto before = source.store.chunkIds().size();
+    const auto moved = pass.committedChunkIds.size();
+    TEST_ASSERT_TRUE(pass.preparationPending);
+    PreparedCapturePassTransfer transfer;
+    TEST_ASSERT_FALSE(t.getLoop(0).transferCapturePass(pass, transfer));
+    assertNoPersistenceRequest();
+    TrackCaptureStopTestAccess::step(t);
+    TEST_ASSERT_EQUAL(id, pass.id);
+    TEST_ASSERT_EQUAL(before ? before - 1 : 0, source.store.chunkIds().size());
+    TEST_ASSERT_EQUAL(moved + (before ? 1 : 0), pass.committedChunkIds.size());
+    TEST_ASSERT_EQUAL(successor, TrackCaptureStopTestAccess::interval(t));
+    TEST_ASSERT_TRUE(t.isRecording());
+    TEST_ASSERT_EQUAL(2, t.getLoop(1).capture.store.size());
+  }
+  TEST_ASSERT_FALSE(pass.preparationPending);
+  TEST_ASSERT_EQUAL(CapturePhase::None, source.phase);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasReadablePass(t));
+  TEST_ASSERT_EQUAL(PendingStopPhase::CanonicalTail, TrackCaptureStopTestAccess::phase(t));
+  advanceToPhase(t, PendingStopPhase::UndoCollection);
+  TrackCaptureStopTestAccess::assertDeniedUndoRetainsObligation(t);
+  TrackCaptureStopTestAccess::assertDeniedUndoPublicationRetries(t);
+  assertNoPersistenceRequest();
+  advanceToPhase(t, PendingStopPhase::DeferredCleanup);
+  TEST_ASSERT_EQUAL(1, t.getLoop(0).passes.overdubPasses.size());
+  SessionMidiEventVec committed;
+  LoopEventStore::appendChunkRefEvents(t.getLoop(0).passes.overdubPasses[0].committedChunkIds, committed);
+  TEST_ASSERT_EQUAL(rows, committed.size());
+  for (unsigned i = 0; i < 140; ++i) {
+    unsigned ons = 0, offs = 0;
+    for (const auto& event : committed) {
+      if (event.channel != 2 + i / 128 || event.data.noteData.note != i % 128) continue;
+      if (event.type == midi::NoteOn) { ++ons; TEST_ASSERT_EQUAL(12, event.tick); }
+      if (event.type == midi::NoteOff) { ++offs; TEST_ASSERT_EQUAL(96, event.tick); }
+    }
+    TEST_ASSERT_EQUAL(1, ons); TEST_ASSERT_EQUAL(1, offs);
+  }
+  TEST_ASSERT_TRUE(StorageManagerInternal::currentSetLoopSlotDirty[0][0]);
+  TEST_ASSERT_FALSE(StorageManagerInternal::currentSetLoopSlotDirty[0][1]);
+  const auto budget = TrackCaptureStopTestAccess::budget(t);
+  for (uint64_t i = 0; i < budget && TrackCaptureStopTestAccess::jobs(t); ++i)
+    TrackCaptureStopTestAccess::step(t);
+  TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::jobs(t));
+  TrackCaptureStopTestAccess::assertRetiredCursors(t);
+  const auto persisted = PersistenceWorkQueue::queueDepth();
+  const auto undoCount = t.getGlobalUndoStack().undoCount();
+  TEST_ASSERT_EQUAL(1, undoCount);
+  for (unsigned i = 0; i < 10; ++i) TrackCaptureStopTestAccess::step(t);
+  TEST_ASSERT_EQUAL(persisted, PersistenceWorkQueue::queueDepth());
+  TEST_ASSERT_EQUAL(undoCount, t.getGlobalUndoStack().undoCount());
+  TEST_ASSERT_EQUAL(1, t.getLoop(0).passes.overdubPasses.size());
+  TEST_ASSERT_TRUE(t.isRecording());
+  TEST_ASSERT_EQUAL(2, t.getLoop(1).capture.store.size());
+}
+
+void test_job_pass_staging_denial_and_receipt_binding() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  auto& loop = t.getLoop(0);
+  Capture source; source.phase = CapturePhase::Overdub;
+  TEST_ASSERT_TRUE(source.store.append(MidiEvent::ControlChange(1, 1, 1, 64)));
+  PendingCapturePass pass, other;
+  LoopEventStoreCommitCursor cursor;
+  uint64_t generation = 4;
+  TEST_ASSERT_EQUAL(SealOutcome::AlreadyPending,
+    loop.beginPreparedCapturePassFromActiveAdmission(loop.capture, pass, cursor, generation, 768));
+  TEST_ASSERT_EQUAL(SealOutcome::FailedValidation,
+    loop.beginPreparedCapturePassFromActiveAdmission(source, pass, cursor, generation, 768));
+  TEST_ASSERT_TRUE(loop.hasActiveOverdubTransferAdmission());
+  TEST_ASSERT_EQUAL(kInvalidPassId, pass.id);
+  TEST_ASSERT_EQUAL(1, source.store.size());
+  TEST_ASSERT_TRUE(source.store.prewarmCaptureDirectory());
+  TEST_ASSERT_EQUAL(SealOutcome::Ok,
+    loop.beginPreparedCapturePassFromActiveAdmission(source, pass, cursor, generation, 768));
+  const auto id = pass.id;
+  TEST_ASSERT_EQUAL(SealOutcome::AlreadyPending,
+    loop.beginPreparedCapturePassFromActiveAdmission(source, pass, cursor, generation, 768));
+  other.id = id;
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied,
+    loop.stepPreparedCapturePass(source, other, cursor, 1));
+  TEST_ASSERT_TRUE(pass.preparationPending);
+  ++generation;
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied,
+    loop.stepPreparedCapturePass(source, pass, cursor, 1));
+  TEST_ASSERT_EQUAL(1, source.store.size());
+  TEST_ASSERT_TRUE(pass.committedChunkIds.empty());
+  TEST_ASSERT_FALSE(loop.canTransferCapturePassWithoutAllocation(pass));
+  source.store.clear();
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
+  RUN_TEST(test_job_pass_staging_denial_and_receipt_binding);
   RUN_TEST(test_record_normalization_stopped_inventory);
   RUN_TEST(test_record_normalization_playing_inventory);
   RUN_TEST(test_record_normalization_disabled_minimum_inventory);

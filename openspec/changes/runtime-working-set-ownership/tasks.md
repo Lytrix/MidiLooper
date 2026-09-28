@@ -2315,6 +2315,13 @@ own execution packet and records fixture/native/build/device results separately.
       owner/pool/destination receipts and partial-cancellation ownership. Fully prewarmed
       synchronous callers share the primitive; Record worker phase integration and full
       normalization remain open. [Transfer execution evidence](S4F18-TRANSFER-EXECUTION.md).
+      **2026-09-28 worker pass staging:** PrepareTransfer now builds directly in the
+      job receipt, one reference move/order swap per turn. Partial receipts reject
+      publication and companion borrowing. A 282-row production fixture retains a
+      live successor through transfer/publication; completed unused undo estimates
+      are retired to prevent a discovered atomic-transfer stall. Verification and
+      measured ring growth: [staging execution evidence](S4F18-STAGING-EXECUTION.md).
+      Record normalization/admission and connected playback/caller work remain open.
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,
@@ -2331,6 +2338,11 @@ own execution packet and records fixture/native/build/device results separately.
       remain open. Full native **2,501 passed / 7 skipped**, focused **15/15**; capture-serial
       passes with padding **840 bytes**. Strict OD→OD now passes; three Record cases remain red.
       [Execution packet](S4F20-PERSISTENCE-EXECUTION.md).
+      **2026-09-28 preparation completion:** completed undo estimates now retire after
+      consumed collection and prepared protected publication. Denied collection keeps
+      its obligation; refused publication retains/retries the entry. Dense production
+      and denial/recovery assertions pass; [staging execution evidence](S4F18-STAGING-EXECUTION.md).
+
 - [ ] S4f.21 **Migrate all record-stop continuations.** Convert stopRecordingTrack, finalizeCaptureAndSelectSlot,
       stopAllTracks and direct stop entry points to identity-qualified execution/geometry results; remove
       synchronous full-record fallback and caller-side duplicate save. Guard same-slot destructive start;

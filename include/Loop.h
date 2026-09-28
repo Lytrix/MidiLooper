@@ -1178,6 +1178,15 @@ struct Loop {
   /// later publication must not retire the Loop's independent live capture.
   SealOutcome stagePreparedCapturePassFromActiveAdmission(
       Capture& source, uint32_t sealedAtTick, CommitReason reason);
+  /// Begin bounded staging directly into a job-owned receipt using admitted storage.
+  /// Source must be independent of the live capture. Both owners and generation
+  /// outlive the cursor. Partial output must not be read or published.
+  SealOutcome beginPreparedCapturePassFromActiveAdmission(
+      Capture& source, PendingCapturePass& pass, LoopEventStoreCommitCursor& cursor,
+      const uint64_t& generation, uint32_t sealedAtTick);
+  LoopEventStoreRewriteResult stepPreparedCapturePass(
+      Capture& source, PendingCapturePass& pass, LoopEventStoreCommitCursor& cursor,
+      size_t quantum);
   /// Wrap-window synthetic note-offs on live capture.store (record/overdub stop policy).
   LoopStopFinalize::Result finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick);
   /// May grow canonical pass storage. Call only while non-real-time preparation is allowed.

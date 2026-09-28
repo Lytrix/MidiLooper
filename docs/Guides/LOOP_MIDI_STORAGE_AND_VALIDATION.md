@@ -142,10 +142,12 @@ shared-finalization implementation.
 5. **`discardPendingCapturePass`** — rollback failed seal/publish.
 
 **Deferred (punch-out) ownership — DEC-072.** The steps above are the live/producer path. When a stop
-is admitted as a deferred job, that job stages its pass at its own `PrepareTransfer` and immediately
-moves it out of `Loop::pendingCapturePass_` into `CaptureStopJob::pendingPass`
-(`Loop::takePendingCapturePass`), because the Loop slot is producer-local scratch a successor interval
-may take over at any moment. From then on the job's `AtomicTransfer` consumes the job-owned pass
+is admitted as a deferred job, its `PrepareTransfer` phase constructs directly in
+`CaptureStopJob::pendingPass` using `Loop::beginPreparedCapturePassFromActiveAdmission`
+and bounded `stepPreparedCapturePass` turns. The receipt owns moved chunk references
+but remains unreadable/unpublishable until directory ordering completes.
+The Loop pending slot stays producer-local scratch a successor may take over at any
+moment. The job's `AtomicTransfer` then consumes the completed job-owned pass
 directly (`Loop::transferCapturePass`), and every deferred reader — companion-history verification,
 undo identity, the bridge-refresh decision, stop telemetry and chunk/event accounting — resolves the
 receipt through the job, never through `Loop::pendingCapturePass_`. A deferred job therefore never
@@ -431,6 +433,11 @@ the earlier zero-undo-after-LSV1-load policy.
 Each overdub **session** pushes exactly one **OverdubPassAdded**, whatever number of laps it committed, so two overdub sessions leave three entries (record + session 1 + session 2) and one undo removes a whole session — never just its last pass.
 
 ### Overdub-session entry contents
+
+Undo collection and its protected publication preparation must complete before their
+unused work estimate is retired. An estimate is not an obligation to execute empty
+worker turns; busy or denied preparation still retains its obligation. A refused
+protected-publication begin retains the prepared entry and retries admission.
 
 - **One entry, every pass.** `Loop::collectOverdubSessionUndoPasses` collects the session's sealed wrap passes; the stop pass is appended. `UndoEntry::passIds` carries them all (legacy/STK2 rows carry a single `passId`). `applyUndoEntry` iterates `appendOverdubCapturePassIds` and disables each one, and refuses the whole entry if any id is missing — so an incomplete list must never be published.
 - **The deferred route reads its own session-exit receipt.** `Loop::captureSessionExitTail` swaps the interval's wrap identities out of the shared loop into its own receipt at stop admission (DEC-068), so a successor opens a clean session. The deferred undo collection must therefore source `Loop::SessionUndoCollection` from `job.admission.sessionExitReceiptRing` (`sessionExitReceiptByRingIndex`), not from the now-empty `overdubSessionPassIds_`. The bound `receiptIdentity` also replaces the live `overdubSessionUndoGeneration_` guard: a successor opening its session must not deny the predecessor's own collection.

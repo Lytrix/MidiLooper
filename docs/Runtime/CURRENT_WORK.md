@@ -1,5 +1,20 @@
 # Current work (implementation scope)
 
+**2026-09-28 — S4f.18 — resumable job-owned pass staging verified.**
+The deferred worker now constructs its pass directly in the job, one chunk-reference
+move or ordering swap per turn. Partial receipts cannot be borrowed or published;
+the Loop producer slot stays available to a successor. A 282-row fixture proves
+exact content, live successor survival, one undo/persistence handoff and cursor
+retirement. It also exposed unused undo estimates blocking atomic transfer: those
+retire only after successful collection and protected publication preparation;
+denied collection retains its obligation and refused publication retries its entry.
+Focused **31/31**; three mutations rejected; full native **2,527 passed / 7 skipped**.
+Capture-serial build passes, RAM1 padding **840 bytes**. The externally allocated
+four-job ring grows **2,728 → 2,984 bytes**; Track/Loop/runtime sizes stay unchanged.
+Record normalization/admission and connected playback/caller work remain open.
+No parent checkoff, upload or device acceptance.
+[Staging evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-STAGING-EXECUTION.md).
+
 **2026-09-28 — S4f.18 — bounded prepared-pass chunk transfer verified.**
 The existing store-to-committed-directory transition supports resumable reference
 moves and order-restoring swaps. Each grain respects its quantum, allocates no

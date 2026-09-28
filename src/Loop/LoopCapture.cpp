@@ -2425,6 +2425,45 @@ LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassWithChunkStorage(
   return SealOutcome::Ok;
 }
 
+LOOP_COLD_MEM SealOutcome Loop::beginPreparedCapturePassFromActiveAdmission(
+    Capture& source, PendingCapturePass& pass, LoopEventStoreCommitCursor& cursor,
+    const uint64_t& generation, uint32_t sealedAtTick) {
+  if (&source == &capture || pass.id != kInvalidPassId ||
+      !pass.committedChunkIds.empty() || cursor.active()) return SealOutcome::AlreadyPending;
+  if (!hasActiveOverdubTransferAdmission()) return SealOutcome::PoolExhausted;
+  if (source.store.empty()) return SealOutcome::SkippedEmpty;
+  auto& row = prewarmedCommittedChunkIdPool_.back();
+  if (source.store.chunkIds().size() > row.capacity()) return SealOutcome::PoolExhausted;
+  pass.committedChunkIds = std::move(row);
+  if (!source.store.beginCommittedChunkTransfer(cursor, pass.committedChunkIds, generation)) {
+    row = std::move(pass.committedChunkIds);
+    return SealOutcome::FailedValidation;
+  }
+  prewarmedCommittedChunkIdPool_.pop_back();
+  pass.preparationPending = true;
+  pass.retiresLiveCapture = false;
+  pass.id = nextPassId_++;
+  pass.mergeSequence = nextMergeSequence_++;
+  pass.phase = effectiveCapturePassPhase(source.phase, passes.hasRecordPass());
+  pass.sealedAtTick = sealedAtTick;
+  pass.overdubSessionIndex = (pass.phase == CapturePassPhase::Overdub && hasOverdubSession())
+      ? currentOverdubSessionIndex_ : kUngroupedOverdubSessionIndex;
+  return SealOutcome::Ok;
+}
+
+LOOP_COLD_MEM LoopEventStoreRewriteResult Loop::stepPreparedCapturePass(
+    Capture& source, PendingCapturePass& pass, LoopEventStoreCommitCursor& cursor,
+    size_t quantum) {
+  if (pass.id == kInvalidPassId || !cursor.targets(source.store, pass.committedChunkIds))
+    return LoopEventStoreRewriteResult::Denied;
+  const auto result = source.store.stepCommittedChunkTransfer(cursor, quantum);
+  if (result == LoopEventStoreRewriteResult::Complete) {
+    pass.preparationPending = false;
+    source.phase = CapturePhase::None;
+  }
+  return result;
+}
+
 LOOP_COLD_MEM bool Loop::preparePendingCapturePassTransfer() {
   if (!hasPendingCapturePass_) {
     return false;
@@ -2447,7 +2486,7 @@ LOOP_COLD_MEM bool Loop::canTransferPendingCapturePassWithoutAllocation() const 
 
 LOOP_COLD_MEM bool Loop::canTransferCapturePassWithoutAllocation(
     const PendingCapturePass& pass) const {
-  if (pass.id == kInvalidPassId) {
+  if (pass.id == kInvalidPassId || pass.preparationPending) {
     return false;
   }
   if (pass.phase == CapturePassPhase::Record) {
