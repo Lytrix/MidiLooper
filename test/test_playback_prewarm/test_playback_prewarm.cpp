@@ -6633,6 +6633,23 @@ void test_frozen_record_window_refuses_a_stale_range() {
   TEST_ASSERT_FALSE(runtime.serviceFrozenRecordWindow(unsealed, unsealed.generation(), source,
                                                       1536, 800, 768, 32));
   TEST_ASSERT_FALSE(runtime.frozenRecordWindowReady());
+
+  // Stale source replacement: with the current source the same service builds the window,
+  // so a stale refusal never blocks the replacement that follows it.
+  for (size_t grain = 0; grain < 4096 && !runtime.frozenRecordWindowReady(); ++grain) {
+    (void)runtime.serviceFrozenRecordWindow(range, range.generation(), source, 1536, 800, 768, 32);
+  }
+  TEST_ASSERT_TRUE(runtime.frozenRecordWindowReady());
+  auto* set = runtime.viewSetIfPrewarmed();
+  const RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
+  TEST_ASSERT_TRUE(ready.complete);
+  TEST_ASSERT_EQUAL_UINT32(768, ready.coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(1536, ready.coverage.loopLengthTicks);
+  size_t retained = 0;
+  for (size_t i = 0; i < ready.storage.eventCount; ++i) {
+    if (ready.storage.eventRetained(i)) ++retained;
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, retained);
 }
 
 // S4f.19 crossing notes: the projection closes only a lane that was open at the stop.
