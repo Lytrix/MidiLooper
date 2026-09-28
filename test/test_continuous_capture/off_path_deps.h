@@ -197,8 +197,14 @@ void StorageManager::requestWorkspaceFooterPersistWhenSafe() {}
 #include "BarStepButtonHandler.h"
 BarStepButtonHandler::BarStepButtonHandler() {}
 BarStepButtonHandler barStepButtonHandler;
-bool BarStepButtonHandler::isBarStepButtonNote(uint8_t channel, uint8_t) const {
-  TEST_ASSERT_EQUAL_MESSAGE(1, channel, "fixture injects musical channel 1 only");
+bool BarStepButtonHandler::isBarStepButtonNote(uint8_t channel, uint8_t note) const {
+#if defined(A34A_LINKS_REAL_MIDI_BUTTONS)
+  // The route fixture also injects the mapped Record control, never bar/step notes.
+  if (channel == MidiConfig::Channels::SELECT && note == MidiConfig::Transport::NOTE_RECORD) {
+    return false;
+  }
+#endif
+  TEST_ASSERT_EQUAL_MESSAGE(1, channel, "fixture injects musical channel 1 or mapped Record only");
   return false;
 }
 void BarStepButtonHandler::handleMidiNote(uint8_t, uint8_t, uint8_t, bool) { OFF_PATH(); }

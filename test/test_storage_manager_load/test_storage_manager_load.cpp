@@ -29,6 +29,19 @@ bool sequencerRunning = false;
 // This suite links the real load path, which defines the two loop-slot-payload functions, so it opts
 // out of those stubs.
 #include "load_harness_stubs.h"
+
+// S4f.20: the Record worker references `TrackUndo::pushRecordPassAdded`, which keeps the
+// undo-branch helpers (and their note-edit preview-revision and disabled-pass reclaim calls)
+// alive. Both routes are unreachable from a load fixture, so this suite — the only one that
+// does not link those owners — supplies inert fail-closed definitions here, in its own
+// translation unit. Defining them in `load_harness_stubs.h` collided with the offline/drain
+// suites, which include that header *and* link the real owners.
+void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats*, bool) {
+  LOAD_HARNESS_OFF_PATH();
+}
+void EditManager::bumpSessionPreviewRevision() { LOAD_HARNESS_OFF_PATH(); }
+void EditManager::bumpSessionPlaybackPreviewRevision() { LOAD_HARNESS_OFF_PATH(); }
+void EditManager::scheduleDeferredNoteEditDisplayRefresh() { LOAD_HARNESS_OFF_PATH(); }
 #include "load_and_restore_harness.h"
 #include "../../src/TrackUndo.cpp"
 

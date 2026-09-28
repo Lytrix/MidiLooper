@@ -30,16 +30,42 @@ struct TrackCaptureStopTestAccess {
     TEST_ASSERT_NOT_NULL(runtime);
     TEST_ASSERT_TRUE(runtime->prewarmCanonicalCaptureOutput());
     runtime->setCaptureStopOwner(job->admission, job->admission.frozenGeneration);
+    // Production bind captures the interval's job-owned Record geometry receipt.
+    t.captureRecordGeometryReceipt(*job);
     ++t.captureStopJobs_->count;
     return *job;
   }
   static auto closureGrain(Track& t) {
     return t.stepDeferredRecordClosure(*t.captureStopJobHead());
   }
+  static auto stagingGrain(Track& t) {
+    return t.stepDeferredRecordSourceStaging(*t.captureStopJobHead());
+  }
+  static auto normalizationGrain(Track& t) {
+    return t.stepDeferredRecordNormalization(*t.captureStopJobHead());
+  }
+  static auto passTransferGrain(Track& t) {
+    return t.stepDeferredRecordPassTransfer(*t.captureStopJobHead());
+  }
+  static auto publicationGrain(Track& t) {
+    return t.stepDeferredRecordPublication(*t.captureStopJobHead());
+  }
+  static auto retirementGrain(Track& t) {
+    return t.stepDeferredRecordRetirement(*t.captureStopJobHead());
+  }
   static auto& closureRuntime(Track& t) {
     return *t.playbackRuntime.slotIfAllocated(t.captureStopJobHead()->slot);
   }
   static size_t heldCount(const Track& t) { return t.pendingNotes.size(); }
+  static size_t stopQueueDepth(const Track& t) { return t.captureStopQueueDepth(); }
+  static UndoLoopGeometry jobBeforeGeometry(Track& t) {
+    return t.captureStopJobHead()->recordBeforeGeometry;
+  }
+  static void seedSuccessorRecordBaseline(Track& t, uint32_t length, uint32_t startLoop,
+                                          uint32_t loopStart) {
+    t.recordCaptureBaselineGeometry_ = {length, startLoop, loopStart};
+    t.hasRecordCaptureBaselineGeometry_ = true;
+  }
   static NoteId recordIdentity(const Track& t, uint8_t channel, uint8_t note) {
     const auto found = t.pendingNotes.find({note, channel});
     return found == t.pendingNotes.end() ? kInvalidNoteId : found->second.recordNoteId;
@@ -666,7 +692,7 @@ void test_record_job_closures_preserve_a_live_successor() {
     }
   }
   TEST_ASSERT_EQUAL(CapturePhase::Record, runtime.canonicalCaptureOutput.phase);
-  TEST_ASSERT_EQUAL(PendingStopPhase::CanonicalOrder, job.admission.phase);
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordSourceStaging, job.admission.phase);
   for (size_t i = 0; i < 2; ++i) {
     const auto& row = runtime.canonicalCaptureOutput.store.at(i);
     TEST_ASSERT_TRUE(row.isNoteOff()); TEST_ASSERT_EQUAL(767, row.tick);
@@ -675,6 +701,172 @@ void test_record_job_closures_preserve_a_live_successor() {
   }
   TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, TrackCaptureStopTestAccess::closureGrain(t));
   TEST_ASSERT_EQUAL(2, runtime.canonicalCaptureOutput.store.size());
+}
+
+void test_record_source_staging_merges_the_frozen_take_after_closure() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  t.noteOn(2, 61, 90, 130);
+  const NoteId first = t.getLoop(0).capture.store.at(0).noteId;
+  const NoteId second = t.getLoop(0).capture.store.at(1).noteId;
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 1000, 768);
+  auto& runtime = TrackCaptureStopTestAccess::closureRuntime(t);
+  LoopEventStoreRewriteResult result = LoopEventStoreRewriteResult::Pending;
+  while (result == LoopEventStoreRewriteResult::Pending) {
+    result = TrackCaptureStopTestAccess::closureGrain(t);
+  }
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, result);
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordSourceStaging, job.admission.phase);
+  TEST_ASSERT_EQUAL(2, runtime.canonicalCaptureOutput.store.size());
+  TEST_ASSERT_EQUAL(2, job.rawRange.size());
+
+  // A runtime owner generation that no longer matches the job must not stage.
+  ++runtime.captureStopOwnerGeneration;
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied, TrackCaptureStopTestAccess::stagingGrain(t));
+  TEST_ASSERT_EQUAL(2, runtime.canonicalCaptureOutput.store.size());
+  --runtime.captureStopOwnerGeneration;
+
+  result = LoopEventStoreRewriteResult::Pending;
+  size_t turns = 0;
+  while (result == LoopEventStoreRewriteResult::Pending && turns++ < 4096) {
+    result = TrackCaptureStopTestAccess::stagingGrain(t);
+  }
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, result);
+  TEST_ASSERT_EQUAL(PendingStopPhase::CanonicalOrder, job.admission.phase);
+
+  // The closure Offs stay at the head and the frozen take follows with its identities.
+  const auto& store = runtime.canonicalCaptureOutput.store;
+  TEST_ASSERT_EQUAL(4, store.size());
+  TEST_ASSERT_TRUE(store.at(0).isNoteOff());
+  TEST_ASSERT_TRUE(store.at(1).isNoteOff());
+  TEST_ASSERT_TRUE(store.at(2).isNoteOn());
+  TEST_ASSERT_TRUE(store.at(3).isNoteOn());
+  bool sawFirst = false, sawSecond = false;
+  for (size_t i = 2; i < 4; ++i) {
+    sawFirst = sawFirst || store.at(i).noteId == first;
+    sawSecond = sawSecond || store.at(i).noteId == second;
+  }
+  TEST_ASSERT_TRUE(sawFirst);
+  TEST_ASSERT_TRUE(sawSecond);
+}
+
+void test_record_normalization_orders_and_identity_completes_the_merged_store() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  t.noteOn(2, 61, 90, 120);
+  const NoteId first = t.getLoop(0).capture.store.at(0).noteId;
+  const NoteId second = t.getLoop(0).capture.store.at(1).noteId;
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 1000, 768);
+  auto& runtime = TrackCaptureStopTestAccess::closureRuntime(t);
+  LoopEventStoreRewriteResult result = LoopEventStoreRewriteResult::Pending;
+  while (result == LoopEventStoreRewriteResult::Pending) {
+    result = TrackCaptureStopTestAccess::closureGrain(t);
+  }
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, result);
+  result = LoopEventStoreRewriteResult::Pending;
+  size_t turns = 0;
+  while (result == LoopEventStoreRewriteResult::Pending && turns++ < 4096) {
+    result = TrackCaptureStopTestAccess::stagingGrain(t);
+  }
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, result);
+  TEST_ASSERT_EQUAL(PendingStopPhase::CanonicalOrder, job.admission.phase);
+  TEST_ASSERT_EQUAL(4, runtime.canonicalCaptureOutput.store.size());
+
+  // A runtime binding that no longer matches the job must not normalize.
+  ++runtime.captureStopOwnerGeneration;
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied,
+                    TrackCaptureStopTestAccess::normalizationGrain(t));
+  TEST_ASSERT_EQUAL(4, runtime.canonicalCaptureOutput.store.size());
+  --runtime.captureStopOwnerGeneration;
+
+  result = LoopEventStoreRewriteResult::Pending;
+  turns = 0;
+  while (result == LoopEventStoreRewriteResult::Pending && turns++ < 65536) {
+    result = TrackCaptureStopTestAccess::normalizationGrain(t);
+  }
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, result);
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPrepared, job.admission.phase);
+
+  // Canonical order: the two staged NoteOns by tick, then the terminal Offs.
+  const auto& store = runtime.canonicalCaptureOutput.store;
+  TEST_ASSERT_EQUAL(4, store.size());
+  TEST_ASSERT_TRUE(store.at(0).isNoteOn());
+  TEST_ASSERT_EQUAL(12, store.at(0).tick);
+  TEST_ASSERT_TRUE(store.at(1).isNoteOn());
+  TEST_ASSERT_EQUAL(20, store.at(1).tick);
+  TEST_ASSERT_TRUE(store.at(2).isNoteOff());
+  TEST_ASSERT_TRUE(store.at(3).isNoteOff());
+  TEST_ASSERT_EQUAL(767, store.at(2).tick);
+  TEST_ASSERT_EQUAL(767, store.at(3).tick);
+  bool sawFirst = false, sawSecond = false;
+  for (size_t i = 0; i < 2; ++i) {
+    sawFirst = sawFirst || store.at(i).noteId == first;
+    sawSecond = sawSecond || store.at(i).noteId == second;
+  }
+  TEST_ASSERT_TRUE(sawFirst);
+  TEST_ASSERT_TRUE(sawSecond);
+
+  // The terminal phase must not re-run preparation: it waits for publication.
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied,
+                    TrackCaptureStopTestAccess::normalizationGrain(t));
+  TEST_ASSERT_EQUAL(4, runtime.canonicalCaptureOutput.store.size());
+
+  // Bounded pass transfer into the job-owned receipt; nothing is published yet.
+  TEST_ASSERT_TRUE(t.getLoop(0).prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_TRUE(t.getLoop(0).hasActiveOverdubTransferAdmission());
+  result = LoopEventStoreRewriteResult::Pending;
+  turns = 0;
+  while (result == LoopEventStoreRewriteResult::Pending && turns++ < 65536) {
+    result = TrackCaptureStopTestAccess::passTransferGrain(t);
+  }
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, result);
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPassReady, job.admission.phase);
+  TEST_ASSERT_TRUE(job.ownsPendingPass);
+  TEST_ASSERT_FALSE(job.pendingPass.committedChunkIds.empty());
+  TEST_ASSERT_EQUAL(CapturePassPhase::Record, job.pendingPass.phase);
+  TEST_ASSERT_EQUAL(0, runtime.canonicalCaptureOutput.store.size());
+
+  // The terminal wait refuses to transfer twice.
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied,
+                    TrackCaptureStopTestAccess::passTransferGrain(t));
+
+  // Atomic publication: the staged pass becomes canonical and its Record undo is pushed.
+  // A successor record start rewrites the Track's inline baseline first; the publication
+  // must still use this interval's job-owned receipt.
+  const UndoLoopGeometry jobBefore = TrackCaptureStopTestAccess::jobBeforeGeometry(t);
+  TrackCaptureStopTestAccess::seedSuccessorRecordBaseline(t, 4242, 4243, 4244);
+  TEST_ASSERT_EQUAL(0, TrackUndo::getUndoCount(t));
+  result = LoopEventStoreRewriteResult::Pending;
+  turns = 0;
+  while (result == LoopEventStoreRewriteResult::Pending && turns++ < 4096) {
+    result = TrackCaptureStopTestAccess::publicationGrain(t);
+  }
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, result);
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPublished, job.admission.phase);
+  TEST_ASSERT_TRUE(t.getLoop(0).passes.hasRecordPass());
+  TEST_ASSERT_EQUAL(1, TrackUndo::getUndoCount(t));
+  const auto& tip = t.getGlobalUndoStack().entries.back();
+  TEST_ASSERT_EQUAL(UndoEntryKind::RecordPassAdded, tip.kind);
+  TEST_ASSERT_EQUAL(jobBefore.loopLengthTicks, tip.beforeGeometry.loopLengthTicks);
+  TEST_ASSERT_EQUAL(jobBefore.startLoopTick, tip.beforeGeometry.startLoopTick);
+  TEST_ASSERT_EQUAL(jobBefore.loopStartTick, tip.beforeGeometry.loopStartTick);
+  TEST_ASSERT_NOT_EQUAL(4242u, tip.beforeGeometry.loopLengthTicks);
+  TEST_ASSERT_EQUAL(t.getLoop(0).loopLengthTicks, tip.afterGeometry.loopLengthTicks);
+
+  // Bounded retirement releases the frozen source and returns the ring entry.
+  const size_t depthBefore = TrackCaptureStopTestAccess::stopQueueDepth(t);
+  result = LoopEventStoreRewriteResult::Pending;
+  turns = 0;
+  while (result == LoopEventStoreRewriteResult::Pending && turns++ < 65536) {
+    result = TrackCaptureStopTestAccess::retirementGrain(t);
+  }
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, result);
+  TEST_ASSERT_EQUAL(depthBefore - 1, TrackCaptureStopTestAccess::stopQueueDepth(t));
+  TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::stopQueueDepth(t));
 }
 
 void test_record_job_closure_denial_retains_obligation_for_retry() {
@@ -988,7 +1180,9 @@ void test_job_pass_staging_denial_and_receipt_binding() {
 
 int main() {
   UNITY_BEGIN();
-  RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
+      RUN_TEST(test_record_normalization_orders_and_identity_completes_the_merged_store);
+RUN_TEST(test_record_source_staging_merges_the_frozen_take_after_closure);
+RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_job_pass_staging_denial_and_receipt_binding);
   RUN_TEST(test_record_normalization_stopped_inventory);
   RUN_TEST(test_record_normalization_playing_inventory);

@@ -125,8 +125,16 @@ class LoopEventStoreOrderCursor {
   size_t firstCut_ = 0, secondCut_ = 0, low_ = 0, high_ = 0;
   size_t reverseFirst_ = 0, reverseLast_ = 0;
   uint32_t pivot_ = 0;
+  /// Class of the current pivot: NoteOff (0) < NoteOn (1) < other (2). Only
+  /// consulted in canonical order; tick-only order ignores it.
+  uint8_t pivotClass_ = 0;
   uint8_t reversal_ = 0;
-  bool lower_ = false, complete_ = false;
+  bool lower_ = false;
+  /// false: stable order by tick alone (equal-tick rows keep their relative
+  /// identity). true: stable order by (tick, class), matching the legacy
+  /// `noteEventLess` canonical capture order.
+  bool canonical_ = false;
+  bool complete_ = false;
   Phase phase_ = Phase::Idle;
 };
 
@@ -295,10 +303,18 @@ class LoopEventStore {
   /// Bind private unpublished dense output, never a live or frozen raw producer.
   /// Bounded preflight denies shared or persistence-admitted chunks before writes.
   bool beginPrivateTickOrder(LoopEventStoreOrderCursor& cursor) const;
+  /// Same bounded private ordering, but with the canonical (tick, class) key the
+  /// legacy capture sort uses: NoteOff before NoteOn before other at equal ticks.
+  /// Equal-key rows keep their relative order. Bounded preflight is identical.
+  bool beginPrivateCanonicalOrder(LoopEventStoreOrderCursor& cursor) const;
   /// At most quantum constant-work transitions/comparisons/swaps/chunk visits.
   /// Partial order is unpublished; denial never rolls back prior accepted steps.
   LoopEventStoreRewriteResult stepPrivateTickOrder(LoopEventStoreOrderCursor& cursor,
                                                   size_t quantum);
+  /// Canonical-key form of `stepPrivateTickOrder`; the comparator is carried by
+  /// the cursor, which must have been bound by `beginPrivateCanonicalOrder`.
+  LoopEventStoreRewriteResult stepPrivateCanonicalOrder(LoopEventStoreOrderCursor& cursor,
+                                                       size_t quantum);
 
   /// Private prepared output only; preflight must reach InputReady before marks.
   /// Original ticks must be in the supported domain (no internal marker values).
@@ -307,6 +323,11 @@ class LoopEventStore {
   LoopEventStoreFilterResult stepPrivateFilter(LoopEventStoreFilterCursor& cursor, size_t quantum);
   /// O(1) dense ordinal access during InputReady. Marked rows are unreadable.
   bool readPrivateFilterRow(const LoopEventStoreFilterCursor& cursor, size_t ordinal, MidiEvent& out) const;
+  /// Private prepared output only, filter cursor in InputReady. Assigns `id` to
+  /// one NoteOn row that has no identity. Denies a marked/missing row, a non-NoteOn
+  /// row, an invalid `id`, or a row that already carries an identity, so an
+  /// existing receipt is never overwritten.
+  bool assignPrivateNoteId(LoopEventStoreFilterCursor& cursor, size_t ordinal, NoteId id);
   /// Atomically mark two source ordinals; idempotent until finishPrivateFilter.
   /// Policy owns the decision. No row is changed if either access is invalid.
   bool markPrivateFilterPair(LoopEventStoreFilterCursor& cursor, size_t first, size_t second);
@@ -498,6 +519,8 @@ class LoopEventStore {
   const EventChunk& chunk(uint16_t id) const;
   bool appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppendDeny* denyOut = nullptr,
                          ChunkReservation* reservation = nullptr);
+  /// Shared bounded private-order admission; `canonical` selects the key.
+  bool beginPrivateOrder(LoopEventStoreOrderCursor& cursor, bool canonical) const;
   void rebuildBarIndex() const;
   void markBarIndexDirty();
 };
