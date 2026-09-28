@@ -300,3 +300,25 @@ The adopt path's phase rule is also pinned: adopting with a launch phase past th
 skips them (the "already heard live" rule), which is why the drive stamps the source before
 resetting the cursor to the loop start.
 
+### Successor start during finalization — measured blocker (round 10)
+
+A fixture that starts a successor record on **slot 1** while slot 0's deferred interval is
+being served shows the predecessor is **not** audible during the successor's recording:
+
+- `Track::playMidiEvents` (the active entry) reaches `playCommittedLoopMidi`, but
+  `fixedViewEligible` requires `isPlaying()`. A successor record puts the track in
+  `TRACK_RECORDING`, so the fixed-view/adopt paths are skipped and the interval emits nothing.
+- The layered entry (`playMidiEventsForSlot`) is target-based (`isActive == false`), so it needs
+  a selected, complete, stream-prepared bridge — i.e. **committed** content. The predecessor's
+  pass is still unpublished, so it has no bridge either.
+
+So "a successor on a different slot must not be serialized behind the predecessor" is satisfied
+for *ownership* (per-slot runtimes keep the window and the frozen range independent — the runtime
+predicates still report servable, and the range is not disturbed), but the predecessor's
+unpublished content is **not served while the successor records**. Closing that needs the layered
+path to serve a range-derived window for a non-active slot (or a deliberate decision that the
+predecessor sounds only after the successor's capture ends). It is recorded here rather than
+worked around, because the accepted-sequence recipe's R→R/OD→R legs depend on it.
+
+The successor fixture was withdrawn rather than committed failing; the ownership half it proved
+(per-slot runtime independence) is already pinned by the retirement/eligibility fixtures.

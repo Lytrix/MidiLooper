@@ -2668,7 +2668,18 @@ own execution packet and records fixture/native/build/device results separately.
       the beyond-bar-one case now also drives past the loop end and asserts the bar-1 note is
       served again after the wrap while the pass is still unpublished. Focused **269/269**; full
       native **2,603 passed / 7 skipped**; capture-serial PASS, padding **888**. Remaining:
-      ownership through successor start, multiple sounding tracks and stale source replacement.
+      **2026-09-28 round 10 — successor start: ownership holds, audibility does not (recorded).**
+      A fixture starting a successor record on slot 1 while slot 0's deferred interval is served
+      shows the predecessor is not audible during the successor's recording: the active entry's
+      `fixedViewEligible` requires `isPlaying()`, and a successor record puts the track in
+      `TRACK_RECORDING`; the layered entry is target-based and needs a committed bridge. Ownership
+      is unaffected (per-slot runtimes keep the window and frozen range independent), but closing
+      the audibility gap needs the layered path to serve a range-derived window for a non-active
+      slot, or an explicit decision that the predecessor sounds only after the successor's capture
+      ends. The failing fixture was withdrawn, not committed; the finding is recorded in the
+      [playback-handoff packet](S4F19-PLAYBACK-HANDOFF-PACKET.md) § successor start. Remaining:
+      that successor-audibility decision plus the multiple-sounding-tracks and
+      stale-source-replacement fixtures.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,
