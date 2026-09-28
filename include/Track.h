@@ -287,6 +287,12 @@ public:
   /// (S4f.19). It is the admission predicate for both playback entry points; an
   /// unpublished interval with no bound window emits nothing.
   bool hasAudiblePlaybackSource(uint8_t slotIndex) const;
+  /// FLASH-resident S4f.19 onward service: adopt the onward window covering the playhead
+  /// for an unpublished deferred Record interval, or advance its build from the job's own
+  /// frozen source by one bounded grain. Returns the fixed view to serve, or nullptr.
+  const RuntimePlaybackView* adoptOrServiceOnwardRecordWindow(
+      Loop& loop, LoopPlaybackRuntime& runtime,
+      const PlaybackViewSourceIdentity& sourceIdentity, uint32_t currentTick);
   /// Silence this track's MIDI channel on the output ports. Does not clear ledger or pendingNotes.
   void silenceTrackMidiOutput();
   void silenceSlotMidiOutput(uint8_t slotIndex);

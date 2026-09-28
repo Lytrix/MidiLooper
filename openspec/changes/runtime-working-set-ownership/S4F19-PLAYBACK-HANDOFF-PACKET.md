@@ -259,10 +259,22 @@ bar-2 rows, canonically ordered (the bar-1 rows are outside the window); a stale
 out-of-loop phase and an unsealed range all refuse without creating a ready window. Mutation:
 switching the fill from `RecordCoverage` to `AllSource` retains all four rows and fails.
 
-**Remaining for the onward slice:** the hot path must pass the job's `rawRange` to this service and
-promote the ready window through the handoff (the range lives on `CaptureStopJob`, not the
-runtime); the crossing-note endpoint then uses the same frozen source; and the continuity-gated
-retirement plus ownership through successor start still follow.
+**Remaining for the onward slice:** the crossing-note endpoint uses the same frozen source; and
+the continuity-gated retirement plus ownership through successor start still follow.
+
+Landed in round 6 — **onward window served through the production hot path:**
+`LoopPlaybackRuntime::adoptFrozenRecordWindow` returns the onward window covering the playhead,
+promoting a completed `ready` build through the audible handoff and reusing an already-serving
+onward window across turns (excluding the bar-1 return window) so a steady playhead does not
+rebuild. `Track::playCommittedLoopMidi` now, when the bar-1 window no longer covers the phase and
+a pending Record job owns the frozen range, adopts the onward window or services the next build
+grain from `job->rawRange` with `RecordCoverage`.
+
+Fixture `test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source`: a two-bar
+take with a note in each bar; at phase 90 the bound bar-1 window serves the bar-1 note, and past
+bar one the onward window built from the job's frozen source serves the bar-2 note **exactly once**
+(one NoteOn and one NoteOff, note 62), with the pass still unpublished. That satisfies the
+traversal-beyond-bar-one exit case.
 
 Landed in round 4 — **publication/replacement parity:**
 `test_published_record_interval_does_not_replay_the_return_window` drives the whole deferred chain

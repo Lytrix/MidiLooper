@@ -1824,6 +1824,38 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::frozenRecordWindowRead
       set->views[set->lifecycle.ready].complete;
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM const RuntimePlaybackView*
+LoopPlaybackRuntime::adoptFrozenRecordWindow(const PlaybackViewSourceIdentity& sourceIdentity,
+                                             uint32_t loopLengthTicks, uint32_t phase) {
+  RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  if (set == nullptr || loopLengthTicks == 0) return nullptr;
+  const auto covers = [&](const RuntimePlaybackView& window) {
+    return window.complete && !window.rawCoveragePrepared &&
+        window.coverage.loopLengthTicks == loopLengthTicks &&
+        phase >= window.coverage.startPhase &&
+        phase - window.coverage.startPhase < window.coverage.lengthTicks;
+  };
+  // Already serving an onward window for this phase: keep it rather than rebuild.
+  if (set->lifecycle.current < set->views.size()) {
+    RuntimePlaybackView& current = set->views[set->lifecycle.current];
+    if (!current.firstRecordReturnWindow && covers(current)) {
+      current.source = sourceIdentity;
+      current.published = true;
+      return &current;
+    }
+  }
+  if (set->lifecycle.ready == RuntimePlaybackViewLifecycle::kNoView ||
+      set->lifecycle.ready >= set->views.size()) {
+    return nullptr;
+  }
+  RuntimePlaybackView& window = set->views[set->lifecycle.ready];
+  if (!covers(window)) return nullptr;
+  window.source = sourceIdentity;
+  if (!set->handoffReadyCoverage(PlaybackViewHandoffMode::Audible)) return nullptr;
+  window.published = true;
+  return &window;
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFirstRecordingBar(
     const Loop& loop, const PlaybackViewSourceIdentity& sourceIdentity,
     uint32_t ticksPerBar, size_t entryQuantum) {

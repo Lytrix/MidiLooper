@@ -710,6 +710,12 @@ struct LoopPlaybackRuntime {
                                  uint32_t windowTicks, size_t entryQuantum = 32);
   /// True once the last `serviceFrozenRecordWindow` build completed into `ready`.
   bool frozenRecordWindowReady() const;
+  /// S4f.19: return the onward window that covers `phase`, promoting a completed `ready`
+  /// build through the audible handoff. Reuses an already-serving onward window across
+  /// turns (the bar-1 return window is excluded) so a steady playhead does not rebuild
+  /// the same window every turn. Returns nullptr when nothing covers the phase yet.
+  const RuntimePlaybackView* adoptFrozenRecordWindow(
+      const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks, uint32_t phase);
   RuntimePlaybackViewBuildGrain nextCoverageBuildGrain() const;
   RuntimePlaybackViewBuildGrain stepCoverageBuildFill(size_t entryQuantum);
   RuntimePlaybackViewBuildGrain stepCoverageBuildOrder(size_t entryQuantum);

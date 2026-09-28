@@ -260,6 +260,15 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
                                                            loop.loopLengthTicks, launchPhase);
   }
 
+  // S4f.19 onward: the bar-1 return window covers only the first bar. Past it the
+  // unpublished interval is served from a window built over the job's own frozen source,
+  // so traversal beyond bar one and a wrap before publication stay audible without a
+  // full-take build on the MIDI edge. FLASH-resident: the MIDI edge keeps only the call.
+  if (fixedView == nullptr && fixedBridge == nullptr && fixedViewEligible &&
+      runtime.hasBoundRecordReturnWindowForPendingJob()) {
+    fixedView = adoptOrServiceOnwardRecordWindow(loop, runtime, expectedFixedSource, currentTick);
+  }
+
 #if RUNTIME_TIMING_ENABLED
   const uint32_t rebuildStartUs = micros();
 #endif
@@ -500,6 +509,28 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   }
   playbackEmitMidiOutput_ = emitMidiOutput && !muted;
   playCommittedLoopMidi(slotIndex, currentTick, PlaybackMidiTarget::LayeredSlot);
+}
+
+// FLASHMEM: the onward service is cold relative to the emit loop (it runs once per
+// window per interval) and RAM1 is at its bank boundary, so the MIDI edge keeps only its
+// call.
+TRACK_COLD_MEM const RuntimePlaybackView* Track::adoptOrServiceOnwardRecordWindow(
+    Loop& loop, LoopPlaybackRuntime& runtime,
+    const PlaybackViewSourceIdentity& sourceIdentity, uint32_t currentTick) {
+  const CaptureStopJob* job = captureStopJobHead();
+  if (job == nullptr || job->mode != CapturePhase::Record || !job->ownsRawRange) {
+    return nullptr;
+  }
+  const uint32_t launchPhase = IntervalProjection::tickPhaseInProjectionCycle(
+      currentTick, projectionCycleStartTick, loop.loopLengthTicks);
+  const RuntimePlaybackView* view =
+      runtime.adoptFrozenRecordWindow(sourceIdentity, loop.loopLengthTicks, launchPhase);
+  if (view != nullptr) return view;
+  // One bounded build grain; the next turn adopts the completed window.
+  (void)runtime.serviceFrozenRecordWindow(
+      job->rawRange, job->rawRange.generation(), sourceIdentity, loop.loopLengthTicks,
+      launchPhase, Config::TICKS_PER_BAR, MidiServiceDrain::kCanonicalPrefixInputQuantum);
+  return nullptr;
 }
 
 // FLASHMEM: the admission check is a cold predicate on the MIDI edge (it is called
