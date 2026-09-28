@@ -2688,7 +2688,17 @@ own execution packet and records fixture/native/build/device results separately.
       committed. S4f.19's own multi-track property — per-track runtimes keeping the bound window
       and frozen range independent — is already pinned by the eligibility and retirement
       fixtures. Remaining: the successor-audibility decision, and multi-track audibility once the
-      committed bridge path is available.
+      **2026-09-28 round 13 — successor source preservation pinned (ownership, not audibility).**
+      Re-reading the contract, "preserve source borrowers through successor start" is an
+      **ownership** requirement: B's start must freeze/rebind to the job-owned source rather than
+      invalidate it. The design deliberately suppresses playback emission while the track is
+      RECORDING (`isAudiblePlaybackActive` excludes it), so the predecessor is not expected to
+      sound during B's capture — only its source must survive. Fixture: while a successor record
+      runs on slot 1, slot 0's `ownsRawRange` and `rawRange.ready()` still hold, the job mode is
+      still Record, the servable view survives, no frozen build is in flight, and the stop ring
+      still holds the predecessor. This supersedes the round-10 "audibility blocker" reading: the
+      remaining gap is multi-track *audibility* only, which is task 2.4's committed-bridge path.
+      Focused **233/233**; full native re-run below.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,
