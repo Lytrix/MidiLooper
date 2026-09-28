@@ -57,6 +57,12 @@ enum class PendingStopPhase : uint8_t {
   /// awaits the atomic publication transaction (S4f.20 completion). Appended so
   /// existing phase ranges are unchanged.
   RecordPassReady,
+  /// Record-only terminal: the accepted Record take produced no prepared content
+  /// once projection and minimum-length policy ran (all rows dropped, all pairs
+  /// filtered, or an empty take). It keeps the inline route's no-content
+  /// semantics -- no pass, no undo, no persistence -- and retires terminally
+  /// rather than pending forever. Appended so existing phase ranges are unchanged.
+  RecordEmpty,
   /// Record-only: the pass, its `RecordPassAdded` undo entry and the once-only
   /// persistence admission are published; the job awaits bounded retirement.
   RecordPublished,

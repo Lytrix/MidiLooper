@@ -10,7 +10,12 @@
 
 namespace RecordSourceStaging {
 
-enum class Step : uint8_t { Pending, Complete, Empty, Denied };
+/// Bounded-step outcome. `Pressure` is a retryable resource denial: the row that
+/// could not be appended was not consumed, no output was mutated, and the cursor
+/// keeps its exact source position, so the caller may top up credits and resume
+/// without duplicating or dropping a row. `Denied` is fatal and the caller must
+/// discard the cursor.
+enum class Step : uint8_t { Pending, Complete, Empty, Pressure, Denied };
 
 enum class DenyReason : uint8_t {
   None,
@@ -31,6 +36,12 @@ enum class DenyReason : uint8_t {
 /// caller's; the cursor never allocates and appends only through
 /// `appendReserved`. No whole-take copy, index or ordering array is created:
 /// ordering is the preparation composition's later, separate grain.
+///
+/// Each append runs inside the global ephemeral seal (see `appendPrivately`) so a
+/// private row that fills its chunk never schedules persistence. The seal is
+/// entered and left within the append itself, so it is always absent whenever a
+/// `step` returns: a pending cursor must never leave another track's normal
+/// capture sealing a chunk under it.
 class Cursor {
  public:
   Cursor() = default;
@@ -57,6 +68,11 @@ class Cursor {
   size_t droppedRows() const { return droppedRows_; }
 
  private:
+  /// Append one private row under a turn-local ephemeral seal. The output is a
+  /// private prepared store, so a full chunk must not be admitted to persistence;
+  /// the seal is released before this returns.
+  bool appendPrivately(const MidiEvent& row);
+
   const LoopEventStore::CaptureRange* source_ = nullptr;
   LoopEventStore* output_ = nullptr;
   LoopEventStore::ChunkReservation* reservation_ = nullptr;
@@ -73,10 +89,6 @@ class Cursor {
   DenyReason deny_ = DenyReason::None;
   bool begun_ = false;
   bool done_ = false;
-  /// The staged rows are private: the cursor holds an ephemeral seal so they
-  /// never schedule persistence, and the later preparation composition can then
-  /// order/filter them under its own seal.
-  bool holdsEphemeralSeal_ = false;
 };
 
 }  // namespace RecordSourceStaging

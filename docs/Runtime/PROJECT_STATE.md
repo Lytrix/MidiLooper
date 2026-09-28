@@ -1,5 +1,40 @@
 # Project state (execution context)
 
+**2026-09-28 — S4F closure-plan Step 1 — preparation/publication boundaries repaired.**
+Six source-verified boundary defects from [S4F-CLOSURE-PLAN](S4F-CLOSURE-PLAN.md) §1 are closed
+with production-worker fixtures: (1) the global ephemeral seal is entered and left inside each
+private append instead of held across pending turns — proved by interleaving a second track's
+256-row capture between private grains (its sealed chunk queues while the private output chunks
+stay `NotScheduled` and `isEphemeralSeal()` is false after every grain); (2) staging credit
+exhaustion is a resumable `Step::Pressure` with credits topped up per grain and a sticky fatal
+deny, so a retry can never duplicate the staged prefix; (3) normalization pressure resumes the
+same cursor (the tail cursor repeats its `EventReady`) and a fatal deny keeps the role bound, so
+temporary filter markers are never re-read as original events; (4) an all-dropped or
+all-filtered Record take reaches the new `RecordEmpty` terminal and retires with the inline
+no-content semantics (no pass, no undo, no persistence, geometry reset only with no active
+pass), leaving a live successor on another slot untouched; (5) an owned pass transfer may
+continue after the source store empties mid-reversal, and `prewarmPreparedPassTransferChunks`
+sizes the prewarmed ownership row from the take through the flash-resident `push_back` path, so
+a Record take is no longer capped at the fixed 8-chunk overdub row and RAM1 padding stays 840;
+(6) publication validates the job-owned geometry receipt and pass capacity **before** the
+irreversible commit, so a missing receipt denies with the pass intact and retries exactly once.
+Focused 63/63; full native 2,591 passed / 7 skipped; capture-serial build PASS with RAM1 padding
+840; six mutations red-prove the fixes. S4f.18/S4f.20 stay open for the production Record
+bind/admission (S4f.17/S4f.21).
+[Closure-boundaries evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-CLOSURE-BOUNDARIES-EXECUTION.md).
+
+**2026-09-28 — closure refinement after `bd7b3bba`.**
+Source review found remaining preparation/publication boundary defects beyond the
+known production-dispatch gap: finite staging credits with restart over partial
+output, global ephemeral-seal scope spanning turns, normalization restart after
+mutation, empty-result/transfer continuations, and geometry validation after pass
+publication. Strict shared-finalization rerun still fails R→R/R→OD/OD→R (OD→OD passes).
+The record HITL recipe still seeds A and sends global Stop, so the recorded missing
+successor is not an isolated firmware-cause proof. Close boundaries first, then
+playback and common admission/callers; finish live identity, correct recipes and
+same-boot provenance before qualification. No firmware changes or new device run.
+[Current closure plan](../../openspec/changes/runtime-working-set-ownership/S4F-CLOSURE-PLAN.md).
+
 **2026-09-28 — goal-round closeout (12/12) — objective not complete.**
 Whole tree green: focused **57/57**; host HITL suites 46/23/23/15; full native **2,585 passed /
 7 skipped**; capture-serial build PASS with RAM1 padding **840**; both OpenSpec changes

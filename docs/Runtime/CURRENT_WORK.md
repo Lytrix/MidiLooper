@@ -1,5 +1,31 @@
 # Current work (implementation scope)
 
+**2026-09-28 — S4F closure-plan Step 1 — preparation/publication boundaries repaired.**
+The six source-verified boundary defects in
+[S4F-CLOSURE-PLAN](S4F-CLOSURE-PLAN.md) §1 are closed: turn-local ephemeral seal (interleaved
+second-track persistence admission proved); resumable staging credits with a sticky fatal deny;
+resumable normalization pressure with a sticky deny that keeps the role bound (no filter-marker
+re-read); the `RecordEmpty` terminal for all-dropped/all-filtered takes with inline no-content
+semantics and a preserved live successor; owned transfer continuation after the store empties,
+with the prewarmed ownership row sized from the take beyond the fixed 8-chunk overdub row; and
+publication preflight before the irreversible commit. Focused 63/63; full native 2,591 passed /
+7 skipped; capture-serial build PASS with RAM1 padding 840; six mutations red-prove the fixes.
+Still open: production Record admission and the production bind site (S4f.17/S4f.21), S4f.19
+playback handoff, S4f.20's deferred revts validation and `invalidateCaches()` parity.
+[Closure-boundaries evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-CLOSURE-BOUNDARIES-EXECUTION.md).
+
+**2026-09-28 — closure refinement after `bd7b3bba`.**
+Source review found remaining preparation/publication boundary defects beyond the
+known production-dispatch gap: finite staging credits with restart over partial
+output, global ephemeral-seal scope spanning turns, normalization restart after
+mutation, empty-result/transfer continuations, and geometry validation after pass
+publication. Strict shared-finalization rerun still fails R→R/R→OD/OD→R (OD→OD passes).
+The record HITL recipe still seeds A and sends global Stop, so the recorded missing
+successor is not an isolated firmware-cause proof. Close boundaries first, then
+playback and common admission/callers; finish live identity, correct recipes and
+same-boot provenance before qualification. No firmware changes or new device run.
+[Current closure plan](../../openspec/changes/runtime-working-set-ownership/S4F-CLOSURE-PLAN.md).
+
 **2026-09-28 — HITL continuation — verdict-grade device sessions; L5 named as the runtime gap.**
 Post-commit work closed two structural oracle gaps and corrected the census. `capture_session.py
 --boot-reset` now owns a real boot inside the capture via a new stopped-only `!REBOOT` command (a

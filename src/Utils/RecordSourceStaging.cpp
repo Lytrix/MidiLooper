@@ -7,14 +7,15 @@
 
 namespace RecordSourceStaging {
 
-namespace {
-LOOP_COLD_MEM void releaseSeal(bool& held) {
-  if (held) {
-    LoopEventStore::leaveEphemeralSeal();
-    held = false;
-  }
+bool LOOP_COLD_MEM Cursor::appendPrivately(const MidiEvent& row) {
+  // The output is a private prepared store: hold the ephemeral seal only for this
+  // append so a chunk that fills here never schedules persistence, and release it
+  // before returning so no pending cursor leaves the global scope active.
+  LoopEventStore::enterEphemeralSeal();
+  const bool appended = output_->appendReserved(row, *reservation_);
+  LoopEventStore::leaveEphemeralSeal();
+  return appended;
 }
-}  // namespace
 
 bool LOOP_COLD_MEM Cursor::begin(const LoopEventStore::CaptureRange& source,
                                  LoopEventStore& output,
@@ -45,15 +46,10 @@ bool LOOP_COLD_MEM Cursor::begin(const LoopEventStore::CaptureRange& source,
   deny_ = DenyReason::None;
   begun_ = true;
   done_ = chunkCount_ == 0;
-  // The output is a private prepared store; hold an ephemeral seal while staged
-  // rows are appended so none of them schedule persistence.
-  LoopEventStore::enterEphemeralSeal();
-  holdsEphemeralSeal_ = true;
   return true;
 }
 
 void LOOP_COLD_MEM Cursor::discard() {
-  releaseSeal(holdsEphemeralSeal_);
   source_ = nullptr;
   output_ = nullptr;
   reservation_ = nullptr;
@@ -73,12 +69,10 @@ Step LOOP_COLD_MEM Cursor::step(size_t quantum) {
     return Step::Denied;
   }
   if (done_) {
-    releaseSeal(holdsEphemeralSeal_);
     return copiedRows_ == 0 && sourceRows_ == 0 ? Step::Empty : Step::Complete;
   }
   if (!quantum) {
     deny_ = DenyReason::ZeroQuantum;
-    releaseSeal(holdsEphemeralSeal_);
     return Step::Denied;
   }
 
@@ -89,7 +83,6 @@ Step LOOP_COLD_MEM Cursor::step(size_t quantum) {
     bool atEnd = false;
     if (!source_->read(sourceGeneration_, chunk_, event_, row, atEnd)) {
       deny_ = DenyReason::SourceUnavailable;
-      releaseSeal(holdsEphemeralSeal_);
       lastStepUnits_ = units;
       return Step::Denied;
     }
@@ -109,11 +102,11 @@ Step LOOP_COLD_MEM Cursor::step(size_t quantum) {
         ++projectedRows_;
       }
     }
-    if (!output_->appendReserved(row, *reservation_)) {
-      deny_ = DenyReason::OutputUnavailable;
-      releaseSeal(holdsEphemeralSeal_);
+    if (!appendPrivately(row)) {
+      // Transient credit/pool pressure: the row was read and projected but not
+      // consumed, so the cursor stays exactly resumable. Do not set `deny_`.
       lastStepUnits_ = units;
-      return Step::Denied;
+      return Step::Pressure;
     }
     ++copiedRows_;
     ++event_;
@@ -121,7 +114,6 @@ Step LOOP_COLD_MEM Cursor::step(size_t quantum) {
   lastStepUnits_ = units;
   if (chunk_ >= chunkCount_) {
     done_ = true;
-    releaseSeal(holdsEphemeralSeal_);
     return copiedRows_ == 0 && sourceRows_ == 0 ? Step::Empty : Step::Complete;
   }
   return Step::Pending;

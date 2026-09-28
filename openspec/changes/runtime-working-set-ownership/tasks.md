@@ -1,3 +1,9 @@
+> **Current closure order (2026-09-28, reviewed at `bd7b3bba`):**
+> [Shared finalization closure plan](S4F-CLOSURE-PLAN.md) identifies preparation/retry,
+> seal-scope and publication-preflight blockers before playback/admission cutover,
+> followed by correlated HITL recipes and same-boot qualification. It supersedes
+> historical “next slice” pointers, not task acceptance or checkboxes.
+
 <!-- 2026-09-25 S1.3 — residency slope: repaired single-session host fixture and added
 seven orchestration tests. No device gate changed. Unfinished !SLOT_PAYLOAD probe withdrawn;
 stored-event parity and reboot survival remain open. See takeover packet in ARCHITECTURE-REVIEW.md. -->
@@ -2464,6 +2470,45 @@ own execution packet and records fixture/native/build/device results separately.
       [Geometry evidence](S4F20-RECORD-GEOMETRY-EXECUTION.md).
       S4f.20 remains unchecked for the deferred revts validation, `invalidateCaches()` parity and
       the production Record bind site (S4f.17). Next: S4f.21 caller migration.
+      **2026-09-28 closure-plan Step 1 — preparation/publication boundaries repaired.** Six
+      source-verified boundary defects from [S4F-CLOSURE-PLAN.md](S4F-CLOSURE-PLAN.md) §1 are
+      closed with production-worker fixtures:
+      (1) *seal scope* — `RecordSourceStaging` and `RecordPreparation` no longer hold the global
+      ephemeral seal across pending turns; each private append enters and leaves it, so a pending
+      cursor can never make another track's normal capture miss persistence admission. Fixture
+      `test_private_grains_never_hold_the_global_ephemeral_seal` interleaves a second track's
+      256-row capture between private grains: its sealed chunk is `Queued` (queue +1) while the
+      private output chunks stay `NotScheduled` and `isEphemeralSeal()` is false after every grain.
+      (2) *staging retry* — `RecordSourceStaging::Step::Pressure` makes credit exhaustion resumable
+      with the source position and un-consumed row intact; the Track wrapper tops credits back up
+      each grain and a fatal deny is sticky (no discard/re-bind that would duplicate the prefix).
+      A 300-row/1-credit fixture pauses at exactly 256 copied rows and resumes to 300 exact rows.
+      (3) *partial normalization retry* — `RecordPreparation::Step::Pressure` covers the synthetic
+      Off append (the tail cursor repeats the same `EventReady`); a fatal deny no longer discards
+      the role, so the private output can never be re-read from temporary filter markers. Fixtures
+      prove exactly-once synthetic Offs under pressure and an unchanged marked store across
+      repeated sticky denials.
+      (4) *empty results* — new terminal `PendingStopPhase::RecordEmpty` and
+      `stepDeferredRecordEmptyResult`: an all-dropped (projection) or all-filtered (minimum-length)
+      Record take keeps the inline `CommitResult::Skipped` no-content semantics — no pass, no
+      `RecordPassAdded` undo, no persistence, geometry reset only when the slot has no active pass —
+      then retires terminally. Fixtures cover both shapes, assert a live successor on another slot
+      is untouched, and prove the stop never stays pending.
+      (5) *transfer continuation* — an owned pass transfer may continue after
+      `stepCommittedChunkTransfer` empties the source store mid-reversal. `Loop::prewarmPreparedPassTransferChunks`
+      sizes the prewarmed ownership row from the prepared take through the flash-resident
+      `push_back` path (a runtime `reserve` instantiation cost 320 B of ITCM), so an accepted Record
+      take is no longer capped at the fixed 8-chunk overdub row; a 24-chunk fixture observes the
+      empty-store `Pending` state, completes the reversal and pins exact directory order.
+      (6) *publication preflight* — `stepDeferredRecordPublication` validates the job-owned geometry
+      receipt and `canTransferCapturePassWithoutAllocation` **before** the irreversible commit; a
+      missing receipt denies with `ownsPendingPass` intact, no published pass, no undo and no
+      persistence, then retries exactly once when restored.
+      Focused shared-finalization **38/38**, preparation **18/18**, staging **7/7**; full native and
+      capture-serial build re-run. Still open (S4f.17/S4f.21, unchanged): production Record
+      admission/bind so the geometry receipt and the transfer-row capacity are established at the
+      production bind rather than the first transfer grain.
+      [Closure-plan Step 1 evidence](S4F18-CLOSURE-BOUNDARIES-EXECUTION.md).
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,

@@ -52,7 +52,15 @@ static_assert(sizeof(Workspace) ==
 /// One synthetic repair Off per MIDI key lane bounds the wrap-output stage.
 constexpr size_t kMaxSyntheticOffs = LoopStopFinalize::TailRepairWorkspace::kLanes;
 
-enum class Step : uint8_t { Pending, Complete, Empty, Denied };
+/// Bounded-step outcome. `Pressure` is a retryable resource denial raised only
+/// when a private append could not take another chunk from the caller's
+/// reservation. The tail cursor repeats the same `EventReady` event until it is
+/// acknowledged, and no mark, sort or compaction has been invalidated, so the
+/// caller may top up credits and resume the same cursor without duplicating or
+/// dropping a row. `Denied` is sticky and terminal for the binding: the private
+/// output may already be partially ordered, repaired or marked, so the caller
+/// must never discard the role and re-bind over that store.
+enum class Step : uint8_t { Pending, Complete, Empty, Pressure, Denied };
 
 /// Named denial for tests and telemetry. The cursor mutates only private output;
 /// a denied cursor leaves ownership with the caller, which discards that output.
@@ -86,9 +94,9 @@ struct NoteIdSource {
 ///   4. minimum-length pair removal through private filter marking/compaction.
 /// The store must be a prewarmed private prepared output: dense (one chunk per
 /// 256 rows), fully reserved directory capacity, and chunks not admitted to
-/// persistence. The cursor holds an ephemeral seal for its own appends so the
-/// synthetic rows never schedule persistence, and it never allocates a chunk
-/// outside the caller's reservation.
+/// persistence. Each private append (the synthetic repair rows) runs inside the
+/// global ephemeral seal, entered and left within that append, so the seal is
+/// always absent whenever a `step` returns and never spans a pending turn.
 ///
 /// Record ingress normally assigns NoteOn identities at admission, and terminal
 /// closure Offs carry their receipt. When a source is supplied, a NoteOn that has
@@ -148,7 +156,10 @@ class RecordPreparationCursor {
   void enterPhase(Phase next);
   void deny(DenyReason reason);
   void finishComplete();
-  void releaseEphemeralSeal();
+  /// Append one synthetic private row under a turn-local ephemeral seal. The
+  /// prepared store is private, so a full chunk must not be admitted to
+  /// persistence; the seal is released before this returns.
+  bool appendPrivately(const MidiEvent& row);
 
   LoopEventStore* output_ = nullptr;
   Workspace* workspace_ = nullptr;
@@ -170,7 +181,6 @@ class RecordPreparationCursor {
   DenyReason deny_ = DenyReason::None;
   Phase phase_ = Phase::Idle;
   bool entered_ = false;
-  bool holdsEphemeralSeal_ = false;
   bool empty_ = false;
   bool emptyReported_ = false;
 };
