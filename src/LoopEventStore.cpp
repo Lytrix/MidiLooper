@@ -597,9 +597,11 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepRewrit
       ++cursor.chunkIndex;
       return LoopEventStoreRewriteResult::Pending;
     }
-    const uint16_t retired = chunkIds_[cursor.chunkIndex];
+    // The retained prefix is fixed. Retire from the tail so a grain never
+    // shifts the remaining directory, regardless of how much content was cut.
+    const uint16_t retired = chunkIds_.back();
     releaseChunkReference(retired);
-    chunkIds_.erase(chunkIds_.begin() + static_cast<ptrdiff_t>(cursor.chunkIndex));
+    chunkIds_.pop_back();
     return LoopEventStoreRewriteResult::Pending;
   }
 

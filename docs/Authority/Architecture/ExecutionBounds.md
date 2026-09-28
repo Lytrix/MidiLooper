@@ -39,6 +39,17 @@ retains its unbounded classification. Future integration must budget/prewarm an
 exclusive role and apply receipts to the same ordered source generation. See
 [minimum-length execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-MINIMUM-EXECUTION.md).
 
+## Canonical rewrite retirement
+
+`LoopEventStore::stepRewriteFromOrderedSource` retires surplus directory entries
+from the tail. Each trim grain visits/clips one retained chunk or releases and
+pops one surplus reference; it never shifts the surviving directory. The former
+middle erase made a single retirement proportional to the remaining chunk count.
+The retained prefix, terminal row inventory and ownership checks are unchanged.
+The current finalizer uses canonical copy; this corrects the in-place rewrite API,
+whose wrapper is currently exercised by native fixtures, without switching routes.
+See [compaction execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-COMPACTION-EXECUTION.md).
+
 ## Interval path
 
 The **interval path** is work that executes between consecutive `handleMidiInput()` entries (the MIDI Input Gap). Clock dispatch inside `handleMidiInput()` and `ClockManager::updateInternalClock` → `TrackManager::updateAllTracks` also consume that interval.
