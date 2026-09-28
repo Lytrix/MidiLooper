@@ -8,6 +8,22 @@ This document does **not** authorize interval reservation, extra `handleMidiInpu
 
 ---
 
+## Bounded Record tail-repair prerequisite
+
+`LoopStopFinalize::TailRepairCursor` is structurally bounded per call: reset and
+output enumeration visit at most the supplied Q lanes (and never more than 2,048),
+input consumes one event, and begin/acknowledge/discard do constant work. Scratch
+is a caller-owned 24,576-byte fixed MIDI-key workspace; the ARM cursor is 48 bytes.
+Neither is allocated or added to a resident owner by this slice. Integration must
+prewarm an exclusive preparation role and account for it in admission. Output is
+retained until acknowledgement so downstream allocation denial cannot lose a row.
+Generation mismatch denies further work. Total input traversal is proportional to
+take length; no 2,048-event ceiling is introduced.
+
+This prerequisite is not dispatched by production Record normalization yet.
+`finalizeWrapWindowOnStore` and the existing sort/minimum-length paths retain their
+previous unbounded classification. See [tail-repair execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-TAIL-EXECUTION.md).
+
 ## Interval path
 
 The **interval path** is work that executes between consecutive `handleMidiInput()` entries (the MIDI Input Gap). Clock dispatch inside `handleMidiInput()` and `ClockManager::updateInternalClock` → `TrackManager::updateAllTracks` also consume that interval.

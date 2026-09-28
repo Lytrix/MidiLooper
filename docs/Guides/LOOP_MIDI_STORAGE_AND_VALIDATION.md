@@ -6,6 +6,22 @@ For overdub overlap candidate / classify / resolve / seal, see [`OVERDUB_OVERLAP
 
 ---
 
+## Record tail-repair preparation prerequisite
+
+The incremental `LoopStopFinalize::TailRepairCursor` implements the existing
+synthetic tail-Off policy without hash allocation or repeated full-source scans.
+Feed the same projected/ordered stream as the synchronous helper: source order
+still decides which tail On is active. Fixed channel/pitch lanes summarize the
+earliest head Off and latest Off, preserving wrap suppression and stop-phase
+closure fallback. Synthetic Off identity remains unchanged. Only acknowledge an
+output after its downstream append succeeds; otherwise the same output is retried.
+The caller must keep the exclusive workspace and generation alive until discard.
+
+Production Record `sealCapture` still invokes the synchronous policy. The new
+consumer is a verified prerequisite, not completed Record normalization: ordering,
+minimum-length filtering and admission/source integration remain open. See
+[tail-repair execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-TAIL-EXECUTION.md).
+
 ## Mental model
 
 Each **loop slot** (`Loop` in `include/Loop.h`) holds live capture, committed **passes**, and a materialized event view:

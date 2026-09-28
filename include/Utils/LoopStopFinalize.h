@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <climits>
 #include <algorithm>
+#include <array>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -32,6 +33,59 @@ inline bool noteEventLess(const MidiEvent& a, const MidiEvent& b) {
   const int bOrder = b.isNoteOff() ? 0 : (b.isNoteOn() ? 1 : 2);
   return aOrder < bOrder;
 }
+
+/// Fixed MIDI-key scratch for one exclusively admitted normalization role.
+/// It is caller-owned/prewarmed, never allocated per input row or per cold slot.
+struct TailRepairWorkspace {
+  struct Lane {
+    uint32_t activeTailTick;
+    uint32_t firstHeadOffTick;
+    uint32_t lastOffTick;
+  };
+  static constexpr size_t kChannels = 16;
+  static constexpr size_t kNotes = 128;
+  static constexpr size_t kLanes = kChannels * kNotes;
+  std::array<Lane, kLanes> lanes;
+};
+static_assert(sizeof(TailRepairWorkspace::Lane) == 12, "tail-repair lane footprint");
+static_assert(sizeof(TailRepairWorkspace) == 24576, "one fixed MIDI-key scratch role");
+
+enum class TailRepairStep : uint8_t { Pending, InputReady, EventReady, Complete, Denied };
+
+/// Incremental equivalent of finalizeWrapWindowOnStore's synthetic-Off policy.
+/// Feed the same projected/ordered stream the legacy helper receives. Workspace
+/// and generation outlive discard and remain exclusive; no source rows are owned.
+class TailRepairCursor {
+ public:
+  TailRepairCursor() = default;
+  TailRepairCursor(const TailRepairCursor&) = delete;
+  TailRepairCursor& operator=(const TailRepairCursor&) = delete;
+  bool begin(TailRepairWorkspace& workspace, const uint64_t& generation,
+             uint32_t loopLengthTicks, uint32_t openTailCloseTick = UINT32_MAX,
+             uint32_t wrapWindow = 768);
+  TailRepairStep stepReset(size_t quantum);
+  bool consume(const MidiEvent& event);
+  bool finishInput();
+  /// At most quantum lane visits. EventReady repeats the same event until ack.
+  /// Output is untouched on Pending, Complete or Denied.
+  TailRepairStep stepOutput(size_t quantum, MidiEvent& out);
+  bool acknowledgeOutput();
+  void discard();
+  size_t lastStepUnits() const { return lastStepUnits_; }
+ private:
+  enum class Phase : uint8_t { Idle, Reset, Input, Output, Ready, Complete };
+  bool current() const;
+  TailRepairWorkspace* workspace_ = nullptr;
+  const uint64_t* generation_ = nullptr;
+  uint64_t expectedGeneration_ = 0;
+  uint32_t length_ = 0;
+  uint32_t closeTick_ = UINT32_MAX;
+  uint32_t headEnd_ = 0;
+  uint32_t tailStart_ = 0;
+  size_t lane_ = 0;
+  size_t lastStepUnits_ = 0;
+  Phase phase_ = Phase::Idle;
+};
 
 struct Result {
   size_t syntheticOffsInserted = 0;
