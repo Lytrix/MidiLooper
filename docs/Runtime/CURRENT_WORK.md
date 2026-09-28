@@ -1,5 +1,19 @@
 # Current work (implementation scope)
 
+**2026-09-28 — S4f.18 — canonical compaction retirement bound corrected.**
+The existing ordered-source rewrite erased surplus chunk IDs from the middle of
+its directory, shifting the remaining suffix in one maintenance grain. It now
+releases/pops one tail reference, preserving every retained directory entry.
+New fixtures reproduce the old shift and catch wrong-reference retirement while
+pinning exact final rows, empty/partial/full chunk cuts and stale-owner denial.
+Focused **196/196**; full native **2,543 passed / 7 skipped**. Capture-serial build passes
+with RAM1 padding **840 bytes**; strict OpenSpec validation passes. No layout
+change, upload, HITL acceptance or parent checkoff. The active finalizer retains
+its canonical-copy route. Record ordering, canonical
+filter writing and production integration remain open.
+[Execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-COMPACTION-EXECUTION.md).
+
+
 **2026-09-28 — S4f.18 — bounded minimum-length decisions verified.**
 `CaptureIncrementalSanity::MinimumLengthCursor` consumes one ordered row per call
 and retains short-pair source ordinals until acknowledged. Eight fixtures preserve

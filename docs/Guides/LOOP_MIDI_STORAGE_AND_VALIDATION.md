@@ -38,6 +38,14 @@ integration. Preserve existing equal-key order; do not silently introduce a Note
 tie-break or assume no-removal means the old helper reordered its store. See
 [minimum-length execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-MINIMUM-EXECUTION.md).
 
+## Canonical rewrite retirement
+
+The existing ordered-source rewrite preserves its retained chunk prefix and
+retires surplus references from the directory tail, one per maintenance grain.
+A trim does not shift the remaining directory. Row count and bar-index dirtiness
+become final at completion as before; partial rewrite output remains unpublished.
+This does not provide Record ordering or the minimum-length canonical writer.
+
 ## Mental model
 
 Each **loop slot** (`Loop` in `include/Loop.h`) holds live capture, committed **passes**, and a materialized event view:

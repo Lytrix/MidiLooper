@@ -304,8 +304,61 @@ void test_committed_transfer_requires_source_persistence_prewarm() {
   TEST_ASSERT_EQUAL(0, LoopEventStore::usedChunkCount());
 }
 
+void test_rewrite_retires_only_directory_tail() {
+  for (size_t count : {0u, 1u, 256u, 257u, 2056u}) {
+    LoopEventStore::resetPoolForTests(); LoopEventStore store;
+    for (size_t i=0; i<4097; ++i)
+      TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(i,1,60,100)));
+    const auto original=store.chunkIds(); const auto capacity=store.chunkIds().capacity();
+    std::vector<MidiEvent> source; std::vector<uint16_t> order;
+    for(size_t i=0;i<count;++i) {source.push_back(MidiEvent::NoteOn(i*2,2,61,90));order.push_back(i);}
+    LoopEventStoreRewriteCursor cursor;
+    TEST_ASSERT_TRUE(store.beginRewriteFromOrderedSource(cursor,count));
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied,
+      store.stepRewriteFromOrderedSource(cursor,source.data(),order.data(),count,count,0));
+    auto result=LoopEventStoreRewriteResult::Pending; size_t previous=original.size();
+    for(size_t turn=0;turn<count/32+original.size()*2+10 && result==LoopEventStoreRewriteResult::Pending;++turn) {
+      result=store.stepRewriteFromOrderedSource(cursor,source.data(),order.data(),count,count,32);
+      TEST_ASSERT_TRUE(result!=LoopEventStoreRewriteResult::Denied);
+      const auto& ids=store.chunkIds();
+      TEST_ASSERT_TRUE(ids.size()==previous || ids.size()+1==previous);
+      TEST_ASSERT_EQUAL(capacity,ids.capacity());
+      for(size_t i=0;i<original.size();++i) {
+        if(i<ids.size()) TEST_ASSERT_EQUAL(original[i],ids[i]);
+        TEST_ASSERT_EQUAL(i<ids.size()?1:0,LoopEventStore::chunkReferenceCount(original[i]));
+      }
+      previous=ids.size();
+    }
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,result);
+    TEST_ASSERT_EQUAL(count,store.size());
+    TEST_ASSERT_EQUAL((count+255)/256,store.chunkIds().size());
+    for(size_t i=0;i<count;++i) {
+      TEST_ASSERT_EQUAL(source[i].tick,store.at(i).tick);
+      TEST_ASSERT_EQUAL(2,store.at(i).channel); TEST_ASSERT_EQUAL(61,store.at(i).data.noteData.note);
+    }
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+      store.stepRewriteFromOrderedSource(cursor,source.data(),order.data(),count,count,32));
+  }
+}
+void test_rewrite_stale_retirement_preserves_replacement() {
+  LoopEventStore::resetPoolForTests(); LoopEventStore store;
+  for(size_t i=0;i<769;++i) TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(i,1,60,100)));
+  LoopEventStoreRewriteCursor cursor;
+  TEST_ASSERT_TRUE(store.beginRewriteFromOrderedSource(cursor,0));
+  for(unsigned i=0;i<2;++i) TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Pending,
+    store.stepRewriteFromOrderedSource(cursor,nullptr,nullptr,0,0,1));
+  TEST_ASSERT_EQUAL(3,store.chunkIds().size());
+  store.clear(); TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(8,2,62,100)));
+  const auto id=store.chunkIds().front();
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied,
+    store.stepRewriteFromOrderedSource(cursor,nullptr,nullptr,0,0,1));
+  TEST_ASSERT_EQUAL(1,LoopEventStore::chunkReferenceCount(id)); TEST_ASSERT_EQUAL(8,store.at(0).tick);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_rewrite_retires_only_directory_tail);
+  RUN_TEST(test_rewrite_stale_retirement_preserves_replacement);
   RUN_TEST(test_committed_transfer_requires_source_persistence_prewarm);
   RUN_TEST(test_committed_transfer_is_bounded_ordered_and_reference_neutral);
   RUN_TEST(test_committed_transfer_preflight_and_zero_quantum_preserve_owners);

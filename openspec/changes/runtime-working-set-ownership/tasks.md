@@ -2337,6 +2337,12 @@ own execution packet and records fixture/native/build/device results separately.
       is added to firmware. ARM scratch 16,384 bytes / cursor 48 bytes, not resident.
       Ordering, canonical compaction and production integration remain open;
       [minimum-length execution evidence](S4F18-MINIMUM-EXECUTION.md).
+      **2026-09-28 compaction retirement correction:** the existing canonical
+      rewrite now pops surplus tail references instead of erasing and shifting
+      its directory. Per-grain prefix/reference fixtures expose the old bound
+      violation; exact final rows and stale-owner denial remain pinned. Record
+      ordering/filter-writer integration remains open. See
+      [compaction execution evidence](S4F18-COMPACTION-EXECUTION.md).
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,
