@@ -11,8 +11,86 @@
 #include "Utils/LoopEventValidation.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/LoopMem.h"
 
 namespace CaptureIncrementalSanity {
+
+LOOP_COLD_MEM bool MinimumLengthCursor::current() const {
+  return workspace_ && generation_ && *generation_ == expectedGeneration_;
+}
+
+LOOP_COLD_MEM bool MinimumLengthCursor::begin(MinimumLengthWorkspace& workspace,
+    const uint64_t& generation, uint32_t length, uint32_t minimum, bool enabled) {
+  if (phase_ != Phase::Idle) return false;
+  workspace_ = &workspace; generation_ = &generation; expectedGeneration_ = generation;
+  length_ = length; minimum_ = minimum; enabled_ = enabled && minimum != 0;
+  position_ = lastStepUnits_ = 0; lastTick_ = 0; lastOrder_ = 0;
+  phase_ = Phase::Reset;
+  return true;
+}
+
+LOOP_COLD_MEM MinimumLengthStep MinimumLengthCursor::stepReset(size_t quantum) {
+  lastStepUnits_ = 0;
+  if (!current() || !quantum) return MinimumLengthStep::Denied;
+  if (phase_ == Phase::Input) return MinimumLengthStep::InputReady;
+  if (phase_ != Phase::Reset) return MinimumLengthStep::Denied;
+  while (lastStepUnits_ < quantum && position_ < MinimumLengthWorkspace::kLanes) {
+    workspace_->lanes[position_++] = {0, SIZE_MAX};
+    ++lastStepUnits_;
+  }
+  if (position_ != MinimumLengthWorkspace::kLanes) return MinimumLengthStep::Pending;
+  position_ = 0; phase_ = Phase::Input;
+  return MinimumLengthStep::InputReady;
+}
+
+LOOP_COLD_MEM MinimumLengthStep MinimumLengthCursor::consume(const MidiEvent& event) {
+  lastStepUnits_ = 0;
+  if (!current() || phase_ != Phase::Input || position_ == SIZE_MAX)
+    return MinimumLengthStep::Denied;
+  const bool on = event.isNoteOn(), off = event.isNoteOff();
+  const uint8_t order = off ? 0 : (on ? 1 : 2);
+  if (position_ && (event.tick < lastTick_ ||
+      (event.tick == lastTick_ && order < lastOrder_))) return MinimumLengthStep::Denied;
+  if ((on || off) && (!event.channel || event.channel > MinimumLengthWorkspace::kChannels ||
+      event.data.noteData.note >= MinimumLengthWorkspace::kNotes)) return MinimumLengthStep::Denied;
+  if (enabled_ && (on || off)) {
+    auto& lane = workspace_->lanes[(event.channel - 1) * MinimumLengthWorkspace::kNotes +
+                                   event.data.noteData.note];
+    if (on) lane = {event.tick, position_};
+    else if (lane.ordinal != SIZE_MAX) {
+      if (event.tick >= lane.tick && event.tick - lane.tick < minimum_ &&
+          !NoteUtils::isWrappedLoopNotePair(lane.tick, event.tick, length_)) {
+        onOrdinal_ = lane.ordinal; offOrdinal_ = position_; phase_ = Phase::Pair;
+      }
+      lane.ordinal = SIZE_MAX;
+    }
+  }
+  lastTick_ = event.tick; lastOrder_ = order; ++position_; lastStepUnits_ = 1;
+  return phase_ == Phase::Pair ? MinimumLengthStep::PairReady : MinimumLengthStep::Accepted;
+}
+
+LOOP_COLD_MEM bool MinimumLengthCursor::pendingPair(size_t& on, size_t& off) const {
+  if (!current() || phase_ != Phase::Pair) return false;
+  on = onOrdinal_; off = offOrdinal_;
+  return true;
+}
+
+LOOP_COLD_MEM bool MinimumLengthCursor::acknowledgePair() {
+  if (!current() || phase_ != Phase::Pair) return false;
+  phase_ = Phase::Input;
+  return true;
+}
+
+LOOP_COLD_MEM bool MinimumLengthCursor::finishInput() {
+  if (!current() || (phase_ != Phase::Input && phase_ != Phase::Complete)) return false;
+  phase_ = Phase::Complete;
+  return true;
+}
+
+LOOP_COLD_MEM void MinimumLengthCursor::discard() {
+  workspace_ = nullptr; generation_ = nullptr; phase_ = Phase::Idle;
+  position_ = lastStepUnits_ = 0;
+}
 
 namespace {
 

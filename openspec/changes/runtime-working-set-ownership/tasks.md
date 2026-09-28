@@ -2330,6 +2330,13 @@ own execution packet and records fixture/native/build/device results separately.
       helper differential fixtures preserve policy, including >2,048 input rows.
       Sort/minimum-length filtering and integration remain open. See
       [tail-repair execution evidence](S4F18-TAIL-EXECUTION.md).
+      **2026-09-28 minimum-length decision prerequisite:** the existing sanity
+      policy has a bounded ordered-row cursor retaining exact short-pair source
+      ordinals until acknowledged. Retrigger/channel/strict-threshold semantics
+      match the existing helper; no source mutation or per-event removal bitmap
+      is added to firmware. ARM scratch 16,384 bytes / cursor 48 bytes, not resident.
+      Ordering, canonical compaction and production integration remain open;
+      [minimum-length execution evidence](S4F18-MINIMUM-EXECUTION.md).
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,
