@@ -1,13 +1,17 @@
 # Current work (implementation scope)
 
-**2026-09-28 — S4f.19 §2 (first-bar/onward playback handoff) — G0 complete, packet pinned.**
-Read-only trace: PASS with named prerequisites. The deferred interval currently emits nothing
-(`playMidiEvents` early-returns without `hasCommittedPasses()`), the retained bar-1 window is
-not bound on the deferred route and its adopt branch requires a session-exit publish gap that
-is false while unpublished, the projected frozen-source `RecordCoverage` fill has no production
-caller, no onward-window builder exists, and retirement can invalidate a source playback would
-read. Next: S19.1 — MIDI-entry admission for the job-owned interval, then the bounded
-return-window bind, onward windows from the owned frozen source, ownership, and acceptance.
+**2026-09-28 — S4f.19 §2 — G0 complete; S19.2 (deferred return-window bind) landed.**
+Read-only trace: PASS with named prerequisites; the deferred interval currently emits nothing
+(`playMidiEvents` early-returns without `hasCommittedPasses()`), and its retained bar-1 window
+was neither bound nor reachable. **Landed:** `LoopPlaybackRuntime::bindDeferredRecordReturnWindow`
+binds the retained bar-1 window to the job's sealed source generation and final geometry, and
+`RuntimePlaybackView::projectRawCoverageToLoopLength` transforms the raw bar (overflow NoteOn
+remap, overflow non-note drop, held-note closure at the loop end, canonical re-order, coverage
+clamped to the prepared-bar/final-loop intersection); `hasBoundRecordReturnWindowForPendingJob`
+is the pending-owner eligibility predicate. Fixtures verify the transformed content, the
+stale/unsealed refusals and the predicate; mutations fail assertions; RAM1 padding 840.
+**Open:** S19.1 MIDI-entry admission (held until a native fixture can observe emission), onward
+windows from the owned frozen source, and the continuity-gated retirement.
 [Playback-handoff packet](../../openspec/changes/runtime-working-set-ownership/S4F19-PLAYBACK-HANDOFF-PACKET.md).
 
 **2026-09-28 — review follow-ups on `2c71b1a3`.** Four defects fixed: the transfer-row capacity

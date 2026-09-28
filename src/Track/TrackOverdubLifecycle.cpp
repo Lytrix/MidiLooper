@@ -1073,6 +1073,14 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordClosure(Capt
        pending->first.second != pending->second.channel))
     return LoopEventStoreRewriteResult::Denied;
 
+  // S4f.19: bind this interval's retained bar-1 window to its frozen source and final
+  // geometry, so the launch and the unpublished interval stay audible until committed
+  // content replaces it. Best-effort and idempotent: a refusal (stale source, or a
+  // sub-bar take whose raw rows still need projection) leaves the window untouched and
+  // never fails the job -- playback then simply has no unpublished source, as today.
+  (void)runtime->bindDeferredRecordReturnWindow(job.rawRange, source.finalizingGeneration,
+                                                job.loopLengthTicks);
+
   auto& output = runtime->canonicalCaptureOutput;
   auto& cursor = runtime->frozenCaptureRewrite;
   if (!runtime->frozenCaptureRewriteOwner) {

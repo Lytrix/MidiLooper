@@ -6376,6 +6376,156 @@ void test_first_record_first_bar_window_serves_a_multi_bar_launch() {
   TEST_ASSERT_NULL(runtime.adoptFirstRecordingBarReturnWindow(loop, launchSource, 1536, 800));
 }
 
+// S4f.19: the deferred Record worker binds the retained bar-1 window to the job's own
+// frozen source and final geometry. The bind must **transform** the raw bar, not merely
+// clamp its coverage: overflow NoteOns are remapped into the loop, other overflow rows
+// are dropped, held notes crossing the loop end are closed, and the rows are ordered
+// canonically. A stale or unsealed range must leave the window unbound.
+void test_deferred_record_return_window_binds_the_owned_frozen_source() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.beginCapture(CapturePhase::Record);
+  // A sub-bar take (final length 500) whose raw bar also overflows: 600 is remapped to
+  // 100 for the NoteOn, the CC at 700 is dropped, and the two notes left open are
+  // closed at the loop end.
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(32, 1, 60, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(96, 1, 60)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(600, 1, 62, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(700, 1, 7, 1)));
+
+  // The interval's frozen source: a sealed, generation-qualified range, exactly what
+  // the deferred job owns.
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange range;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(range.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(32, 1, 60, 90)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOff(96, 1, 60)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(range));
+  TEST_ASSERT_TRUE(range.ready());
+
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  const PlaybackViewSourceIdentity recordingSource{loop.playbackRevision, 1,
+                                                   loop.publishedSnapshotIdentity()};
+  for (size_t i = 0; i < 32; ++i) runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 1);
+  const PlaybackViewSourceIdentity launchSource{loop.playbackRevision + 1, 2, nullptr};
+
+  // A stale generation must not bind: the retained window stays raw (unbound), so no
+  // adopter can serve it.
+  TEST_ASSERT_FALSE(runtime.bindDeferredRecordReturnWindow(range, range.generation() + 1, 500));
+  TEST_ASSERT_NULL(runtime.adoptFirstRecordingBarReturnWindow(loop, launchSource, 500, 0));
+
+  // The qualified bind projects the raw bar onto the final 500-tick loop and makes the
+  // window the interval's audible source.
+  TEST_ASSERT_TRUE(runtime.bindDeferredRecordReturnWindow(range, range.generation(), 500));
+  runtime.reset(true);
+  const RuntimePlaybackView* adopted =
+      runtime.adoptFirstRecordingBarReturnWindow(loop, launchSource, 500, 0);
+  TEST_ASSERT_NOT_NULL(adopted);
+  TEST_ASSERT_TRUE(adopted->published);
+  TEST_ASSERT_FALSE(adopted->rawCoveragePrepared);
+  TEST_ASSERT_TRUE(adopted->firstRecordReturnWindow);
+  // The coverage is the prepared bar intersected with the final loop.
+  TEST_ASSERT_EQUAL_UINT32(0, adopted->coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(500, adopted->coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(500, adopted->coverage.loopLengthTicks);
+
+  // Exact transformed content, in canonical order.
+  size_t retained = 0;
+  for (size_t i = 0; i < adopted->storage.eventCount; ++i) {
+    if (adopted->storage.eventRetained(i)) ++retained;
+  }
+  TEST_ASSERT_EQUAL_UINT32(6, retained);
+  const auto at = [&](size_t k) -> const MidiEvent& {
+    return adopted->storage.events[adopted->storage.order[k]];
+  };
+  // 32 On(60), 96 Off(60), 100 On(62) [600 remapped], 400 On(64),
+  // 499 Off(62) and 499 Off(64) [held-note closure at the loop end].
+  TEST_ASSERT_EQUAL_UINT32(32, at(0).tick);
+  TEST_ASSERT_TRUE(at(0).isNoteOn());
+  TEST_ASSERT_EQUAL_UINT8(60, at(0).data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(96, at(1).tick);
+  TEST_ASSERT_TRUE(at(1).isNoteOff());
+  TEST_ASSERT_EQUAL_UINT32(100, at(2).tick);
+  TEST_ASSERT_TRUE(at(2).isNoteOn());
+  TEST_ASSERT_EQUAL_UINT8(62, at(2).data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(400, at(3).tick);
+  TEST_ASSERT_TRUE(at(3).isNoteOn());
+  TEST_ASSERT_EQUAL_UINT8(64, at(3).data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(499, at(4).tick);
+  TEST_ASSERT_TRUE(at(4).isNoteOff());
+  TEST_ASSERT_EQUAL_UINT8(62, at(4).data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(499, at(5).tick);
+  TEST_ASSERT_TRUE(at(5).isNoteOff());
+  TEST_ASSERT_EQUAL_UINT8(64, at(5).data.noteData.note);
+  // The overflowing CC never survives projection.
+  for (size_t k = 0; k < retained; ++k) {
+    TEST_ASSERT_FALSE(at(k).type == midi::ControlChange);
+    TEST_ASSERT_LESS_THAN_UINT32(500, at(k).tick);
+  }
+
+  // Idempotent: the role was handed off, so a second bind is a no-op refusal and the
+  // adopted window is unchanged.
+  TEST_ASSERT_FALSE(runtime.bindDeferredRecordReturnWindow(range, range.generation(), 500));
+  TEST_ASSERT_EQUAL_PTR(adopted,
+                        runtime.adoptFirstRecordingBarReturnWindow(loop, launchSource, 500, 0));
+}
+
+void test_deferred_record_return_window_refuses_an_unsealed_range() {
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange range;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(range.reserveTail());
+  TEST_ASSERT_FALSE(range.ready());
+  TEST_ASSERT_FALSE(runtime.bindDeferredRecordReturnWindow(range, range.generation(), 1536));
+  // The window is untouched and still raw, so nothing can adopt it.
+  Loop loop;
+  TEST_ASSERT_NULL(runtime.adoptFirstRecordingBarReturnWindow(
+      loop, PlaybackViewSourceIdentity{1, 1, nullptr}, 1536, 0));
+}
+
+void test_deferred_record_interval_is_eligible_only_under_a_pending_owner() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(32, 1, 60, 90)));
+
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  const PlaybackViewSourceIdentity recordingSource{loop.playbackRevision, 1,
+                                                   loop.publishedSnapshotIdentity()};
+  for (size_t i = 0; i < 16; ++i) runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 1);
+
+  // A pending owner alone is not enough: an unbound raw window is never eligible.
+  PendingStopAdmission admission{};
+  admission.pending = true;
+  runtime.setCaptureStopOwner(admission, 1);
+  TEST_ASSERT_FALSE(runtime.hasBoundRecordReturnWindowForPendingJob());
+
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange range;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(range.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(32, 1, 60, 90)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(range));
+  TEST_ASSERT_TRUE(runtime.bindDeferredRecordReturnWindow(range, range.generation(), 768));
+  TEST_ASSERT_TRUE(runtime.hasBoundRecordReturnWindowForPendingJob());
+
+  // Retiring the job ends the unpublished interval's eligibility; committed content
+  // owns the slot from then on.
+  admission.pending = false;
+  TEST_ASSERT_FALSE(runtime.hasBoundRecordReturnWindowForPendingJob());
+}
+
 void test_first_record_return_window_release_covers_a_bound_window() {
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
@@ -6770,6 +6920,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_first_record_return_window_releases_for_the_next_take);
   RUN_TEST(test_first_record_bound_window_is_adopted_as_the_audible_source);
   RUN_TEST(test_first_record_first_bar_window_serves_a_multi_bar_launch);
+  RUN_TEST(test_deferred_record_return_window_binds_the_owned_frozen_source);
+  RUN_TEST(test_deferred_record_return_window_refuses_an_unsealed_range);
+  RUN_TEST(test_deferred_record_interval_is_eligible_only_under_a_pending_owner);
   RUN_TEST(test_first_record_return_window_release_covers_a_bound_window);
   RUN_TEST(test_first_record_window_refresh_reuses_capture_store_and_restarts_on_append);
   RUN_TEST(test_boot_playback_prewarm_does_not_allocate_capture_workers_and_upgrades_in_place);

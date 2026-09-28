@@ -116,11 +116,20 @@ Per the contract, before any production edit for this task:
   `RuntimePlaybackViewSet` `build`/`ready` handoff exactly as `serviceBridgeWindow` does,
   with the cursor derived from the playhead phase and the frozen range's projected rows —
   no new stored cursor field until a fixture proves one is required. Confidence: medium.
-- **Borrow vs. early completion at retirement** (UNKNOWN). Preferred path: complete or
-  abandon the in-flight fill before the first `retireJobCaptureSourceGrain` grain
-  (retirement is already a multi-grain phase), and additionally assert the range generation
-  in the fill so a late read denies. A borrower count is the fallback if a fixture shows a
-  deadline that cannot complete first. Confidence: medium.
+- **Retirement must be gated on playback continuity, not on the fill finishing** (UNKNOWN).
+  Completing or abandoning the *current* fill is insufficient: the **next** playback window
+  may still need the frozen source. `retireJobCaptureSourceGrain` must wait until all three
+  conditions hold —
+  1. a matching committed replacement is ready and handed off;
+  2. every builder has detached from the raw range;
+  3. playback no longer needs that range for subsequent windows (the onward window has moved
+     past what the range still covers, or committed content covers the remaining span).
+  Enforce that condition **at retirement itself**, not by draining a fill that may be
+  restarted. A borrower counter is optional if the existing ownership protocol can prove the
+  three conditions (the range is `sealed`, the job owns it, the committed handoff carries the
+  matching identity, and no builder borrows it); generation checks alone are **not**
+  sufficient, because they deny a late read rather than preserving continuity through the
+  interval. Confidence: medium; the exact predicate is S19.4's contract.
 - **Record admission predicate** (UNKNOWN). The mode-neutral
   `hasPendingDeferredOverdubStop()` ring-count predicate already covers both modes; keep it
   and let S4f.17 name the common owner. Confidence: high.
@@ -131,3 +140,52 @@ No fabricated committed pass, no global Stop, no full-take build on the MIDI edg
 snapshot wait as a recovery strategy, no new undo grouping, no geometry policy change. S4f.17
 (production Record admission), S4f.20's remaining residuals and S4f.21 stay open; this packet
 does not close S4f.19.
+
+## Landed: S19.2 core — job-qualified deferred return-window bind
+
+`LoopPlaybackRuntime::bindDeferredRecordReturnWindow(range, expectedGeneration,
+loopLengthTicks)` binds the retained bar-1 window to a deferred job's frozen source and final
+geometry. It reuses `RuntimePlaybackView::bindRawCoverage` + `handoffToRetained` and adds the
+job qualification the inline route does not need:
+
+- refuses a range that is not `ready()` or whose generation is not `expectedGeneration`;
+- **transforms** the raw bar before binding, not merely clamps its coverage:
+  `RuntimePlaybackView::projectRawCoverageToLoopLength` applies the record stop tick policy
+  (an overflowing NoteOn is remapped into the loop, every other overflowing row is dropped),
+  closes a note left open at the loop end with one synthetic Off at `loopLengthTicks - 1`
+  carrying the NoteOn's identity, clamps the coverage to the prepared-bar/final-loop
+  intersection, and re-orders the retained rows canonically (phase, NoteOff < NoteOn < other);
+- leaves the retained window untouched on refusal and is a no-op after a successful handoff.
+
+`Track::stepDeferredRecordClosure` calls it once per closure grain after the frozen-source
+borrow is validated; a refusal never fails the job, so playback simply has no unpublished
+source, exactly as before.
+
+`LoopPlaybackRuntime::hasBoundRecordReturnWindowForPendingJob()` is the eligibility predicate
+the MIDI entry will use: a **pending** job owning a bindable window. It is false for the inline
+route (which keeps the session-exit publication-gap predicate) and false once the job retires,
+so committed content owns the slot from then on.
+
+Fixtures (`test/test_playback_prewarm`, 186/186) verify **transformed event content**: a
+sub-bar take (raw bar with a NoteOn at 600 remapped to 100, a CC at 700 dropped, two notes
+left open closed at 499) binds and serves the exact canonical sequence; a stale generation
+leaves the window unbound and unadoptable; an unsealed range refuses; and eligibility requires
+both a pending owner and a bound window. Mutations red-prove the fixtures: removing the tick
+projection leaves the overflow row and fails the content assertion; removing the closure path
+fails the bind. Resource cost: the projection is one FLASH-resident cold function on the
+existing `RuntimePlaybackView` role — **no new field, view role, or job byte** — with one
+256-byte stack lane bitmap and work bounded by the view role capacity (one bar).
+
+**Not yet wired (S19.1):** the two `hasCommittedPasses()` early returns in
+`Track::playMidiEvents`/`playMidiEventsForSlot` and the adopt-branch
+`isPlaybackSessionExitPublicationGap()` condition still do not admit a deferred interval. That
+edit is deliberately held until a native fixture can observe emission, because the harness has
+no MIDI send capture today (`off_path_deps.h` stubs only `silenceTrackMidiOutput`). The
+predicate, the projection and the bind are in place; the wiring is one guarded condition plus
+that fixture.
+
+**Still open:** onward windows from the frozen source (with the continuity-gated retirement
+above) and the ownership-through-successor slice. S4f.19 stays unchecked and is partial
+implementation; production Record admission (S4f.17) must not be enabled before the
+onward-window and retirement evidence exist.
+
