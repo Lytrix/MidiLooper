@@ -1778,6 +1778,52 @@ LoopPlaybackRuntime::hasBoundRecordReturnWindowForPendingJob() const {
       set->firstRecordReturnWindowIndex() != RuntimePlaybackViewLifecycle::kNoView;
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFrozenRecordWindow(
+    const LoopEventStore::CaptureRange& range, uint64_t expectedGeneration,
+    const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks,
+    uint32_t phase, uint32_t windowTicks, size_t entryQuantum) {
+  RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  if (set == nullptr || loopLengthTicks == 0 || windowTicks == 0 || entryQuantum == 0 ||
+      !range.ready() || range.generation() != expectedGeneration ||
+      phase >= loopLengthTicks) {
+    return false;
+  }
+  if (!viewBuild.active()) {
+    if (set->lifecycle.build == RuntimePlaybackViewLifecycle::kNoView) return false;
+    // The window that contains the playhead, clamped to the loop. `RecordCoverage`
+    // applies the record stop projection, so the frozen rows arrive in-loop.
+    const uint32_t start = (phase / windowTicks) * windowTicks;
+    const uint32_t remaining = loopLengthTicks - start;
+    const uint32_t length = remaining < windowTicks ? remaining : windowTicks;
+    const PlaybackCoverageInterval coverage{start, length, loopLengthTicks};
+    const RuntimePlaybackViewSource source =
+        RuntimePlaybackViewSource::fromCaptureRange(range);
+    if (!viewBuild.begin(set->views[set->lifecycle.build], source, sourceIdentity, coverage,
+                         EmissionCursor{}, LedgerBoundarySummary{},
+                         RuntimePlaybackViewFillScope::RecordCoverage)) {
+      return false;
+    }
+  }
+  const RuntimePlaybackViewBuildGrain grain = viewBuild.nextGrain();
+  if (grain == RuntimePlaybackViewBuildGrain::Fill) {
+    if (viewBuild.stepFill(entryQuantum) == RuntimePlaybackViewBuildGrain::Denied) return false;
+  } else if (grain == RuntimePlaybackViewBuildGrain::Order) {
+    if (viewBuild.stepOrder(entryQuantum) == RuntimePlaybackViewBuildGrain::Denied) return false;
+  }
+  if (viewBuild.nextGrain() != RuntimePlaybackViewBuildGrain::Complete) return true;
+  if (!set->publishCompletedBuildAsReady(PlaybackViewHandoffMode::Preparation)) {
+    viewBuild.discard();
+    return false;
+  }
+  return true;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::frozenRecordWindowReady() const {
+  const RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  return set != nullptr && set->lifecycle.ready != RuntimePlaybackViewLifecycle::kNoView &&
+      set->views[set->lifecycle.ready].complete;
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFirstRecordingBar(
     const Loop& loop, const PlaybackViewSourceIdentity& sourceIdentity,
     uint32_t ticksPerBar, size_t entryQuantum) {

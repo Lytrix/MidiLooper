@@ -2606,6 +2606,19 @@ own execution packet and records fixture/native/build/device results separately.
       owned frozen source — the window is one bar, so the projection currently closes such a note
       at `loopLengthTicks - 1`), onward windows from the owned frozen source, and the
       continuity-gated retirement plus ownership through successor start.
+      **2026-09-28 round 5 — onward window primitive from the owned frozen source.**
+      `LoopPlaybackRuntime::serviceFrozenRecordWindow` builds the window containing the playhead
+      from the job's frozen `CaptureRange` through the existing fill/order owners and the
+      `RecordCoverage` projection: one bounded grain per call, reusing the `build` role and
+      publishing into `ready` for the normal handoff, refusing a stale/unready range or an
+      out-of-loop phase. Fixtures pin the bar containing phase 800 as window `startPhase 768 /
+      length 768` over a 1536-tick loop with exact projected content (only the two bar-2 rows,
+      canonically ordered) and all three refusals; the `RecordCoverage`→`AllSource` mutation
+      retains all four rows and fails. Focused **244/244**; full native **2,601 passed /
+      7 skipped**; capture-serial PASS, padding **888** (the service is FLASH-resident). Remaining:
+      the hot path must pass the job's `rawRange` to this service and promote the ready window
+      through the handoff; then the crossing-note endpoint, continuity-gated retirement and
+      ownership through successor start.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,

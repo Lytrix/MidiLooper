@@ -245,7 +245,24 @@ Still owed:
    actual Off tick. The actual endpoint lives in the owned frozen source, so this check depends on
    the onward-window slice; the closure policy is only correct for a note left open at the stop.
    Until then the projection's closure is a **known approximation for crossing notes**.
-2. Onward windows from the owned frozen source and the continuity-gated retirement.
+Landed in round 5 — **onward window built from the owned frozen source:**
+`LoopPlaybackRuntime::serviceFrozenRecordWindow(range, expectedGeneration, sourceIdentity,
+loopLengthTicks, phase, windowTicks, entryQuantum)` builds the window that contains the playhead
+from the frozen `CaptureRange` through the existing fill/order owners and the `RecordCoverage`
+projection. One bounded grain per call, reusing the `build` role and publishing into `ready` for
+the normal handoff. It refuses a stale/unready range or a phase outside the loop, leaving both
+roles as they were.
+
+Fixtures (`test/test_playback_prewarm`): the bar containing phase 800 is built as the window
+`startPhase 768, length 768` over a 1536-tick loop with **exact projected content** — only the two
+bar-2 rows, canonically ordered (the bar-1 rows are outside the window); a stale generation, an
+out-of-loop phase and an unsealed range all refuse without creating a ready window. Mutation:
+switching the fill from `RecordCoverage` to `AllSource` retains all four rows and fails.
+
+**Remaining for the onward slice:** the hot path must pass the job's `rawRange` to this service and
+promote the ready window through the handoff (the range lives on `CaptureStopJob`, not the
+runtime); the crossing-note endpoint then uses the same frozen source; and the continuity-gated
+retirement plus ownership through successor start still follow.
 
 Landed in round 4 — **publication/replacement parity:**
 `test_published_record_interval_does_not_replay_the_return_window` drives the whole deferred chain

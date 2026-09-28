@@ -697,6 +697,19 @@ struct LoopPlaybackRuntime {
   bool serviceFirstRecordingBar(const Loop& loop,
                                 const PlaybackViewSourceIdentity& sourceIdentity,
                                 uint32_t ticksPerBar, size_t entryQuantum = 32);
+  /// S4f.19 onward windows: build the playback window that contains `phase` from the
+  /// **owned frozen Record source**, through the existing fill/order owners and the
+  /// `RecordCoverage` projection. One bounded grain per call, reusing the `build` role
+  /// and publishing into `ready`; the caller promotes it through the normal handoff.
+  /// Refuses a stale/unready range or a phase outside the loop, leaving both roles as
+  /// they were. Returns true while the build is still in flight.
+  bool serviceFrozenRecordWindow(const LoopEventStore::CaptureRange& range,
+                                 uint64_t expectedGeneration,
+                                 const PlaybackViewSourceIdentity& sourceIdentity,
+                                 uint32_t loopLengthTicks, uint32_t phase,
+                                 uint32_t windowTicks, size_t entryQuantum = 32);
+  /// True once the last `serviceFrozenRecordWindow` build completed into `ready`.
+  bool frozenRecordWindowReady() const;
   RuntimePlaybackViewBuildGrain nextCoverageBuildGrain() const;
   RuntimePlaybackViewBuildGrain stepCoverageBuildFill(size_t entryQuantum);
   RuntimePlaybackViewBuildGrain stepCoverageBuildOrder(size_t entryQuantum);
