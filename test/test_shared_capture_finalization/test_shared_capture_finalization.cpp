@@ -1583,6 +1583,64 @@ void test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source(
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, wrapOns, wrapTrace);
 }
 
+// S4f.19 multiple sounding tracks: two tracks each own an unpublished deferred interval and
+// each serve their own bound window independently. This is S4f.19's multi-track property (the
+// committed-bridge multi-track case belongs to task 2.4).
+void test_two_tracks_each_serve_their_own_deferred_window() {
+  Track* tracks[2] = {&trackManager.getTrack(0), &trackManager.getTrack(1)};
+  uint8_t notes[2] = {60, 62};
+  LoopPlaybackRuntime* runtimes[2] = {nullptr, nullptr};
+  for (size_t i = 0; i < 2; ++i) {
+    Track& t = *tracks[i];
+    prepareSlot(t, 0, false);
+    Loop& loop = t.getLoop(0);
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    runtimes[i] = &runtime;
+    if (runtime.viewSetIfPrewarmed() == nullptr) {
+      TEST_ASSERT_TRUE(runtime.prewarmViews(loop.companionRowHorizonBound(),
+                                            loop.fullTakePlaybackViewAdmissible()));
+    }
+    t.startRecording(100);
+    t.noteOn(1, notes[i], 100, 112);
+    t.noteOff(1, notes[i], 0, 180);
+    loop.loopLengthTicks = 768;
+    const PlaybackViewSourceIdentity recordingSource{
+        loop.playbackRevision, TrackCaptureStopTestAccess::playbackGenerationOf(t),
+        loop.publishedSnapshotIdentity()};
+    for (size_t grain = 0; grain < 32; ++grain) {
+      runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 1);
+    }
+    auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 768, 768);
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                      TrackCaptureStopTestAccess::closureGrain(t));
+    TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::audibleSource(t, 0));
+    TEST_ASSERT_TRUE(runtime.hasServableDeferredRecordView());
+    TEST_ASSERT_TRUE(job.admission.pending);
+  }
+
+  MidiSendCapture::reset();
+  for (size_t i = 0; i < 2; ++i) {
+    Track& t = *tracks[i];
+    t.forceSetState(TRACK_PLAYING);
+    TrackCaptureStopTestAccess::unmute(t);
+    TrackCaptureStopTestAccess::selectSlot(t, 0);
+    TrackCaptureStopTestAccess::resetProjectionCycle(t);
+    t.getLoop(0).lastTickInLoop = 0;
+    t.getLoop(0).nextEventIndex = 0;
+    t.playMidiEvents(90, true);
+  }
+  size_t note60 = 0;
+  size_t note62 = 0;
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const MidiEvent& event = MidiSendCapture::at(i);
+    if (!event.isNoteOn()) continue;
+    if (event.data.noteData.note == 60) ++note60;
+    if (event.data.noteData.note == 62) ++note62;
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, note60);
+  TEST_ASSERT_EQUAL_UINT32(1, note62);
+}
+
 void test_private_grains_never_hold_the_global_ephemeral_seal() {
   Track& t0 = trackManager.getTrack(0);
   prepareSlot(t0, 0, false);
@@ -1875,6 +1933,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_empty_record_take_all_filtered_retires_without_content);
   RUN_TEST(test_deferred_record_interval_is_audible_only_with_a_bound_window);
   RUN_TEST(test_native_midi_send_capture_records_a_direct_send);
+  RUN_TEST(test_two_tracks_each_serve_their_own_deferred_window);
   RUN_TEST(test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source);
   RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);
   RUN_TEST(test_private_grains_never_hold_the_global_ephemeral_seal);
