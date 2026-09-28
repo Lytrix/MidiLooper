@@ -2322,6 +2322,14 @@ own execution packet and records fixture/native/build/device results separately.
       are retired to prevent a discovered atomic-transfer stall. Verification and
       measured ring growth: [staging execution evidence](S4F18-STAGING-EXECUTION.md).
       Record normalization/admission and connected playback/caller work remain open.
+      **2026-09-28 bounded tail-repair prerequisite:** the existing stop-finalize
+      policy now has a generation-checked streaming consumer with bounded reset/
+      enumeration and acknowledged output retry. Fixed 24,576-byte MIDI-key scratch
+      replaces per-event allocation/repeated scans in this consumer; no resident
+      role or production Record dispatch is added. Handwritten inventories and real
+      helper differential fixtures preserve policy, including >2,048 input rows.
+      Sort/minimum-length filtering and integration remain open. See
+      [tail-repair execution evidence](S4F18-TAIL-EXECUTION.md).
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,

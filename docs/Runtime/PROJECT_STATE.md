@@ -1,5 +1,19 @@
 # Project state (execution context)
 
+**2026-09-28 — S4f.18 — bounded Record tail-repair prerequisite verified.**
+`LoopStopFinalize::TailRepairCursor` now preserves the existing synthetic-Off
+policy through one-row input, bounded lane reset/enumeration and acknowledged
+output retry. Six fixtures include all 2,048 MIDI keys / 4,096 source rows,
+80 real-helper differential cases and three caught policy mutations. ARM cursor
+is **48 bytes**; caller-owned scratch is **24,576 bytes**, with no resident field
+or production Record dispatch added. Full native **2,533 passed / 7 skipped**; capture-serial
+build passes with RAM1 padding **840 bytes** and unchanged firmware footprint.
+OpenSpec strict validation passes. Record sorting, minimum-length filtering,
+role admission and playback/caller integration remain open. No upload, HITL
+acceptance, task checkoff or new decision; connected parent tasks remain open.
+[Execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-TAIL-EXECUTION.md).
+
+
 **2026-09-28 — S4f.18 — resumable job-owned pass staging verified.**
 The deferred worker now constructs its pass directly in the job, one chunk-reference
 move or ordering swap per turn. Partial receipts cannot be borrowed or published;
