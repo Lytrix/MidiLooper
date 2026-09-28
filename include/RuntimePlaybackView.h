@@ -131,6 +131,15 @@ struct RuntimePlaybackView {
   bool rawCoveragePrepared = false;
   // Bind already ordered raw coverage once final geometry is known. No scan.
   bool bindRawCoverage(uint32_t loopLengthTicks);
+  /// S4f.19: project a prepared raw bar onto the interval's **final** loop geometry
+  /// before binding it. Applies the record stop tick policy (an overflowing NoteOn is
+  /// remapped into the loop, any other overflowing row is dropped), closes a note left
+  /// open at the loop end with one synthetic Off at `loopLengthTicks - 1` carrying the
+  /// NoteOn's identity, clamps the coverage to the final loop, and re-orders the
+  /// retained rows canonically (phase, NoteOff < NoteOn < other). Bounded by the view
+  /// role capacity -- the prepared window is at most one bar. Refuses a view that is not
+  /// prepared/complete, so a partially built window is never bound.
+  bool projectRawCoverageToLoopLength(uint32_t loopLengthTicks);
   // Set by `bindRawCoverage`: this view is the record-session return window, the
   // first take's only audible source until its first root publishes. It is
   // preserved across playback-cache metadata resets and released by the next

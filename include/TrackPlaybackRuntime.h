@@ -678,6 +678,20 @@ struct LoopPlaybackRuntime {
   // Bind final record geometry and make the retained bar-1 view eligible for
   // the normal audible handoff. No source copy or order rebuild occurs here.
   bool bindFirstRecordingBar(uint32_t loopLengthTicks);
+  /// S4f.19: bind the retained first-record bar to a **deferred** Record job's
+  /// frozen source and final geometry. Job-qualified: refuses a range that is not
+  /// ready or whose generation is not `expectedGeneration`, and refuses a final
+  /// length shorter than the prepared bar, because raw rows past the final length
+  /// would need projection (the onward-window slice) and binding them raw would
+  /// emit out-of-loop rows. Leaves the retained window untouched on refusal, and
+  /// is a no-op after a successful bind (the role is handed off).
+  bool bindDeferredRecordReturnWindow(const LoopEventStore::CaptureRange& range,
+                                      uint64_t expectedGeneration, uint32_t loopLengthTicks);
+  /// True when a **pending** deferred job owns this slot's bindable return window, so an
+  /// unpublished interval may be served from it. False once the job retires (committed
+  /// content then owns the slot) and false for an inline take, which uses the
+  /// session-exit publication-gap predicate instead.
+  bool hasBoundRecordReturnWindowForPendingJob() const;
   /// Refresh the retained first-record bar from the live capture store using
   /// the same bounded fill/order workers as ordinary playback preparation.
   bool serviceFirstRecordingBar(const Loop& loop,

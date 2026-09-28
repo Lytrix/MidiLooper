@@ -1740,6 +1740,44 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindFirstRecordingBar(
   return set->lifecycle.handoffToRetained(set->views);
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindDeferredRecordReturnWindow(
+    const LoopEventStore::CaptureRange& range, uint64_t expectedGeneration,
+    uint32_t loopLengthTicks) {
+  RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  if (set == nullptr || loopLengthTicks == 0 || !range.ready() ||
+      range.generation() != expectedGeneration) {
+    return false;
+  }
+  if (set->lifecycle.retained == RuntimePlaybackViewLifecycle::kNoView ||
+      set->lifecycle.retained >= set->views.size()) {
+    return false;
+  }
+  RuntimePlaybackView& retained = set->views[set->lifecycle.retained];
+  if (!retained.complete || !retained.rawCoveragePrepared) {
+    return false;
+  }
+  // Project the raw bar onto this interval's final geometry first: remap an
+  // overflowing NoteOn into the loop, drop other overflowing rows, close a note left
+  // open at the loop end, and re-order canonically. A shorter final length (a sub-bar
+  // take) is the normal case here, not a refusal: binding raw rows past the length
+  // would emit out-of-loop content. A refusal leaves the window untouched.
+  if (!retained.projectRawCoverageToLoopLength(loopLengthTicks)) {
+    return false;
+  }
+  return retained.bindRawCoverage(loopLengthTicks) &&
+      set->lifecycle.handoffToRetained(set->views);
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool
+LoopPlaybackRuntime::hasBoundRecordReturnWindowForPendingJob() const {
+  if (captureStopOwner == nullptr || !captureStopOwner->pending) {
+    return false;
+  }
+  const RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  return set != nullptr &&
+      set->firstRecordReturnWindowIndex() != RuntimePlaybackViewLifecycle::kNoView;
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFirstRecordingBar(
     const Loop& loop, const PlaybackViewSourceIdentity& sourceIdentity,
     uint32_t ticksPerBar, size_t entryQuantum) {

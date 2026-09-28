@@ -2539,6 +2539,25 @@ own execution packet and records fixture/native/build/device results separately.
       successor/publication/retirement → acceptance evidence), resource accounting to record
       before the first production edit, and the open decisions with preferred paths are pinned in
       the [playback-handoff packet](S4F19-PLAYBACK-HANDOFF-PACKET.md). S4f.19 stays unchecked.
+      **2026-09-28 S19.2 landed — job-qualified deferred return-window bind, transformed content.**
+      `LoopPlaybackRuntime::bindDeferredRecordReturnWindow` binds the retained bar-1 window to a
+      deferred job's sealed source generation and final geometry, and
+      `RuntimePlaybackView::projectRawCoverageToLoopLength` **transforms** the raw bar first:
+      an overflowing NoteOn is remapped into the loop, every other overflowing row is dropped, a
+      note left open at the loop end gets one synthetic Off at `loopLengthTicks - 1` carrying its
+      identity, the coverage is clamped to the prepared-bar/final-loop intersection, and the rows
+      are re-ordered canonically (phase, NoteOff < NoteOn < other). `Track::stepDeferredRecordClosure`
+      calls it once per grain; a refusal never fails the job. `hasBoundRecordReturnWindowForPendingJob`
+      is the eligibility predicate the MIDI entry will use (pending owner **and** bound window).
+      Fixtures verify transformed content (sub-bar take: NoteOn 600 → 100, CC 700 dropped, two notes
+      closed at 499, exact canonical sequence), stale-generation and unsealed-range refusals, and
+      the eligibility predicate; two mutations (remove projection, remove closure) fail assertions.
+      No new view role, job byte or stored cursor: one FLASH cold function plus a 256-byte stack
+      lane bitmap, work bounded by the view role capacity. **S19.1 (MIDI-entry admission) is not yet
+      wired** — it is held until a native fixture can observe emission (the harness has no MIDI send
+      capture). Onward windows and the continuity-gated retirement (matching committed replacement
+      handed off, all builders detached, playback no longer needs the range) remain open, and
+      production Record admission must not be enabled before they land.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,
