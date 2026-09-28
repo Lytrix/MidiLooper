@@ -24,7 +24,8 @@ namespace {
 constexpr size_t kMidiChannelCount = 16;
 constexpr size_t kMidiNoteCount = 128;
 constexpr size_t kMidiLaneCount = kMidiChannelCount * kMidiNoteCount;
-constexpr size_t kMidiLaneWords = (kMidiLaneCount + 63) / 64;
+constexpr size_t kMidiLaneWords = RuntimePlaybackView::kOpenLaneWords;
+static_assert(kMidiLaneWords * 64 >= kMidiLaneCount, "lane map covers the MIDI domain");
 
 RUNTIME_PLAYBACK_VIEW_COLD_MEM void* allocateExternalMemoryFirst(size_t bytes) {
   if (bytes == 0) {
@@ -225,7 +226,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::bindRawCoverage(uint32_
 // S4f.19: project a prepared raw bar onto the finalized loop before binding. Cold
 // (once per take, in the deferred worker). RAM1/ITCM is at its bank boundary.
 RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::projectRawCoverageToLoopLength(
-    uint32_t loopLengthTicks) {
+    uint32_t loopLengthTicks, const uint64_t* openAtStopLanes) {
   if (!rawCoveragePrepared || !complete || loopLengthTicks == 0 || !storage.isPrewarmed() ||
       coverage.startPhase >= loopLengthTicks || storage.eventCount > storage.capacity) {
     return false;
@@ -259,6 +260,12 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::projectRawCoverageToLoo
       }
       if ((word & bit) != 0) {
         word &= ~bit;
+        continue;
+      }
+      // A lane open at the loop end is closed here only when it was open at the stop.
+      // Otherwise its real Off is inside the take, beyond this one-bar window, and
+      // closing it here would end the note early.
+      if (openAtStopLanes != nullptr && (openAtStopLanes[lane >> 6] & bit) == 0) {
         continue;
       }
       ++closures;
@@ -308,6 +315,9 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::projectRawCoverageToLoo
       if ((word & bit) != 0) {
         word &= ~bit;
         continue;
+      }
+      if (openAtStopLanes != nullptr && (openAtStopLanes[lane >> 6] & bit) == 0) {
+        continue;  // real Off is in the take: the onward window carries it
       }
       MidiEvent terminal = MidiEvent::NoteOff(
           loopLengthTicks - 1, event.channel, event.data.noteData.note, 0);

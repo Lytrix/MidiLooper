@@ -6635,6 +6635,69 @@ void test_frozen_record_window_refuses_a_stale_range() {
   TEST_ASSERT_FALSE(runtime.frozenRecordWindowReady());
 }
 
+// S4f.19 crossing notes: the projection closes only a lane that was open at the stop.
+// A lane whose real Off is further inside the take stays open so the onward window ends
+// it at its actual tick, instead of being cut at the loop end here.
+void test_projection_closes_only_lanes_open_at_the_stop() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  const MidiEvent rows[] = {MidiEvent::NoteOn(700, 1, 60, 90),
+                            MidiEvent::NoteOn(710, 2, 62, 91)};
+  RuntimePlaybackView window;
+  TEST_ASSERT_TRUE(window.prewarm(8));
+  RuntimePlaybackViewFill fill;
+  const PlaybackCoverageInterval coverage{0, 768, 0};
+  TEST_ASSERT_TRUE(fill.begin(window, rows, 2, PlaybackViewSourceIdentity{1, 1, nullptr},
+                              coverage, EmissionCursor{}, LedgerBoundarySummary{},
+                              RuntimePlaybackViewFillScope::RawCoverage));
+  while (fill.step(8) == RuntimePlaybackViewFillResult::Pending) {
+  }
+  // This fixture drives the fill owner directly, so the build/order owner's completion
+  // flag is set here; the projection's precondition is `complete && rawCoveragePrepared`.
+  window.complete = true;
+  TEST_ASSERT_TRUE(window.rawCoveragePrepared);
+
+  // Only the (ch1, note60) lane was open at the stop: lane 0*128+60 = 60.
+  std::array<uint64_t, RuntimePlaybackView::kOpenLaneWords> lanes{};
+  lanes[60 >> 6] |= static_cast<uint64_t>(1) << (60 & 63u);
+  TEST_ASSERT_TRUE(window.projectRawCoverageToLoopLength(768, lanes.data()));
+
+  size_t ons = 0;
+  size_t offs = 0;
+  for (size_t i = 0; i < window.storage.eventCount; ++i) {
+    if (!window.storage.eventRetained(i)) continue;
+    const MidiEvent& event = window.storage.events[i];
+    if (event.isNoteOff()) {
+      ++offs;
+      // The open-at-stop lane closes at the loop end; the crossing lane does not.
+      TEST_ASSERT_EQUAL_UINT8(60, event.data.noteData.note);
+      TEST_ASSERT_EQUAL_UINT32(767, event.tick);
+    } else {
+      ++ons;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, offs);
+  TEST_ASSERT_EQUAL_UINT32(2, ons);
+
+  // With no open-at-stop information at all, both lanes are treated as open at the stop
+  // (the previous behaviour) -- the gate is what makes the distinction.
+  RuntimePlaybackView both;
+  TEST_ASSERT_TRUE(both.prewarm(8));
+  RuntimePlaybackViewFill fillBoth;
+  TEST_ASSERT_TRUE(fillBoth.begin(both, rows, 2, PlaybackViewSourceIdentity{1, 1, nullptr},
+                                  coverage, EmissionCursor{}, LedgerBoundarySummary{},
+                                  RuntimePlaybackViewFillScope::RawCoverage));
+  while (fillBoth.step(8) == RuntimePlaybackViewFillResult::Pending) {
+  }
+  both.complete = true;
+  TEST_ASSERT_TRUE(both.projectRawCoverageToLoopLength(768, nullptr));
+  size_t bothOffs = 0;
+  for (size_t i = 0; i < both.storage.eventCount; ++i) {
+    if (both.storage.eventRetained(i) && both.storage.events[i].isNoteOff()) ++bothOffs;
+  }
+  TEST_ASSERT_EQUAL_UINT32(2, bothOffs);
+}
+
 void test_deferred_record_return_window_refuses_an_unsealed_range() {
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
@@ -7084,6 +7147,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_deferred_record_projection_refusal_leaves_the_window_untouched);
   RUN_TEST(test_deferred_record_return_window_refuses_an_unsealed_range);
   RUN_TEST(test_frozen_record_source_builds_the_next_playback_window);
+  RUN_TEST(test_projection_closes_only_lanes_open_at_the_stop);
   RUN_TEST(test_frozen_record_window_refuses_a_stale_range);
   RUN_TEST(test_deferred_record_interval_is_eligible_only_under_a_pending_owner);
   RUN_TEST(test_first_record_return_window_release_covers_a_bound_window);

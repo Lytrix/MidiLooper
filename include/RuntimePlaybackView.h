@@ -139,7 +139,12 @@ struct RuntimePlaybackView {
   /// retained rows canonically (phase, NoteOff < NoteOn < other). Bounded by the view
   /// role capacity -- the prepared window is at most one bar. Refuses a view that is not
   /// prepared/complete, so a partially built window is never bound.
-  bool projectRawCoverageToLoopLength(uint32_t loopLengthTicks);
+  /// Lane-map words for the MIDI (channel, note) domain: 16 x 128 bits. A caller that
+  /// knows which lanes were open at the stop supplies this bitmap so the projection
+  /// closes only those lanes; a lane left open here has its real Off in the take.
+  static constexpr size_t kOpenLaneWords = 32;
+  bool projectRawCoverageToLoopLength(uint32_t loopLengthTicks,
+                                      const uint64_t* openAtStopLanes = nullptr);
   // Set by `bindRawCoverage`: this view is the record-session return window, the
   // first take's only audible source until its first root publishes. It is
   // preserved across playback-cache metadata resets and released by the next

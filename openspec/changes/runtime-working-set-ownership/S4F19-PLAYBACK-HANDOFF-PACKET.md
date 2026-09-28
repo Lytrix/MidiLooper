@@ -270,11 +270,24 @@ rebuild. `Track::playCommittedLoopMidi` now, when the bar-1 window no longer cov
 a pending Record job owns the frozen range, adopts the onward window or services the next build
 grain from `job->rawRange` with `RecordCoverage`.
 
-Fixture `test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source`: a two-bar
-take with a note in each bar; at phase 90 the bound bar-1 window serves the bar-1 note, and past
+Landed in round 7 — **crossing-note endpoint (the check-4 gap closed):**
+`projectRawCoverageToLoopLength` and `bindDeferredRecordReturnWindow` now take an optional
+`openAtStopLanes` bitmap (16 x 128 bits). The projection closes a lane left open at the window
+end **only** when that lane was open at the stop; a lane whose real Off lies further inside the
+take is left open for the onward window to end at its actual tick, instead of being cut at
+`loopLengthTicks - 1`. `Track::stepDeferredRecordClosure` builds the bitmap from
+`job.pendingNotes`, which is the authoritative open-at-stop set at that point (the bind runs
+before any terminal closure Off is emitted).
+
+Fixture `test_projection_closes_only_lanes_open_at_the_stop`: a raw window with two held lanes,
+one marked open at the stop. With the bitmap only that lane closes (at 767); the crossing lane
+stays open. With no bitmap both close — the previous behaviour — so the fixture discriminates the
+gate by construction.
+
+Round-6 fixture (retained): `test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source`
+— a two-bar take with a note in each bar; phase 90 is served by the bound bar-1 window, and past
 bar one the onward window built from the job's frozen source serves the bar-2 note **exactly once**
-(one NoteOn and one NoteOff, note 62), with the pass still unpublished. That satisfies the
-traversal-beyond-bar-one exit case.
+while the pass is still unpublished. That satisfies the traversal-beyond-bar-one exit case.
 
 Landed in round 4 — **publication/replacement parity:**
 `test_published_record_interval_does_not_replay_the_return_window` drives the whole deferred chain

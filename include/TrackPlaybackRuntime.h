@@ -686,7 +686,8 @@ struct LoopPlaybackRuntime {
   /// emit out-of-loop rows. Leaves the retained window untouched on refusal, and
   /// is a no-op after a successful bind (the role is handed off).
   bool bindDeferredRecordReturnWindow(const LoopEventStore::CaptureRange& range,
-                                      uint64_t expectedGeneration, uint32_t loopLengthTicks);
+                                      uint64_t expectedGeneration, uint32_t loopLengthTicks,
+                                      const uint64_t* openAtStopLanes = nullptr);
   /// True when a **pending** deferred job owns this slot's bindable return window, so an
   /// unpublished interval may be served from it. False once the job retires (committed
   /// content then owns the slot) and false for an inline take, which uses the
