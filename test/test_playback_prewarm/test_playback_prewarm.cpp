@@ -6552,6 +6552,89 @@ void test_deferred_record_projection_refusal_leaves_the_window_untouched() {
   TEST_ASSERT_TRUE(window.rawCoveragePrepared);
 }
 
+// S4f.19 onward windows: the window containing the playhead is built from the owned
+// frozen Record source through the existing fill/order owners and the RecordCoverage
+// projection, into the `ready` role.
+void test_frozen_record_source_builds_the_next_playback_window() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange range;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(range.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(100, 1, 60, 90)));   // bar 1
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOff(200, 1, 60)));
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(800, 1, 62, 91)));   // bar 2
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOff(900, 1, 62)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(range));
+
+  const PlaybackViewSourceIdentity source{1, 2, nullptr};
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  // The record start's own preparation leaves the lifecycle with a free `ready` role,
+  // exactly the state the onward service runs in.
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  auto* lifecycleSet = runtime.viewSetIfPrewarmed();
+  TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackViewLifecycle::kNoView, lifecycleSet->lifecycle.ready);
+  // The playhead is in bar 2, so the bar-2 window is the one built.
+  for (size_t grain = 0; grain < 4096 && !runtime.frozenRecordWindowReady(); ++grain) {
+    (void)runtime.serviceFrozenRecordWindow(range, range.generation(), source, 1536, 800, 768, 32);
+  }
+  TEST_ASSERT_TRUE(runtime.frozenRecordWindowReady());
+  auto* set = runtime.viewSetIfPrewarmed();
+  const RuntimePlaybackView& ready = set->views[set->lifecycle.ready];
+  // The playhead at phase 800 is in the bar that starts at 768.
+  TEST_ASSERT_EQUAL_UINT32(768, ready.coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(768, ready.coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(1536, ready.coverage.loopLengthTicks);
+  // Exact projected bar-2 content: the two bar-2 rows, canonically ordered. Bar-1 rows
+  // are outside the window.
+  size_t retained = 0;
+  for (size_t i = 0; i < ready.storage.eventCount; ++i) {
+    if (ready.storage.eventRetained(i)) ++retained;
+  }
+  TEST_ASSERT_EQUAL_UINT32(2, retained);
+  const MidiEvent& first = ready.storage.events[ready.storage.order[0]];
+  const MidiEvent& second = ready.storage.events[ready.storage.order[1]];
+  TEST_ASSERT_EQUAL_UINT32(800, first.tick);
+  TEST_ASSERT_TRUE(first.isNoteOn());
+  TEST_ASSERT_EQUAL_UINT8(62, first.data.noteData.note);
+  TEST_ASSERT_EQUAL_UINT32(900, second.tick);
+  TEST_ASSERT_TRUE(second.isNoteOff());
+}
+
+// A stale or unready frozen range refuses without creating a ready window.
+void test_frozen_record_window_refuses_a_stale_range() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore producer;
+  LoopEventStore::CaptureRange range;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  TEST_ASSERT_TRUE(range.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(800, 1, 62, 91)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(range));
+
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  const PlaybackViewSourceIdentity source{1, 2, nullptr};
+  TEST_ASSERT_FALSE(runtime.serviceFrozenRecordWindow(range, range.generation() + 1, source,
+                                                      1536, 800, 768, 32));
+  TEST_ASSERT_FALSE(runtime.frozenRecordWindowReady());
+  // A phase outside the loop also refuses.
+  TEST_ASSERT_FALSE(runtime.serviceFrozenRecordWindow(range, range.generation(), source,
+                                                      1536, 1536, 768, 32));
+  TEST_ASSERT_FALSE(runtime.frozenRecordWindowReady());
+  // An unsealed range refuses.
+  LoopEventStore::CaptureRange unsealed;
+  LoopEventStore spare;
+  TEST_ASSERT_TRUE(spare.reserveCaptureTail());
+  TEST_ASSERT_TRUE(unsealed.reserveTail());
+  TEST_ASSERT_FALSE(runtime.serviceFrozenRecordWindow(unsealed, unsealed.generation(), source,
+                                                      1536, 800, 768, 32));
+  TEST_ASSERT_FALSE(runtime.frozenRecordWindowReady());
+}
+
 void test_deferred_record_return_window_refuses_an_unsealed_range() {
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
@@ -7000,6 +7083,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_deferred_record_return_window_binds_the_owned_frozen_source);
   RUN_TEST(test_deferred_record_projection_refusal_leaves_the_window_untouched);
   RUN_TEST(test_deferred_record_return_window_refuses_an_unsealed_range);
+  RUN_TEST(test_frozen_record_source_builds_the_next_playback_window);
+  RUN_TEST(test_frozen_record_window_refuses_a_stale_range);
   RUN_TEST(test_deferred_record_interval_is_eligible_only_under_a_pending_owner);
   RUN_TEST(test_first_record_return_window_release_covers_a_bound_window);
   RUN_TEST(test_first_record_window_refresh_reuses_capture_store_and_restarts_on_append);
