@@ -6728,11 +6728,13 @@ void test_deferred_record_interval_is_eligible_only_under_a_pending_owner() {
                                                    loop.publishedSnapshotIdentity()};
   for (size_t i = 0; i < 16; ++i) runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 1);
 
-  // A pending owner alone is not enough: an unbound raw window is never eligible.
+  // Ownership and audibility are separate: a pending owner owns the interval for its whole
+  // life (eligibility), but an unbound raw window is not yet a servable view.
   PendingStopAdmission admission{};
   admission.pending = true;
   runtime.setCaptureStopOwner(admission, 1);
-  TEST_ASSERT_FALSE(runtime.hasBoundRecordReturnWindowForPendingJob());
+  TEST_ASSERT_TRUE(runtime.hasBoundRecordReturnWindowForPendingJob());
+  TEST_ASSERT_FALSE(runtime.hasServableDeferredRecordView());
 
   LoopEventStore producer;
   LoopEventStore::CaptureRange range;
@@ -6741,12 +6743,13 @@ void test_deferred_record_interval_is_eligible_only_under_a_pending_owner() {
   TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(32, 1, 60, 90)));
   TEST_ASSERT_TRUE(producer.sealCaptureRange(range));
   TEST_ASSERT_TRUE(runtime.bindDeferredRecordReturnWindow(range, range.generation(), 768));
-  TEST_ASSERT_TRUE(runtime.hasBoundRecordReturnWindowForPendingJob());
+  TEST_ASSERT_TRUE(runtime.hasServableDeferredRecordView());
 
-  // Retiring the job ends the unpublished interval's eligibility; committed content
-  // owns the slot from then on.
+  // Retiring the job ends the unpublished interval's eligibility and audibility; committed
+  // content owns the slot from then on.
   admission.pending = false;
   TEST_ASSERT_FALSE(runtime.hasBoundRecordReturnWindowForPendingJob());
+  TEST_ASSERT_FALSE(runtime.hasServableDeferredRecordView());
 }
 
 void test_first_record_return_window_release_covers_a_bound_window() {

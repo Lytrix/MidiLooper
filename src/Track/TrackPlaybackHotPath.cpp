@@ -551,7 +551,7 @@ TRACK_COLD_MEM bool Track::hasAudiblePlaybackSource(uint8_t slotIndex) const {
   // window, but only while a pending deferred job owns that window. Without it the
   // interval has no source yet and must stay silent rather than fabricate one.
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
-  return runtime != nullptr && runtime->hasBoundRecordReturnWindowForPendingJob();
+  return runtime != nullptr && runtime->hasServableDeferredRecordView();
 }
 
 namespace {

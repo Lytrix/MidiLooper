@@ -1769,13 +1769,32 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindDeferredRecordRetu
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool
+LoopPlaybackRuntime::hasServableDeferredRecordView() const {
+  if (!hasBoundRecordReturnWindowForPendingJob()) return false;
+  const RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  if (set == nullptr) return false;
+  if (set->firstRecordReturnWindowIndex() != RuntimePlaybackViewLifecycle::kNoView) {
+    return true;
+  }
+  const auto onward = [&](uint8_t index) {
+    return index < set->views.size() && set->views[index].complete &&
+        !set->views[index].rawCoveragePrepared &&
+        !set->views[index].firstRecordReturnWindow;
+  };
+  return onward(set->lifecycle.current) || onward(set->lifecycle.ready);
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool
 LoopPlaybackRuntime::hasBoundRecordReturnWindowForPendingJob() const {
   if (captureStopOwner == nullptr || !captureStopOwner->pending) {
     return false;
   }
-  const RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
-  return set != nullptr &&
-      set->firstRecordReturnWindowIndex() != RuntimePlaybackViewLifecycle::kNoView;
+  // A pending job owns the unpublished interval for its whole life, not only while the
+  // bar-1 window is the served view. Once an onward window is handed off the bar-1
+  // window is no longer current, and a later bar (or a wrap back to bar one) must still be
+  // built from the job's frozen source -- so eligibility is the ownership, and the adopt
+  // paths themselves decide what they can serve.
+  return viewSetIfPrewarmed() != nullptr;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFrozenRecordWindow(

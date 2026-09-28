@@ -693,6 +693,9 @@ struct LoopPlaybackRuntime {
   /// content then owns the slot) and false for an inline take, which uses the
   /// session-exit publication-gap predicate instead.
   bool hasBoundRecordReturnWindowForPendingJob() const;
+  /// True when a pending job owns the interval **and** a view it can serve exists: the bound
+  /// bar-1 return window or a range-derived onward window. Ownership alone is not audibility.
+  bool hasServableDeferredRecordView() const;
   /// Refresh the retained first-record bar from the live capture store using
   /// the same bounded fill/order workers as ordinary playback preparation.
   bool serviceFirstRecordingBar(const Loop& loop,
