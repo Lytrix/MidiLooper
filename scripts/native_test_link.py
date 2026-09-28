@@ -4,6 +4,7 @@ Import("env")
 # Suites that link production code pulling in the Arduino/SD hardware boundaries.
 _FIRMWARE_BOUNDARY_SUITES = {
     "test_continuous_capture",
+    "test_midi_button_timing",
     "test_shared_capture_finalization",
     # S3 gate: the runtime working-set acceptance suite drives the production admission paths
     # (boot/load, the record arm, the stop admission and the selection mechanism), so it needs the

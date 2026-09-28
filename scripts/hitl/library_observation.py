@@ -31,7 +31,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Optional, Sequence
 
 __all__ = [
     "Cause",
@@ -505,6 +505,22 @@ def state_names_from_mask(mask: int) -> list[str]:
     if mask & 4:
         names.append("pending")
     return names
+
+
+def occupied_slots(lines: Iterable[str]) -> Optional[dict[tuple[int, int], bool]]:
+    """Per-slot content occupancy from one observation, or None when it is incomplete.
+
+    Occupancy is the device classifier's union content signal
+    (`has_committed_content`), keyed by the device's **0-based** `(track, slot)`. An
+    incomplete window returns None: a lost terminal row is not an empty library.
+    """
+    observation = parse_observation_lines(lines)
+    if not observation.get("complete"):
+        return None
+    return {
+        (int(record["track"]), int(record["slot"])): bool(record["has_committed_content"])
+        for record in observation["slots"]
+    }
 
 
 def parse_observation_lines(lines: Iterable[str]) -> dict[str, Any]:

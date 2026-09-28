@@ -727,6 +727,33 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 // Stopped-only and outside the record-stop path: it neither records nor writes.
                 DebugSessionCapture::emitIdentityPathStats();
 #if defined(__IMXRT1062__)
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!LIB_OBSERVE_STATUS") == 0 &&
+                       !clockManager.isTransportRunning()) {
+                // Read-only diagnostic for the on-demand library observation. Emitted
+                // **directly**, not through the capture ring: the ring may reject or
+                // displace the row (exactly the visibility question these counters
+                // answer) and this path is stopped-only and host-requested.
+                const StorageManagerInternal::LibraryObservationView view =
+                    StorageManagerInternal::libraryObservationView();
+                Serial.printf(
+                    "#CAP,%lu,LIBOBS,status,req=%u,ready=%u,phase=%u,tr=%u,ts=%u,turns=%u,"
+                    "restarts=%u,collected=%u,emitted=%u,slotsPer=%u,sdPer=%u,lastSlots=%u,"
+                    "lastSd=%u,startUs=%lu,endUs=%lu,epoch=%lu\r\n",
+                    static_cast<unsigned long>(micros()), view.requested ? 1u : 0u,
+                    view.reportReady ? 1u : 0u, static_cast<unsigned>(view.phase),
+                    static_cast<unsigned>(view.cursorTrack),
+                    static_cast<unsigned>(view.cursorSlot),
+                    static_cast<unsigned>(view.turns),
+                    static_cast<unsigned>(view.restarts),
+                    static_cast<unsigned>(view.collected),
+                    static_cast<unsigned>(view.emittedSlots),
+                    static_cast<unsigned>(view.slotsPerInvocation),
+                    static_cast<unsigned>(view.sdProbesPerInvocation),
+                    static_cast<unsigned>(view.lastInvocationSlots),
+                    static_cast<unsigned>(view.lastInvocationSdProbes),
+                    static_cast<unsigned long>(view.windowStartUs),
+                    static_cast<unsigned long>(view.windowEndUs),
+                    static_cast<unsigned long>(view.setEpochAtStart));
             } else if (std::strcmp(sHitlSerialLineBuffer, "!HEAP_STATS") == 0) {
                 StoppedHeapDiagnostics::Gate gate;
                 gate.transport = clockManager.isTransportRunning();
