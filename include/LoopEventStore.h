@@ -130,6 +130,26 @@ class LoopEventStoreOrderCursor {
   Phase phase_ = Phase::Idle;
 };
 
+enum class LoopEventStoreFilterResult : uint8_t { Pending, InputReady, Complete, Denied };
+
+/// Borrowed cursor for marking rejected ordinals and compacting private dense
+/// output. Exclusive caller ownership excludes every other reader/writer until
+/// completion. Discard abandons the receipt, not the mutations already made.
+class LoopEventStoreFilterCursor {
+ public:
+  bool complete() const;
+  size_t lastStepUnits() const { return lastStepUnits_; }
+  void discard() { *this = LoopEventStoreFilterCursor{}; }
+ private:
+  friend class LoopEventStore;
+  enum class Phase : uint8_t { Idle, Chunks, Rows, Input, Compact, Trim, Refresh, Complete, Denied };
+  LoopEventStore* owner_ = nullptr;
+  uint64_t generation_ = 0, pool_ = 0;
+  size_t count_ = 0, chunks_ = 0, chunk_ = 0;
+  size_t read_ = 0, write_ = 0, lastStepUnits_ = 0;
+  Phase phase_ = Phase::Idle;
+};
+
 /// Unpublished raw input for one pass. The owner retains immutable chunk refs,
 /// output storage, and the generation token for this cursor's entire lifetime.
 /// Invalidate the token BEFORE releasing/replacing refs (including pool reuse).
@@ -166,6 +186,7 @@ enum class LoopEventStoreAppendDeny : uint8_t {
 /// Append-only fixed-size event chunks backed by a global PSRAM pool.
 class LoopEventStore {
   friend class LoopEventStoreOrderCursor;
+  friend class LoopEventStoreFilterCursor;
  public:
   class CaptureRange;
   class ChunkReservation;
@@ -278,6 +299,18 @@ class LoopEventStore {
   /// Partial order is unpublished; denial never rolls back prior accepted steps.
   LoopEventStoreRewriteResult stepPrivateTickOrder(LoopEventStoreOrderCursor& cursor,
                                                   size_t quantum);
+
+  /// Private prepared output only; preflight must reach InputReady before marks.
+  /// Original ticks must be in the supported domain (no internal marker values).
+  bool beginPrivateFilter(LoopEventStoreFilterCursor& cursor);
+  /// <= quantum fixed-work transitions, row visits/copies or chunk retire/refresh.
+  LoopEventStoreFilterResult stepPrivateFilter(LoopEventStoreFilterCursor& cursor, size_t quantum);
+  /// O(1) dense ordinal access during InputReady. Marked rows are unreadable.
+  bool readPrivateFilterRow(const LoopEventStoreFilterCursor& cursor, size_t ordinal, MidiEvent& out) const;
+  /// Atomically mark two source ordinals; idempotent until finishPrivateFilter.
+  /// Policy owns the decision. No row is changed if either access is invalid.
+  bool markPrivateFilterPair(LoopEventStoreFilterCursor& cursor, size_t first, size_t second);
+  bool finishPrivateFilter(LoopEventStoreFilterCursor& cursor);
 
   /// First global index whose event tick is >= tick, or size() if none.
   size_t lowerBoundIndex(uint32_t tick) const;
@@ -416,6 +449,11 @@ class LoopEventStore {
                                                       NoteIdSupplier supplier, void* ctx);
 
  private:
+  bool ownsPrivateFilter(const LoopEventStoreFilterCursor& cursor) const;
+  bool privateFilterChunkReady(const LoopEventStoreFilterCursor& cursor, size_t index) const;
+  const MidiEvent* privateFilterRow(const LoopEventStoreFilterCursor& cursor, size_t ordinal) const;
+  MidiEvent* privateFilterRow(const LoopEventStoreFilterCursor& cursor, size_t ordinal);
+
   static bool hasHeadroomForCommittedChunkIdList(size_t count);
   static bool tryAssignCommittedChunkIds(CommittedChunkIdList& dest, const uint16_t* ids,
                                         size_t count);

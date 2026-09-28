@@ -65,6 +65,25 @@ must explicitly handle the prepared chunks afterward; the sorter does not enqueu
 publish or restore abandoned output. Production Record still uses its existing path.
 [Ordering execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-ORDER-EXECUTION.md).
 
+## Private prepared canonical filtering
+
+`beginPrivateFilter` / `stepPrivateFilter` validate a dense private store before
+accepting rejected ordinal pairs. `readPrivateFilterRow` supplies constant-time
+input to the existing minimum-length decision cursor; `markPrivateFilterPair`
+applies its receipt atomically and idempotently. After `finishPrivateFilter`,
+bounded forward compaction preserves every retained event field and its order,
+then retires surplus tail refs and refreshes metadata. No whole-take scratch.
+
+Rejection markers exist only in unpublished output and cannot collide with valid
+input ticks. Do not publish, persist, sort or otherwise borrow intermediate output.
+Discarding the cursor does not restore output; abandon it and retain frozen raw
+input for recovery. Shared/persistence-admitted chunks and stale receipts deny.
+The filter does not establish the minimum policy's Off/On/other input order or
+change its legacy no-removal ordering. It is verified with the real decision
+cursor but is not dispatched by the production Record worker yet. The prepared
+output still requires explicit publication/persistence integration.
+[Filter execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-FILTER-EXECUTION.md).
+
 ## Mental model
 
 Each **loop slot** (`Loop` in `include/Loop.h`) holds live capture, committed **passes**, and a materialized event view:
