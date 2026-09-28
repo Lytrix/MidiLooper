@@ -1856,6 +1856,24 @@ LoopPlaybackRuntime::adoptFrozenRecordWindow(const PlaybackViewSourceIdentity& s
   return &window;
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::frozenWindowBuildActive() const {
+  return viewBuild.active();
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::releaseFrozenRecordWindow() {
+  viewBuild.discard();
+  RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  if (set == nullptr) return;
+  const auto clearOnward = [&](uint8_t index) {
+    if (index >= set->views.size()) return;
+    RuntimePlaybackView& window = set->views[index];
+    if (window.firstRecordReturnWindow) return;  // the bound bar-1 window is served
+    window.resetMetadata();
+  };
+  clearOnward(set->lifecycle.current);
+  clearOnward(set->lifecycle.ready);
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFirstRecordingBar(
     const Loop& loop, const PlaybackViewSourceIdentity& sourceIdentity,
     uint32_t ticksPerBar, size_t entryQuantum) {
