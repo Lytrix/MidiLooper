@@ -231,12 +231,12 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     // A fixed view already proved its exact generation and source. Do not
     // erase it merely because the legacy runtime cache has not been touched
     // since STOPPED prewarm.
-    // S4f.19 note: while a pending deferred Record job owns its bound bar-1 return
-    // window, `reset(true)` refuses (it preserves that window), so this branch aborts
-    // the interval before the window can be served. The emission slice must resolve that
-    // (skip the reset for a pending owner, or serve before the stale check) together
-    // with its fixture; it is deliberately not changed here.
-    if (runtime.cachedTrackGeneration != playbackGeneration && fixedView == nullptr) {
+    // S4f.19: a pending deferred Record job owns its bound bar-1 return window, and
+    // `reset` refuses precisely to preserve it — so resetting here would abort the
+    // interval's only unpublished source. Skip the destructive reset for that owner and
+    // sync the revision; the window is served below.
+    if (runtime.cachedTrackGeneration != playbackGeneration && fixedView == nullptr &&
+        !runtime.hasBoundRecordReturnWindowForPendingJob()) {
       if (!runtime.reset(true)) return;
     }
     loop.nextEventIndex = 0;

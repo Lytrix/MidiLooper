@@ -75,6 +75,13 @@ struct TrackCaptureStopTestAccess {
     return *t.playbackRuntime.slotIfAllocated(slot);
   }
   static uint32_t playbackGenerationOf(const Track& t) { return t.playbackGeneration; }
+  static void resetProjectionCycle(Track& t) { t.projectionCycleStartTick = 0; }
+  static void unmute(Track& t) { t.muted = false; }
+  static void armEmit(Track& t) { t.playbackEmitMidiOutput_ = true; }
+  static void selectSlot(Track& t, uint8_t slot) { t.activeLoopIndex = slot; }
+  static void directSend(Track& t, const MidiEvent& event, uint8_t slot) {
+    t.sendMidiEvent(event, slot);
+  }
   static auto retirementGrain(Track& t) {
     return t.stepDeferredRecordRetirement(*t.captureStopJobHead());
   }
@@ -1273,6 +1280,9 @@ void test_deferred_record_interval_is_audible_only_with_a_bound_window() {
   // A pending job whose window is still raw has no audible source: the interval must
   // stay silent rather than fabricate one from nothing.
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::audibleSource(t, 0));
+  MidiSendCapture::reset();
+  t.playMidiEvents(10, true);
+  TEST_ASSERT_EQUAL_UINT32(0, MidiSendCapture::count());
   // The closure grain binds the window to this interval's geometry and frozen source.
   TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
                     TrackCaptureStopTestAccess::closureGrain(t));
@@ -1285,10 +1295,71 @@ void test_deferred_record_interval_is_audible_only_with_a_bound_window() {
 
   // Another slot has no source of its own.
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::audibleSource(t, 1));
-  // Retiring the job ends the unpublished interval's eligibility; committed content
-  // owns the slot from then on.
+  // The layered entry point is for another track's committed bridge; `isActive` is
+  // target-based (`PlaybackMidiTarget::ActiveSlot`), so an unpublished deferred interval
+  // has no fixed view there and must emit nothing rather than fabricate content from a
+  // window it does not own. The interval's own track is served by the active entry.
+  MidiSendCapture::reset();
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  t.playMidiEventsForSlot(0, 90, true);
+  TEST_ASSERT_EQUAL_UINT32(0, MidiSendCapture::count());
+
+  // Emission through the production active-slot entry point: the unpublished interval
+  // must actually reach the wire from its bound window, once per event.
+  MidiSendCapture::reset();
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  t.playMidiEvents(90, true);
+  size_t ons = 0;
+  size_t offs = 0;
+  char trace[512];
+  size_t written = 0;
+  for (size_t i = 0; i < MidiSendCapture::count() && written + 24 < sizeof(trace); ++i) {
+    const MidiEvent& event = MidiSendCapture::at(i);
+    written += static_cast<size_t>(snprintf(trace + written, sizeof(trace) - written,
+                                            "[%u %s %u]", event.tick,
+                                            event.isNoteOn() ? "on" : "off",
+                                            event.data.noteData.note));
+    if (event.isNoteOn()) ++ons;
+    if (event.isNoteOff()) ++offs;
+  }
+  trace[written] = '\0';
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, ons, trace);
+  TEST_ASSERT_EQUAL_UINT32(1, offs);
+
+  // A stale/unready interval emits nothing: retiring the pending owner ends the
+  // unpublished interval's eligibility, and another slot never had a source.
   job.admission.pending = false;
+  MidiSendCapture::reset();
+  t.playMidiEvents(110, true);
+  t.playMidiEventsForSlot(0, 110, true);
+  t.playMidiEventsForSlot(1, 110, true);
+  TEST_ASSERT_EQUAL_UINT32(0, MidiSendCapture::count());
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::audibleSource(t, 0));
+}
+
+// The native send boundary must record a send before any playback assertion relies on it.
+void test_native_midi_send_capture_records_a_direct_send() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::armEmit(t);
+  MidiSendCapture::reset();
+  TrackCaptureStopTestAccess::directSend(t, MidiEvent::NoteOn(0, 1, 60, 100), 0);
+  TEST_ASSERT_EQUAL_UINT32(1, MidiSendCapture::count());
+  TEST_ASSERT_TRUE(MidiSendCapture::at(0).isNoteOn());
+  MidiSendCapture::reset();
+  TEST_ASSERT_EQUAL_UINT32(0, MidiSendCapture::count());
 }
 
 void test_private_grains_never_hold_the_global_ephemeral_seal() {
@@ -1582,6 +1653,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_empty_record_take_all_dropped_retires_without_content);
   RUN_TEST(test_empty_record_take_all_filtered_retires_without_content);
   RUN_TEST(test_deferred_record_interval_is_audible_only_with_a_bound_window);
+  RUN_TEST(test_native_midi_send_capture_records_a_direct_send);
   RUN_TEST(test_private_grains_never_hold_the_global_ephemeral_seal);
   RUN_TEST(test_record_job_closures_preserve_a_live_successor);
   RUN_TEST(test_record_job_closure_denial_retains_obligation_for_retry);
