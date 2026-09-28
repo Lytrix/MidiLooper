@@ -717,6 +717,13 @@ struct LoopPlaybackRuntime {
   /// the same window every turn. Returns nullptr when nothing covers the phase yet.
   const RuntimePlaybackView* adoptFrozenRecordWindow(
       const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks, uint32_t phase);
+  /// True while a view build is in flight, so the raw range is still being read. Retirement
+  /// must wait for it to drain rather than free chunks under the reader.
+  bool frozenWindowBuildActive() const;
+  /// Drop the range-derived onward window (and any in-flight frozen build) once a matching
+  /// committed replacement exists. Idempotent; the bar-1 return window is left alone because
+  /// it is served until a replacement view is handed off.
+  void releaseFrozenRecordWindow();
   RuntimePlaybackViewBuildGrain nextCoverageBuildGrain() const;
   RuntimePlaybackViewBuildGrain stepCoverageBuildFill(size_t entryQuantum);
   RuntimePlaybackViewBuildGrain stepCoverageBuildOrder(size_t entryQuantum);

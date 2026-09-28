@@ -1442,6 +1442,31 @@ void test_published_record_interval_does_not_replay_the_return_window() {
   trace[written] = '\0';
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, ons, trace);
   TEST_ASSERT_EQUAL_UINT32(1, offs);
+
+  // S4f.19 continuity gate: retirement waits for an in-flight frozen build to drain,
+  // because that build still borrows the raw range, and then drops the range-derived
+  // window before the first release grain.
+  const PlaybackViewSourceIdentity expected{
+      loop.playbackRevision, TrackCaptureStopTestAccess::playbackGenerationOf(t),
+      loop.publishedSnapshotIdentity()};
+  TEST_ASSERT_TRUE(runtime.serviceFrozenRecordWindow(job.rawRange, job.rawRange.generation(),
+                                                     expected, 768, 400, 768, 1));
+  TEST_ASSERT_TRUE(runtime.frozenWindowBuildActive());
+  const size_t depthBeforeGate = TrackCaptureStopTestAccess::stopQueueDepth(t);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Pending,
+                    TrackCaptureStopTestAccess::retirementGrain(t));
+  TEST_ASSERT_EQUAL(depthBeforeGate, TrackCaptureStopTestAccess::stopQueueDepth(t));
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPublished, job.admission.phase);
+  // Drain the build; retirement then completes and the job leaves the ring.
+  for (size_t turn = 0; turn < 4096 && runtime.frozenWindowBuildActive(); ++turn) {
+    (void)runtime.serviceFrozenRecordWindow(job.rawRange, job.rawRange.generation(), expected,
+                                            768, 400, 768, 1);
+  }
+  TEST_ASSERT_FALSE(runtime.frozenWindowBuildActive());
+  const LoopEventStoreRewriteResult retired =
+      driveGrains(t, TrackCaptureStopTestAccess::retirementGrain);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, retired);
+  TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::stopQueueDepth(t));
 }
 
 // S4f.19 traversal: past the bound bar-1 window the unpublished interval is served from

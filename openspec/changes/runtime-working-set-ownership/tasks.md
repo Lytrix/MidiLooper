@@ -2645,6 +2645,19 @@ own execution packet and records fixture/native/build/device results separately.
       is discriminated by construction. Focused **269/269**; full native **2,603 passed /
       7 skipped**; capture-serial PASS, padding **888**. Remaining: continuity-gated retirement
       and ownership through successor start.
+      **2026-09-28 round 8 — continuity-gated retirement.** `stepDeferredRecordRetirement` now
+      refuses (`Pending`) while a frozen-window build is in flight, because that build still
+      borrows the job's raw range, and then calls `LoopPlaybackRuntime::releaseFrozenRecordWindow`
+      to drop the range-derived onward window (and any active build) before the first release
+      grain. The bound bar-1 return window is deliberately kept: it owns copies and is served
+      until a replacement *view* is handed off. Fixture
+      `test_published_record_interval_does_not_replay_the_return_window` now starts an onward
+      build, asserts retirement returns `Pending` with the ring depth unchanged and the phase still
+      `RecordPublished`, then drains the build and completes retirement with the ring empty.
+      Mutation (remove the build-active gate) retires while the build is in flight and fails the
+      ring-depth assertion. Focused **269/269**; full native **2,603 passed / 7 skipped**;
+      capture-serial PASS, padding **888**. Remaining: ownership through successor start, plus the
+      wrap-while-finalizing, multiple-sounding-tracks and stale-source-replacement fixtures.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,

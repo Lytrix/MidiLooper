@@ -1452,10 +1452,21 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
       job.slot >= Config::MAX_LOOPS_PER_TRACK)
     return LoopEventStoreRewriteResult::Denied;
   Loop& loop = getLoop(job.slot);
+  auto* runtime = playbackRuntime.slotIfAllocated(job.slot);
+  // S4f.19 continuity gate. The published pass is the matching committed replacement, but
+  // the job's raw range may still be read: an in-flight frozen-window build borrows it, and
+  // the range-derived onward window is served past bar one. Freeing chunks under either
+  // reader would break playback rather than transfer it, so retirement waits for the build
+  // and then drops the range-derived window before the first release grain. The bound bar-1
+  // return window is deliberately kept: it is served until a replacement *view* is handed
+  // off, and it owns copies, not the range.
+  if (runtime != nullptr && runtime->frozenWindowBuildActive()) {
+    return LoopEventStoreRewriteResult::Pending;
+  }
+  if (runtime != nullptr) runtime->releaseFrozenRecordWindow();
   // Bounded: one raw-extent grain per call until the frozen source is gone.
   if (!retireJobCaptureSourceGrain(job, loop, false))
     return LoopEventStoreRewriteResult::Pending;
-  auto* runtime = playbackRuntime.slotIfAllocated(job.slot);
   if (runtime) (void)runtime->clearCaptureStopOwner(stop, stop.frozenGeneration);
   job.owner = nullptr;
   job.loopId = kInvalidLoopId;
