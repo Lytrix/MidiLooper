@@ -232,6 +232,43 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::projectRawCoverageToLoo
   }
   const size_t count = storage.eventCount;
 
+  // 0. Preflight the held-note closure capacity **before any mutation**. Projection only
+  //    drops rows, but closure appends one Off per note left open at the loop end, so a
+  //    refusal must be decided here: the worker retries the same window, and a partially
+  //    projected window is neither raw nor bound. This non-mutating pass applies the exact
+  //    same drop rule and lane logic as steps 1-2, so its count is the count they will use.
+  size_t closures = 0;
+  {
+    std::array<uint64_t, kMidiLaneWords> closed{};
+    for (size_t i = count; i-- > 0;) {
+      if (!storage.eventRetained(i)) continue;
+      MidiEvent event = storage.events[i];
+      if (!LoopEventStore::projectRecordStopTick(event, loopLengthTicks)) continue;
+      if (!event.isNoteOn() && !event.isNoteOff()) continue;
+      if (event.channel == 0 || event.channel > kMidiChannelCount ||
+          event.data.noteData.note >= kMidiNoteCount) {
+        continue;
+      }
+      const size_t lane = static_cast<size_t>(event.channel - 1) * kMidiNoteCount +
+          event.data.noteData.note;
+      const uint64_t bit = static_cast<uint64_t>(1) << (lane & 63u);
+      uint64_t& word = closed[lane >> 6];
+      if (event.isNoteOff()) {
+        word |= bit;
+        continue;
+      }
+      if ((word & bit) != 0) {
+        word &= ~bit;
+        continue;
+      }
+      ++closures;
+      word |= bit;
+    }
+  }
+  if (closures > storage.capacity - count) {
+    return false;  // refused with the window left byte-identical for the retry
+  }
+
   // 1. Record stop tick projection: an overflowing NoteOn is remapped into the loop,
   //    every other overflowing row is dropped. `phases` carries the in-loop tick.
   for (size_t i = 0; i < count; ++i) {
@@ -248,7 +285,8 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::projectRawCoverageToLoo
   // 2. Close a note left open at the loop end. A reverse pass needs only one 2048-bit
   //    lane map: an Off marks its lane closed, and an unmatched On is held and gets one
   //    synthetic Off at the loop end carrying the On's own identity (the record stop
-  //    closure policy). Marking the lane closed also matches an earlier retrigger.
+  //    closure policy). Marking the lane closed also matches an earlier retrigger. Step 0
+  //    proved the appended rows fit, so the mutation below cannot fail part-way.
   {
     std::array<uint64_t, kMidiLaneWords> closed{};
     for (size_t i = count; i-- > 0;) {
@@ -271,13 +309,10 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::projectRawCoverageToLoo
         word &= ~bit;
         continue;
       }
-      if (!storage.canAppend()) {
-        return false;  // no reserved room for the closure: refuse rather than let it hang
-      }
       MidiEvent terminal = MidiEvent::NoteOff(
           loopLengthTicks - 1, event.channel, event.data.noteData.note, 0);
       terminal.noteId = event.noteId;
-      if (!storage.append(terminal)) return false;
+      if (!storage.append(terminal)) return false;  // preflighted: unreachable
       storage.phases[storage.eventCount - 1] = terminal.tick;
       word |= bit;
     }

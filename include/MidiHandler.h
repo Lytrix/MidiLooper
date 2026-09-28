@@ -14,6 +14,19 @@ enum InputSource {
   SOURCE_USB_HOST
 };
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+/// Native test boundary: records every event that reaches the wire, so playback
+/// emission can be asserted end to end without a device. Compiled only for the
+/// host test build; firmware never sees it.
+struct MidiSendCapture {
+  static constexpr size_t kCapacity = 8192;
+  static void reset();
+  static size_t count();
+  static MidiEvent at(size_t index);
+  static void record(const MidiEvent& event);
+};
+#endif
+
 /**
  * @class MidiHandler
  * @brief Central MIDI input/output router and dispatcher.

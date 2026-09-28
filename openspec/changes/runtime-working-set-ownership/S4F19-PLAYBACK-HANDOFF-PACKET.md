@@ -189,3 +189,42 @@ above) and the ownership-through-successor slice. S4f.19 stays unchecked and is 
 implementation; production Record admission (S4f.17) must not be enabled before the
 onward-window and retirement evidence exist.
 
+## Correction and next step (2026-09-28, round 2)
+
+**Fixed — refusal is now atomic.** `projectRawCoverageToLoopLength` mutated rows and could
+append synthetic Offs before returning `false` when closure capacity ran out, so a worker retry
+saw a partially transformed window. It now preflights the closure count with a non-mutating pass
+that applies the same drop rule and lane logic, and returns `false` with the window
+byte-identical when the appends cannot fit. Fixture
+`test_deferred_record_projection_refusal_leaves_the_window_untouched` fills the view role to
+capacity with held notes and compares every row (tick, type, channel, note, retained flag,
+phase) plus the coverage before and after a refusal, and again after a repeat refusal. Mutation:
+removing the preflight leaves a mutated row and fails the comparison.
+
+**Added — native MIDI send-capture boundary.** `MidiSendCapture` (`include/MidiHandler.h`,
+`src/MidiHandler.cpp`, `PIO_UNIT_TEST_NATIVE` only) records every event that reaches
+`MidiHandler::sendMidiEvent`, so playback emission can be asserted end to end without a device.
+
+**Added — admission predicate and its fixture.** `Track::hasAudiblePlaybackSource(slot)` is the
+admission predicate for both entry points: committed passes, or a pending job's bound bar-1
+window. `test_deferred_record_interval_is_audible_only_with_a_bound_window` drives the real
+record start (which prepares the window) and the deferred closure grain, and asserts the slot is
+**not** audible while the window is raw, becomes audible once the worker binds it, is not audible
+for another slot, and stops being audible when the job retires.
+
+**Hot-path prerequisite found and fixed:** `playCommittedLoopMidi`'s stale-runtime branch called
+`reset(true)`, which refuses while a pending job owns the window, and then returned — so the
+interval could never be served. The reset is now skipped when a pending job owns a bound return
+window (the window is exactly the state `reset(true)` preserves), and the revision is synced
+without a destructive reset.
+
+**Immediate next step — emission assertions (not yet green).** The capture boundary is in place,
+but the first emission drive through `playMidiEvents`/`playMidiEventsForSlot` still produced no
+recorded send in the harness fixture, so those assertions were withdrawn rather than committed
+failing. The remaining checks are: (1) an unpublished interval emits the expected NoteOn/NoteOff
+sequence, (2) stale/unready coverage emits nothing, (3) publication/replacement handoff neither
+repeats nor omits boundary events, (4) a note crossing the first-bar boundary closes at its
+actual endpoint. The drive must establish the production transport/clock state (active slot,
+playing state, unmuted, projection cycle) before the emit path; the earlier relaxed drive replayed
+the window twice, which the exact-sequence assertion must catch rather than tolerate.
+

@@ -6475,6 +6475,83 @@ void test_deferred_record_return_window_binds_the_owned_frozen_source() {
                         runtime.adoptFirstRecordingBarReturnWindow(loop, launchSource, 500, 0));
 }
 
+// A refusal must leave the window byte-identical: the worker retries the same raw
+// window, so a partially projected (or partially closed) window is neither raw nor
+// bindable. Fill the view role to capacity with held notes so the closure append cannot
+// fit, then compare the complete window before and after the refusal.
+void test_deferred_record_projection_refusal_leaves_the_window_untouched() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.beginCapture(CapturePhase::Record);
+  // 1023 closed pairs plus two held Ons = 2048 rows, exactly the view capacity. Every
+  // row must sit inside the raw bar-1 window (ticks < 768) and the ingress needs
+  // non-decreasing ticks, so several events share a tick.
+  constexpr uint32_t kPairs = 1023;
+  for (uint32_t pair = 0; pair < kPairs; ++pair) {
+    const uint8_t note = static_cast<uint8_t>(pair % 128);
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(pair / 4, 1, note, 90)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(pair / 4, 1, note)));
+  }
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(700, 1, 60, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(701, 2, 62, 90)));
+  TEST_ASSERT_EQUAL_UINT32(2048, loop.capture.store.size());
+
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  const PlaybackViewSourceIdentity recordingSource{loop.playbackRevision, 1,
+                                                   loop.publishedSnapshotIdentity()};
+  for (size_t i = 0; i < 8192; ++i) {
+    runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 32);
+  }
+  auto* set = runtime.viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewLifecycle::kNoView, set->lifecycle.retained);
+  RuntimePlaybackView& window = set->views[set->lifecycle.retained];
+  TEST_ASSERT_TRUE(window.complete);
+  TEST_ASSERT_TRUE(window.rawCoveragePrepared);
+  TEST_ASSERT_EQUAL_UINT32(2048, window.storage.eventCount);
+
+  // Snapshot the complete window, then refuse: the closure appends cannot fit.
+  using Row = std::array<uint32_t, 6>;  // tick, type, channel, note, retained, phase
+  const auto snapshot = [&]() {
+    std::vector<Row> rows;
+    for (size_t i = 0; i < window.storage.eventCount; ++i) {
+      const MidiEvent& event = window.storage.events[i];
+      rows.push_back({event.tick, static_cast<uint32_t>(event.type), event.channel,
+                      event.data.noteData.note,
+                      window.storage.eventRetained(i) ? 1u : 0u, window.storage.phases[i]});
+    }
+    return rows;
+  };
+  const std::vector<Row> before = snapshot();
+  const uint32_t coverageBefore = window.coverage.lengthTicks;
+  TEST_ASSERT_FALSE(window.projectRawCoverageToLoopLength(200));
+  const std::vector<Row> after = snapshot();
+  TEST_ASSERT_EQUAL_UINT32(before.size(), after.size());
+  for (size_t i = 0; i < before.size(); ++i) {
+    for (size_t field = 0; field < before[i].size(); ++field) {
+      TEST_ASSERT_EQUAL_UINT32(before[i][field], after[i][field]);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(coverageBefore, window.coverage.lengthTicks);
+  TEST_ASSERT_TRUE(window.rawCoveragePrepared);
+  TEST_ASSERT_TRUE(window.complete);
+
+  // The refusal is repeatable and still leaves the window raw: the worker can retry the
+  // same window while capacity is unavailable, and every refusal is a no-op.
+  TEST_ASSERT_FALSE(window.projectRawCoverageToLoopLength(200));
+  const std::vector<Row> afterRetry = snapshot();
+  TEST_ASSERT_EQUAL_UINT32(before.size(), afterRetry.size());
+  for (size_t i = 0; i < before.size(); ++i) {
+    for (size_t field = 0; field < before[i].size(); ++field) {
+      TEST_ASSERT_EQUAL_UINT32(before[i][field], afterRetry[i][field]);
+    }
+  }
+  TEST_ASSERT_TRUE(window.rawCoveragePrepared);
+}
+
 void test_deferred_record_return_window_refuses_an_unsealed_range() {
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
@@ -6921,6 +6998,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_first_record_bound_window_is_adopted_as_the_audible_source);
   RUN_TEST(test_first_record_first_bar_window_serves_a_multi_bar_launch);
   RUN_TEST(test_deferred_record_return_window_binds_the_owned_frozen_source);
+  RUN_TEST(test_deferred_record_projection_refusal_leaves_the_window_untouched);
   RUN_TEST(test_deferred_record_return_window_refuses_an_unsealed_range);
   RUN_TEST(test_deferred_record_interval_is_eligible_only_under_a_pending_owner);
   RUN_TEST(test_first_record_return_window_release_covers_a_bound_window);

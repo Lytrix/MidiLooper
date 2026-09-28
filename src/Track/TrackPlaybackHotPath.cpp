@@ -231,6 +231,11 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     // A fixed view already proved its exact generation and source. Do not
     // erase it merely because the legacy runtime cache has not been touched
     // since STOPPED prewarm.
+    // S4f.19 note: while a pending deferred Record job owns its bound bar-1 return
+    // window, `reset(true)` refuses (it preserves that window), so this branch aborts
+    // the interval before the window can be served. The emission slice must resolve that
+    // (skip the reset for a pending owner, or serve before the stale check) together
+    // with its fixture; it is deliberately not changed here.
     if (runtime.cachedTrackGeneration != playbackGeneration && fixedView == nullptr) {
       if (!runtime.reset(true)) return;
     }
@@ -242,13 +247,13 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   }
 
   if (fixedView == nullptr && fixedBridge == nullptr && fixedViewEligible &&
-      loop.isPlaybackSessionExitPublicationGap()) {
-    // First take: the session-exit root is still publishing, so neither
-    // snapshot-backed fixed source above exists and the merged window would
-    // hold empty until that publish lands (the audible ~0.6 s gap). The
-    // record-stop handoff already bound the prepared bar-1 window to the final
-    // geometry; serve the launch from it while the playhead is inside that
-    // coverage and let the published root replace it.
+      (loop.isPlaybackSessionExitPublicationGap() ||
+       runtime.hasBoundRecordReturnWindowForPendingJob())) {
+    // The first take is not yet backed by a published root: either the session-exit
+    // root is still publishing (the audible ~0.6 s inline gap), or a deferred Record
+    // job owns the interval and its pass is unpublished (S4f.19). In both cases the
+    // bar-1 return window was bound to the final geometry, so serve the launch from it
+    // while the playhead is inside that coverage and let the published root replace it.
     const uint32_t launchPhase = IntervalProjection::tickPhaseInProjectionCycle(
         currentTick, projectionCycleStartTick, loop.loopLengthTicks);
     fixedView = runtime.adoptFirstRecordingBarReturnWindow(loop, expectedFixedSource,
@@ -474,8 +479,7 @@ void Track::playMidiEvents(uint32_t currentTick, bool emitMidiOutput) {
   if (isStoppedRecording()) {
     return;
   }
-  Loop& loop = getActiveLoop();
-  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+  if (!hasAudiblePlaybackSource(activeLoopIndex)) {
     return;
   }
   playbackEmitMidiOutput_ = emitMidiOutput && !muted;
@@ -491,12 +495,32 @@ void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool 
   if (isStoppedRecording()) {
     return;
   }
-  Loop& loop = getLoop(slotIndex);
-  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+  if (!hasAudiblePlaybackSource(slotIndex)) {
     return;
   }
   playbackEmitMidiOutput_ = emitMidiOutput && !muted;
   playCommittedLoopMidi(slotIndex, currentTick, PlaybackMidiTarget::LayeredSlot);
+}
+
+// FLASHMEM: the admission check is a cold predicate on the MIDI edge (it is called
+// once per turn, alongside the FLASH-resident session-exit gap predicate), and RAM1 is
+// at its bank boundary.
+TRACK_COLD_MEM bool Track::hasAudiblePlaybackSource(uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return false;
+  }
+  const Loop& loop = getLoop(slotIndex);
+  if (loop.loopLengthTicks == 0) {
+    return false;
+  }
+  if (loop.hasCommittedPasses()) {
+    return true;
+  }
+  // S4f.19: an unpublished Record interval is audible from its retained bar-1 return
+  // window, but only while a pending deferred job owns that window. Without it the
+  // interval has no source yet and must stay silent rather than fabricate one.
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  return runtime != nullptr && runtime->hasBoundRecordReturnWindowForPendingJob();
 }
 
 namespace {
