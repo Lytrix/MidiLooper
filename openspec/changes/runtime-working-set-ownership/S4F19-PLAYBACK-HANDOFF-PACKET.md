@@ -218,13 +218,34 @@ interval could never be served. The reset is now skipped when a pending job owns
 window (the window is exactly the state `reset(true)` preserves), and the revision is synced
 without a destructive reset.
 
-**Immediate next step — emission assertions (not yet green).** The capture boundary is in place,
-but the first emission drive through `playMidiEvents`/`playMidiEventsForSlot` still produced no
-recorded send in the harness fixture, so those assertions were withdrawn rather than committed
-failing. The remaining checks are: (1) an unpublished interval emits the expected NoteOn/NoteOff
-sequence, (2) stale/unready coverage emits nothing, (3) publication/replacement handoff neither
-repeats nor omits boundary events, (4) a note crossing the first-bar boundary closes at its
-actual endpoint. The drive must establish the production transport/clock state (active slot,
-playing state, unmuted, projection cycle) before the emit path; the earlier relaxed drive replayed
-the window twice, which the exact-sequence assertion must catch rather than tolerate.
+**Immediate next step — emission assertions (partially landed).** The capture boundary is in
+place and the first checks are green; two remain.
+
+Landed (round 3, `test_shared_capture_finalization`):
+- `MidiSendCapture` records a direct `Track::sendMidiEvent` (sanity: the boundary itself works).
+- An unpublished interval with a **pending job but a raw (unbound) window emits nothing**.
+- The **active entry point emits exactly one NoteOn and one NoteOff** from the bound window
+  (`ons == 1`, `offs == 1`, with the emitted trace in the failure message).
+- The **layered entry point emits nothing** for this interval: `isActive` is target-based
+  (`PlaybackMidiTarget::ActiveSlot`), so `fixedViewEligible` is false there and an unpublished
+  interval has no fixed view. That is the layered entry's contract — it serves another track's
+  committed bridge — so it must not fabricate content from a window it does not own.
+- **Retiring the job ends emission**, and another slot emits nothing.
+
+Hot-path prerequisite fixed: `playCommittedLoopMidi`'s stale-runtime branch called `reset(true)`,
+which refuses while a pending job owns the bound window, and then returned — so the interval
+could never be served. The reset is now skipped when a pending job owns a bound return window (the
+window is exactly the state `reset(true)` preserves) and the revision is synced without a
+destructive reset. That change is what made the active-entry assertion pass.
+
+Still owed:
+1. **Publication/replacement handoff neither repeats nor omits boundary events.** Drive the job
+   through transfer, publication and retirement, then emit and assert the committed content is
+   served exactly once — the window must not also replay.
+2. **A note crossing the first-bar boundary must close at its actual endpoint.** This is a real
+   gap, not just a missing test: the retained window is truncated at one bar, so a NoteOn in bar 1
+   whose Off lies in bar 2 is closed by the projection at `loopLengthTicks - 1` rather than at its
+   actual Off tick. The actual endpoint lives in the owned frozen source, so this check depends on
+   the onward-window slice; the closure policy is only correct for a note left open at the stop.
+   Until then the projection's closure is a **known approximation for crossing notes**.
 

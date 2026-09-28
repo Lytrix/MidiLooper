@@ -2579,6 +2579,22 @@ own execution packet and records fixture/native/build/device results separately.
       new admission predicate call site needed 16 B of ITCM, reclaimed by moving the idle
       diagnostic `Track::notePlayingMidiDrainAfterOverdubStopIdle` to FLASH; RAM1 padding is
       **888** (floor 840). Capture-serial build PASS.
+      **2026-09-28 round 3 — emission through the production entry point.** Fixed the hot-path
+      prerequisite: `playCommittedLoopMidi`'s stale-runtime branch called `reset(true)`, which
+      refuses while a pending job owns the bound window, and returned — the interval could never
+      be served. The reset is now skipped for that owner and the revision synced. With the native
+      `MidiSendCapture` boundary, `test_shared_capture_finalization` now proves: a direct
+      `sendMidiEvent` records; a pending job with a **raw** window emits nothing; the **active**
+      entry point emits exactly one NoteOn and one NoteOff from the bound window (trace in the
+      failure message); the **layered** entry emits nothing (its `isActive` is target-based, so an
+      unpublished interval has no fixed view there); retiring the job ends emission and another
+      slot emits nothing. Still owed: publication/replacement handoff must neither repeat nor omit
+      boundary events, and a note crossing the first-bar boundary must close at its actual
+      endpoint — currently the window is truncated at one bar, so the projection closes such a
+      note at `loopLengthTicks - 1`; the actual Off lives in the owned frozen source, so that check
+      depends on the onward-window slice and the closure is a known approximation until then.
+      Focused **241/241**; full native **2,598 passed / 7 skipped**; capture-serial PASS, padding
+      **888**.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,
