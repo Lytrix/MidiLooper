@@ -71,6 +71,8 @@ struct OverdubPass {
 };
 
 struct PendingCapturePass {
+  // Partial directory ownership is not a publishable or readable pass.
+  bool preparationPending = false;
   // Runtime ownership receipt; never serialized into canonical passes.
   bool retiresLiveCapture = true;
   PassId id = kInvalidPassId;

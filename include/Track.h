@@ -662,14 +662,10 @@ private:
     /// before the atomic commit, then drained in bounded DeferredCleanup turns.
     bool undoPublicationStarted = false;
     bool undoPublicationReady = false;
-    /// OpenSpec 5.12 / D8: this interval's staged capture pass. Ownership moves out of the
-    /// Loop producer slot in this job's own `PrepareTransfer` turn and is consumed only by
-    /// this job's terminal transfer. A successor interval therefore stages its own pass into
-    /// the (now empty) Loop slot without the `AlreadyPending` collision that a shared scalar
-    /// produced, and a deferred reader resolves the receipt through the job, never through
-    /// `Loop::pendingCapturePass()`. `ownsPendingPass` is the ownership receipt: at most one
-    /// owner holds a given staged pass, and two intervals may each hold one concurrently.
+    /// The job owns partial and complete pass references. Readers only borrow a
+    /// completed receipt; a successor never shares this construction slot.
     PendingCapturePass pendingPass;
+    LoopEventStoreCommitCursor passTransfer;
     bool ownsPendingPass = false;
     PendingNoteMap pendingNotes;
   };
@@ -769,7 +765,7 @@ private:
     static_assert(sizeof(Track) == 384,
                   "S3.0: Track is the eight-way DTCM array, so a by-value member costs 8x "
                   "(measured for teensy41-capture-serial; re-measure for another configuration)");
-    static_assert(sizeof(CaptureStopJobs) == 2728,
+    static_assert(sizeof(CaptureStopJobs) == 2984,
                   "S3.0: the externally allocated ring object also carries the latch; its size is a "
                   "RAM1-relevant decision, not incidental");
 #endif

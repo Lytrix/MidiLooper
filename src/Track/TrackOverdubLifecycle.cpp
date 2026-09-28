@@ -385,12 +385,14 @@ TRACK_COLD_MEM const Track::CaptureStopJob* Track::captureStopJobHead() const {
 
 TRACK_COLD_MEM PendingCapturePass* Track::ownedPendingCapturePass() {
   CaptureStopJob* head = captureStopJobHead();
-  return (head != nullptr && head->ownsPendingPass) ? &head->pendingPass : nullptr;
+  return (head != nullptr && head->ownsPendingPass && !head->pendingPass.preparationPending)
+      ? &head->pendingPass : nullptr;
 }
 
 TRACK_COLD_MEM const PendingCapturePass* Track::ownedPendingCapturePass() const {
   const CaptureStopJob* head = captureStopJobHead();
-  return (head != nullptr && head->ownsPendingPass) ? &head->pendingPass : nullptr;
+  return (head != nullptr && head->ownsPendingPass && !head->pendingPass.preparationPending)
+      ? &head->pendingPass : nullptr;
 }
 
 TRACK_COLD_MEM Track::CaptureStopJob* Track::captureStopJobTail() {
@@ -1290,26 +1292,19 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   if (stop.phase == PendingStopPhase::PrepareTransfer) {
     // Ordering/rewrite have finished. Unused estimates are not service work.
     if (!stop.retireCompletedPreparation()) return false;
-    const SealOutcome staged = runtime->canonicalCaptureOutput.store.empty()
-                                   ? SealOutcome::SkippedEmpty
-                                   : loop.stagePreparedCapturePassFromActiveAdmission(
-                                         runtime->canonicalCaptureOutput, stop.stopTick,
-                                         stop.destination == PendingStopDestination::Playing
-                                             ? CommitReason::OverdubStop
-                                             : CommitReason::OverdubStopToStopped);
-    if (staged != SealOutcome::Ok && staged != SealOutcome::SkippedEmpty) {
-      return false;
-    }
-    // OpenSpec 5.12 / D8: take ownership of the pass in the same non-yielding grain that staged
-    // it. The Loop pending slot is only this job's transient construction point; from here the
-    // receipt lives in the job, so a successor interval's `beginCapture` cannot discard it and
-    // this job's terminal transfer never has to reacquire the (possibly successor-owned) slot.
-    if (staged == SealOutcome::Ok) {
-      if (!loop.takePendingCapturePass(job.pendingPass)) {
-        return false;  // Cannot happen: the staging call just proved a pass exists.
-      }
+    if (!job.ownsPendingPass && !runtime->canonicalCaptureOutput.store.empty()) {
+      const SealOutcome staged = loop.beginPreparedCapturePassFromActiveAdmission(
+          runtime->canonicalCaptureOutput, job.pendingPass, job.passTransfer,
+          job.interval, stop.stopTick);
+      if (staged != SealOutcome::Ok) return false;
       job.ownsPendingPass = true;
+      return false;  // Admission is a separate scalar grain.
     }
+    if (job.ownsPendingPass &&
+        loop.stepPreparedCapturePass(runtime->canonicalCaptureOutput, job.pendingPass,
+                                     job.passTransfer, 1) != LoopEventStoreRewriteResult::Complete)
+      return false;
+    const SealOutcome staged = job.ownsPendingPass ? SealOutcome::Ok : SealOutcome::SkippedEmpty;
     // A zero-event stop has no canonical tail or companion bridge. Keep the
     // existing bounded transfer path for that case; populated captures use
     // the prepared joint handoff below.
@@ -1382,7 +1377,19 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     // prepared OverdubPassAdded entry built from this job's slot and baseline,
     // then the protected transaction's prepare (begin + detach redo).
     if (!stepDeferredUndoCollection(job, loop, stop)) return false;
+    // Entry preparation consumes a completed collection back to Cold. A denied
+    // or absent collection is not proof that the undo obligation was fulfilled.
+    if (!job.undoCollectable ||
+        job.undoCollection.phase != Loop::SessionUndoCollection::Phase::Cold) return false;
     if (!stepDeferredUndoPublication(job, stop)) return false;
+    if (!job.undoPublicationReady) {
+      // A refused begin retains the entry. Retry when admission recovers;
+      // never retire its estimate and publish the pass without its undo.
+      job.undoPublicationStarted = false;
+      return false;
+    }
+    // Collection/publication preparation is complete; unused estimates are not work.
+    if (!stop.retireCompletedPreparation()) return false;
     stop.setPhase(PendingStopPhase::CompanionBridge);
     return false;
   }
@@ -1560,6 +1567,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   }
   job.pendingPass = PendingCapturePass{};
   job.ownsPendingPass = false;
+  job.passTransfer = LoopEventStoreCommitCursor{};
   // S2b.6 retire-path invariant (invariant 34; precondition of S2b.1). A retiring job leaves the
   // slot's canonical-copy target empty. Every committing route consumes the store at
   // `PrepareTransfer`, but a skipped or failed route can leave it populated with no ring entry --

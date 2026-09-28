@@ -81,6 +81,9 @@ class LoopEventStoreCommitCursor {
  public:
   bool active() const { return active_; }
   bool complete() const { return complete_; }
+  bool targets(const LoopEventStore& source, const CommittedChunkIdList& destination) const {
+    return owner_ == &source && destination_ == &destination;
+  }
  private:
   friend class LoopEventStore;
   const LoopEventStore* owner_ = nullptr;

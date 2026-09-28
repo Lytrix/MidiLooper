@@ -134,6 +134,7 @@ LOOP_COLD_MEM bool Loop::beginPreparedCompanionHistory(
   // always name its own receipt (production passes `&job.pendingPass` unconditionally).
   PendingCapturePass* boundCapturePass = capturePass;
   if (boundCapturePass == nullptr && hasPendingCapturePass_) boundCapturePass = &pendingCapturePass_;
+  if (boundCapturePass != nullptr && boundCapturePass->preparationPending) return false;
   if (captureInputs && (boundCapturePass == nullptr || boundCapturePass->id == kInvalidPassId ||
       boundCapturePass->committedChunkIds.empty() ||
       boundCapturePass->committedChunkIds.size() > PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS ||
@@ -185,7 +186,7 @@ LOOP_COLD_MEM bool Loop::preparedCompanionHistorySourceCurrent() const {
       work.historyCount == passes.editPasses.size() && work.firstId == nextPassId_ &&
       work.source && work.capture && work.source->preparationGeneration() == work.rowGeneration &&
       work.source->ready(*work.capture) &&
-      (!work.captureInputs || (boundPass != nullptr && boundPass->id == work.capturePassId &&
+      (!work.captureInputs || (boundPass != nullptr && !boundPass->preparationPending && boundPass->id == work.capturePassId &&
        boundPass->committedChunkIds.data() == work.captureChunks &&
        boundPass->committedChunkIds.size() == work.captureChunkCount &&
        work.captureInputs->generation() == work.captureInputsGeneration &&

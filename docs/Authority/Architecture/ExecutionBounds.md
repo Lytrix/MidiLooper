@@ -1366,8 +1366,32 @@ an unbounded reverse. Destination is incomplete/unpublishable until Complete;
 source and destination own disjoint reference sets throughout cancellation.
 No event rows are copied, source/destination directory capacity never grows, and
 immutable raw CaptureRange input is not touched. Cursor footprint is 64 B ARM /
-96 B native, caller-owned; no Track/job/runtime field is added. The legacy
+96 B native, caller-owned. The worker integration below places it in the existing job ring. The legacy
 `detachChunksToCommittedChunkIds` wrapper still drains synchronously, using this
 primitive only for fully prewarmed stores. This does not reclassify the entire
 legacy stop path or close Record normalization/admission/playback deadlines.
 [Transfer execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-TRANSFER-EXECUTION.md).
+
+
+### Resumable job-owned pass staging (2026-09-28)
+
+`Loop::beginPreparedCapturePassFromActiveAdmission` consumes one prewarmed directory
+into a job receipt with scalar preflight and metadata. It rejects the live producer,
+a busy candidate/cursor, insufficient admission and an unprewarmed source; a denied
+source bind returns the directory to its owner. `Track::processDeferredOverdubStopGrain`
+performs admission in its own turn, then calls `stepPreparedCapturePass` with quantum
+one: at most one fixed-chunk seal/reference move or order-restoring pair swap per
+PrepareTransfer turn. The Loop producer slot remains independent. The partial receipt
+owns references but `preparationPending` denies transfer and companion borrowing;
+completion only clears it after the ordered directory is ready. No whole-take work,
+new allocation or capacity growth belongs to these steps.
+
+The 64-byte ARM cursor is held per job in the existing externally allocated four-entry
+ring: 2,728 → 2,984 bytes. Track (384), Loop (984) and playback runtime (6,352) sizes
+remain unchanged; the receipt flag fits padding. Retirement resets the cursor before
+ring reuse. `PendingStopAdmission::retireCompletedPreparation` also retires unused
+undo estimates after collection and protected publication preparation finish, in
+scalar work; busy/denied collection retains its obligation, and refused protected
+publication retries the retained entry in a later turn. This is not a device
+latency measurement or completion of Record normalization/admission/playback.
+[Staging execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-STAGING-EXECUTION.md).
