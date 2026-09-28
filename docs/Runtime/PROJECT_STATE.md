@@ -1,5 +1,32 @@
 # Project state (execution context)
 
+**2026-09-28 — S4f.19 §2 status after rounds 2-11 (delta work complete; two items depend on a decision/dependency).**
+Landed and verified since the G0 packet: **S19.2** job-qualified deferred return-window bind with
+content projection (overflow remap, sub-bar clamp, held-note closure, canonical re-order) and an
+**atomic refusal** (closure capacity preflighted before any mutation, byte-identical on refusal);
+the **native `MidiSendCapture`** wire boundary; the **admission predicate split** (`hasAudiblePlaybackSource`
+for audibility, `hasBoundRecordReturnWindowForPendingJob` for a pending owner's ownership, plus
+`hasServableDeferredRecordView`); the **hot-path serve** of the bound window and of **onward windows
+built from the job's own frozen source** (`serviceFrozenRecordWindow`/`adoptFrozenRecordWindow`,
+`RecordCoverage`); the **crossing-note endpoint** (closure gated on `job.pendingNotes`, so a note
+whose real Off is further in the take is not cut at the loop end); the **wrap-while-finalizing** fix
+(eligibility is ownership, so a later bar is still built after an onward handoff); and the
+**continuity-gated retirement** (waits for an in-flight frozen build, then releases the range-derived
+window before the first release grain, keeping the copy-owning bar-1 window).
+Exit fixtures green: incomplete preparation, sub-bar stop, remapped notes, held notes, traversal
+beyond bar one, wrap while finalizing, stale source replacement, plus the production-entry emission
+checks (active entry emits the exact sequence; layered emits nothing for an unpublished interval;
+publication neither repeats nor omits; retiring ends emission).
+**Two items remain, neither inside S4f.19's own implementation scope:** (1) *successor audibility* —
+a successor record puts the track in `TRACK_RECORDING`, so `fixedViewEligible`'s `isPlaying()` skips
+the adopt paths and the layered entry needs a committed bridge; needs a decision to extend the
+layered path or to accept that the predecessor sounds only after the successor's capture ends;
+(2) *multi-track audibility* — blocked on the committed-bridge emission path (task 2.4).
+Focused **269/269**; full native **2,603 passed / 7 skipped**; capture-serial build PASS with RAM1
+padding **888**.
+[Playback-handoff packet](../../openspec/changes/runtime-working-set-ownership/S4F19-PLAYBACK-HANDOFF-PACKET.md).
+
+
 **2026-09-28 — S4f.19 round 2 — refusal atomicity, send-capture boundary, admission predicate.**
 The deferred return-window projection now preflights its held-note closure capacity with a
 non-mutating pass, so a capacity refusal returns **false with the window byte-identical** for

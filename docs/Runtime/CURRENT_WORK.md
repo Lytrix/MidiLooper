@@ -1,5 +1,24 @@
 # Current work (implementation scope)
 
+**2026-09-28 — S4f.19 §2 — first-bar and onward playback handoff: delta work complete.**
+Landed and verified (rounds 2-11): deferred return-window bind with content projection and an
+atomic refusal; the native `MidiSendCapture` wire boundary; the ownership/audibility predicate
+split; hot-path serve of the bound window and of onward windows built from the job's own frozen
+source; the crossing-note actual endpoint; the wrap-while-finalizing fix; and continuity-gated
+retirement (waits for an in-flight frozen build, releases the range-derived window before the
+first release grain, keeps the copy-owning bar-1 window). Exit fixtures green: incomplete
+preparation, sub-bar stop, remapped notes, held notes, traversal beyond bar one, wrap while
+finalizing, stale source replacement, production-entry emission and publication/replacement
+parity. Focused **269/269**; full native **2,603 passed / 7 skipped**; capture-serial PASS,
+RAM1 padding **888**.
+**Open, both outside S4f.19's own scope:** successor audibility (a successor record holds the
+track in `TRACK_RECORDING`, so the adopt paths' `isPlaying()` skips them and the layered entry
+needs a committed bridge — needs a decision to extend the layered path or to defer the
+predecessor's sound until the successor's capture ends); and multi-track audibility (blocked on
+the committed-bridge emission path, task 2.4). S4f.19 stays unchecked.
+[Playback-handoff packet](../../openspec/changes/runtime-working-set-ownership/S4F19-PLAYBACK-HANDOFF-PACKET.md).
+
+
 **2026-09-28 — S4f.19 round 2 — refusal atomicity, send-capture boundary, admission predicate.**
 `projectRawCoverageToLoopLength` now preflights the held-note closure capacity with a
 non-mutating pass and refuses `false` with the window **byte-identical** (fixture fills the view
