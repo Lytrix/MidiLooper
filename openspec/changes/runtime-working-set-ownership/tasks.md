@@ -2678,8 +2678,17 @@ own execution packet and records fixture/native/build/device results separately.
       slot, or an explicit decision that the predecessor sounds only after the successor's capture
       ends. The failing fixture was withdrawn, not committed; the finding is recorded in the
       [playback-handoff packet](S4F19-PLAYBACK-HANDOFF-PACKET.md) § successor start. Remaining:
-      that successor-audibility decision plus the multiple-sounding-tracks and
-      stale-source-replacement fixtures.
+      **2026-09-28 round 11 — stale source replacement verified; multiple-tracks boundary named.**
+      The frozen-window refusal fixture now also proves **stale source replacement**: after a
+      stale-generation refusal the same service builds the window from the current source, so a
+      stale attempt never blocks the replacement that follows. A **multiple sounding tracks**
+      fixture (two tracks, each with an inline-committed take, emitting through their active
+      entries) emitted nothing for committed content: the committed-bridge/fixed-view emission
+      path is task 2.4's subsystem, not S4f.19's. The failing fixture was withdrawn rather than
+      committed. S4f.19's own multi-track property — per-track runtimes keeping the bound window
+      and frozen range independent — is already pinned by the eligibility and retirement
+      fixtures. Remaining: the successor-audibility decision, and multi-track audibility once the
+      committed bridge path is available.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,
