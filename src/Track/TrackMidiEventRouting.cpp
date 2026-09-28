@@ -10,7 +10,9 @@
 
 extern TrackManager trackManager;
 
-MidiEventVec& Track::legacyMidiEventsFromCommitted() {
+// FLASHMEM: legacy note-edit access, not a MIDI-edge path; moved out of ITCM to
+// keep the S4f.19 onward-service call site inside the RAM1 floor.
+TRACK_COLD_MEM MidiEventVec& Track::legacyMidiEventsFromCommitted() {
   // Edit-path boundary only (EditManager::editMidiEvents when session inactive).
   // OpenSpec 4.6 Stage 5 / 6.3.3: published-snapshot content + revision/identity freshness.
   (void)CommittedMidiScratch::refresh(committedMidiScratch_, committedMidiScratchRevision_,
@@ -18,7 +20,7 @@ MidiEventVec& Track::legacyMidiEventsFromCommitted() {
   return committedMidiScratch_;
 }
 
-const MidiEventVec& Track::legacyMidiEventsFromCommitted() const {
+TRACK_COLD_MEM const MidiEventVec& Track::legacyMidiEventsFromCommitted() const {
   return const_cast<Track*>(this)->legacyMidiEventsFromCommitted();
 }
 

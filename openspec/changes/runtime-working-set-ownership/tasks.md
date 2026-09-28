@@ -2619,6 +2619,20 @@ own execution packet and records fixture/native/build/device results separately.
       the hot path must pass the job's `rawRange` to this service and promote the ready window
       through the handoff; then the crossing-note endpoint, continuity-gated retirement and
       ownership through successor start.
+      **2026-09-28 round 6 — onward window served through the hot path.** `adoptFrozenRecordWindow`
+      promotes a completed `ready` build through the audible handoff and reuses an already-serving
+      onward window across turns (excluding the bar-1 return window) so a steady playhead does not
+      rebuild. `Track::playCommittedLoopMidi` now, when the bar-1 window no longer covers the
+      phase and a pending Record job owns the frozen range, adopts the onward window or advances
+      one build grain from `job->rawRange` with `RecordCoverage` — the whole service is a
+      FLASH-resident `Track` helper so the MIDI edge keeps only the call. Fixture
+      `test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source`: a two-bar take
+      with a note in each bar; phase 90 is served by the bound bar-1 window, and past bar one the
+      onward window from the frozen source serves the bar-2 note exactly once while the pass is
+      still unpublished. Focused **245/245**; full native **2,602 passed / 7 skipped**;
+      capture-serial PASS, padding **888** (one legacy note-edit accessor moved to FLASH to keep
+      the new call site inside the floor). Remaining: the crossing-note actual endpoint,
+      continuity-gated retirement and ownership through successor start.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,

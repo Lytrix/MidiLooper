@@ -1444,6 +1444,79 @@ void test_published_record_interval_does_not_replay_the_return_window() {
   TEST_ASSERT_EQUAL_UINT32(1, offs);
 }
 
+// S4f.19 traversal: past the bound bar-1 window the unpublished interval is served from
+// a window built over the job's own frozen source, so bar two stays audible while the
+// pass is still finalizing.
+void test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  Loop& loop = t.getLoop(0);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  if (runtime.viewSetIfPrewarmed() == nullptr) {
+    TEST_ASSERT_TRUE(runtime.prewarmViews(loop.companionRowHorizonBound(),
+                                          loop.fullTakePlaybackViewAdmissible()));
+  }
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);   // relative tick 12  (bar 1)
+  t.noteOff(1, 60, 0, 180);    // relative tick 80
+  t.noteOn(1, 62, 100, 900);   // relative tick 800 (bar 2)
+  t.noteOff(1, 62, 0, 1000);   // relative tick 900
+  loop.loopLengthTicks = 1536;
+  const PlaybackViewSourceIdentity recordingSource{
+      loop.playbackRevision, TrackCaptureStopTestAccess::playbackGenerationOf(t),
+      loop.publishedSnapshotIdentity()};
+  for (size_t i = 0; i < 64; ++i) {
+    runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 1);
+  }
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 1536, 1536);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    TrackCaptureStopTestAccess::closureGrain(t));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::audibleSource(t, 0));
+
+  // The bar-1 window still serves the first bar.
+  MidiSendCapture::reset();
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  t.playMidiEvents(90, true);
+  size_t barOneOns = 0;
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const MidiEvent& event = MidiSendCapture::at(i);
+    if (event.isNoteOn() && event.data.noteData.note == 60) ++barOneOns;
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, barOneOns);
+
+  // Past bar one the bar-1 window no longer covers the phase; the onward window is built
+  // from the job's frozen source and serves the bar-2 note exactly once.
+  MidiSendCapture::reset();
+  for (size_t turn = 0; turn < 128 && MidiSendCapture::count() == 0; ++turn) {
+    TrackCaptureStopTestAccess::resetProjectionCycle(t);
+    loop.lastTickInLoop = 0;
+    loop.nextEventIndex = 0;
+    t.playMidiEvents(940, true);
+  }
+  size_t barTwoOns = 0;
+  size_t barTwoOffs = 0;
+  char trace[512];
+  size_t written = 0;
+  for (size_t i = 0; i < MidiSendCapture::count() && written + 24 < sizeof(trace); ++i) {
+    const MidiEvent& event = MidiSendCapture::at(i);
+    written += static_cast<size_t>(snprintf(trace + written, sizeof(trace) - written,
+                                            "[%u %s %u]", event.tick,
+                                            event.isNoteOn() ? "on" : "off",
+                                            event.data.noteData.note));
+    if (event.isNoteOn() && event.data.noteData.note == 62) ++barTwoOns;
+    if (event.isNoteOff() && event.data.noteData.note == 62) ++barTwoOffs;
+  }
+  trace[written] = '\0';
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, barTwoOns, trace);
+  TEST_ASSERT_EQUAL_UINT32(1, barTwoOffs);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasRecordPass(t, 0));
+}
+
 void test_private_grains_never_hold_the_global_ephemeral_seal() {
   Track& t0 = trackManager.getTrack(0);
   prepareSlot(t0, 0, false);
@@ -1736,6 +1809,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_empty_record_take_all_filtered_retires_without_content);
   RUN_TEST(test_deferred_record_interval_is_audible_only_with_a_bound_window);
   RUN_TEST(test_native_midi_send_capture_records_a_direct_send);
+  RUN_TEST(test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source);
   RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);
   RUN_TEST(test_private_grains_never_hold_the_global_ephemeral_seal);
   RUN_TEST(test_record_job_closures_preserve_a_live_successor);
