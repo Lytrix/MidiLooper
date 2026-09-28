@@ -2595,6 +2595,17 @@ own execution packet and records fixture/native/build/device results separately.
       depends on the onward-window slice and the closure is a known approximation until then.
       Focused **241/241**; full native **2,598 passed / 7 skipped**; capture-serial PASS, padding
       **888**.
+      **2026-09-28 round 4 — publication/replacement parity.** `test_published_record_interval_does_not_replay_the_return_window`
+      drives the whole deferred chain (closure → staging → normalization → transfer → publication),
+      asserts the pass is committed, then emits through the active entry point and asserts exactly
+      one NoteOn and one NoteOff: the already-served window events are not replayed and the
+      committed boundary is not omitted. The bound window survives publication and remains the
+      served source because no matching replacement *view* has been handed off yet, which is the
+      contract's retain-until-replaced rule. Focused **242/242**; full native **2,599 passed /
+      7 skipped**; capture-serial PASS. Remaining: the crossing-note actual endpoint (needs the
+      owned frozen source — the window is one bar, so the projection currently closes such a note
+      at `loopLengthTicks - 1`), onward windows from the owned frozen source, and the
+      continuity-gated retirement plus ownership through successor start.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,

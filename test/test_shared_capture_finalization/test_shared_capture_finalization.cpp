@@ -1362,6 +1362,88 @@ void test_native_midi_send_capture_records_a_direct_send() {
   TEST_ASSERT_EQUAL_UINT32(0, MidiSendCapture::count());
 }
 
+// S4f.19 replacement handoff: once the interval's own pass is published, emitting must
+// neither repeat the already-served window events nor omit the committed boundary.
+void test_published_record_interval_does_not_replay_the_return_window() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  Loop& loop = t.getLoop(0);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  if (runtime.viewSetIfPrewarmed() == nullptr) {
+    TEST_ASSERT_TRUE(runtime.prewarmViews(loop.companionRowHorizonBound(),
+                                          loop.fullTakePlaybackViewAdmissible()));
+  }
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  t.noteOff(1, 60, 0, 180);
+  loop.loopLengthTicks = 768;
+  const PlaybackViewSourceIdentity recordingSource{
+      loop.playbackRevision, TrackCaptureStopTestAccess::playbackGenerationOf(t),
+      loop.publishedSnapshotIdentity()};
+  for (size_t i = 0; i < 32; ++i) {
+    runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 1);
+  }
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 768, 768);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    TrackCaptureStopTestAccess::closureGrain(t));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::stagingGrain));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::normalizationGrain));
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::passTransferGrain));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::publicationGrain));
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPublished, job.admission.phase);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasRecordPass(t, 0));
+  {
+    auto* set = runtime.viewSetIfPrewarmed();
+    TEST_ASSERT_NOT_NULL(set);
+    TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewLifecycle::kNoView, set->firstRecordReturnWindowIndex());
+    TEST_ASSERT_TRUE(runtime.hasBoundRecordReturnWindowForPendingJob());
+  }
+
+  // The bound window survives publication and is still adoptable: no matching
+  // replacement *view* has been handed off yet, so the contract keeps serving it.
+  // Stamping its source here makes the drive below deterministic about which source is
+  // served (the production adopt runs inside the entry point and re-seeds the cursor to
+  // skip the pre-stop phase, which is the "already heard live" rule).
+  {
+    const PlaybackViewSourceIdentity expected{
+        loop.playbackRevision, TrackCaptureStopTestAccess::playbackGenerationOf(t),
+        loop.publishedSnapshotIdentity()};
+    TEST_ASSERT_NOT_NULL(
+        runtime.adoptFirstRecordingBarReturnWindow(loop, expected, 768, 90));
+  }
+
+  // Emit after publication: the committed pass is the boundary now.
+  MidiSendCapture::reset();
+  t.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::unmute(t);
+  TrackCaptureStopTestAccess::selectSlot(t, 0);
+  TrackCaptureStopTestAccess::resetProjectionCycle(t);
+  loop.lastTickInLoop = 0;
+  loop.nextEventIndex = 0;
+  t.playMidiEvents(90, true);
+  size_t ons = 0;
+  size_t offs = 0;
+  char trace[512];
+  size_t written = 0;
+  for (size_t i = 0; i < MidiSendCapture::count() && written + 24 < sizeof(trace); ++i) {
+    const MidiEvent& event = MidiSendCapture::at(i);
+    written += static_cast<size_t>(snprintf(trace + written, sizeof(trace) - written,
+                                            "[%u %s %u]", event.tick,
+                                            event.isNoteOn() ? "on" : "off",
+                                            event.data.noteData.note));
+    if (event.isNoteOn()) ++ons;
+    if (event.isNoteOff()) ++offs;
+  }
+  trace[written] = '\0';
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, ons, trace);
+  TEST_ASSERT_EQUAL_UINT32(1, offs);
+}
+
 void test_private_grains_never_hold_the_global_ephemeral_seal() {
   Track& t0 = trackManager.getTrack(0);
   prepareSlot(t0, 0, false);
@@ -1654,6 +1736,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_empty_record_take_all_filtered_retires_without_content);
   RUN_TEST(test_deferred_record_interval_is_audible_only_with_a_bound_window);
   RUN_TEST(test_native_midi_send_capture_records_a_direct_send);
+  RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);
   RUN_TEST(test_private_grains_never_hold_the_global_ephemeral_seal);
   RUN_TEST(test_record_job_closures_preserve_a_live_successor);
   RUN_TEST(test_record_job_closure_denial_retains_obligation_for_retry);

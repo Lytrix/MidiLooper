@@ -239,13 +239,22 @@ window is exactly the state `reset(true)` preserves) and the revision is synced 
 destructive reset. That change is what made the active-entry assertion pass.
 
 Still owed:
-1. **Publication/replacement handoff neither repeats nor omits boundary events.** Drive the job
-   through transfer, publication and retirement, then emit and assert the committed content is
-   served exactly once — the window must not also replay.
-2. **A note crossing the first-bar boundary must close at its actual endpoint.** This is a real
+1. **A note crossing the first-bar boundary must close at its actual endpoint.** This is a real
    gap, not just a missing test: the retained window is truncated at one bar, so a NoteOn in bar 1
    whose Off lies in bar 2 is closed by the projection at `loopLengthTicks - 1` rather than at its
    actual Off tick. The actual endpoint lives in the owned frozen source, so this check depends on
    the onward-window slice; the closure policy is only correct for a note left open at the stop.
    Until then the projection's closure is a **known approximation for crossing notes**.
+2. Onward windows from the owned frozen source and the continuity-gated retirement.
+
+Landed in round 4 — **publication/replacement parity:**
+`test_published_record_interval_does_not_replay_the_return_window` drives the whole deferred chain
+(closure → staging → normalization → transfer → publication), asserts the pass is committed, then
+emits through the active entry point and asserts **exactly one NoteOn and one NoteOff**. The bound
+window survives publication and is still the served source because no matching replacement *view*
+has been handed off yet — the contract keeps it until one is — and the assertion proves the
+already-served window events are **not replayed** and the committed boundary is **not omitted**.
+The adopt path's phase rule is also pinned: adopting with a launch phase past the window's events
+skips them (the "already heard live" rule), which is why the drive stamps the source before
+resetting the cursor to the loop start.
 
