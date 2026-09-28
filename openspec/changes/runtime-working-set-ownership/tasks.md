@@ -2524,6 +2524,21 @@ own execution packet and records fixture/native/build/device results separately.
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,
       playback beyond bar one and wrap before finalization completes, plus multiple sounding tracks.
+      **2026-09-28 G0 complete — execution packet pinned, no behavior changed.** Read-only trace
+      verdict: **PASS with named prerequisites**, not a small wiring change. The MIDI entry
+      returns before `playCommittedLoopMidi` when `!hasCommittedPasses()`
+      (`TrackPlaybackHotPath.cpp:478,495`), so a deferred-only interval emits nothing; the
+      retained bar-1 window is unreachable (its adopt branch needs
+      `isPlaybackSessionExitPublicationGap()`, false while unpublished) and nothing binds it on
+      the deferred route (`bindFirstRecordingBar`'s only caller is the inline stop). The
+      projected frozen-source fill (`RecordCoverage` + `fromCaptureRange`) has **no production
+      caller**, no later-window builder exists for the frozen take, playback holds no borrow
+      that would block `retireJobCaptureSourceGrain`, and Record-mode jobs are still
+      test-only (S4f.17). Slice sequence S19.1–S19.5 (admission → bounded return-window bind in
+      the worker → onward windows from the owned frozen source → ownership through
+      successor/publication/retirement → acceptance evidence), resource accounting to record
+      before the first production edit, and the open decisions with preferred paths are pinned in
+      the [playback-handoff packet](S4F19-PLAYBACK-HANDOFF-PACKET.md). S4f.19 stays unchecked.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,

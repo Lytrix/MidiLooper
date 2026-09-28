@@ -1,5 +1,17 @@
 # Project state (execution context)
 
+**2026-09-28 — S4f.19 §2 G0 complete — execution packet pinned, no behavior changed.**
+Read-only trace verdict: PASS with named prerequisites. The MIDI entry early-returns without a
+committed pass (`TrackPlaybackHotPath.cpp:478,495`), so a deferred-only Record interval emits
+nothing; the retained bar-1 window is neither bound on the deferred route nor reachable (its
+adopt branch needs `isPlaybackSessionExitPublicationGap()`, false while unpublished); the
+projected frozen-source fill (`RecordCoverage` + `fromCaptureRange`) has no production caller;
+no onward-window builder exists for the frozen take; playback holds no borrow that would block
+`retireJobCaptureSourceGrain`; Record-mode jobs are still test-only (S4f.17). The packet fixes
+the slice sequence S19.1–S19.5, the resource accounting required before the first production
+edit, and the open decisions with preferred paths. S4f.19 stays open.
+[Playback-handoff packet](../../openspec/changes/runtime-working-set-ownership/S4F19-PLAYBACK-HANDOFF-PACKET.md).
+
 **2026-09-28 — review follow-ups on `2c71b1a3` (one firmware P1, three HITL P1/P2).**
 (1) The transfer-row capacity admission grew the prewarmed ownership row with an unguarded
 `std::vector::push_back`, so a refused allocation wrote through the null block (ASan null-write);
