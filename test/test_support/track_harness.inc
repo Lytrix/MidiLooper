@@ -59,6 +59,14 @@
 #include "../../src/Track/TrackPlaybackWindowBuild.cpp"
 #include "../../src/Track/TrackLoopJamGeometry.cpp"
 #include "../../src/Track/TrackOverdubLifecycle.cpp"
+// S4f.18: the Record source-staging step lives in the production Track TU above,
+// so every suite that compiles that TU links its dependency here.
+#include "../../src/Utils/RecordSourceStaging.cpp"
+// S4f.18: the Record preparation composition and its two bounded policy owners
+// are dependencies of the Track preparation step above.
+#include "../../src/Utils/LoopStopFinalize.cpp"
+// `CaptureIncrementalSanity.cpp` is already provided by LoopCaptureTestDeps.cpp.
+#include "../../src/Utils/RecordPreparation.cpp"
 #include "../../src/Track/TrackOverdubWrap.cpp"
 #include "../../src/Track/TrackDeferredMaintenance.cpp"
 #include "../../src/Utils/CommittedMidiScratch.cpp"

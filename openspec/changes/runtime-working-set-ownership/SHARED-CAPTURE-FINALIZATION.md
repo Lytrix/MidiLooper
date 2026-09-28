@@ -1,6 +1,8 @@
 # Shared record/overdub finalization — firmware implementation contract
 
-Status: contract specified; production fixtures and identity/length prerequisites implemented, 2026-09-27. Shared deferred record finalization and device acceptance remain open.
+Status: contract specified; production fixtures, identity/length prerequisites and the
+bounded record preparation composition implemented, 2026-09-28. Shared deferred record
+finalization and device acceptance remain open.
 Authority: DEC-078 — accepted interactions; runtime role/finalization requirements in
 [spec delta](specs/runtime-working-set-ownership/spec.md); design Revision 23 mandatory
 record-A → overdub-B acceptance. Implementation: S4f.15–S4f.22 in [tasks](tasks.md).
@@ -266,6 +268,24 @@ A missed natural window is NOT_EXERCISED; no criterion is waived and no reboot p
 Completion: S4f.16 production fixtures are implemented; see [fixture evidence](S4F16-EXECUTION.md).
 The user approved connected S4f.17–S4f.21 implementation. Common start identity, typed accepted-stop
 identity and maintained record-length metadata are prerequisites in progress/verification; see
-[S4f.17 execution evidence](S4F17-EXECUTION.md). Record stop is still inline. Full shared worker,
-playback, publication/undo and caller migration gates are not complete. No device acceptance;
-S4f.13 and S7 remain open.
+[S4f.17 execution evidence](S4F17-EXECUTION.md). The bounded Record preparation composition is now
+implemented and native-verified: `RecordPreparationCursor` canonically orders a private prepared
+store, applies reserved wrap repair and re-orders, then applies minimum-length decisions and private
+compaction in bounded grains. Missing NoteOn identity, a stale preparation generation and a missing
+reservation deny by name; the role is not dispatched yet, so no ITCM or RAM1 growth is claimed. The
+prepared route now also completes missing NoteOn identities in canonical order (matching `sealCapture`)
+when the caller supplies a `NoteIdSource`, and still denies without one. The frozen take is now
+staged into that private output one bounded row per unit by `RecordSourceStaging::Cursor`, applying
+the existing per-row stop projection under an ephemeral seal; the closure output holds only terminal
+Offs and must be merged into the staged store before normalization (see the corrected sequence in the
+[role-admission packet](S4F18-ROLE-ADMISSION-PACKET.md#g0-correction-and-slice-sequence-2026-09-28)).
+See [composition](S4F18-COMPOSITION-EXECUTION.md), [identity](S4F18-IDENTITY-EXECUTION.md) and
+[source-staging](S4F18-SOURCE-STAGING-EXECUTION.md), [closure-merge](S4F18-CLOSURE-MERGE-EXECUTION.md)
+and [preparation-role](S4F18-PREPARATION-ROLE-EXECUTION.md) evidence. The per-track
+`RecordPreparation::Role` now binds by job identity and drives the composition over the merged store
+to `RecordPrepared`, a bounded pass transfer stages the normalized output into the job-owned receipt
+at `RecordPassReady`, and the deferred publication atomically commits the pass, pushes the interval's
+`RecordPassAdded` undo entry from its own job-owned geometry and admits persistence once at
+`RecordPublished`, after which a bounded retirement returns the ring entry. S4f.20 remains unchecked
+for the deferred revts validation, `invalidateCaches()` parity and the production Record bind site. Record stop is still inline. Publication, the shared worker continuation and all caller
+migration gates are not complete. No device acceptance; S4f.13 and S7 remain open.

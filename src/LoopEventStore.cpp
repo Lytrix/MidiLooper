@@ -541,15 +541,30 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStoreOrderCursor::complete() const {
       chunks_ == owner_->chunkIds_.size();
 }
 
-bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginPrivateTickOrder(LoopEventStoreOrderCursor& c) const {
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginPrivateOrder(
+    LoopEventStoreOrderCursor& c, bool canonical) const {
   if (c.phase_ != LoopEventStoreOrderCursor::Phase::Idle || (!poolReady_ && eventCount_)) return false;
   const size_t expected = (eventCount_ + LoopEventStoreConfig::CHUNK_CAPACITY - 1) /
                           LoopEventStoreConfig::CHUNK_CAPACITY;
   if (chunkIds_.size() != expected && !(eventCount_ == 0 && chunkIds_.size() == 1)) return false;
   c.owner_ = this; c.generation_ = ownershipGeneration_; c.pool_ = poolLifetime_;
   c.count_ = eventCount_; c.chunks_ = chunkIds_.size();
+  c.canonical_ = canonical; c.pivotClass_ = 0;
   c.phase_ = LoopEventStoreOrderCursor::Phase::Preflight;
   return true;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginPrivateTickOrder(LoopEventStoreOrderCursor& c) const {
+  return beginPrivateOrder(c, false);
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginPrivateCanonicalOrder(LoopEventStoreOrderCursor& c) const {
+  return beginPrivateOrder(c, true);
+}
+
+LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivateCanonicalOrder(
+    LoopEventStoreOrderCursor& c, size_t quantum) {
+  return stepPrivateTickOrder(c, quantum);
 }
 
 LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivateTickOrder(
@@ -581,6 +596,27 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivat
     return &chunk(chunkIds_[ci]).events[i % LoopEventStoreConfig::CHUNK_CAPACITY];
   };
   auto deny = [&]() { c.phase_ = Phase::Denied; return LoopEventStoreRewriteResult::Denied; };
+  // Legacy capture sort class: NoteOff before NoteOn before every other message.
+  auto privateOrderClass = [](const MidiEvent& e) -> uint8_t {
+    return e.isNoteOff() ? 0 : (e.isNoteOn() ? 1 : 2);
+  };
+  // Ordering key. Tick-only keeps the legacy stable equal-tick identity; canonical
+  // adds the capture class so equal ticks sort Off < On < other as `noteEventLess`.
+  auto keyLess = [&](const MidiEvent& a, const MidiEvent& b) {
+    if (a.tick != b.tick) return a.tick < b.tick;
+    if (!c.canonical_) return false;
+    return privateOrderClass(a) < privateOrderClass(b);
+  };
+  auto beforePivot = [&](const MidiEvent& row) {
+    if (row.tick != c.pivot_) return row.tick < c.pivot_;
+    if (!c.canonical_) return false;
+    return privateOrderClass(row) < c.pivotClass_;
+  };
+  auto notAfterPivot = [&](const MidiEvent& row) {
+    if (row.tick != c.pivot_) return row.tick < c.pivot_;
+    if (!c.canonical_) return true;
+    return privateOrderClass(row) <= c.pivotClass_;
+  };
   while (c.lastStepUnits_ < quantum) {
     ++c.lastStepUnits_;
     if (c.phase_ == Phase::Preflight) {
@@ -603,25 +639,27 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivat
       if (m.last - m.first == 2) {
         auto* a = event(m.first); auto* b = event(m.middle);
         if (!a || !b) return deny();
-        if (b->tick < a->tick) std::swap(*a, *b);
+        if (keyLess(*b, *a)) std::swap(*a, *b);
         continue;
       }
       c.lower_ = m.middle - m.first > m.last - m.middle;
       if (c.lower_) {
         c.firstCut_ = m.first + (m.middle - m.first) / 2;
         auto* pivot = event(c.firstCut_); if (!pivot) return deny();
-        c.pivot_ = pivot->tick; c.low_ = m.middle; c.high_ = m.last;
+        c.pivot_ = pivot->tick; c.pivotClass_ = privateOrderClass(*pivot);
+        c.low_ = m.middle; c.high_ = m.last;
       } else {
         c.secondCut_ = m.middle + (m.last - m.middle) / 2;
         auto* pivot = event(c.secondCut_); if (!pivot) return deny();
-        c.pivot_ = pivot->tick; c.low_ = m.first; c.high_ = m.middle;
+        c.pivot_ = pivot->tick; c.pivotClass_ = privateOrderClass(*pivot);
+        c.low_ = m.first; c.high_ = m.middle;
       }
       c.phase_ = Phase::Search;
     } else if (c.phase_ == Phase::Search) {
       if (c.low_ < c.high_) {
         const size_t mid = c.low_ + (c.high_ - c.low_) / 2;
         auto* row = event(mid); if (!row) return deny();
-        const bool before = c.lower_ ? row->tick < c.pivot_ : row->tick <= c.pivot_;
+        const bool before = c.lower_ ? beforePivot(*row) : notAfterPivot(*row);
         if (before) c.low_ = mid + 1; else c.high_ = mid;
       } else {
         if (c.lower_) c.secondCut_ = c.low_; else c.firstCut_ = c.low_;
@@ -731,6 +769,17 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::markPrivateFilterPair(
   if (!a || !b) return false;
   a->tick = kPrivateFilterRemovedTick;
   b->tick = kPrivateFilterRemovedTick;
+  return true;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::assignPrivateNoteId(
+    LoopEventStoreFilterCursor& c, size_t ordinal, NoteId id) {
+  if (!ownsPrivateFilter(c) || c.phase_ != LoopEventStoreFilterCursor::Phase::Input) return false;
+  if (id == kInvalidNoteId) return false;
+  auto* row = privateFilterRow(c, ordinal);
+  if (!row || row->tick == kPrivateFilterRemovedTick) return false;
+  if (!row->isNoteOn() || row->noteId != kInvalidNoteId) return false;
+  row->noteId = id;
   return true;
 }
 

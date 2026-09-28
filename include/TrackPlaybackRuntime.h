@@ -46,6 +46,20 @@ enum class PendingStopPhase : uint8_t {
   CompanionBridge,
   AtomicTransfer,
   DeferredCleanup,
+  /// Record-only: after the terminal closure Offs, copy the frozen raw take into
+  /// the same private output through the bounded stop projection. Appended to the
+  /// enum so existing phase ranges are unchanged.
+  RecordSourceStaging,
+  /// Record-only terminal: the take is canonically ordered, identity-complete and
+  /// policy-filtered in the private output and awaits publication (S4f.20).
+  RecordPrepared,
+  /// Record-only terminal: the job owns a capacity-proven staged Record pass and
+  /// awaits the atomic publication transaction (S4f.20 completion). Appended so
+  /// existing phase ranges are unchanged.
+  RecordPassReady,
+  /// Record-only: the pass, its `RecordPassAdded` undo entry and the once-only
+  /// persistence admission are published; the job awaits bounded retirement.
+  RecordPublished,
 };
 
 /// Declares the per-turn quantum and fixed closure/storage obligations between

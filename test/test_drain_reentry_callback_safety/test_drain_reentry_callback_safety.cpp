@@ -11,7 +11,7 @@ constexpr uint8_t kClearChannel = MidiConfig::Channels::SELECT;
 
 /// Replace the configured table with one entry that maps both press types to `CLEAR_TRACK`. This keeps
 /// the route real (`handleMidiNote` -> processor -> callback -> `executeAction`) and removes only the
-/// gesture timing, which the native `millis()` boundary cannot advance.
+/// gesture timing. Timing is covered separately by the production-mapping tests below.
 void configureClearOnShortPress() {
   MidiButtonConfig::Config::clearConfigs();
   MidiButtonConfig::ButtonConfig config(kClearNote, kClearChannel, "CLEAR (A3.4a fixture)");
@@ -20,12 +20,11 @@ void configureClearOnShortPress() {
 }
 
 /// One CLEAR injected through the real MIDI dispatch route. The fixture's button is momentary, so the
-/// NoteOn press itself dispatches the configured `CLEAR_TRACK` action; that removes only the native
+/// NoteOn press itself dispatches the configured `CLEAR_TRACK` action; that removes only the
 /// `millis()` tap-expiry stage, not the dispatch route.
 void dispatchClearThroughRealMidiRoute() {
   midiButtonManager.handleMidiNote(kClearChannel, kClearNote, 127, true);
-  // Release the press, as a controller does. The native `millis()` boundary cannot expire a tap, so the
-  // release dispatches the orphan note-off path and only clears the processor's pressed state.
+  // Release completes the momentary fixture gesture.
   midiButtonManager.handleMidiNote(kClearChannel, kClearNote, 0, false);
 }
 
@@ -254,6 +253,36 @@ void test_s2b8_redo_clear_supersedes_the_restore_request() {
       "a redo-clear must record `superseded`, not `refused`");
 }
 
+// Layer-hold is off-path for the record control. Keep this boundary fail-closed;
+// the fixture must never turn a held Record button into a loop-layer mutation.
+void TrackManager::beginSlotSelectionHold(uint8_t, uint8_t) {
+  TEST_FAIL_MESSAGE("unexpected loop layer hold in record-control fixture");
+}
+void TrackManager::endSlotSelectionHold(uint8_t, uint8_t, uint32_t) {
+  TEST_FAIL_MESSAGE("unexpected loop layer release in record-control fixture");
+}
+
+// Response-driven HITL: actual USB and DROID dispatch with the production timing table.
+// A successful clear after release is the control proving the whole route acts.
+void verifyProductionLongClear(InputSource source) {
+  midiButtonManager.setup();
+  MidiButtonConfig::Config::loadConfiguration();
+  nativeMillisSet(10000);
+  Track& track = preparePlayingTrackWithContent();
+  const uint8_t slot = track.getActiveLoopIndex();
+  TEST_ASSERT_TRUE(track.hasDataInSlot(slot));
+  midiHandler.handleMidiMessage(midi::NoteOn, kClearChannel, kClearNote, 127, source);
+  TEST_ASSERT_TRUE(midiButtonManager.isButtonPressed(kClearNote, kClearChannel));
+  nativeMillisAdvance(600);
+  midiButtonManager.update();
+  TEST_ASSERT_TRUE_MESSAGE(track.hasDataInSlot(slot), "holding alone must not clear");
+  midiHandler.handleMidiMessage(midi::NoteOff, kClearChannel, kClearNote, 0, source);
+  TEST_ASSERT_FALSE(midiButtonManager.isButtonPressed(kClearNote, kClearChannel));
+  TEST_ASSERT_FALSE_MESSAGE(track.hasDataInSlot(slot), "release must reach the real clear owner");
+}
+void test_hitl_usb_production_long_clear_route() { verifyProductionLongClear(SOURCE_USB); }
+void test_hitl_droid_production_long_clear_route() { verifyProductionLongClear(SOURCE_USB_HOST); }
+
 void setUp() { A34aBoundary::resetSlotFlags(); }
 void tearDown() {}
 int main(int, char**) {
@@ -267,5 +296,7 @@ int main(int, char**) {
   // S2b.8 — undo-clear / redo-clear are external resets of the restore request.
   RUN_TEST(test_s2b8_undo_clear_supersedes_the_restore_request);
   RUN_TEST(test_s2b8_redo_clear_supersedes_the_restore_request);
+  RUN_TEST(test_hitl_usb_production_long_clear_route);
+  RUN_TEST(test_hitl_droid_production_long_clear_route);
   return UNITY_END();
 }

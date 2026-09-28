@@ -2357,6 +2357,113 @@ own execution packet and records fixture/native/build/device results separately.
       pass. ARM cursor 56 bytes, no store growth or take-sized scratch. Ordering/
       policy composition, preparation-role admission and production publication
       remain open. [Filter execution evidence](S4F18-FILTER-EXECUTION.md).
+      **2026-09-28 preparation composition:** `RecordPreparationCursor` now composes the
+      existing owners over one private prepared store: canonical (tick, Off < On < other)
+      order, wrap repair with reserved synthetic Offs, canonical re-order, then
+      minimum-length decisions and private compaction. Work is bounded per grain; identity
+      gaps, stale generations and missing reservations deny by name. 12/12 focused cases
+      and an eight-round differential against the legacy store helpers pass; four mutations
+      fail assertions. Full native **2,571 passed / 7 skipped**; capture-serial build passes
+      with RAM1 padding **840** and no linked ITCM growth (the role is not dispatched yet).
+      ARM `Workspace` 40,960 B / cursor 1,104 B, caller-owned. Bounded missing-identity
+      completion, resource admission and the shared worker/publication handoff remain open.
+      [Composition execution evidence](S4F18-COMPOSITION-EXECUTION.md).
+      **2026-09-28 bounded identity completion:** the private prepared store now has one
+      fail-closed NoteId write, and the composition completes missing NoteOn identities in
+      canonical order between the sort and wrap repair, matching `sealCapture`. A caller
+      `NoteIdSource` supplies them; without one, or on an invalid/refused id, the cursor
+      denies `IdentityIncomplete`. 17/17 composition cases (store-level overwrite/row
+      matrix plus the canonical-order and differential cases) pass; three mutations fail
+      assertions. Full native **2,576 passed / 7 skipped**; capture-serial build passes with
+      RAM1 padding **840** and no linked ITCM growth. ARM cursor 1,104 -> 1,120 B. Resource
+      admission and the shared worker/publication handoff remain open.
+      [Identity execution evidence](S4F18-IDENTITY-EXECUTION.md).
+      **2026-09-28 preparation-role admission packet + workspace union:** wrap repair and
+      minimum-length filtering run in disjoint phases, so the composition `Workspace` is a
+      union scratch role of **24,576 B** (was 40,960) pinned by a `static_assert`, and
+      `FilterReset` re-discards the tail cursor. The admission slice is pinned in the
+      [role-admission packet](S4F18-ROLE-ADMISSION-PACKET.md): one externally allocated
+      25,696 B preparation role per track (8 total, 205,568 B), bound by job identity,
+      driving one bounded grain and advancing only to the (future) publication phase.
+      Packet only — no behavior edit; resource admission/publication remain open.
+      **2026-09-28 bounded source staging (G0 packet correction):** reconnaissance falsified
+      the packet's premise that the closure output store already holds the take: the closure
+      consumer requires an empty store and writes only terminal Offs. The corrected sequence
+      is (1) stage the frozen raw range into a private output, (2) merge the closure Offs,
+      (3) the per-track role and normalization, (4) publication. Step 1 landed as
+      `RecordSourceStaging::Cursor`: one row per bounded unit through the existing
+      `projectRecordStopTick` policy (remap an overflowing NoteOn, drop other overflowing
+      rows) under an ephemeral seal, never allocating and never growing the directory.
+      7/7 focused cases including stale-source, credit-exhaustion and privacy-on-seal;
+      two mutations fail assertions. Full native **2,583 passed / 7 skipped**; capture-serial
+      build passes with RAM1 padding **840**. [Source-staging evidence](S4F18-SOURCE-STAGING-EXECUTION.md).
+      **2026-09-28 closure merge and staging phase:** the frozen take is staged into the same
+      private output *after* the terminal closure Offs (the composition orders the store, so the
+      append order is not semantic), so the closure consumer's contract is unchanged.
+      `PendingStopPhase::RecordSourceStaging` is appended to the enum; the Record closure step
+      sets its own next phase in both completion places; `stepDeferredRecordSourceStaging`
+      validates owner/generation/closure/raw-range, tops up credits, binds the per-track cursor
+      under a receipt and drives one bounded grain to `CanonicalOrder`. The cursor and receipt
+      live in the externally allocated ring, whose reviewed size pin is re-based 2984 -> 3072 B
+      (+88 B per track; RAM1 padding stays 840). Focused shared-finalization **32/32** and the
+      affected suites **166/166**; two mutations fail assertions. Full native **2,584 passed /
+      7 skipped**; the full-suite gate caught a missing harness include in three
+      firmware-boundary suites, which was fixed. [Closure-merge evidence](S4F18-CLOSURE-MERGE-EXECUTION.md).
+      **2026-09-28 per-track preparation role and normalization step:** the admission slice
+      landed. `RecordPreparation::Role` (composition cursor + 24,576 B union scratch, bound by
+      job slot/LoopId/interval/generation) lives in the externally allocated per-track ring;
+      `sizeof(CaptureStopJobs)` is re-based 3072 -> 28,808 B (8 x 25,736 B role = 205,888 B
+      PSRAM, RAM1 padding unchanged at 840). `stepDeferredRecordNormalization` validates
+      mode/phase/owner/geometry/runtime generation/closure, tops up credits, binds once and
+      drives one bounded grain over the merged store, advancing to the new terminal
+      `RecordPrepared`. The Record worker branch dispatches closure -> staging -> normalization
+      -> prepared. Integrated fixture proves the pre-normalization order (Off, Off, On, On)
+      becomes canonical (On, On, Off, Off) with identities preserved; mismatched-binding and
+      terminal-phase denials leave the store untouched. Focused shared-finalization **33/33**,
+      with preparation and staging **57/57**; two mutations fail assertions. Full native
+      **2,585 passed / 7 skipped**; capture-serial build passes with RAM1 padding **840**.
+      [Preparation-role evidence](S4F18-PREPARATION-ROLE-EXECUTION.md).
+      **2026-09-28 bounded Record pass transfer (S4f.20 prerequisite):** the normalized private
+      output is now staged into the job-owned transfer receipt through the same mode-neutral
+      mechanism the overdub route uses (`beginPreparedCapturePassFromActiveAdmission` +
+      `stepPreparedCapturePass` over `runtime->canonicalCaptureOutput`), with a new terminal
+      `RecordPassReady`. The chain is
+      `ReservedClosure -> RecordSourceStaging -> CanonicalOrder -> RecordPrepared -> RecordPassReady`.
+      Nothing is published: the atomic publication transaction (pass + `RecordPassAdded`
+      undo/geometry + audible-source handoff + once-only persistence + retirement) consumes that
+      terminal and is S4f.20 completion. Focused shared-finalization **33/33**; mutations M1
+      (ready phase) and M3 (receipt re-begun) fail assertions, while M2 (phase guard) is recorded
+      as individually unobservable. Full native **2,585 passed / 7 skipped**; capture-serial
+      build passes with RAM1 padding **840** and the ring pin unchanged.
+      [Pass-transfer evidence](S4F18-RECORD-PASS-TRANSFER-EXECUTION.md).
+      **2026-09-28 mode-correct Record atomic publication and retirement:** the deferred Record
+      route now publishes end to end. `stepDeferredRecordPublication` performs the bounded
+      canonical handoff with a local receipt and then the job-slot-keyed effects
+      (`RecordPassAdded` undo entry, display staleness, once-only persistence) at a new
+      `RecordPublished` phase; `stepDeferredRecordRetirement` releases the frozen extent in bounded
+      grains and returns the ring entry. The chain is now
+      `ReservedClosure -> RecordSourceStaging -> CanonicalOrder -> RecordPrepared -> RecordPassReady
+      -> RecordPublished -> (retired)`. The inline side-effect owner was evaluated and rejected: it
+      drags the note-edit surface in and two of its Record effects are not job-correct. Named
+      residuals keep S4f.20 unchecked: (1) job-owned Record geometry, captured at the production
+      Record bind site once S4f.17 record admission exists; (2) the deferred Record revts validation,
+      which reads the active loop; (3) `invalidateCaches()` parity. Focused **68/68** (load 35 +
+      shared-finalization 33); mutations M1 (undo entry), M2 (atomic handoff) and M3 (ring entry)
+      fail assertions. Full native **2,585 passed / 7 skipped**; capture-serial build passes with
+      RAM1 padding **840**. [Publication evidence](S4F20-RECORD-PUBLICATION-EXECUTION.md).
+      **2026-09-28 job-owned Record geometry receipt:** `CaptureStopJob` now owns the interval's
+      before/after `UndoLoopGeometry` and its LoopId, captured at the Record bind by
+      `Track::captureRecordGeometryReceipt` (which also consumes the Track's inline baseline so a
+      successor cannot rewrite it). `TrackUndo::pushRecordPassAdded` gained a job-owned overload,
+      and the deferred publication now fails closed without a matching receipt and stamps the
+      after geometry from the job's own loop. The reviewed ring pin is re-based 28808 -> 28936 B
+      (+32 B per job). A fixture seeds a successor record baseline after the bind and proves the
+      published entry still carries the job's geometry; two mutations fail assertions (reading the
+      live baseline publishes the seeded value; a missing receipt denies). Focused **33/33**; full
+      native **2,585 passed / 7 skipped**; capture-serial build passes with RAM1 padding **840**.
+      [Geometry evidence](S4F20-RECORD-GEOMETRY-EXECUTION.md).
+      S4f.20 remains unchecked for the deferred revts validation, `invalidateCaches()` parity and
+      the production Record bind site (S4f.17). Next: S4f.21 caller migration.
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,

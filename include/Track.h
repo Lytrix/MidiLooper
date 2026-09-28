@@ -20,6 +20,8 @@
 #include "TrackDisplayState.h"
 #include "Loop.h"
 #include "LoopEventStore.h"
+#include "Utils/RecordSourceStaging.h"
+#include "Utils/RecordPreparationRole.h"
 #include "GlobalUndoStack.h"
 #include "TrackPlaybackRuntime.h"
 #include "Slot.h"
@@ -667,6 +669,13 @@ private:
     PendingCapturePass pendingPass;
     LoopEventStoreCommitCursor passTransfer;
     bool ownsPendingPass = false;
+    /// S4f.20: job-owned Record undo geometry. Captured at the interval's Record
+    /// bind and consumed fail-closed by the deferred publication, so a live
+    /// successor's record start can never rewrite this interval's baseline.
+    UndoLoopGeometry recordBeforeGeometry{};
+    UndoLoopGeometry recordAfterGeometry{};
+    LoopId recordGeometryLoopId = kInvalidLoopId;
+    bool hasRecordGeometry = false;
     PendingNoteMap pendingNotes;
   };
   // Stable descriptors only: shared canonical/companion worker scratch is not
@@ -719,6 +728,22 @@ private:
     /// S4f.1: the track's accepted-but-not-yet-executed interaction. One instance, not a ring
     /// descriptor: it consumes none of `entries`/`count` and is never stacked.
     PendingInteractionLatch interaction;
+    /// S4f.18 Record-only source staging. One per track because the worker binds the
+    /// FIFO head, so only one job per track stages at a time. External to `Track`
+    /// (the ring is externally allocated), so it adds no DTCM field.
+    struct RecordStagingReceipt {
+      uint64_t sourceGeneration = 0;
+      uint32_t frozenGeneration = 0;
+      const void* owner = nullptr;
+      size_t stagedRows = 0;
+      bool bound = false;
+    };
+    RecordSourceStaging::Cursor recordStaging;
+    RecordStagingReceipt recordStagingReceipt;
+    /// S4f.18: the per-track Record preparation role (composition cursor + union
+    /// scratch). Lives in the externally allocated ring, so `Track` gains no DTCM
+    /// field; the ring's reviewed size pin is re-based with its reason.
+    RecordPreparation::Role recordPreparation;
   };
   struct CaptureStopJobsDeleter {
     void operator()(CaptureStopJobs* jobs) const;
@@ -765,9 +790,15 @@ private:
     static_assert(sizeof(Track) == 384,
                   "S3.0: Track is the eight-way DTCM array, so a by-value member costs 8x "
                   "(measured for teensy41-capture-serial; re-measure for another configuration)");
-    static_assert(sizeof(CaptureStopJobs) == 2984,
-                  "S3.0: the externally allocated ring object also carries the latch; its size is a "
-                  "RAM1-relevant decision, not incidental");
+    static_assert(sizeof(CaptureStopJobs) == 28936,
+                  "S3.0/S4f.18: the externally allocated ring object also carries the latch, the "
+                  "Record source-staging cursor/receipt and the per-track Record preparation role; "
+                  "its size is a RAM1-relevant decision, not incidental (re-based 2984 -> 3072 for "
+                  "staging, then 3072 -> 28808 for the 25,736 B preparation role: composition "
+                  "cursor + 24,576 B union scratch, then 28808 -> 28936 for the +32 B per job of "
+                  "job-owned Record undo geometry: two 12 B UndoLoopGeometry receipts, the LoopId "
+                  "and the presence flag). The role is externally allocated, so this is "
+                  "PSRAM, not DTCM; the post-link RAM1 gate is the DTCM authority.");
 #endif
   }
   /// Latch an accepted stop for `slot`/`interval`; a same-identity repeat is a no-op.
@@ -817,6 +848,26 @@ private:
   /// Prepare at most one job-owned Record terminal Off into reserved output.
   /// Does not admit Record stops, publish, or touch the live capture producer.
   LoopEventStoreRewriteResult stepDeferredRecordClosure(CaptureStopJob& job);
+  /// Bounded copy of the job's frozen raw take into the private Record output,
+  /// after the terminal closure Offs. Record-only; advances to `CanonicalOrder`.
+  LoopEventStoreRewriteResult stepDeferredRecordSourceStaging(CaptureStopJob& job);
+  /// Bounded preparation composition over the merged private Record output:
+  /// canonical order, identity completion, wrap repair and minimum-length
+  /// policy. Record-only; advances to `RecordPrepared` (publication is S4f.20).
+  LoopEventStoreRewriteResult stepDeferredRecordNormalization(CaptureStopJob& job);
+  /// Bounded staging of the normalized private Record output into the job-owned
+  /// transfer receipt. Record-only; advances to `RecordPassReady` (the atomic
+  /// publication transaction is S4f.20 completion).
+  LoopEventStoreRewriteResult stepDeferredRecordPassTransfer(CaptureStopJob& job);
+  /// Record-only atomic publication over `RecordPassReady`: commit the staged pass,
+  /// push its Record undo and admit persistence once. Advances to `RecordPublished`.
+  LoopEventStoreRewriteResult stepDeferredRecordPublication(CaptureStopJob& job);
+  /// Record-only bounded retirement of a published job: release its frozen source,
+  /// clear the runtime owner and advance the ring. Advances out of the ring.
+  LoopEventStoreRewriteResult stepDeferredRecordRetirement(CaptureStopJob& job);
+  /// Capture this interval's job-owned Record undo geometry and consume the Track's
+  /// inline record-start baseline. Called at the Record bind, never at publication.
+  void captureRecordGeometryReceipt(CaptureStopJob& job);
 
   /// One bounded turn of the deferred undo-identity collection. Returns true when
   /// the job's prepared entry is ready (or the session had nothing to record).

@@ -122,3 +122,9 @@ Final full native is rerun after the accessor change. Initial failed build evide
   updated. Pure implementation of existing owners/DEC-043/DEC-093; no new decision
   or shipped deliverable. Parent remains open, **50/176** complete. Filter compaction,
   prepared-output persistence/publication and shared Record routing remain required.
+
+Superseding measurement (2026-09-28, S4f.18 preparation composition): the order cursor
+is now **872 bytes** (+8) because the same bounded worker gained the opt-in canonical
+(tick, NoteOff < NoteOn < other) key. The tick-only entry points and their stable
+equal-tick identity are unchanged; the ARM measurement was re-taken with the real
+firmware flags. See [composition execution evidence](S4F18-COMPOSITION-EXECUTION.md).

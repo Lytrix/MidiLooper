@@ -598,6 +598,25 @@ TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotInd
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
         return;
     }
+    Loop& loop = track.getLoop(slotIndex);
+    // Inline route: the record-start baseline is this interval's before geometry and is
+    // consumed here. The deferred route captures the same baseline into its job at bind
+    // and calls the job-owned overload below, so this stays the only live-state reader.
+    const UndoLoopGeometry before = track.hasRecordCaptureBaselineGeometry_
+        ? track.recordCaptureBaselineGeometry_
+        : captureGeometry(loop);
+    track.hasRecordCaptureBaselineGeometry_ = false;
+    track.recordCaptureBaselineGeometry_ = {};
+    pushRecordPassAdded(track, slotIndex, passId, loop.loopId, before, captureGeometry(loop));
+}
+
+TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotIndex, PassId passId,
+                                                   LoopId loopId,
+                                                   const UndoLoopGeometry& beforeGeometry,
+                                                   const UndoLoopGeometry& afterGeometry) {
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || passId == kInvalidPassId) {
+        return;
+    }
     // Fresh record on a cleared slot supersedes prior pass and clear-slot undo checkpoints.
     GlobalUndoStack& stack = track.getGlobalUndoStack();
     const size_t pruned = eraseUndoEntriesForSlot(stack, slotIndex, false);
@@ -610,7 +629,7 @@ TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotInd
     UndoEntry entry;
     entry.kind = UndoEntryKind::RecordPassAdded;
     entry.slotIndex = slotIndex;
-    entry.loopId = loop.loopId;
+    entry.loopId = loopId;
     entry.passId = passId;
     // Record start clears the published root (`startRecording` → resetPassTimeline).
     // before remains empty; after is the current published tip when already current.
@@ -619,14 +638,8 @@ TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotInd
         entry.afterPublishedSnapshot = capturePublishedSnapshot(loop);
         entry.afterPublishedCoverage = capturePublishedSnapshotCoverage(loop);
     }
-    if (track.hasRecordCaptureBaselineGeometry_) {
-        entry.beforeGeometry = track.recordCaptureBaselineGeometry_;
-    } else {
-        entry.beforeGeometry = captureGeometry(loop);
-    }
-    entry.afterGeometry = captureGeometry(loop);
-    track.hasRecordCaptureBaselineGeometry_ = false;
-    track.recordCaptureBaselineGeometry_ = {};
+    entry.beforeGeometry = beforeGeometry;
+    entry.afterGeometry = afterGeometry;
     const bool needsDeferredAfter = !entry.afterPublishedSnapshot;
     pushUndoEntry(track, std::move(entry));
     if (needsDeferredAfter) {

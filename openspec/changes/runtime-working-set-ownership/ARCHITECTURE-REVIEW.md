@@ -8554,6 +8554,35 @@ this re-run (preparation cleared campaign-authored test data only).
     --expect-successor-note 67 --out captures/<run>/retention-review.json
 ```
 
+
+
+## S4f.13 — accepted-sequence driver correction (2026-09-27)
+
+Execution packet: host-only, user-authorized; specified before edits. Owner: `hitl_accepted_sequence.py`, its gesture plan and managed `DeviceSession`; oracle: `accepted_sequence_probe.py`. Contract: task S4f.13 and DEC-078 — every interaction is accepted.
+
+Source trace: `handleToggleRecordForSlot` reaches the capture-switch branch **before** the SD-aware playback branch, only while capturing. The proven retention plan’s B switch is A’s single stop; inserting a separate A stop removes that precondition. B must be populated for overdub. An empty C recording is a separate retention leg, not evidence of B overdubbing.
+
+Controls/oracle fixed before edits: plan must match the retention prefix through B stop; no separate A stop and no record carrier assumed for a populated B. An unexpected queued/reaffirmed playback switch aborts before the next gesture; generic Playback-started lines cannot prove target identity. Abort must survive shutdown into the JSON report and nonzero exit. Record-only RECA/RECS evidence cannot pass an overdub leg. A window-open row cannot prove release, a wrong-slot or post-release start cannot prove overlap.
+
+Verification: focused host tests and retention-plan regression, OpenSpec validation, Python compile and diff checks. Firmware/native build not applicable (host-only, no push/PR); no upload, SD operation, or hardware acceptance. Device-only timing/content and identity evidence remain open.
+
+Completion record: host verified. `.venv/bin/python scripts/test_accepted_sequence.py`: 30/30;
+`.venv/bin/python scripts/test_retention_handoff_plan.py`: 23/23;
+`.venv/bin/python -m unittest discover -s scripts -p 'test_device_shutdown.py'`: 15/15.
+Mutation reinstating the generic Playback-started guard: the new actual-driver regression fails once,
+zero errors. This is a discriminating assertion, not a predicate-only test. A mocked managed run verifies
+B-before-A seeding, shutdown before capture close, a written abort report and exit 3. No hardware was opened.
+`openspec validate runtime-working-set-ownership --strict`: valid; Python compilation and diff checks pass.
+No firmware/native build (host-only, no push/PR), no hardware acceptance. S4f.13 remains open.
+
+Oracle boundary discovered: RECA/RECS originate in record owners; overdub lifecycle uses different,
+currently uncorrelated evidence. An overdub invocation therefore marks record-specific links UNKNOWN,
+not a firmware failure or acceptance. Counting successful stops cannot establish how many inputs were
+sent, so one-press evidence is also UNKNOWN pending driver-report correlation. This slice does not
+invent identity from generic human rows or weaken the task’s content/timing gates. The record leg’s
+existing setup is not device revalidated by this overdub correction. No architectural decision changed;
+no DEC appended. Nothing shipped to device, so deliverable shipping status is unchanged.
+
 ## Shared record/overdub finalization — contract review (2026-09-27)
 
 Scope: [firmware contract](SHARED-CAPTURE-FINALIZATION.md), design Revision 25;
