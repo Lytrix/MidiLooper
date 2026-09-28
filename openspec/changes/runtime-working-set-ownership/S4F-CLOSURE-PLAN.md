@@ -204,3 +204,17 @@ the destination-row capacity and geometry receipt are currently established at t
 transfer grain / bind fixture until that production bind site exists. **Next slice: §2 —
 first-bar and onward playback handoff (S4f.19).**
 
+### §2 status — 2026-09-28 (G0 complete)
+
+Read-only G0 is complete and pinned in the
+[playback-handoff packet](S4F19-PLAYBACK-HANDOFF-PACKET.md): verdict **PASS with named
+prerequisites**. §2 is not a wiring change — the MIDI entry early-returns without a committed
+pass, the retained bar-1 window is neither bound nor reachable on the deferred route, the
+projected frozen-source fill has no production caller, no onward-window builder exists, and
+retirement can invalidate a source a playback fill would read. The packet fixes the slice
+sequence (S19.1 admission → S19.2 bounded return-window bind → S19.3 onward windows from the
+owned frozen source → S19.4 ownership → S19.5 acceptance), the resource accounting to record
+before the first production edit, and the open decisions with preferred paths. No firmware
+behavior changed; S4f.19 stays open.
+
+
