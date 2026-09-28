@@ -228,6 +228,39 @@ Oracle: still `SETUP_INCOMPLETE`, now for three structural reasons rather than t
 Green on the same run: `L2_no_capacity_denial`, `L3_a_finalization_window`,
 `L4_a_capacity_released`. Nothing is waived: the leg drove, and the verdict stays non-PASS.
 
+## Continuation — verdict-grade device sessions (2026-09-28, after commit 9993f2a6)
+
+Landed after the closeout, closing two of the three structural oracle gaps:
+
+- **Owned boot.** `capture_session.py --boot-reset` resets the board *before* the boot
+  settle, so the banner starts the captured stream. A 1200-baud touch is **not** honoured on
+  this board (measured twice, with and without a hold), so the capture owner instead writes a
+  new stopped-only `!REBOOT` command (host-requested, never automatic, acknowledged and
+  flushed before `SCB_AIRCR` resets). Result: `fresh_boot: boot banner in the first 80 lines`
+  passes for both legs, and `overflow_free` passes on the record leg.
+- **Identity pinning.** The driver writes `metadata.json` (git commit + the newest built
+  `firmware.hex` sha256) and prints the oracle command with `--metadata`; `identity_pinned`
+  now reports `git_commit=9993f2a6… firmware_hex_sha256=b50a968c…`.
+- **Census correction.** The census decoded the *whole log* and could pick an earlier family;
+  it now decodes only the requested fenced family. It also distinguishes a **lost** window
+  (no terminal row → unknown) from an **unsettled sweep** (terminal row present but the
+  device's `x=0`, measured when a 64-slot sweep spans service turns): occupancy is usable for
+  target preparation while the settle flag is reported (`device_settled`). Record-leg census:
+  `slots=64, occupied=22, device_settled=True`.
+- **Preparation safety.** A selection press now happens only when the census *says* the target
+  is filled; an unavailable census stays fail-closed (long-press only), so an empty target can
+  never be armed by a blind select.
+
+Record leg, verdict-grade (`captures/hitl_accepted_sequence/20260928-rec-verdict3`):
+census 64/22 settled; slot 4 `REFUSED` once (`post_load_holdoff`) then `CLEARED`; seed
+committed; `result: DROVE_LEG`. Oracle `ACCEPTED_SEQUENCE_FAIL` with **L1, L2, L3 and L4 green**
+— including a device-timestamped deferral window `DIAG,reentry_window_open,3,836,2304 at
+30012783 us` — and **L5 the single named runtime gap**: `no start follows A's stop: nothing
+succeeded the predecessor`. That is exactly the S4f.19/S4f.21 gap (the deferred chain is built
+and natively verified but production record stop is still inline), now demonstrated on
+hardware rather than inferred. L6/L7 remain task 2.2's correlated evidence.
+
+
 ## Goal-round closeout (2026-09-28, round 12/12)
 
 Whole-tree state at closeout: focused shared-finalization/preparation/staging **57/57**; host
