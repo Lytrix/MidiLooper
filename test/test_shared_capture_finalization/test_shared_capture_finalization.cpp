@@ -1540,6 +1540,29 @@ void test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source(
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, barTwoOns, trace);
   TEST_ASSERT_EQUAL_UINT32(1, barTwoOffs);
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasRecordPass(t, 0));
+
+  // Wrap while finalizing: the playhead returns to bar one, which the bound bar-1 window
+  // still covers, so the interval stays audible across the wrap.
+  MidiSendCapture::reset();
+  for (size_t turn = 0; turn < 128 && MidiSendCapture::count() == 0; ++turn) {
+    TrackCaptureStopTestAccess::resetProjectionCycle(t);
+    loop.lastTickInLoop = 1500;
+    loop.nextEventIndex = 0;
+    t.playMidiEvents(1600, true);
+  }
+  size_t wrapOns = 0;
+  char wrapTrace[256];
+  size_t wrapWritten = 0;
+  for (size_t i = 0; i < MidiSendCapture::count() && wrapWritten + 24 < sizeof(wrapTrace); ++i) {
+    const MidiEvent& event = MidiSendCapture::at(i);
+    wrapWritten += static_cast<size_t>(snprintf(wrapTrace + wrapWritten,
+                                                sizeof(wrapTrace) - wrapWritten, "[%u %s %u]",
+                                                event.tick, event.isNoteOn() ? "on" : "off",
+                                                event.data.noteData.note));
+    if (event.isNoteOn() && event.data.noteData.note == 60) ++wrapOns;
+  }
+  wrapTrace[wrapWritten] = '\0';
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, wrapOns, wrapTrace);
 }
 
 void test_private_grains_never_hold_the_global_ephemeral_seal() {

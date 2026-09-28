@@ -2658,6 +2658,17 @@ own execution packet and records fixture/native/build/device results separately.
       ring-depth assertion. Focused **269/269**; full native **2,603 passed / 7 skipped**;
       capture-serial PASS, padding **888**. Remaining: ownership through successor start, plus the
       wrap-while-finalizing, multiple-sounding-tracks and stale-source-replacement fixtures.
+      **2026-09-28 round 9 — wrap while finalizing.** The eligibility predicate
+      `hasBoundRecordReturnWindowForPendingJob` now reports **ownership** (a pending job owns the
+      interval) rather than "the bar-1 window is current". Once an onward window is handed off,
+      the bar-1 window is no longer current, so the old predicate went false and a later bar --
+      including a wrap back to bar one -- was never built: the interval fell silent. Because
+      ownership alone is not audibility, a new `hasServableDeferredRecordView` (bound bar-1 window
+      or a range-derived onward window) is what `Track::hasAudiblePlaybackSource` uses. Fixture:
+      the beyond-bar-one case now also drives past the loop end and asserts the bar-1 note is
+      served again after the wrap while the pass is still unpublished. Focused **269/269**; full
+      native **2,603 passed / 7 skipped**; capture-serial PASS, padding **888**. Remaining:
+      ownership through successor start, multiple sounding tracks and stale source replacement.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,
