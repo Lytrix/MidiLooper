@@ -22,6 +22,22 @@ consumer is a verified prerequisite, not completed Record normalization: orderin
 minimum-length filtering and admission/source integration remain open. See
 [tail-repair execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-TAIL-EXECUTION.md).
 
+## Minimum-length decision prerequisite
+
+`CaptureIncrementalSanity::MinimumLengthCursor` accepts an immutable stream ordered
+by tick, NoteOff, NoteOn, then other events. It tracks the latest On per channel/pitch
+and reports the On/Off source ordinals when their linear span is strictly below
+the captured minimum-length policy. NoteId does not select the pair. A reported
+Off has already been consumed; retry the pending receipt until acknowledged, then
+feed the next row. Source rows remain untouched. Disabled/zero policy emits no
+removals. Out-of-order or stale input is denied without advancing its ordinal.
+
+The existing synchronous helper remains the production caller. Sorting and applying
+these receipts in bounded canonical compaction are still required before Record
+integration. Preserve existing equal-key order; do not silently introduce a NoteId
+tie-break or assume no-removal means the old helper reordered its store. See
+[minimum-length execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-MINIMUM-EXECUTION.md).
+
 ## Mental model
 
 Each **loop slot** (`Loop` in `include/Loop.h`) holds live capture, committed **passes**, and a materialized event view:

@@ -24,6 +24,21 @@ This prerequisite is not dispatched by production Record normalization yet.
 `finalizeWrapWindowOnStore` and the existing sort/minimum-length paths retain their
 previous unbounded classification. See [tail-repair execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-TAIL-EXECUTION.md).
 
+## Bounded minimum-length decision prerequisite
+
+`CaptureIncrementalSanity::MinimumLengthCursor` resets at most Q of 2,048 MIDI-key
+lanes per call and consumes one ordered source row per call. Receipt read/acknowledge,
+finish and discard are constant work. ARM scratch is **16,384 bytes**, cursor
+**48 bytes**; both are borrowed preparation resources, with no resident allocation
+introduced. Input length is not limited to the number of MIDI keys. A short-pair
+receipt blocks new input/completion until acknowledged; stale generations deny it.
+
+This is a decision primitive, not canonical compaction. The production
+`removePairsShorterThanNoteMinLength` still copies/sorts/reloads synchronously and
+retains its unbounded classification. Future integration must budget/prewarm an
+exclusive role and apply receipts to the same ordered source generation. See
+[minimum-length execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-MINIMUM-EXECUTION.md).
+
 ## Interval path
 
 The **interval path** is work that executes between consecutive `handleMidiInput()` entries (the MIDI Input Gap). Clock dispatch inside `handleMidiInput()` and `ClockManager::updateInternalClock` → `TrackManager::updateAllTracks` also consume that interval.

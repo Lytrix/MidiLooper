@@ -1,5 +1,19 @@
 # Current work (implementation scope)
 
+**2026-09-28 — S4f.18 — bounded minimum-length decisions verified.**
+`CaptureIncrementalSanity::MinimumLengthCursor` consumes one ordered row per call
+and retains short-pair source ordinals until acknowledged. Eight fixtures preserve
+strict thresholds, retriggers independent of NoteId, channel separation, stale
+receipts and retry behavior; 64 differential cases match the real helper's retained
+inventory. All 2,048 MIDI keys / 4,096 rows pass, and three policy mutations fail.
+ARM cursor **48 bytes**, borrowed workspace **16,384 bytes**; no resident allocation
+or production dispatch added. Full native **2,541 passed / 7 skipped**; capture-serial build
+and strict OpenSpec validation pass, RAM1 padding **840 bytes**. This is a decision
+primitive: sorting, canonical compaction and Record admission/playback integration
+remain open. No upload, hardware acceptance, new decision or parent checkoff.
+[Execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-MINIMUM-EXECUTION.md).
+
+
 **2026-09-28 — S4f.18 — bounded Record tail-repair prerequisite verified.**
 `LoopStopFinalize::TailRepairCursor` now preserves the existing synthetic-Off
 policy through one-row input, bounded lane reset/enumeration and acknowledged
