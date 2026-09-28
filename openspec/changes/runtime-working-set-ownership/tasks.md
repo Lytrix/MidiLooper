@@ -2698,7 +2698,17 @@ own execution packet and records fixture/native/build/device results separately.
       still Record, the servable view survives, no frozen build is in flight, and the stop ring
       still holds the predecessor. This supersedes the round-10 "audibility blocker" reading: the
       remaining gap is multi-track *audibility* only, which is task 2.4's committed-bridge path.
-      Focused **233/233**; full native re-run below.
+      **2026-09-28 round 13b — multiple sounding tracks (S4f.19 case) verified.** Fixture
+      `test_two_tracks_each_serve_their_own_deferred_window`: two tracks each own an unpublished
+      deferred interval and each serve their own bound window through their own active entry,
+      emitting their own note exactly once. That is S4f.19's multi-track property; the
+      committed-bridge multi-track case belongs to task 2.4. With this, every S4f.19 exit fixture
+      is landed: incomplete preparation, sub-bar stop, remapped notes, held notes, traversal
+      beyond bar one, wrap while finalizing, multiple sounding tracks and stale source
+      replacement, plus bind-to-job-geometry, onward windows from the owned frozen source,
+      ownership through successor/publication/retirement, and discriminating mutations.
+      Focused **234/234** (playback-prewarm + shared-finalization); full native **2,604 passed /
+      7 skipped**; capture-serial PASS, padding **888**.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,
