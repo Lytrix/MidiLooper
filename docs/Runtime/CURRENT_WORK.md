@@ -1,5 +1,20 @@
 # Current work (implementation scope)
 
+**2026-09-28 — S4f.18 — bounded stable private-chunk ordering verified.**
+The store owner now sorts private dense prepared chunks in place through bounded
+binary comparisons and rotation swaps, preserving equal-tick event identities.
+No whole-take event/index scratch; ARM cursor **864 bytes**, no store growth.
+Owner/pool checks, exclusive references and non-allocating persistence-state checks
+protect the work. Frozen raw input stays untouched beside separate sorted output.
+Six fixtures cover long/mixed inputs, metadata and denial; four mutations fail.
+Final native **2,549 passed / 7 skipped**; focused ordering/persistence **15/15**. Firmware
+build passes with RAM1 padding **840 bytes**, restored after moving the newly used
+state accessor to FLASH. OpenSpec validates. No production Record route switch,
+upload, acceptance or parent checkoff. Canonical filtering and private-output
+publication/persistence integration remain open.
+[Execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-ORDER-EXECUTION.md).
+
+
 **2026-09-28 — S4f.18 — canonical compaction retirement bound corrected.**
 The existing ordered-source rewrite erased surplus chunk IDs from the middle of
 its directory, shifting the remaining suffix in one maintenance grain. It now

@@ -2343,6 +2343,13 @@ own execution packet and records fixture/native/build/device results separately.
       violation; exact final rows and stale-owner denial remain pinned. Record
       ordering/filter-writer integration remains open. See
       [compaction execution evidence](S4F18-COMPACTION-EXECUTION.md).
+      **2026-09-28 bounded stable tick ordering:** private prepared dense chunks
+      can now be sorted in place, one bounded comparison/swap/control unit at a
+      time. Fixed 864-byte ARM cursor; no whole-take mirror/index or store growth.
+      Generation/pool and persistence/share checks protect source ownership;
+      equal-tick identities remain stable. Filter compaction and private-output
+      publication/persistence integration remain open, as does Record dispatch.
+      [Ordering execution evidence](S4F18-ORDER-EXECUTION.md).
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,

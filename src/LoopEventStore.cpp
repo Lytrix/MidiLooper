@@ -535,6 +535,132 @@ const MidiEvent& LoopEventStore::at(size_t globalIndex) const {
   return kEmpty;
 }
 
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStoreOrderCursor::complete() const {
+  return complete_ && owner_ && generation_ == owner_->ownershipGeneration_ &&
+      pool_ == LoopEventStore::poolLifetime_ && count_ == owner_->eventCount_ &&
+      chunks_ == owner_->chunkIds_.size();
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginPrivateTickOrder(LoopEventStoreOrderCursor& c) const {
+  if (c.phase_ != LoopEventStoreOrderCursor::Phase::Idle || (!poolReady_ && eventCount_)) return false;
+  const size_t expected = (eventCount_ + LoopEventStoreConfig::CHUNK_CAPACITY - 1) /
+                          LoopEventStoreConfig::CHUNK_CAPACITY;
+  if (chunkIds_.size() != expected && !(eventCount_ == 0 && chunkIds_.size() == 1)) return false;
+  c.owner_ = this; c.generation_ = ownershipGeneration_; c.pool_ = poolLifetime_;
+  c.count_ = eventCount_; c.chunks_ = chunkIds_.size();
+  c.phase_ = LoopEventStoreOrderCursor::Phase::Preflight;
+  return true;
+}
+
+LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivateTickOrder(
+    LoopEventStoreOrderCursor& c, size_t quantum) {
+  using Phase = LoopEventStoreOrderCursor::Phase;
+  c.lastStepUnits_ = 0;
+  if (c.owner_ != this || c.generation_ != ownershipGeneration_ || c.pool_ != poolLifetime_ ||
+      c.count_ != eventCount_ || c.chunks_ != chunkIds_.size()) {
+    c.complete_ = false; c.phase_ = Phase::Denied;
+    return LoopEventStoreRewriteResult::Denied;
+  }
+  if (!quantum || c.phase_ == Phase::Denied || c.phase_ == Phase::Idle)
+    return LoopEventStoreRewriteResult::Denied;
+  if (c.phase_ == Phase::Complete) return LoopEventStoreRewriteResult::Complete;
+  auto validChunk = [&](size_t i) {
+    if (i >= chunkIds_.size()) return false;
+    const auto id = chunkIds_[i];
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolUsed_[id] ||
+        poolChunkRefCount_[id] != 1 || PersistenceQueue::chunkState(id) != ChunkPersistenceState::NotScheduled)
+      return false;
+    const size_t base = i * LoopEventStoreConfig::CHUNK_CAPACITY;
+    const size_t expected = base < c.count_ ? std::min(c.count_ - base,
+        size_t(LoopEventStoreConfig::CHUNK_CAPACITY)) : 0;
+    return chunk(id).used == expected;
+  };
+  auto event = [&](size_t i) -> MidiEvent* {
+    const size_t ci = i / LoopEventStoreConfig::CHUNK_CAPACITY;
+    if (i >= c.count_ || !validChunk(ci)) return nullptr;
+    return &chunk(chunkIds_[ci]).events[i % LoopEventStoreConfig::CHUNK_CAPACITY];
+  };
+  auto deny = [&]() { c.phase_ = Phase::Denied; return LoopEventStoreRewriteResult::Denied; };
+  while (c.lastStepUnits_ < quantum) {
+    ++c.lastStepUnits_;
+    if (c.phase_ == Phase::Preflight) {
+      if (c.chunk_ < c.chunks_) {
+        if (!validChunk(c.chunk_++)) return deny();
+      } else { c.phase_ = Phase::Run; c.chunk_ = 0; }
+    } else if (c.phase_ == Phase::Run) {
+      if (c.width_ >= c.count_) { c.phase_ = Phase::Refresh; c.chunk_ = 0; }
+      else if (c.run_ >= c.count_) { c.width_ *= 2; c.run_ = 0; }
+      else {
+        const size_t middle = c.run_ + std::min(c.width_, c.count_ - c.run_);
+        const size_t last = middle + std::min(c.width_, c.count_ - middle);
+        c.stack_[c.depth_++] = {c.run_, middle, last}; c.run_ = last; c.phase_ = Phase::Merge;
+      }
+    } else if (c.phase_ == Phase::Merge) {
+      if (!c.depth_) { c.phase_ = Phase::Run; continue; }
+      c.merge_ = c.stack_[--c.depth_];
+      const auto m = c.merge_;
+      if (m.first == m.middle || m.middle == m.last) continue;
+      if (m.last - m.first == 2) {
+        auto* a = event(m.first); auto* b = event(m.middle);
+        if (!a || !b) return deny();
+        if (b->tick < a->tick) std::swap(*a, *b);
+        continue;
+      }
+      c.lower_ = m.middle - m.first > m.last - m.middle;
+      if (c.lower_) {
+        c.firstCut_ = m.first + (m.middle - m.first) / 2;
+        auto* pivot = event(c.firstCut_); if (!pivot) return deny();
+        c.pivot_ = pivot->tick; c.low_ = m.middle; c.high_ = m.last;
+      } else {
+        c.secondCut_ = m.middle + (m.last - m.middle) / 2;
+        auto* pivot = event(c.secondCut_); if (!pivot) return deny();
+        c.pivot_ = pivot->tick; c.low_ = m.first; c.high_ = m.middle;
+      }
+      c.phase_ = Phase::Search;
+    } else if (c.phase_ == Phase::Search) {
+      if (c.low_ < c.high_) {
+        const size_t mid = c.low_ + (c.high_ - c.low_) / 2;
+        auto* row = event(mid); if (!row) return deny();
+        const bool before = c.lower_ ? row->tick < c.pivot_ : row->tick <= c.pivot_;
+        if (before) c.low_ = mid + 1; else c.high_ = mid;
+      } else {
+        if (c.lower_) c.secondCut_ = c.low_; else c.firstCut_ = c.low_;
+        if (c.depth_ + 2 > LoopEventStoreOrderCursor::kStackCapacity) return deny();
+        c.reversal_ = 0; c.reverseFirst_ = c.firstCut_; c.reverseLast_ = c.merge_.middle;
+        c.phase_ = (c.firstCut_ == c.merge_.middle || c.secondCut_ == c.merge_.middle)
+            ? Phase::Split : Phase::Reverse;
+      }
+    } else if (c.phase_ == Phase::Reverse) {
+      if (c.reverseLast_ - c.reverseFirst_ > 1) {
+        auto* a = event(c.reverseFirst_); auto* b = event(c.reverseLast_ - 1);
+        if (!a || !b) return deny();
+        std::swap(*a, *b); ++c.reverseFirst_; --c.reverseLast_;
+      } else if (++c.reversal_ == 1) {
+        c.reverseFirst_ = c.merge_.middle; c.reverseLast_ = c.secondCut_;
+      } else if (c.reversal_ == 2) {
+        c.reverseFirst_ = c.firstCut_; c.reverseLast_ = c.secondCut_;
+      } else c.phase_ = Phase::Split;
+    } else if (c.phase_ == Phase::Split) {
+      const size_t middle = c.firstCut_ + c.secondCut_ - c.merge_.middle;
+      c.stack_[c.depth_++] = {middle, c.secondCut_, c.merge_.last};
+      c.stack_[c.depth_++] = {c.merge_.first, c.firstCut_, middle};
+      c.phase_ = Phase::Merge;
+    } else if (c.phase_ == Phase::Refresh) {
+      if (c.chunk_ < c.chunks_) {
+        if (!validChunk(c.chunk_)) return deny();
+        auto& ch = chunk(chunkIds_[c.chunk_++]);
+        ch.firstTick = ch.used ? ch.events[0].tick : 0;
+        ch.lastTick = ch.used ? ch.events[ch.used - 1].tick : 0;
+      } else {
+        lastAppendedTick_ = c.count_ ? chunk(chunkIds_.back()).lastTick : 0;
+        markBarIndexDirty(); c.phase_ = Phase::Complete; c.complete_ = true;
+        return LoopEventStoreRewriteResult::Complete;
+      }
+    } else return deny();
+  }
+  return LoopEventStoreRewriteResult::Pending;
+}
+
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ownsRewriteCursor(
     const LoopEventStoreRewriteCursor& cursor) const {
   return cursor.owner == this && cursor.ownershipGeneration == ownershipGeneration_ &&

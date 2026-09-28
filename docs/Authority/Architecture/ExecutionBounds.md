@@ -50,6 +50,21 @@ The current finalizer uses canonical copy; this corrects the in-place rewrite AP
 whose wrapper is currently exercised by native fixtures, without switching routes.
 See [compaction execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-COMPACTION-EXECUTION.md).
 
+## Private prepared-chunk tick ordering
+
+`LoopEventStore::stepPrivateTickOrder` performs at most Q constant-work units per
+turn: a state transition, binary comparison, swap, or chunk visit. It sorts stable
+raw ticks in place using divide-and-rotate merges, with O(N log² N) worst-case
+moves/comparisons and a fixed stack. ARM cursor **864 bytes**, unchanged **56-byte**
+store; no whole-take scratch or resident per-slot field. Per-chunk preflight and
+access checks require exclusive references and NotScheduled persistence state.
+Owner generation, pool lifetime, count and directory-size changes deny the cursor.
+The persistence-state accessor is a FLASH-resident, non-allocating read; queue
+prewarming is never triggered from a sort grain.
+Only completion exposes refreshed chunk metadata and valid ordered output; the
+caller must keep partial output private. No production Record dispatch changes.
+See [ordering execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-ORDER-EXECUTION.md).
+
 ## Interval path
 
 The **interval path** is work that executes between consecutive `handleMidiInput()` entries (the MIDI Input Gap). Clock dispatch inside `handleMidiInput()` and `ClockManager::updateInternalClock` → `TrackManager::updateAllTracks` also consume that interval.

@@ -46,6 +46,25 @@ A trim does not shift the remaining directory. Row count and bar-index dirtiness
 become final at completion as before; partial rewrite output remains unpublished.
 This does not provide Record ordering or the minimum-length canonical writer.
 
+## Private prepared canonical ordering
+
+`beginPrivateTickOrder` / `stepPrivateTickOrder` now sort a dense private prepared
+store in bounded turns without a take-sized event or index array. Equal ticks
+retain source order, matching the capture stable-tick policy. This does not apply
+the later minimum-length Off/On/other ordering or compact rejected pairs.
+
+Only exclusively owned, unpublished, NotScheduled chunks qualify. The persistence
+state query reads existing state without allocating the queue. Prepare output
+without persistence admission using the existing ephemeral seal boundary; never
+hold that global scope across worker turns. Frozen raw CaptureRange remains
+immutable and separate. Keep output private through completion; a denied or
+abandoned sort leaves partial order and is not a publishable pass. The caller must
+exclude concurrent mutation, readers and persistence admission. Source replacement
+or pool reuse invalidates the cursor. Canonical publication/persistence integration
+must explicitly handle the prepared chunks afterward; the sorter does not enqueue,
+publish or restore abandoned output. Production Record still uses its existing path.
+[Ordering execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-ORDER-EXECUTION.md).
+
 ## Mental model
 
 Each **loop slot** (`Loop` in `include/Loop.h`) holds live capture, committed **passes**, and a materialized event view:
