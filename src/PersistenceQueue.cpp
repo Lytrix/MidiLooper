@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "PersistenceQueue.h"
+#include "Utils/LoopMem.h"
 
 #include <cstring>
 #include <new>
@@ -28,8 +29,12 @@ struct QueueState {
   uint16_t queueTail = 0;
 };
 
+// Same process-lifetime owner as the former function-local pointer. Read-only
+// state queries must not enter the allocating queue admission path.
+QueueState* queueStateStorage = nullptr;
+
 QueueState* queueState() {
-  static QueueState* state = nullptr;
+  QueueState*& state = queueStateStorage;
   if (state != nullptr) {
     return state;
   }
@@ -126,8 +131,8 @@ uint16_t writingChunkCount() {
   return state != nullptr ? countChunksInState(*state, ChunkPersistenceState::Writing) : 0;
 }
 
-ChunkPersistenceState chunkState(uint16_t chunkId) {
-  QueueState* state = queueState();
+LOOP_COLD_MEM ChunkPersistenceState chunkState(uint16_t chunkId) {
+  const QueueState* state = queueStateStorage;
   if (state == nullptr || chunkId >= LoopEventStoreConfig::POOL_CHUNK_COUNT) {
     return ChunkPersistenceState::NotScheduled;
   }

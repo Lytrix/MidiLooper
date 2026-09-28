@@ -104,6 +104,32 @@ class LoopEventStoreCommitCursor {
 
 enum class LoopEventStoreReadResult : uint8_t { Pending, Complete, Denied };
 
+/// Stable tick ordering of private dense prepared chunks. No event/index mirror.
+/// Caller retains exclusive unpublished storage until completion or abandonment.
+class LoopEventStoreOrderCursor {
+ public:
+  bool complete() const;
+  size_t lastStepUnits() const { return lastStepUnits_; }
+  void discard() { *this = LoopEventStoreOrderCursor{}; }
+ private:
+  friend class LoopEventStore;
+  struct Merge { size_t first, middle, last; };
+  static constexpr size_t kStackCapacity = 2 * sizeof(size_t) * 8;
+  std::array<Merge, kStackCapacity> stack_;
+  enum class Phase : uint8_t { Idle, Preflight, Run, Merge, Search, Reverse, Split, Refresh, Complete, Denied };
+  const LoopEventStore* owner_ = nullptr;
+  uint64_t generation_ = 0, pool_ = 0;
+  size_t count_ = 0, chunks_ = 0, chunk_ = 0, lastStepUnits_ = 0;
+  size_t width_ = 1, run_ = 0, depth_ = 0;
+  Merge merge_{};
+  size_t firstCut_ = 0, secondCut_ = 0, low_ = 0, high_ = 0;
+  size_t reverseFirst_ = 0, reverseLast_ = 0;
+  uint32_t pivot_ = 0;
+  uint8_t reversal_ = 0;
+  bool lower_ = false, complete_ = false;
+  Phase phase_ = Phase::Idle;
+};
+
 /// Unpublished raw input for one pass. The owner retains immutable chunk refs,
 /// output storage, and the generation token for this cursor's entire lifetime.
 /// Invalidate the token BEFORE releasing/replacing refs (including pool reuse).
@@ -139,6 +165,7 @@ enum class LoopEventStoreAppendDeny : uint8_t {
 
 /// Append-only fixed-size event chunks backed by a global PSRAM pool.
 class LoopEventStore {
+  friend class LoopEventStoreOrderCursor;
  public:
   class CaptureRange;
   class ChunkReservation;
@@ -187,6 +214,10 @@ class LoopEventStore {
 
   static ChunkLifecycleState chunkLifecycleState(uint16_t id);
   static uint16_t chunkReferenceCount(uint16_t id);
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// Resource-boundary fixture: simulate an outstanding immutable borrower.
+  static void retainChunkReferenceForTests(uint16_t id) { retainChunkReference(id); }
+#endif
 
   /// Nested SD-load staging scope: sealChunk marks Persisted instead of admitting mid_pass.
   static void enterSdLoadStaging();
@@ -239,6 +270,14 @@ class LoopEventStore {
       LoopEventStoreRewriteCursor& cursor, const MidiEvent* source,
       const uint16_t* orderedIndices, size_t sourceCount, size_t sourceCapacity,
       size_t eventQuantum);
+
+  /// Bind private unpublished dense output, never a live or frozen raw producer.
+  /// Bounded preflight denies shared or persistence-admitted chunks before writes.
+  bool beginPrivateTickOrder(LoopEventStoreOrderCursor& cursor) const;
+  /// At most quantum constant-work transitions/comparisons/swaps/chunk visits.
+  /// Partial order is unpublished; denial never rolls back prior accepted steps.
+  LoopEventStoreRewriteResult stepPrivateTickOrder(LoopEventStoreOrderCursor& cursor,
+                                                  size_t quantum);
 
   /// First global index whose event tick is >= tick, or size() if none.
   size_t lowerBoundIndex(uint32_t tick) const;

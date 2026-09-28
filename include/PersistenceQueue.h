@@ -27,6 +27,7 @@ uint16_t queueDepth();
 /// Chunks currently in the Writing persistence state.
 uint16_t writingChunkCount();
 
+/// Non-allocating query; an uninitialized queue has no scheduled chunks.
 ChunkPersistenceState chunkState(uint16_t chunkId);
 
 /// Admit a newly sealed chunk exactly once. Returns true when newly queued.
