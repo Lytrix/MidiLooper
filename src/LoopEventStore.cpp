@@ -661,6 +661,147 @@ LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivat
   return LoopEventStoreRewriteResult::Pending;
 }
 
+namespace {
+constexpr uint32_t kPrivateFilterRemovedTick = UINT32_MAX;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStoreFilterCursor::complete() const {
+  return phase_ == Phase::Complete && owner_ && owner_->ownsPrivateFilter(*this);
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ownsPrivateFilter(
+    const LoopEventStoreFilterCursor& c) const {
+  return c.owner_ == this && c.generation_ == ownershipGeneration_ &&
+      c.pool_ == poolLifetime_ && c.count_ == eventCount_ && c.chunks_ == chunkIds_.size();
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::privateFilterChunkReady(
+    const LoopEventStoreFilterCursor& c, size_t i) const {
+  if (i >= chunkIds_.size()) return false;
+  const auto id = chunkIds_[i];
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolUsed_[id] ||
+      poolChunkRefCount_[id] != 1 ||
+      PersistenceQueue::chunkState(id) != ChunkPersistenceState::NotScheduled) return false;
+  using Phase = LoopEventStoreFilterCursor::Phase;
+  const size_t count = c.phase_ == Phase::Refresh && i < c.chunk_ ? c.write_ : c.count_;
+  const size_t base = i * LoopEventStoreConfig::CHUNK_CAPACITY;
+  const size_t expected = base < count ? std::min(count - base,
+      size_t(LoopEventStoreConfig::CHUNK_CAPACITY)) : 0;
+  return chunk(id).used == expected;
+}
+
+const MidiEvent* LOOP_EVENT_STORE_COLD_MEM LoopEventStore::privateFilterRow(
+    const LoopEventStoreFilterCursor& c, size_t ordinal) const {
+  const size_t ci = ordinal / LoopEventStoreConfig::CHUNK_CAPACITY;
+  if (ordinal >= c.count_ || !privateFilterChunkReady(c, ci)) return nullptr;
+  return &chunk(chunkIds_[ci]).events[ordinal % LoopEventStoreConfig::CHUNK_CAPACITY];
+}
+
+MidiEvent* LOOP_EVENT_STORE_COLD_MEM LoopEventStore::privateFilterRow(
+    const LoopEventStoreFilterCursor& c, size_t ordinal) {
+  return const_cast<MidiEvent*>(static_cast<const LoopEventStore*>(this)->privateFilterRow(c, ordinal));
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginPrivateFilter(LoopEventStoreFilterCursor& c) {
+  if (c.phase_ != LoopEventStoreFilterCursor::Phase::Idle || (!poolReady_ && !chunkIds_.empty()))
+    return false;
+  const size_t expected = (eventCount_ + LoopEventStoreConfig::CHUNK_CAPACITY - 1) /
+      LoopEventStoreConfig::CHUNK_CAPACITY;
+  if (chunkIds_.size() != expected && !(eventCount_ == 0 && chunkIds_.size() == 1)) return false;
+  c.owner_ = this; c.generation_ = ownershipGeneration_; c.pool_ = poolLifetime_;
+  c.count_ = eventCount_; c.chunks_ = chunkIds_.size();
+  c.phase_ = LoopEventStoreFilterCursor::Phase::Chunks;
+  return true;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::readPrivateFilterRow(
+    const LoopEventStoreFilterCursor& c, size_t ordinal, MidiEvent& out) const {
+  if (!ownsPrivateFilter(c) || c.phase_ != LoopEventStoreFilterCursor::Phase::Input) return false;
+  const auto* row = privateFilterRow(c, ordinal);
+  if (!row || row->tick == kPrivateFilterRemovedTick) return false;
+  out = *row;
+  return true;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::markPrivateFilterPair(
+    LoopEventStoreFilterCursor& c, size_t first, size_t second) {
+  if (!ownsPrivateFilter(c) || c.phase_ != LoopEventStoreFilterCursor::Phase::Input) return false;
+  auto* a = privateFilterRow(c, first);
+  auto* b = privateFilterRow(c, second);
+  if (!a || !b) return false;
+  a->tick = kPrivateFilterRemovedTick;
+  b->tick = kPrivateFilterRemovedTick;
+  return true;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::finishPrivateFilter(LoopEventStoreFilterCursor& c) {
+  if (!ownsPrivateFilter(c) || c.phase_ != LoopEventStoreFilterCursor::Phase::Input) return false;
+  c.read_ = 0; c.phase_ = LoopEventStoreFilterCursor::Phase::Compact;
+  return true;
+}
+
+LoopEventStoreFilterResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepPrivateFilter(
+    LoopEventStoreFilterCursor& c, size_t quantum) {
+  using Phase = LoopEventStoreFilterCursor::Phase;
+  using Result = LoopEventStoreFilterResult;
+  c.lastStepUnits_ = 0;
+  auto deny = [&]() { c.phase_ = Phase::Denied; return Result::Denied; };
+  if (!ownsPrivateFilter(c)) return deny();
+  if (!quantum || c.phase_ == Phase::Idle || c.phase_ == Phase::Denied) return Result::Denied;
+  if (c.phase_ == Phase::Complete) return Result::Complete;
+  if (c.phase_ == Phase::Input) return Result::InputReady;
+  while (c.lastStepUnits_ < quantum) {
+    ++c.lastStepUnits_;
+    if (c.phase_ == Phase::Chunks) {
+      if (c.chunk_ < c.chunks_) {
+        if (!privateFilterChunkReady(c, c.chunk_++)) return deny();
+      } else c.phase_ = Phase::Rows;
+    } else if (c.phase_ == Phase::Rows) {
+      if (c.read_ < c.count_) {
+        const auto* row = privateFilterRow(c, c.read_++);
+        if (!row || row->tick > LoopEventStoreConfig::MAX_INDEXED_TICKS) return deny();
+      } else { c.phase_ = Phase::Input; return Result::InputReady; }
+    } else if (c.phase_ == Phase::Compact) {
+      if (c.read_ < c.count_) {
+        const auto* source = privateFilterRow(c, c.read_);
+        if (!source) return deny();
+        if (source->tick != kPrivateFilterRemovedTick) {
+          auto* target = privateFilterRow(c, c.write_);
+          if (!target) return deny();
+          if (c.write_ != c.read_) *target = *source;
+          ++c.write_;
+        }
+        ++c.read_;
+      } else c.phase_ = Phase::Trim;
+    } else if (c.phase_ == Phase::Trim) {
+      const size_t keep = (c.write_ + LoopEventStoreConfig::CHUNK_CAPACITY - 1) /
+          LoopEventStoreConfig::CHUNK_CAPACITY;
+      if (c.chunks_ > keep) {
+        if (!privateFilterChunkReady(c, c.chunks_ - 1)) return deny();
+        releaseChunkReference(chunkIds_.back());
+        chunkIds_.pop_back(); --c.chunks_;
+      } else { c.chunk_ = 0; c.phase_ = Phase::Refresh; }
+    } else if (c.phase_ == Phase::Refresh) {
+      if (c.chunk_ < c.chunks_) {
+        if (!privateFilterChunkReady(c, c.chunk_)) return deny();
+        auto& ch = chunk(chunkIds_[c.chunk_]);
+        ch.used = static_cast<uint16_t>(std::min(c.write_ - c.chunk_ * LoopEventStoreConfig::CHUNK_CAPACITY,
+            size_t(LoopEventStoreConfig::CHUNK_CAPACITY)));
+        ch.firstTick = ch.events[0].tick;
+        ch.lastTick = ch.events[ch.used - 1].tick;
+        ++c.chunk_;
+      } else {
+        if (c.chunks_ && !privateFilterChunkReady(c, c.chunks_ - 1)) return deny();
+        eventCount_ = c.count_ = c.write_;
+        lastAppendedTick_ = c.write_ ? chunk(chunkIds_.back()).lastTick : 0;
+        markBarIndexDirty(); c.phase_ = Phase::Complete;
+        return Result::Complete;
+      }
+    } else return deny();
+  }
+  return Result::Pending;
+}
+
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ownsRewriteCursor(
     const LoopEventStoreRewriteCursor& cursor) const {
   return cursor.owner == this && cursor.ownershipGeneration == ownershipGeneration_ &&

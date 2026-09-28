@@ -65,6 +65,25 @@ Only completion exposes refreshed chunk metadata and valid ordered output; the
 caller must keep partial output private. No production Record dispatch changes.
 See [ordering execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-ORDER-EXECUTION.md).
 
+## Private prepared filter compaction
+
+`LoopEventStore::stepPrivateFilter` is structurally bounded to Q fixed-work units:
+one chunk preflight, row validation/copy, tail-reference retirement, metadata
+refresh or control transition. For N rows and K chunks, preflight uses N+K+2 units;
+compaction uses N+K+3. Marking a rejected pair checks both constant-time dense
+ordinal accesses before either write. Repeated marks are idempotent. Read, mark,
+finish, begin and discard do constant work; no allocation or directory shifting.
+ARM cursor **56 bytes**, unchanged **56-byte** store; no resident role field added.
+
+The source ordinal decision belongs to `MinimumLengthCursor`; this API applies
+it to exclusive, unpublished output. A temporary out-of-domain tick marker is
+allowed only after every original tick passes validation. No partial output is
+readable by playback, undo or persistence. Store/pool identity, directory shape,
+exclusive refs and NotScheduled state qualify every access. Raw frozen Capture
+remains separate. Production Record normalization remains inline and unbounded;
+ordering/policy composition and worker admission/publication are still open.
+See [filter execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-FILTER-EXECUTION.md).
+
 ## Interval path
 
 The **interval path** is work that executes between consecutive `handleMidiInput()` entries (the MIDI Input Gap). Clock dispatch inside `handleMidiInput()` and `ClockManager::updateInternalClock` → `TrackManager::updateAllTracks` also consume that interval.

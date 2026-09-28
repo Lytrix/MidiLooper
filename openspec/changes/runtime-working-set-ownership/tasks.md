@@ -2350,6 +2350,13 @@ own execution packet and records fixture/native/build/device results separately.
       equal-tick identities remain stable. Filter compaction and private-output
       publication/persistence integration remain open, as does Record dispatch.
       [Ordering execution evidence](S4F18-ORDER-EXECUTION.md).
+      **2026-09-28 private filter compaction:** the store applies rejected ordinal
+      pairs to exclusive prepared output, then compacts rows and retires surplus
+      chunks in bounded units. Real minimum-policy differential cases preserve
+      retained inventory; all 2,048 keys / 4,096 rows and frozen-source isolation
+      pass. ARM cursor 56 bytes, no store growth or take-sized scratch. Ordering/
+      policy composition, preparation-role admission and production publication
+      remain open. [Filter execution evidence](S4F18-FILTER-EXECUTION.md).
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,

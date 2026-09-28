@@ -1,5 +1,17 @@
 # Project state (execution context)
 
+**2026-09-28 — S4f.18 — bounded private canonical filtering verified.**
+The store now applies exact rejected-row pairs to private prepared output and
+compacts retained rows in bounded turns without a take-sized bitmap or copy.
+Ten fixtures cover real minimum-policy parity, long inputs, frozen-source isolation,
+late persistence/borrowing, stale receipts and tail retirement; six counterexamples
+are rejected. Final focused **24/24**, full native **2,559 passed / 7 skipped**.
+Capture-serial build and strict OpenSpec validation pass; RAM1 padding **840 bytes**.
+ARM cursor **56 bytes**, no store or resident-role growth. Record ordering/policy
+composition, role admission and production integration remain open. No upload,
+device acceptance, new decision or parent checkoff.
+[Filter execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-FILTER-EXECUTION.md).
+
 **2026-09-28 — S4f.18 — bounded stable private-chunk ordering verified.**
 The store owner now sorts private dense prepared chunks in place through bounded
 binary comparisons and rotation swaps, preserving equal-tick event identities.
