@@ -120,15 +120,18 @@ static NoteId takeNextId(void* context) {
 }
 
 static RunResult runPrepared(LoopEventStore& store, const Geometry& geometry, size_t quantum,
-                             bool withReservation, const RecordPreparation::NoteIdSource* ids = nullptr) {
+                             bool withReservation, const RecordPreparation::NoteIdSource* ids = nullptr,
+                             size_t creditChunks = 0) {
   RecordPreparation::Workspace workspace;
   RecordPreparationCursor cursor;
   uint64_t generation = 1;
   LoopEventStore::ChunkReservation reservation;
   LoopEventStore::ChunkReservation* credits = nullptr;
   if (withReservation) {
-    TEST_ASSERT_TRUE(reservation.reserveChunks(
-        RecordPreparation::kMaxSyntheticOffs / LoopEventStoreConfig::CHUNK_CAPACITY + 1));
+    const size_t budget = creditChunks != 0
+        ? creditChunks
+        : RecordPreparation::kMaxSyntheticOffs / LoopEventStoreConfig::CHUNK_CAPACITY + 1;
+    TEST_ASSERT_TRUE(reservation.reserveChunks(budget));
     credits = &reservation;
   }
   const RecordPreparation::NoteIdSource noIds{};
@@ -141,6 +144,14 @@ static RunResult runPrepared(LoopEventStore& store, const Geometry& geometry, si
                                      static_cast<uint32_t>(cursor.lastStepUnits()));
     result.units += cursor.lastStepUnits();
     if (step == Step::Pending) {
+      continue;
+    }
+    if (step == Step::Pressure) {
+      // Production caller contract: a Pressure grain is resumable, so top the
+      // reservation back up and keep the same cursor. Nothing was duplicated.
+      TEST_ASSERT_TRUE(withReservation);
+      const size_t available = reservation.availableChunks();
+      TEST_ASSERT_TRUE(reservation.reserveChunks(available + 1));
       continue;
     }
     result.step = step;
@@ -348,6 +359,84 @@ void test_repair_and_minimum_compose_on_the_appended_stream() {
                 {1500, 0, 1, 60, 0, 0},
                 {1800, 2, 2, 7, 0, 30}},
                store);
+  }
+}
+
+void test_no_content_output_pauses_for_retry_and_a_late_denial_is_sticky() {
+  {
+    // A chunk-aligned store (no tail space) plus 300 synthetic wrap Offs with a
+    // single reserved credit: the first 256 Offs consume the one new chunk, so the
+    // 257th raises Pressure. The composition must resume the same cursor and emit
+    // every Off exactly once.
+    LoopEventStore store;
+    std::vector<MidiEvent> rows;
+    for (uint32_t pair = 0; pair < 106; ++pair) {
+      rows.push_back(on(pair * 2, 1, static_cast<uint8_t>(pair % 128),
+                        static_cast<uint32_t>(pair + 1)));
+      rows.push_back(off(pair * 2 + 1, 1, static_cast<uint8_t>(pair % 128),
+                         static_cast<uint32_t>(pair + 1)));
+    }
+    // 300 held lanes on channels unused by the pairs, so no head Off can wrap them.
+    for (uint8_t channel = 2; channel <= 4; ++channel) {
+      for (uint8_t note = 0; note < 100; ++note) {
+        rows.push_back(on(1500, channel, note, 900));
+      }
+    }
+    fill(store, rows);
+    TEST_ASSERT_EQUAL_UINT32(512, store.size());  // exactly two full chunks
+    Geometry geometry;
+    geometry.loopLengthTicks = 2000;
+    const auto result = runPrepared(store, geometry, 7, true, nullptr, 1);
+    TEST_ASSERT_EQUAL(static_cast<int>(Step::Complete), static_cast<int>(result.step));
+    TEST_ASSERT_EQUAL_UINT32(300, result.synthetic);
+    TEST_ASSERT_EQUAL_UINT32(812, store.size());
+    TEST_ASSERT_FALSE(LoopEventStore::isEphemeralSeal());
+    // Exactly one terminal Off per held lane, appended once despite the pause.
+    size_t terminalOffs = 0;
+    for (size_t i = 0; i < store.size(); ++i) {
+      const MidiEvent& e = store.at(i);
+      if (e.isNoteOff() && e.tick == 1999) ++terminalOffs;
+    }
+    TEST_ASSERT_EQUAL_UINT32(300, terminalOffs);
+  }
+  {
+    // A denial after the private filter has already marked a pair is sticky and
+    // mutates nothing further. Production must keep the role bound rather than
+    // re-bind over these markers.
+    LoopEventStore store;
+    fill(store, {on(0, 1, 60, 1), off(20, 1, 60, 1), on(100, 2, 61, 2), off(300, 2, 61, 2)});
+    RecordPreparation::Workspace workspace;
+    RecordPreparationCursor cursor;
+    uint64_t generation = 1;
+    LoopEventStore::ChunkReservation reservation;
+    TEST_ASSERT_TRUE(reservation.reserveChunks(2));
+    Geometry geometry;
+    geometry.loopLengthTicks = 2000;
+    geometry.minLengthTicks = 48;
+    geometry.minLengthRemoveEnabled = true;
+    TEST_ASSERT_TRUE(cursor.begin(store, workspace, generation, geometry, &reservation));
+    // Drive until the first pair is marked, then invalidate the binding.
+    for (size_t turn = 0; turn < 20000 && cursor.pairsRemoved() == 0; ++turn) {
+      const Step step = cursor.step(1);
+      if (step != Step::Pending) break;
+    }
+    TEST_ASSERT_EQUAL_UINT32(1, cursor.pairsRemoved());
+    const size_t sizeAtDenial = store.size();
+    const auto rowsAtDenial = orderOf(store);
+    ++generation;  // stale-identity denial on the next grain
+    TEST_ASSERT_EQUAL(static_cast<int>(Step::Denied), static_cast<int>(cursor.step(1)));
+    TEST_ASSERT_EQUAL(static_cast<int>(DenyReason::OutputUnavailable),
+                      static_cast<int>(cursor.denyReason()));
+    // Every later grain keeps denying and never touches the marked store.
+    for (size_t turn = 0; turn < 4; ++turn) {
+      TEST_ASSERT_EQUAL(static_cast<int>(Step::Denied), static_cast<int>(cursor.step(8)));
+      TEST_ASSERT_EQUAL(static_cast<int>(DenyReason::OutputUnavailable),
+                        static_cast<int>(cursor.denyReason()));
+      TEST_ASSERT_EQUAL_UINT32(sizeAtDenial, store.size());
+      expectSequence(rowsAtDenial, orderOf(store));
+    }
+    TEST_ASSERT_FALSE(LoopEventStore::isEphemeralSeal());
+    cursor.discard();
   }
 }
 
@@ -616,6 +705,7 @@ int main() {
   RUN_TEST(test_close_tick_branch_and_wrapped_pair);
   RUN_TEST(test_minimum_length_pair_removal_and_disable);
   RUN_TEST(test_repair_and_minimum_compose_on_the_appended_stream);
+  RUN_TEST(test_no_content_output_pauses_for_retry_and_a_late_denial_is_sticky);
   RUN_TEST(test_long_dense_take_beyond_overdub_staging);
   RUN_TEST(test_empty_and_zero_length_terminals);
   RUN_TEST(test_identity_incomplete_and_missing_reservation_deny);

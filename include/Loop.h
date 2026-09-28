@@ -1184,6 +1184,13 @@ struct Loop {
   SealOutcome beginPreparedCapturePassFromActiveAdmission(
       Capture& source, PendingCapturePass& pass, LoopEventStoreCommitCursor& cursor,
       const uint64_t& generation, uint32_t sealedAtTick);
+  /// Cold, idempotent capacity admission for a prepared pass whose source holds
+  /// `chunks` chunk references. Sizes the next prewarmed ownership row to that
+  /// count so a Record interval is not capped at the fixed overdub transfer row.
+  /// Allocation happens here, once, before the bounded transfer starts; the
+  /// transfer itself never grows the row. Returns false without an admission or
+  /// beyond the pool bound.
+  bool prewarmPreparedPassTransferChunks(size_t chunks);
   LoopEventStoreRewriteResult stepPreparedCapturePass(
       Capture& source, PendingCapturePass& pass, LoopEventStoreCommitCursor& cursor,
       size_t quantum);

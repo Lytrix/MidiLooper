@@ -1,3 +1,9 @@
+> **Current closure order (2026-09-28):** follow the
+> [shared closure plan](../runtime-working-set-ownership/S4F-CLOSURE-PLAN.md).
+> Boot/census progress does not close the live identity protocol. The current Record
+> recipe still seeds A and uses global Stop; correct it before qualification.
+> A single boot anchor must serve repeated attempts without per-attempt resets.
+
 Firmware dependency: runtime [shared capture finalization](../runtime-working-set-ownership/SHARED-CAPTURE-FINALIZATION.md)
 and S4f.16–S4f.22. Preserve overlap acceptance for record and overdub; do not weaken the record
 oracle to accommodate today's inline path. Existing completed host fixtures remain valid.

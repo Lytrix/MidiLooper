@@ -23,21 +23,23 @@ LOOP_COLD_MEM void resetFilterCursor(LoopEventStoreFilterCursor& cursor) {
 
 }  // namespace
 
-LOOP_COLD_MEM void RecordPreparationCursor::releaseEphemeralSeal() {
-  if (holdsEphemeralSeal_) {
-    LoopEventStore::leaveEphemeralSeal();
-    holdsEphemeralSeal_ = false;
-  }
-}
-
 LOOP_COLD_MEM void RecordPreparationCursor::enterPhase(Phase next) {
   phase_ = next;
   entered_ = false;
 }
 
+bool LOOP_COLD_MEM RecordPreparationCursor::appendPrivately(const MidiEvent& row) {
+  // The prepared store is private: hold the ephemeral seal only for this append
+  // so a chunk that fills here never schedules persistence, and release it before
+  // returning so no pending cursor leaves the global scope active.
+  LoopEventStore::enterEphemeralSeal();
+  const bool appended = output_->appendReserved(row, *reservation_);
+  LoopEventStore::leaveEphemeralSeal();
+  return appended;
+}
+
 LOOP_COLD_MEM void RecordPreparationCursor::deny(DenyReason reason) {
   deny_ = reason;
-  releaseEphemeralSeal();
   resetOrderCursor(order_);
   resetFilterCursor(filter_);
   tail_.discard();
@@ -47,7 +49,6 @@ LOOP_COLD_MEM void RecordPreparationCursor::deny(DenyReason reason) {
 }
 
 LOOP_COLD_MEM void RecordPreparationCursor::finishComplete() {
-  releaseEphemeralSeal();
   resetOrderCursor(order_);
   resetFilterCursor(filter_);
   tail_.discard();
@@ -89,16 +90,11 @@ bool LOOP_COLD_MEM RecordPreparationCursor::begin(
     phase_ = Phase::Complete;
     return true;
   }
-  // The prepared output is private: hold an ephemeral seal for this role's
-  // lifetime so the synthetic repair rows never schedule persistence.
-  LoopEventStore::enterEphemeralSeal();
-  holdsEphemeralSeal_ = true;
   enterPhase(Phase::Order);
   return true;
 }
 
 void LOOP_COLD_MEM RecordPreparationCursor::discard() {
-  releaseEphemeralSeal();
   output_ = nullptr;
   workspace_ = nullptr;
   generation_ = nullptr;
@@ -338,10 +334,12 @@ Step LOOP_COLD_MEM RecordPreparationCursor::step(size_t quantum) {
             lastStepUnits_ = units;
             return Step::Denied;
           }
-          if (!output_->appendReserved(event, *reservation_)) {
-            deny(DenyReason::TailOutputRejected);
+          if (!appendPrivately(event)) {
+            // Transient credit pressure. The tail cursor repeats this same
+            // EventReady until acknowledged, and the removal marks are untouched,
+            // so the caller resumes the same cursor after topping up credits.
             lastStepUnits_ = units;
-            return Step::Denied;
+            return Step::Pressure;
           }
           ++syntheticOffs_;
           if (!tail_.acknowledgeOutput()) {

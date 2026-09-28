@@ -862,6 +862,11 @@ private:
   /// Record-only atomic publication over `RecordPassReady`: commit the staged pass,
   /// push its Record undo and admit persistence once. Advances to `RecordPublished`.
   LoopEventStoreRewriteResult stepDeferredRecordPublication(CaptureStopJob& job);
+  /// Record-only terminal over `RecordEmpty`: an accepted Record take that
+  /// prepared no content keeps the inline route's no-content geometry/undo/
+  /// persistence semantics and advances to `RecordPublished` for retirement. It
+  /// never publishes a pass and never discards a live successor's producer.
+  LoopEventStoreRewriteResult stepDeferredRecordEmptyResult(CaptureStopJob& job);
   /// Record-only bounded retirement of a published job: release its frozen source,
   /// clear the runtime owner and advance the ring. Advances out of the ring.
   LoopEventStoreRewriteResult stepDeferredRecordRetirement(CaptureStopJob& job);

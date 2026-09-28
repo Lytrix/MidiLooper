@@ -205,7 +205,7 @@ void test_a_stale_source_generation_denies() {
                     static_cast<int>(result.deny));
 }
 
-void test_unprepared_output_and_missing_credits_deny() {
+void test_unprepared_output_denies_and_exhausted_credits_pause_for_retry() {
   {
     LoopEventStore producer, output;
     LoopEventStore::CaptureRange range;
@@ -223,16 +223,35 @@ void test_unprepared_output_and_missing_credits_deny() {
     LoopEventStore::ChunkReservation credits;
     std::vector<MidiEvent> rows;
     for (uint32_t i = 0; i < 300; ++i) {
-      rows.push_back(MidiEvent::NoteOn(i, 1, 60, 100));
+      rows.push_back(noteOn(i, 1, 60, 100 + i));
     }
     buildSource(producer, range, rows);
     prepareOutput(output, credits, 1);  // one chunk of credits for two chunks of rows
     Cursor cursor;
     TEST_ASSERT_TRUE(cursor.begin(range, output, credits, 1000));
-    const auto result = run(cursor, 7);
-    TEST_ASSERT_EQUAL(static_cast<int>(Step::Denied), static_cast<int>(result.step));
-    TEST_ASSERT_EQUAL(static_cast<int>(DenyReason::OutputUnavailable),
-                      static_cast<int>(result.deny));
+    // Exhausted credits are a resumable pause, not a sticky denial: the row that
+    // needed a second chunk was not consumed, so the cursor stays exactly
+    // resumable and no row is duplicated or dropped.
+    const Result paused = run(cursor, 7);
+    TEST_ASSERT_EQUAL(static_cast<int>(Step::Pressure), static_cast<int>(paused.step));
+    TEST_ASSERT_EQUAL(static_cast<int>(DenyReason::None), static_cast<int>(paused.deny));
+    TEST_ASSERT_EQUAL_UINT32(256, paused.copied);
+    TEST_ASSERT_EQUAL_UINT32(256, output.size());
+    TEST_ASSERT_FALSE(LoopEventStore::isEphemeralSeal());
+    // Top the caller's credits up and resume the same cursor.
+    TEST_ASSERT_TRUE(credits.reserveChunks(8));
+    const Result resumed = run(cursor, 7);
+    TEST_ASSERT_EQUAL(static_cast<int>(Step::Complete), static_cast<int>(resumed.step));
+    TEST_ASSERT_EQUAL_UINT32(300, resumed.copied);
+    TEST_ASSERT_EQUAL_UINT32(300, output.size());
+    TEST_ASSERT_FALSE(LoopEventStore::isEphemeralSeal());
+    // Exact content: every source row once, in order, with no duplicated prefix.
+    const auto staged = rowsOf(output);
+    TEST_ASSERT_EQUAL_UINT32(300, staged.size());
+    for (size_t i = 0; i < staged.size(); ++i) {
+      TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(i), std::get<0>(staged[i]));
+      TEST_ASSERT_EQUAL_UINT32(100 + static_cast<uint32_t>(i), std::get<3>(staged[i]));
+    }
   }
 }
 
@@ -254,6 +273,9 @@ void test_bounded_units_and_no_directory_growth() {
     TEST_ASSERT_TRUE(cursor.begin(range, output, outCredits, 1000));
     const auto result = run(cursor, quantum);
     TEST_ASSERT_EQUAL(static_cast<int>(Step::Complete), static_cast<int>(result.step));
+    // The per-append seal is always absent once a step returns, so a pending
+    // cursor can never leave another track's capture under the global scope.
+    TEST_ASSERT_FALSE(LoopEventStore::isEphemeralSeal());
     TEST_ASSERT_EQUAL_UINT32(600, result.copied);
     TEST_ASSERT_EQUAL_UINT32(capacity, output.chunkIds().capacity());
     TEST_ASSERT_EQUAL_UINT32(before, LoopEventStore::usedChunkCount());
@@ -273,7 +295,7 @@ int main() {
   RUN_TEST(test_zero_length_copies_every_row_unchanged);
   RUN_TEST(test_empty_source_reports_empty_and_all_dropped_reports_complete);
   RUN_TEST(test_a_stale_source_generation_denies);
-  RUN_TEST(test_unprepared_output_and_missing_credits_deny);
+  RUN_TEST(test_unprepared_output_denies_and_exhausted_credits_pause_for_retry);
   RUN_TEST(test_bounded_units_and_no_directory_growth);
   return UNITY_END();
 }

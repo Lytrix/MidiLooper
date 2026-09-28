@@ -50,6 +50,24 @@ struct TrackCaptureStopTestAccess {
   static auto publicationGrain(Track& t) {
     return t.stepDeferredRecordPublication(*t.captureStopJobHead());
   }
+  static auto emptyGrain(Track& t) {
+    return t.stepDeferredRecordEmptyResult(*t.captureStopJobHead());
+  }
+  static void clearGeometryReceipt(Track& t) {
+    t.captureStopJobHead()->hasRecordGeometry = false;
+  }
+  static void restoreGeometryReceipt(Track& t, LoopId loopId) {
+    auto& job = *t.captureStopJobHead();
+    job.recordGeometryLoopId = loopId;
+    job.hasRecordGeometry = true;
+  }
+  static bool ownsPendingPass(const Track& t) {
+    const auto* job = t.captureStopJobHead();
+    return job != nullptr && job->ownsPendingPass;
+  }
+  static bool hasRecordPass(const Track& t, uint8_t slot) {
+    return t.getLoop(slot).passes.hasRecordPass();
+  }
   static auto retirementGrain(Track& t) {
     return t.stepDeferredRecordRetirement(*t.captureStopJobHead());
   }
@@ -962,6 +980,266 @@ void test_record_job_without_held_notes_emits_no_closures() {
   TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, TrackCaptureStopTestAccess::closureGrain(t));
 }
 
+// ---------------------------------------------------------------------------
+// S4f-CLOSURE-PLAN Step 1: preparation/publication production-worker boundaries.
+// ---------------------------------------------------------------------------
+
+using GrainFn = LoopEventStoreRewriteResult (*)(Track&);
+
+static LoopEventStoreRewriteResult driveGrains(Track& t, GrainFn grain, size_t limit = 200000) {
+  LoopEventStoreRewriteResult result = LoopEventStoreRewriteResult::Pending;
+  size_t turns = 0;
+  while (result == LoopEventStoreRewriteResult::Pending && turns++ < limit) {
+    result = grain(t);
+  }
+  return result;
+}
+
+/// Drive closure -> staging -> normalization to the prepared terminal.
+static void driveToPrepared(Track& t) {
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::closureGrain));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::stagingGrain));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::normalizationGrain));
+}
+
+void test_record_publication_preflight_denies_before_the_irreversible_commit() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 768, 768);
+  driveToPrepared(t);
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPrepared, job.admission.phase);
+  TEST_ASSERT_TRUE(t.getLoop(0).prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_TRUE(t.getLoop(0).hasActiveOverdubTransferAdmission());
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::passTransferGrain));
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPassReady, job.admission.phase);
+  TEST_ASSERT_TRUE(job.ownsPendingPass);
+  TEST_ASSERT_FALSE(job.pendingPass.committedChunkIds.empty());
+
+  // A missing job-owned geometry receipt must deny BEFORE the irreversible commit:
+  // committing the pass first would publish content with no `RecordPassAdded` undo
+  // entry, no persistence, and no retryable receipt.
+  TrackCaptureStopTestAccess::clearGeometryReceipt(t);
+  const size_t queueBefore = PersistenceWorkQueue::queueDepth();
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied,
+                    TrackCaptureStopTestAccess::publicationGrain(t));
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPassReady, job.admission.phase);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ownsPendingPass(t),
+                           "the job-owned pass must survive a preflight denial");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasRecordPass(t, 0),
+                            "no content may be published before the preflight passes");
+  TEST_ASSERT_EQUAL(0, TrackUndo::getUndoCount(t));
+  TEST_ASSERT_EQUAL(queueBefore, PersistenceWorkQueue::queueDepth());
+  TEST_ASSERT_FALSE(StorageManagerInternal::currentSetLoopSlotDirty[0][0]);
+
+  // The same binding retries once the receipt is back: exactly one publish.
+  TrackCaptureStopTestAccess::restoreGeometryReceipt(t, job.loopId);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::publicationGrain));
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPublished, job.admission.phase);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasRecordPass(t, 0));
+  TEST_ASSERT_EQUAL(1, TrackUndo::getUndoCount(t));
+  TEST_ASSERT_TRUE(StorageManagerInternal::currentSetLoopSlotDirty[0][0]);
+}
+
+void test_record_pass_transfer_continues_after_the_store_empties() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 768, 768);
+  auto& runtime = TrackCaptureStopTestAccess::closureRuntime(t);
+  auto& output = runtime.canonicalCaptureOutput.store;
+  // Fill the prepared private output with enough chunks that one bounded transfer
+  // grain moves every chunk and still has destination-order reversals left: the
+  // store empties while the transfer is provably Pending. 24 chunks at the
+  // production 32-unit preparation quantum (24 moves + 8 of 12 swaps) is exactly
+  // that shape; if the quantum moves, this fixture fails loudly rather than
+  // silently dropping the case.
+  constexpr size_t kChunks = 24;
+  std::vector<uint16_t> sourceOrder;
+  LoopEventStore::enterEphemeralSeal();
+  for (size_t i = 0; i < kChunks * LoopEventStoreConfig::CHUNK_CAPACITY; ++i) {
+    TEST_ASSERT_TRUE(output.append(MidiEvent::NoteOn(
+        static_cast<uint32_t>(i), 1, 60, static_cast<uint32_t>(i + 1))));
+  }
+  LoopEventStore::leaveEphemeralSeal();
+  TEST_ASSERT_EQUAL(kChunks, output.chunkIds().size());
+  sourceOrder.assign(output.chunkIds().begin(), output.chunkIds().end());
+
+  // The transfer destination is the prewarmed ownership row; the production
+  // transfer sizes it from the prepared output, so this fixture must observe an
+  // accepted take far beyond the fixed overdub transfer row.
+  TEST_ASSERT_TRUE(t.getLoop(0).prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_TRUE(t.getLoop(0).hasActiveOverdubTransferAdmission());
+  job.admission.phase = PendingStopPhase::RecordPrepared;
+
+  bool sawEmptyPending = false;
+  LoopEventStoreRewriteResult result = LoopEventStoreRewriteResult::Pending;
+  for (size_t turn = 0; turn < 200 && result == LoopEventStoreRewriteResult::Pending; ++turn) {
+    result = TrackCaptureStopTestAccess::passTransferGrain(t);
+    if (result == LoopEventStoreRewriteResult::Pending && output.empty()) {
+      sawEmptyPending = true;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(sawEmptyPending,
+                           "the fixture must observe an empty store mid-transfer");
+  TEST_ASSERT_TRUE(job.ownsPendingPass);
+  TEST_ASSERT_TRUE(job.pendingPass.preparationPending);
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPrepared, job.admission.phase);
+  TEST_ASSERT_EQUAL_UINT32(kChunks, job.pendingPass.committedChunkIds.size());
+
+  // The owned continuation must finish rather than deny on the emptied store.
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::passTransferGrain));
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPassReady, job.admission.phase);
+  TEST_ASSERT_FALSE(job.pendingPass.preparationPending);
+  TEST_ASSERT_EQUAL_UINT32(kChunks, job.pendingPass.committedChunkIds.size());
+  // Exact directory order: the bounded reversal restores the source order.
+  size_t index = 0;
+  for (uint16_t id : job.pendingPass.committedChunkIds) {
+    TEST_ASSERT_EQUAL_UINT32(sourceOrder[index++], id);
+  }
+  TEST_ASSERT_EQUAL_UINT32(kChunks, index);
+  TEST_ASSERT_FALSE(LoopEventStore::isEphemeralSeal());
+}
+
+void test_empty_record_take_all_dropped_retires_without_content() {
+    // All rows dropped by the stop projection: a non-note row beyond the final
+    // length leaves the closure and the staging output empty.
+    Track& t = trackManager.getTrack(0);
+    prepareSlot(t, 0, false);
+    t.startRecording(100);
+    TEST_ASSERT_TRUE(t.getLoop(0).capture.store.append(MidiEvent::ControlChange(900, 1, 7, 1)));
+    auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 1000, 768);
+    auto& runtime = TrackCaptureStopTestAccess::closureRuntime(t);
+    driveToPrepared(t);
+    TEST_ASSERT_EQUAL(PendingStopPhase::RecordEmpty, job.admission.phase);
+    TEST_ASSERT_EQUAL(0, runtime.canonicalCaptureOutput.store.size());
+    TEST_ASSERT_FALSE(job.ownsPendingPass);
+
+    // A live successor on another slot must keep its producer untouched.
+    Track& t1 = trackManager.getTrack(1);
+    prepareSlot(t1, 0, false);
+    t1.setActiveLoopIndex(0);
+    t1.startRecording(200);
+    TEST_ASSERT_TRUE(t1.getLoop(0).capture.store.append(MidiEvent::NoteOn(212, 1, 70, 100)));
+    const size_t successorRows = t1.getLoop(0).capture.store.size();
+
+    const size_t queueBefore = PersistenceWorkQueue::queueDepth();
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                      driveGrains(t, TrackCaptureStopTestAccess::emptyGrain));
+    TEST_ASSERT_EQUAL(PendingStopPhase::RecordPublished, job.admission.phase);
+    TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasRecordPass(t, 0));
+    TEST_ASSERT_EQUAL(0, TrackUndo::getUndoCount(t));
+    TEST_ASSERT_EQUAL(queueBefore, PersistenceWorkQueue::queueDepth());
+    TEST_ASSERT_FALSE(StorageManagerInternal::currentSetLoopSlotDirty[0][0]);
+    TEST_ASSERT_EQUAL_UINT32(0, t.getLoop(0).loopLengthTicks);
+    TEST_ASSERT_EQUAL_UINT32(0, t.getLoop(0).startLoopTick);
+    TEST_ASSERT_EQUAL(successorRows, t1.getLoop(0).capture.store.size());
+    TEST_ASSERT_EQUAL(CapturePhase::Record, t1.getLoop(0).capture.phase);
+
+    const size_t depthBefore = TrackCaptureStopTestAccess::stopQueueDepth(t);
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                      driveGrains(t, TrackCaptureStopTestAccess::retirementGrain));
+    TEST_ASSERT_EQUAL(depthBefore - 1, TrackCaptureStopTestAccess::stopQueueDepth(t));
+    TEST_ASSERT_EQUAL(successorRows, t1.getLoop(0).capture.store.size());
+    TEST_ASSERT_EQUAL(CapturePhase::Record, t1.getLoop(0).capture.phase);
+}
+
+void test_empty_record_take_all_filtered_retires_without_content() {
+    // All rows filtered away: a pair shorter than the minimum-length policy leaves
+    // a non-empty prepared store that the filter compacts to nothing.
+    Track& t = trackManager.getTrack(0);
+    prepareSlot(t, 0, false);
+    t.startRecording(100);
+    t.noteOn(1, 60, 100, 112);
+    t.noteOff(1, 60, 0, 124);  // 12 ticks: survives the capture-time minimum
+    auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 768, 768);
+    // The preparation policy now removes the pair, so a non-empty staged take is
+    // compacted to nothing rather than being denied.
+    noteMinLengthTicks = 48;
+    auto& runtime = TrackCaptureStopTestAccess::closureRuntime(t);
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                      driveGrains(t, TrackCaptureStopTestAccess::closureGrain));
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                      driveGrains(t, TrackCaptureStopTestAccess::stagingGrain));
+    TEST_ASSERT_EQUAL_UINT32(2, runtime.canonicalCaptureOutput.store.size());
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                      driveGrains(t, TrackCaptureStopTestAccess::normalizationGrain));
+    TEST_ASSERT_EQUAL(PendingStopPhase::RecordEmpty, job.admission.phase);
+    TEST_ASSERT_EQUAL(0, runtime.canonicalCaptureOutput.store.size());
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                      driveGrains(t, TrackCaptureStopTestAccess::emptyGrain));
+    TEST_ASSERT_EQUAL(PendingStopPhase::RecordPublished, job.admission.phase);
+    TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasRecordPass(t, 0));
+    TEST_ASSERT_EQUAL(0, TrackUndo::getUndoCount(t));
+    TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                      driveGrains(t, TrackCaptureStopTestAccess::retirementGrain));
+    TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::stopQueueDepth(t));
+}
+
+void test_private_grains_never_hold_the_global_ephemeral_seal() {
+  Track& t0 = trackManager.getTrack(0);
+  prepareSlot(t0, 0, false);
+  t0.startRecording(100);
+  // Enough closed pairs that staging needs many bounded grains and its private
+  // output seals more than one chunk.
+  for (uint32_t pair = 0; pair < 160; ++pair) {
+    const uint32_t tick = 4 + pair * 4;
+    t0.noteOn(1 + (pair % 8), static_cast<uint8_t>(pair % 128), 100, tick);
+    t0.noteOff(1 + (pair % 8), static_cast<uint8_t>(pair % 128), 0, tick + 2);
+  }
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t0, 0, 768, 768);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t0, TrackCaptureStopTestAccess::closureGrain));
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordSourceStaging, job.admission.phase);
+
+  // A second track's normal capture, appended between two private grains, must
+  // still reach normal persistence admission: a long-held global seal would make
+  // `sealChunk` skip it.
+  Track& t1 = trackManager.getTrack(1);
+  prepareSlot(t1, 0, false);
+  t1.setActiveLoopIndex(0);
+  t1.startRecording(200);
+  const size_t queueBefore = PersistenceQueue::queueDepth();
+  t1.noteOn(1, 60, 100, 212);
+  while (t1.getLoop(0).capture.store.size() < LoopEventStoreConfig::CHUNK_CAPACITY) {
+    TEST_ASSERT_TRUE(t1.getLoop(0).capture.store.append(MidiEvent::ControlChange(
+        static_cast<uint32_t>(212 + t1.getLoop(0).capture.store.size()), 1, 7, 1)));
+  }
+  TEST_ASSERT_EQUAL(queueBefore + 1, PersistenceQueue::queueDepth());
+  TEST_ASSERT_EQUAL(static_cast<int>(ChunkPersistenceState::Queued),
+                    static_cast<int>(PersistenceQueue::chunkState(
+                        t1.getLoop(0).capture.store.chunkIds().front())));
+
+  // Every private grain must return with the global seal absent, and the private
+  // output chunks (which seal past the staging ceiling) must never be admitted.
+  const size_t queueAfterNormal = PersistenceQueue::queueDepth();
+  LoopEventStoreRewriteResult result = LoopEventStoreRewriteResult::Pending;
+  size_t turns = 0;
+  while (result == LoopEventStoreRewriteResult::Pending && turns++ < 200000) {
+    result = TrackCaptureStopTestAccess::stagingGrain(t0);
+    TEST_ASSERT_FALSE(LoopEventStore::isEphemeralSeal());
+    TEST_ASSERT_EQUAL(queueAfterNormal, PersistenceQueue::queueDepth());
+  }
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, result);
+  TEST_ASSERT_GREATER_THAN(1, TrackCaptureStopTestAccess::closureRuntime(t0)
+                                  .canonicalCaptureOutput.store.chunkIds().size());
+  for (uint16_t id : TrackCaptureStopTestAccess::closureRuntime(t0)
+                         .canonicalCaptureOutput.store.chunkIds()) {
+    TEST_ASSERT_EQUAL(static_cast<int>(ChunkPersistenceState::NotScheduled),
+                      static_cast<int>(PersistenceQueue::chunkState(id)));
+  }
+  TEST_ASSERT_EQUAL(queueAfterNormal, PersistenceQueue::queueDepth());
+}
+
 // Independent inventories for the deferred Record normalizer migration. These
 // call the real stop entry points; they do not copy normalization into a fixture.
 void assertRecordRows(const Loop& loop, const SessionMidiEventVec& expected) {
@@ -1192,6 +1470,11 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_record_job_closure_rejects_reused_raw_and_replaced_output);
   RUN_TEST(test_record_job_closures_exceed_overdub_hold_limit_without_staging);
   RUN_TEST(test_record_job_without_held_notes_emits_no_closures);
+  RUN_TEST(test_record_publication_preflight_denies_before_the_irreversible_commit);
+  RUN_TEST(test_record_pass_transfer_continues_after_the_store_empties);
+  RUN_TEST(test_empty_record_take_all_dropped_retires_without_content);
+  RUN_TEST(test_empty_record_take_all_filtered_retires_without_content);
+  RUN_TEST(test_private_grains_never_hold_the_global_ephemeral_seal);
   RUN_TEST(test_record_job_closures_preserve_a_live_successor);
   RUN_TEST(test_record_job_closure_denial_retains_obligation_for_retry);
   RUN_TEST(test_record_stop_closure_does_not_search_reused_producer);

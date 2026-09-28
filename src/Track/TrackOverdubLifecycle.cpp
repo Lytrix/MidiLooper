@@ -1142,13 +1142,6 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordSourceStagin
   const uint64_t sourceGeneration = job.rawRange.generation();
   if (!receipt.bound || receipt.frozenGeneration != stop.frozenGeneration ||
       receipt.owner != &stop || receipt.sourceGeneration != sourceGeneration) {
-    // Top the credits back up before binding so the copy cannot exhaust mid-way.
-    // A denial here performs no mutation; the job retries on a later grain.
-    while (runtime->canonicalCaptureChunks.availableChunks() <
-           PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS) {
-      if (!runtime->replenishCanonicalCaptureChunk()) break;
-    }
-    if (runtime->canonicalCaptureChunks.availableChunks() == 0) return LoopEventStoreRewriteResult::Denied;
     receipt.bound = false;
     if (!cursor.begin(job.rawRange, output, runtime->canonicalCaptureChunks,
                       job.loopLengthTicks))
@@ -1161,11 +1154,25 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordSourceStagin
   }
   const RecordSourceStaging::Step step = cursor.step(kDeferredStopPreparationQuantum);
   if (step == RecordSourceStaging::Step::Denied) {
-    receipt.bound = false;
-    cursor.discard();
+    // Sticky terminal denial for this binding. Deliberately do NOT discard the
+    // cursor and re-bind: rows already appended to the private output would be
+    // copied a second time, duplicating closure/source rows. The job fails closed
+    // on this binding; a distinct interval binds a fresh cursor.
     return LoopEventStoreRewriteResult::Denied;
   }
-  if (step == RecordSourceStaging::Step::Pending) return LoopEventStoreRewriteResult::Pending;
+  if (step == RecordSourceStaging::Step::Pressure ||
+      step == RecordSourceStaging::Step::Pending) {
+    // Keep the resumable copy working across an arbitrary accepted take size: top
+    // the caller's credits back up before the next grain. `Pressure` kept the
+    // cursor's exact source position, and `Pending` only paused mid-copy, so no
+    // staged row is duplicated or dropped. Each grain reserves at most the
+    // bounded transfer allowance and `appendReserved` never allocates a chunk.
+    while (runtime->canonicalCaptureChunks.availableChunks() <
+           PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS) {
+      if (!runtime->replenishCanonicalCaptureChunk()) break;
+    }
+    return LoopEventStoreRewriteResult::Pending;
+  }
   // Complete or Empty: the take is staged after the closure Offs. Ordering,
   // identity completion, wrap repair and filtering are the composition's grain.
   receipt.stagedRows = cursor.copiedRows();
@@ -1199,7 +1206,7 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordNormalizatio
       runtime->captureStopOwnerGeneration != stop.frozenGeneration)
     return LoopEventStoreRewriteResult::Denied;
   auto& output = runtime->canonicalCaptureOutput.store;
-  if (output.empty() || !output.reservedAppendReady()) return LoopEventStoreRewriteResult::Denied;
+  if (!output.reservedAppendReady()) return LoopEventStoreRewriteResult::Denied;
 
   auto& role = captureStopJobs_->recordPreparation;
   const RecordPreparation::Role::Key key{job.slot, job.loopId, job.interval,
@@ -1227,14 +1234,33 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordNormalizatio
   }
   const RecordPreparation::Step step = role.step(kDeferredStopPreparationQuantum);
   if (step == RecordPreparation::Step::Denied) {
-    role.discard();
+    // Sticky terminal denial. Deliberately do NOT discard the role: the private
+    // output may already be partially ordered, repaired or marked, and re-binding
+    // over that store would re-read temporary filter markers as original events.
+    // The job fails closed on this binding instead of duplicating or corrupting
+    // rows; a distinct interval or output store binds a fresh role.
     return LoopEventStoreRewriteResult::Denied;
   }
-  if (step == RecordPreparation::Step::Pending) return LoopEventStoreRewriteResult::Pending;
-  // Complete (the output is non-empty here, so Empty cannot occur): the private
-  // output is ordered, identity-complete and policy-filtered. Publication is
-  // S4f.20 and is deliberately not attempted from this phase.
+  if (step == RecordPreparation::Step::Pressure ||
+      step == RecordPreparation::Step::Pending) {
+    // Resumable: top the caller's credits back up before the next grain. A
+    // `Pressure` grain kept the cursor's exact position and its removal marks
+    // intact, so the retry neither duplicates nor drops a row.
+    while (runtime->canonicalCaptureChunks.availableChunks() <
+           PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS) {
+      if (!runtime->replenishCanonicalCaptureChunk()) break;
+    }
+    return LoopEventStoreRewriteResult::Pending;
+  }
+  // Complete or Empty: the private output is ordered, identity-complete and
+  // policy-filtered. An output with no retained rows is a valid no-content
+  // Record result, not a denial: it keeps the inline route's empty-take
+  // semantics and retires terminally instead of pending forever.
   role.discard();
+  if (output.empty()) {
+    stop.setPhase(PendingStopPhase::RecordEmpty);
+    return LoopEventStoreRewriteResult::Complete;
+  }
   stop.setPhase(PendingStopPhase::RecordPrepared);
   return LoopEventStoreRewriteResult::Complete;
 }
@@ -1255,8 +1281,19 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordPassTransfer
     return LoopEventStoreRewriteResult::Denied;
   Loop& loop = *job.owner;
   Capture& output = runtime->canonicalCaptureOutput;
-  if (output.store.empty()) return LoopEventStoreRewriteResult::Denied;
   if (!job.ownsPendingPass) {
+    // Begin needs staged content, but an owned transfer must be allowed to finish:
+    // `stepCommittedChunkTransfer` empties the source store as it moves the last
+    // references and can still return Pending while it reverses the destination
+    // directory order. Rejecting the empty store here would strand that accepted,
+    // owned continuation forever.
+    if (output.store.empty()) return LoopEventStoreRewriteResult::Denied;
+    // Size the prewarmed ownership row to this take's chunk count before the
+    // bounded transfer starts: the fixed overdub transfer row must not cap an
+    // accepted Record take. Cold, once, and idempotent; the transfer itself never
+    // allocates.
+    if (!loop.prewarmPreparedPassTransferChunks(output.store.chunkIds().size()))
+      return LoopEventStoreRewriteResult::Denied;
     // The same admitted transfer row and job-owned receipt the overdub route uses;
     // the source is this interval's normalized private output.
     const SealOutcome staged = loop.beginPreparedCapturePassFromActiveAdmission(
@@ -1308,6 +1345,21 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordPublication(
       runtime->captureStopOwnerGeneration != stop.frozenGeneration)
     return LoopEventStoreRewriteResult::Denied;
   Loop& loop = *job.owner;
+  // Preflight every rejectable prerequisite BEFORE the irreversible commit. The
+  // atomic handoff cannot be undone: committing content and then denying on a
+  // missing geometry receipt would publish a pass with no `RecordPassAdded` undo
+  // entry or persistence, and would clear `ownsPendingPass` with no retryable
+  // receipt. A fail-closed deny here leaves the job-owned pass intact so a later
+  // grain can retry once the receipt exists.
+  //
+  // Fail closed without the interval's own geometry receipt: the Track's inline
+  // baseline belongs to whichever record start ran last, not necessarily this job.
+  if (!job.hasRecordGeometry || job.recordGeometryLoopId != job.loopId)
+    return LoopEventStoreRewriteResult::Denied;
+  // The pass must be capacity-proven and fully prepared; a pass that cannot
+  // transfer without allocation would otherwise be rejected after publication.
+  if (!loop.canTransferCapturePassWithoutAllocation(job.pendingPass))
+    return LoopEventStoreRewriteResult::Denied;
   // Mode-correct atomic publication: the bounded canonical ownership handoff,
   // then exactly the inline Record stop's side effects — the `RecordPassAdded`
   // undo entry, display staleness and cache invalidation.
@@ -1325,10 +1377,6 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordPublication(
   // derived views are invalidated without the inline path's extra cache walk.
   const PassId publishedPassId = loop.lastCommittedPassId();
   if (publishedPassId == kInvalidPassId) return LoopEventStoreRewriteResult::Denied;
-  // Fail closed without the interval's own geometry receipt: the Track's inline
-  // baseline belongs to whichever record start ran last, not necessarily this job.
-  if (!job.hasRecordGeometry || job.recordGeometryLoopId != job.loopId)
-    return LoopEventStoreRewriteResult::Denied;
   job.recordAfterGeometry =
       UndoLoopGeometry{loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick};
   TrackUndo::pushRecordPassAdded(*this, job.slot, publishedPassId, job.loopId,
@@ -1336,6 +1384,41 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordPublication(
   loop.markDisplayCachesStale();
   requestLoopSlotPersistAndSaveState(*this, job.slot,
                                      MemoryMonitor::getInternalHeapFreeBytes());
+  stop.setPhase(PendingStopPhase::RecordPublished);
+  return LoopEventStoreRewriteResult::Complete;
+}
+
+TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordEmptyResult(
+    CaptureStopJob& job) {
+  auto& stop = job.admission;
+  if (!stop.pending || job.mode != CapturePhase::Record || !job.owner ||
+      job.loopId == kInvalidLoopId || !loopsAllocated() ||
+      job.slot >= Config::MAX_LOOPS_PER_TRACK || loopIdForSlot(job.slot) != job.loopId ||
+      &getLoop(job.slot) != job.owner || job.owner->loopId != job.loopId ||
+      !captureStopJobs_ || stop.phase != PendingStopPhase::RecordEmpty)
+    return LoopEventStoreRewriteResult::Denied;
+  auto* runtime = playbackRuntime.slotIfAllocated(job.slot);
+  if (!runtime || runtime->captureStopOwner != &stop ||
+      runtime->captureStopOwnerGeneration != stop.frozenGeneration)
+    return LoopEventStoreRewriteResult::Denied;
+  // Nothing to publish: projection and minimum-length policy retained no row, so
+  // this is the inline route's `CommitResult::Skipped` empty-take outcome. There
+  // is no pass, no `RecordPassAdded` undo entry and no persistence admission --
+  // only the no-content geometry reset the inline path performs when the slot has
+  // no active pass. The live capture store is deliberately NOT discarded: the
+  // job-owned raw range carries this interval's rows, and a live successor may
+  // already own the Loop's producer directory.
+  Loop& loop = *job.owner;
+  if (loop.activeCapturePassCount() == 0) {
+    loop.resetPassTimeline();
+    loop.loopLengthTicks = 0;
+    loop.loopStartTick = 0;
+    loop.startLoopTick = 0;
+    loop.nextEventIndex = 0;
+    loop.lastTickInLoop = 0;
+    loop.invalidatePlaybackCaches();
+  }
+  loop.markDisplayCachesStale();
   stop.setPhase(PendingStopPhase::RecordPublished);
   return LoopEventStoreRewriteResult::Complete;
 }
@@ -1410,6 +1493,9 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     }
     if (stop.phase == PendingStopPhase::RecordPassReady) {
       return stepDeferredRecordPublication(job) != LoopEventStoreRewriteResult::Denied;
+    }
+    if (stop.phase == PendingStopPhase::RecordEmpty) {
+      return stepDeferredRecordEmptyResult(job) != LoopEventStoreRewriteResult::Denied;
     }
     if (stop.phase == PendingStopPhase::RecordPublished) {
       return stepDeferredRecordRetirement(job) != LoopEventStoreRewriteResult::Denied;
