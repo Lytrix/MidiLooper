@@ -275,6 +275,19 @@ class LoopEventStore {
   static bool deepCloneCommittedChunkIds(CommittedChunkIdList& dest,
                                          const CommittedChunkIdList& src);
 
+  /// Failure-aware capacity admission for a committed chunk-id directory. `std::vector`
+  /// cannot report a null allocate, so the exact block the next growth would request is
+  /// probed and freed first; a refused probe returns false with \p dest unmodified rather
+  /// than writing through a null pointer. Grows only an empty list, and leaves it empty
+  /// (capacity only). Cold path.
+  static bool prewarmCommittedChunkIdCapacity(CommittedChunkIdList& dest, size_t count);
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// Resource-boundary fixture: make the committed-directory allocation probe refuse,
+  /// so the failure-aware admission is exercised without a real allocator fault.
+  static void setCommittedChunkIdProbeRefusedForTests(bool refused);
+#endif
+
   LoopEventStore() = default;
   LoopEventStore(const LoopEventStore&) = delete;
   LoopEventStore& operator=(const LoopEventStore&) = delete;

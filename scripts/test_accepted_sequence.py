@@ -343,8 +343,7 @@ class StoppedPreparationTests(unittest.TestCase):
         self.assertEqual(ClearStatus.NOT_SELECTED, queued.status)
         self.assertFalse(switched.ok)
 
-    def test_a_recognized_long_press_with_no_clear_row_is_the_empty_noop(self):
-        from unittest.mock import patch
+    def _recognized_noop_reader(self):
         state = {"n": 0}
 
         def reader(_path):
@@ -353,14 +352,39 @@ class StoppedPreparationTests(unittest.TestCase):
                 return []
             return ["[1.0] [DEBUG] [BTN] Button press: Loop 4 (long)"]
 
+        return reader
+
+    def _run_recognized_noop(self, **kwargs):
+        from unittest.mock import patch
         nows = iter([0.0, 0.0, 0.0, 2.0, 2.0, 2.0, 9.0])
         with patch("hitl.actions.slots._send_long_press"):
-            outcome = stopped_preparation.clear_slot(
+            return stopped_preparation.clear_slot(
                 _Ctx(FakePort()), self.log, track_index0=7, slot0=3, long_press_ms=900,
-                noop_settle_s=1.0, timeout_s=5.0, lines_reader=reader,
-                sleep=lambda _s: None, now=lambda: next(nows, 9.0))
+                noop_settle_s=1.0, timeout_s=5.0, lines_reader=self._recognized_noop_reader(),
+                sleep=lambda _s: None, now=lambda: next(nows, 9.0), **kwargs)
+
+    def test_a_recognized_long_press_without_evidence_is_unconfirmed(self):
+        # Recognition is not completion: the firmware acknowledges the gesture before
+        # deciding, so a silent slot could be a lost refusal or switch. Elapsed time
+        # alone must never be reported as a successful preparation.
+        outcome = self._run_recognized_noop()
+        self.assertEqual(ClearStatus.UNCONFIRMED, outcome.status)
+        self.assertFalse(outcome.ok)
+
+    def test_a_recognized_long_press_with_confirmed_emptiness_is_the_empty_noop(self):
+        outcome = self._run_recognized_noop(emptiness_reader=lambda: True)
         self.assertEqual(ClearStatus.ALREADY_EMPTY, outcome.status)
         self.assertTrue(outcome.ok)
+
+    def test_a_recognized_long_press_on_a_populated_target_is_unconfirmed(self):
+        outcome = self._run_recognized_noop(emptiness_reader=lambda: False)
+        self.assertEqual(ClearStatus.UNCONFIRMED, outcome.status)
+        self.assertFalse(outcome.ok)
+
+    def test_a_recognized_long_press_with_unavailable_emptiness_is_unconfirmed(self):
+        outcome = self._run_recognized_noop(emptiness_reader=lambda: None)
+        self.assertEqual(ClearStatus.UNCONFIRMED, outcome.status)
+        self.assertFalse(outcome.ok)
 
     def test_a_short_press_is_rejected_as_a_different_gesture(self):
         with self.assertRaises(ValueError):
@@ -501,25 +525,51 @@ class CensusPreparationTests(unittest.TestCase):
     """The read-only census decides whether a clear is needed; unknown never means empty."""
 
     def family(self, *slots):
+        """`slots` are `(track, slot, has_content, payload_code)` (payload 1=absent, 3=present)."""
         lines = ["#CAP,1,LIBOBS,B,a=1,e=0,s=64"]
-        for track, slot, has in slots:
-            lines.append(f"#CAP,2,LIBOBS,S,t={track},s={slot},st=2,c=n,p=3,o=2,q=5,w=0,m=1,"
-                         f"g=0,e=0,k={has},kp={has},kr={has},kc={has},a=0,h=0,l=0,v=0,n=0,i=0,x=0")
+        for track, slot, has, payload in slots:
+            lines.append(self.slot_row(track, slot, has, payload))
         lines.append("#CAP,3,LIBOBS,E,a=1,b=1,t=1,r=0,s=1,P=1,R=1,x=1")
         return lines
 
-    def test_occupancy_uses_the_device_union_content_signal(self):
-        self.assertEqual({(7, 3): True, (7, 4): False},
-                         occupied_slots(self.family((7, 3, 1), (7, 4, 0))))
+    @staticmethod
+    def slot_row(track, slot, has, payload, *, include_payload=True, include_content=True):
+        parts = [f"t={track}", f"s={slot}", "st=2", "c=n", "o=2", "q=5", "w=0", "m=1",
+                 "g=0", "e=0"]
+        if include_payload:
+            parts.append(f"p={payload}")
+        if include_content:
+            parts += [f"k={has}", f"kp={has}", f"kr={has}", f"kc={has}"]
+        parts += ["a=0", "h=0", "l=0", "v=0", "n=0", "i=0", "x=0"]
+        return "#CAP,2,LIBOBS,S," + ",".join(parts)
+
+    def test_occupancy_uses_both_content_representations(self):
+        # RAM-only, SD-only (verified payload with k=0), both, and neither.
+        occupancy = occupied_slots(self.family((7, 3, 1, 1), (7, 4, 0, 3),
+                                               (7, 5, 1, 3), (7, 6, 0, 1)))
+        self.assertEqual({(7, 3): True, (7, 4): True, (7, 5): True, (7, 6): False}, occupancy)
+
+    def test_an_sd_only_slot_is_populated_not_empty(self):
+        # The defect: a verified SD payload with no loaded content read as empty, so
+        # preparation skipped the clear and then seeded into occupied content.
+        self.assertIs(True, occupied_slots(self.family((7, 3, 0, 3)))[(7, 3)])
+
+    def test_unavailable_evidence_is_unknown_never_empty(self):
+        lines = ["#CAP,1,LIBOBS,B,a=1,e=0,s=64",
+                 self.slot_row(7, 3, 0, 3, include_payload=False),   # SD evidence absent
+                 self.slot_row(7, 4, 0, 0),                          # payload token unknown
+                 self.slot_row(7, 5, 0, 1, include_content=False),   # RAM evidence absent
+                 "#CAP,3,LIBOBS,E,a=1,b=1,t=1,r=0,s=1,P=1,R=1,x=1"]
+        self.assertEqual({(7, 3): None, (7, 4): None, (7, 5): None}, occupied_slots(lines))
 
     def test_a_lost_window_is_unknown_not_empty(self):
-        self.assertIsNone(occupied_slots(self.family((7, 3, 1))[:-1]))
-        self.assertEqual((None, None), observation_window(self.family((7, 3, 1))[:-1]))
+        self.assertIsNone(occupied_slots(self.family((7, 3, 1, 1))[:-1]))
+        self.assertEqual((None, None), observation_window(self.family((7, 3, 1, 1))[:-1]))
 
     def test_an_unsettled_sweep_still_yields_occupancy_with_its_flag(self):
         # The device flags a multi-turn sweep as not settled (x=0) while every slot row is
         # present; preparation may use the occupancy, a settled census must not.
-        lines = self.family((7, 3, 1), (7, 4, 0))
+        lines = self.family((7, 3, 1, 1), (7, 4, 0, 1))
         lines = [line.replace("P=1,R=1,x=1", "P=1,R=1,x=0") for line in lines]
         occupancy, settled = observation_window(lines)
         self.assertEqual({(7, 3): True, (7, 4): False}, occupancy)

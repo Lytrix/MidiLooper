@@ -1110,6 +1110,48 @@ void test_record_pass_transfer_continues_after_the_store_empties() {
   TEST_ASSERT_FALSE(LoopEventStore::isEphemeralSeal());
 }
 
+void test_record_pass_transfer_capacity_refusal_fails_closed() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 768, 768);
+  auto& runtime = TrackCaptureStopTestAccess::closureRuntime(t);
+  auto& output = runtime.canonicalCaptureOutput.store;
+  // A take beyond the fixed overdub transfer row forces the ownership-row capacity
+  // admission before the bounded transfer can start.
+  constexpr size_t kChunks = PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS + 2;
+  LoopEventStore::enterEphemeralSeal();
+  for (size_t i = 0; i < kChunks * LoopEventStoreConfig::CHUNK_CAPACITY; ++i) {
+    TEST_ASSERT_TRUE(output.append(MidiEvent::NoteOn(
+        static_cast<uint32_t>(i), 1, 60, static_cast<uint32_t>(i + 1))));
+  }
+  LoopEventStore::leaveEphemeralSeal();
+  TEST_ASSERT_TRUE(t.getLoop(0).prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_TRUE(t.getLoop(0).hasActiveOverdubTransferAdmission());
+  job.admission.phase = PendingStopPhase::RecordPrepared;
+
+  // Forced allocation refusal: the admission must report failure. `std::vector`
+  // growth cannot report a null allocate, so an unguarded push_back would write
+  // through the refused block (reproduced as an ASan null-write).
+  LoopEventStore::setCommittedChunkIdProbeRefusedForTests(true);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied,
+                    TrackCaptureStopTestAccess::passTransferGrain(t));
+  LoopEventStore::setCommittedChunkIdProbeRefusedForTests(false);
+  TEST_ASSERT_FALSE_MESSAGE(job.ownsPendingPass,
+                            "a refused allocation must not begin the pass transfer");
+  TEST_ASSERT_FALSE(job.pendingPass.preparationPending);
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPrepared, job.admission.phase);
+  TEST_ASSERT_EQUAL(kChunks * LoopEventStoreConfig::CHUNK_CAPACITY, output.size());
+
+  // The same binding retries once the allocation is available again.
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::passTransferGrain));
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPassReady, job.admission.phase);
+  TEST_ASSERT_TRUE(job.ownsPendingPass);
+  TEST_ASSERT_EQUAL(kChunks, job.pendingPass.committedChunkIds.size());
+}
+
 void test_empty_record_take_all_dropped_retires_without_content() {
     // All rows dropped by the stop projection: a non-note row beyond the final
     // length leaves the closure and the staging output empty.
@@ -1472,6 +1514,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_record_job_without_held_notes_emits_no_closures);
   RUN_TEST(test_record_publication_preflight_denies_before_the_irreversible_commit);
   RUN_TEST(test_record_pass_transfer_continues_after_the_store_empties);
+  RUN_TEST(test_record_pass_transfer_capacity_refusal_fails_closed);
   RUN_TEST(test_empty_record_take_all_dropped_retires_without_content);
   RUN_TEST(test_empty_record_take_all_filtered_retires_without_content);
   RUN_TEST(test_private_grains_never_hold_the_global_ephemeral_seal);

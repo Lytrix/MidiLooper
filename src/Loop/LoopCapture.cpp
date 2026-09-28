@@ -2457,22 +2457,9 @@ LOOP_COLD_MEM bool Loop::prewarmPreparedPassTransferChunks(size_t chunks) {
   }
   CommittedChunkIdList& row = prewarmedCommittedChunkIdPool_.back();
   if (!row.empty()) return false;
-  if (row.capacity() >= chunks) return true;
-  // Grow through the committed-directory `push_back` path that
-  // `LoopEventStore::tryAssignCommittedChunkIds` already emits in the cold store
-  // TU. A runtime `std::vector::reserve` is a separate out-of-line instantiation
-  // the linker places in ITCM (measured: 320 B, which took RAM1 padding below its
-  // reviewed floor); `push_back` is already resident, so this admission adds no
-  // ITCM code. The row is left empty, only pre-sized.
-  const uint16_t zero = 0;
-  while (row.capacity() < chunks) {
-    const size_t sizeBefore = row.size();
-    row.push_back(zero);
-    if (row.size() == sizeBefore) break;  // external allocation refused
-  }
-  const bool ready = row.capacity() >= chunks;
-  row.clear();
-  return ready;
+  // The store owner owns failure-aware growth: a bare `push_back` cannot report a
+  // null allocate and a runtime `reserve` instantiation also costs 320 B of ITCM.
+  return LoopEventStore::prewarmCommittedChunkIdCapacity(row, chunks);
 }
 
 LOOP_COLD_MEM LoopEventStoreRewriteResult Loop::stepPreparedCapturePass(

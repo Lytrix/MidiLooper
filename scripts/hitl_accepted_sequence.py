@@ -47,6 +47,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import mido
 
@@ -308,7 +309,8 @@ def _run_census(capture, capture_log: Path, events: list[dict]) -> Optional[dict
     occupied, device_complete = observation_window(family.rows)
     events.append({"event": "census",
                    "slots": 0 if occupied is None else len(occupied),
-                   "occupied": 0 if occupied is None else sum(1 for v in occupied.values() if v),
+                   "occupied": 0 if occupied is None else sum(1 for v in occupied.values() if v is True),
+                   "unknown": 0 if occupied is None else sum(1 for v in occupied.values() if v is None),
                    "device_settled": bool(device_complete)})
     return occupied
 
@@ -424,7 +426,8 @@ def main(argv: list[str] | None = None) -> int:
             census = _run_census(capture, capture_log, events) if args.clear_targets else None
             report["census"] = (
                 None if census is None else
-                {f"{track}:{slot}": bool(value) for (track, slot), value in sorted(census.items())})
+                {f"{track}:{slot}": (None if value is None else bool(value))
+                 for (track, slot), value in sorted(census.items())})
 
             def seed(slot_number: int, label: str, note_base: int) -> None:
                 """Record a short take into `slot_number`, committed, so it is a *filled* slot afterwards.
@@ -465,10 +468,24 @@ def main(argv: list[str] | None = None) -> int:
                         # gesture a bounded number of times rather than giving up.
                         attempts = max(1, args.clear_attempts)
                         outcome = None
+
+                        def target_emptiness() -> Optional[bool]:
+                            """Fresh read-only census state for this target; None when unavailable.
+
+                            A recognized long press is not completion: the firmware acknowledges the
+                            gesture before deciding, so a silent slot is only ALREADY_EMPTY when the
+                            census independently classifies it empty (RAM and SD both observed absent).
+                            """
+                            fresh = _run_census(capture, capture_log, events)
+                            if fresh is None:
+                                return None
+                            return fresh.get((t0, slot0))
+
                         for attempt in range(attempts):
                             outcome = stopped_preparation.clear_slot(
                                 ctx, capture_log, track_index0=t0, slot0=slot0,
-                                timeout_s=args.clear_timeout_s)
+                                timeout_s=args.clear_timeout_s,
+                                emptiness_reader=target_emptiness)
                             events.append({"event": f"prepare_slot_{label}", "attempt": attempt,
                                            **outcome.as_dict()})
                             if outcome.ok or outcome.status not in (

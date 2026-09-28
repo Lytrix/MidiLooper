@@ -22,6 +22,10 @@ ALLOWED_HITL_COMMANDS = frozenset({
     "!HEAP_STATS",
     "!LIB_OBSERVE_STATUS",
     "!STOP_STATUS",
+    # Read-only ring flush. The observation family is emitted through the capture
+    # ring, so an idle device can hold it unflushed; the drain makes a completed
+    # observation visible without mutating content.
+    "!TRACE_DRAIN",
 })
 
 

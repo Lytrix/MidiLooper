@@ -2509,6 +2509,17 @@ own execution packet and records fixture/native/build/device results separately.
       admission/bind so the geometry receipt and the transfer-row capacity are established at the
       production bind rather than the first transfer grain.
       [Closure-plan Step 1 evidence](S4F18-CLOSURE-BOUNDARIES-EXECUTION.md).
+      **2026-09-28 review follow-up — allocation refusal fails closed:** the transfer-row capacity
+      admission (`Loop::prewarmPreparedPassTransferChunks`) grew the prewarmed ownership row with
+      `std::vector::push_back` and checked its size afterwards; `std::vector` cannot report a null
+      allocate, so `_M_realloc_insert` wrote through the refused block (ASan null-write). Growth now
+      goes through the new flash-resident `LoopEventStore::prewarmCommittedChunkIdCapacity`, which
+      probes the exact block the next growth will request immediately before the `push_back` that
+      needs it and returns false with the row unmodified. A native-only refusal hook plus
+      `test_record_pass_transfer_capacity_refusal_fails_closed` prove the denial leaves the
+      job-owned state intact and that the same binding retries to `RecordPassReady`; red-proved by
+      removing the probe guard. RAM1 padding unchanged at **840**. See the same
+      [closure-boundaries evidence](S4F18-CLOSURE-BOUNDARIES-EXECUTION.md) § review follow-ups.
 - [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,
