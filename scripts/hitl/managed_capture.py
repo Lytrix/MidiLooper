@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Callable, Iterator, Optional
 
 from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT, HitlConfig
+from hitl.serial.protocol import (collect_library_observation, fenced_rows,
+                                  fenced_window, format_command_request)
 
 _CAPTURE_SCRIPT = Path(__file__).resolve().parent.parent / "capture_session.py"
 _ACTIVE_LOCK = threading.Lock()
@@ -137,6 +139,9 @@ class ManagedCaptureSession:
         self._output_thread: threading.Thread | None = None
         self._session_log: Path | None = None
         self._owner_write_fd: int | None = None
+        # One outstanding read-only request at a time: the capture session is the
+        # single serial owner, so overlap would make a response window ambiguous.
+        self._pending_command_nonce: Optional[str] = None
 
     @property
     def session_log(self) -> Path | None:
@@ -166,6 +171,8 @@ class ManagedCaptureSession:
             command += ["--run-token", self._run_token]
         if self._arm_snapshot_yield:
             command.append("--arm-snapshot-yield")
+        # Allowlisted, fenced read-only requests on stdin (task 2.3).
+        command.append("--command-stdin")
         # Parent-death pipe: the child exits when this process closes the write
         # end, which happens even if the harness is SIGKILLed. That guarantees a
         # leaked capture session can never keep the USB serial port open.
@@ -187,6 +194,7 @@ class ManagedCaptureSession:
         try:
             self._process = subprocess.Popen(
                 command,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -210,6 +218,97 @@ class ManagedCaptureSession:
         print("[hitl-capture] boot settle complete", flush=True)
         _set_active_managed_capture(self)
         return self._session_log
+
+    def send_command(self, command: str, *, nonce: str, end_nonce: str) -> tuple[bool, str]:
+        """Queue one allowlisted read-only request for the capture owner.
+
+        Refuses while another request is outstanding, and refuses when no capture
+        session owns the port, so a request can never be written by the wrong owner.
+        """
+        if self._pending_command_nonce is not None:
+            return False, "one outstanding request"
+        process = self._process
+        if process is None or process.poll() is not None or process.stdin is None:
+            return False, "capture session not running"
+        try:
+            process.stdin.write(format_command_request(command, nonce, end_nonce))
+            process.stdin.flush()
+        except (BrokenPipeError, ValueError, OSError) as exc:
+            return False, f"write failed: {exc}"
+        self._pending_command_nonce = nonce
+        return True, "queued"
+
+    def complete_command(self, nonce: str) -> None:
+        """Release the outstanding-request slot for `nonce` (ack, timeout or loss)."""
+        if self._pending_command_nonce == nonce:
+            self._pending_command_nonce = None
+
+    @property
+    def pending_command_nonce(self) -> Optional[str]:
+        return self._pending_command_nonce
+
+    def fenced_response(self, nonce: str, end_nonce: str, *, timeout_s: float = 20.0,
+                        poll_s: float = 0.05) -> Optional[list[str]]:
+        """This request's fenced response window, or None when it never completed."""
+        deadline = time.monotonic() + max(timeout_s, 0.0)
+        try:
+            while time.monotonic() < deadline:
+                log = self._session_log
+                if log is not None and log.is_file():
+                    rows = fenced_rows(
+                        log.read_text(encoding="utf-8", errors="replace").splitlines(),
+                        nonce, end_nonce)
+                    if rows is not None:
+                        return rows
+                time.sleep(poll_s)
+            return None
+        finally:
+            self.complete_command(nonce)
+
+    def drain_capture_ring(self) -> bool:
+        """Ask the owner to flush the capture ring. Read-only and fire-and-forget.
+
+        The observation family is emitted through the capture ring, so on an idle
+        device it can sit unflushed; the status diagnostic proved the observation
+        itself completes (64/64 emitted) while no row was visible. This is not a
+        fenced request, so it does not consume the outstanding-request slot.
+        """
+        process = self._process
+        if process is None or process.poll() is not None or process.stdin is None:
+            return False
+        try:
+            process.stdin.write("!TRACE_DRAIN\n")
+            process.stdin.flush()
+        except (BrokenPipeError, ValueError, OSError):
+            return False
+        return True
+
+    def library_observation(self, nonce: str, end_nonce: str, *, timeout_s: float = 40.0,
+                            poll_s: float = 0.05, drain_every_s: float = 2.0):
+        """This request's complete library-observation family, or None.
+
+        The command fence proves the request reached the device; the family's own
+        `LIBOBS,E` row proves the census settled. Either one missing returns None.
+        """
+        deadline = time.monotonic() + max(timeout_s, 0.0)
+        next_drain = time.monotonic()
+        try:
+            while time.monotonic() < deadline:
+                log = self._session_log
+                if log is not None and log.is_file():
+                    lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+                    window = fenced_window(lines, nonce, end_nonce)
+                    if window is not None:
+                        family = collect_library_observation(lines, window[1] + 1)
+                        if family is not None and family.closed:
+                            return family
+                if drain_every_s > 0 and time.monotonic() >= next_drain:
+                    self.drain_capture_ring()
+                    next_drain = time.monotonic() + drain_every_s
+                time.sleep(poll_s)
+            return None
+        finally:
+            self.complete_command(nonce)
 
     def poll(self) -> Optional[int]:
         process = self._process

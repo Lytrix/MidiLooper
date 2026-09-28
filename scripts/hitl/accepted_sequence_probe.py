@@ -203,10 +203,11 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
                 if (m := CANONICAL_RELEASE_RE.match(e.body)) and int(m.group(1)) == a0]
     for us, body in releases:
         evidence["releases"].append(f"{us}: {body}")
-    l4_released = bool(releases) or bool(human_windows)
+    human_releases = [l for l in lines if re.search(rf"Reentry released slot={a0}(?:\s|$)", l)]
+    l4_released = bool(releases) or bool(human_releases)
     add("L4_a_capacity_released", OK if l4_released else FAIL,
         (releases[0][1] + f" at {releases[0][0]} us") if releases
-        else ("A retired (human edge only)" if human_windows else
+        else ("A retired (human edge only)" if human_releases else
               "no release edge for A: it never retired, so B's stop could not be bounded by it"),
         "retention", "L4")
 
@@ -214,7 +215,8 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
     # A *successor* start is one that follows A's stop; a start before it is the seed that set the leg up, and
     # counting it would let a leg with no successor at all still satisfy L5.
     a_stop_us = stops_a[0][0] if stops_a else None
-    all_starts = [(e.us, e.body) for e in entries if RECA_RE.match(e.body)]
+    all_starts = [(e.us, e.body) for e in entries
+                  if (m := RECA_RE.match(e.body)) and int(m.group(1)) == b0]
     starts = [(us, body) for us, body in all_starts if a_stop_us is None or us > a_stop_us]
     for us, body in all_starts:
         evidence["successor_start"].append(
@@ -228,7 +230,9 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
             + ("" if a_stop_us is None else f" (A's stop was at {a_stop_us} us)"), "retention", "L5")
     else:
         after_release = [u for u, _ in starts if release_us is not None and u > release_us]
-        add("L5_successor_started", OK,
+        overlap = (a_stop_us is not None and release_us is not None
+                   and any(a_stop_us < us < release_us for us, _ in starts))
+        add("L5_successor_started", OK if overlap else (UNKNOWN if release_us is None else FAIL),
             f"{len(starts)} start(s): " + ", ".join(b for _, b in starts[:4])
             + (f"; {len(after_release)} after A's release edge" if release_us is not None else
                "; A's release edge is human-positioned only, so the ordering is positional"),
@@ -237,11 +241,27 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
     # ---------------- L7: no second press ----------------
     # A second press would show as a *second* stop request for the same interval, which L1/L6 already count;
     # this link states the user-facing consequence explicitly.
+    # Successful executions do not count button requests: retries may collapse
+    # into one execution. The driver gesture report is a separate required input.
     second_press = (len(stops_a) > 1) or (len(stops_b) > 1)
-    add("L7_one_press_per_stop", FAIL if second_press else OK,
+    add("L7_one_press_per_stop", FAIL if second_press else UNKNOWN,
         "a second stop request exists for an interval, so a press was required twice" if second_press else
-        "exactly one successful stop record per interval; no second press was needed",
+        "stop executions alone cannot prove one input press; correlate the driver's gesture report",
         "retention", "L7")
+
+    if leg == "od":
+        # RECA and RECS are emitted by record start/stop, not overdub lifecycle.
+        # In the old driver these were the seeds, producing a false acceptance.
+        for check in checks:
+            if check.name in ("L1_a_stop_accepted_once", "L6_b_stop_executes_once",
+                               "L5_successor_started", "L7_one_press_per_stop"):
+                check.status = UNKNOWN
+                check.kind = "evidence"
+                check.detail = "Record-only RECA/RECS cannot establish this overdub link"
+        add("overdub_interval_identity", UNKNOWN,
+            "RECA/RECS do not identify overdub intervals. Correlated overdub start, accepted-stop and "
+            "retirement evidence for A and B is still required; record seeds cannot close this leg",
+            "evidence")
 
     # ---------------- verdict ----------------
     if any(c.status == FAIL and c.kind == "setup" for c in checks):

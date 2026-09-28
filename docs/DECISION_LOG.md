@@ -15,6 +15,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
 | [DEC-093](#dec-093--record-and-overdub-share-the-existing-deferred-finalization-lifecycle) | 2026-09-27 | Record and overdub share existing deferred finalization; preserve original overlap acceptance | Accepted implementation contract; firmware/device proof open |
+| [DEC-092](#dec-092--response-driven-hitl-preserves-continuous-playback-and-same-boot-preparation) | 2026-09-27 | Response-driven HITL, continuous-play acceptance, scoped same-boot preparation | Accepted user constraints; design recorded, implementation/device evidence open |
 | [DEC-086](#dec-086--loop-edit-tempo-fader-is-a-global-bpm-control-on-cc102) | 2026-09-25 | Loop-edit fader 4: a global BPM control on ch16 CC102 (60–187 BPM, one BPM per step) | Accepted — implemented, native + device verified |
 | [DEC-091](#dec-091--a-failed-workspace-completion-is-discharged-and-reported-not-retried-at-the-queue-head) | 2026-09-26 | A failed workspace completion is **discharged and reported**, not re-queued at the head (it blocked every other item and kept the owed-save guard true) | Accepted — implemented, native verified (fixture red-proved); device fault path has no injection, evidence owed |
 | [DEC-090](#dec-090--the-deferred-save-records-workspace-focus-at-footer-write-time-not-at-admission) | 2026-09-26 | The deferred save records workspace **focus** at footer-write time; content identity stays the interval's slot (snapshot-at-admission rejected) | Accepted — implemented behavior, **native verified** (`test_storage_drain_restore`, red-proved); no firmware change |
@@ -101,7 +102,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-092 -->
+<!-- Append new entries below (newest first). Next ID: DEC-094 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -5265,6 +5266,67 @@ pre-slice build — the discharge helper is `STORAGE_PERSIST_MEM` (FLASH), so th
 for the whole assertion window. The S2b.7 parked-instance drain fixture was re-premised on the drain's
 **ownership transfer** (its progress-counter oracle needed the removed spin) and pins the corrected `Failed`
 verdict. No device evidence: this is an SD fault path and no device fault injection exists for it.
+
+
+## DEC-092 — Response-driven HITL preserves continuous playback and same-boot preparation
+
+**Date:** 2026-09-27
+**Owner:** HITL automation
+**Status:** Accepted — user workflow constraints; design recorded, implementation and device qualification open.
+
+### Problem
+
+Repeated accepted-sequence attempts require timing repairs and can test the wrong mode or
+pending switch. Manual DROID use works without global Stop. Existing telemetry and host tests
+do not establish every input-to-execution identity link.
+
+### Decision
+
+The user specifies DROID MIDI controls, continuously playing measured acceptance windows,
+no required manual reference pass, and repeatable scoped clearing without reboot. Stopped
+preparation is permitted. Advance from correlated responses; timeouts abort rather than
+press again. Retain the existing runtime acceptance, content, timing and SD authorization
+contracts. The implementation design and staged verification are in the linked OpenSpec;
+this record does not claim that new telemetry or automation has shipped.
+
+### Rationale
+
+Code and prior device traces distinguish sent MIDI, delayed gesture recognition, accepted
+intent and deferred execution. A populated record fixture becomes overdub; a separately
+stopped capture can make the switch take the SD-aware playback route. More elapsed time is
+not proof of the intended transition and can erase the required overlap.
+
+### Alternatives considered
+
+- Manual golden pass: excluded by the user's request; prior traces and production-path fixtures
+  must provide regression knowledge without another operator performance.
+- Longer fixed waits: cannot establish identities and can miss predecessor ownership windows.
+- Reboot after clearing: obscures persistence completion and prevents same-boot repeatability.
+- Another standalone driver/parser: duplicates the existing HITL architecture's owners.
+- Hardware finalizer pause: would manufacture the acceptance window rather than observe it.
+
+### Affected modules
+
+Existing HITL actions/session/protocol/verifiers/reporting; accepted-sequence entry point;
+existing firmware gesture/capture/serial observation owners. No runtime ownership transfer.
+
+### Constraints created
+
+No Stop inside the measured window; no implicit reset, unrelated data clear or control bypass.
+Missing evidence and missed overlap remain non-PASS. DEC-078 — accept-and-latch governs the
+meaning of an accepted interaction, even when old diagnostics use denial vocabulary.
+
+### Related OpenSpec
+
+[Response-driven HITL acceptance](../openspec/changes/response-driven-hitl-acceptance/design.md),
+a prerequisite of S4f.13 — accepted-sequence acceptance in `runtime-working-set-ownership`.
+
+### Migration notes
+
+Planning complete only. Apply staged tasks with per-slice execution packets; retain existing
+entry-point compatibility and immutable failed-run evidence. Close parent acceptance only
+with complete device/content/timing evidence. No SD targets are authorized by this record.
+
 
 ## DEC-093 — Record and overdub share the existing deferred finalization lifecycle
 

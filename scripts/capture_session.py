@@ -13,6 +13,77 @@ from pathlib import Path
 import serial
 
 
+# Read-only HITL observations this capture owner will forward on request. Anything
+# else is refused by name: the capture session is the single serial owner, so an
+# unfiltered passthrough would let a host-side bug issue a mutating command.
+ALLOWED_HITL_COMMANDS = frozenset({
+    "!LIB_OBSERVE",
+    "!CAP_IDENTITY_STATS",
+    "!HEAP_STATS",
+    "!LIB_OBSERVE_STATUS",
+    "!STOP_STATUS",
+})
+
+
+# The firmware accepts `!TRACE_FENCE <token>` only when the token is exactly 32
+# characters, so both fence tokens are generated in that shape.
+FENCE_TOKEN_LENGTH = 32
+
+
+def is_fence_token(token: str) -> bool:
+    return len(token) == FENCE_TOKEN_LENGTH and all(c in "0123456789abcdef" for c in token)
+
+
+def parse_command_request(line: str):
+    """``<start> <end> <!COMMAND>`` -> ``(start, end, command)``; malformed input returns None."""
+    parts = line.strip().split()
+    if len(parts) != 3:
+        return None
+    start, end, command = parts
+    command = command.strip()
+    # A command is `!` plus a name: no bare bang and no embedded whitespace, so a
+    # coalesced or truncated line is refused instead of forwarded as something else.
+    if not is_fence_token(start) or not is_fence_token(end) or start == end:
+        return None
+    if len(command) < 2 or not command.startswith("!") or any(c.isspace() for c in command):
+        return None
+    return start, end, command
+
+
+def _service_command_requests(ser, *, enabled: bool) -> None:
+    """Forward at most one allowlisted request, fenced so the host can detect loss.
+
+    The request is framed by two fence rows carrying the caller's nonce, so a
+    missing fence means the response window was lost or the device restarted --
+    never an inferred success.
+    """
+    if not enabled or ser is None or not ser.is_open:
+        return
+    while True:
+        try:
+            ready, _, _ = select.select([sys.stdin], [], [], 0)
+        except (OSError, ValueError):
+            return
+        if not ready:
+            return
+        line = sys.stdin.readline()
+        if not line:
+            return
+        parsed = parse_command_request(line)
+        if parsed is None:
+            print("[capture] command refused: malformed request", flush=True)
+            continue
+        start, end, command = parsed
+        if command not in ALLOWED_HITL_COMMANDS:
+            print(f"[capture] command refused nonce={start} command={command}", flush=True)
+            continue
+        ser.write(f"!TRACE_FENCE {start}\n".encode("ascii"))
+        ser.write(f"{command}\n".encode("ascii"))
+        ser.write(f"!TRACE_FENCE {end}\n".encode("ascii"))
+        ser.flush()
+        print(f"[capture] command accepted nonce={start} command={command}", flush=True)
+
+
 def _sync_log(log) -> None:
     log.flush()
     os.fsync(log.fileno())
@@ -58,6 +129,11 @@ def main() -> int:
         "--arm-snapshot-yield",
         action="store_true",
         help="Write !SNAPSHOT_YIELD once after the first timing-critical ST line",
+    )
+    parser.add_argument(
+        "--command-stdin",
+        action="store_true",
+        help="Forward allowlisted read-only HITL requests read from stdin, fenced by nonce",
     )
     parser.add_argument("--run-token", default=None,
                         help="Hex token echoed by capture firmware with its device timestamp")
@@ -204,6 +280,7 @@ def main() -> int:
                     time.sleep(args.reconnect_delay)
                     continue
 
+                _service_command_requests(ser, enabled=args.command_stdin)
                 if chunk:
                     log.write(chunk)
                     _arm_yield_from_chunk(chunk)

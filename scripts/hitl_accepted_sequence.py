@@ -6,8 +6,19 @@ a stop is *accepted* on the first press, the successor starts while the predeces
 successor's own stop executes exactly once after the predecessor releases -- with no second press anywhere.
 
     (a) RECORD leg:   record A -> stop A (one press) -> switch to B -> record B -> stop B
-    (b) OVERDUB leg:  overdub A -> stop A (one press) -> switch to B -> overdub B
-                      -> stop B once while A still finalizes -> continue transport
+    (b) OVERDUB leg:  seed B then A -> overdub A -> capture-switch to B (stops A)
+                      -> overdub B -> stop B once -> continue transport
+
+The overdub leg reuses the proven retention prefix. It does not substitute the
+retention run's empty C target for the populated overdub successor B. A driven
+leg is not acceptance: interval identity, overlap, content and timing remain
+separate evidence obligations.
+
+Scoped stopped preparation is integrated (task 4.1): before each seed the driver
+long-presses that authorized slot's own loop button and requires the firmware's
+own clear evidence (`CLEARED` or an idempotent `ALREADY_EMPTY`); a refusal, abort,
+wrong target or unconfirmed request stops the leg before any record gesture. No
+manual clear and no reboot prepare a repeat.
 
 Stimulus provenance (AGENTS.md: never edit a canonical stimulus; no registered stimulus covers this shape):
 each leg is a **TEMP variant** forked from `STIM-BASE-2-ONE-OD-01` via the sanctioned
@@ -29,11 +40,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import mido
@@ -49,11 +59,21 @@ from hitl.control_constants import (  # noqa: E402
     RECORD_BUTTON_NOTE,
 )
 from hitl.device_shutdown import DeviceSession, refuse_reset_if_latched  # noqa: E402
+from hitl.flows import stopped_preparation  # noqa: E402
+from hitl.library_observation import occupied_slots  # noqa: E402
 from hitl.managed_capture import ManagedCaptureSession  # noqa: E402
 from hitl.midi_io import _find_midi_port, _send_short_press  # noqa: E402
 
 TRANSPORT_STARTED = "Transport started"
 TRANSPORT_STOPPED = "Transport stopped"
+
+
+class PreparationFailure(RuntimeError):
+    """Scoped stopped preparation did not complete for an authorized target.
+
+    Raised instead of pressing on: the reproducer must stop before recording
+    into a target whose clear was refused, aborted or never confirmed.
+    """
 
 
 @dataclass(frozen=True)
@@ -65,17 +85,11 @@ class Gesture:
 
 
 def leg_gestures(leg: str, *, track: int, a: int, b: int) -> list[Gesture]:
-    """The ordered presses of one leg, with the acceptance contract encoded in the order.
+    """Ordered user gestures; overdub uses the proven capture-switch stop route.
 
-    The requirement is the ORDER, and each line of it is load-bearing:
-
-    * **A's stop is one press.** In the record leg it is the record/transport pair that ends the take; in the
-      overdub leg it is a single press on A's own loop button. Two presses would make "one press per stop"
-      untestable, so the plan never contains a second one.
-    * **The switch to B comes after A's stop**, so B starts while A is still finalizing -- that is the whole
-      point of the leg, and reversing the two would test nothing.
-    * **B's stop is one press on B's slot**, which is the only route that reaches `stopOverdubbing` for the
-      live interval; a record-button press would toggle rather than stop.
+    For overdub, B's loop press stops A and switches in one action, the record
+    button starts B, and B's loop button requests its stop once. Both A and B
+    must already have committed seed content. No empty-slot carrier is assumed.
     """
     if leg == "rec":
         return [
@@ -86,27 +100,14 @@ def leg_gestures(leg: str, *, track: int, a: int, b: int) -> list[Gesture]:
             Gesture("b_stop", "record", 0),              # ONE press: stop B's session
         ]
     if leg == "od":
-        return [
-            Gesture("select_track", "track", track),
-            Gesture("a_overdub_start", "record", 0),
-            Gesture("a_stop", "slot_record", a),         # ONE press: A's own loop button
-            # The switch gesture **is** B's start, and only when B is a **record** target: the
-            # capture-switch branch runs before the playing/filled branch and carries the start itself --
-            # `queueRecordingTrack` when the switch committed, `retainRecordStartForSlot` when it did not
-            # (S4f.6 / S4f.3). So there is deliberately **no record press after the switch**: pressing again
-            # is the second gesture this leg exists to prove is unnecessary.
-            #
-            # CAUTION, measured twice on device: `slotHasDataForPlaybackSwitch` is **SD-aware**, and every
-            # slot on this device retains an SD payload, so an *empty* slot is not automatically a record
-            # target -- B takes the playback-switch branch and waits on a quantized countdown instead of
-            # carrying a start. When that happens the leg's premise does not hold, and the driver now aborts
-            # rather than pressing into a pending switch.
-            Gesture("b_switch_start", "slot_record", b),
-            # ONE press, while A still finalizes. The **record button**: it is the route that stops B's
-            # session, and a loop-button press on a filled playing slot routes to the switch/mute branch
-            # instead of `Track::stopOverdubbing`.
-            Gesture("b_stop", "record", 0),
-        ]
+        # The switch IS A's stop. A separate stop first leaves PLAYING and routes B's
+        # button through the SD-aware playback queue instead of the capture-switch.
+        # Reuse the device-proven retention prefix; C is a separate record successor
+        # and is deliberately not substituted for the populated overdub target B.
+        from hitl_retention_handoff import critical_window_gestures
+        return [Gesture(g.step, g.kind, g.value) for g in
+                critical_window_gestures(track=track, a=a, b=b, c=8)
+                if g.step != "c_switch_request"]
     raise ValueError(f"unknown leg {leg!r}")
 
 
@@ -173,28 +174,73 @@ def _ensure_transport(out_port, capture_log: Path, *, running: bool, press_ms: i
 #   Loop 5: Queued playback switch   ->  Loop 5: Reaffirmed playback switch   ->  Loop 5: Reaffirmed ...
 # i.e. **two countdowns for the same switch**. The firmware side of that is `queuePlayingSlotSwitch`, which
 # clears and re-requests without checking whether the same target is already pending, so the quantized switch
-# restarts from the current tick. The driver's side is this: never press the same gesture twice inside the
-# window, and never press `record` while a queued switch has not executed.
+# restarts from the current tick. This capture-switch scenario aborts on a playback queue; an unattributed
+# Playback-started row cannot prove that the requested target became active.
 DEFAULT_TAP_WINDOW_S = 0.35
 
 
 def _switch_pending(capture_log: Path, since: int, slot: int) -> bool:
-    """True while the log shows a queued/affirmed switch for `slot` that has not yet executed."""
-    tail = _lines(capture_log)[since:]
-    queued = any(("Queued playback switch" in l or "Reaffirmed playback switch" in l)
-                 and f"Loop {slot}:" in l for l in tail)
-    executed = any("Playback started" in l for l in tail)
-    return queued and not executed
+    """An unexpected playback queue invalidates this capture-switch leg.
+
+    `Playback started` has no track/slot identity and may belong to another
+    track or an earlier transport start. It cannot discharge this guard. This
+    scenario requires the capture-switch route, so even a later playback switch
+    would not repair its premise: abort rather than press again.
+    """
+    return any(("Queued playback switch" in line or "Reaffirmed playback switch" in line)
+               and f"Loop {slot}:" in line for line in _lines(capture_log)[since:])
 
 
-def _wait_switch_executed(capture_log: Path, since: int, timeout_s: float) -> bool:
-    """Wait for the queued switch to actually run before any further press touches the same buttons."""
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if any("Playback started" in l for l in _lines(capture_log)[since:]):
-            return True
-        time.sleep(0.1)
-    return False
+def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int,
+              press_ms: int, phase_timeout_s: float, events: list[dict],
+              note_channel: int = 7, overdub_notes: int = 16) -> str:
+    """Drive one bounded leg, stopping before the next press on a bad transition."""
+    leg_mark = len(_lines(capture_log))
+    last_slot_press_at = 0.0
+    for gesture in plan:
+        if _switch_pending(capture_log, leg_mark, slot_b):
+            events.append({"event": "leg_aborted_pending_switch", "gesture": gesture.step})
+            return "UNEXPECTED_PLAYBACK_SWITCH"
+        if any("switch and record start retained" in line
+               for line in _lines(capture_log)[leg_mark:]):
+            events.append({"event": "leg_aborted_retained_switch", "gesture": gesture.step})
+            return "UNEXPECTED_RETAINED_SWITCH"
+        if gesture.step in ("a_record_start", "b_switch_start"):
+            if not _ensure_transport(out_port, capture_log, running=True, press_ms=press_ms,
+                                     events=events, label=gesture.step):
+                return "TRANSPORT_START_UNCONFIRMED"
+        if gesture.kind == "slot_record":
+            gap = time.monotonic() - last_slot_press_at
+            if gap < DEFAULT_TAP_WINDOW_S:
+                time.sleep(DEFAULT_TAP_WINDOW_S - gap)
+            last_slot_press_at = time.monotonic()
+        mark = len(_lines(capture_log))
+        _emit(out_port, gesture, press_ms=press_ms)
+        events.append({"event": f"gesture:{gesture.step}", "line": mark,
+                       "host_monotonic_ns": time.monotonic_ns()})
+        if gesture.step in ("a_overdub_start", "b_overdub_start"):
+            if not _wait_for(capture_log, mark, ("Overdubbing started @ tick",), phase_timeout_s):
+                events.append({"event": "leg_aborted_start_unconfirmed", "gesture": gesture.step})
+                return "OVERDUB_START_UNCONFIRMED"
+            # An empty overdub retires too quickly to stage the successor. Give
+            # A real work, and B a distinct note for the subsequent content check.
+            count = max(1, overdub_notes) if gesture.step == "a_overdub_start" else 1
+            base = 60 if gesture.step == "a_overdub_start" else 79
+            for i in range(count):
+                pitch = base + i % 12
+                out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=note_channel))
+                time.sleep(0.02)
+                out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=note_channel))
+            events.append({"event": f"{gesture.step}_notes", "count": count,
+                           "channel": note_channel, "note_base": base})
+        elif gesture.step == "b_switch":
+            if not _wait_for(capture_log, mark,
+                             (f"Loop {slot_b}: Switch gesture from slot ",
+                              f"Loop {slot_b}: Queued playback switch",
+                              f"Loop {slot_b}: Reaffirmed playback switch"), phase_timeout_s):
+                return "SWITCH_UNCONFIRMED"
+        time.sleep(DEFAULT_TAP_WINDOW_S)
+    return "DROVE_LEG"
 
 
 def _emit(out_port, gesture: Gesture, *, press_ms: int) -> None:
@@ -210,6 +256,29 @@ def _emit(out_port, gesture: Gesture, *, press_ms: int) -> None:
                           channel_1based=CONTROL_CHANNEL_1BASED, press_ms=press_ms)
     else:  # pragma: no cover - guarded by the plan
         raise ValueError(f"unknown gesture kind {gesture.kind!r}")
+
+
+def _run_census(capture, capture_log: Path, events: list[dict]) -> Optional[dict]:
+    """Read-only per-slot occupancy for scoped preparation; None when it cannot be trusted.
+
+    The observation is requested through the single serial owner and decoded once by the
+    library-observation owner. An incomplete window returns None, and the caller then falls
+    back to the gesture-only preparation rather than treating "unknown" as "empty".
+    """
+    nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
+    ok, detail = capture.send_command("!LIB_OBSERVE", nonce=nonce, end_nonce=end_nonce)
+    if not ok:
+        events.append({"event": "census_refused", "detail": detail})
+        return None
+    family = capture.library_observation(nonce, end_nonce, timeout_s=45.0)
+    if family is None:
+        events.append({"event": "census_lost"})
+        return None
+    occupied = occupied_slots(_lines(capture_log))
+    events.append({"event": "census",
+                   "slots": 0 if occupied is None else len(occupied),
+                   "occupied": 0 if occupied is None else sum(1 for v in occupied.values() if v)})
+    return occupied
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -232,6 +301,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--upload-attempts", type=int, default=3,
                    help="`teensy-gui` fails intermittently and succeeds on a retry, so the upload is retried")
     p.add_argument("--upload-retry-delay-s", type=float, default=3.0)
+    p.add_argument("--clear-attempts", type=int, default=4,
+                   help="Bounded retries when the firmware refuses a clear while a save is in flight")
+    p.add_argument("--clear-retry-delay-s", type=float, default=4.0)
+    p.add_argument("--clear-timeout-s", type=float, default=stopped_preparation.DEFAULT_CLEAR_TIMEOUT_S,
+                   help="Bound for one scoped stopped clear's own completion evidence")
+    p.add_argument("--no-clear-targets", dest="clear_targets", action="store_false", default=True,
+                   help="Do not clear the target slots first; requires them to be empty already")
     args = p.parse_args(argv)
 
     if args.slot_a == args.slot_b:
@@ -242,10 +318,13 @@ def main(argv: list[str] | None = None) -> int:
     a0, b0, t0 = (to_firmware_slot(args.slot_a), to_firmware_slot(args.slot_b), args.track - 1)
 
     events: list[dict] = []
+    preparation: list[dict] = []
     report: dict = {"leg": args.leg, "track": args.track, "slot_a": args.slot_a, "slot_b": args.slot_b,
                     "slot_a_firmware": a0, "slot_b_firmware": b0,
                     "stimulus": (f"STIM-BASE-2-ONE-OD-01-TEMP-ACCEPTED-SEQ-"
                                  f"{'REC' if args.leg == 'rec' else 'OD'}"),
+                    "clear_targets": bool(args.clear_targets), "preparation": preparation,
+                    "census": None,
                     "events": events, "result": "INCOMPLETE", "upload": bool(args.upload)}
 
     if args.upload:
@@ -304,21 +383,65 @@ def main(argv: list[str] | None = None) -> int:
                 context=f"accepted-sequence-{args.leg}",
                 events=events) as shutdown_session:
 
+            census = _run_census(capture, capture_log, events) if args.clear_targets else None
+            report["census"] = (
+                None if census is None else
+                {f"{track}:{slot}": bool(value) for (track, slot), value in sorted(census.items())})
+
             def seed(slot_number: int, label: str, note_base: int) -> None:
                 """Record a short take into `slot_number`, committed, so it is a *filled* slot afterwards.
 
-                Only A is seeded. **B must stay empty**: that is what makes it a *record* target, and the
-                switch-carried start only exists for a slot with no committed passes
-                (`if (!track.hasCommittedPassesInSlot(slotIndex))` in `handleToggleRecordForSlot`). Seeding B
-                was tried on 2026-09-27 and is wrong in two ways: a filled B takes the playback-switch branch
-                instead of carrying a start, and with an empty selected slot behind a pending switch a record
-                press reaffirms the switch rather than reaching anything.
+                The overdub leg seeds B first and A last, as in the retention
+                driver. A short press while A is capturing then stops A and
+                switches to populated B, which can actually overdub.
                 """
                 slots.press_track(ctx, args.track, press_ms=args.press_ms)
                 time.sleep(0.4)
                 if not _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
                                          events=events, label=f"seed_{label}_stop"):
                     raise RuntimeError("could not stop the transport before seeding")
+                if args.clear_targets:
+                    # Scoped stopped preparation (task 4.1): the read-only census decides
+                    # whether a clear is needed at all, then the target's own loop-button
+                    # gesture clears it and the firmware's evidence must confirm. No reboot,
+                    # no manual step, and a lost census never reads as "empty".
+                    slot0 = to_firmware_slot(slot_number)
+                    known_occupied = None if census is None else census.get((t0, slot0))
+                    if known_occupied is False:
+                        preparation.append({"slot": slot_number, "status": "ALREADY_EMPTY",
+                                            "detail": "census: no committed content"})
+                        events.append({"event": f"prepare_slot_{label}", "slot": slot_number,
+                                       "status": "ALREADY_EMPTY", "detail": "census"})
+                    else:
+                        if known_occupied is True:
+                            # A filled target that is not the selected slot would switch
+                            # playback on a long press instead of clearing, so select it
+                            # first (the operator's own gesture).
+                            slots.press_slot_record(ctx, slot_number, press_ms=args.press_ms)
+                            time.sleep(0.45)
+                        # A refused or aborted clear means the firmware could not
+                        # complete its deferred save first; that is an explicit
+                        # "save in flight", so wait for it to quiesce and retry the
+                        # gesture a bounded number of times rather than giving up.
+                        attempts = max(1, args.clear_attempts)
+                        outcome = None
+                        for attempt in range(attempts):
+                            outcome = stopped_preparation.clear_slot(
+                                ctx, capture_log, track_index0=t0, slot0=slot0,
+                                timeout_s=args.clear_timeout_s)
+                            events.append({"event": f"prepare_slot_{label}", "attempt": attempt,
+                                           **outcome.as_dict()})
+                            if outcome.ok or outcome.status not in (
+                                    stopped_preparation.ClearStatus.REFUSED,
+                                    stopped_preparation.ClearStatus.ABORTED):
+                                break
+                            if attempt + 1 < attempts:
+                                time.sleep(args.clear_retry_delay_s)
+                        preparation.append(outcome.as_dict())
+                        if not outcome.ok:
+                            raise PreparationFailure(
+                                f"slot {slot_number} scoped clear {outcome.status.value}: "
+                                f"{outcome.detail}")
                 before = len(_lines(capture_log))
                 slots.press_slot_record(ctx, slot_number, press_ms=args.press_ms)
                 if not _wait_for(capture_log, before,
@@ -333,8 +456,9 @@ def main(argv: list[str] | None = None) -> int:
                 events.append({"event": f"seed_{label}_recording", "confirmed": recording})
                 if not recording:
                     raise RuntimeError(
-                        f"slot {slot_number} never started recording; it is probably not an empty target. "
-                        "This script does not clear it -- pick an empty slot from the pre-run observation.")
+                        f"slot {slot_number} never started recording after a "
+                        f"{'confirmed clear' if args.clear_targets else 'no-clear run'}; "
+                        "the target is not an empty recording target")
                 span_s = max(args.bars, 1) * 2.0
                 gap_s = span_s / (args.notes + 1)
                 for i in range(args.notes):
@@ -345,60 +469,48 @@ def main(argv: list[str] | None = None) -> int:
                     time.sleep(max(gap_s - 0.03, 0.01))
                 _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
                                   events=events, label=f"seed_{label}_commit")
-                _wait_for(capture_log, before, (",RECS,stop",), timeout_s=args.phase_timeout_s)
-                events.append({"event": f"seed_{label}_committed", "confirmed": True})
+                committed = _wait_for(capture_log, before,
+                                      (f",RECS,stop,{to_firmware_slot(slot_number)},",
+                                       f",RECS,stopToStopped,{to_firmware_slot(slot_number)},"),
+                                      timeout_s=args.phase_timeout_s)
+                events.append({"event": f"seed_{label}_committed", "confirmed": committed})
+                if not committed:
+                    raise RuntimeError(f"slot {slot_number} seed commit unconfirmed")
 
-            # Seed A only, and last, so A is the active/selected slot when the leg's first gesture runs.
-            seed(args.slot_a, "a", 60)
+            # B must contain a loop for the overdub successor. A is seeded last
+            # so its record-button gesture addresses A without a playback queue.
+            leg_mark = len(_lines(capture_log))
+            prepared = True
+            try:
+                if args.leg == "od":
+                    seed(args.slot_b, "b", 64)
+                seed(args.slot_a, "a", 60)
+            except PreparationFailure as exc:
+                prepared = False
+                report["result"] = "PREPARATION_FAILED"
+                report["preparation_error"] = str(exc)
+                events.append({"event": "preparation_failed", "detail": str(exc)})
+                print(f"[s4f13] {exc}")
 
             # --- the leg's own plan ---------------------------------------------------------------
-            leg_mark = len(_lines(capture_log))
-            plan = leg_gestures(args.leg, track=args.track, a=args.slot_a, b=args.slot_b)
-            report["plan"] = [{"step": g.step, "kind": g.kind, "value": g.value} for g in plan]
-            last_slot_press_at = 0.0
-            for gesture in plan:
-                # A pending switch owns the buttons until it executes, and pressing into it is the defect: a
-                # record press with an empty *selected* slot behind a pending switch routes to
-                # `!hasCommittedPassesInSlot(selectedSlot)` -> `queuePlayingSlotSwitch` -> "Reaffirmed
-                # playback switch", i.e. a SECOND countdown for the same switch. So this waits
-                # unconditionally, and when the switch never runs it aborts the leg instead of pressing into
-                # an unfinished switch -- a leg that presses there is not testing the acceptance, it is
-                # manufacturing the bug.
-                if _switch_pending(capture_log, leg_mark, args.slot_b):
-                    ran = _wait_switch_executed(capture_log, leg_mark, timeout_s=args.phase_timeout_s)
-                    events.append({"event": f"{gesture.step}_waited_for_pending_switch", "confirmed": ran})
-                    if not ran:
-                        events.append({"event": "leg_aborted_pending_switch_never_ran",
-                                       "gesture": gesture.step})
-                        report["result"] = "PENDING_SWITCH_NEVER_RAN"
-                        report["aborted_at"] = gesture.step
-                        raise RuntimeError(
-                            f"the queued switch to slot {args.slot_b} never executed, so '{gesture.step}' was "
-                            "not pressed: pressing there reaffirms the pending switch and produces the double "
-                            "countdown. The leg's premise did not hold -- the switch to B must commit before "
-                            "anything else is pressed.")
-                mark = len(_lines(capture_log))
-                if gesture.step.endswith("_start") and gesture.kind != "transport":
-                    # A start/switch needs a running transport; the plan's transport gestures are explicit.
-                    _ensure_transport(out_port, capture_log, running=True, press_ms=args.press_ms,
-                                      events=events, label=f"{gesture.step}_transport")
-                # Never press a loop button twice inside the firmware's tap window: the second tap merges
-                # into a double/triple and re-queues the switch instead of being a distinct gesture.
-                if gesture.kind == "slot_record":
-                    gap = time.monotonic() - last_slot_press_at
-                    if gap < DEFAULT_TAP_WINDOW_S:
-                        time.sleep(DEFAULT_TAP_WINDOW_S - gap)
-                    last_slot_press_at = time.monotonic()
-                _emit(out_port, gesture, press_ms=args.press_ms)
-                events.append({"event": f"gesture:{gesture.step}", "line": mark,
-                               "host_monotonic_ns": time.monotonic_ns()})
-                time.sleep(0.25)
+            if prepared:
+                plan = leg_gestures(args.leg, track=args.track, a=args.slot_a, b=args.slot_b)
+                report["plan"] = [{"step": g.step, "kind": g.kind, "value": g.value} for g in plan]
+                if not _ensure_transport(out_port, capture_log, running=True, press_ms=args.press_ms,
+                                         events=events, label="leg_start"):
+                    report["result"] = "TRANSPORT_START_UNCONFIRMED"
+                else:
+                    report["leg_start_row"] = len(_lines(capture_log))
+                    report["result"] = _run_plan(
+                        out_port, capture_log, plan, slot_b=args.slot_b, press_ms=args.press_ms,
+                        phase_timeout_s=args.phase_timeout_s, events=events,
+                        note_channel=t0, overdub_notes=args.notes)
             time.sleep(args.settle_s)
             report["leg_rows"] = len(_lines(capture_log)) - leg_mark
 
             _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
                               events=events, label="final")
-            report["result"] = "DROVE_LEG"
+            report["leg_end_row"] = len(_lines(capture_log))
 
     report["shutdown"] = shutdown_session.result.as_dict()
     if not shutdown_session.result.ok:
@@ -409,10 +521,10 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({k: v for k, v in report.items() if k not in ("events", "plan")}, indent=2))
     for e in events:
         print(f"  {e}")
-    print(f"[s4f13] drove leg {args.leg}; now run the oracle:")
+    print(f"[s4f13] leg {args.leg}: {report['result']}; inspect with the oracle:")
     print(f"  .venv/bin/python scripts/hitl/accepted_sequence_probe.py --session-log {capture_log} "
           f"--slot-a {args.slot_a} --slot-b {args.slot_b} --leg {args.leg}")
-    return 0
+    return 0 if report["result"] == "DROVE_LEG" else 3
 
 
 if __name__ == "__main__":

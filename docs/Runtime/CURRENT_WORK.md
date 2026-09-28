@@ -1,5 +1,220 @@
 # Current work (implementation scope)
 
+**2026-09-28 — goal-round closeout (12/12) — objective not complete; precise handoff below.**
+Whole tree green: focused **57/57**; host HITL suites 46/23/23/15; full `pio test -e native`
+**2,585 passed / 7 skipped**; capture-serial build PASS with RAM1 padding **840**; both
+OpenSpec changes strict-valid; no leftover mutation; nothing committed.
+**Landed and verified this session:** firmware S4f.18 bounded Record preparation end to end
+(canonical ordering, identity completion, union workspace, source staging, closure merge,
+per-track preparation role, pass transfer) plus S4f.20 atomic publication, bounded retirement and
+job-owned Record geometry; HITL 2.3 allowlisted fenced command forwarding; 2.1's on-demand
+observation device-confirmed via a new `!LIB_OBSERVE_STATUS` diagnostic (earlier negative
+corrected); 4.1's census-driven preparation device-verified with no manual step
+(`DROVE_LEG` twice, including a fresh-boot run whose clear was refused once by
+`post_load_holdoff` and retried to `CLEARED`).
+**Open — firmware:** S4f.19 first-bar/onward playback handoff; S4f.20's deferred revts validation,
+`invalidateCaches()` parity and the production Record bind site; S4f.17 production Record
+admission; S4f.21 caller migration; S4f.22 integration gates; S4f.13 device acceptance.
+**Open — HITL:** 2.2 identity correlation; 2.1 acceptance coverage; the 4.1 fresh-boot/shed-free
+both-leg and mixed-sequence runs (the oracle needs the boot banner inside the attached capture
+window, and every run must be ring-shed-free); 5.x oracle integration; 6.x qualification.
+[HITL execution review](../../openspec/changes/response-driven-hitl-acceptance/EXECUTION-REVIEW.md),
+[firmware evidence index](../../openspec/changes/runtime-working-set-ownership/S4F18-ROLE-ADMISSION-PACKET.md).
+
+**2026-09-28 — response-driven HITL 4.1 — census-driven preparation device-verified.**
+The read-only census now drives target preparation: an empty target skips the clear, a filled
+target is selected then long-pressed, and the firmware's "deferred save in flight" refusal is
+retried after a bounded wait. Device run on track 8 (A=4, B=5, no upload, no manual step):
+census 64 slots / 61 occupied; slot 5 cleared on attempt 0; slot 4 aborted once then cleared on
+attempt 1; both seeds committed; `DROVE_LEG`. Oracle `SETUP_INCOMPLETE` with named causes (no
+fresh boot, 2 ring-shed rows, overdub identity = task 2.2) and L2/L3/L4 green. Host 46/46.
+Remaining: a fresh-boot shed-free both-leg run plus the mixed sequence, and 2.2's identity.
+[HITL execution review](../../openspec/changes/response-driven-hitl-acceptance/EXECUTION-REVIEW.md).
+
+**2026-09-28 — response-driven HITL 2.1 — on-demand observation device-confirmed (earlier negative corrected).**
+A new stopped-only `!LIB_OBSERVE_STATUS` diagnostic (emitted directly, bypassing the capture ring)
+shows `phase=3,ready=1,collected=64,emitted=64` after `!LIB_OBSERVE`, and the managed capture now
+returns the complete `LIBOBS,B…E` family — `closed=True, rows=131, slots=64` with real per-slot
+occupancy. The earlier "does not serve" result was a ring-flush visibility artifact; the host
+drains while it waits. Host **23/23**; full native and capture-serial build re-run; the diagnostic
+image is flashed. Remaining for 2.1 is acceptance coverage and 2.2's identity correlation.
+[HITL execution review](../../openspec/changes/response-driven-hitl-acceptance/EXECUTION-REVIEW.md).
+
+**2026-09-28 — response-driven HITL 2.1 investigation — the on-demand observation does not serve.**
+Attributed negative result, device-reproduced read-only. With task 2.3's transport in place, a
+managed session forwards `!LIB_OBSERVE` and the device answers
+`[StorageManager] library observation requested` with both request fences in the log — so the
+command reaches the handler. But no `LIBOBS` family is emitted on a **settled, long-running
+boot**: 30 s and 60 s read windows, including a run draining every 2 s, saw none. The code path
+should serve (unconditional `SESSION_CAPTURE` idle-owner service tail, `beginCollection` sets
+Collecting, no production reset), and the one run that did emit was captured while the boot
+restore scan was active — hypothesis: serving is tied to in-flight restore work. Next: expose
+the observation's per-turn counters behind the capture gate to separate "never scheduled" from
+"emitted but not flushed". Task 2.1 remains open; task 2.3 stays complete. No SD mutation,
+upload or acceptance claim.
+[HITL execution review](../../openspec/changes/response-driven-hitl-acceptance/EXECUTION-REVIEW.md).
+
+**2026-09-28 — response-driven HITL 2.3 — allowlisted command forwarding verified.**
+`capture_session.py` gained an opt-in `--command-stdin` channel: it refuses malformed requests
+and anything outside the read-only allowlist by name, and frames an accepted request with two
+distinct 32-char `!TRACE_FENCE` tokens — a device-learned constraint, since 8-char tokens are
+silently ignored by the firmware. `serial/protocol.py` now owns request formatting, receipt
+parsing, exact fence-row matching, the fenced window and the self-delimiting
+`LIBOBS,B`…`LIBOBS,E` family; `ManagedCaptureSession` owns `stdin=PIPE`, a
+one-outstanding-request guard and the response helpers. Host suite **23/23**; the other HITL
+suites re-ran green (42/3/23/15); capture-serial build and full native (2,585 passed /
+7 skipped) confirm the firmware tree is unchanged. Device-confirmed: the forwarded request and
+both fences appear in the session log. The `LIBOBS` family did not settle within 60 s on that
+idle boot, so the decoder returned loss rather than an empty census; observation serving is
+task 2.1/2.2 and the next HITL slice. No SD mutation, upload or acceptance claim.
+[Command-forwarding evidence](../../openspec/changes/response-driven-hitl-acceptance/COMMAND-FORWARDING-EXECUTION.md).
+
+**2026-09-28 — S4f.20 — job-owned Record geometry receipt verified.**
+`CaptureStopJob` now owns the interval's before/after `UndoLoopGeometry` and LoopId, captured at
+the Record bind by `Track::captureRecordGeometryReceipt` (which consumes the Track's inline
+baseline so a successor cannot rewrite it). `TrackUndo::pushRecordPassAdded` gained a job-owned
+overload, and the deferred publication fails closed without a matching receipt and stamps the
+after geometry from the job's own loop. The reviewed ring pin is re-based 28808 -> 28936 B
+(+32 B per job). The fixture seeds a successor record baseline after the bind and proves the
+published entry still carries the job's geometry; two mutations fail assertions (reading the live
+baseline publishes the seeded value; a missing receipt denies). Focused **33/33**; full native
+**2,585 passed / 7 skipped**; capture-serial build passes with RAM1 padding **840**. S4f.20 stays
+unchecked for the deferred revts validation, `invalidateCaches()` parity and the production bind
+site. No dispatch, upload, device acceptance or task checkoff.
+[Geometry evidence](../../openspec/changes/runtime-working-set-ownership/S4F20-RECORD-GEOMETRY-EXECUTION.md).
+
+**2026-09-28 — S4f.20 — mode-correct Record atomic publication and retirement verified.**
+The deferred Record route now publishes end to end: `stepDeferredRecordPublication` performs the
+bounded canonical handoff with a local receipt, then the job-slot-keyed effects
+(`RecordPassAdded` undo entry, display staleness, once-only persistence) at the new
+`RecordPublished` phase; `stepDeferredRecordRetirement` releases the frozen extent in bounded
+grains and returns the ring entry. Chain: `ReservedClosure -> RecordSourceStaging ->
+CanonicalOrder -> RecordPrepared -> RecordPassReady -> RecordPublished -> retired`. The inline
+side-effect owner was evaluated and rejected (it drags the note-edit surface in, and two of its
+Record effects are not job-correct). Focused **68/68** (load 35 + shared-finalization 33);
+mutations M1/M2/M3 fail assertions; full native **2,585 passed / 7 skipped**; capture-serial build
+passes with RAM1 padding **840** and the ring pin unchanged at 28,808 B. S4f.20 stays unchecked:
+job-owned Record geometry (needs the production bind site), the deferred revts validation and
+`invalidateCaches()` parity remain. No dispatch, upload, device acceptance or task checkoff.
+[Publication evidence](../../openspec/changes/runtime-working-set-ownership/S4F20-RECORD-PUBLICATION-EXECUTION.md).
+
+**2026-09-28 — S4f.20 — bounded Record pass transfer verified.**
+The normalized private output is staged into the job-owned transfer receipt
+(`beginPreparedCapturePassFromActiveAdmission` + `stepPreparedCapturePass`) through the same
+mode-neutral mechanism the overdub route uses, with a new terminal
+`PendingStopPhase::RecordPassReady`. The chain is
+`ReservedClosure -> RecordSourceStaging -> CanonicalOrder -> RecordPrepared -> RecordPassReady`.
+Nothing is published: the atomic publication transaction (pass + `RecordPassAdded` undo with
+job-owned geometry + audible-source handoff + once-only persistence + retirement) consumes that
+terminal and is S4f.20 completion. Focused shared-finalization **33/33**; mutations M1 (ready
+phase) and M3 (receipt re-begun every grain) fail assertions, and M2 (the phase guard) is
+recorded as individually unobservable rather than claimed. Full native **2,585 passed /
+7 skipped**; capture-serial build passes with RAM1 padding **840** and the ring pin unchanged at
+28,808 B. No dispatch, upload, device acceptance or task checkoff.
+[Pass-transfer evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-RECORD-PASS-TRANSFER-EXECUTION.md).
+
+**2026-09-28 — S4f.18 — per-track Record preparation role and normalization step verified.**
+The admission slice landed. `RecordPreparation::Role` (composition cursor + 24,576 B union
+scratch, bound by job slot/LoopId/interval/generation) lives in the externally allocated
+per-track ring; `sizeof(CaptureStopJobs)` is re-based 3072 -> 28,808 B (8 x 25,736 B =
+205,888 B PSRAM; RAM1 padding stays **840**). `stepDeferredRecordNormalization` validates
+mode/phase/owner/geometry/runtime generation/closure, tops up credits, binds once and drives
+one bounded grain over the merged store, advancing to the new terminal `RecordPrepared`.
+The Record worker branch dispatches closure -> staging -> normalization -> prepared. The
+integrated fixture proves the pre-normalization order (Off, Off, On, On) becomes canonical
+(On, On, Off, Off) with identities preserved; mismatched-binding and terminal-phase denials
+leave the store untouched. Focused shared-finalization **33/33**, with preparation and
+staging **57/57**; two mutations fail assertions. Full native **2,585 passed / 7 skipped**;
+capture-serial build passes. No dispatch of record admission, upload, device acceptance or
+task checkoff; publication (S4f.20) is next.
+[Preparation-role evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-PREPARATION-ROLE-EXECUTION.md).
+
+**2026-09-28 — S4f.18 — Record closure merge and staging phase verified.**
+The frozen take is staged into the same private output after the terminal closure Offs (the
+composition orders the store, so append order is not semantic), so the closure consumer is
+unchanged. `PendingStopPhase::RecordSourceStaging` was appended to the enum; the Record
+closure step now sets its own next phase in both completion places (the generic
+`consumeClosureGrain` default is the overdub route); and `stepDeferredRecordSourceStaging`
+validates owner/generation/closure/raw-range, tops up credits, binds the per-track cursor
+under a receipt and drives one bounded grain to `CanonicalOrder`. Focused
+shared-finalization **32/32**, affected suites **166/166**; two mutations fail assertions.
+Full native **2,584 passed / 7 skipped** (the full-suite gate caught a missing harness
+include in three firmware-boundary suites, now fixed). Capture-serial build passes with RAM1
+padding **840**; the reviewed ring size pin is re-based 2984 -> 3072 B (+88 B per track,
+externally allocated). No dispatch, upload, device acceptance or task checkoff.
+[Closure-merge evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-CLOSURE-MERGE-EXECUTION.md).
+
+**2026-09-28 — S4f.18 — bounded Record source staging verified; packet corrected.**
+G0 reconnaissance falsified the admission packet's premise: the closure consumer requires an
+empty output store and writes only terminal held-note Offs, so the take rows were never
+staged. Corrected sequence: (1) source staging, (2) closure merge, (3) per-track preparation
+role + normalization, (4) publication. Step 1 landed as `RecordSourceStaging::Cursor`, which
+copies the frozen `CaptureRange` one bounded row per unit through the existing
+`projectRecordStopTick` policy under an ephemeral seal — no allocation, no directory growth,
+fail-closed on a stale source or exhausted credits. Focused **7/7**; two mutations fail
+assertions. Full native **2,583 passed / 7 skipped**; capture-serial build passes with RAM1
+padding **840** and no linked ITCM growth. No behavior dispatch, upload, device acceptance or
+task checkoff.
+[Source-staging evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-SOURCE-STAGING-EXECUTION.md).
+
+**2026-09-28 — S4f.18 — preparation workspace unioned; role-admission packet pinned.**
+Wrap repair and minimum-length filtering run in disjoint phases, so the composition
+`Workspace` is now a union scratch role of **24,576 B** (was 40,960), pinned by a
+`static_assert`, and `FilterReset` re-discards the tail cursor. Focused composition
+**17/17**; capture-serial build passes with RAM1 padding **840** and no linked ITCM growth;
+full native **2,576 passed / 7 skipped**. The next slice is pinned in the
+[role-admission packet](../../openspec/changes/runtime-working-set-ownership/S4F18-ROLE-ADMISSION-PACKET.md):
+one externally allocated 25,696 B preparation role per track (8 total, 205,568 B PSRAM),
+bound by job identity, driving one bounded grain and advancing only to the future
+publication phase. No behavior edit, no upload, no task checkoff; resource admission and the
+shared worker/publication handoff remain open.
+
+**2026-09-28 — S4f.18 — bounded Record identity completion verified.**
+`LoopEventStore::assignPrivateNoteId` writes one NoteId only to an unmarked private
+NoteOn row that has none, and refuses an overwrite, a non-note row, a missing ordinal or
+an invalid id. `RecordPreparationCursor` completes missing NoteOn identities in canonical
+order between the sort and wrap repair (matching `sealCapture`) through a borrowed
+`NoteIdSource`, and still denies `IdentityIncomplete` without one. Focused composition
+**17/17**, with the private filter/order and record tail/minimum suites **47/47**; full
+native **2,576 passed / 7 skipped**. Capture-serial build passes with RAM1 padding **840**
+and no linked ITCM growth (the role is not dispatched). ARM cursor 1,104 -> 1,120 B;
+workspace 40,960 B unchanged. Three mutations fail assertions and all sources were restored
+byte-for-byte. Resource admission and the shared worker/publication handoff remain open;
+record stop is still inline. No upload, device acceptance, new decision or parent checkoff.
+[Identity execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-IDENTITY-EXECUTION.md).
+
+**2026-09-28 — response-driven HITL 4.1 (partial) — scoped stopped preparation device-exercised.**
+`scripts/hitl/flows/stopped_preparation.py` clears one authorized target through the
+production loop-button long press and classifies only firmware evidence (`CLEARED`,
+`ALREADY_EMPTY`, `REFUSED`, `ABORTED`, `NOT_SELECTED`, `UNCONFIRMED`); it is integrated
+before every seed in `scripts/hitl_accepted_sequence.py` and aborts with
+`PREPARATION_FAILED` before any record gesture. Host accepted-sequence **42**, corpus **3**,
+retention plan **23**, shutdown **15**. On the flashed image (`bed90c04` + dirty,
+hex `451000aa…`, RAM1 padding 840) the record leg cleared slot 4
+(`MIDI: Clear selected slot 4`) and drove; its oracle is `SETUP_INCOMPLETE` (no fresh boot)
+with L4/L5 failing — the known inline-record gap. The overdub leg reported `ALREADY_EMPTY`
+for empty slot 5 and `NOT_SELECTED` for populated slot 4, aborting before mutation.
+Measured bounds for the rest of 4.1: only the selected slot clears, a short press is a
+record toggle (it armed and started the transport), and same-button presses inside the tap
+window degrade a long press (900 ms requested, 458 ms measured). No upload between legs,
+no manual clear; task 4.1 open.
+[Execution review](../../openspec/changes/response-driven-hitl-acceptance/EXECUTION-REVIEW.md).
+
+**2026-09-28 — S4f.18 — bounded Record preparation composition verified.**
+`RecordPreparationCursor` now composes the existing private owners over one job-owned
+prepared store: canonical (tick, NoteOff < NoteOn < other) order, reserved wrap repair
+with a canonical re-order, then minimum-length decisions and private compaction, all in
+bounded per-grain units. Missing NoteOn identity, a stale preparation generation and a
+missing reservation deny by name; the legacy store helpers' inventory is matched over
+eight randomized differential rounds. Focused **12/12**, existing primitives **30/30**,
+full native **2,571 passed / 7 skipped**. Capture-serial build passes with RAM1 padding
+**840**; the role is not dispatched, so no linked ITCM growth. ARM `Workspace` 40,960 B /
+cursor 1,104 B, caller-owned; order cursor 864 -> 872 B for the opt-in canonical key.
+Four mutations fail assertions and all sources were restored byte-for-byte. Bounded
+missing-identity completion, resource admission and the shared worker/publication handoff
+remain open. No upload, device acceptance, new decision or parent checkoff.
+[Composition execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-COMPOSITION-EXECUTION.md).
+
 **2026-09-28 — S4f.18 — bounded private canonical filtering verified.**
 The store now applies exact rejected-row pairs to private prepared output and
 compacts retained rows in bounded turns without a take-sized bitmap or copy.
@@ -146,6 +361,78 @@ remain open. Full native: **2,497 passed / 7 skipped**; focused: **11/11**.
 Capture-serial build passed, RAM1 padding **840 bytes**. Strict contract retains four
 expected implementation-gap failures. No task completion or device acceptance claimed.
 [Connected execution evidence](../../openspec/changes/runtime-working-set-ownership/S4F17-EXECUTION.md).
+
+**2026-09-27 — S4f.17 — common admission preflight found a sequencing dependency.**
+Record admission cannot be enabled independently of the bounded record worker, source handoff,
+record publication and manager continuations assigned to S4f.18–S4f.21. The existing worker
+requires overdub staging; managers still assume the void record stop published synchronously.
+[Dependency trace and proposed implementation boundary](../../openspec/changes/runtime-working-set-ownership/S4F17-EXECUTION.md).
+Recommended: implement the connected firmware path, preserving individual verification gates.
+User approved the connected S4f.17–S4f.21 implementation. Work is in progress; each task retains its verification gate and remains open until verified.
+
+**2026-09-27 — S4f.16 — production finalization fixtures complete.**
+Real record stop/cold helpers, deferred worker, undo and storage admission now share the drain
+suite's production closure. Four record/overdub rotation baselines pass; explicit contract mode
+fails on missing record deferred ownership, missing record interval stamp, and missing deferred
+worker persistence handoff. These are implementation gaps, not accepted alternative behavior.
+Full native **2,490 passed / 7 skipped**; final focused **4/4**; strict OpenSpec valid.
+[Fixture evidence and bounds](../../openspec/changes/runtime-working-set-ownership/S4F16-EXECUTION.md).
+Next: S4f.17 — common interval and stop admission. S4f.20 — publication/undo/persistence must
+also close the exposed persistence gap. No firmware behavior or device changes;
+S4f.13 — accepted-sequence acceptance remains open.
+
+**2026-09-27 — shared record/overdub finalization was already intended; firmware contract added.**
+Audit confirms runtime proposal role budgeting, accepted-interaction specs and design Revision 23
+item 6 already require record A to finalize alongside a live successor. The earlier recommendation
+to weaken the record oracle is withdrawn. The implementation gap is record's inline route and
+its missing common interval, source, geometry and undo integration.
+[Shared capture finalization contract](../../openspec/changes/runtime-working-set-ownership/SHARED-CAPTURE-FINALIZATION.md),
+design Revision 25, DEC-093 — shared capture finalization and S4f.15–S4f.22 now define the
+firmware work. Existing Track/job/worker owners are reused; first-bar and onward coverage,
+mode-correct undo/persistence and all four record/overdub transitions are required. Both
+OpenSpec changes strictly validate. Contract only: no firmware/device changes or new test run.
+The prior HITL fixture results remain valid; S4f.13 — accepted-sequence acceptance stays open.
+At that handoff the next slice was S4f.16 — production finalization fixtures; its completion is recorded above.
+
+**2026-09-27 — response-driven HITL implementation started: production input regressions verified.**
+Tasks 1.2 — historical failure corpus and 1.3 — production gesture fixtures are complete
+(**2/21**). Four attributed failed-run excerpts remain non-PASS. Real button timing has
+12 native cases; USB and DROID dispatch both reach the real long-press clear action in
+native storage fixtures. A momentary-dispatch mutation fails 11 assertions. Python accepted
+sequence/corpus: **33 passed**; full native: **2,486 passed / 7 skipped**.
+Task 1.1 — instrumentation contract is blocked: record-stop seals/publishes inline; the
+planned predecessor capture-stop window belongs to overdub. The user has been asked whether
+to separate the record/overdub oracles or retain record overlap with firmware scope. No
+acceptance criterion changed pending that choice. No firmware edit or device action.
+Evidence: [execution review](../../openspec/changes/response-driven-hitl-acceptance/EXECUTION-REVIEW.md).
+S4f.13 — accepted-sequence acceptance remains open.
+
+**2026-09-27 — response-driven HITL proposal for S4f.13 — accepted-sequence acceptance.**
+The user specifies DROID MIDI controls, continuously playing acceptance windows, no manual
+reference pass, and scoped clearing/repetition without reboot. Code and existing failed
+captures ground the new [response-driven HITL change](../../openspec/changes/response-driven-hitl-acceptance/proposal.md).
+Its design separates gesture recognition, accepted intent and execution; adds bounded
+identity observations; verifies RAM/SD preparation and persistence; and requires production
+button-timing regressions plus three consecutive device passes per leg on one boot.
+All planning artifacts validate; implementation and device qualification remain open.
+Earlier host-only driver edits are preserved. No device access, clear or upload in this
+planning slice. DEC-092 — response-driven HITL records the user constraints.
+
+**2026-09-27 — S4f.13 — accepted-sequence driver corrected, host verified only.**
+The overdub leg now reuses the proven retention prefix: seed B then A, start A’s overdub,
+press B once to stop A and switch, start B’s overdub, press B once to stop it. The former
+separate A stop removed the capturing-state precondition and entered the SD-aware playback
+queue. Slot 8 is a separate record successor in the retention run, not a substitute for an
+overdub target. Unexpected queued/reaffirmed playback aborts before the next gesture;
+unattributed Playback-started rows cannot discharge that guard. Abort results survive managed
+shutdown into the JSON report and nonzero exit. Both intervals receive notes; starts and seed
+commits are confirmed. Host tests: accepted sequence 30, retention plan 23, shutdown 15;
+old guard mutation fails the new driver regression. OpenSpec strict validation passes.
+The oracle no longer treats wrong-slot/late starts or window-open-as-release as acceptance;
+record-only RECA/RECS cannot establish overdub identity, and successful stop counts cannot
+prove input press counts. Those evidence links explicitly remain unknown. No firmware,
+upload, device run, SD clear, push or PR. S4f.13 — accepted-sequence acceptance remains open.
+Record: active change `ARCHITECTURE-REVIEW.md`, “S4f.13 — accepted-sequence driver correction”.
 
 **2026-09-27 — S4f.3's no-concession device gate CLOSED: `RETENTION_PASS`, exit 0, zero concessions.** The
 re-run the first campaign called for, on the same authorized targets (**track 8, A=4, B=5, C=8**) with both
@@ -3458,6 +3745,23 @@ Fully prewarmed synchronous callers share the implementation. **40/40** focused,
 padding. The 64-byte ARM cursor adds no resident Track/job/runtime field.
 Full normalization and Record worker phase integration remain open.
 [Transfer evidence](../../openspec/changes/runtime-working-set-ownership/S4F18-TRANSFER-EXECUTION.md).
+
+### Response-driven HITL for S4f.13 — accepted-sequence acceptance (2026-09-27)
+
+Active next-step contract: [response-driven-hitl-acceptance](../../openspec/changes/response-driven-hitl-acceptance/tasks.md).
+Proposal, design, spec delta and tasks exist; fixture tasks 1.2 and 1.3 are verified.
+The shared record/overdub overlap contract is resolved by the runtime firmware contract above;
+its implementation gates remain open. See the sibling
+[execution review](../../openspec/changes/response-driven-hitl-acceptance/EXECUTION-REVIEW.md).
+The first slice pins bounded identity evidence and deterministic production gesture fixtures,
+then adds read-only instrumentation before replacing the driver. Record and overdub remain
+separate continuously playing recipes; stopped target preparation and final dumps are outside
+the measured window. No manual golden pass or reboot is required. Target-specific destructive
+authorization is still a run input. Parent acceptance stays open until complete device evidence.
+
+### S4f.13 — accepted-sequence driver correction (2026-09-27)
+
+User-authorized host-only correction: reuse the retention driver’s capture-switch stop for the overdub leg, seed both overdub targets, prevent further gestures after an unexpected playback queue, and preserve an abort report through managed shutdown. Correct false-positive acceptance evidence without changing firmware or accepting the device gate. No device writes or clears are part of this slice.
 
 ### Continuation after recovery (2026-09-26)
 
