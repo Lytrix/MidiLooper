@@ -2399,7 +2399,10 @@ bool Track::playingMidiDrainAfterOverdubStopActive() const {
   return getActiveLoop().visualCacheDirty || !playingMidiDrainAfterOverdubStopIdleNoted_;
 }
 
-void Track::notePlayingMidiDrainAfterOverdubStopIdle() {
+// FLASHMEM: idle-turn diagnostic only (called from the main loop's idle checks), and
+// RAM1 padding is at its reviewed floor. Moved out of ITCM to keep the S4f.19 playback
+// admission predicate's call site inside the budget.
+TRACK_COLD_MEM void Track::notePlayingMidiDrainAfterOverdubStopIdle() {
   if (!playingMidiDrainAfterOverdubStop_) {
     return;
   }

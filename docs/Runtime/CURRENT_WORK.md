@@ -1,5 +1,21 @@
 # Current work (implementation scope)
 
+**2026-09-28 — S4f.19 round 2 — refusal atomicity, send-capture boundary, admission predicate.**
+`projectRawCoverageToLoopLength` now preflights the held-note closure capacity with a
+non-mutating pass and refuses `false` with the window **byte-identical** (fixture fills the view
+role to capacity with held notes and compares every row + coverage before/after, twice;
+mutation fails it). `MidiSendCapture` is a native-only boundary recording every event that
+reaches `MidiHandler::sendMidiEvent`. `Track::hasAudiblePlaybackSource(slot)` is the shared
+admission predicate for both playback entry points, fixture-verified in the raw → bound →
+retired states and for another slot. A hot-path prerequisite was found and recorded:
+`playCommittedLoopMidi`'s stale-runtime branch calls `reset(true)`, which refuses while a
+pending job owns the window, so the interval cannot yet be served — it is the emission slice's
+first item. **Next:** the emission assertions (expected NoteOn/NoteOff sequence, stale/unready
+emits nothing, publication/replacement boundary, note crossing bar one). Focused 240/240; full
+native 2,597 passed / 7 skipped; capture-serial build PASS with RAM1 padding **888** (one idle
+diagnostic moved to FLASH to keep the new call site inside the floor).
+[Playback-handoff packet](../../openspec/changes/runtime-working-set-ownership/S4F19-PLAYBACK-HANDOFF-PACKET.md).
+
 **2026-09-28 — S4f.19 §2 — G0 complete; S19.2 (deferred return-window bind) landed.**
 Read-only trace: PASS with named prerequisites; the deferred interval currently emits nothing
 (`playMidiEvents` early-returns without `hasCommittedPasses()`), and its retained bar-1 window

@@ -799,7 +799,31 @@ void MidiHandler::handleMidiContinue() {
 }
 
 // --- MIDI Output ---
+#if defined(PIO_UNIT_TEST_NATIVE)
+namespace {
+MidiEvent sMidiSendCapture[MidiSendCapture::kCapacity];
+size_t sMidiSendCaptureCount = 0;
+}  // namespace
+
+void MidiSendCapture::reset() { sMidiSendCaptureCount = 0; }
+
+size_t MidiSendCapture::count() { return sMidiSendCaptureCount; }
+
+MidiEvent MidiSendCapture::at(size_t index) {
+    return index < sMidiSendCaptureCount ? sMidiSendCapture[index] : MidiEvent{};
+}
+
+void MidiSendCapture::record(const MidiEvent& event) {
+    if (sMidiSendCaptureCount < kCapacity) {
+        sMidiSendCapture[sMidiSendCaptureCount++] = event;
+    }
+}
+#endif
+
 void MidiHandler::sendMidiEvent(const MidiEvent& event) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+    MidiSendCapture::record(event);
+#endif
     if (event.type != midi::Clock) {
         SC_MIDI_OUT_EVENT(event);
     }

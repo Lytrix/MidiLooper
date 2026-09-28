@@ -2558,6 +2558,27 @@ own execution packet and records fixture/native/build/device results separately.
       capture). Onward windows and the continuity-gated retirement (matching committed replacement
       handed off, all builders detached, playback no longer needs the range) remain open, and
       production Record admission must not be enabled before they land.
+      **2026-09-28 round 2 — refusal atomicity, send-capture boundary, admission predicate.**
+      (a) `projectRawCoverageToLoopLength` now preflights the held-note closure count with a
+      non-mutating pass (same drop rule and lane logic) and returns `false` with the window
+      byte-identical when the appends cannot fit; fixture
+      `test_deferred_record_projection_refusal_leaves_the_window_untouched` fills the view role to
+      capacity with held notes and compares every row plus the coverage before/after, twice;
+      mutation (remove the preflight) fails it. (b) `MidiSendCapture` is a native-only boundary
+      that records every event reaching `MidiHandler::sendMidiEvent`. (c)
+      `Track::hasAudiblePlaybackSource(slot)` is the shared admission predicate for both playback
+      entry points (committed passes, or a pending job's bound bar-1 window); fixture
+      `test_deferred_record_interval_is_audible_only_with_a_bound_window` drives the real record
+      start and the deferred closure grain and asserts not-audible (raw window) → audible (bound)
+      → not-audible (job retired), plus another slot. (d) A hot-path prerequisite was found:
+      `playCommittedLoopMidi`'s stale-runtime branch calls `reset(true)`, which refuses while a
+      pending job owns the window, and returns — so the interval cannot be served; recorded for
+      the emission slice, not changed here because its assertions are not yet green. The
+      **emission assertions remain the immediate next step** (expected NoteOn/NoteOff sequence,
+      stale/unready emits nothing, publication/replacement boundary, note crossing bar one). The
+      new admission predicate call site needed 16 B of ITCM, reclaimed by moving the idle
+      diagnostic `Track::notePlayingMidiDrainAfterOverdubStopIdle` to FLASH; RAM1 padding is
+      **888** (floor 840). Capture-serial build PASS.
 - [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,

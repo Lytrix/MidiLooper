@@ -282,6 +282,11 @@ public:
   /// and output ports; cursor and ledger always run.
   void playMidiEvents(uint32_t currentTick, bool emitMidiOutput);
   void playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool emitMidiOutput);
+  /// True when this slot has an audible playback source: committed passes, or a
+  /// deferred Record interval whose bindable bar-1 return window a pending job owns
+  /// (S4f.19). It is the admission predicate for both playback entry points; an
+  /// unpublished interval with no bound window emits nothing.
+  bool hasAudiblePlaybackSource(uint8_t slotIndex) const;
   /// Silence this track's MIDI channel on the output ports. Does not clear ledger or pendingNotes.
   void silenceTrackMidiOutput();
   void silenceSlotMidiOutput(uint8_t slotIndex);

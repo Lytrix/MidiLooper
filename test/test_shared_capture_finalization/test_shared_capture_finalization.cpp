@@ -68,6 +68,13 @@ struct TrackCaptureStopTestAccess {
   static bool hasRecordPass(const Track& t, uint8_t slot) {
     return t.getLoop(slot).passes.hasRecordPass();
   }
+  static bool audibleSource(const Track& t, uint8_t slot) {
+    return t.hasAudiblePlaybackSource(slot);
+  }
+  static LoopPlaybackRuntime& runtimeFor(Track& t, uint8_t slot) {
+    return *t.playbackRuntime.slotIfAllocated(slot);
+  }
+  static uint32_t playbackGenerationOf(const Track& t) { return t.playbackGeneration; }
   static auto retirementGrain(Track& t) {
     return t.stepDeferredRecordRetirement(*t.captureStopJobHead());
   }
@@ -1227,6 +1234,63 @@ void test_empty_record_take_all_filtered_retires_without_content() {
     TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::stopQueueDepth(t));
 }
 
+void test_deferred_record_interval_is_audible_only_with_a_bound_window() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  Loop& loop = t.getLoop(0);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  if (runtime.viewSetIfPrewarmed() == nullptr) {
+    TEST_ASSERT_TRUE(runtime.prewarmViews(loop.companionRowHorizonBound(),
+                                          loop.fullTakePlaybackViewAdmissible()));
+  }
+  // The production record start prepares and installs the retained bar-1 window.
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  t.noteOff(1, 60, 0, 180);
+  // The stop edge stamps the interval's final geometry; the deferred worker then binds
+  // the retained window to it.
+  loop.loopLengthTicks = 768;
+  {
+    auto* set = runtime.viewSetIfPrewarmed();
+    TEST_ASSERT_NOT_NULL(set);
+    TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewLifecycle::kNoView, set->lifecycle.retained);
+  }
+  const PlaybackViewSourceIdentity recordingSource{
+      loop.playbackRevision, TrackCaptureStopTestAccess::playbackGenerationOf(t),
+      loop.publishedSnapshotIdentity()};
+  for (size_t i = 0; i < 32; ++i) {
+    runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 1);
+  }
+
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 768, 768);
+  {
+    auto* set = runtime.viewSetIfPrewarmed();
+    TEST_ASSERT_NOT_NULL(set);
+    TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewLifecycle::kNoView, set->lifecycle.retained);
+    TEST_ASSERT_TRUE(set->views[set->lifecycle.retained].complete);
+    TEST_ASSERT_TRUE(set->views[set->lifecycle.retained].rawCoveragePrepared);
+  }
+  // A pending job whose window is still raw has no audible source: the interval must
+  // stay silent rather than fabricate one from nothing.
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::audibleSource(t, 0));
+  // The closure grain binds the window to this interval's geometry and frozen source.
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    TrackCaptureStopTestAccess::closureGrain(t));
+  {
+    auto* set = runtime.viewSetIfPrewarmed();
+    TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewLifecycle::kNoView, set->firstRecordReturnWindowIndex());
+  }
+  TEST_ASSERT_TRUE(runtime.hasBoundRecordReturnWindowForPendingJob());
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::audibleSource(t, 0));
+
+  // Another slot has no source of its own.
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::audibleSource(t, 1));
+  // Retiring the job ends the unpublished interval's eligibility; committed content
+  // owns the slot from then on.
+  job.admission.pending = false;
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::audibleSource(t, 0));
+}
+
 void test_private_grains_never_hold_the_global_ephemeral_seal() {
   Track& t0 = trackManager.getTrack(0);
   prepareSlot(t0, 0, false);
@@ -1517,6 +1581,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_record_pass_transfer_capacity_refusal_fails_closed);
   RUN_TEST(test_empty_record_take_all_dropped_retires_without_content);
   RUN_TEST(test_empty_record_take_all_filtered_retires_without_content);
+  RUN_TEST(test_deferred_record_interval_is_audible_only_with_a_bound_window);
   RUN_TEST(test_private_grains_never_hold_the_global_ephemeral_seal);
   RUN_TEST(test_record_job_closures_preserve_a_live_successor);
   RUN_TEST(test_record_job_closure_denial_retains_obligation_for_retry);
