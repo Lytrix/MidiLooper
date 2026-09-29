@@ -1,5 +1,21 @@
 # Project state (execution context)
 
+**2026-09-29 — §3 gates (S17.5) — enforced gate, mutation set, accounting.** The finalization suite no
+longer reads `S4F16_REQUIRE_CONTRACT`: the R→R/R→OD/OD→R/OD→OD rotation oracle and every other
+assertion are unconditional, so ordinary suite success is the strict result and there is no weaker
+mode to select. Nine mutations are red-proven — reintroducing the inline Record commit (7 cases),
+dropping the stop-edge length stamp (8), closing tails at loop end (3), restoring the old live-length
+equality clause (1), retiring during a frozen-window build (1), removing the switch guard (1),
+reading the stop-edge prediction instead of the published geometry (2), skipping the deferred REVT
+queue (1) and skipping the committed-scratch invalidation (1). Accounting is the compile-time
+structure pins (`sizeof(Track) == 384`, `sizeof(CaptureStopJobs) == 28936`, active under
+`SESSION_CAPTURE`+`PERF_TELEMETRY`) plus the post-link RAM1 gate:
+`variables 96,192 / ITCM 393,216 (code 391,224 + padding 1,992) / locals 34,880`, padding floor 840.
+Strict matrix **47/47**; full native **2 617 cases, 2 610 succeeded, 7 skipped**;
+`teensy41-capture-serial` **SUCCESS**. S17.1–S17.5 are all landed; §3's own exit list still owes a
+transport-stop-in-every-phase sweep, an internal/external clock sweep and load/clear interaction
+with a stop in flight, and no device acceptance is claimed from host results.
+
 **2026-09-29 — S4f.20 residuals (S17.4) — deferred REVT queue and `invalidateCaches()` parity.**
 The deferred Record publication queues the stored note-on (REVT) scan the inline commit queued, and
 the queue is slot-qualified (`deferredRecordRevtsPending` bool → `deferredRecordRevtsSlot`, the same

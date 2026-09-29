@@ -70,8 +70,22 @@ fails its fixture. Strict matrix **47/47**; full native **2 617 cases, 2 610 suc
 capture-serial PASS, RAM1 padding 1,992. The suite is now an **enforced** gate: it no longer reads
 `S4F16_REQUIRE_CONTRACT`, so ordinary suite success is the strict result.
 
-**Open:** S17.5 — the enforced-gate documentation, the mutation set, per-track/job/raw/output
-RAM1+PSRAM accounting and doc closeout.
+**2026-09-29 — §3 gates (S17.5).** The finalization suite is an **enforced** gate: it no longer reads
+`S4F16_REQUIRE_CONTRACT`, so the R→R/R→OD/OD→R/OD→OD rotation oracle and every other assertion are
+unconditional and the ordinary suite is the strict result. Nine mutations are red-proven (inline
+Record commit reintroduced; stop-edge length stamp dropped; loop-end tail close; the old
+live-length equality clause; retirement during a frozen-window build; the missing switch guard; the
+stop-edge prediction read; the missing deferred REVT queue; the missing committed-scratch
+invalidation). Accounting: compile-time pins `sizeof(Track) == 384` and `sizeof(CaptureStopJobs) ==
+28936` (active under `SESSION_CAPTURE`+`PERF_TELEMETRY`) plus the post-link RAM1 gate —
+`variables 96,192 / ITCM 393,216 (code 391,224 + padding 1,992) / locals 34,880`, floor 840.
+Strict matrix **47/47**; full native **2 617 cases, 2 610 succeeded, 7 skipped**;
+`teensy41-capture-serial` **SUCCESS**.
+
+**Remaining for §3's exit:** transport Stop in every phase, an internal/external clock sweep, and
+load/clear interaction with a record stop in flight. The transport-stop route is covered for the
+Stopped destination, and the wrong-slot/successor-baseline cases by S17.3a. No device acceptance is
+claimed from host results.
 [Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md).
 
 **2026-09-28 — S4f.19 §2 — first-bar and onward playback handoff: delta work complete.**

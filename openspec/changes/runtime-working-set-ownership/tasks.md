@@ -2791,7 +2791,17 @@ own execution packet and records fixture/native/build/device results separately.
       Fixtures `test_deferred_record_publication_queues_revts_for_its_own_slot` and
       `test_deferred_record_publication_invalidates_the_track_committed_scratch`; removing either
       wiring fails its fixture. Strict matrix 47/47; full native 2 617 cases / 2 610 succeeded /
-      7 skipped; capture-serial PASS, RAM1 unchanged at padding 1,992. **S17.5 remains open.**
+      7 skipped; capture-serial PASS, RAM1 unchanged at padding 1,992.
+      **2026-09-29 S17.5 — gates, mutations and accounting (native leg): done.** The finalization
+      suite is an enforced gate (it no longer reads `S4F16_REQUIRE_CONTRACT`, so ordinary suite
+      success is the strict result). Nine mutations are red-proven, including the three the packet
+      names (inline Record commit reintroduced; stop-edge prediction read instead of the published
+      geometry; retirement while a frozen-window build still borrows the raw range). Structural
+      accounting is compile-time and active (`sizeof(Track) == 384`, `sizeof(CaptureStopJobs) ==
+      28936` under SESSION_CAPTURE+PERF_TELEMETRY) plus the post-link RAM1 gate. Strict 47/47; full
+      native 2 617 cases / 2 610 succeeded / 7 skipped; capture-serial SUCCESS. **Still open for
+      §3's exit:** transport Stop in every phase, an internal/external clock sweep, and load/clear
+      interaction with a stop in flight; no device acceptance is claimed from host results.
 - [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
       full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with
