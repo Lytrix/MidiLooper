@@ -54,6 +54,25 @@ class DeferredRevtTests(unittest.TestCase):
         self.assertFalse(grid["revt_missing"])
         self.assertEqual(4, grid["note_on_count"])
 
+    def test_a_single_take_extractor_equals_the_unbounded_take_slice(self) -> None:
+        """The acceptance invariant: for a take with no successor, every `REVT` row after its `RECA`
+        is included — which is exactly what the pre-`21b8ca8f` extractor did.
+
+        Three-extractor replay of the stored runs (`pre-21b8ca8f`, current, this rule): the fix returns
+        the pre-regression tick set for `s4f22-step4-a1`, `s4f22-step5-b1`, `s4f22-step8-e3`,
+        `s4f22-step11-h5` and `s4f22-step11-h6` (32 ticks each, where the current code returns 0) and
+        keeps 0 for `s4f22-step3-base-01`, `s4f22-step8-e1` and `s4f22-step11-h3`. Only
+        `s4f22-step8-e2` differs from pre-regression (4 -> 0), which is `21b8ca8f`'s successor intent.
+        """
+        lines = _grid_lines_with_deferred_revt()
+        take_start = baseline._record_take_row_index(lines)
+        self.assertIsNotNone(take_start)
+        unbounded = [
+            int(line.split(",")[3]) for line in lines[take_start:] if ",REVT," in line
+        ]
+        self.assertEqual(unbounded, baseline._extract_revt_note_on_ticks(lines))
+        self.assertEqual([16, 64, 111, 158], unbounded)
+
     def test_the_flush_stamp_is_not_the_phase_clock(self) -> None:
         """The regression `21b8ca8f` introduced: bounding by `ts > RECS,stop` empties the set."""
         lines = _grid_lines_with_deferred_revt()
