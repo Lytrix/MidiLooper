@@ -256,6 +256,14 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseChunkRefs(const CommittedC
   }
 }
 
+void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::retainChunkRefs(const CommittedChunkIdList& refs) {
+  // Pins borrowed ids for a deferred reader. `retainChunkReference` is the inverse of the release
+  // side of `releaseChunkRefs`; `tryFreeChunk` stays on the release side only.
+  for (uint16_t id : refs) {
+    retainChunkReference(id);
+  }
+}
+
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::hasHeadroomForCommittedChunkIdList(size_t count) {
   if (count == 0) {
     return true;

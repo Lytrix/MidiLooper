@@ -260,6 +260,10 @@ class LoopEventStore {
   /// Release runtime references held by a chunk-ref list (does not clear the list).
   static void releaseChunkRefs(const CaptureChunkIdList& refs);
   static void releaseChunkRefs(const CommittedChunkIdList& refs);
+  /// Take one runtime reference per id in a list that *borrows* committed refs
+  /// (`tryCopyCommittedChunkIds`). A deferred reader must pin what it borrowed, because the
+  /// producer's own `releaseChunkRefs` frees the chunks and a freed id reads as empty.
+  static void retainChunkRefs(const CommittedChunkIdList& refs);
   /// Release and remove one owned tail reference; leaves list capacity reserved.
   static bool releaseLastCommittedChunkRef(CommittedChunkIdList& refs);
 

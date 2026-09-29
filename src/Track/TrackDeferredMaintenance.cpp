@@ -1316,6 +1316,9 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
 }
 
 void Track::resetDeferredRecordRevts() {
+  // Releases the reference `queueDeferredRecordRevts` took when it borrowed the producer's chunk
+  // ids. It is a no-op for the merge path, which never copied a directory.
+  LoopEventStore::releaseChunkRefs(deferredRecordRevtChunkRefs);
   deferredRecordRevtsSlot = Config::INVALID_LOOP_SLOT;
   deferredRecordRevtChunkScan = false;
   deferredRecordRevtCursor = 0;
@@ -1358,6 +1361,14 @@ void Track::queueDeferredRecordRevts(uint8_t slot) {
     if (!LoopEventStore::tryCopyCommittedChunkIds(deferredRecordRevtChunkRefs,
                                                   loop.passes.recordPass.committedChunkIds)) {
       resetDeferredRecordRevts();
+    } else {
+      // The copy borrows the producer's chunk references. Pin them for the deferral: the scan runs
+      // in a later turn, and the publication/retirement that runs first releases its own directory,
+      // which frees the chunks. `appendChunkRefEvent` then returns nothing for a freed id, so the
+      // take reported zero stored notes with no error (`captures/s4f22-step3-base-01`:
+      // `Queued REVT note-ons (deferred): 0`, zero `REVT` rows, and a failed stored-grid check on a
+      // take that had recorded, published and played). `resetDeferredRecordRevts` releases the pin.
+      LoopEventStore::retainChunkRefs(deferredRecordRevtChunkRefs);
     }
   }
 }
@@ -1379,6 +1390,7 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice, bool allowMerge
 
   if (deferredRecordRevtChunkScan) {
     size_t queued = 0;
+    size_t chunksRead = 0;
     while (queued < maxEventsPerSlice) {
       if (deferredRecordRevtChunkEventCursor >= deferredRecordRevtChunkEvents.size()) {
         deferredRecordRevtChunkEvents.clear();
@@ -1388,6 +1400,7 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice, bool allowMerge
         }
         const uint16_t chunkId = deferredRecordRevtChunkRefs[deferredRecordRevtChunkCursor++];
         LoopEventStore::appendChunkRefEvent(chunkId, deferredRecordRevtChunkEvents);
+        ++chunksRead;
         continue;
       }
 
@@ -1404,8 +1417,13 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice, bool allowMerge
         deferredRecordRevtChunkCursor >= deferredRecordRevtChunkRefs.size() &&
         deferredRecordRevtChunkEventCursor >= deferredRecordRevtChunkEvents.size();
     if (done) {
-      logger.log(CAT_TRACK, LOG_DEBUG, "Queued REVT note-ons (deferred): %d",
-                 static_cast<int>(queued));
+      // `refs` and `events` make a zero readable: refs=0 is an empty directory, while
+      // refs>0 with events=0 means the chunk could not be read (a freed/never-owned id).
+      logger.log(CAT_TRACK, LOG_DEBUG,
+                 "Queued REVT note-ons (deferred): %d (mode=chunk refs=%u events=%u chunksRead=%u)",
+                 static_cast<int>(queued), static_cast<unsigned>(deferredRecordRevtChunkRefs.size()),
+                 static_cast<unsigned>(deferredRecordRevtChunkEvents.size()),
+                 static_cast<unsigned>(chunksRead));
       resetDeferredRecordRevts();
     }
     return;
