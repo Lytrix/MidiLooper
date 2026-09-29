@@ -34,6 +34,10 @@ class HitlConfig:
     capture_serial_port: str = DEFAULT_CAPTURE_SERIAL_PORT
     capture_boot_wait_s: float = 10.0
     arm_snapshot_yield: bool = False
+    # A managed run owns a real boot by default (the fresh-boot gate needs the banner). A
+    # repeatability campaign turns this off after its first attempt, because the acceptance
+    # contract asks for consecutive passes on one boot.
+    boot_reset: bool = True
     build_env: str = "teensy41-capture-serial"
 
     def needs_managed_capture(self) -> bool:

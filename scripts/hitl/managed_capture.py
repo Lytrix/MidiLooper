@@ -486,12 +486,15 @@ def managed_capture_session(config: HitlConfig) -> Iterator[Path]:
         boot_wait_s=config.capture_boot_wait_s,
         out_dir=config.out_dir,
         arm_snapshot_yield=config.arm_snapshot_yield,
-        # A managed run must own a real boot: the accepted-sequence oracle's fresh-boot gate reads
-        # `#CAP,<us>,DIAG,boot_reset,` out of the capture, and a capture that attaches to an already
-        # running device has no banner at all (`captures/s4f22-base-device-11` had none, so that run
-        # could not be read as verdict-grade even though its record leg verified). `capture_session.py`
-        # asks the firmware for the reset before its boot settle, so the banner lands in this log.
-        boot_reset=True,
+        # A managed run normally owns a real boot: the accepted-sequence oracle's fresh-boot gate
+        # reads `#CAP,<us>,DIAG,boot_reset,` out of the capture, and a capture that attaches to an
+        # already running device has no banner at all (`captures/s4f22-base-device-11` had none, so
+        # that run could not be read as verdict-grade even though its record leg verified).
+        # `capture_session.py` asks the firmware for the reset before its boot settle, so the banner
+        # lands in this log. A repeatability campaign opts out (`--no-boot-reset`) because three
+        # consecutive attempts on one boot is what the acceptance contract asks for; only the first
+        # attempt of such a campaign owns the boot.
+        boot_reset=config.boot_reset,
     )
     try:
         log_path = session.start()
