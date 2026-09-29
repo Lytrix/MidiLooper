@@ -1,59 +1,71 @@
 # Current work (implementation scope)
 
-**2026-09-29 — content-evidence root causes: the stored rows exist, the checks look at the wrong time.**
-Investigation of the `INCONCLUSIVE_CAPTURE` verdicts' remaining issues
-(`record_stored_revt_missing`, `overdub_stored_span_too_short`, `second_overdub_stored_span_too_short`,
-`persistence_stage_missing:result`, `persistence_active_snapshot_unavailable_during_save`). Findings,
-with the classification they earn:
+**2026-09-29 — content-evidence decision proposal: one host fix landed, two decisions open.**
 
-1. **REVT window uses the flush time as if it were the capture time (VERIFIED, host).**
-   `_extract_revt_note_on_ticks` keeps a `#CAP,<us>,REVT,…` row only when
-   `RECA_ts <= us <= RECS_stop_ts` — but `<us>` is when `flushOneRevtRecord` wrote it
-   (`micros()` at flush), and the function's own docstring says "REVT emission is deferred (idle
-   flush), so lines can appear after RECS,stop". `s4f22-step11-h5` has **32 REVT rows at 72.97 s**
-   against `recs_stop_ts` = 36.65 s → every one is discarded → `revt_missing: true`,
-   `note_on_count: 0`, `record_stored_revt_missing`. The rows are complete (32 = the 2-bar record
-   take's note-ons); the *check* throws them away.
-2. **The overdub stored-span check is not scoped to its leg (VERIFIED, host).** The first-overdub call
-   passes no `after_ts`/`before_ts`, so `_extract_sevt_note_on_ticks` counts every `SEVT,N` row in the
-   log. `s4f22-step11-h5`: 64 note-ons, `last_tick=2130`, `bars_reached=3` for a 2-bar loop →
-   `span_ticks=2125 > 1296 expected` → `span_ok=False` (and `count_ok=True, bars_match_ok=True`, the
-   contradiction that gives it away). `s4f22-step11-h6` has 32 rows spanning exactly 2 bars and passes.
-   The counterexample pair pins it to the *scoping*, not to loss.
-3. **A deduplicated save request is demanded to produce its own `result` (VERIFIED, host).**
-   Every in-sequence `PERS,request` of `s4f22-step11-h5` reports `outcome: already_pending` (seven of
-   them, 37.1 s → 77.7 s) and the handoff verifier requires `result` for the request it saw →
-   `persistence_stage_missing:result`. `PERS,result,…,ok` rows do exist in the same log (16.43 s,
-   20.32 s) — a request that was already pending is by design not followed by a second result.
-4. **The post-boot commit holdoff defers the whole run's persistence (VERIFIED, device).**
-   `s4f22-step11-h4`: `Clear refused: … post_load_holdoff` at 16.8 s; h5: `PERS,drain,waiting_commit_gate`
-   at 20.2 s and `already_pending` for 40 s of measured sequence. This is what pushes the stored-evidence
-   walks (REVT at 72.97 s, SEVT at 70–73 s) far past the phases they describe, and it is why
-   `persistence_active_snapshot_unavailable_during_save` reports no RAM2 figure.
-5. **`Revt` records and `SEVT,` text are unprotected and unaccounted for (VERIFIED from code; the
-   observed loss is unattributable *because* of it).** `appendCaptureRecord` derives tier/critical from
-   `text`, which is `nullptr` for `CaptureRecordType::Revt`, so a Revt append is rejected whenever the
-   head is tier-A/critical text (counted only as generic timing shed) and the flush's pressure loop —
-   which stops only at a **tier-A text** head — can discard a Revt record outright.
-   `CaptureLineTier::isTierALine` has no `SEVT,` entry, so SEVT text is shed silently. Neither family
-   has a counter (`recordFamilyStats` is text-keyed; `RING,record_stats` reports only RECA/RECS/RID), so
-   `s4f22-step11-h3` reads `RECA entered=1/enq=1/tx=1, RECS 7/7/7, evict 0` **and** no REVT rows at all.
-   Same defect class the repo already fixed for `DIAG,reentry*` (`CaptureLineTier.h`: "they were
-   non-Tier-A, so the timing-critical shed … removed them from a completed run's log entirely").
-6. **The ring's delivery position, not its content, is the variable (VERIFIED, device).**
-   h5: `attempts=13339, ok=13339, tx=13335, shed=4, overflow=0, tierA_evict=0, wipe=0` — a numerically
-   clean ring, yet stored rows arrive 36 s late. h3: `ok−tx = 58 294` **constant** across 20 samples over
-   29 s (ok and tx both advancing ~29/s) with `shed=73 217` and `tierA_evict=7 966` accumulated earlier —
-   sustained pressure, evidence delivered far behind the phase. h6's abort is the separate,
-   intermittent ring-wipe defect (`firmware capture ring discarded unreadable content`; `wipe=0` in
-   h3/h5, so it is not the cause of their verdicts).
+**Decision requested.** Approve the REVT take-bounding fix (applied below, replay-validated on all nine
+stored runs) and pick a direction for the SEVT leg attribution, which the current telemetry cannot
+support. `already_pending` semantics and firmware evidence protection stay separate decisions.
 
-**Cheapest high-value fixes, in order:** (a) stop bounding the REVT window by the flush stamp — bound by
-the take (next `RECA`) instead, per its own docstring; (b) scope the first-overdub SEVT set to its leg
-like the second one; (c) accept `already_pending` in the persistence handoff when the deduplicated save
-settles later in the same log; (d) firmware: classify `Revt` records and `SEVT,` as protected evidence
-with per-family counters, so a loss is reported instead of inferred. (a)-(c) are host-side; (d) needs an
-upload and an owner decision.
+Findings, each classified, with the acceptance criteria the fix has to meet:
+
+1. **REVT was bounded by the flush clock, not the phase clock (VERIFIED, host; regression).**
+   `_extract_revt_note_on_ticks` kept a `#CAP,<us>,REVT,…` row only when
+   `RECA_ts <= us <= RECS_stop_ts`, but `<us>` is when `flushOneRevtRecord` wrote it (`micros()` at
+   flush) — which the function's own docstring has said since `373566a7` ("REVT emission is deferred
+   (idle flush), so lines can appear after RECS,stop"). `git log -S` attributes the bound to
+   **`21b8ca8f`**, and every run after it reports `record_stored_revt_missing` while the *same* rows
+   counted as 32 with `grid_ok: true` before it. **Fixed:** the take is bounded by its **row span**
+   (`_record_take_row_index` → `_next_record_take_row_index`, both stop forms recognised), which keeps
+   the deferred rows and still excludes a successor take's. Acceptance criteria and the 9-run replay:
+   * `s4f22-step11-h5`, `s4f22-step11-h6`: `revt_missing true → false`, `note_on_count 0 → 32`,
+     `grid_ok false → true` (same input rows; 32 REVT rows at 72.97 s / 1836.2 s vs stops 36.65 s /
+     1807.35 s).
+   * `s4f22-step4-a1`, `s4f22-step5-b1`, `s4f22-step8-e3`: unchanged (32, `grid_ok true`) — the
+     pre-regression behavior is preserved, not re-derived.
+   * `s4f22-step3-base-01`, `s4f22-step8-e1`, `s4f22-step11-h3`: unchanged (missing, 0) — no rows were
+     delivered.
+   * `s4f22-step8-e2`: 4 → 0 rows (`revt_missing` true). **Deliberate semantic change**: those 4 rows
+     follow the *stray* take's `RECA`, so the scored take's stored rows were never delivered; this is
+     `21b8ca8f`'s intent expressed by identity instead of by flush stamp. Residual: a take whose stored
+     rows are flushed *after* a successor take started is scored as missing — the telemetry carries no
+     take id on a REVT row.
+2. **The overdub stored-span mismatch is not a missing window (VERIFIED, host; direction open).** The
+   first-overdub call passes no `after_ts`/`before_ts`, but passing the leg's phase window cannot fix it:
+   the rows are emitted by *walks*, so their `#CAP,<us>` is a walk clock, and the SEVT blocks in these
+   runs sit entirely **outside** the phase windows — `s4f22-step11-h5`: blocks at 9.2–18.1 s and
+   72.9–73.3 s against windows 37.8–43.0 s / 51.6–56.8 s; `s4f22-step11-h6`: blocks at 1792.6–1798.8 s
+   against 1809.0–1814.7 s / 1822.8–1835.9 s. Those rows are the **pre-run** (boot/attach-era)
+   restoration verification, which is also why h6's apparent pass (`32` rows spanning exactly 2 bars)
+   is accidental — it scored restored-library evidence as the run's leg, and why h5's count (64) sees
+   the span go to 3 bars. **Decision needed:** either (a) the firmware stamps a take/leg identity on
+   `SEVT` (and `Revt`) so the harness can scope by it, or (b) the check is redefined to verify the last
+   complete walk's set under an explicit invariant ("the loop's full stored inventory") rather than "the
+   leg's notes". (a) needs an upload; (b) is host-only but weakens what the check proves.
+3. **A deduplicated save request is demanded to produce its own `result` (VERIFIED, host; decision
+   open).** All seven in-sequence `PERS,request` rows of `s4f22-step11-h5` are `outcome: already_pending`
+   (the post-boot commit holdoff), and the handoff verifier requires `result` for the request it saw →
+   `persistence_stage_missing:result`. **Risk of accepting `already_pending` as success:** a run whose
+   save never settles would read as passing — the `result` row is the only proof the write reached SD,
+   so the relaxed form must still require *some* later `PERS,result,…,ok` plus a settled drain, and must
+   keep the missing case as evidence loss, not as a contradiction.
+4. **The ring's delivery position, not its content, is the variable (VERIFIED, device).**
+   `s4f22-step11-h5`: `attempts=13339, ok=13339, tx=13335, shed=4, overflow=0, tierA_evict=0, wipe=0` —
+   numerically clean, stored rows 36 s late. `s4f22-step11-h3`: `ok−tx = 58 294` **constant** over 20
+   samples/29 s with `shed=73 217` and `tierA_evict=7 966` accumulated earlier (the long pre-run session
+   with no reader). `s4f22-step11-h6`'s abort is the separate intermittent ring wipe (`wipe=0` in
+   h3/h5). **So: no *in-run* evidence loss is measured in these runs.**
+5. **`Revt` records and `SEVT,` text are unprotected and unaccounted for (VERIFIED from code).**
+   `appendCaptureRecord` derives tier/critical from `text`, which is `nullptr` for
+   `CaptureRecordType::Revt`; the flush's pressure loop stops only at a **tier-A text** head, so a Revt
+   record can be discarded with only a generic timing-shed note; `isTierALine` has no `SEVT,` entry.
+   Neither family has a counter (`recordFamilyStats` is text-keyed), which is exactly why h3's absent
+   REVT rows cannot be attributed to a discard path. Same defect class already fixed for
+   `DIAG,reentry*`. **Urgency: preventative, not urgent** — these runs show no measured loss; the fix's
+   value is turning an unattributable loss into a reported one.
+
+**Order:** (1) landed; (2) and (3) await a direction; (5) after (2)/(3) show whether loss still occurs.
+Fixtures: `scripts/test_hitl_stored_record_grid.py` (8 cases) plus the replay above.
+
 
 
 **2026-09-29 — the transport-proxy phase decisions now read device time, not the follow index.**

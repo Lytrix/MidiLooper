@@ -1,23 +1,28 @@
 # Project state (execution context)
 
-**2026-09-29 — the content-evidence issues are mostly the verifier reading the wrong clock.**
-Settled the open `INCONCLUSIVE_CAPTURE` issues without a firmware change: **the stored rows exist and
-the checks look at the wrong time.** `s4f22-step11-h5` carries **32 `REVT` rows at 72.97 s** while
-`_extract_revt_note_on_ticks` keeps only rows inside `[RECA_ts, RECS_stop_ts]` (= 36.65 s) — but a REVT
-row's `#CAP,<us>` is when it was *flushed* out of the ring, and its own docstring says the emission is
-deferred, so all 32 are discarded → `revt_missing: true`. The first-overdub stored-span check passes no
-window at all, so it counts every `SEVT,N` row in the log (h5: 64 rows, `last_tick=2130`,
-`bars_reached=3` for a 2-bar loop → `span_ok=False`, while `count_ok=True` and `bars_match_ok=True` —
-the contradiction that names the cause); h6's 32 rows spanning exactly 2 bars pass.
-`persistence_stage_missing:result` is the same shape: all seven in-sequence `PERS,request` rows are
-`already_pending` (the boot commit holdoff, `post_load_holdoff`/`waiting_commit_gate`), and the verifier
-demands a `result` for a request that was deduplicated. The device-side loss path is real but separate:
-`CaptureRecordType::Revt` and `SEVT,` are not tier-protected and have no per-family counters
-(`appendCaptureRecord` classifies from `text`, null for Revt; `isTierALine` has no `SEVT,`), which is
-why h3 reads `RECA 1/1/1, RECS 7/7/7, evict 0` and no REVT rows at all — the same defect already fixed
-for `DIAG,reentry*`. h5's ring is numerically clean (`ok 13339, tx 13335, shed 4, overflow 0, wipe 0`)
-yet its stored rows arrive 36 s late; h6's abort is the separate intermittent ring wipe.
-Full findings and the ranked fixes: [CURRENT_WORK](CURRENT_WORK.md).
+**2026-09-29 — content evidence: the REVT bound regressed on the flush clock; one host fix landed.**
+`git log -S` attributes the REVT window `ts > recs_stop_ts → skip` to **`21b8ca8f`**, added against the
+function's own docstring ("REVT emission is deferred (idle flush), so lines can appear after RECS,stop",
+`373566a7`): a REVT row's `#CAP,<us>` is a **flush** clock, so the bound discarded exactly the deferred
+rows. Every run after it reports `record_stored_revt_missing`; the *same* rows counted as 32 with
+`grid_ok: true` before it (`s4f22-step4-a1`, `s4f22-step5-b1`, `s4f22-step8-e3`). **Fixed** by bounding
+the take by its **row span** (`RECA` → next `RECA`, both stop forms): 9-run replay — h5/h6
+`missing → 32 rows, grid_ok`, a1/b1/e3/base-01/e1/h3 unchanged, and `s4f22-step8-e2` 4 → 0 rows
+(deliberate: those 4 follow the *stray* take's `RECA`). 8 new fixtures.
+
+**Two decisions still open**, because the remaining issues are *not* the same shape:
+the SEVT rows that fail the overdub stored-span check sit entirely **outside** the phase windows
+(h5: blocks at 9.2–18.1 s and 72.9–73.3 s vs windows 37.8–43.0/51.6–56.8 s; h6: 1792.6–1798.8 s vs
+1809–1836 s), i.e. they are pre-run restoration walks — so h6's apparent pass scored restored-library
+evidence, and "pass the leg window" cannot fix it; that needs a take/leg id in telemetry (upload) or a
+redefined check. `persistence_stage_missing:result` is a deduplicated (`already_pending`) request the
+verifier demands a `result` for, and accepting that has a real risk (a save that never settles would
+read as passing), so its relaxed form needs its own criteria. Firmware protection for
+`CaptureRecordType::Revt`/`SEVT,` (no tier, no counters) is **preventative, not urgent**: these runs
+measure no in-run loss — h5's ring is clean (`shed=4, overflow=0, wipe=0`) and h3's pressure
+(`shed=73 217`, `tierA_evict=7 966`) accumulated in the long pre-run session with no reader. h6's abort
+is the separate intermittent ring wipe. Full proposal, evidence and risks:
+[CURRENT_WORK](CURRENT_WORK.md).
 
 **2026-09-29 — the transport decision now anchors on device time, not line position.**
 Capture rows go through the firmware's fixed evidence ring, which flushes in batches, so a record the

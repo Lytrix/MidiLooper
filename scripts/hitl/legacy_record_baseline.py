@@ -3025,44 +3025,38 @@ def _verify_long_run_persistence_result(
 
 
 def _extract_revt_note_on_ticks(lines: list[str]) -> list[int]:
-    """Stored note-on ticks logged for the first record phase.
+    """Stored note-on ticks of the take that owns the first record stop.
 
-    REVT emission is deferred (idle flush), so lines can appear after RECS,stop.
+    REVT emission is deferred (idle flush), so lines can appear after RECS,stop — the docstring has
+    said so since `373566a7`. A REVT row's `#CAP,<us>` is when `flushOneRevtRecord` wrote it
+    (`micros()` at flush), so that stamp is a *flush* clock, not the phase clock, and it cannot bound
+    the take: `21b8ca8f` added `ts > recs_stop_ts -> skip` and thereby discarded exactly the deferred
+    rows. Every run after it reports `record_stored_revt_missing`
+    (`s4f22-step11-h5` has 32 REVT rows at 72.97 s against `recs_stop_ts` 36.65 s; `s4f22-step11-h6`
+    likewise), while the *same* rows counted as 32 with `grid_ok` before it
+    (`s4f22-step4-a1`, `s4f22-step5-b1`, `s4f22-step8-e3`).
+
+    The take is bounded by its **row span** instead: from its `RECA` to the next take's `RECA` (or the
+    end of the log). Deferred rows sit inside that span (measured: REVT always follows its take's
+    `RECS` in the same take frame), and a later take's rows stay excluded, which is what `21b8ca8f`
+    was for.
     """
-    recs_stop_ts: Optional[int] = None
-    record_start_ts: Optional[int] = None
-    for line in lines:
-        if ",RECA," in line and record_start_ts is None:
-            try:
-                record_start_ts = int(line.split(",")[1])
-            except ValueError:
-                pass
-        if ",RECS,stop," in line and recs_stop_ts is None:
-            try:
-                recs_stop_ts = int(line.split(",")[1])
-            except ValueError:
-                pass
-            break
-    if recs_stop_ts is None:
+    take_start = _record_take_row_index(lines)
+    if take_start is None:
         return []
+    take_end = _next_record_take_row_index(lines, after_index=take_start)
 
     ticks: list[int] = []
-    for line in lines:
+    for index in range(take_start, len(lines) if take_end is None else take_end):
+        line = lines[index]
         if ",REVT," not in line:
             continue
         parts = line.split(",")
         if len(parts) < 6:
             continue
         try:
-            ts = int(parts[1])
             tick = int(parts[3])
         except ValueError:
-            continue
-        if record_start_ts is not None and ts < record_start_ts:
-            continue
-        # Bound the grid to the take that owns the first stop row: a later take's stored notes
-        # would otherwise be counted into this one (unbounded scan before this).
-        if recs_stop_ts is not None and ts > recs_stop_ts:
             continue
         ticks.append(tick)
     return ticks
@@ -7240,3 +7234,36 @@ def run() -> int:
     print(f"  Report: {report_path}")
     print(f"  Result: {hitl_report.verdict}" + (f" ({hitl_report.reason})" if hitl_report.reason else ""))
     return process_exit_code(hitl_report.verdict)
+
+
+#: A record take's own start: `#CAP,<us>,RECA,<slot>,…`. The same tag appears inside a
+#: `RING,record_stats,RECA,entered=…` row, so the row must *start* with it.
+_RECA_ROW_RE = re.compile(r"^#CAP,\d+,RECA,")
+#: The two successful stop forms the firmware emits (`s4f22-step8-e2` used the second), matching
+#: `accepted_sequence_probe`'s `RECS_STOP_RE`.
+_RECS_STOP_ROW_RE = re.compile(r"^#CAP,\d+,RECS,(?:stop|stopToStopped),")
+
+
+def _record_take_row_index(lines: list[str]) -> Optional[int]:
+    """Row index of the first record take's `RECA` receipt (the take the run scores)."""
+    for index, line in enumerate(lines):
+        if _RECA_ROW_RE.match(line):
+            return index
+    return None
+
+
+def _next_record_take_row_index(lines: list[str], *, after_index: int) -> Optional[int]:
+    """Row index of the next take's `RECA` once this take has stopped, or None.
+
+    A `RECA` seen **before any** `RECS,stop` is the same take re-reported (or a
+    `RING,record_stats` row), not a successor, so it does not close the span.
+    """
+    stopped = False
+    for index in range(after_index + 1, len(lines)):
+        line = lines[index]
+        if _RECS_STOP_ROW_RE.match(line):
+            stopped = True
+            continue
+        if stopped and _RECA_ROW_RE.match(line):
+            return index
+    return None
