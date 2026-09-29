@@ -31,6 +31,7 @@ void setUp() {
   sCaptureRing = {};
   sCaptureRing.data = backing;
   sCaptureRing.capacity = sizeof(backing);
+  sFlushInProgress = false;
   captureSerial.output.clear();
   captureSerial.room = 4096;
 }
@@ -166,6 +167,29 @@ void test_unreadable_head_is_reported_as_a_wipe() {
   TEST_ASSERT_FALSE(sCaptureRing.wipedPending);
 }
 
+void test_nested_append_during_a_flush_cannot_evict_the_head() {
+  // `Serial` output can reach the Teensy `yield()`, which can deliver a USB-host MIDI message and
+  // append to this ring while a flush is walking it. An eviction there moved the head mid-record
+  // and reset the whole ring (captures/s4f22-step3-base-04 lost 10 355 bytes that way).
+  const std::string filler = "#CAP,1,DIAG,idle_maint," + std::string(90, 'x');
+  for (int i = 0; i < 200; ++i) queueCaptureTextLine(filler.c_str());
+  TEST_ASSERT_TRUE(sCaptureRing.used + 112 > sCaptureRing.capacity - kRecordReserveBytes ||
+                   sCaptureRing.capacity <= kRecordReserveBytes);
+  const size_t usedBefore = sCaptureRing.used;
+  const size_t headBefore = sCaptureRing.head;
+  sFlushInProgress = true;
+  TEST_ASSERT_FALSE(queueCaptureTextLine(filler.c_str()));
+  TEST_ASSERT_EQUAL_UINT32(usedBefore, sCaptureRing.used);
+  TEST_ASSERT_EQUAL_UINT32(headBefore, sCaptureRing.head);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.silentWipes);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, sCaptureRing.timingShedPending);
+  // A nested flush is refused too: it would fight the outer one for the same head.
+  const uint32_t flushCallsBefore = sCaptureRing.flushCalls;
+  flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_UINT32(flushCallsBefore, sCaptureRing.flushCalls);
+  sFlushInProgress = false;
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_real_emitters_are_accounted_and_drained);
@@ -174,5 +198,6 @@ int main() {
   RUN_TEST(test_critical_flood_counts_actual_family_eviction);
   RUN_TEST(test_allocation_failure_is_reported_after_safe_usb_retry);
   RUN_TEST(test_unreadable_head_is_reported_as_a_wipe);
+  RUN_TEST(test_nested_append_during_a_flush_cannot_evict_the_head);
   return UNITY_END();
 }
