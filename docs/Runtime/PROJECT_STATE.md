@@ -1,5 +1,20 @@
 # Project state (execution context)
 
+**2026-09-29 — S4f.22 device legs: the Record leg passes; capture loss is still under attribution.**
+Uploaded the candidate (`teensy41-capture-serial`, RAM1 padding 2,072) and ran the
+registered base preset. Attempt **a1** (fresh upload + boot reset) is a **PASS**: integrity
+COMPLETE, `issues []`, all five transition checks green, drain complete (RECA 1 / RECS 7 /
+RID 1 reconciled) and **32 `REVT` rows** present. Fixed from what the runs demonstrated: the
+queued stored-note scan borrowed chunk ids the producer then freed (it read nothing, `REVT`
+0) and is now pinned for the deferral; the REVT slice drains during playback through the
+bounded chunk walk. The boot-restore save completes ~29 s after a real boot, so the
+scoped-clear precondition passes and is no longer the blocker. Repeat attempts on the same
+boot did **not** pass: **a2** `INCONCLUSIVE_CAPTURE` with `RING,wiped,1,15981` (integrity
+INCOMPLETE, now fail-loud) and **a3** `FAIL` (`second_overdub_first_note_missing`). The new
+stopped-only `RING,stats` reports attempts == ok, `tx` below it (undrained backlog) and one
+wipe; a nested append during a flush can no longer move the head, but the wipe reproduced
+anyway, so its remaining cause is **unattributed**. Repeatability is **NOT proven**.
+
 **2026-09-29 — evidence reliability before the next device attempt (step 2).**
 The in-flight S4f.21/S4f.22 slices were reviewed and checkpointed in six commits.
 Three evidence-reliability defects were then fixed, all host-verified: the Record
