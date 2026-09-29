@@ -1,5 +1,23 @@
 # Current work (implementation scope)
 
+**2026-09-29 — the extra transport press, named and removed; readiness now proven from a fresh reply.**
+The d2 trace showed an unexplained extra Global Transport press between the start and the intended
+Record stop (start 53.527, recording 53.974, press 54.526, Record stop 59.248 -> armed a new take),
+which is the short take and the missing PLAYING in one sequence. Cause: `ensure_transport_clock`
+bounded its wait for the *caller's own* start acknowledgement and then fell through to
+`ensure_midi_clock`, whose press is a **toggle** -- so a late receipt stopped the transport the
+start had just begun (same signature as `s4f22-base-device-03`: start 25.086, toggle 25.603). Fixes
+committed: (1) confirmation after Start is **observation-only** and a missing receipt is a **named
+failure**, never a re-press, pinned by `scripts/test_transport_clock_observation.py`; (2) attach
+readiness comes from a **fenced `!STOP_STATUS` this run asks for** (`state=STOPPED` plus an idle
+stop queue), with line count demoted to diagnostics -- the old gate accepted 40 `#DMA_XFER` lines
+with no capture rows and could not tell a live device from a backlog; (3) `_send_short_press`
+records every control action with its caller, and the run report carries `transport_press_count`
+and `control_actions`, so an unexpected transport press is attributable. **The ring-wipe
+investigation stays open**: no `head_bad` in two runs does not clear it, and the detector checks
+plausible payload length, not full record-boundary integrity. Next: the bounded same-boot campaign,
+preserving every attempt and the existing content/timing gates.
+
 **2026-09-29 — head-boundary detector armed; the wipe did not reproduce, and setup variance is
 now the dominant failure.** Two same-boot attempts with `RING,head_bad` armed
 (`captures/s4f22-step7-d1/d2`) produced **no `head_bad` row and no wipe**. The failures were
