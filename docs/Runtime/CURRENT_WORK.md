@@ -1,5 +1,34 @@
 # Current work (implementation scope)
 
+**2026-09-29 — the HITL boot decision, replacing the boot wait (PX1).**
+Scope: host HITL automation only (`scripts/capture_session.py`, `scripts/hitl/managed_capture.py`,
+`config.py`, `runner.py`, `layered_cli.py`). A managed run starts the scenario as soon as the device is
+driveable, instead of after a fixed post-open window:
+
+* `capture_session.py` takes `--boot-reset-mode auto|force|never` (default `auto`, `--boot-reset` is the
+  legacy alias for `force`). `auto` asks once, read-only (`!STOP_STATUS`, written directly like the
+  reset request): a stopped device is attached without a reset, otherwise the capture requests
+  `!REBOOT` and reads the firmware's acknowledgement (`host-requested reboot`, `--reset-ack-s`) instead
+  of waiting for a banner that a refused request never produces.
+* The post-open settle is evidence-driven (`settle_end_reason`): `attach_no_reset` immediately, or
+  `boot_loaded` on `DIAG,boot_reset` + `BOOT,load,ok`; `--boot-wait` is only the ceiling for a device
+  that never gets there.
+* `establish_attach_readiness` resolves the transport-gated silence: one idempotent MIDI Stop
+  (`mido.Message("stop")`, port resolved through `hitl.midi_io._find_midi_port`), then one more probe,
+  then a refusal by name.
+* `run_with_managed_capture` drives a confirmed-stopped device straight away; a device it had to repair,
+  or one that still will not answer, gets `ManagedCaptureSession.restart_with_boot_reset()` — a second
+  capture that owns a forced boot (**why** in the h2 entry below).
+* `_prepare_deferred_save_before_clear`'s docstring and dead `wait_for_deferred_save_idle_if_active`
+  import follow the shipped behavior; its two stale expectations in
+  `scripts/test_clear_before_record_precondition.py` now pin "reported, not waited on".
+
+Evidence: `captures/s4f22-step11-h1` (9 s of blind retries replaced by a named refusal),
+`captures/s4f22-step11-h2` (the repair, and the stale-backlog misread it caused),
+`captures/s4f22-step11-h3` (0.1 s attach settle, `precondition_failures: []`, CONFIRMED EMPTY clear,
+run verdict `INCONCLUSIVE_CAPTURE` on the pre-existing ring/REVT loss). Open: the attaching-run
+transport proxy still reads line position, not device time, for a drained backlog. No firmware change.
+
 **2026-09-29 — the record-leg misattribution, fixed at the phase pairing.**
 `record_loop_length_mismatch` / `record_note_span_too_short` were never a firmware defect. The phase
 pairing accepted only `RECORDING -> STOPPED_RECORDING`, so a take that resolved to a full transport

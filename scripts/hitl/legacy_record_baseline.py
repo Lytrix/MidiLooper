@@ -923,11 +923,13 @@ def _prepare_deferred_save_before_clear(
     after_index: int = 0,
     abort: RunAbort,
 ) -> bool:
-    """Stop transport or wait on recent save activity before clear long press.
+    """Stop the transport before the clear long press.
 
-    Use fresh sequencer activity as well as explicit transport transitions.
-    Unresolved stuck persistence or a wait timeout blocks clear; neither is
-    evidence that the save-before-clear ownership guard can be bypassed.
+    Fresh sequencer activity and explicit transport transitions both count as "still running".
+    A pending deferred save is **reported**, not waited on: after boot the device is driveable
+    immediately and the firmware owns the refusal (`Clear aborted: could not complete deferred
+    save first` is read downstream as a clear abort). A transport that is still running after two
+    stop attempts still blocks, because a clear cannot drain against an active sequencer.
     """
     del in_port
     if serial_collector is None:
@@ -937,7 +939,6 @@ def _prepare_deferred_save_before_clear(
         deferred_save_active_in_suffix,
         deferred_save_active_in_tail,
         persistence_drain_stuck_in_suffix,
-        wait_for_deferred_save_idle_if_active,
     )
 
     lines = serial_collector.snapshot()

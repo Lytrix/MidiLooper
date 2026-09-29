@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from hitl.baseline_canonical_args import canonical_external_capture_legacy_args
-from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT, HitlConfig
+from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT, HitlConfig, boot_reset_mode_from_args
 
 
 def _legacy_flag_value(
@@ -145,6 +145,6 @@ def config_from_runner_args(args: argparse.Namespace, legacy: list[str]) -> Hitl
         managed_capture=managed_capture,
         capture_serial_port=getattr(args, "capture_port", DEFAULT_CAPTURE_SERIAL_PORT),
         capture_boot_wait_s=float(getattr(args, "capture_boot_wait", 10.0)),
-        boot_reset=not bool(getattr(args, "no_boot_reset", False)),
+        boot_reset=boot_reset_mode_from_args(args),
         build_env=getattr(args, "build_env", "teensy41-capture-serial"),
     )

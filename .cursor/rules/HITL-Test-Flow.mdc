@@ -60,7 +60,7 @@ List named live-MIDI recipes before inventing a new HITL:
  --undo-redo-delay-ms 3000
 ```
 
-Capture defaults: `--capture-port /dev/cu.usbmodem154944801` (no boot wait by default; pass `--capture-boot-wait N` if needed). Console prefixes: `[hitl-capture]` / `[capture]` for the capture process, `[hitl]` / scenario logs for MIDI.
+Capture defaults: `--capture-port /dev/cu.usbmodem154944801`. The boot is a **decision, not a wait**: `--boot-reset-mode auto` (default) asks the device read-only whether it is already stopped and attaches without a reset when it is, so the scenario starts as soon as the device is driveable (`captures/s4f22-step11-h3`: settle 0.1 s); `--boot-reset` forces a fresh boot (the banner) and `--no-boot-reset` never resets. `--capture-boot-wait N` is only the ceiling for a device that never becomes usable. Readiness comes from a fenced `!STOP_STATUS` this run asks for; when that transport-gated probe is silent the harness sends **one** idempotent MIDI Stop and probes again, then owns a fresh boot if it had to repair the device. Console prefixes: `[hitl-capture]` / `[capture]` for the capture process, `[hitl]` / scenario logs for MIDI.
 
 Layered first smoke (`record_overdub` only):
 

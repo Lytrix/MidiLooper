@@ -34,10 +34,11 @@ class HitlConfig:
     capture_serial_port: str = DEFAULT_CAPTURE_SERIAL_PORT
     capture_boot_wait_s: float = 10.0
     arm_snapshot_yield: bool = False
-    # A managed run owns a real boot by default (the fresh-boot gate needs the banner). A
-    # repeatability campaign turns this off after its first attempt, because the acceptance
-    # contract asks for consecutive passes on one boot.
-    boot_reset: bool = True
+    # How a managed run treats the boot. `auto`: ask the device once whether it is already stopped
+    # and run without a reboot when it is (`--no-boot-reset` attaches, `--boot-reset` forces a fresh
+    # boot for the verdict-grade fresh-boot gate). The acceptance contract's "consecutive passes on
+    # one boot" wants `never` after the first attempt.
+    boot_reset: str = "auto"
     build_env: str = "teensy41-capture-serial"
 
     def needs_managed_capture(self) -> bool:
@@ -63,3 +64,12 @@ class HitlConfig:
                 or self.needs_managed_capture()
             )
         )
+
+
+def boot_reset_mode_from_args(args: object) -> str:
+    """`never` for `--no-boot-reset`, `force` for `--boot-reset`, else `auto`."""
+    if bool(getattr(args, "no_boot_reset", False)):
+        return "never"
+    if bool(getattr(args, "boot_reset", False)):
+        return "force"
+    return "auto"

@@ -19,7 +19,25 @@ from hitl.serial.protocol import (collect_library_observation, fenced_rows,
                                   fenced_window, format_command_request, record_evidence_stats,
                                   record_evidence_row_counts, stopped_capture_queue_idle)
 
+_BOOT_BANNER_MARKER = "DIAG,boot_reset,"
+
 _CAPTURE_SCRIPT = Path(__file__).resolve().parent.parent / "capture_session.py"
+
+
+def resolve_boot_reset_mode(value) -> str:
+    """Normalize the boot mode (or the legacy boolean) through the capture's own definition.
+
+    The capture owns the meaning of the modes: it is the process that asks the device whether it is
+    already in the right state, so the harness asks it rather than restating the rule.
+    """
+    script_dir = str(_CAPTURE_SCRIPT.parent)
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    import capture_session
+
+    return capture_session.normalize_boot_reset_mode(value)
+
+
 _ACTIVE_LOCK = threading.Lock()
 _ACTIVE_SESSION: Optional["ManagedCaptureSession"] = None
 
@@ -98,7 +116,10 @@ def wait_for_capture_boot_ready(
 
     The managed runner must not send control MIDI while opening serial has reset
     the Teensy.  The ready marker binds this wait to the exact session log so a
-    stale marker from an earlier run cannot authorize the new scenario.
+    stale marker from an earlier run cannot authorize the new scenario, and the
+    capture writes it as soon as it has evidence the device is up -- so this wait
+    is normally a few seconds, and its timeout only bounds a device that never
+    reaches a usable state.
     """
     ready = out_dir / ".current_session.ready"
     deadline = time.monotonic() + max(timeout_s, 0.0)
@@ -130,7 +151,7 @@ class ManagedCaptureSession:
         python_executable: Optional[str] = None,
         arm_snapshot_yield: bool = False,
         run_token: str | None = None,
-        boot_reset: bool = False,
+        boot_reset: bool | str = "auto",
     ) -> None:
         self._port = port
         self._boot_wait_s = max(boot_wait_s, 0.0)
@@ -138,7 +159,8 @@ class ManagedCaptureSession:
         self._python = python_executable or sys.executable
         self._arm_snapshot_yield = arm_snapshot_yield
         self._run_token = run_token
-        self._boot_reset = boot_reset
+        self._boot_reset_mode = resolve_boot_reset_mode(boot_reset)
+        self._restarted_for_boot = False
         self._process: subprocess.Popen[str] | None = None
         self._output_thread: threading.Thread | None = None
         self._session_log: Path | None = None
@@ -150,6 +172,43 @@ class ManagedCaptureSession:
     @property
     def session_log(self) -> Path | None:
         return self._session_log
+
+    @property
+    def boot_reset_mode(self) -> str:
+        return self._boot_reset_mode
+
+    def boot_banner_seen(self) -> bool:
+        """Whether the capture that is running now observed its own boot banner."""
+        log = self._session_log
+        if log is None or not log.is_file():
+            return False
+        try:
+            return _BOOT_BANNER_MARKER in log.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+
+    def restart_with_boot_reset(self) -> bool:
+        """Own a fresh boot after the state check cleared the transport gate.
+
+        `!REBOOT` is refused while the transport runs, so this recovers exactly the attach that
+        failed because the device was left playing: the caller stops the transport once (idempotent
+        MIDI Stop) and then asks for this restart, which is the same capture owner with a new
+        session log and the boot banner inside it. Bounded to one restart per run.
+        """
+        if self._boot_reset_mode == "force":
+            return False
+        if self._restarted_for_boot:
+            return False
+        self._restarted_for_boot = True
+        print("[hitl-capture] re-attaching with a forced boot reset", flush=True)
+        self.stop()
+        self._boot_reset_mode = "force"
+        try:
+            self.start()
+        except TimeoutError as exc:
+            print(f"[hitl-capture] fresh boot did not settle: {exc}", flush=True)
+            return False
+        return True
 
     def start(self) -> Path:
         if not _CAPTURE_SCRIPT.is_file():
@@ -177,8 +236,9 @@ class ManagedCaptureSession:
             command.append("--arm-snapshot-yield")
         # Allowlisted, fenced read-only requests on stdin (task 2.3).
         command.append("--command-stdin")
-        if self._boot_reset:
-            command.append("--boot-reset")
+        # The capture decides the reset from the device's own state; the mode is what says whether
+        # it may reset at all, so a run that only needs a driveable device never pays for a boot.
+        command += ["--boot-reset-mode", self._boot_reset_mode]
         # Parent-death pipe: the child exits when this process closes the write
         # end, which happens even if the harness is SIGKILLed. That guarantees a
         # leaked capture session can never keep the USB serial port open.
@@ -188,12 +248,13 @@ class ManagedCaptureSession:
         if self._boot_wait_s > 0:
             print(
                 f"[hitl-capture] starting capture_session.py on {self._port} "
-                f"(boot-wait {self._boot_wait_s:.1f}s)",
+                f"(boot mode {self._boot_reset_mode}, settle ceiling {self._boot_wait_s:.1f}s)",
                 flush=True,
             )
         else:
             print(
-                f"[hitl-capture] starting capture_session.py on {self._port}",
+                f"[hitl-capture] starting capture_session.py on {self._port} "
+                f"(boot mode {self._boot_reset_mode})",
                 flush=True,
             )
         started_at = time.monotonic()
@@ -535,7 +596,10 @@ def attach_stream_is_usable(
     return True, f"{len(lines)} line(s)"
 
 
-def establish_attach_readiness(*, timeout_s: float = 12.0) -> tuple[bool, str]:
+def establish_attach_readiness(
+    *, timeout_s: float = 12.0, send_transport_stop: Optional[Callable[[], None]] = None,
+    stop_retries: int = 1,
+) -> tuple[bool, str]:
     """Readiness from a fresh fenced stopped-state reply, never from line count.
 
     Line count says only that bytes arrived; it cannot separate a live device from a backlog left
@@ -544,6 +608,13 @@ def establish_attach_readiness(*, timeout_s: float = 12.0) -> tuple[bool, str]:
     reporting the selected track stopped, with no pending finalization and an empty stop queue
     (`stopped_capture_queue_idle`). Persistence prerequisites stay with the caller's own save-idle
     wait, which is the owner of that contract.
+
+    `!STOP_STATUS` is transport-gated, so a device whose transport is still running answers
+    nothing -- and a run that was killed mid-sequence leaves exactly that state
+    (`captures/s4f22-step10-g2`). The reply's silence is therefore ambiguous between "stopped
+    transport, dead device" and "device fine, transport running", and `send_transport_stop` (one
+    idempotent MIDI Stop, never the control surface's toggle) resolves it: after the stop a healthy
+    device answers. A silent device is then refused by name, once.
     """
     session = active_managed_capture()
     if session is None:
@@ -562,16 +633,34 @@ def establish_attach_readiness(*, timeout_s: float = 12.0) -> tuple[bool, str]:
         baseline = len(read_lines())
         deadline = time.monotonic() + max(timeout_s, 0.0)
         last = "no reply"
+        stops_sent = 0
         while time.monotonic() < deadline:
             nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
             accepted, detail = session.send_command("!STOP_STATUS", nonce=nonce, end_nonce=end_nonce)
             if not accepted:
                 return False, f"!STOP_STATUS refused: {detail}"
+            # A direct-serial reply arrives in milliseconds; a transport-gated silence is then cheap
+            # (1 s per attempt) instead of costing the whole readiness budget before the Stop.
             rows = session.fenced_response(
-                nonce, end_nonce, timeout_s=min(3.0, max(0.1, deadline - time.monotonic()))
+                nonce, end_nonce, timeout_s=min(1.0, max(0.1, deadline - time.monotonic()))
             )
             if rows is None:
-                last = "no fenced !STOP_STATUS reply"
+                if send_transport_stop is not None and stops_sent < stop_retries:
+                    stops_sent += 1
+                    print(
+                        "[hitl] no !STOP_STATUS reply; the transport is probably still running "
+                        "from a killed run — sending one idempotent MIDI Stop and probing again",
+                        flush=True,
+                    )
+                    send_transport_stop()
+                    last = "no reply to the readiness probe; stopped the transport once"
+                    continue
+                last = (
+                    "no !STOP_STATUS reply even after one idempotent MIDI Stop; the device is "
+                    "not answering"
+                    if stops_sent
+                    else "no fenced !STOP_STATUS reply"
+                )
                 continue
             lines = read_lines()
             window = fenced_window(lines, nonce, end_nonce)
@@ -592,10 +681,43 @@ def establish_attach_readiness(*, timeout_s: float = 12.0) -> tuple[bool, str]:
             if not stopped_capture_queue_idle([row]):
                 last = f"stop queue is not idle: {row.strip()}"
                 continue
-            return True, "fresh stopped reply with an idle stop queue"
+            suffix = " after one idempotent MIDI Stop" if stops_sent else ""
+            return True, f"fresh stopped reply with an idle stop queue{suffix}"
         return False, last
     except (OSError, ValueError, RuntimeError) as exc:
         return False, f"readiness probe failed: {exc}"
+
+
+def transport_stop_sender(config: HitlConfig, sent: dict) -> Callable[[], None]:
+    """One idempotent MIDI Stop to the configured output, at most once per run.
+
+    Deliberately not the control surface's transport press: that is a *toggle*, so a blind press
+    can start the transport it was meant to stop. `mido.Message("stop")` is the same idempotent
+    stop the end-of-leg Record evidence drain already sends, and the firmware routes it to
+    `handleMidiStop()`, which clears `sequencerRunning` -- including the gate that refuses
+    `!REBOOT` while the transport runs.
+
+    `config.midi_out_name` is a *substring* of the port name (`"Teensy"` for the ALSA/CoreMIDI port
+    "Teensy MIDI"), resolved with the same helper the scenario uses -- opening it verbatim failed
+    the first device run of this slice (`captures/s4f22-step11-h1`: `unknown port 'Teensy'`).
+    """
+    def _send() -> None:
+        if sent.get("value"):
+            return
+        sent["value"] = True
+        try:
+            import mido
+
+            from hitl.midi_io import _find_midi_port
+
+            port_name = _find_midi_port(config.midi_out_name, is_input=False)
+            with mido.open_output(port_name) as port:
+                port.send(mido.Message("stop"))
+            print(f"[hitl] sent one idempotent MIDI Stop to {port_name!r}", flush=True)
+        except Exception as exc:  # noqa: BLE001 - a missing MIDI port is reported, not fatal
+            print(f"[hitl] could not send the MIDI Stop: {exc}", flush=True)
+
+    return _send
 
 
 def _run_with_watchdog(run_fn: Callable[[], int], timeout_s: float) -> int:
@@ -642,17 +764,49 @@ def run_with_managed_capture(
     the harness always ends itself and releases the USB serial port.
     `timeout_s <= 0` (or `HITL_MANAGED_RUN_TIMEOUT_S=0`) disables the watchdog
     for intentionally long runs.
+
+    Before the scenario, the device's state decides the boot: a device the capture
+    confirmed stopped is driven straight away, and one that cannot answer the
+    readiness probe is recovered with one idempotent MIDI Stop (a killed run leaves
+    the transport running, which is also what makes the firmware refuse `!REBOOT`).
+    A run that wanted a fresh boot and still has no banner then re-attaches with a
+    forced reset, now that the transport gate is clear.
     """
     timeout = resolve_managed_run_timeout(timeout_s)
     with managed_capture_session(config) as log_path:
-        # Line count is diagnostic only; readiness comes from a reply this run asked for.
-        usable, detail = attach_stream_is_usable(log_path, require_stream=config.boot_reset)
+        mode = resolve_boot_reset_mode(config.boot_reset)
+        stopped_once = {"value": False}
+        # Line count is diagnostic only; readiness comes from a reply this run asked for. Only a
+        # run that forces the boot promises a fresh stream to count.
+        usable, detail = attach_stream_is_usable(log_path, require_stream=(mode == "force"))
         print(f"[hitl] attach stream: {detail}")
         if not usable:
             print(f"[hitl] attached stream is not usable ({detail}); refusing to run the scenario")
             write_metadata_best_effort(config, session_log=log_path)
             return 3
-        ready, reason = establish_attach_readiness()
+        ready, reason = establish_attach_readiness(
+            send_transport_stop=transport_stop_sender(config, stopped_once)
+        )
+        print(f"[hitl] attach readiness: {reason}")
+        # A ready device is driven straight away (no reboot, no boot wait). A device this run had to
+        # *repair* is a different case: the idempotent Stop changed the state, and the capture stream
+        # now mixes the ring's stale backlog with fresh rows -- the drain lands old `BAR`/`DFRAME`
+        # rows *after* newer ones, so a scenario that reads "is the transport running?" from line
+        # position sees the transport running (`captures/s4f22-step11-h2`: BAR rows stamped 850-1864 s
+        # interleaved after a 1855 s `state=STOPPED` reply, and the scenario's stop press then
+        # *started* the transport, so the clear could not drain). Own a fresh boot for that case: it
+        # is the state the scenario is written against, and the reboot clears the backlog with it.
+        needs_fresh_boot = mode != "never" and (not ready or stopped_once["value"])
+        if needs_fresh_boot:
+            session = active_managed_capture()
+            if session is not None and not session.boot_banner_seen() \
+                    and session.restart_with_boot_reset():
+                log_path = session.session_log or log_path
+                usable, detail = attach_stream_is_usable(log_path, require_stream=True)
+                print(f"[hitl] fresh-boot attach stream: {detail}")
+                if usable:
+                    ready, reason = establish_attach_readiness()
+                    print(f"[hitl] fresh-boot readiness: {reason}")
         if not ready:
             print(f"[hitl] attach readiness failed ({reason}); refusing to run the scenario")
             write_metadata_best_effort(config, session_log=log_path)
