@@ -149,12 +149,25 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransferWithUndo(
     if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()))
       return commitStoppedWithUndo(loop, runtime, stop, generation, transferred, stack, undo,
                                    pendingPass);
-    // Transport Stop can recover the frozen canonical pass before companion
-    // preparation. This route never authorizes an audible PLAYING successor, and
-    // it publishes no protected undo entry.
+    // Transport Stop can recover the frozen canonical pass before companion preparation. This route
+    // never authorizes an audible PLAYING successor. The deferred overdub route prepares its own
+    // `OverdubPassAdded` entry from this interval's session-exit receipt, so publish that entry here
+    // when it is ready: the pass and its undo entry then cross this one boundary (DEC-063), which is
+    // what makes a stopped overdub add its sidebar `U:` level. A caller that prepared no entry (the
+    // transaction is not `Ready`) publishes none -- `canPublish` is the proof, and a refusal must
+    // never fail the pass that is about to commit.
+    const bool undoReady = undo.canPublish(stack, loop.loopId, finalPassId(pendingPass, loop));
     if (pendingPass != nullptr ? !loop.commitPreparedCapturePassAtomic(transferred, *pendingPass)
                                : !loop.commitPreparedCapturePassAtomic(transferred)) return false;
     markDeferredCommitDisplayRanges(loop, stop, pendingPass);
+    if (undoReady) undo.publishAtCommit();
+  } else if (undo.canPublish(stack, loop.loopId, kInvalidPassId)) {
+    // This turn commits no pass of its own: the interval's take was already committed by its wraps
+    // (the clean-stop jump), so the publication this transfer owes is the prepared entry for those
+    // identities -- the device's dominant stopped-overdub route. Publishing here keeps the pass and
+    // its undo entry on one boundary (DEC-063). A job whose transaction never reached `Ready`
+    // publishes nothing, exactly as before this handoff existed.
+    undo.publishAtCommit();
   }
   stop.setPhase(PendingStopPhase::DeferredCleanup);
   return true;
@@ -313,18 +326,23 @@ TRACK_COLD_MEM RuntimePlaybackOrderBuildResult TrackPreparedStopCommit::stepHist
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::commitSupersededCausalBase(
     Loop& loop, PendingStopAdmission& stop, PreparedCapturePassTransfer& transferred,
-    TrackUndoPublication* undo, PendingCapturePass* pendingPass) {
+    GlobalUndoStack* stack, TrackUndoPublication* undo, PendingCapturePass* pendingPass) {
   if (stop.phase != PendingStopPhase::AtomicTransfer) return false;
   // No bridge, no companion publication, no stale PLAYING successor selection.
   // The accepted capture pass is still committed, and a prepared undo entry for
   // it is published in the same turn.
   const bool staged = pendingPass != nullptr ? pendingPass->id != kInvalidPassId
-                                            : loop.hasPendingCapturePass();
+                                           : loop.hasPendingCapturePass();
   if (staged) {
     if (pendingPass != nullptr ? !loop.commitPreparedCapturePassAtomic(transferred, *pendingPass)
                                : !loop.commitPreparedCapturePassAtomic(transferred)) return false;
     markDeferredCommitDisplayRanges(loop, stop, pendingPass);
     if (undo != nullptr) undo->publishAtCommit();
+  } else if (undo != nullptr && stack != nullptr &&
+             undo->canPublish(*stack, loop.loopId, kInvalidPassId)) {
+    // Nothing staged: this interval's take was already committed by its wraps, so the entry names
+    // those identities and publishing it is this turn's whole publication (DEC-063).
+    undo->publishAtCommit();
   }
   stop.setPhase(PendingStopPhase::DeferredCleanup);
   return true;

@@ -17,6 +17,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 | [DEC-093](#dec-093--record-and-overdub-share-the-existing-deferred-finalization-lifecycle) | 2026-09-27 | Record and overdub share existing deferred finalization; preserve original overlap acceptance | Accepted implementation contract; firmware/device proof open |
 | [DEC-092](#dec-092--response-driven-hitl-preserves-continuous-playback-and-same-boot-preparation) | 2026-09-27 | Response-driven HITL, continuous-play acceptance, scoped same-boot preparation | Accepted user constraints; design recorded, implementation/device evidence open |
 | [DEC-094](#dec-094--a-pass-commit-queues-its-own-session-exit-snapshot-publication-and-coverage-is-only-claimed-for-content-the-box-enumerated) | 2026-09-29 | A pass commit queues its own session-exit snapshot publication (the deferred Record route restored that parity), and coverage is claimed only for content the box enumerated | Accepted — implemented, native verified (fixture red-proved); build verified; device re-run separate |
+| [DEC-095](#dec-095--a-deferred-stops-pass-publication-pushes-the-intervals-undo-entry-in-the-same-turn-and-the-entrys-identity-comes-from-that-intervals-own-session-exit-receipt) | 2026-09-30 | A deferred stop's pass publication pushes the interval's undo entry in the same turn, with the identity taken from that interval's own session-exit receipt | Accepted — implemented, native verified (fixture red-proved); build verified; device A/B on the clean-stop route verified |
 | [DEC-086](#dec-086--loop-edit-tempo-fader-is-a-global-bpm-control-on-cc102) | 2026-09-25 | Loop-edit fader 4: a global BPM control on ch16 CC102 (60–187 BPM, one BPM per step) | Accepted — implemented, native + device verified |
 | [DEC-091](#dec-091--a-failed-workspace-completion-is-discharged-and-reported-not-retried-at-the-queue-head) | 2026-09-26 | A failed workspace completion is **discharged and reported**, not re-queued at the head (it blocked every other item and kept the owed-save guard true) | Accepted — implemented, native verified (fixture red-proved); device fault path has no injection, evidence owed |
 | [DEC-090](#dec-090--the-deferred-save-records-workspace-focus-at-footer-write-time-not-at-admission) | 2026-09-26 | The deferred save records workspace **focus** at footer-write time; content identity stays the interval's slot (snapshot-at-admission rejected) | Accepted — implemented behavior, **native verified** (`test_storage_drain_restore`, red-proved); no firmware change |
@@ -5475,3 +5476,82 @@ No schema, ownership, capacity or transport change; the inline route is untouche
 fixtures keep their meaning and the new deferred-route fixture is the regression gate. A device re-run is a
 separate, approval-gated step: its signature is already readable in the stored run
 (`VCACHE,slice_clean,notes` / `DIAG,lcr,src,from=snapshot,notes` against `DIAG,lcr,pairrows,at=passes,count`).
+
+## DEC-095 — A deferred stop's pass publication pushes the interval's undo entry in the same turn, and the entry's identity comes from that interval's own session-exit receipt
+
+**Date:** 2026-09-30
+**Status:** Accepted — implemented, native verified (fixture red-proved, seven mutations); firmware build verified; device A/B on the clean-stop route verified. Not committed yet.
+**Owner:** `Track::processDeferredOverdubStopGrain` (handoff + `prepareDeferredOverdubUndoEntryFromReceipt`) → `TrackPreparedStopCommit::advanceAtomicTransfer*`/`commitSupersededCausalBase` (publication) → `TrackUndoPublication` (protected transaction) → `Loop::gatherSessionExitReceiptUndoIdentities` (identity source)
+**Governing change:** [`runtime-working-set-ownership`](../openspec/changes/runtime-working-set-ownership/proposal.md) — S4f.17 stop admission; parent plan [`overdub_stop_undo_level_short_route_bugfix.md`](../docs/Plans/overdub_stop_undo_level_short_route_bugfix.md)
+
+### Context
+
+The sidebar `U:` level (`TrackUndo::undoDepthForLoop`) counted only the record pass while a loop was live —
+`U:01` after recording plus overdubs against `U:03` after a reboot, and the base check
+`undo_redo_after_overdub_stop` logged `0 counts` against `expected_min: 1`. The deferred overdub stop drive
+published the interval's pass, but the `OverdubPassAdded` entry was only ever prepared in the
+`CompanionHistory`/`UndoCollection` phases. Three correct production routes skip them: the **clean-stop jump**
+(`PrepareTransfer` with `SealOutcome::SkippedEmpty` — the interval's take was already committed by its wraps, so
+nothing is staged at the stop; the dominant device route, `stop_phase` trail `1,6,10,11`), the **STOPPED destination
+without verified companion preparation** (the "transport Stop can recover the frozen canonical pass" fallback,
+which published no entry by design), and the **superseded causal base** (its variant runs before what was then the
+audible-bridge handoff). The user's "3-bar record loses the undo levels" is the same defect reached through
+stimulus timing: a late record start is quantized up to 3 bars, which shifts the later steps so the overdub stop
+lands as a clean stop.
+
+### Decision
+
+**A pass publication pushes its interval's undo entry once per job, in the same turn, on every route.** The
+deferred overdub route prepares the entry itself:
+
+1. The entry is built from the interval's **own** session-exit receipt (DEC-068 — its wrap-committed identities)
+   plus any pass this stop still stages, in the canonical `OverdubPassAdded` shape
+   (`TrackUndo::pushOverdubSessionOnStop`: `passId` = last identity, `passIds` = the whole set only when `>1`,
+   companion edit ids flattened). The receipt is Loop-private, so the identities come from the new
+   `Loop::gatherSessionExitReceiptUndoIdentities`.
+2. The handoff sits at the **top of the `AtomicTransfer` phase**, once per job (`undoPublicationStarted` marks
+   it), and drives the protected transaction to `Ready` before any variant runs — so the audible bridge, the
+   stopped recovery, the no-staged case and the superseded case can each publish what was prepared.
+3. `job.undoPublicationReady` means "publishable (`Ready`)", not "opened": `begin` leaves the transaction in
+   `DetachRedo`, and the old value made the gate skip the prepare turn.
+4. `TrackUndoPublication::canPublish(stack, loopId, kInvalidPassId)` means "this turn commits no pass of its own";
+   the entry's own identity is then the whole requirement. A clean stop never has a staged pass to name.
+
+**Fail-open and fail-closed split, deliberately:** a job that names **no** identity publishes nothing and still
+retires (never parks on a transaction `begin` would refuse forever), while a **refused** `begin` retains the entry
+and retries — a pass is never published without its level. That is the full route's existing policy; its own
+collection machinery is untouched, and this handoff is a no-op there.
+
+### Evidence
+
+- Fixture `test_stopped_overdub_stop_publishes_one_undo_entry` (`test/test_shared_capture_finalization/`): four
+  legs on the production stop path (stopped, second stop, superseded causal base, and a clean stop whose identity
+  comes only from its receipt), asserting the entry kind/slot/`passId` and the canonical `passIds` tail.
+- Seven mutations red-proved, each restored byte-identically; the removed prepare call site additionally stalls
+  `test_stopped_publication_requests_own_slot_once`, which is the proof that the fail-open guard is load-bearing.
+- `pio test -e native`: 2637 cases / 2630 succeeded / 7 skipped / 0 failed;
+  `pio run -e teensy41-capture-serial` SUCCESS (`RAM1` padding 1,928 ≥ approved floor 840).
+- Device A/B on the clean route with an identical command: `captures/s4f20-odundo-07` (pre-fix) `undo_entries`
+  5→5 with no short-route row; `captures/s4f20-odundo-10-1` (fixed) 5→6 with one
+  `src=deferred_short_route` row. Full-route control `captures/s4f20-odundo-09`: 5→6 and
+  `MIDI: Undo (entries=3)` — the `U:03` the reboot's content reconstruction (DEC-088) reports.
+
+### Consequences
+
+A stopped overdub's undo level exists at runtime, so the sidebar no longer depends on a reboot to show it, and an
+undo after an overdub stop removes the passes that interval added. Device runs also need the transport stopped
+before `--boot-reset` (a running transport refuses `!REBOOT`, after which the harness's attach-freshness check
+refuses to start) — clearing it with two `stop` messages and a ~6 s wait precedes the run.
+
+### Related OpenSpec
+
+[`runtime-working-set-ownership`](../openspec/changes/runtime-working-set-ownership/proposal.md) — S4f.17 stop
+admission and the cutover packet's slice record; DEC-063 (one publication boundary), DEC-068 (the interval's own
+session-exit receipt), DEC-088 (the post-reboot content reconstruction that used to be the only witness).
+
+### Migration notes
+
+No schema, capacity, ownership or transport change; no new job fields and no size-pin change. The full route's
+`UndoCollection`/`CompanionHistory` phases and their prepared entry are unchanged, so their native fixtures keep
+their meaning; the new fixture is the regression gate for the short routes. `canPublish`'s `kInvalidPassId` form is
+strictly additional (an entry identity is still required in all cases).

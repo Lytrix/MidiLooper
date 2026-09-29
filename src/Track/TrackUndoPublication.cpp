@@ -55,9 +55,14 @@ TRACK_COLD_MEM bool TrackUndoPublication::stepPrepare(size_t maximumUnits) {
 
 TRACK_COLD_MEM bool TrackUndoPublication::canPublish(
     const GlobalUndoStack& stack, LoopId loopId, PassId finalPassId) const {
-  return phase_ == Phase::Ready && stack_ == &stack && sourceCurrent() &&
-      entry_.loopId == loopId && entry_.passId == finalPassId &&
-      stack.entries.size() < stack.entries.capacity();
+  // `kInvalidPassId` = "this turn commits no pass of its own" (a clean stop whose wraps already
+  // committed the interval's content): the entry's own identity is then the whole requirement.
+  // `kInvalidPassId` = "this turn commits no pass of its own" (a clean stop whose wraps already
+  // committed the interval's content): the entry's own identity is then the whole requirement.
+  const bool identity = finalPassId == kInvalidPassId ? entry_.passId != kInvalidPassId
+                                                     : entry_.passId == finalPassId;
+  return phase_ == Phase::Ready && stack_ == &stack && sourceCurrent() && entry_.loopId == loopId &&
+      identity && stack.entries.size() < stack.entries.capacity();
 }
 
 TRACK_COLD_MEM void TrackUndoPublication::publishAtCommit() {

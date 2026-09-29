@@ -429,6 +429,13 @@ struct Loop {
   void pushOverdubSessionPass(PassId passId, EditPassIdList companionIds);
   /// Sealed wraps still on the session cursor (not the undone redo tail).
   void collectOverdubSessionUndoPasses(PassIdList& passIds, EditPassIdList& companionIds) const;
+  /// DEC-068/DEC-088: this interval's **own** session identities in `collectOverdubSessionUndoPasses`
+  /// shape, read from its session-exit receipt (`sessionExitReceiptByRingIndex`) instead of the shared
+  /// live session, which after reentry belongs to a successor. The caller owns the final-pass
+  /// invariant: a receipt captured at stop admission predates its own final pass, so the caller
+  /// appends it. False when no receipt is staged for that ring index, or it names no pass identity.
+  bool gatherSessionExitReceiptUndoIdentities(size_t ringIndex, PassIdList& passIds,
+                                             EditPassIdList& companionIds) const;
   struct SessionUndoCollection {
     enum class Phase : uint8_t { Cold, Pass, Companions, FinalPass, FinalCompanions, Complete, Denied };
     const Loop* owner = nullptr;

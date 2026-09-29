@@ -928,6 +928,14 @@ private:
   /// One bounded turn of the protected transaction's prepare (begin + detach
   /// redo). Returns true when the entry is Ready to publish at the atomic commit.
   bool stepDeferredUndoPublication(CaptureStopJob& job, PendingStopAdmission& stop);
+  /// Deferred-route only: build this interval's `OverdubPassAdded` entry from its **own
+  /// session-exit receipt** (DEC-068) so the two short routes -- a clean stop's zero-row jump
+  /// straight to the transfer tail, and the STOPPED destination -- still carry an undo entry and
+  /// the sidebar `U:` gains its level. The entry crosses the pass's publication boundary through
+  /// the existing protected transaction (DEC-063). Returns false while the interval's final pass
+  /// identity is not yet stamped. Never used by the full CompanionHistory/UndoCollection route.
+  bool prepareDeferredOverdubUndoEntryFromReceipt(CaptureStopJob& job, Loop& loop,
+                                                  PendingStopAdmission& stop);
   /// One bounded turn of the protected transaction's post-commit drain. Returns
   /// true once the transaction is back to Idle.
   bool stepProtectedUndoDrain();

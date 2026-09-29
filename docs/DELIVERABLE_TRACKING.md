@@ -1,5 +1,27 @@
 # Deliverable Tracking (Main vs Refinement)
 
+**2026-09-30 — S4f.17 sub-slice: a deferred overdub stop publishes its interval's undo level.** The sidebar `U:`
+(`TrackUndo::undoDepthForLoop`) counted only the record pass while a loop was live — `U:01` after recording plus
+overdubs against `U:03` after a reboot — and the base check `undo_redo_after_overdub_stop` logged `0 counts`
+against `expected_min: 1`. The deferred overdub stop drive prepared the interval's `OverdubPassAdded` entry only
+in the `CompanionHistory`/`UndoCollection` phases, so three correct production routes committed the pass with no
+entry: the **clean-stop jump** (`PrepareTransfer` with `SealOutcome::SkippedEmpty`; `stop_phase` trail
+`1,6,10,11`, the dominant device route), the **STOPPED destination without verified companion preparation** (its
+fallback published no entry by design), and the **superseded causal base**. A late record start quantized up to 3
+bars is the same defect reached through timing. Fixed by a handoff at the top of the `AtomicTransfer` phase (once
+per job) that prepares the canonical entry from the interval's own session-exit receipt
+(`Loop::gatherSessionExitReceiptUndoIdentities`, DEC-068) plus any staged final pass and drives the protected
+transaction to `Ready`, so every transfer variant publishes what it prepared; `job.undoPublicationReady` now means
+"publishable", and `canPublish(…, kInvalidPassId)` means "this turn commits no pass of its own". Fail-open when the
+interval names no identity, fail-closed on a refused `begin`. Fixture
+`test_stopped_overdub_stop_publishes_one_undo_entry` (four legs incl. the clean stop); **seven mutations
+red-proved**, each restored byte-identically. Full native **2 637 cases / 2 630 succeeded / 7 skipped / 0 failed**;
+`teensy41-capture-serial` **SUCCESS**, RAM1 padding **1 928** (floor 840). **Device A/B verified 2026-09-30** on
+the clean route with an identical command: pre-fix `captures/s4f20-odundo-07` trail `1,6,10,11` and
+`undo_entries` 5→5 with no short-route row; fixed `captures/s4f20-odundo-10-1` the same trail, 5→6 and one
+`src=deferred_short_route` row; full-route control `captures/s4f20-odundo-09` 5→6 and `MIDI: Undo (entries=3)`
+(the reboot's `U:03`). Residual: that run's scenario report is not a clean PASS (its capture closed while the run
+was still finishing). Decision **DEC-095**. [Plan](../Plans/overdub_stop_undo_level_short_route_bugfix.md).
 **2026-09-29 — S4f.20 slice: the deferred Record publication queues its own session-exit snapshot.** The
 deferred route (S4f.17/S4f.21) mirrored the inline Record stop's undo/display/scratch/persistence side
 effects but not `Loop::queueSessionExitSnapshot`, the only enumeration of the committed Record pass into
