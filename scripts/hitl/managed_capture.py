@@ -503,22 +503,31 @@ def managed_capture_session(config: HitlConfig) -> Iterator[Path]:
         session.stop()
 
 
-def attach_stream_is_usable(session_log: Path, *, min_lines: int = 40) -> tuple[bool, str]:
+def attach_stream_is_usable(
+    session_log: Path, *, min_lines: int = 40, require_stream: bool = True
+) -> tuple[bool, str]:
     """Whether a capture that just attached has a usable device stream.
 
-    A capture can attach to a device that is silent or wedged -- most often after an
-    abruptly stopped previous session. The scenario then runs its whole measured sequence
-    against nothing and reports a confusing `SPARSE_CAPTURE`
+    A capture that owns the boot can attach to a device that is silent or wedged -- most often
+    after an abruptly stopped previous session. The scenario then runs its whole measured
+    sequence against nothing and reports a confusing `SPARSE_CAPTURE`
     (`captures/s4f22-step7-d1`: 15 lines, no `#CAP` row, `!STOP_STATUS` fence missing,
-    `clear_to_empty: clear_not_confirmed`). Setup must refuse that attach instead of
-    spending the run on it. A healthy attach has the boot rows and live capture rows
-    within the boot settle.
+    `clear_to_empty: clear_not_confirmed`). Such a run must refuse instead of spending the
+    sequence on it.
+
+    An **attaching** run is different: it deliberately joins a *running, idle* device, and an
+    idle device emits nothing until it is spoken to, so line volume says nothing about health
+    (`captures/s4f22-step10-g1`: 21 lines and a perfectly responsive device, refused by the
+    volume rule). Pass ``require_stream=False`` there -- readiness is then the fenced reply
+    (`establish_attach_readiness`), and the count stays diagnostics.
     """
     try:
         text = session_log.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return False, f"session log unreadable: {exc}"
     lines = [line for line in text.splitlines() if line.strip()]
+    if not require_stream:
+        return True, f"{len(lines)} line(s), attaching to a running device"
     if len(lines) < min_lines:
         return False, f"device stream has {len(lines)} line(s); expected at least {min_lines}"
     if not any(line.startswith("#CAP,") or line.startswith("#") for line in lines):
@@ -637,7 +646,7 @@ def run_with_managed_capture(
     timeout = resolve_managed_run_timeout(timeout_s)
     with managed_capture_session(config) as log_path:
         # Line count is diagnostic only; readiness comes from a reply this run asked for.
-        usable, detail = attach_stream_is_usable(log_path)
+        usable, detail = attach_stream_is_usable(log_path, require_stream=config.boot_reset)
         print(f"[hitl] attach stream: {detail}")
         if not usable:
             print(f"[hitl] attached stream is not usable ({detail}); refusing to run the scenario")
