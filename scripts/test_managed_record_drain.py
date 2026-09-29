@@ -214,6 +214,57 @@ class AttachStreamGateTests(unittest.TestCase):
         self.assertFalse(usable)
         self.assertIn("15 line", detail)
 
+    def test_stale_reply_is_not_readiness(self) -> None:
+        """A reply that precedes this attach is a backlog, not evidence of a live device."""
+        from hitl import managed_capture as mc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "stale.log"
+            log.write_text("\n".join(f"line {i}" for i in range(60)), encoding="utf-8")
+
+            class FakeSession:
+                session_log = log
+
+                def send_command(self, command, *, nonce, end_nonce):
+                    return True, "accepted"
+
+                def fenced_response(self, nonce, end_nonce, *, timeout_s):
+                    return ["#STOP_STATUS,us=1,state=STOPPED,pending=0,queue=0/4"]
+
+            fake = FakeSession()
+            # The reply's fences are not in the log at all -> not fresh.
+            with patch.object(mc, "active_managed_capture", lambda: fake):
+                ready, reason = mc.establish_attach_readiness(timeout_s=0.2)
+        self.assertFalse(ready)
+        self.assertIn("not present", reason)
+
+    def test_fresh_stopped_reply_is_readiness(self) -> None:
+        from hitl import managed_capture as mc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "fresh.log"
+            log.write_text("\n".join(f"line {i}" for i in range(60)), encoding="utf-8")
+            state = {"nonce": "", "end": "", "baseline": 0}
+
+            class FakeSession:
+                session_log = log
+
+                def send_command(self, command, *, nonce, end_nonce):
+                    state["nonce"], state["end"] = nonce, end_nonce
+                    with log.open("a", encoding="utf-8") as fh:
+                        fh.write(f"#CAP,1,TRACE_FENCE,{nonce}\n")
+                        fh.write("#STOP_STATUS,us=1,state=STOPPED,pending=0,queue=0/4\n")
+                        fh.write(f"#CAP,2,TRACE_FENCE,{end_nonce}\n")
+                    return True, "accepted"
+
+                def fenced_response(self, nonce, end_nonce, *, timeout_s):
+                    return ["#STOP_STATUS,us=1,state=STOPPED,pending=0,queue=0/4"]
+
+            fake = FakeSession()
+            with patch.object(mc, "active_managed_capture", lambda: fake):
+                ready, reason = mc.establish_attach_readiness(timeout_s=1.0)
+        self.assertTrue(ready, reason)
+
     def test_healthy_attach_is_accepted(self) -> None:
         from hitl.managed_capture import attach_stream_is_usable
 
