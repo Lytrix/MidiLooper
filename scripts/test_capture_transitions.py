@@ -509,6 +509,49 @@ class SerialHeartbeatNoiseTests(unittest.TestCase):
         self.assertTrue(serial_line_resets_heartbeat("#CAP,1,ST,Track,STOPPED,ARMED"))
 
 
+class RecordPhasePairingTests(unittest.TestCase):
+    """The record leg is the first complete pair, including one that resolved to a full stop."""
+
+    def test_leg_that_stops_to_stopped_pairs_and_wins(self) -> None:
+        from hitl.serial_timing import extract_phase_sessions
+
+        lines = [
+            "#CAP,1000,ST,Track,STOPPED,RECORDING",
+            "#CAP,2000,ST,Track,RECORDING,STOPPED",
+            "#CAP,3000,ST,Track,STOPPED,RECORDING",
+            "#CAP,4000,ST,Track,RECORDING,STOPPED_RECORDING",
+        ]
+        report = extract_phase_sessions(lines)
+        self.assertIsNotNone(report.record)
+        self.assertEqual((1000, 2000), (report.record.start_ts, report.record.stop_ts))
+
+
+class RecordLegPhaseScopingTests(unittest.TestCase):
+    """The record leg must be scored from its own phase window, not from the last take."""
+
+    def test_later_stray_take_is_excluded(self) -> None:
+        from hitl.legacy_record_baseline import _scope_recs_lengths_to_phase
+
+        rows = [
+            {"timestamp": 70_203_000, "raw_length": 2032, "final_length": 2304},
+            {"timestamp": 73_795_000, "raw_length": 426, "final_length": 768},
+        ]
+        scoped = _scope_recs_lengths_to_phase(rows, 64_026_000, 70_203_000)
+        self.assertEqual([2304], [row["final_length"] for row in scoped])
+
+    def test_no_take_in_the_window_is_empty_not_every_row(self) -> None:
+        from hitl.legacy_record_baseline import _scope_recs_lengths_to_phase
+
+        rows = [{"timestamp": 73_795_000, "raw_length": 426, "final_length": 768}]
+        self.assertEqual([], _scope_recs_lengths_to_phase(rows, 64_026_000, 70_203_000))
+
+    def test_untimed_rows_keep_previous_behaviour(self) -> None:
+        from hitl.legacy_record_baseline import _scope_recs_lengths_to_phase
+
+        rows = [{"timestamp": 0, "raw_length": 2070, "final_length": 2304}]
+        self.assertEqual(rows, _scope_recs_lengths_to_phase(rows, 1, 2))
+
+
 class SuccessorStartReceiptTests(unittest.TestCase):
     """A missing predecessor stop receipt must refuse the press, not press anyway."""
 

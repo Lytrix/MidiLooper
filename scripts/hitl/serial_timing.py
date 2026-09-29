@@ -101,9 +101,14 @@ def _pair_record_sessions(
             open_record_start = ts
         elif (
             from_state == "RECORDING"
-            and to_state == "STOPPED_RECORDING"
+            and to_state in ("STOPPED_RECORDING", "STOPPED")
             and open_record_start is not None
         ):
+            # A record leg that resolved to a full transport stop (`stopRecordingToStopped`, a
+            # transport stop during finalization) is still the end of that leg. Pairing only
+            # `STOPPED_RECORDING` skipped exactly that leg on device and paired a later stray take
+            # instead (`captures/s4f22-step8-e2`: intended take 2304 ticks ending RECORDING->STOPPED,
+            # stray take 768 ticks ending RECORDING->STOPPED_RECORDING; the run scored 768/1536).
             record_sessions.append((open_record_start, ts))
             open_record_start = None
 
@@ -232,7 +237,12 @@ def extract_phase_sessions(
     diagnostics: list[str] = []
     record: Optional[MatchedPhaseSession] = None
     if record_sessions:
-        start_ts, stop_ts = record_sessions[-1]
+        # The record leg is the **first** complete start->stop pair, matching the overdub
+        # convention below (`overdub_sessions[0]` / `[1]`). Taking the last pair scored a later
+        # stray take instead: `captures/s4f22-step8-e2` had the intended leg (2304 ticks) and a
+        # stray one-bar re-arm (768 ticks), and the run reported the stray leg's numbers against
+        # the correct take.
+        start_ts, stop_ts = record_sessions[0]
         record_ambiguity = None
         if stop_ts <= start_ts:
             record_ambiguity = PhaseAmbiguity.OUT_OF_ORDER
