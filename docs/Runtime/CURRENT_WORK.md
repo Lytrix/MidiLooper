@@ -94,10 +94,13 @@ STOPPED. The playback-runtime reset path deliberately does *not* force the trans
 retained window is still the sounding source (S4f.19) — which the playing-inventory fixture pins.
 Fixture `test_transport_retarget_of_a_record_job_resolves_stopped`; removing the resolution fails it.
 
-**Remaining for §3's exit:** transport Stop in every phase, an internal/external clock sweep, and
-load/clear interaction with a record stop in flight. The transport-stop route is now covered for the
-Stopped destination *and* for a Record finalization in flight; the wrong-slot/successor-baseline
-cases by S17.3a. No device acceptance is claimed from host results.
+**§3 exit breadth.** Transport Stop is covered across the deferred stop's phases by
+`test_continuous_capture` (canonical-copy, mid-flight playing retarget, live successor, B03
+retarget, accept-then-transport-stop) plus this change's Record retarget fixture; clock-source
+classification by `test_clock_transport_master`. **Still owed:** a deferred Record stop under an
+**external** clock, and a slot **load** / slot **clear** issued while a Record stop is in flight
+(replacement is covered by the supersede fixtures; load and clear are not). No device acceptance is
+claimed from host results.
 [Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md).
 
 **2026-09-28 — S4f.19 §2 — first-bar and onward playback handoff: delta work complete.**

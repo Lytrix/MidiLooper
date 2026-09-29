@@ -324,11 +324,22 @@ variables are 32 B above it (the S17.3b geometry obligation), re-based deliberat
 *Verification line.* Strict matrix 47/47; `pio test -e native` 2 617 cases / 2 610 succeeded /
 7 skipped; `pio run -e teensy41-capture-serial` SUCCESS.
 
-*Exit criteria not yet exercised* (they are the packet's own §3 exit list, not the slice gates):
-transport Stop in **every** phase, an internal/external clock sweep, and load/clear interaction
-with a record stop in flight. The transport-stop route itself is covered (Stopped destination) and
-the wrong-slot / successor-baseline cases are covered by S17.3a. These remain the next evidence
-step; no device acceptance is claimed from host results.
+*§3 exit breadth — what is covered and what is not.* Transport Stop is covered across the deferred
+stop's phases by existing fixtures plus this change: `test_continuous_capture` carries
+`test_transport_stop_during_canonical_copy_preserves_accepted_rows`,
+`test_transport_stop_retarget_retires_a_midflight_playing_job`,
+`test_transport_stop_while_successor_is_live_keeps_its_rows_and_root`,
+`test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it` and
+`test_s4f10c_accept_and_latch_then_transport_stop_supersedes_before_the_drive`; the Record leg adds
+S17.5a's retarget fixture. Clock-source *classification* is covered by
+`test_clock_transport_master` (internal master, external active, external timed out).
+
+Still **not** exercised, and the honest remainder of §3's exit list: (1) a deferred Record stop
+under an **external** clock source (only the clock classification itself is tested); (2) a slot
+**load** and a slot **clear** issued while a Record stop is in flight — replacement (LoopId bump /
+capture-mode change) is covered by `test_replaced_loop_supersedes_accepted_stop` and
+`test_changed_capture_mode_supersedes_accepted_stop`, but load and clear are not. No device
+acceptance is claimed from host results.
 
 ## Fixed fixture requirements (from the trace)
 

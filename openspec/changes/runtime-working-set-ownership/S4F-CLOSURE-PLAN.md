@@ -221,10 +221,13 @@ SESSION_CAPTURE+PERF_TELEMETRY) plus the post-link RAM1 gate
 (`variables 96,192 / ITCM 393,216 (code 391,224 + padding 1,992) / locals 34,880`, floor 840).
 Strict matrix 47/47; full native 2,617 cases / 2,610 succeeded / 7 skipped; capture-serial SUCCESS.
 
-**Remaining for §3's exit:** transport Stop in every phase, an internal/external clock sweep, and
-load/clear interaction with a record stop in flight. Those are the exit list's own items; the
-transport-stop route is covered for the Stopped destination and the wrong-slot/successor-baseline
-cases are covered. No device acceptance is claimed from host results.
+**§3 exit breadth.** Transport Stop is covered across the deferred stop's phases by
+`test_continuous_capture` (canonical-copy, mid-flight playing retarget, live successor, B03
+retarget, accept-then-transport-stop) plus this change's Record retarget fixture; clock-source
+classification is covered by `test_clock_transport_master`. **Still owed:** a deferred Record stop
+under an **external** clock, and a slot **load** / slot **clear** issued while a Record stop is in
+flight (replacement is covered; load and clear are not). No device acceptance is claimed from host
+results.
 
 ## 4. Finish correlated observations and correct the actual test recipes
 
