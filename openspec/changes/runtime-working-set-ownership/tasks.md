@@ -2288,6 +2288,24 @@ own execution packet and records fixture/native/build/device results separately.
       Capture mode without layout growth. Record binding/geometry/held-note receipts and common
       worker execution remain open. S4f.18's maximum-tick prerequisite is implemented; normalization
       and closure still await the bounded Record source path. No admission/publication gate checked.
+      **2026-09-29 S17.1 + S17.2 — production Record admission and stop routing.** `stopRecording` and
+      `stopRecordingToStopped` now admit through `beginDeferredRecordStopForSlot` and keep their
+      destination behaviour at the stop edge (`Track::completeAdmittedRecordStop`: origin alignment,
+      truncation rewind, loop phase, PLAYING/STOPPED, the record-stop playback handoff); a denied stop
+      is retained as an accepted obligation and admitted later by `driveAcceptedInteraction`, which now
+      dispatches on the request's capture mode. The inline `prepareRecordStop`/`commitCaptureForStop`
+      Record fallback is gone from both entry points, and the pass, its `RecordPassAdded` undo entry and
+      its persistence admission come from the worker's publication. The strict R→R/R→OD/OD→R/OD→OD
+      matrix is green (45/45, `S4F16_REQUIRE_CONTRACT=1`), full native is 2 612 cases / 2 605 succeeded /
+      7 skipped, and `teensy41-capture-serial` builds with RAM1 padding 2 040 (floor 840). Three defects
+      fell out of the migrated fixtures and are fixed in the same slice: (1) the deferred Record
+      normalization closed open tails at loop end (the *overdub* policy) instead of the stop playhead's
+      loop phase, changing the published row set; (2) the deferred-grain prologue required the live
+      `loopLengthTicks` to equal the job's, which parks a completed Record job forever once the take is
+      filtered out or a successor resets the slot; (3) the S4f.19 continuity gate waited on a frozen
+      window build that only the playback owner can advance, deadlocking retirement on an empty take.
+      The Record admission also declares its bounded preparation estimate so the job's declared work is
+      honest. Caller conversion (S4f.17 remainder) and S4f.18's task checkbox stay open.
 - [ ] S4f.18 **Bounded record preparation.** Add the record source mode to existing preparation, using
       frozen canonical raw ranges and maintained length summaries; defer normalization/closure/order/pass
       construction without a full-take staging copy or changed input capacity. Verify exact short/dense/long

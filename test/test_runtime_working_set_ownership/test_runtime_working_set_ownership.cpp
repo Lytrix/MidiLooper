@@ -1311,8 +1311,27 @@ void test_the_successor_take_commits_with_content_after_a_transport_stop() {
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::committedPassesInSlot(track, 2),
                             "precondition: C's take must not be committed before the transport stop");
 
-  // (9) The production transport-stop route finalises the take.
+  // (9) The production transport-stop route finalises the take. S4f.17: a Record stop is
+  // admitted as a deferred job and its pass is published by the worker's bounded grains, so the
+  // user-visible result is consumed here instead of at the stop edge. The drive is bounded and
+  // stops when no stop is in flight.
   TrackCaptureStopTestAccess::transportStop();
+  for (int turn = 0; turn < 8192; ++turn) {
+    if (TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track)) {
+      (void)TrackCaptureStopTestAccess::step(track);
+      continue;
+    }
+    // A stop that met a busy finalization owner is retained, not dropped: the accepted-stop
+    // drive binds it once capacity frees, exactly as the production deferred owner does.
+    if (TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 2)) {
+      (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurn(track);
+      continue;
+    }
+    break;
+  }
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track) ||
+                                TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 2),
+                            "the transport-stop take must finish its deferred finalization");
 
   // (10) The USER-VISIBLE result. A start marker proves none of this.
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, TrackCaptureStopTestAccess::activeLoopIndex(track),

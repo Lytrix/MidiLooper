@@ -1,6 +1,7 @@
 # S4f.17–S4f.21 — Record admission and caller cutover (execution packet)
 
-Status: **S17.1 landed 2026-09-29 (Record admission bind, no routing change); S17.2–S17.5 open.**
+Status: **S17.1 + S17.2 landed 2026-09-29 (Record admission bind and both stop entry points routed
+through the drive); S17.3–S17.5 open.**
 Baseline `aac1e8df` (§1 preparation/publication boundaries, §2 record playback handoff both
 closed). Authority: [shared contract](SHARED-CAPTURE-FINALIZATION.md),
 [S4F-CLOSURE-PLAN.md](S4F-CLOSURE-PLAN.md) §3, DEC-093 — shared capture finalization,
@@ -13,33 +14,42 @@ executable slices).
 ```
 S4F16_REQUIRE_CONTRACT=1 pio test -e native -f test_shared_capture_finalization
 ```
-Current result: **46 cases, 3 failed, 43 succeeded** (OD→OD passes). One case was added by S17.1
-(`test_record_stop_admits_through_the_common_drive`); the three failures are unchanged and remain
-the oracle for this cutover:
+Current result: **45 cases, 45 succeeded.** Before S17.1/S17.2 this was the cutover's red oracle —
+**45 cases, 3 failed**:
 
 - `test_record_to_record` — *"A must own a deferred job before any worker grain (record
   currently publishes inline)"*.
 - `test_record_to_overdub` — the same assertion.
 - `test_overdub_to_record` — B's deferred record job is absent.
 
-## Current routing (VERIFIED)
+The rotation oracle is no longer contract-gated: the deferred stop is the production shape on
+every mode, so `rotation()` asserts the deferred bind with or without `S4F16_REQUIRE_CONTRACT`.
+
+## Current routing (VERIFIED, post-S17.2)
 
 - Two production Record stop entry points: `Track::stopRecording` and
-  `Track::stopRecordingToStopped` (`src/Track/TrackCaptureStopCommit.cpp:384` and `:539`). Both
-  call `prepareRecordStop` (an inline scan: last-event lookup, pending-note finalization, store
-  remap) and then `commitCaptureForStop` (inline `Loop::commitCapturePass` → publication, undo,
-  persistence) before advancing state and binding the first-bar window.
-- `driveAcceptedInteraction` admits only through `beginDeferredOverdubStopForSlot`
-  (`src/Track/TrackOverdubLifecycle.cpp:514`), which requires `isOverdubbing()` and then a chain
-  of **overdub-only** resources: live capture staging, `hasActiveOverdubTransferAdmission()`,
-  `canonicalCaptureOutputAdmitted()`, `canHandoffSessionExitSnapshot()`, causal base and ranked
-  preparation budgets. Record input does not populate those.
-- The deferred worker and the whole Record chain **already exist and are verified** (§1): closure,
-  bounded source staging, normalization, transfer, atomic publication with job-owned geometry,
-  retirement, and the empty-take terminal. They are currently reachable only through the
-  controlled-bind production-worker fixture.
-- The manager continuations read length synchronously after the void stop:
-  `TrackManager::stopRecordingTrack`, `finalizeCaptureAndSelectSlot`, `stopAllTracks`.
+  `Track::stopRecordingToStopped`. Both admit the interval through
+  `beginDeferredRecordStopForSlot` (which stamps the final length from the maintained
+  maximum-tick summary, seals and borrows the raw range under a `canSealCaptureRange`
+  preflight, moves the held-note receipt, takes the job-owned geometry receipt, declares the
+  Record preparation bound and sets the runtime capture-stop owner), run the transport edge in
+  `Track::completeAdmittedRecordStop` (origin alignment, truncation rewind, loop phase,
+  destination state and the record-stop playback handoff) and return. `prepareRecordStop` and
+  `commitCaptureForStop` remain as the legacy/fault owners but are no longer on the Record stop
+  route; S17.4/S17.5 decide their remaining callers.
+- A refused admission is not a refusal: `latchAcceptedStop` retains the obligation against the
+  interval's own slot and generation, the interval keeps recording, and
+  `driveAcceptedInteraction` dispatches on the retained request's **capture mode** — Record
+  through the Record chain, overdub through the overdub form. The overdub form still requires
+  `isOverdubbing()` and its own live staging, transfer admission, session-exit handoff, causal
+  base and ranked preparation budgets; Record populates none of those and needs none of them.
+- The deferred worker and the whole Record chain are verified and now **production-reachable**:
+  closure, bounded source staging, normalization, transfer, atomic publication with job-owned
+  geometry, retirement, and the empty-take terminal.
+- The manager continuations still read length synchronously after the void stop:
+  `TrackManager::stopRecordingTrack`, `finalizeCaptureAndSelectSlot`, `stopAllTracks`. The stop
+  edge stamps `loop.loopLengthTicks`, so those reads are still well defined — which is exactly
+  why S17.3 must convert them to a job-qualified geometry-ready result rather than relying on it.
 - `Track::prepareRecordStop`'s body is a content-size scan and must not move into a single
   deferred grain; the maintained maximum-tick summary already exists (S4f.17 prerequisite).
 
@@ -110,8 +120,67 @@ Evidence:
   the cold `SESSION_CAPTURE`-gated `PersistenceDiagnostics::maybeEmitPeriodic` to FLASH; the floor
   was not re-based.
 
-S17.2–S17.5 remain open. **Do not route one stop entry point without the other**: S17.2 must move
-`stopRecording` and `stopRecordingToStopped` together, and the strict failures stay red until then.
+**S17.2 — Route both stop entry points through the drive: done.** Both entry points moved together;
+neither route admits while the other still commits inline. `stopRecording` and
+`stopRecordingToStopped` now admit through `beginDeferredRecordStopForSlot` and keep their
+destination behaviour at the stop edge, in `Track::completeAdmittedRecordStop` (TRACK_COLD_MEM):
+origin alignment for the PLAYING route, the truncation rewind against the admitted final length,
+the loop phase and projection cycle, `TRACK_STOPPED_RECORDING` → `TRACK_PLAYING`/`TRACK_STOPPED`,
+and the record-stop playback handoff (`sendAllNotesOff`, `resetPlaybackState`,
+`bindFirstRecordingBar`, `startPlaying`, `refreshViewportAfterRecordStop`). A denied stop is
+*retained*: `latchAcceptedStop` records the obligation against the interval's own slot and
+generation, the interval keeps recording with its rows and reservations intact, and
+`driveAcceptedInteraction` admits it later — now dispatching on the retained request's capture
+**mode** so a Record obligation runs the Record chain. The inline `prepareRecordStop` /
+`commitCaptureForStop` Record route is gone from both entry points, and the pass, the
+`RecordPassAdded` undo entry and the once-only persistence admission come from
+`stepDeferredRecordPublication`.
+
+The strict matrix is green:
+
+```
+S4F16_REQUIRE_CONTRACT=1 pio test -e native -f test_shared_capture_finalization
+=> 45 cases, 45 succeeded   (R→R, R→OD, OD→R, OD→OD)
+```
+
+`pio test -e native`: 2 612 cases, 2 605 succeeded, 7 skipped. `pio run -e
+teensy41-capture-serial`: SUCCESS, RAM1 padding 2 040 (floor 840).
+
+Fixtures converted from the inline oracle (the deferred chain now produces their content):
+`recordNormalizationInventory` (stopped/playing/minimum-length-disabled),
+`test_record_normalization_preserves_take_larger_than_overdub_staging`,
+`test_record_normalization_filtered_empty_resets_geometry`,
+`test_record_stop_commits_exact_held_note_closures`, and in the working-set suite
+`test_the_successor_take_commits_with_content_after_a_transport_stop`. The R→R/R→OD/OD→R/OD→OD
+rotation oracle is no longer contract-gated: the deferred stop is the production shape on every
+mode.
+
+Mutations proven: reintroducing the inline `prepareRecordStop` + `commitCaptureForStop` Record
+route fails 7 cases (the strict three plus the four content fixtures); dropping the stop-edge
+`loopLengthTicks` stamp fails 8; reverting the tail-close policy to loop end fails the three
+inventory cases; reverting the job-owned-geometry exemption fails the filtered-empty case.
+
+**Defects found by the converted fixtures** (all fixed in this slice; each was invisible while the
+inline route published synchronously):
+
+1. `stepDeferredRecordNormalization` passed `geometry.openTailCloseTick = UINT32_MAX`, closing an
+   open tail at loop end. `Loop::finalizeCaptureWrapWindowAtStop` closes it at the **stop
+   playhead's loop phase** (falling back to `loopLengthTicks - 1` when that phase precedes the
+   note's start), so the published row set differed. The Record job now passes `job.phaseTick`.
+2. The deferred-grain prologue required `job.owner->loopLengthTicks == job.loopLengthTicks`. A
+   Record job **owns** its geometry: an all-filtered take resets the live scalar to zero, and a
+   successor take resets it too, so the equality parked a completed job at `RecordPublished`
+   forever — holding its raw range, the capture-stop owner and its ring slot. The clause is now
+   overdub-only; the owner/slot/loopId clauses still prove the interval was not replaced.
+3. The S4f.19 continuity gate waited on `frozenWindowBuildActive()` unconditionally. That build is
+   advanced only by the playback owner (`TrackPlaybackHotPath`), which never runs for a slot with
+   no audible source, so an empty take deadlocked retirement. The wait now applies while the
+   interval still has geometry.
+4. The Record admission declared no preparation credits, so the job's declared service bound was
+   the fixture's fixed slack. It now declares a bounded estimate (fixed MIDI-key scratch resets,
+   row passes, chunk moves) read from O(1) scalars and consumes one credit per Record grain.
+
+S17.3–S17.5 remain open.
 
 ## Fixed fixture requirements (from the trace)
 

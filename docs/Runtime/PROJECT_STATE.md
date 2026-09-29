@@ -1,5 +1,28 @@
 # Project state (execution context)
 
+**2026-09-29 — S4f.17 S17.1 + S17.2 — production Record admission and stop routing landed.**
+The production Record stop no longer finalizes inline. `stopRecording` and
+`stopRecordingToStopped` admit the interval through `beginDeferredRecordStopForSlot` (final length
+from the maintained maximum-tick summary, raw cut under a `canSealCaptureRange` preflight,
+job-owned geometry and held-note receipts, declared Record preparation bound, runtime
+capture-stop owner) and run their bounded transport edge in `Track::completeAdmittedRecordStop`
+(origin alignment, truncation rewind, loop phase, `TRACK_STOPPED_RECORDING` → PLAYING/STOPPED, and
+the record-stop playback handoff). A denied stop is retained as an accepted obligation and
+admitted later by `driveAcceptedInteraction`, which now dispatches on the retained request's
+capture mode. The pass, its `RecordPassAdded` undo entry and its once-only persistence admission
+come from `stepDeferredRecordPublication`. Fixtures converted from the inline oracle now assert the
+deferred chain's content (three normalization inventories, a 2 056-row take, the filtered-empty
+geometry reset, exact held-note closures, the transport-stop successor take) and exposed three
+defects the synchronous route had hidden: the deferred normalization closed open tails at loop end
+instead of the stop playhead's loop phase; the deferred-grain prologue required the live loop
+length to equal the job's, parking a completed job after an all-filtered take or a successor
+reset; and the S4f.19 continuity gate waited on a frozen window build only the playback owner can
+advance, deadlocking retirement on an empty take. All three are fixed. **Strict matrix green
+45/45** with and without `S4F16_REQUIRE_CONTRACT`; full native **2 612 cases, 2 605 succeeded,
+7 skipped**; `teensy41-capture-serial` **PASS, RAM1 padding 2 040** (floor 840). Open: S17.3
+manager continuations, S17.4 the S4f.20 residuals, S17.5 the enforced gate and mutations.
+[Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md).
+
 **2026-09-28 — S4f.19 §2 status after rounds 2-11 (delta work complete; two items depend on a decision/dependency).**
 Landed and verified since the G0 packet: **S19.2** job-qualified deferred return-window bind with
 content projection (overflow remap, sub-bar clamp, held-note closure, canonical re-order) and an

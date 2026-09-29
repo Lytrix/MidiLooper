@@ -120,7 +120,7 @@ save. Make the strict contract an enforced regression gate; ordinary suite succe
 with `S4F16_REQUIRE_CONTRACT` unset is insufficient. Full native + capture-serial build,
 RAM1 padding >=840 and per-track/job/raw/output/overlap PSRAM accounting must pass.
 
-### §3 status — 2026-09-29 (S17.1 landed; cutover still open)
+### §3 status — 2026-09-29 (S17.1 + S17.2 landed; caller cutover open)
 
 The executable slice sequence S17.1–S17.5 — the mode-conditioned admission with the record
 receipts, rerouting both stop entry points through the drive, the manager continuations consuming
@@ -144,6 +144,30 @@ The ITCM cost of the slice — the held-note receipt transfer compiles to an out
 `_Hashtable::swap` that the linker keeps in ITCM and reaches from FLASH through an 8 B veneer —
 was reclaimed by moving the cold, `SESSION_CAPTURE`-gated `PersistenceDiagnostics::maybeEmitPeriodic`
 out of ITCM rather than by re-basing the floor.
+
+**S17.2 — Both stop entry points routed through the drive: done.** `stopRecording` and
+`stopRecordingToStopped` admit, run the transport edge (`Track::completeAdmittedRecordStop`) and
+return; a denied stop is retained and admitted later by `driveAcceptedInteraction`, which now
+dispatches on the retained request's capture mode. The inline Record fallback is gone from both
+entry points, and the pass, the `RecordPassAdded` undo entry and the once-only persistence
+admission come from the worker's publication.
+
+The strict contract is now the **green** exit of the cutover's first half: **45 cases, 45
+succeeded** (R→R, R→OD, OD→R, OD→OD), unchanged by `S4F16_REQUIRE_CONTRACT`. Full native: 2 612
+cases, 2 605 succeeded, 7 skipped. `teensy41-capture-serial`: SUCCESS, RAM1 padding 2 040 (floor
+840).
+
+The converted fixtures — the three `recordNormalizationInventory` modes, the larger-than-staging
+take, the filtered-empty reset, the exact held-note closures and the working-set transport-stop
+successor take — are what verify the deferred chain's *content* rather than its coverage, and
+they exposed three defects that the synchronous inline route had hidden: the deferred
+normalization closed open tails at loop end instead of the stop playhead's phase; the deferred
+grain prologue required the live loop length to equal the job's, parking a completed job forever
+once an all-filtered take or a successor reset the slot; and the S4f.19 continuity gate waited on
+a frozen window build that only the playback owner can advance, deadlocking retirement on an empty
+take. All three are fixed in the slice, and the Record admission now declares its bounded
+preparation estimate. S17.3–S17.5 remain open: the manager continuations still read the
+stop-edge-stamped length synchronously.
 
 ## 4. Finish correlated observations and correct the actual test recipes
 

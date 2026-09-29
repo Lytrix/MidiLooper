@@ -940,6 +940,14 @@ private:
   /// output must already be admitted (reserved at the record start).
   bool beginDeferredRecordStopForSlot(PendingStopDestination destination, uint32_t currentTick,
                                       uint8_t slot, uint64_t interval);
+  /// S4f.17: the transport edge of an **admitted** Record stop. The admission has already
+  /// frozen the interval and stamped its final length from the maintained summary, so this
+  /// is the bounded scalar part of the old inline stop: origin alignment, the truncation
+  /// rewind, the loop phase, the destination state and, for PLAYING, the record-stop
+  /// playback handoff. It never walks the store and never publishes content: the deferred
+  /// worker owns the pass, the undo entry and persistence.
+  void completeAdmittedRecordStop(PendingStopDestination destination, uint32_t currentTick,
+                                  uint8_t slot, uint32_t rawLength);
   /// Move this interval's held-note receipt into the job. Both admissions (Record and overdub)
   /// transfer through this one helper so the ownership move has a single reviewed home.
   ///
