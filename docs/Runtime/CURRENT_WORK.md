@@ -1,5 +1,21 @@
 # Current work (implementation scope)
 
+**2026-09-29 — head-boundary detector armed; the wipe did not reproduce, and setup variance is
+now the dominant failure.** Two same-boot attempts with `RING,head_bad` armed
+(`captures/s4f22-step7-d1/d2`) produced **no `head_bad` row and no wipe**. The failures were
+elsewhere: **d1** attached to a device whose session log held 15 lines, aborted with
+`!STOP_STATUS: response fence missing`, and reported `SPARSE_CAPTURE` with
+`clear_to_empty: clear_not_confirmed`; **d2** recorded but never entered overdub
+(`abort: record stop did not reach PLAYING`) with `record_loop_length_mismatch`,
+`record_note_span_too_short` and 42 shed rows. So the detector neither fired nor refuted, and
+the same registered preset has now produced a PASS (`s4f22-step5-b1`), a wipe
+(`s4f22-step5-b2`/`b3`, `s4f22-step6-c2`) and a no-record attach (`d1`). Per-run device-state
+variance -- not one ring defect -- is what blocks repeatability. Next step: fail fast when the
+attach has no usable stream (d1's 15-line log should abort at setup, not after the scenario),
+and verify the device's settled state before the measured window, instead of reporting a sparse
+capture afterwards. `RING,head_bad` stays armed meanwhile: it will name the operation if the
+non-boundary head recurs.
+
 **2026-09-29 — the ring wipe, named: the head lands mid-record, not on a boundary.**
 `RING,wipe_detail` (added this session) from `captures/s4f22-step6-c2`:
 `head=990370 tail=993518 used=3148 type=50 plen=11317 prefix="295,4294967295,1"`. The 16
