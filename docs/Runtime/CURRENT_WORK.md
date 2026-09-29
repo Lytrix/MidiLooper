@@ -1,5 +1,21 @@
 # Current work (implementation scope)
 
+**2026-09-29 — the ring wipe, named: the head lands mid-record, not on a boundary.**
+`RING,wipe_detail` (added this session) from `captures/s4f22-step6-c2`:
+`head=990370 tail=993518 used=3148 type=50 plen=11317 prefix="295,4294967295,1"`. The 16
+bytes at the head are the middle of a text row, not a header, so the head had been
+advanced by a total that did not match the record it sat on; the next flush then read
+text as a header, saw `total > used`, and reset the ring (3 148 bytes). In that same boot
+every append succeeded (`attempts == ok` = 28 472) and tier-A eviction, overflow, critical
+rejection and shed stayed at 0 or 4 -- this is a bookkeeping/torn-record defect, **not**
+capacity and **not** eviction. A same-boot attach is only where it becomes visible, because
+the ring then carries the previous attempt's backlog. Guarding the nested append against a
+flush removed one way to move the head under a flush; **at least one way remains**. If it is
+not found by inspection, the next instrumentation is a bounded rolling trace of the last
+ring operations (kind, args, head/tail/used before and after) dumped with the wipe, which
+names the operation that advanced into the record. Repeatability remains **not proven**:
+`captures/s4f22-step5-b1` PASS, `b2`/`b3` and `s4f22-step6-c1`/`c2` INCONCLUSIVE.
+
 **2026-09-29 — S4f.22 device legs: the Record leg passes; capture loss is still under attribution.**
 Uploaded the candidate (`teensy41-capture-serial`, RAM1 padding 2,072) and ran the
 registered base preset. Attempt **a1** (fresh upload + boot reset) is a **PASS**: integrity
