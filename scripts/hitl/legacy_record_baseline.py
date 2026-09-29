@@ -4392,7 +4392,8 @@ def _expected_overdub_notes_min(overdub_bars: int, step_clocks: int) -> int:
 
 # The markers that end the *preceding* pass, and the receipts that say its deferred stop has
 # finished publishing/retiring. A successor start is only admitted after the receipt; pressing
-# before it is silently consumed (see `_await_successor_start_receipt`).
+# before it is not a late start but a different gesture, so a missing receipt refuses the leg
+# (see `_await_successor_start_receipt`).
 SUCCESSOR_PREDECESSOR_STOP_MARKERS: tuple[str, ...] = (
     "Recording stopped",
     "Reentry window open",
@@ -4422,9 +4423,13 @@ def _await_successor_start_receipt(
     `Record pass undo reset` 35.746 -> `Overdubbing started` 35.996.
 
     The readiness is read from the device's own log, so this replaces a modelled delay with the
-    device's evidence. A receipt that never arrives is bounded and reported: the press still
-    happens, so a genuinely absent receipt surfaces as the existing transition failure rather
-    than as a hang.
+    device's evidence. A receipt that never arrives is a bounded **refusal**: pressing without it
+    does not surface as a transition failure, it produces a *different* gesture. Measured
+    (`captures/s4f22-step8-e2`): the intended record leg completed correctly at two bars
+    (`length=2304`), the overdub-start phase then pressed transport with the track STOPPED after
+    this wait timed out, and that press started an empty-slot capture -- a second, unplanned
+    one-bar take (`length=768`) which the verifier then scored as the record leg. Returns the
+    receipt marker, or ``None`` when the caller must not press.
     """
     if serial_collector is None:
         return None
@@ -4451,8 +4456,9 @@ def _await_successor_start_receipt(
             return None
         if time.monotonic() >= deadline:
             print(
-                f"[warn] {pass_label} start: no stop-completion receipt within "
-                f"{timeout_s:.1f}s; pressing anyway"
+                f"[error] {pass_label} start refused: no stop-completion receipt within "
+                f"{timeout_s:.1f}s. A press here is not a late start -- with the track stopped it "
+                "starts a new capture (captures/s4f22-step8-e2). Waiting is the safe action."
             )
             return None
         time.sleep(0.02)
@@ -4500,13 +4506,24 @@ def _run_overdub_pass(
     if serial_collector is not None:
         timeout_s = args.state_sync_timeout_ms / 1000.0
         # Do not press into the predecessor's finalization window: the successor start is only
-        # admitted once that stop has published/retired, and an early press is consumed silently.
-        _await_successor_start_receipt(
+        # admitted once that stop has published/retired, and a press without that receipt is not a
+        # late start -- it is a different gesture (a new capture when the track is stopped). A
+        # missing receipt therefore refuses the leg by name instead of pressing.
+        successor_receipt = _await_successor_start_receipt(
             serial_collector,
             timeout_s=max(timeout_s, 3.0),
             abort=abort,
             pass_label=pass_label,
         )
+        if successor_receipt is None:
+            return (
+                f"{pass_label} start refused: no predecessor stop-completion receipt",
+                0,
+                0,
+                0,
+                {},
+                False,
+            )
         od_start = request_state_transition(
             snapshot=serial_collector.snapshot,
             requested="OVERDUBBING",

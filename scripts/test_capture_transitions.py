@@ -509,6 +509,37 @@ class SerialHeartbeatNoiseTests(unittest.TestCase):
         self.assertTrue(serial_line_resets_heartbeat("#CAP,1,ST,Track,STOPPED,ARMED"))
 
 
+class SuccessorStartReceiptTests(unittest.TestCase):
+    """A missing predecessor stop receipt must refuse the press, not press anyway."""
+
+    class _Collector:
+        def __init__(self, lines: list[str]) -> None:
+            self._lines = lines
+
+        def snapshot(self) -> list[str]:
+            return list(self._lines)
+
+    def test_missing_receipt_refuses(self) -> None:
+        from hitl.legacy_record_baseline import _await_successor_start_receipt
+
+        lines = ["[70.203] [DEBUG] [TRACK] Recording stopped (to STOPPED) @ tick 2366 (recStart=382 length=2304)"]
+        self.assertIsNone(
+            _await_successor_start_receipt(self._Collector(lines), timeout_s=0.05)
+        )
+
+    def test_receipt_is_returned(self) -> None:
+        from hitl.legacy_record_baseline import _await_successor_start_receipt
+
+        lines = [
+            "[70.203] [TRACK] Recording stopped (to STOPPED)",
+            "[71.5] [INFO] [TRACK] Record pass undo reset for slot 0: removed=4",
+        ]
+        self.assertEqual(
+            "Record pass undo reset for slot",
+            _await_successor_start_receipt(self._Collector(lines), timeout_s=0.5),
+        )
+
+
 class EvidenceVersusContradictionTests(unittest.TestCase):
     """Missing rows must not be read as the device asserting the opposite."""
 
