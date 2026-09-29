@@ -1,5 +1,14 @@
 # Project state (execution context)
 
+**2026-09-29 — record-leg misattribution fixed at the phase pairing.**
+Not firmware: the pairing accepted only `RECORDING -> STOPPED_RECORDING`, so the intended take
+(which resolved `RECORDING -> STOPPED`) was never a pair, a later stray take became the only
+candidate, and both the session selection and the length verifier took the last one. Replaying
+`s4f22-step8-e2` now selects the intended 65.011 -> 70.204 leg (`length=2304`) rather than
+72.697 -> 73.795 (`length=768`). With the successor-start refusal (removes the stray take) and the
+clock fix, both record-leg assertions should read the intended take. **Open:** ring reclamation
+(e3's zeros) and the bounded same-boot campaign.
+
 **2026-09-29 — correction: the "Record length/span" defect was a misattributed second take.**
 `s4f22-step8-e2`: the intended record leg completed correctly (`Recording stopped (to STOPPED) @ tick
 2366 (recStart=382 length=2304)`) at 70.20 s. The `overdub start` phase then pressed transport while

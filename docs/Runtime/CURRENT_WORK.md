@@ -1,5 +1,20 @@
 # Current work (implementation scope)
 
+**2026-09-29 — the record-leg misattribution, fixed at the phase pairing.**
+`record_loop_length_mismatch` / `record_note_span_too_short` were never a firmware defect. The phase
+pairing accepted only `RECORDING -> STOPPED_RECORDING`, so a take that resolved to a full transport
+stop (`RECORDING -> STOPPED`, the stop-to-STOPPED leg) was not a pair at all; a later **stray take**
+then became the only candidate, and both `extract_phase_sessions` (`record_sessions[-1]`) and
+`_verify_record_loop_length` (`_last_recs_row`) took the **last** one. Replaying
+`captures/s4f22-step8-e2` through the fix selects the intended **65.011 -> 70.204** leg
+(`length=2304`) instead of 72.697 -> 73.795 (`length=768`). Three changes with fixtures: pair
+`RECORDING -> STOPPED` as a leg end; select the first complete pair (matching the overdub
+convention); scope the RECS rows and stored-grid ticks to the record phase window, with an empty
+window reported as evidence loss rather than permission to score a foreign take. Together with the
+successor-start refusal -- which removes the stray take at its source -- and the clock fix, both
+record-leg assertions should now read the intended take. **Open: the ring reclamation evidence
+(unchanged; e3's zeros) and the bounded same-boot campaign.**
+
 **2026-09-29 — correction: the "Record length/span" defect was a misattributed second take.**
 e2's trace (`captures/s4f22-step8-e2`): the intended record leg completed **correctly** --
 `Recording stopped (to STOPPED) @ tick 2366 (recStart=382 length=2304)`, two bars -- at 70.20 s.
