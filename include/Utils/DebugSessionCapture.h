@@ -122,6 +122,17 @@ void restartCaptureBootGrace();
 SC_MEM_ATTR void appendCaptureTextLine(const char* line);
 
 /**
+ * The capture ring's own PSRAM range, when it is allocated.
+ *
+ * The ring and the loop-event pool blocks share the Teensy `extmem` smalloc pool, and frees are
+ * classified by address window alone, so a mis-freed block would let a pool block be handed the
+ * ring's memory and zero it (`captures/s4f22-step8-e3`: `head_bad type=0 plen=0`, all-zero prefix,
+ * self-consistent head/tail/used -- 384 571 bytes of content lost). `poolAlloc` calls this to
+ * report an overlap instead of leaving it to be discovered as a wipe.
+ */
+SC_MEM_ATTR bool captureRingRange(uintptr_t& start, size_t& bytes);
+
+/**
  * Drain up to @p maxRecords from the PSRAM ring to USB serial.
  * Runs from RAM (not FLASHMEM) — safe for Serial and ring access from main loop.
  */
@@ -557,6 +568,7 @@ inline bool appendDiagTraceRecord(const void*, uint16_t) { return false; }
 inline void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord&) {}
 inline bool captureBootGraceActive() { return false; }
 inline void restartCaptureBootGrace() {}
+inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 }  // namespace DebugSessionCapture
 
 #define SC_SESSION_HEADER()                ((void)0)

@@ -745,6 +745,15 @@ SC_MEM_ATTR void initCaptureBuffer() {
   markCaptureBootUs();
 }
 
+SC_MEM_ATTR bool captureRingRange(uintptr_t& start, size_t& bytes) {
+  if (sCaptureRing.data == nullptr || sCaptureRing.capacity == 0) {
+    return false;
+  }
+  start = reinterpret_cast<uintptr_t>(sCaptureRing.data);
+  bytes = sCaptureRing.capacity;
+  return true;
+}
+
 SC_MEM_ATTR void appendCaptureTextLine(const char* line) {
   (void)queueCaptureTextLine(line);
 }
