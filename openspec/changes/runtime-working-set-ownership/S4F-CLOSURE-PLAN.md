@@ -193,7 +193,17 @@ stop-edge read fails both. `scripts/ram1_budget.json` was re-based deliberately 
 obligation, offset by moving the continuation to FLASH: padding 1,976 → 1,992), with the reason
 recorded in the cutover packet.
 
-**S17.4–S17.5 remain open.**
+**S17.4 — S4f.20 residuals: done.** The deferred Record publication queues the REVT stored note-on
+scan the inline commit queued, and the queue is slot-qualified
+(`deferredRecordRevtsPending` bool → `deferredRecordRevtsSlot`, same byte) so it scans the
+publishing interval rather than whatever is active. `invalidateCaches()` parity is proven against
+the actual consumer contract: `notifyCommittedContentChanged`/`markPassDerivedStale` already covers
+the Loop's derived caches, and the gap — the Track-level committed-MIDI scratch, the note-edit
+selected-slot invalidation and the REVT queue — is now applied by
+`Track::invalidateCommittedContentForSlot(slot, queueRecordRevts)` against the job's slot. Two
+fixtures, each with a failing mutation.
+
+**S17.5 remains open** (enforced gate, mutations, RAM1/PSRAM accounting, doc closeout).
 
 ## 4. Finish correlated observations and correct the actual test recipes
 

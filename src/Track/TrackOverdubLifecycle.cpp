@@ -1559,6 +1559,11 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordPublication(
   TrackUndo::pushRecordPassAdded(*this, job.slot, publishedPassId, job.loopId,
                                  job.recordBeforeGeometry, job.recordAfterGeometry);
   loop.markDisplayCachesStale();
+  // S4f.20 parity: this publication *is* the inline stop's commit, so it applies the same
+  // Track-level side effects -- the committed-MIDI scratch invalidation, the note-edit
+  // selected-slot invalidation and the deferred REVT queue -- against the job's own slot. The
+  // active index may already belong to a successor take, which is exactly why they are qualified.
+  invalidateCommittedContentForSlot(job.slot, true);
   requestLoopSlotPersistAndSaveState(*this, job.slot,
                                      MemoryMonitor::getInternalHeapFreeBytes());
   stop.setPhase(PendingStopPhase::RecordPublished);

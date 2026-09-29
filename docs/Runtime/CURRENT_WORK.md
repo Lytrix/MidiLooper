@@ -55,9 +55,23 @@ stop-edge read fails both with the defect message. `scripts/ram1_budget.json` re
 Full native **2 613 cases, 2 606 succeeded, 7 skipped**; strict matrix 45/45; capture-serial
 **PASS**.
 
-**Open:** S17.4 — the S4f.20 residuals (the deferred revts validation's active-slot dependence and
-`invalidateCaches()` parity) — and S17.5 — the enforced strict gate, mutations, RAM1/PSRAM
-accounting and doc closeout.
+**2026-09-29 — S4f.20 residuals (S17.4).** The deferred Record publication now queues the REVT stored
+note-on scan the inline `finalizeCommitSideEffects` queued on commit, with the queue made
+**slot-qualified** (`deferredRecordRevtsPending` bool → `deferredRecordRevtsSlot`, the same byte) so
+it scans the publishing interval rather than `getActiveLoop()`. `invalidateCaches()` parity is
+proven against the consumer contract rather than assumed: `Loop::notifyCommittedContentChanged`
+(`markPassDerivedStale`) already covers the Loop's playbackOrder/visual/noteCache/eventIndex
+invalidation, so the gap was the Track-level work — `CommittedMidiScratch::invalidate`, the
+note-edit selected-slot invalidation and the REVT queue — now applied by
+`Track::invalidateCommittedContentForSlot(slot, queueRecordRevts)` against the job's slot. Fixtures
+`test_deferred_record_publication_queues_revts_for_its_own_slot` and
+`test_deferred_record_publication_invalidates_the_track_committed_scratch`; removing either wiring
+fails its fixture. Strict matrix **47/47**; full native **2 617 cases, 2 610 succeeded, 7 skipped**;
+capture-serial PASS, RAM1 padding 1,992. The suite is now an **enforced** gate: it no longer reads
+`S4F16_REQUIRE_CONTRACT`, so ordinary suite success is the strict result.
+
+**Open:** S17.5 — the enforced-gate documentation, the mutation set, per-track/job/raw/output
+RAM1+PSRAM accounting and doc closeout.
 [Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md).
 
 **2026-09-28 — S4f.19 §2 — first-bar and onward playback handoff: delta work complete.**

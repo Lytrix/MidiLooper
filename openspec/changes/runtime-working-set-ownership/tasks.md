@@ -2776,6 +2776,22 @@ own execution packet and records fixture/native/build/device results separately.
       capture-serial build PASS. `scripts/ram1_budget.json` re-based deliberately (+32 B DTCM for the
       obligation, offset by moving the continuation to FLASH: padding 1,976 -> 1,992); reason recorded
       in the packet. No admission/publication behaviour changed by this sub-slice.
+      **2026-09-29 S17.4 — S4f.20 residuals: done.** The deferred Record publication now queues the
+      stored note-on (REVT) scan the inline `finalizeCommitSideEffects` queued on commit, and the
+      queue is **slot-qualified**: `deferredRecordRevtsPending` (bool) became
+      `deferredRecordRevtsSlot` (same byte, the interval's slot or `INVALID_LOOP_SLOT`),
+      `queueDeferredRecordRevts(slot)` names the publishing interval, and `processDeferredRecordRevts`
+      scans that loop instead of `getActiveLoop()` -- previously the side effect was missing on the
+      deferred route entirely, and an active-slot read would have scanned a successor take.
+      `invalidateCaches()` parity is proven rather than assumed: `notifyCommittedContentChanged`
+      (`markPassDerivedStale`) already covers the Loop's playbackOrder/visual/noteCache/eventIndex
+      invalidation, so the only gap was the Track-level work -- `CommittedMidiScratch::invalidate`,
+      the note-edit selected-slot invalidation and the REVT queue -- now applied by
+      `Track::invalidateCommittedContentForSlot(slot, queueRecordRevts)` against the job's slot.
+      Fixtures `test_deferred_record_publication_queues_revts_for_its_own_slot` and
+      `test_deferred_record_publication_invalidates_the_track_committed_scratch`; removing either
+      wiring fails its fixture. Strict matrix 47/47; full native 2 617 cases / 2 610 succeeded /
+      7 skipped; capture-serial PASS, RAM1 unchanged at padding 1,992. **S17.5 remains open.**
 - [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
       full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with

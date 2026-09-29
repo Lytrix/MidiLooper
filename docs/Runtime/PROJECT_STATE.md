@@ -1,5 +1,23 @@
 # Project state (execution context)
 
+**2026-09-29 — S4f.20 residuals (S17.4) — deferred REVT queue and `invalidateCaches()` parity.**
+The deferred Record publication queues the stored note-on (REVT) scan the inline commit queued, and
+the queue is slot-qualified (`deferredRecordRevtsPending` bool → `deferredRecordRevtsSlot`, the same
+byte), so it scans the publishing interval rather than whatever owns the active slot; before this
+the side effect was absent from the deferred route entirely. Cache-invalidation parity was verified
+against the consumer contract instead of assumed: `Loop::notifyCommittedContentChanged` is
+`markPassDerivedStale` (playbackOrderDirty, visualCacheDirty, `invalidatePlaybackCaches` — noteCache
+and eventIndexValid), a superset of `Loop::invalidateCaches()` for that loop, so the remaining gap
+was Track-level — the committed-MIDI scratch, the note-edit selected-slot invalidation and the REVT
+queue — now applied by `Track::invalidateCommittedContentForSlot(slot, queueRecordRevts)` for the
+job's slot. Fixtures `test_deferred_record_publication_queues_revts_for_its_own_slot` and
+`test_deferred_record_publication_invalidates_the_track_committed_scratch`, each with a failing
+mutation. The finalization suite is now an **enforced** gate (it no longer reads
+`S4F16_REQUIRE_CONTRACT`). Strict matrix **47/47**; full native **2 617 cases, 2 610 succeeded,
+7 skipped**; `teensy41-capture-serial` PASS, RAM1 padding **1 992** (unchanged by this slice).
+Remaining: S17.5 — enforced-gate documentation, the mutation set, per-track/job/raw/output
+RAM1+PSRAM accounting and doc closeout.
+
 **2026-09-29 — S4f.21 S17.3b — job-qualified Record-stop geometry result.** `Track::recordStopGeometryForSlot`
 reports `Final` (no stop in flight for that slot; the committed length is authoritative) or
 `PendingStop` (an admitted job or a retained obligation still owns the slot's geometry), and is

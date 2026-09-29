@@ -320,7 +320,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
     }
 #endif
     if (recordStop) {
-      queueDeferredRecordRevts();
+      queueDeferredRecordRevts(slot);
     }
     if (overdubStop) {
 #if defined(SESSION_CAPTURE)

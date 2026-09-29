@@ -546,6 +546,12 @@ public:
 
   /// Invalidate caches when MIDI events change (includes flat sync when dirty).
   void invalidateCaches(bool refreshPlaybackPreview = true);
+  /// S4f.20/S4f.21: the Track-level derived-cache invalidation a committed pass in `slot` owes its
+  /// consumers, plus (optionally) the deferred REVT queue for that slot. Slot-qualified because the
+  /// deferred Record publication runs while a successor may already own the active slot.
+  void invalidateCommittedContentForSlot(uint8_t slot, bool queueRecordRevts);
+  /// The slot-qualified body of `invalidateLoopDerivedCaches`; the active-slot form delegates here.
+  void invalidateLoopDerivedCachesForSlot(uint8_t slot);
 
   /// Chunk mutations on hot paths — no flat sync.
   void invalidatePlaybackCaches() {
@@ -610,7 +616,12 @@ private:
   bool overdubStopSavePendingBefore_ = false;
   bool overdubStopSavePendingAfter_ = false;
   uint16_t recordAddedNoteOnCount;  // note-ons this overdub pass (memory log at overdub stop)
-  bool deferredRecordRevtsPending = false;
+  /// S4f.20/S4f.21: the slot whose committed Record pass owes the deferred REVT note-on queue, or
+  /// `Config::INVALID_LOOP_SLOT` when nothing is owed. This replaces the boolean pending flag with
+  /// the same one byte: the queue is owed by the interval that **published**, and the deferred
+  /// publication runs while a successor may already own the active slot, so an active-slot read
+  /// would scan the wrong loop (or nothing at all).
+  uint8_t deferredRecordRevtsSlot = Config::INVALID_LOOP_SLOT;
   bool deferredRecordRevtChunkScan = false;
   size_t deferredRecordRevtCursor = 0;
   SessionMidiEventVec deferredRecordRevtEvents;
@@ -928,7 +939,7 @@ private:
   static const uint32_t TICKS_PER_BAR;
 
   void resetDeferredRecordRevts();
-  void queueDeferredRecordRevts();
+  void queueDeferredRecordRevts(uint8_t slot);
   void processDeferredRecordRevts(size_t maxEventsPerSlice = 64);
 
   void resetDeferredStoredMidiVerification();
