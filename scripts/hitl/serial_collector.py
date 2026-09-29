@@ -65,6 +65,8 @@ class CaptureLineClock:
         # later verifier to turn missing rows into a firmware contradiction.
         if "#CAP," in line and ",RING,overflow" in line:
             self.mark_incomplete("firmware capture ring overflow")
+        if "#CAP," in line and ",RING,critical_rejected," in line:
+            self.mark_incomplete("firmware capture ring rejected critical evidence")
         if serial_line_resets_heartbeat(line):
             self.last_firmware_at = stamp
         if serial_line_is_transport(line):

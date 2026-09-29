@@ -35,19 +35,10 @@ inline bool tagStartsWith(const char* line, const char* prefix) {
   return strncmp(tag, prefix, strlen(prefix)) == 0;
 }
 
-// A one-shot root-cause record must outlive a prolonged Tier-A timing stream.
-// Keep this deliberately narrow: normal stop telemetry remains Tier-A.
-// `RID,` (record-stop slot identity) is here because it is the one-shot evidence that explains a wrong
-// persistence target, and a Tier-A ring dropped it on the run that admitted `slot:5:0` — at most two
-// lines per take, so it cannot flood.
-//
-// `RECA,`/`RECS,` are here for the same measured reason. They are the only evidence of the record
-// stop (its start tick, its final geometry and its stage trace), and being merely Tier-A they were
-// displaced by the `DIAG,reentry`/`canonical_release`/`timing_max`/`midisvc` flood that an overdub
-// finalization produces: `captures/s4f22-base-device-05` recorded, published and retired a take with
-// **zero** `RECS` rows left, so the harness could only report `record_stop_stage_missing:record_stop`
-// and `record_first_note_missing` against a correct stop. Per take this is one `RECA` plus the
-// stop's geometry row and its bounded stage trace (six stages), so it cannot flood.
+// One-shot root-cause and Record receipts have priority over ordinary Tier-A traffic.
+// They are bounded per take, not per session: another critical row may still evict
+// them, and that loss must invalidate capture integrity. Classification alone is
+// not evidence that the record family reached or survived the ring.
 inline bool isCriticalLine(const char* line) {
   return tagStartsWith(line, "ODUB,stop,bridge_begin,") || tagStartsWith(line, "RID,") ||
          tagStartsWith(line, "RECA,") || tagStartsWith(line, "RECS,");
@@ -58,8 +49,7 @@ inline bool isCriticalLine(const char* line) {
 /// These are three observably different losses and they must not be conflated by the host:
 /// routine timing shed; Tier-A text displaced by newer Tier-A text (the ring's documented
 /// behaviour that keeps the newest timing windows, so the session stays usable); and critical
-/// text loss, which cannot legitimately happen because critical may only be displaced by
-/// critical. Only the last one invalidates a capture. Header-only so the host tests pin the
+/// text loss when critical displaces critical. Only the last eviction kind invalidates a capture. Header-only so the host tests pin the
 /// truth table without Arduino.
 enum class EvictionKind : uint8_t { TimingShed, TierAText, CriticalText };
 
@@ -76,7 +66,8 @@ inline EvictionKind evictionKindFor(bool headIsTierAText, bool headIsCriticalTex
 
 /// Whether an incoming line may displace the head record. Tier-A may only be displaced by Tier-A
 /// and critical only by critical, so ordinary diagnostics can never evict the evidence a timing
-/// verdict is computed from; a denied append is reported as timing shed instead.
+/// verdict is computed from. Rejected non-critical appends are timing shed; rejected critical
+/// appends invalidate capture integrity.
 inline bool incomingMayDisplace(bool incomingTierA, bool incomingCritical, bool headTierA,
                                 bool headCritical) {
   return !((!incomingTierA && headTierA) || (!incomingCritical && headCritical));

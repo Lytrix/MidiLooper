@@ -3,6 +3,7 @@ import sys
 Import("env")
 # Suites that link production code pulling in the Arduino/SD hardware boundaries.
 _FIRMWARE_BOUNDARY_SUITES = {
+    "test_capture_ring",
     "test_continuous_capture",
     "test_midi_button_timing",
     "test_shared_capture_finalization",
