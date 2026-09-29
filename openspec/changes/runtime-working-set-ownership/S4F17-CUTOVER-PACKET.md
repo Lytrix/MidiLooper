@@ -1,12 +1,13 @@
 # S4f.17–S4f.21 — Record admission and caller cutover (execution packet)
 
-Status: **S17.1–S17.5 landed 2026-09-29.** The production Record stop is a deferred job on every
-mode: admission binds the raw range, geometry and held-note receipts; both stop entry points run a
-bounded transport edge; a retained stop is driven by the common accepted-stop dispatch; the manager
-continuations consume the job-qualified geometry; the S4f.20 publication residuals are closed; and
-the strict R→R/R→OD/OD→R/OD→OD matrix is an **enforced** gate. §3's own exit list still owes a
-transport-stop-in-every-phase sweep, an internal/external clock sweep and load/clear interaction
-with a stop in flight — no device acceptance is claimed from host results.**
+Status: **S17.1–S17.5 landed 2026-09-29; host-level evidence only, no device run.**
+The production Record stop is a deferred job on every mode: admission binds the raw range, geometry
+and held-note receipts; both stop entry points run a bounded transport edge; a retained stop is
+driven by the common accepted-stop dispatch; the switch, the manager continuations and the
+transport-stop/retarget path all consume or supersede the job correctly; the S4f.20 publication
+residuals are closed; and the strict R→R/R→OD/OD→R/OD→OD matrix is an **enforced** gate. §3's exit
+list has no unexercised item this environment can reach (see S17.5a–c). The remaining verification
+is the change's device leg, which is **S4f.22** and is not claimed here.
 Baseline `aac1e8df` (§1 preparation/publication boundaries, §2 record playback handoff both
 closed). Authority: [shared contract](SHARED-CAPTURE-FINALIZATION.md),
 [S4F-CLOSURE-PLAN.md](S4F-CLOSURE-PLAN.md) §3, DEC-093 — shared capture finalization,
@@ -185,8 +186,8 @@ inline route published synchronously):
    the fixture's fixed slack. It now declares a bounded estimate (fixed MIDI-key scratch resets,
    row passes, chunk moves) read from O(1) scalars and consumes one credit per Record grain.
 
-**S17.3 — Caller continuations: partially done (S17.3a landed; geometry result still open).**
-`finalizeCaptureAndSelectSlot`'s Record branch now mirrors the overdub branch's slot-scoped rule.
+**S17.3a — the switch guard: done.** `finalizeCaptureAndSelectSlot`'s Record branch now mirrors the
+overdub branch's slot-scoped rule.
 An **admitted** Record job carries its own identity (`job.owner`, `job.slot`, `job.loopId`, the
 interval latch, `captureStopOwner`) and does not hold the active slot, so the switch commits and a
 different-slot successor is not serialized behind predecessor cleanup. An **accepted-but-unbound**
