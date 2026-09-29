@@ -165,6 +165,17 @@ Open: an **attaching** run (`--no-boot-reset`, the acceptance contract's same-bo
 answers "is the transport running?" from **line position**, so a drained backlog of old `BAR`/`DFRAME`
 rows can authorize a wrong phase and there is no reboot to clear it (`s4f22-step11-h2`). The proxy
 owner must anchor on device time (`#CAP,<us>`), not on the follow index.
+  * Clear refusals are named and retried (PX1, second half). The **force** reset path settled in 3.7 s
+    (`boot_loaded`) and passed readiness on the first probe, but `s4f22-step11-h4` then died at its clear
+    with `clear_not_confirmed` and no cause: the firmware had printed `Clear refused: deferred save
+    temporarily blocked by post_load_holdoff; slot left untouched, save still owed`
+    (`MidiButtonActions.cpp`), a **temporary** refusal distinct from `Clear aborted`, and the transition
+    never retried it because it only retries a *disproved* request. `_serial_clear_refusal` now reads the
+    reason, the clear waits for the save-idle receipt (30 s bound) and presses once more
+    (`CLEAR_REFUSAL_RETRIES` 2), and a surviving refusal is reported as `clear_refused_<reason>`.
+    `s4f22-step11-h5` then reported `waiting_commit_gate`, waited, and reached **CONFIRMED** EMPTY ->
+    record -> two overdubs, exit 0 (`INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` on the pre-existing
+    `record_stored_revt_missing` / persistence-evidence loss, not setup). 4 new host cases.
 Open separately: the capture ring lost 384 571 bytes to zeros with self-consistent bookkeeping
 (`s4f22-step8-e3`: `head_bad op=4 type=0 plen=0`, zero prefix, `(tail-used) mod 1 MiB = head`);
 `RING,overlap` in `poolAlloc` is armed to identify whether an event-pool block is handed the

@@ -475,6 +475,37 @@ def _serial_has_clear_aborted(lines: list[str], *, after_index: int = 0) -> bool
     return False
 
 
+_CLEAR_REFUSED_RE = re.compile(r"Clear refused: deferred save temporarily blocked by ([\w.]+)")
+
+# A temporary refusal is retryable once the owed save settles; bounded so a device that keeps
+# refusing still fails visibly (`captures/s4f22-step11-h4`).
+CLEAR_REFUSAL_RETRIES = 2
+CLEAR_REFUSAL_SAVE_WAIT_S = 30.0
+
+
+def _serial_clear_refusal(lines: list[str], *, after_index: int = 0) -> Optional[str]:
+    """The firmware's **temporary** clear refusal reason, or None when there is none.
+
+    `MidiButtonActions.cpp` distinguishes the two deferred-save outcomes of a clear:
+
+    * `Clear refused: deferred save temporarily blocked by <reason>; slot left untouched, save still
+      owed` -- the slot is untouched and the request is retryable once that save settles
+      (`post_load_holdoff` is the fresh-boot case: `captures/s4f22-step11-h4` refused the press and
+      the run died with `clear_not_confirmed`, because the transition only retries a *disproved*
+      request).
+    * `Clear aborted: could not complete deferred save first (<reason>)` -- terminal, read by
+      `_serial_has_clear_aborted`.
+
+    The newest row wins, so a refusal that a later completed clear superseded is not reported.
+    """
+    reason: Optional[str] = None
+    for line in lines[after_index:]:
+        match = _CLEAR_REFUSED_RE.search(line)
+        if match:
+            reason = match.group(1)
+    return reason
+
+
 def _serial_has_clear_completed(lines: list[str], *, after_index: int = 0) -> bool:
     for line in lines[after_index:]:
         if "MIDI: Clear Track" in line:
@@ -2296,33 +2327,67 @@ def _run_clear_before_record(
                 out_port, clear_press_ms=args.clear_press_ms
             )
 
-        clear_outcome = request_state_transition(
-            snapshot=serial_collector.snapshot,
-            requested="EMPTY",
-            already_satisfied=lambda lines, _baseline: (
-                _can_skip_clear_before_record(
-                    lines, loop_slot=target_loop_slot, after_index=track_baseline_len
-                )
-                # A selected slot that is already provably empty needs no clear long
-                # press: the press cannot confirm on an already-empty slot and the run
-                # otherwise aborts before any genuine record (sevt-fix-verify4).
-                or _selected_slot_provably_empty(
-                    lines, loop_slot=target_loop_slot, after_index=select_baseline_len
-                )
-            ),
-            confirmed=_clear_confirmed,
-            disproved=_clear_disproved,
-            blocked=_clear_blocked,
-            send_request=_send_clear_request,
-            timeout_s=args.state_sync_timeout_ms / 1000.0,
-            max_retries=2,
-            abort=abort,
-            latest_state=lambda lines, baseline: _latest_track_state(lines, after_index=baseline),
-        )
+        def _attempt_clear():
+            return request_state_transition(
+                snapshot=serial_collector.snapshot,
+                requested="EMPTY",
+                already_satisfied=lambda lines, _baseline: (
+                    _can_skip_clear_before_record(
+                        lines, loop_slot=target_loop_slot, after_index=track_baseline_len
+                    )
+                    # A selected slot that is already provably empty needs no clear long
+                    # press: the press cannot confirm on an already-empty slot and the run
+                    # otherwise aborts before any genuine record (sevt-fix-verify4).
+                    or _selected_slot_provably_empty(
+                        lines, loop_slot=target_loop_slot, after_index=select_baseline_len
+                    )
+                ),
+                confirmed=_clear_confirmed,
+                disproved=_clear_disproved,
+                blocked=_clear_blocked,
+                send_request=_send_clear_request,
+                timeout_s=args.state_sync_timeout_ms / 1000.0,
+                max_retries=2,
+                abort=abort,
+                latest_state=lambda lines, baseline: _latest_track_state(
+                    lines, after_index=baseline
+                ),
+            )
+
+        clear_outcome = _attempt_clear()
         log_action_outcome(clear_outcome)
         if clear_outcome.kind is ActionResultKind.ALREADY_SATISFIED:
             print("[info] Track already empty or idle; skipping clear long press.")
             return True, "already_empty_skip"
+        # A **temporary** refusal is a retryable state, not a failed clear. The firmware leaves the
+        # slot untouched and still owes the save (`Clear refused: deferred save temporarily blocked by
+        # post_load_holdoff`), and only a *disproved* request is retried by the transition -- so a
+        # fresh-boot run pressed once, saw nothing confirm, and died `clear_not_confirmed`
+        # (`captures/s4f22-step11-h4`, refused ~17 s after the boot). Wait for the owner of that
+        # condition (the save-idle receipt) and press once more, bounded.
+        refusal_attempts = 0
+        while not clear_outcome.ok and refusal_attempts < CLEAR_REFUSAL_RETRIES:
+            refusal = _serial_clear_refusal(
+                serial_collector.snapshot(), after_index=clear_outcome.evidence.baseline_index
+            )
+            if refusal is None:
+                break
+            refusal_attempts += 1
+            print(
+                f"[info] clear refused by the firmware ({refusal}); waiting for the owed save, "
+                f"then retrying ({refusal_attempts}/{CLEAR_REFUSAL_RETRIES})"
+            )
+            from hitl.deferred_save_idle import wait_for_deferred_save_idle_if_active
+
+            wait_for_deferred_save_idle_if_active(
+                serial_collector,
+                after_line_index=clear_outcome.evidence.baseline_index,
+                log_prefix="[clear-retry]",
+                abort=abort,
+                max_timeout_s=CLEAR_REFUSAL_SAVE_WAIT_S,
+            )
+            clear_outcome = _attempt_clear()
+            log_action_outcome(clear_outcome)
         clear_baseline = clear_outcome.evidence.baseline_index
         if not clear_outcome.ok:
             if _serial_has_clear_aborted(
@@ -2391,6 +2456,18 @@ def _run_clear_before_record(
                             )
                         return True, result if result else "clear_log_confirmed"
                     time.sleep(0.02)
+            refusal = _serial_clear_refusal(
+                serial_collector.snapshot(), after_index=clear_baseline
+            )
+            if refusal is not None:
+                # Name the firmware's own reason instead of a bare `clear_not_confirmed`: a temporary
+                # refusal that survived the bounded retries means the owed save never settled.
+                print(
+                    f"[error] Clear still refused by the firmware after "
+                    f"{refusal_attempts} retr{'y' if refusal_attempts == 1 else 'ies'} "
+                    f"(deferred save blocked by {refusal})"
+                )
+                return False, f"clear_refused_{refusal}"
             print("[error] Clear precondition did not confirm EMPTY / clear completed.")
             return False, "clear_not_confirmed"
         post_snap = serial_collector.snapshot()

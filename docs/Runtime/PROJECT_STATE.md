@@ -19,6 +19,20 @@ green, and `test_managed_capture` is red-free (its metadata test was failing bef
 position, so a drained backlog of old `BAR`/`DFRAME` rows can authorize a wrong phase — the h2 shape,
 with no reboot to clear it. No firmware change, no upload.
 
+**2026-09-29 — the fresh-boot clear refusal, named and retried (the same slice's second half).**
+`--boot-reset` (force) settled in **3.7 s** (`boot_loaded`) and readiness passed on the first probe,
+but `s4f22-step11-h4` then died at its *clear* with `clear_not_confirmed` and no cause. The firmware
+had said why: `Clear refused: deferred save temporarily blocked by post_load_holdoff; slot left
+untouched, save still owed` (`MidiButtonActions.cpp`) — a **temporary** refusal, distinct from
+`Clear aborted`, which the transition never retried because only a *disproved* request is. The
+harness now reads that refusal by name, waits for the owner of the condition (the save-idle receipt,
+30 s bound) and presses once more, bounded to two retries; a refusal that survives them is reported
+as `clear_refused_<reason>` instead of a bare `clear_not_confirmed`. `s4f22-step11-h5` (same force
+reset) then reported `clear refused by the firmware (waiting_commit_gate)` → waited → **CONFIRMED**
+EMPTY → record + two overdubs, exit 0; its `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` verdict is the
+pre-existing `record_stored_revt_missing` / persistence-evidence loss, not setup. Host: 4 new cases
+in `scripts/test_clear_before_record_precondition.py`.
+
 **2026-09-29 — record-leg misattribution fixed at the phase pairing.**
 Not firmware: the pairing accepted only `RECORDING -> STOPPED_RECORDING`, so the intended take
 (which resolved `RECORDING -> STOPPED`) was never a pair, a later stray take became the only

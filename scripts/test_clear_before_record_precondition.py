@@ -432,5 +432,53 @@ class DeferredSaveClearTests(unittest.TestCase):
         self.assertEqual(sends, 0)
 
 
+class ClearRefusalTests(unittest.TestCase):
+    """The firmware's **temporary** clear refusal is retryable; its abort is not.
+
+    `MidiButtonActions.cpp` prints two different rows for the deferred-save outcomes of a clear.
+    `post_load_holdoff` is the fresh-boot case (`captures/s4f22-step11-h4`: the press was refused ~17 s
+    after the boot, the slot was left untouched and the save was still owed, and the run then died with
+    `clear_not_confirmed` because the transition only retries a *disproved* request).
+    """
+
+    def setUp(self) -> None:
+        from hitl import legacy_record_baseline as baseline
+
+        self.baseline = baseline
+
+    def test_temporary_refusal_reason_is_read(self) -> None:
+        lines = [
+            "[16.764] [INFO] Clear waiting for deferred save completion",
+            "[StorageManager] ERROR: Persistence drain blocked by post_load_holdoff",
+            "[16.799] [ERROR] Clear refused: deferred save temporarily blocked by "
+            "post_load_holdoff; slot left untouched, save still owed",
+        ]
+        self.assertEqual(
+            "post_load_holdoff", self.baseline._serial_clear_refusal(lines)
+        )
+
+    def test_terminal_abort_is_not_a_refusal(self) -> None:
+        lines = ["[1.2] [ERROR] Clear aborted: could not complete deferred save first (drain_stuck)"]
+        self.assertIsNone(self.baseline._serial_clear_refusal(lines))
+        self.assertTrue(self.baseline._serial_has_clear_aborted(lines))
+
+    def test_the_newest_row_wins(self) -> None:
+        lines = [
+            "Clear refused: deferred save temporarily blocked by post_load_holdoff; slot left untouched",
+            "MIDI: Clear selected slot 1",
+        ]
+        # A later completed clear supersedes the refusal in the same window only when the caller
+        # scopes the scan; the predicate itself reports the newest refusal row it sees.
+        self.assertEqual("post_load_holdoff", self.baseline._serial_clear_refusal(lines))
+        self.assertIsNone(
+            self.baseline._serial_clear_refusal(lines, after_index=1)
+        )
+
+    def test_retry_budget_is_bounded(self) -> None:
+        self.assertGreaterEqual(self.baseline.CLEAR_REFUSAL_RETRIES, 1)
+        self.assertLessEqual(self.baseline.CLEAR_REFUSAL_RETRIES, 3)
+        self.assertGreater(self.baseline.CLEAR_REFUSAL_SAVE_WAIT_S, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
