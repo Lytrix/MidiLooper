@@ -1482,3 +1482,25 @@ latches a count/timestamp; serial reporting occurs only on a safe drain budget
 `emitIdentityPathStats` request adds two fixed-format rows. No input-edge serial
 write or dynamically growing history is introduced. See the runtime change's
 [S4f.22 evidence-accounting packet](../../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md#s4f22--record-evidence-loss-accounting-2026-09-29).
+
+### Record-family ring reserve
+
+The Record receipts (`RECA`/`RECS`/`RID`) are unevictable by ordinary traffic and by
+their own replacement while the reserve lasts. `appendCaptureRecord` keeps the last
+`kRecordReserveBytes` (32 KiB) of the fixed 1 MiB ring out of the ordinary append
+ceiling, so a take's start/stop/stage/identity row appends into free space instead of
+displacing an earlier one. Ordinary rows still displace an ordinary head at that
+ceiling, so the ring cannot wedge; a refused ordinary append is reported as timing
+shed exactly as before. Record rows may use the whole ring, and a reserve that is
+itself exhausted falls back to the pre-existing critical-to-critical displacement,
+which stays fatal and counted. Ring capacity, allocation policy and the
+timing-critical drop-only path are unchanged.
+
+### Record REVT drain during playback
+
+`Track::processDeferredRecordRevts` is sliced at 32 events per turn when the
+transport is playing, and that slice takes the bounded chunk walk only. The
+full-merge fallback and the stored-MIDI verification still run only on a fully idle
+transport: flattening the active passes is the unbounded work the idle gate existed
+for. The chunk ids are copied at queue time, so the playing slice adds one bounded
+chunk read plus at most 32 capture-ring appends per turn and no new resident state.

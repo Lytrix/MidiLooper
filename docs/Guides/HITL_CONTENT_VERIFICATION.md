@@ -183,3 +183,29 @@ same capture file to include rows the follower thread has not yet consumed.
 An incomplete drain marks capture integrity incomplete without replacing the
 original leg failure. This proves retrieval of queued Record evidence, not full
 ring/persistence completion or acceptance of the measured behavior.
+
+### Missing evidence versus a firmware contradiction
+
+A serial-verification issue means one of two different things, and the verdict now
+says which:
+
+- **Absent evidence** — the row that would prove the claim is not in the capture,
+  for behavior other evidence already places. The claim stays unproven:
+  `INCONCLUSIVE_CAPTURE` with reason `EVIDENCE_MISSING`, `overall_ok` false, and
+  `assertions.evidence_gap_issues` naming the rows. In this class:
+  `record_stored_revt_missing`, `record_recs_missing`,
+  `record_stop_stage_missing:*`, `missing_phase_boundaries`,
+  `*_stored_sevt_missing`, `persistence_active_snapshot_unavailable_during_save`,
+  `persist_admission_not_observed`, `record_start_identity_missing`, `display_*`.
+- **Contradiction** — the device asserted something inconsistent with itself. This
+  stays `FAIL` / `FIRMWARE_CONTRADICTION`, listed under
+  `assertions.firmware_contradiction_issues`. In this class: a missing note *event*
+  (`record_first_note_missing` and its overdub counterparts — the note should have
+  sounded), a length mismatch, a bad stored grid, a short span/count/bar set, an
+  oversized persistence slice, and a stop whose save was not deferred.
+
+Neither class is a PASS, and neither is a reason to enlarge a timeout. Ring loss
+has its own route: `RING,overflow` and `RING,critical_rejected` make capture
+integrity INCOMPLETE, which is neither class above and is always fatal to a
+verdict. The verify adapter applies the same split, so a per-suite verdict cannot
+disagree with the baseline report.
