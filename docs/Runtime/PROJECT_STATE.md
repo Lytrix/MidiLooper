@@ -1,5 +1,24 @@
 # Project state (execution context)
 
+**2026-09-29 — HITL setup: the boot *decision* replaced the boot *wait* (PX1).**
+A managed run no longer waits on a fixed post-open window, and never on the device's boot-load steps.
+`capture_session.py` asks the device instead (`--boot-reset-mode auto|force|never`): its own read-only
+`!STOP_STATUS` probe, and a stopped device is attached **without** a reset — the settle ended on
+evidence in **0.1 s** (`captures/s4f22-step11-h3`). Only a device that is not in that state is worth a
+fresh boot, and the reset is then confirmed by the firmware's own acknowledgement rather than a blind
+10 s window (a refusal is named: `!REBOOT is transport-gated`, `captures/s4f22-step11-h1`). The harness
+repairs a transport a killed run left running with **one** idempotent MIDI Stop and then owns a fresh
+boot, because that repair makes the stream untrustworthy by position: `captures/s4f22-step11-h2` shows
+ring-`drained` `BAR` rows stamped 850–1864 s interleaved *after* a 1855 s `state=STOPPED` reply, the
+scenario's "stop" press then **started** the transport, and the clear could not drain. With that rule,
+`s4f22-step11-h3` ran clear → record → overdub → second overdub with `precondition_failures: []`, a
+**CONFIRMED EMPTY** clear and no readiness refusal; its `INCONCLUSIVE_CAPTURE` verdict is the
+pre-existing capture-ring/REVT loss, not setup. Host: new `scripts/test_hitl_boot_settle.py` (15 cases)
+green, and `test_managed_capture` is red-free (its metadata test was failing before this slice).
+**Open:** an attaching run (`--no-boot-reset`) still decides "is the transport running?" from line
+position, so a drained backlog of old `BAR`/`DFRAME` rows can authorize a wrong phase — the h2 shape,
+with no reboot to clear it. No firmware change, no upload.
+
 **2026-09-29 — record-leg misattribution fixed at the phase pairing.**
 Not firmware: the pairing accepted only `RECORDING -> STOPPED_RECORDING`, so the intended take
 (which resolved `RECORDING -> STOPPED`) was never a pair, a later stray take became the only

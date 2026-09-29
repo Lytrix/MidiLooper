@@ -20,7 +20,7 @@ from hitl.layered_cli import (
     legacy_args_with_slot_flags,
     require_slot_target,
 )
-from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT
+from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT, boot_reset_mode_from_args
 from hitl.registry import get_registry, resolve_scenarios
 from hitl.stimuli.cli import add_stimulus_subparser, apply_run_temp_override, run_stimulus_command
 
@@ -141,12 +141,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--capture-boot-wait",
         type=float,
         default=10.0,
-        help="Seconds to settle after serial-open reset before the scenario starts (default: 10)",
+        help="Ceiling in seconds for the capture's post-open settle (default: 10). The settle ends "
+             "on device evidence; this only bounds a device that never becomes usable",
     )
     run_parser.add_argument(
         "--no-managed-capture",
         action="store_true",
         help="Do not spawn capture_session.py (use --serial-port for built-in serial instead)",
+    )
+    run_parser.add_argument(
+        "--boot-reset",
+        action="store_true",
+        help=(
+            "Always request a boot reset before the scenario, so the capture carries the boot "
+            "banner (verdict-grade fresh-boot evidence). Default: auto -- reset only when the "
+            "device is not already stopped and answering"
+        ),
     )
     run_parser.add_argument(
         "--no-boot-reset",
@@ -224,7 +234,7 @@ def _run_with_optional_managed_capture(
         capture_serial_port=getattr(args, "capture_port", DEFAULT_CAPTURE_SERIAL_PORT),
         capture_boot_wait_s=float(getattr(args, "capture_boot_wait", 10.0)),
         arm_snapshot_yield=bool(getattr(args, "arm_snapshot_yield", False)),
-        boot_reset=not bool(getattr(args, "no_boot_reset", False)),
+        boot_reset=boot_reset_mode_from_args(args),
         build_env=getattr(args, "build_env", "teensy41-capture-serial"),
     )
 

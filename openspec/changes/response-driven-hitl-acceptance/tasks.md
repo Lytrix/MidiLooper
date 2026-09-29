@@ -146,10 +146,25 @@ Fixed, each with a fixture and a device observation:
   * Setup latency: the clear no longer waits for the deferred-save idle receipt (120 s configured,
     240 s floored) -- it aborted setup when the boot restore was slow and never made the clear more
     likely to succeed. The device is driven straight after boot; the firmware owns the refusal.
-Open: `s4f22-step10-g2` refused readiness because an **idle attached device never answered**
-`!STOP_STATUS` (that command is transport-gated and the transport was likely left running by an
-earlier killed run). Next: probe, and if there is no reply stop the transport once and probe again,
-then refuse by name only if it still does not answer.
+  * Setup latency (PX1, 2026-09-29): the *boot wait itself* is gone. `capture_session.py` takes
+    `--boot-reset-mode auto|force|never` and, in `auto`, asks the device read-only whether it is
+    already stopped: a stopped device is attached with **no** reset and the settle ends on that
+    evidence (0.1 s in `s4f22-step11-h3`), while a device that is not stopped gets a `!REBOOT` whose
+    firmware acknowledgement is read instead of a blind 10 s window (refusal named:
+    `!REBOOT is transport-gated`, `s4f22-step11-h1`). The `s4f22-step10-g2` refusal below is fixed:
+    silence from the transport-gated probe is resolved with **one** idempotent MIDI Stop
+    (`mido.Message("stop")`, port resolved via `hitl.midi_io._find_midi_port`), then one more probe,
+    then a refusal by name. A device this run had to repair is not handed over as-is: the repair makes
+    the stream untrustworthy *by position* (`s4f22-step11-h2`: ring-drained `BAR` rows stamped
+    850-1864 s after a 1855 s `state=STOPPED` reply; the scenario's stop press then *started* the
+    transport and the clear could not drain), so that case owns a fresh boot
+    (`ManagedCaptureSession.restart_with_boot_reset`). `s4f22-step11-h3` then ran clear -> record ->
+    overdub -> second overdub with `precondition_failures: []`, a CONFIRMED EMPTY clear and no
+    readiness refusal (verdict `INCONCLUSIVE_CAPTURE` on the pre-existing ring/REVT loss, not setup).
+Open: an **attaching** run (`--no-boot-reset`, the acceptance contract's same-boot campaign) still
+answers "is the transport running?" from **line position**, so a drained backlog of old `BAR`/`DFRAME`
+rows can authorize a wrong phase and there is no reboot to clear it (`s4f22-step11-h2`). The proxy
+owner must anchor on device time (`#CAP,<us>`), not on the follow index.
 Open separately: the capture ring lost 384 571 bytes to zeros with self-consistent bookkeeping
 (`s4f22-step8-e3`: `head_bad op=4 type=0 plen=0`, zero prefix, `(tail-used) mod 1 MiB = head`);
 `RING,overlap` in `poolAlloc` is armed to identify whether an event-pool block is handed the

@@ -30,13 +30,23 @@ omits the intervention and does not reproduce the fixture.
 - Device visible: `pio device list` shows `/dev/cu.usbmodem*`.
 - The slot under test is the authorized scratch slot (default track 5 / slot 1).
 
-## 3. Prepare the device (fresh boot)
+## 3. Prepare the device (the boot is a decision now)
 
-Opening serial may reset the Teensy, but not reliably. **Symptom of a stale run:**
-the session log has no boot banner, device uptime is large, and the run ends
-`INCONCLUSIVE_CAPTURE` with `RING,overflow` and no phase boundaries.
+A managed run no longer waits for a boot it does not need. `--boot-reset-mode auto` (the default)
+asks the device read-only whether it is already stopped and attaches **without** a reset when it is,
+so the scenario starts as soon as the device is driveable (`captures/s4f22-step11-h3`: settle 0.1 s,
+readiness on the first probe). Pass `--boot-reset` when the run must carry the fresh-boot banner
+(the accepted-sequence oracle's gate); the capture then reads the firmware's own `!REBOOT`
+acknowledgement instead of waiting a fixed window, and names a refusal (`!REBOOT is transport-gated`).
+The harness repairs a transport a killed run left running with one idempotent MIDI Stop and then owns a
+fresh boot, because the repair makes the capture stream untrustworthy by *position* (see the
+`s4f22-step11-h2` note in `docs/Runtime/CURRENT_WORK.md`).
 
-Reliable reset before a content run:
+Opening serial may still reset the Teensy. **Symptom of a stale run:** the session log has no boot
+banner, device uptime is large, and the run ends `INCONCLUSIVE_CAPTURE` with `RING,overflow` and no
+phase boundaries.
+
+Reliable reset (rebuild the sketch) when the device state itself must be reset:
 
 ```bash
 pio run -e teensy41-capture-serial -t upload

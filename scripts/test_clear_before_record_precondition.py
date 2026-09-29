@@ -398,22 +398,33 @@ class DeferredSaveClearTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(sends, 2)
 
-    def test_save_wait_timeout_blocks_clear(self):
-        result, _ = self.run_prepare(["#CAP,100,SAVE,pending,1"], [False], idle=False)
-        self.assertFalse(result)
+    def test_a_pending_save_does_not_block_the_clear(self):
+        """The setup-latency contract: no deferred-save idle receipt is awaited before the clear.
 
-    def test_recent_pending_before_fixture_baseline_is_drained_before_clear(self):
-        """A save pending before this run's baseline must not reach Clear's sync drain."""
+        `9ca308be` removed the wait (120 s configured, floored at 240 s): on device it aborted setup
+        when the boot restore was slow and never made the clear more likely to succeed
+        (`captures/s4f22-base-device-16`). After boot the device is driven straight away and the
+        firmware owns the refusal, which is read downstream as a clear abort.
+        """
+        result, _ = self.run_prepare(["#CAP,100,SAVE,pending,1"], [False], idle=False)
+        self.assertTrue(result)
+
+    def test_a_save_pending_before_the_baseline_is_reported_not_waited_on(self):
+        """`deferred_save_active_in_tail` still *sees* the earlier pending save; it just does not wait.
+
+        The recent-window anchor stays (a pending writer must not be missed), and no
+        `wait_for_deferred_save_idle_if_active` call may be issued for it.
+        """
         lines = ["#CAP,100,SAVE,pending,1"]
         collector = Mock()
         collector.snapshot.return_value = lines
         with patch.object(baseline, "_serial_sequencer_running", return_value=False), \
-             patch("hitl.deferred_save_idle.wait_for_deferred_save_idle_if_active", return_value=False) as wait:
+             patch("hitl.deferred_save_idle.wait_for_deferred_save_idle_if_active") as wait:
             result = baseline._prepare_deferred_save_before_clear(
                 Mock(), Mock(), collector, SimpleNamespace(deferred_save_wait_ms=3000),
                 press_ms=120, phase_wait_ms=500, after_index=len(lines), abort=Mock())
-        self.assertFalse(result)
-        self.assertEqual(wait.call_count, 1)
+        self.assertTrue(result)
+        self.assertEqual(wait.call_count, 0)
 
     def test_unresolved_stuck_drain_blocks_clear(self):
         result, sends = self.run_prepare(["Persistence drain stuck after 256 iterations"], [])

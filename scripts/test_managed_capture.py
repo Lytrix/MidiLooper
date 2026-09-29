@@ -199,7 +199,10 @@ class ManagedCaptureTests(unittest.TestCase):
                 out_dir=out,
                 build_env="__no_such_env__",
             )
+            # The capture always leaves a real log (the stream check reads it), so the fixture does
+            # too: an attaching run needs no boot banner, only a readable stream.
             target = out / "new-session.log"
+            target.write_text("BOOT,load,ok\n#CAP,1,ST,Track,STOPPED,STOPPED\n", encoding="utf-8")
 
             @contextmanager
             def session(_config):
