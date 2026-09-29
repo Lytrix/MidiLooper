@@ -38,14 +38,20 @@ def parse_latest_bpm(lines: list[str], *, tail: int = 80) -> Optional[float]:
 def serial_lines_show_transport_activity(
     lines: list[str], *, tail: int = 40, after_index: int = 0
 ) -> bool:
-    """True when the current-session suffix shows sequencer activity.
+    """True when the current-session suffix shows sequencer activity the device still stands behind.
 
-    Historical lines before ``after_index`` must not authorize a new phase.
+    Historical lines before ``after_index`` must not authorize a new phase -- and neither may a line
+    the ring drained *late*: the firmware writes capture rows through a fixed evidence ring, so an old
+    record can land after newer ones and an index window reads it as current
+    (`captures/s4f22-step11-h2`: drained `BAR` rows stamped 850-1864 s after a 1855 s row decided
+    "transport running", the run skipped its start presses and then pressed a stop onto a stopped
+    device, which started it). `filter_live_lines` drops those by the device's own stamp.
     """
+    from hitl.device_time import filter_live_lines
     from hitl.serial_collector import serial_line_is_transport
 
-    suffix = lines[max(after_index, 0) :]
-    return any(serial_line_is_transport(line) for line in suffix[-tail:])
+    live = filter_live_lines(lines, after_index=max(after_index, 0))
+    return any(serial_line_is_transport(line) for line in live[-tail:])
 
 
 def serial_lines_show_bpm_activity(lines: list[str], *, tail: int = 40) -> bool:

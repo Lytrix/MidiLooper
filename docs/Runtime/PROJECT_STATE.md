@@ -1,5 +1,28 @@
 # Project state (execution context)
 
+**2026-09-29 — the transport decision now anchors on device time, not line position.**
+Capture rows go through the firmware's fixed evidence ring, which flushes in batches, so a record the
+ring drained **late** lands after newer rows and an index window reads it as current. Measured in
+`captures/s4f22-step11-h2`: `BAR` rows stamped 850-1864 s interleaved after a 1855 s `state=STOPPED`
+reply, 343 `BAR` + 10 453 `DIAG` rows out of device order — and the run concluded "transport running"
+from a tail of **40/40 drained rows**, skipped its transport start, then pressed a "stop" onto an
+already-stopped device, which *started* it, so the clear could not drain. New
+`scripts/hitl/device_time.py` carries the rule (`filter_live_lines`, `device_clock_step`,
+`human_line_device_us`): a stamped row older than the newest stamp already seen is drained history,
+unstamped directly-printed rows are live by construction, and a boot row restarts the watermark.
+`serial_lines_show_transport_activity` filters by it, the arm-time "already playing?" answer compares
+a drained `ST,…PLAYING` record with the `Transport stopped` logger line **in device time**, and the
+baseline's call site passes its track baseline as the anchor. Replaying h2's prefixes: at the points
+where the old index rule said "activity present", the new rule says no, with 40/40 drained rows in the
+tail — and where the evidence was genuinely live (h3/h6 tails) both agree. Device: `s4f22-step11-h6`
+attached to a device whose log already held 19 026 lines and no longer printed the stale conclusion;
+its clear reached `CONFIRMED`/`Clear completed` (its verdict `INCONCLUSIVE_CAPTURE` is the separate
+ring-wipe defect below, see the content-evidence entry). Host: new `scripts/test_hitl_device_time.py`
+(15 cases). **Residual:** under a large drain lag the newest *transport* row can itself be late, so the
+filter can answer "no current activity" for a transport that is running; the authoritative answer (a
+fresh fenced `!STOP_STATUS`: a reply *is* proof the transport is stopped) is available but not yet
+wired into these phase decisions.
+
 **2026-09-29 — HITL setup: the boot *decision* replaced the boot *wait* (PX1).**
 A managed run no longer waits on a fixed post-open window, and never on the device's boot-load steps.
 `capture_session.py` asks the device instead (`--boot-reset-mode auto|force|never`): its own read-only

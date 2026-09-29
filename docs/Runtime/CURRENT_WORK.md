@@ -1,5 +1,31 @@
 # Current work (implementation scope)
 
+**2026-09-29 — the transport-proxy phase decisions now read device time, not the follow index.**
+Scope: `scripts/hitl/device_time.py` (new), `scripts/hitl/serial_transport.py`,
+`scripts/hitl/legacy_record_baseline.py`. Why: capture telemetry goes through the firmware's fixed
+evidence ring, which flushes in batches, so a record drained **late** lands after newer rows and
+`lines[after_index:]` reads it as current. `captures/s4f22-step11-h2` measured 343 `BAR` and 10 453
+`DIAG` rows out of device order (drained stamps 850-1864 s after a 1855 s `state=STOPPED` reply); the
+run decided "transport running" from a tail of 40/40 drained rows, skipped its start presses, then
+pressed a "stop" onto a stopped device, which *started* it, and its clear could not drain.
+
+* `filter_live_lines` drops a stamped row older than the newest stamp already seen, keeps unstamped
+  directly-printed rows, and restarts the watermark at a boot row (`micros()` restarts with `!REBOOT`).
+* `serial_lines_show_transport_activity` filters by it before the tail scan;
+  `_transport_running_before_record_arm` compares a drained `ST,…PLAYING` record with the
+  `Transport stopped` logger line in **device time** (`human_line_device_us`), with the old position
+  comparison kept as the clock-less fallback; the baseline's call site passes `track_baseline_len`.
+
+Evidence: prefix replay of h2 — where the old rule said "activity present" the new rule says no, with
+40/40 drained rows in the tail, while genuinely live tails (h3/h6) agree; device `s4f22-step11-h6`
+(attach to a log already holding 19 026 lines) no longer printed the stale conclusion and reached
+`CONFIRMED` / `Clear completed`. Host: `scripts/test_hitl_device_time.py`, 15 cases.
+
+**Residual, recorded:** with a large drain lag the newest transport row can itself be late, so the
+filter can answer "no current activity" while the transport runs; the authoritative answer is the
+transport-gated `!STOP_STATUS` (a fresh fenced reply *is* proof the transport stopped), which the
+readiness gate already uses and these phase decisions do not yet.
+
 **2026-09-29 — the HITL boot decision, replacing the boot wait (PX1).**
 Scope: host HITL automation only (`scripts/capture_session.py`, `scripts/hitl/managed_capture.py`,
 `config.py`, `runner.py`, `layered_cli.py`). A managed run starts the scenario as soon as the device is
