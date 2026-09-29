@@ -4,11 +4,15 @@
 `git log -S` attributes the REVT window `ts > recs_stop_ts → skip` to **`21b8ca8f`**, added against the
 function's own docstring ("REVT emission is deferred (idle flush), so lines can appear after RECS,stop",
 `373566a7`): a REVT row's `#CAP,<us>` is a **flush** clock, so the bound discarded exactly the deferred
-rows. Every run after it reports `record_stored_revt_missing`; the *same* rows counted as 32 with
-`grid_ok: true` before it (`s4f22-step4-a1`, `s4f22-step5-b1`, `s4f22-step8-e3`). **Fixed** by bounding
-the take by its **row span** (`RECA` → next `RECA`, both stop forms): 9-run replay — h5/h6
-`missing → 32 rows, grid_ok`, a1/b1/e3/base-01/e1/h3 unchanged, and `s4f22-step8-e2` 4 → 0 rows
-(deliberate: those 4 follow the *stray* take's `RECA`). 8 new fixtures.
+rows. Every run after it reports `record_stored_revt_missing`, so the check has been failing **five**
+stored runs, not only the recent ones — a three-extractor replay
+replay (`pre-21b8ca8f` unbounded, current bound, the fix) gives 32 / **0** / 32 for
+`s4f22-step4-a1`, `s4f22-step5-b1`, `s4f22-step8-e3`, `s4f22-step11-h5`, `s4f22-step11-h6` (their
+*recorded* reports predate `21b8ca8f`, which is why a1/b1/e3 read as passing), 0/0/0 for
+`s4f22-step3-base-01`, `s4f22-step8-e1`, `s4f22-step11-h3` (nothing delivered), and 4/0/0 for
+`s4f22-step8-e2` (the four rows are the *stray* take's). **Fixed** by bounding the take by its **row
+span** (`RECA` → next `RECA`, both stop forms). 9 fixtures, including the pre-regression equivalence.
+Successor residual accepted: a false negative is evidence loss, never a pass (0 in nine runs).
 
 **Two decisions still open**, because the remaining issues are *not* the same shape:
 the SEVT rows that fail the overdub stored-span check sit entirely **outside** the phase windows

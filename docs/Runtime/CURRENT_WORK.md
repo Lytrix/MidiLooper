@@ -2,9 +2,9 @@
 
 **2026-09-29 — content-evidence decision proposal: one host fix landed, two decisions open.**
 
-**Decision requested.** Approve the REVT take-bounding fix (applied below, replay-validated on all nine
-stored runs) and pick a direction for the SEVT leg attribution, which the current telemetry cannot
-support. `already_pending` semantics and firmware evidence protection stay separate decisions.
+**Decision requested.** **Accept the landed REVT take-bounding fix and approve its release**; pick a
+direction for SEVT leg attribution, which the current telemetry cannot support. `already_pending`
+semantics and firmware evidence protection stay separate follow-up decisions (see *Next decisions*).
 
 Findings, each classified, with the acceptance criteria the fix has to meet:
 
@@ -13,22 +13,33 @@ Findings, each classified, with the acceptance criteria the fix has to meet:
    `RECA_ts <= us <= RECS_stop_ts`, but `<us>` is when `flushOneRevtRecord` wrote it (`micros()` at
    flush) — which the function's own docstring has said since `373566a7` ("REVT emission is deferred
    (idle flush), so lines can appear after RECS,stop"). `git log -S` attributes the bound to
-   **`21b8ca8f`**, and every run after it reports `record_stored_revt_missing` while the *same* rows
-   counted as 32 with `grid_ok: true` before it. **Fixed:** the take is bounded by its **row span**
-   (`_record_take_row_index` → `_next_record_take_row_index`, both stop forms recognised), which keeps
-   the deferred rows and still excludes a successor take's. Acceptance criteria and the 9-run replay:
-   * `s4f22-step11-h5`, `s4f22-step11-h6`: `revt_missing true → false`, `note_on_count 0 → 32`,
-     `grid_ok false → true` (same input rows; 32 REVT rows at 72.97 s / 1836.2 s vs stops 36.65 s /
-     1807.35 s).
-   * `s4f22-step4-a1`, `s4f22-step5-b1`, `s4f22-step8-e3`: unchanged (32, `grid_ok true`) — the
-     pre-regression behavior is preserved, not re-derived.
-   * `s4f22-step3-base-01`, `s4f22-step8-e1`, `s4f22-step11-h3`: unchanged (missing, 0) — no rows were
-     delivered.
-   * `s4f22-step8-e2`: 4 → 0 rows (`revt_missing` true). **Deliberate semantic change**: those 4 rows
-     follow the *stray* take's `RECA`, so the scored take's stored rows were never delivered; this is
-     `21b8ca8f`'s intent expressed by identity instead of by flush stamp. Residual: a take whose stored
-     rows are flushed *after* a successor take started is scored as missing — the telemetry carries no
-     take id on a REVT row.
+   **`21b8ca8f`**.
+
+   **What "take-bounding" means operationally.** `_record_take_row_index` is the row index of the first
+   row matching `^#CAP,<us>,RECA,` (strict, so a `RING,record_stats,RECA,…` row is not a take).
+   `_next_record_take_row_index` is the first such row appearing **after** a
+   `^#CAP,<us>,RECS,(stop|stopToStopped),` row, else `None`. The considered rows are
+   `lines[take_start : take_end)` and their `tick` field is collected. The window is therefore in
+   **log order** (the ring's FIFO), not device time: a deferred flush stays inside its take, and a
+   successor take's rows fall outside.
+
+   **Acceptance criteria, validated by a three-extractor replay** (`pre-21b8ca8f` unbounded, the
+   current bound, this rule) over all nine stored runs — the fix must return the pre-regression tick set
+   wherever a take has no successor, and exclude a successor's rows:
+
+   | run | pre-`21b8ca8f` | current | fixed | criterion |
+   |---|---|---|---|---|
+   | `s4f22-step4-a1`, `s4f22-step5-b1`, `s4f22-step8-e3` | 32 | **0** | 32 | regression repaired (their *recorded reports* predate `21b8ca8f`; re-running them today fails too) |
+   | `s4f22-step11-h5`, `s4f22-step11-h6` | 32 | **0** | 32 | repaired (32 REVT rows at 72.97 s / 1836.2 s vs stops 36.65 s / 1807.35 s) |
+   | `s4f22-step3-base-01`, `s4f22-step8-e1`, `s4f22-step11-h3` | 0 | 0 | 0 | correctly still missing: no rows delivered |
+   | `s4f22-step8-e2` | 4 | 0 | 0 | successor excluded (`21b8ca8f`'s intent); those 4 rows follow the *stray* take's `RECA` |
+
+   **Successor-take residual, for acceptance:** a take whose stored rows are flushed *after* a successor
+   take started is scored `revt_missing`. Accept it, because the failure direction is safe and bounded —
+   a false negative becomes an evidence-loss verdict (`INCONCLUSIVE_CAPTURE`), never a pass, while the
+   alternative (keeping successor rows) produced a false *pass* on foreign evidence. Measured 0 false
+   negatives in the nine stored runs; the only differing case (e2) is the intended exclusion. Settling
+   it properly needs a take id on the REVT row — the same telemetry gap as SEVT below.
 2. **The overdub stored-span mismatch is not a missing window (VERIFIED, host; direction open).** The
    first-overdub call passes no `after_ts`/`before_ts`, but passing the leg's phase window cannot fix it:
    the rows are emitted by *walks*, so their `#CAP,<us>` is a walk clock, and the SEVT blocks in these
@@ -40,7 +51,13 @@ Findings, each classified, with the acceptance criteria the fix has to meet:
    the span go to 3 bars. **Decision needed:** either (a) the firmware stamps a take/leg identity on
    `SEVT` (and `Revt`) so the harness can scope by it, or (b) the check is redefined to verify the last
    complete walk's set under an explicit invariant ("the loop's full stored inventory") rather than "the
-   leg's notes". (a) needs an upload; (b) is host-only but weakens what the check proves.
+   leg's notes". **Recommendation: (a)**, the firmware-stamped take/leg identity — it is the only option
+   that keeps the check proving what it claims (the leg's own stored note-ons). Treat (b) as a
+   **deliberate reduction**: it would stop proving leg attribution and prove only that *some* complete
+   walk's inventory is consistent — exactly the accidental pass `s4f22-step11-h6` shows today. Interim
+   (host-only, no semantics lost): when the SEVT set is dominated by rows from outside every phase
+   window, report the check as **evidence unavailable** (`INCONCLUSIVE_CAPTURE`) instead of a span
+   violation, so a pre-run walk cannot be scored as the run's leg in either direction.
 3. **A deduplicated save request is demanded to produce its own `result` (VERIFIED, host; decision
    open).** All seven in-sequence `PERS,request` rows of `s4f22-step11-h5` are `outcome: already_pending`
    (the post-boot commit holdoff), and the handoff verifier requires `result` for the request it saw →
@@ -63,8 +80,19 @@ Findings, each classified, with the acceptance criteria the fix has to meet:
    `DIAG,reentry*`. **Urgency: preventative, not urgent** — these runs show no measured loss; the fix's
    value is turning an unattributable loss into a reported one.
 
-**Order:** (1) landed; (2) and (3) await a direction; (5) after (2)/(3) show whether loss still occurs.
-Fixtures: `scripts/test_hitl_stored_record_grid.py` (8 cases) plus the replay above.
+**Next decisions, owners and the evidence each needs.**
+
+| Decision | Owner | Evidence before acting |
+|---|---|---|
+| SEVT attribution direction, (a) firmware take/leg id vs (b) redefined invariant | verifier/reporting stage owner of `response-driven-hitl-acceptance` §5 (the check's owner); the (a) half with the capture-telemetry owner (`Utils/DebugSessionCapture.cpp`, `Track/TrackDeferredMaintenance.cpp`) | for (a): the same seam that already queues `Revt` per take (`deferredRecordRevtsSlot`) is the natural id source; the upload needs explicit approval. For (b): a written statement of what the check would no longer prove (leg attribution) and who accepts that loss |
+| `Revt`/`SEVT,` tier protection + per-family counters | capture-telemetry owner | an **in-run** loss demonstration for these families — a run where `RING,record_stats`/`RING,stats` deltas rise for them while their rows are absent. The counters do not exist yet, so the honest sequence is counters first (no semantics), measure, then decide protection. A policy decision that unattributable absence is unacceptable is the alternative trigger |
+| `already_pending` accepted in the persistence handoff | verifier/reporting stage owner of §5 | a run whose in-sequence save **settles inside the measured sequence** (a `PERS,result,…,ok` for an in-sequence request) — i.e. after the post-boot commit holdoff stops deferring (`post_load_holdoff` / `waiting_commit_gate`, recorded open in the PX1 note) |
+| Successor-take residual of the REVT span rule | record-leg/verifier owner named by `21b8ca8f` | none needed to accept: the failure direction is evidence-loss, not a pass (0 false negatives in nine runs). Revisit with the same take/leg id as SEVT (a) |
+
+**Order:** (1) landed and awaiting release approval; (2) and (3) await the decisions above; (5) after
+(2)/(3) show whether loss still occurs.
+Fixtures: `scripts/test_hitl_stored_record_grid.py` (9 cases, including the pre-regression equivalence
+invariant) plus the three-extractor replay.
 
 
 
