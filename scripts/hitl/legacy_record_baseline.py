@@ -24,6 +24,7 @@ from contextlib import contextmanager
 import argparse
 import json
 import re
+import os
 import subprocess
 import sys
 import time
@@ -1200,8 +1201,10 @@ def _stream_fixture_record_serial_anchored(
     target_clocks = target_bars * MIDI_CLOCKS_PER_BAR
     end_transport_tick = reca_start_tick + target_bars * TICKS_PER_BAR
     stop_trigger_clock: Optional[int] = None
-    if stop_press_advance_clocks > 0:
-        stop_trigger_clock = max(1, target_clocks - stop_press_advance_clocks)
+    # A zero advance means the stop belongs exactly at the requested device-tick boundary;
+    # it must still be emitted in-stream. Leaving this unset makes the outer caller press later
+    # from wall time, which can add a bar when the device started recording late.
+    stop_trigger_clock = max(1, target_clocks - max(0, stop_press_advance_clocks))
 
     anchor = TransportTickAnchor.from_collector(
         serial_collector,
@@ -1419,6 +1422,15 @@ def _stream_fixture_record_bars(
             wall_clock_tempo = _resolve_wall_tempo_for_proxy(
                 serial_collector, args, using_serial_proxy=using_serial_proxy
             )
+    require_midi_clock = bool(getattr(args, "require_midi_clock", False)) or os.environ.get(
+        "HITL_REQUIRE_MIDI_CLOCK", ""
+    ) == "1"
+    if require_midi_clock and using_serial_proxy:
+        print(
+            "[error] strict MIDI-clock mode refused serial/wall-clock fallback; "
+            "connect a MIDI-clock feedback path from the device"
+        )
+        return 0, 0, False, False
     if not clock_ok:
         print("[error] MIDI clock / serial transport proxy missing before fixture record.")
         return 0, 0, False, False
@@ -1456,7 +1468,12 @@ def _stream_fixture_record_bars(
     if using_serial_proxy and serial_collector is not None:
         from hitl.serial_tick_anchor import parse_record_start_tick
 
-        reca_start = parse_record_start_tick(serial_collector.snapshot())
+        reca_start = None
+        receipt_deadline = time.monotonic() + max(8.0, float(getattr(args, "state_sync_timeout_ms", 8000)) / 1000.0)
+        while reca_start is None and time.monotonic() < receipt_deadline:
+            reca_start = parse_record_start_tick(serial_collector.snapshot())
+            if reca_start is None:
+                time.sleep(0.02)
         if reca_start is not None:
             rec_notes, rec_clocks = _stream_fixture_record_serial_anchored(
                 out_port,
@@ -1472,9 +1489,9 @@ def _stream_fixture_record_bars(
                 press_ms=args.press_ms,
                 abort=abort,
             )
-            return rec_notes, rec_clocks, True, False
+            return rec_notes, rec_clocks, True, True
 
-    if record_schedule_start_mono is not None:
+    if record_schedule_start_mono is not None and not require_midi_clock:
         rec_notes, rec_clocks, stop_sent = _stream_fixture_record_wall_scheduled(
             out_port,
             fixture=fixture,
@@ -1496,14 +1513,16 @@ def _stream_fixture_record_bars(
         fixture=fixture,
         target_bars=target_bars,
         midi_channel_1based=midi_channel_1based,
-        stop_press_advance_clocks=int(getattr(args, "stop_press_advance_clocks", 0) or 0),
+        stop_press_advance_clocks=(
+            -1 if require_midi_clock else int(getattr(args, "stop_press_advance_clocks", 0) or 0)
+        ),
         press_ms=args.press_ms,
         abort=abort,
-        wall_clock_tempo_bpm=wall_clock_tempo,
+        wall_clock_tempo_bpm=None if require_midi_clock else wall_clock_tempo,
         emit_immediate_first_step=True,
         stream_start_monotonic=recording_confirmed_at,
     )
-    return rec_notes, rec_clocks, True, False
+    return rec_notes, rec_clocks, True, require_midi_clock
 
 
 def _transport_running_before_record_arm(
@@ -4510,6 +4529,7 @@ SUCCESSOR_PREDECESSOR_STOP_MARKERS: tuple[str, ...] = (
 SUCCESSOR_ADMISSION_RECEIPT_MARKERS: tuple[str, ...] = (
     "Record pass undo reset for slot",
     "Reentry released slot=",
+    "PERS,result,",
 )
 
 
@@ -4783,14 +4803,22 @@ def _run_overdub_pass(
                 phase_start_delay_bars=phase_start_delay_bars,
                 phase_start_delay_beats=phase_start_delay_beats,
                 max_seconds_guard=guard,
+                stop_press_advance_clocks=(
+                    -1
+                    if (getattr(args, "require_midi_clock", False) or os.environ.get("HITL_REQUIRE_MIDI_CLOCK", "") == "1")
+                    else overdub_stop_advance_clocks
+                ),
                 fixed_note=args.overdub_fixed_note if args.fixed_grid_notes else None,
-                stop_press_advance_clocks=overdub_stop_advance_clocks,
                 stop_press_note=RECORD_BUTTON_NOTE,
                 stop_press_channel_1based=CONTROL_CHANNEL_1BASED,
                 stop_press_press_ms=args.press_ms,
                 abort=abort,
                 emit_immediate_first_step=True,
-                wall_clock_tempo_bpm=wall_clock_tempo,
+                wall_clock_tempo_bpm=(
+                    None
+                    if (getattr(args, "require_midi_clock", False) or os.environ.get("HITL_REQUIRE_MIDI_CLOCK", "") == "1")
+                    else wall_clock_tempo
+                ),
                 device_bar_probe=(
                     _device_bar_probe(serial_collector, getattr(args, "follow_serial_log", None)) if serial_collector is not None else None
                 ),
@@ -5275,6 +5303,14 @@ def run() -> int:
         action="store_false",
         dest="bar_sync_from_midi_clock",
         help="Disable MIDI clock bar sync and use tempo-based seconds conversion",
+    )
+    parser.add_argument(
+        "--require-midi-clock",
+        action="store_true",
+        help=(
+            "Refuse serial/wall-clock pacing and require incoming MIDI Clock pulses "
+            "for bar-synchronised record/overdub fixtures"
+        ),
     )
     parser.add_argument(
         "--clear-before-record",

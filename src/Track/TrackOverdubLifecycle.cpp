@@ -1637,6 +1637,19 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordPublication(
   TrackUndo::pushRecordPassAdded(*this, job.slot, publishedPassId, job.loopId,
                                  job.recordBeforeGeometry, job.recordAfterGeometry);
   loop.markDisplayCachesStale();
+  // S4f.20 parity -- the inline Record stop's last side effect. `Loop::commitPendingCapturePass` ends
+  // by queuing the interval's session-exit snapshot publication, and that queue is the only thing that
+  // enumerates the **committed Record pass** into the pending box. The pass does not exist at the stop
+  // edge (the job owns it until this grain), so this publication owns the queue. Without it the box
+  // publishes the retained live-record candidate alone: that candidate's content stops at the
+  // completed-bar frontier (`MidiServiceDrain::liveRecordCompletedTicks`), `handoffPendingSnapshotLength`
+  // extends only its declared length to the sealed length, and the successor's own exit queue stamps the
+  // root with the current committed-pass coverage -- so consumers serve a current root that is missing
+  // the take's last partial bar until some later inventory change makes it non-current.
+  loop.queueSessionExitSnapshot(stop.destination == PendingStopDestination::Playing
+                                    ? CommitReason::RecordStop
+                                    : CommitReason::RecordStopToStopped,
+                                {});
   // S4f.20 parity: this publication *is* the inline stop's commit, so it applies the same
   // Track-level side effects -- the committed-MIDI scratch invalidation, the note-edit
   // selected-slot invalidation and the deferred REVT queue -- against the job's own slot. The

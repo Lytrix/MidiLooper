@@ -16,6 +16,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 |----|------|-------|--------|
 | [DEC-093](#dec-093--record-and-overdub-share-the-existing-deferred-finalization-lifecycle) | 2026-09-27 | Record and overdub share existing deferred finalization; preserve original overlap acceptance | Accepted implementation contract; firmware/device proof open |
 | [DEC-092](#dec-092--response-driven-hitl-preserves-continuous-playback-and-same-boot-preparation) | 2026-09-27 | Response-driven HITL, continuous-play acceptance, scoped same-boot preparation | Accepted user constraints; design recorded, implementation/device evidence open |
+| [DEC-094](#dec-094--a-pass-commit-queues-its-own-session-exit-snapshot-publication-and-coverage-is-only-claimed-for-content-the-box-enumerated) | 2026-09-29 | A pass commit queues its own session-exit snapshot publication (the deferred Record route restored that parity), and coverage is claimed only for content the box enumerated | Accepted — implemented, native verified (fixture red-proved); build verified; device re-run separate |
 | [DEC-086](#dec-086--loop-edit-tempo-fader-is-a-global-bpm-control-on-cc102) | 2026-09-25 | Loop-edit fader 4: a global BPM control on ch16 CC102 (60–187 BPM, one BPM per step) | Accepted — implemented, native + device verified |
 | [DEC-091](#dec-091--a-failed-workspace-completion-is-discharged-and-reported-not-retried-at-the-queue-head) | 2026-09-26 | A failed workspace completion is **discharged and reported**, not re-queued at the head (it blocked every other item and kept the owed-save guard true) | Accepted — implemented, native verified (fixture red-proved); device fault path has no injection, evidence owed |
 | [DEC-090](#dec-090--the-deferred-save-records-workspace-focus-at-footer-write-time-not-at-admission) | 2026-09-26 | The deferred save records workspace **focus** at footer-write time; content identity stays the interval's slot (snapshot-at-admission rejected) | Accepted — implemented behavior, **native verified** (`test_storage_drain_restore`, red-proved); no firmware change |
@@ -102,7 +103,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-094 -->
+<!-- Append new entries below (newest first). Next ID: DEC-095 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -5389,3 +5390,88 @@ Documentation only this turn. Existing synchronous record entry points become wr
 common lifecycle once the staged implementation is verified; compatibility names cannot conceal
 mode-specific bypasses. Existing native input/corpus fixtures remain valid. No firmware or device
 acceptance is implied, and no data operation is authorized by this record.
+
+## DEC-094 — A pass commit queues its own session-exit snapshot publication, and coverage is only claimed for content the box enumerated
+
+**Date:** 2026-09-29
+**Status:** Accepted — implemented and native-verified (fixture red-proved by removing the queued call); build verified; no device run in this slice
+**Owner:** `Track::stepDeferredRecordPublication` (deferred Record route) → `Loop::queueSessionExitSnapshot` (publication owner)
+**Governing change:** [`runtime-working-set-ownership`](../openspec/changes/runtime-working-set-ownership/proposal.md) — S4f.20 parity of the deferred Record publication; parent plan [`record_session_exit_snapshot_queue_deferred_publication_bugfix.md`](../docs/Plans/record_session_exit_snapshot_queue_deferred_publication_bugfix.md)
+
+### Context
+
+A pass that owns a **session exit** must have its content enumerated into the pending publication box, or the
+published root is incomplete. The inline Record route did this as the last act of
+`Loop::commitPendingCapturePass` (`queueSessionExitSnapshot(reason, {})` guarded by
+`passes.recordPass.id == lastCommittedPassId_`). **S4f.17 — common interval and stop admission** and
+**S4f.21 — Record-stop caller migration** moved the production Record stop to the deferred route, whose
+publication (`Track::stepDeferredRecordPublication`) mirrored the inline stop's undo, display, scratch and
+persistence side effects but not that queue; `Track::commitCaptureForStop` (the only remaining
+`Loop::commitCapturePass` caller) is now overdub-only. The live-record snapshot candidate that RC1 retains
+across a stop covers only the **completed-bar frontier**
+(`MidiServiceDrain::liveRecordCompletedTicks`), and RC1's `handoffPendingSnapshotLength` extends only its
+declared length — legitimate only when the pass that carries the remaining content is enumerated into the
+same box. `queueSessionExitSnapshot` also writes `box.coveredPassRevision = committedPassRevision()`
+unconditionally, and `publishedSnapshotIsCurrent()` compares exactly that watermark, so a box holding a
+truncated candidate can be stamped current by a *successor's* exit. Device consequence
+(`captures/session_20260929_225529.log`): after the first overdub stop the published root carried 42 notes
+(26 Record-prefix + 16 overdub) instead of 48, the visual-cache slice rebuild and the overdub source view
+served it because it was current, and the Record pass's last bar vanished from the display until a pass-stack
+change (overdub undo) made the root non-current and forced the passes-authoritative rebuild. Content,
+storage and persistence were correct throughout.
+
+### Decision
+
+1. **The publication that commits a pass queues that pass's session-exit publication.** The deferred Record
+   publication calls `Loop::queueSessionExitSnapshot` for its own slot with the mode-correct reason
+   (`PendingStopDestination::Playing` → `CommitReason::RecordStop`, `Stopped` →
+   `CommitReason::RecordStopToStopped`), exactly as the inline commit did. Enumerating a committed pass is the
+   publication owner's existing responsibility; callers must not be relied on to supply it.
+   A **Record** exit enumerates its own just-committed pass; only an **overdub** exit may take a pending
+   session-exit receipt's pass id. A receipt is an overdub session's identity handoff (DEC-068), so letting a
+   Record exit read it enumerates another interval's pass — or nothing, when the legacy one-shot handoff never
+   filled `lastPassId` — while the coverage watermark still advances.
+2. **A live-record handoff may extend a candidate's declared length past its applied content frontier only
+   with the pass carrying the remaining content enumerated into the same box.**
+3. **Coverage is claimed only for content actually incorporated** (DEC-073): the coverage watermark must not
+   advance over a committed pass the box did not enumerate.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Do nothing — treat the display loss as a consumer-completeness problem | The consumers were right: a root stamped current is a contract to serve its membership. Healing consumers would hide a real publication defect and was already unwound once (the membership unwind of 2026-09-11) |
+| Queue the exit at the Record **stop admission** instead of at publication | At admission the pass does not exist yet (`lastCommittedPassId_` invalid), so the queue would push nothing — the very failure observed; the inline route also queued at commit, not at the press |
+| A receipt (`captureSessionExitTail`/`markSessionExitTailReady`) for the Record stop | That mechanism is the overdub session's identity handoff and requires `hasOverdubSession()`; the Record path has no session to hand off. Extending it would duplicate the queue this decision restores |
+| Rewrite the watermark (condition it on covering the committed inventory) in the same slice | Correct direction but a different contract: it changes *when* a session-exit root may publish at all, and a wrong predicate converts a silent truncation into a permanent publication gap (the RC3 class). Recorded as the named residual with its own fixture shapes |
+| Make the display ignore non-current roots | Would lose the publish-latency benefit of the retained candidate and leave the persistence gate selecting a root it cannot trust |
+
+### Consequences
+
+- A deferred Record stop now publishes a **content-complete, current** root during the PLAYING gap that
+  follows it, instead of leaving the box to be published later by a successor's exit; the first overdub
+  publication then extends that root rather than substituting a truncated one.
+- The Record stop's publication path gains one bounded queue push (once per take, cold path, no new per-turn
+  work and no new admission): the same operation the inline route performed at the stop edge.
+- **Still open, named:** the completeness direction (3) is not enforced by a guard — no code compares the
+  committed-pass inventory with the box's tracked set before `storePublishedSnapshot`. This slice removes the
+  only production path that violated it and pins it with fixtures.
+
+### Affected modules
+
+`Track` deferred Record publication (`TrackOverdubLifecycle.cpp`, contract comment in `Track.h`); `Loop`
+snapshot publication consumers (`queueSessionExitSnapshot`, DEC-073 coverage); native fixtures
+`test_shared_capture_finalization` and `test_loop_take_survival`.
+
+### Related OpenSpec
+
+[`runtime-working-set-ownership`](../openspec/changes/runtime-working-set-ownership/proposal.md) — S4f.17/S4f.20/S4f.21
+and the cutover packet's slice record; [`record_stop_snapshot_publication_gap_display_bugfix.md`](../docs/Plans/record_stop_snapshot_publication_gap_display_bugfix.md)
+RC1 gains the queue-call-site requirement its design assumed.
+
+### Migration notes
+
+No schema, ownership, capacity or transport change; the inline route is untouched, so inline-driven native
+fixtures keep their meaning and the new deferred-route fixture is the regression gate. A device re-run is a
+separate, approval-gated step: its signature is already readable in the stored run
+(`VCACHE,slice_clean,notes` / `DIAG,lcr,src,from=snapshot,notes` against `DIAG,lcr,pairrows,at=passes,count`).

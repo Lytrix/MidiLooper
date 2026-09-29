@@ -1,5 +1,145 @@
 # Current work (implementation scope)
 
+**2026-09-29 — issue 2 root cause: the deferred Record publication never queued the record session-exit snapshot (fixed).**
+The device symptom (Record-pass bar-3 notes disappear from the display after the first overdub stop and return
+when the second overdub pass is undone) is a **snapshot-membership** defect, not a Shorten/Hide transform and not
+content loss. The production Record stop publishes through the deferred route (**S4f.17 — common interval and
+stop admission** / **S4f.21 — Record-stop caller migration**); `Track::stepDeferredRecordPublication` mirrored the
+inline stop's `RecordPassAdded`/display/scratch/persistence side effects but **not**
+`Loop::queueSessionExitSnapshot(RecordStop, …)`, which still lives at the end of the inline
+`Loop::commitPendingCapturePass` — a path no production Record stop reaches any more (`commitCaptureForStop` is
+now overdub-only). Consequence: the committed Record pass is never enumerated into the pending publication box, so
+the box publishes the **live-record candidate** alone. That candidate by design stops at the completed-bar
+frontier (`MidiServiceDrain::liveRecordCompletedTicks` — 1536 of 2304 in the reported take), RC1's
+`handoffPendingSnapshotLength` extends only its *declared length* to the sealed length, and the successor
+overdub's own exit queue stamps the root with the **current** committed-pass coverage, so
+`publishedSnapshotIsCurrent()` is true for content that is 6 Record notes short. Consumers that serve a current
+root — the visual-cache slice rebuild (`VCACHE,idle_src,SnapshotNotes`) and the overdub source view
+(`DIAG,lcr,src,from=snapshot`) — then lose the Record pass's last bar; a later pass-stack change (the overdub
+undo, or transport stop) advances `committedPassRevision`, the root stops being current, and the
+passes-authoritative rebuild restores the notes exactly as reported.
+Evidence, `captures/session_20260929_225529.log`: `snapshot_unit,kind=publish,q=0,a=1` @40.135 s;
+`VCACHE,slice_clean,notes,42` and `DIAG,lcr,src,notes=42` (26 Record + 16 OD1) against
+`DIAG,lcr,pairrows,at=passes,count=32`; 50 after OD2; `notes,48` after the 64.8 s undo; the STOPPED frame dump
+still lists notes 75–79 at 1573–1765. Stored/effective content and persistence were correct throughout, and the
+native 3-bar fixture could not see it because it drives the inline `Loop::commitCapturePass`, which queues inside
+the same call.
+**Fix:** `Track::stepDeferredRecordPublication` queues the record session-exit publication for its own slot with
+the mode-correct reason (destination Playing → `RecordStop`, Stopped → `RecordStopToStopped`), restoring inline
+parity; `include/Track.h`'s contract comment now names it. `Loop::queueSessionExitSnapshot` additionally takes a
+pending **session-exit receipt** only for an *overdub* exit: a receipt is an overdub session's identity handoff
+(DEC-068), so a Record exit always enumerates its own just-committed pass instead of a stale receipt's id (or
+nothing, when the legacy one-shot handoff left it unfilled) while the watermark advanced.
+**Fixtures:** `test_deferred_record_publication_queues_the_record_session_exit_snapshot`
+(`test_shared_capture_finalization`, red-proves the call: removing it leaves `pendingSnapshotSessionExitQueued()`
+false and no current root), plus `test_record_session_exit_with_a_truncated_candidate_keeps_the_take_tail` and
+`test_record_session_exit_ignores_a_pending_overdub_receipt` (`test_loop_take_survival`, pinning the Loop-side
+invariant that a handoff-extended candidate still publishes the take's tail note, and the receipt selection).
+**Decision:** **DEC-094** — a pass commit queues its session-exit publication on every route, and the coverage
+watermark may not advance over a pass the box did not enumerate.
+**Residual (recorded, not fixed here):** the enabler is `queueSessionExitSnapshot` writing
+`box.coveredPassRevision = committedPassRevision()` unconditionally while no guard requires the box to have
+enumerated the committed inventory; a general completeness gate changes *when* a session-exit root may publish
+and needs its own fixtures (a wrong predicate would produce a permanent publication gap, the RC3 class).
+Plan, full evidence table and non-goals:
+[`record_session_exit_snapshot_queue_deferred_publication_bugfix.md`](../Plans/record_session_exit_snapshot_queue_deferred_publication_bugfix.md);
+slice record:
+[`S4F17-CUTOVER-PACKET.md`](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md)
+§ "S4f.20 — the deferred Record publication queues the record session-exit snapshot".
+**Verification, measured:** focused `test_shared_capture_finalization` **55/55**,
+`test_loop_take_survival` **143/143**, both together **198/198**; full `pio test -e native`
+**2 636 cases / 2 629 succeeded / 7 skipped / 0 failed**; `pio run -e teensy41-capture-serial`
+**SUCCESS** with ITCM 393,216 (code 391,288 + padding **1,928**) and locals 34,880 — padding unchanged
+from the pre-slice tree, floor 840. Three mutations, each restored byte-for-byte: removing the new call fails
+**only** the deferred fixture; removing the Loop-side queue fails the Loop fixtures; restoring the unfiltered
+receipt selection fails **only** the receipt fixture.
+No upload and no device action in this slice at that point (device run recorded below).
+
+**2026-09-29 — device run of the S4f.20 session-exit queue fix: base HITL PASS with a complete published root, matched A/B against the pre-fix image.**
+Uploaded the fixed image and ran the authoritative base HITL (`host_midi_hitl.py run --preset base
+--track 5 --loop-slot 1 --midi-channel 1 --boot-reset`, registered stimulus `STIM-BASE-2-2-01`, reused
+unchanged). Runs are pinned by `metadata.json`: `git_commit 300af1fa` + `git_dirty true` (this fix
+uncommitted), fixed image `firmware_hex_sha256 0e7d549e…`, A/B image `df665ce5…`.
+**Fix confirmed at the mechanism level:** on the fixed image a `DIAG,snapshot_unit,kind=publish` with
+`a=1` lands **0.3 s after the record stop and before the first overdub start** (`captures/s4f20-record-exit-snapshot-02`,
+24.459 s vs `Live Overdub` 24.862 s), and the root after the first overdub stop is `a=2` (record + OD1) —
+the record session-exit publication the deferred route never queued.
+**Reported symptom reproduced by the A/B:** the same preset on the image *without* that queue call
+(`captures/s4f20-ab-prefix-02`, one-line mutation, source restored byte-identically afterwards) publishes a
+frontier-truncated root: its snapshot-derived source view holds **26 of the pass's 32** record notes
+(pitches 48–73 at ticks 282–1530; the omitted 74–79 sit at 1530–1770 against the completed-bar frontier
+1536), so the snapshot-derived display after the first overdub stop reads `visual=42` = 26 + 16 instead of
+48 — the record's last bar missing, exactly the reported class. The fixed image no longer truncates at the
+frontier.
+**Matched A/B — the reported symptom is fixed on device.** Three runs on the same preset/stimulus, two of
+them the same take shape (3-bar, notes crossing the completed-bar frontier 1536):
+
+| Run | Image | Take / frontier-crossing content | Published root | Snapshot-derived display after the first overdub stop | Verdict |
+|---|---|---|---|---|---|
+| `captures/s4f20-ab-prefix-02` | pre-fix (one-line queue call removed) | 2304, notes to 1770 | **26/32** record notes — omitted 74–79 at 1530–1770 = exactly the frontier set | `visual=42` (26 + 16) — record's last bar missing | `INCONCLUSIVE_CAPTURE`, `overall_ok=false` |
+| `captures/s4f20-lencheck-01` | **fixed** | 2304, notes to 1744 | **32/32** (`lcr,src,from=snapshot,notes=32`, `srcspan count=32`), **48** after OD1 = 32 + 16 | `DISP after overdub: frame=48 visual=32`; `srcspan count=48` | **PASS**, `overall_ok=true` |
+| `captures/s4f20-record-exit-snapshot-02` | fixed | 1536 (2-bar take, content to 1494) | 28/32 (see below) | `visual=44` | `INCONCLUSIVE_CAPTURE` on the documented residuals |
+
+So the fix's *content* effect is demonstrated on hardware, not only its mechanism: with the queue call the
+frontier-crossing record pass is published whole (32/32; `CLN reconcile record: sent=32`;
+`overdub_ok=True transport_ok=True`), without it the same shape publishes 26/32 and the display loses the
+last bar — the user-visible symptom, and the recorded "no disappearing bar-3 notes / no shortened note at
+the end of bar 2" observation matches the fixed run's numbers.
+
+**Correction — the 28/32 observation is *not* a standing defect (my earlier wording over-claimed).** The
+fixed 2-bar run (`…-snapshot-02`) held 28 of 32 record notes (missing pitches 76–79), which the
+completed-bar frontier cannot explain (its content ends at 1339, under its 1536 frontier) — but the fixed
+3-bar run reproduces neither the shape nor the shortfall (32/32), so this is **one unreproduced
+observation in 2 fixed runs**, not a second confirmed defect. Its distinguishing feature is the host
+pacing state of that run: the host's tick model reported `recStart=343 → stop 698` (355 ticks) while the
+device actually ran raw 1891 ticks — a **~5× divergence** of the wall-clock tempo proxy (all three runs
+printed `Bar sync via wall-clock tempo proxy (120.0 BPM) — Teensy clock not on USB MIDI in`). Kept open as
+"28/32 seen once"; attribution candidates stay the note-pair resolution across fragment caps or a
+loop-phase/rotation projection, and the tree's `vch`/sameid instrumentation emitted **no rows** in these
+builds, so its gate or call site needs checking before it can attribute this.
+
+**Take length is host stop-press timing — this firmware slice cannot change it.** The *same fixed image*
+produced a 2-bar take (raw 1891) and a 3-bar take (raw 1997) on consecutive runs; the length is stamped in
+the stop **admission** (`Track::beginDeferredRecordStopForSlot` → `computeRecordStopLengthTicks(raw,
+captureMaximumTick)`), i.e. before `stepDeferredRecordPublication` and its new queue call. The flip is the
+device's bar quantization: `quantizeTransportRecordLength` snaps to the nearest bar while the overshoot is
+within `ticksPerBar/2` = 384 ticks, else up — raw 1891 − 1536 = 355 ≤ 384 → **1536**; raw 1997 − 1536 = 461
+> 384 → **2304**. Every run so far stops ~0.46–0.63 bar late, i.e. right on that edge, so the 2-vs-3-bar
+outcome is the fixture's stop-press timing, not a firmware effect: the *original* 3-bar runs (raw 1989,
+2020) and the newest ones (1891, 1997, 2022) sit on the same edge, and no device-side change here moves it.
+The instrument for it is the host's strict MIDI-clock mode (`--require-midi-clock`, refuse wall-clock
+pacing), which needs the device's clock on USB MIDI in — the existing open item, unchanged by this slice.
+
+**Verdicts and gates:** the fixed 3-bar run is a **PASS** (`overall_ok=true`); the other two end
+`INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` on the *documented* pre-existing residuals
+(`persistence_stage_missing:result` — the `already_pending` decision; `overdub_stored_span_too_short` /
+`second_overdub_stored_span_too_short` — the SEVT leg-attribution decision), not on this change.
+Everything this change could regress is green in every run: record grid `count=32 delta 47-49 bad=0`,
+`CLN reconcile record: sent=32`, overdub `16/16`, second overdub `8/8`, `VERIFY display … overdub_ok=True
+transport_ok=True`, `MIDI-boundary timing … overflow_free=True call_sites=True`, `min free RAM2 77 824 B`.
+No content loss at any point: the passes hold the record notes. The device carries the **fixed** image
+(re-uploaded after the A/B; padding 1,928, floor 840). Evidence dirs:
+`captures/s4f20-record-exit-snapshot-0{1,2}`, `captures/s4f20-ab-prefix-0{1,2}`,
+`captures/s4f20-lencheck-01` (the `-01` variants of the first two are refused short-stream attaches).
+
+**2026-09-29 — `vch` geometry trace added for issue 2.** The existing session-capture `DIAG,lcr,vch,miss` now reports same-NoteId actual geometry (`sameid_n/sameid_s/sameid_e`) when prepared and native display representations disagree. This directly distinguishes a true Shorten/Hide transform from a prepared-window reconstruction mismatch. Native `test_loop_take_survival`: **141/141 passed**; `teensy41-capture-serial` build: **SUCCESS**, RAM1 padding **1,928 bytes**. No upload or firmware behavior change was performed after this instrumentation.
+
+**2026-09-29 — strict MIDI-clock HITL mode implemented.** `legacy_record_baseline.py` now supports `--require-midi-clock` / `HITL_REQUIRE_MIDI_CLOCK=1`: focused runs refuse serial/wall-clock pacing and require incoming MIDI Clock pulses. Serial RECA/BAR receipts remain validation anchors; no arbitrary sleep is used as musical timing. `TransportTickAnchor` treats the fresh RECA tick as the phase origin, and the host tests cover stale-BAR rejection. Host verification: **88/88 passed** plus syntax validation. A strict invocation reached the device's MIDI-clock-active path; its later failure was the unrelated no-clear slot-observation guard. Device execution with a real clock-feedback path remains required.
+
+**2026-09-29 — refinement of issue 2 classification.** The device observation is split: Record bar-3 notes reappear when transport stops, so their temporary absence is a playback/display-window refresh artifact, not confirmed content loss. The persistent defect is narrower: the Record-pass note crossing the bar-2 boundary is shortened after the first overdub stop and remains wrong. The native 3-bar fixture preserves that crossing note, so the remaining target is the device playback/display handoff path, not Loop canonical storage or the stopped display owner.
+
+**2026-09-29 — issue 2 focused reproduction is green in native.** Added `test_three_bar_record_first_overdub_stop_keeps_record_display_geometry` to `test_loop_take_survival`: a 2304-tick/3-bar Record take with a note crossing the 1536-tick bar boundary, followed by a first Overdub commit/stop and snapshot drain. The Record crossing note, Record bar-3 note, and overdub note all remain present with exact geometry. Focused suite: **141/141 passed**. This does not clear the device observation; it narrows it to device-path/setup state or a path not represented by the Loop/display owner fixture. No firmware edit made.
+
+**2026-09-29 — S4f.22 issue classification from the fresh device run.** Four observations are pinned before diagnosis: **(1) setup timing** — Record started at tick 379 and stopped at tick 2373, so the take is 2304 ticks/3 bars although the fixture expected 2; the note stream was started too late. **(2) candidate firmware defect** — after the first overdub stop (`Reentry window open` → `Reentry released`), the display loses Record-pass material from bar 3 onward and shortens a note crossing bar 2; this requires a focused playback/display reproduction and is not dismissed as setup. **(3) setup sequencing** — after the second overdub, the log has no `MIDI Button A: Stop Overdub`; the next gesture is consumed as `Overdub session undo`. **(4) setup consequence** — the intended global undo/redo never reaches global `U:` history; the subsequent double/triple gestures operate on the overdub session, so the observed `U:02`/missing `U:03` cannot yet diagnose global undo numbering. No firmware change made from these observations.
+
+**2026-09-29 — S4f.22 device baseline and content parity: scenario pass, parity blocker.** Uploaded the approved `teensy41-capture-serial` image and ran the authoritative baseline on track 5 / slot 1 / MIDI channel 1 with a forced fresh boot. Managed baseline: **exit 0 / Result PASS / overall_ok=true**; RECA 2, RECS 8; record grid 32/32; persistence `result=ok`; timing `overflow_free=true`, `call_sites=true`; RAM2 minimum 77,824 B. Read-only content dump/playback verification then **FAILED** inventory parity on every cycle (`inventory_equal=false`), while `storage_matches_effective=true` for 152 effective rows and `max_bar_refs=72` (`capacity_path_exercised=false`). S4f.22 remains open: do not reinterpret this as a firmware contradiction or weaken the content oracle; the next work is to diagnose the playback-capture mismatch.
+
+**2026-09-29 — S4f.22 host integration gate verified.** Focused Python transition/integrity/drain tests: **98/98 passed**. Focused native `test_capture_ring` + `test_shared_capture_finalization`: **62/62 passed**. OpenSpec validation passed. The host-side S4f.22 contract, mutation, capture-accounting, and deferred Record oracle paths are verified; the S4f.22 checkbox remains open only for the separate response-driven device acceptance, which is still parked and must not be substituted by host evidence.
+
+**2026-09-29 — S4f runtime verification resumed after the scope reset.** Reused the existing production implementation; no firmware edit was needed in this continuation. Focused `test_shared_capture_finalization`: **54/54 passed**. Full `pio test -e native`: **2,625 passed / 7 skipped** on the final run. `pio run -e teensy41-capture-serial`: **SUCCESS**, RAM1 padding **1,928 bytes** (approved floor 840). This verifies the current native/build path for S4f.17–S4f.21; parent task checkboxes remain open where their integration/device acceptance still requires separate evidence. HITL/content-evidence remains parked.
+
+**2026-09-29 — runtime scope reset: S4f implementation is primary; HITL acceptance is parked.** The active implementation scope is the runtime OpenSpec `runtime-working-set-ownership`, specifically **S4f.17 — common interval and stop admission**, **S4f.18 — bounded Record preparation**, **S4f.19 — first-bar and onward playback handoff**, **S4f.20 — atomic publication and retirement**, **S4f.21 — Record-stop caller migration**, and **S4f.22 — shared finalization integration gates**. Native fixtures and the `teensy41-capture-serial` build are the next verification gates. Response-driven HITL/content-evidence work remains recorded, but is parked and must not block these runtime slices. Do not use an unstable HITL run to redefine a native/runtime verdict; device acceptance resumes only when a named S4f gate requires it.
+
 **2026-09-29 — content-evidence decision proposal: one host fix landed, two decisions open.**
 
 **Decision requested.** **Accept the landed REVT take-bounding fix and approve its release**; pick a
@@ -4352,30 +4492,18 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-### S4f.21 — preserve Record playback across cache invalidation (2026-09-29)
+### S4f.17–S4f.21 — connected shared capture finalization, native-first (2026-09-29)
 
-Investigate and fix the run-08 Record stop edge's unintended STOPPED retarget in
-`invalidatePlaybackMergedMidiEvents`, using the real finalization fixture before
-firmware edits. Preserve explicit transport Stop and the existing overdub recovery
-behavior. Contract and oracle are appended to the cutover packet.
+Continue the runtime OpenSpec implementation in dependency order. **S4f.17 — common interval and stop admission** is the production admission/bind and caller-migration track; **S4f.18 — bounded Record preparation** is the preparation/publication worker; **S4f.19 — first-bar and onward playback handoff** is the playback continuity track; **S4f.20 — atomic publication and retirement** owns the remaining deferred Record residuals; and **S4f.21 — Record-stop caller migration** closes the production continuations. Use the existing execution packets and production fixtures. The next gates are focused native tests, full `pio test -e native`, and the `teensy41-capture-serial` build. Do not wait for an unstable device/HITL run to advance a host-verifiable gate.
 
+### S4f.22 — shared finalization integration gates (after the runtime slice)
 
-### S4f.22 — same-session Record evidence drain (2026-09-29)
+Run the contract matrix, mutation proofs, and integration checks only after the S4f.17–S4f.21 runtime path is complete. Device acceptance is a later, named gate; no upload or destructive device operation is implied by this scope.
 
-Device counters identify undrained RECS in run 08. Extend baseline end-of-run
-cleanup to stop and retrieve evidence before closing MIDI or the managed reader;
-use fenced stopped-only replies, bounded repeated drains and counter/log
-reconciliation. Preserve the failed leg verdict. This host-only follow-up is
-specified in the cutover packet; it does not change the always-playing measured
-sequence or certify persistence completion.
+### Parked — response-driven HITL/content-evidence follow-up
 
-### S4f.22 — Record evidence loss accounting (2026-09-29)
+The response-driven HITL change and the S4f.22 content-evidence investigations remain recorded for later device validation. They are not the current implementation blocker. Do not alter runtime semantics to compensate for unstable HITL evidence; reopen this work only for a named acceptance gate or a separately approved host fix.
 
-Continue the cutover packet's unreadable-device-evidence blocker: extend the
-existing capture ring's per-family outcome counters and make critical enqueue
-refusal visible to capture integrity. Preserve eviction policy until measured
-counters establish the loss path. No device clear, upload, or acceptance in this
-slice. Contract and oracle: [cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md#s4f22--record-evidence-loss-accounting-2026-09-29).
 
 
 ### S4f.17–S4f.21 — connected shared capture finalization (authorized; 2026-09-27)

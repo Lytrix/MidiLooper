@@ -1,5 +1,34 @@
 # Deliverable Tracking (Main vs Refinement)
 
+**2026-09-29 — S4f.20 slice: the deferred Record publication queues its own session-exit snapshot.** The
+deferred route (S4f.17/S4f.21) mirrored the inline Record stop's undo/display/scratch/persistence side
+effects but not `Loop::queueSessionExitSnapshot`, the only enumeration of the committed Record pass into
+the pending snapshot box; a mid-bar take therefore published the truncated live-record candidate as a
+*current* root, which is the "issue 2" device symptom (Record-pass last bar missing from the display,
+returning on an overdub undo). Fixed in `Track::stepDeferredRecordPublication` (mode-correct reason), with
+`Loop::queueSessionExitSnapshot` taking a pending session-exit receipt only for an *overdub* exit, so a Record
+exit always enumerates its own just-committed pass (DEC-068 receipt identity); decision **DEC-094**. Fixtures:
+`test_deferred_record_publication_queues_the_record_session_exit_snapshot` (red-proved by removing the call),
+`test_record_session_exit_with_a_truncated_candidate_keeps_the_take_tail` and
+`test_record_session_exit_ignores_a_pending_overdub_receipt` (the latter red-proved by restoring the unfiltered
+receipt selection). Focused **198/198**; full native **2 636 cases / 2 629 succeeded / 7 skipped / 0 failed**;
+`teensy41-capture-serial` **SUCCESS**, RAM1 padding **1,928** (floor 840, unchanged). **Device verified
+2026-09-29** on the authoritative base HITL (`STIM-BASE-2-2-01`, reused), three runs: the fixed image
+**passes** (`overall_ok=true`) and publishes a **complete** root — `from=snapshot,notes=32`, `srcspan
+count=32`, `48` after the first overdub (32 + 16), `DISP frame=48 visual=32`; the fix's mechanism shows as a
+`kind=publish,a=1` root right after the record stop, *before* the first overdub. On the **matched**
+pre-fix A/B (both 3-bar takes whose notes cross the completed-bar frontier 1536) the same stimulus
+reproduces the reported symptom: **26/32** Record notes (omitted 74–79 at ticks 1530–1770 = the frontier
+set) and `visual=42` instead of 48. Residuals, all open and *not* this slice's: (a) **28/32 seen once**
+(fixed 2-bar run; not reproduced in the fixed 3-bar run, which gave 32/32) — that run's distinguishing
+feature is a ~5× divergence of the host's wall-clock tempo proxy; (b) **take length is host stop-press
+timing** — the same fixed image produced 2-bar (raw 1891, inside the 384-tick bar grace) and 3-bar (raw
+1997) takes, since the length is stamped in the stop *admission* before the publication queue; the
+instrument for the residual ~0.5-bar late stop is the host's strict `--require-midi-clock` mode; (c) the
+DEC-073 coverage watermark is written without a committed-inventory completeness check, and
+`queueSessionExitSnapshot` re-arms a parked box's companion batch.
+[Plan](../Plans/record_session_exit_snapshot_queue_deferred_publication_bugfix.md).
+
 **2026-09-29 — S4f.22 device legs: the Record leg passes; capture loss is still under attribution.**
 Uploaded the candidate (`teensy41-capture-serial`, RAM1 padding 2,072) and ran the registered
 base preset. Attempt **a1** (fresh upload + boot reset) is a **PASS**: integrity COMPLETE,

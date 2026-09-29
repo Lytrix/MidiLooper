@@ -105,9 +105,9 @@ class TransportTickAnchor:
         lines = collector.snapshot()
         bar_tick = parse_latest_cap_bar_tick(lines, after_index=after_index)
         reca_tick = parse_latest_cap_reca_tick(lines, after_index=after_index)
-        tick = bar_tick if bar_tick is not None else reca_tick
-        if tick is None:
-            tick = fallback_tick if fallback_tick is not None else 0
+        # A fresh Record-start receipt is the phase origin. Pre-record BAR rows can be
+        # stale and would shift the stop schedule by the time already elapsed before RECA.
+        tick = fallback_tick if fallback_tick is not None else (bar_tick if bar_tick is not None else reca_tick)
         return cls(
             anchor_tick=tick,
             anchor_mono=time.monotonic(),
