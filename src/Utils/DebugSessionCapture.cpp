@@ -119,6 +119,14 @@ struct CaptureRing {
   uint32_t silentWipes = 0;
   uint32_t silentWipeBytes = 0;
   uint32_t silentWipeFirstUs = 0;
+  // Boot-lifetime totals. The `*Pending`/count fields above are cleared when their notice is
+  // emitted, so they answer "is a notice owed", not "how much was lost". These never reset, and
+  // they are what `RING,stats` reports: without them a finished run reads `shed=0 tierA_evict=0`
+  // even when the ring evicted all session.
+  uint32_t shedTotal = 0;
+  uint32_t tierAEvictedTotal = 0;
+  uint32_t overflowTotal = 0;
+  uint32_t criticalRejectedTotal = 0;
   bool wipedPending = false;
   RecordFamilyStats recordStart;
   RecordFamilyStats recordStop;
@@ -364,6 +372,7 @@ void noteTimingShed() {
   if (sCaptureRing.timingShedPending != UINT32_MAX) {
     ++sCaptureRing.timingShedPending;
   }
+  incrementSaturated(sCaptureRing.shedTotal);
 }
 
 /// Account for a ring reset that discards content without an eviction/shed outcome. The bytes are
@@ -409,12 +418,14 @@ void discardOldestRecord(CaptureLineTier::EvictionKind kind) {
     case CaptureLineTier::EvictionKind::TierAText:
       sCaptureRing.tierADegradedPending = true;
       ++sCaptureRing.tierAEvictedCount;
+      incrementSaturated(sCaptureRing.tierAEvictedTotal);
       if (sCaptureRing.tierAFirstEvictedUs == 0) {
         sCaptureRing.tierAFirstEvictedUs = micros();
       }
       break;
     case CaptureLineTier::EvictionKind::CriticalText:
       sCaptureRing.overflowPending = true;
+      incrementSaturated(sCaptureRing.overflowTotal);
       if (sCaptureRing.overflowFirstEvictedUs == 0) {
         sCaptureRing.overflowFirstEvictedUs = micros();
       }
@@ -436,6 +447,7 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
       if (sCaptureRing.criticalRejectedPending == 0)
         sCaptureRing.criticalFirstRejectedUs = micros();
       incrementSaturated(sCaptureRing.criticalRejectedPending);
+      incrementSaturated(sCaptureRing.criticalRejectedTotal);
     } else {
       noteTimingShed();
     }
@@ -864,10 +876,10 @@ SC_MEM_ATTR void emitIdentityPathStats() {
                 static_cast<unsigned long>(sCaptureRing.appendsOk),
                 static_cast<unsigned long>(sCaptureRing.flushCalls),
                 static_cast<unsigned long>(sCaptureRing.flushTransmitted),
-                static_cast<unsigned long>(sCaptureRing.timingShedPending),
-                static_cast<unsigned long>(sCaptureRing.tierAEvictedCount),
-                static_cast<unsigned long>(sCaptureRing.overflowPending ? 1 : 0),
-                static_cast<unsigned long>(sCaptureRing.criticalRejectedPending),
+                static_cast<unsigned long>(sCaptureRing.shedTotal),
+                static_cast<unsigned long>(sCaptureRing.tierAEvictedTotal),
+                static_cast<unsigned long>(sCaptureRing.overflowTotal),
+                static_cast<unsigned long>(sCaptureRing.criticalRejectedTotal),
                 static_cast<unsigned long>(sCaptureRing.silentWipes),
                 static_cast<unsigned long>(sCaptureRing.silentWipeBytes));
 }
