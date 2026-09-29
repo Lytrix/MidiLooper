@@ -344,6 +344,8 @@ constexpr uint8_t kLiveCaptureBit = static_cast<uint8_t>(WorkingSetRole::LiveCap
 void setUp() {
   nativeTransportRunning = true;
   g_nativeSilenceTrackCalls = 0;
+  g_nativeAdoptedMasterLength = 0;
+  g_nativeAdoptedMasterLengthCalls = 0;
   trackManager.~TrackManager();
   LoopEventStore::resetPoolForTests();
   new (&trackManager) TrackManager();
@@ -1296,6 +1298,82 @@ void test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one() {
                            "the switched-away interval's take must still commit its pass");
 }
 
+/// **S4f.21 — the master length is adopted from the interval's PUBLISHED geometry.**
+///
+/// The Record stop edge stamps a *predicted* length from the maintained maximum-tick summary so the
+/// caller continuations stay well defined. That prediction is not the result: an all-filtered take
+/// publishes zero. The manager therefore holds the obligation until the interval's job publishes or
+/// is superseded, and reads the finalized geometry exactly once at a dispatch boundary.
+void test_record_stop_adopts_published_geometry_not_the_stop_edge_prediction() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  clockManager.assignCurrentTickSilently(0);
+  track.startRecording(0);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::isRecording(track));
+  inputNote(60, 12, 96);
+
+  clockManager.assignCurrentTickSilently(768);
+  // The **production transport-stop route**: the same continuation family as `stopRecordingTrack`,
+  // and the route that finalises a live capture when the transport stops.
+  trackManager.handleTransportStop();
+
+  // The interval is admitted, so its geometry is not decided yet: the prediction must not be
+  // adopted as the transport's master length.
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                           "precondition: the Record stop must be deferred");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, g_nativeAdoptedMasterLengthCalls,
+                                 "the stop edge must not latch its predicted length");
+
+  for (int turn = 0; turn < 8192 && track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  trackManager.servicePendingRecordStopGeometry();
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, g_nativeAdoptedMasterLengthCalls,
+                                 "the published geometry must be adopted exactly once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(768, g_nativeAdoptedMasterLength,
+                                   "the adopted master length must be the published geometry");
+  TEST_ASSERT_TRUE_MESSAGE(track.getLoop(0).passes.hasRecordPass(),
+                           "precondition: the take must have published a pass");
+}
+
+/// **S4f.21 — a take that publishes nothing must not set the master length.**
+///
+/// The control for the fixture above, and the reason the obligation exists: the stop edge's
+/// prediction for this take is 768 ticks (one quantized bar), while the minimum-length policy
+/// removes its only pair, so the published geometry is zero. Reading the prediction at the stop
+/// edge — which is what the pre-S17.3 continuation did — would adopt a length the worker never
+/// publishes and then auto-align the emptied interval with it.
+void test_filtered_record_take_publishes_no_master_length() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  noteMinLengthTicks = 48;
+  noteMinLengthRemoveEnabled = true;
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  clockManager.assignCurrentTickSilently(0);
+  track.startRecording(0);
+  inputNote(60, 12, 32);  // 20 ticks long: below the minimum, so the pair is filtered out.
+
+  clockManager.assignCurrentTickSilently(768);
+  trackManager.handleTransportStop();
+  for (int turn = 0; turn < 8192 && track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  trackManager.servicePendingRecordStopGeometry();
+
+  TEST_ASSERT_FALSE_MESSAGE(track.getLoop(0).passes.hasRecordPass(),
+                            "precondition: the take must have been filtered out");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      0, g_nativeAdoptedMasterLengthCalls,
+      "a take that published nothing must not adopt a master length from the stop-edge prediction");
+}
+
 /// **S4f.3 — the successor's take must COMMIT with content, not merely start.**
 ///
 /// Encodes a real device failure. On hardware the whole handoff chain worked -- A's finalizer outstanding,
@@ -2055,6 +2133,8 @@ int main() {
   // The successor's take must COMMIT with content -- the device failure a start marker hid.
   RUN_TEST(test_the_successor_take_commits_with_content_after_a_transport_stop);
   RUN_TEST(test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one);
+  RUN_TEST(test_record_stop_adopts_published_geometry_not_the_stop_edge_prediction);
+  RUN_TEST(test_filtered_record_take_publishes_no_master_length);
   // S4b.1 contract check 7 coverage, and the exactly-once half the committed carrier was missing.
   RUN_TEST(test_a_cross_track_successor_starts_while_the_predecessor_finalizes);
   RUN_TEST(test_a_cleared_successor_is_a_record_target_while_the_predecessor_finalizes);

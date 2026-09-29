@@ -108,6 +108,12 @@ bool nativeTransportRunning = true;
 /// Counts `Track::silenceTrackMidiOutput()` (defined in `off_path_deps.h`, which is included much
 /// later). Declared here so `setUp` can reset it.
 unsigned g_nativeSilenceTrackCalls = 0;
+/// S4f.21: the master length the manager **adopted** from a finalized Record stop. The manager's own
+/// `masterLoopLength` is private, and this suite stubs `setMasterLoopLength` (the track-stop route's
+/// neighbour), so the stub records the adopted value and how many times it was adopted. Declared here
+/// so `setUp` can reset it. See `off_path_deps.h`.
+uint32_t g_nativeAdoptedMasterLength = 0;
+unsigned g_nativeAdoptedMasterLengthCalls = 0;
 bool ClockManager::isTransportRunning() const { return nativeTransportRunning; }
 // Match production: a stopped clock arms; a running clock quantizes the start.
 bool ClockManager::shouldQuantizeRecordStart() const { return isTransportRunning(); }

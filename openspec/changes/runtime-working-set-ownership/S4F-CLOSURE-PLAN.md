@@ -178,11 +178,22 @@ and dropped the take. Fixture `test_record_switch_respects_a_retained_stop_and_p
 the guard-removal mutation fails it. Full native 2 613 cases / 2 606 succeeded / 7 skipped;
 capture-serial build PASS, RAM1 padding 1 976.
 
-**S17.3b–S17.5 remain open.** The manager continuations (`stopRecordingTrack`,
-`finalizeCaptureAndSelectSlot`, `stopAllTracks`) still read the stop-edge-stamped `loopLengthTicks`
-synchronously; that stamp is the predicted length, so an all-filtered take can still set
-`masterLoopLength` from geometry that is never published. Those callers must consume a
-job-qualified geometry-ready result.
+**S17.3b — job-qualified geometry result: done.** `Track::recordStopGeometryForSlot` reports
+`Final` (no stop in flight for that slot, so the length is authoritative) or `PendingStop` (an
+admitted job or a retained obligation still owns it). `stopRecordingTrack`,
+`finalizeCaptureAndSelectSlot`'s Record branch and `handleTransportStop` adopt the geometry once,
+only when final; until then they retain a per-track obligation that
+`servicePendingRecordStopGeometry` consumes at the next dispatch boundary, and auto-align goes
+through the new slot-qualified `Track::setLoopLengthForSlot`. This closes a real defect: the stop
+edge stamps the *predicted* length, so the synchronous read adopted a `masterLoopLength` from a
+take the minimum-length policy then deleted and auto-aligned the emptied interval with it.
+Fixtures `test_record_stop_adopts_published_geometry_not_the_stop_edge_prediction` and
+`test_filtered_record_take_publishes_no_master_length`; reverting the transport continuation to the
+stop-edge read fails both. `scripts/ram1_budget.json` was re-based deliberately (+32 B DTCM for the
+obligation, offset by moving the continuation to FLASH: padding 1,976 → 1,992), with the reason
+recorded in the cutover packet.
+
+**S17.4–S17.5 remain open.**
 
 ## 4. Finish correlated observations and correct the actual test recipes
 

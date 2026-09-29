@@ -57,14 +57,19 @@ void TrackManager::handleTransportStop() {
       // Stop recording BEFORE sendAllNotesOff(): finalizePendingNotes() must record
       // note-offs for still-held notes, but sendAllNotesOff() clears pendingNotes,
       // which left the last note-on orphaned so validation removed it.
+      // S4f.21: capture the interval's slot before the stop moves state, then adopt the
+      // **job-qualified** geometry. The transport stop is the same continuation as
+      // `stopRecordingTrack`, so it holds the same obligation instead of latching the stop edge's
+      // predicted length (an all-filtered take publishes zero).
+      const uint8_t captureSlot = t.getActiveLoopIndex();
       t.stopRecordingToStopped(currentTick);
       t.sendAllNotesOff();
-      uint32_t recordedLength = t.getLoopLength();
-      if (recordedLength > 0 && masterLoopLength == 0) {
-        setMasterLoopLength(recordedLength);
-      }
-      if (autoAlignEnabled) {
-        t.setLoopLength(masterLoopLength);
+      uint32_t recordedLength = 0;
+      if (t.recordStopGeometryForSlot(captureSlot, recordedLength) ==
+          Track::RecordStopGeometryState::Final) {
+        applyRecordStopGeometry(i, captureSlot, recordedLength);
+      } else {
+        retainRecordStopGeometryObligation(i, captureSlot);
       }
     } else if (t.isOverdubbing() || t.hasPendingDeferredOverdubStop()) {
       // Same order as record: finalize held notes before sendAllNotesOff()
@@ -112,6 +117,9 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
   const uint32_t tracksStartUs = micros();
 #endif
   handlePendingRecordStart(currentTick);
+  // S4f.21: adopt any Record-stop geometry whose interval has since been published or superseded.
+  // The obligation is created at the stop edge, where the geometry was still a prediction.
+  servicePendingRecordStopGeometry();
 
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
 #if RUNTIME_TIMING_ENABLED

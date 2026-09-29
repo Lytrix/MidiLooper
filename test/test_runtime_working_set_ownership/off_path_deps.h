@@ -85,7 +85,14 @@ void Track::silenceTrackMidiOutput() { ++g_nativeSilenceTrackCalls; }
 // fail-closed, as do the play/stop neighbours above.
 #if defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
 void Track::clearQueuedPlaybackStart() {}
-void TrackManager::setMasterLoopLength(uint32_t) {}
+// S4f.21: record the adopted value rather than dropping it, so a fixture can assert that the master
+// length came from the interval's *published* geometry. The real `masterLoopLength` is private and
+// this suite links the stop route, not the policy TU that owns its accessor, so the stub is the
+// observable boundary (matching the `g_nativeSilenceTrackCalls` convention above).
+void TrackManager::setMasterLoopLength(uint32_t length) {
+  g_nativeAdoptedMasterLength = length;
+  ++g_nativeAdoptedMasterLengthCalls;
+}
 #else
 void Track::clearQueuedPlaybackStart() { OFF_PATH(); }
 void TrackManager::setMasterLoopLength(uint32_t) { OFF_PATH(); }

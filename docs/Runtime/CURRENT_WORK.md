@@ -35,11 +35,29 @@ obligation superseded and dropped the take. Fixture
 mutation fails it. Full native **2 613 cases, 2 606 succeeded, 7 skipped**; strict matrix 45/45;
 capture-serial **PASS, RAM1 padding 1 976**.
 
-**Open:** S17.3b — `stopRecordingTrack`, `finalizeCaptureAndSelectSlot` and `stopAllTracks` still
-read the stop-edge-stamped `loopLengthTicks` synchronously, so an all-filtered take can set
-`masterLoopLength` from geometry that is never published; they must consume a job-qualified
-geometry-ready result. Then S17.4 — the S4f.20 residuals — and S17.5 — the enforced gate and
-mutations.
+**2026-09-29 — S4f.21 S17.3b — job-qualified Record-stop geometry result.** `Track::recordStopGeometryForSlot`
+reports `Final` (no stop in flight for that slot; the committed length is authoritative) or
+`PendingStop` (an admitted job or a retained obligation still owns the slot's geometry). It is
+mode-neutral and slot-scoped. `stopRecordingTrack`, `finalizeCaptureAndSelectSlot`'s Record branch
+and `handleTransportStop` (there is no separate `stopAllTracks` symbol) now adopt the geometry
+**once**, only when final; until then they retain a per-track obligation
+(`pendingRecordGeometryMask` + `pendingRecordGeometrySlot`) consumed by
+`servicePendingRecordStopGeometry` at the next dispatch boundary, and auto-align uses the new
+slot-qualified `Track::setLoopLengthForSlot` because the obligation's slot may no longer be active.
+This closes a real defect: the stop edge stamps the *predicted* length, so the old synchronous read
+adopted a `masterLoopLength` from a take the minimum-length policy then deleted, and auto-aligned
+the emptied interval with it. Fixtures
+`test_record_stop_adopts_published_geometry_not_the_stop_edge_prediction` and
+`test_filtered_record_take_publishes_no_master_length`; reverting the transport continuation to the
+stop-edge read fails both with the defect message. `scripts/ram1_budget.json` re-based deliberately
+(+32 B DTCM for the obligation, offset by moving the continuation to FLASH: padding 1,976 → 1,992;
+`itcm_bytes` and `padding_floor` unchanged), reason recorded in the cutover packet.
+Full native **2 613 cases, 2 606 succeeded, 7 skipped**; strict matrix 45/45; capture-serial
+**PASS**.
+
+**Open:** S17.4 — the S4f.20 residuals (the deferred revts validation's active-slot dependence and
+`invalidateCaches()` parity) — and S17.5 — the enforced strict gate, mutations, RAM1/PSRAM
+accounting and doc closeout.
 [Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md).
 
 **2026-09-28 — S4f.19 §2 — first-bar and onward playback handoff: delta work complete.**

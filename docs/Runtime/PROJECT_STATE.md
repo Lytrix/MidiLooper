@@ -1,5 +1,23 @@
 # Project state (execution context)
 
+**2026-09-29 — S4f.21 S17.3b — job-qualified Record-stop geometry result.** `Track::recordStopGeometryForSlot`
+reports `Final` (no stop in flight for that slot; the committed length is authoritative) or
+`PendingStop` (an admitted job or a retained obligation still owns the slot's geometry), and is
+mode-neutral and slot-scoped. `stopRecordingTrack`, `finalizeCaptureAndSelectSlot`'s Record branch
+and `handleTransportStop` now adopt the geometry once, only when final; until then they retain a
+per-track obligation consumed by `servicePendingRecordStopGeometry` at the next dispatch boundary,
+and auto-align uses the new slot-qualified `Track::setLoopLengthForSlot`. This closes a real defect:
+the stop edge stamps the *predicted* length, so the synchronous read adopted a `masterLoopLength`
+from a take the minimum-length policy then deleted and auto-aligned the emptied interval with it.
+Fixtures `test_record_stop_adopts_published_geometry_not_the_stop_edge_prediction` and
+`test_filtered_record_take_publishes_no_master_length`; reverting the transport continuation to the
+stop-edge read fails both. `scripts/ram1_budget.json` re-based deliberately (+32 B DTCM for the
+obligation, offset by moving the continuation to FLASH: padding 1,976 → 1,992; `itcm_bytes` 12 banks
+and `padding_floor` 840 unchanged). Full native **2 613 cases, 2 606 succeeded, 7 skipped**; strict
+matrix 45/45; `teensy41-capture-serial` **PASS**. Remaining: S17.4 (the S4f.20 residuals —
+deferred revts validation, `invalidateCaches()` parity) and S17.5 (enforced gate, mutations,
+RAM1/PSRAM accounting, doc closeout).
+
 **2026-09-29 — S4f.21 S17.3a — switch guard for a retained Record stop.** `finalizeCaptureAndSelectSlot`'s
 Record branch now mirrors the overdub branch's slot-scoped rule: an **admitted** Record job carries
 its own identity and does not hold the active slot (the switch commits; a different-slot successor

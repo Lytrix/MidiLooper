@@ -2760,10 +2760,22 @@ own execution packet and records fixture/native/build/device results separately.
       (refusal + unchanged active slot + retained obligation + post-bind commit + predecessor still
       finalizing + its pass still committed); the guard-removal mutation fails it. Full native 2 613 cases /
       2 606 succeeded / 7 skipped; capture-serial build PASS, RAM1 padding 1 976.
-      **Still open:** the geometry-result half — `stopRecordingTrack`, `finalizeCaptureAndSelectSlot` and
-      `stopAllTracks` still read the stop-edge-stamped `loopLengthTicks` synchronously, so an all-filtered
-      take can set `masterLoopLength` from a length that is never published. Those callers must consume a
-      job-qualified geometry-ready result instead.
+      **2026-09-29 S17.3b — job-qualified geometry result: done.** `Track::recordStopGeometryForSlot`
+      reports `Final` (no stop in flight for that slot; the length is authoritative) or `PendingStop`
+      (an admitted job or a retained obligation still owns it). It is mode-neutral and slot-scoped.
+      `stopRecordingTrack`, `finalizeCaptureAndSelectSlot`'s Record branch and `handleTransportStop`
+      (there is no separate `stopAllTracks` symbol) adopt the geometry once, only when final; until
+      then they retain a per-track obligation consumed by `servicePendingRecordStopGeometry` at the
+      next dispatch boundary, and auto-align uses the new slot-qualified `Track::setLoopLengthForSlot`
+      because the obligation's slot may no longer be active. This is a real fix, not tidying: the stop
+      edge stamps the *predicted* length, so the old read adopted a `masterLoopLength` from a take the
+      minimum-length policy then deleted. Fixtures
+      `test_record_stop_adopts_published_geometry_not_the_stop_edge_prediction` and
+      `test_filtered_record_take_publishes_no_master_length`; reverting the transport continuation to
+      the stop-edge read fails both. Full native 2 613 cases / 2 606 succeeded / 7 skipped;
+      capture-serial build PASS. `scripts/ram1_budget.json` re-based deliberately (+32 B DTCM for the
+      obligation, offset by moving the continuation to FLASH: padding 1,976 -> 1,992); reason recorded
+      in the packet. No admission/publication behaviour changed by this sub-slice.
 - [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
       full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with
