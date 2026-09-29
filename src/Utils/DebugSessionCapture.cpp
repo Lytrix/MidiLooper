@@ -61,6 +61,9 @@ struct CaptureRecordHeader {
 constexpr size_t kCaptureRingBytes = 1024 * 1024;
 constexpr size_t kCaptureRingPressureBytes = (kCaptureRingBytes * 3) / 4;
 constexpr size_t kMaxCaptureTextBytes = 192;
+// Ring slice only Record rows may consume. A take's start/stop/stage/identity rows are at most a
+// few kilobytes, so 32 KiB holds them many times over while costing ordinary traffic 3% of the ring.
+constexpr size_t kRecordReserveBytes = 32 * 1024;
 
 struct RecordFamilyStats {
   uint32_t entered = 0;
@@ -406,7 +409,18 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
   const CaptureRecordHeader header{static_cast<uint8_t>(type), payloadLen};
   const size_t total = recordTotalBytes(header);
   if (total > sCaptureRing.capacity) return reject();
-  while (sCaptureRing.used + total > sCaptureRing.capacity) {
+  // A take's Record rows are its only evidence of geometry and persistence target, so ordinary
+  // traffic may not consume the last `kRecordReserveBytes` of the ring. Keeping that slice free
+  // means a start/stop/identity row is appended into reserved space instead of displacing an
+  // earlier one -- the displacement that cost a whole RECS family when the ring filled during a
+  // dense run. Ordinary rows still cycle: they displace an ordinary head at the ceiling, so the
+  // reserved slice stays free and the ring cannot wedge. Only Record rows may use the reserve,
+  // and a ring too small to hold one is unchanged.
+  const size_t ceiling =
+      (family != nullptr || sCaptureRing.capacity <= kRecordReserveBytes)
+          ? sCaptureRing.capacity
+          : sCaptureRing.capacity - kRecordReserveBytes;
+  while (sCaptureRing.used + total > ceiling) {
     const bool headTierA = headRecordIsTierAText();
     const bool headCritical = headRecordIsCriticalText();
     if (!CaptureLineTier::incomingMayDisplace(incomingTierA, incomingCritical, headTierA,

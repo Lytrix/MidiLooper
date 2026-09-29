@@ -35,13 +35,21 @@ inline bool tagStartsWith(const char* line, const char* prefix) {
   return strncmp(tag, prefix, strlen(prefix)) == 0;
 }
 
+/// The one-shot Record receipts: the take's start (`RECA,`), its stop and stage rows (`RECS,`) and
+/// its slot identity (`RID,`). They are the only evidence of a take's geometry and persistence
+/// target, which is why the ring reserves space for them instead of letting ordinary traffic, or
+/// another take's rows, displace them.
+inline bool isRecordFamilyLine(const char* line) {
+  return tagStartsWith(line, "RID,") || tagStartsWith(line, "RECA,") ||
+         tagStartsWith(line, "RECS,");
+}
+
 // One-shot root-cause and Record receipts have priority over ordinary Tier-A traffic.
 // They are bounded per take, not per session: another critical row may still evict
 // them, and that loss must invalidate capture integrity. Classification alone is
 // not evidence that the record family reached or survived the ring.
 inline bool isCriticalLine(const char* line) {
-  return tagStartsWith(line, "ODUB,stop,bridge_begin,") || tagStartsWith(line, "RID,") ||
-         tagStartsWith(line, "RECA,") || tagStartsWith(line, "RECS,");
+  return tagStartsWith(line, "ODUB,stop,bridge_begin,") || isRecordFamilyLine(line);
 }
 
 /// What a full capture ring must displace.
