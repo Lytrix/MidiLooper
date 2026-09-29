@@ -147,6 +147,11 @@ struct CaptureRing {
 
 CaptureRing sCaptureRing;
 
+/// True while `flushCaptureBuffer` is walking the ring. `Serial` output can re-enter this module
+/// through the Teensy `yield()`, and a nested append that evicts would move the head under the
+/// flush; a nested flush would do the same. Both are refused while set.
+bool sFlushInProgress = false;
+
 SC_MEM_ATTR void incrementSaturated(uint32_t& value) {
   if (value != UINT32_MAX) ++value;
 }
@@ -452,6 +457,13 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
           ? sCaptureRing.capacity
           : sCaptureRing.capacity - kRecordReserveBytes;
   while (sCaptureRing.used + total > ceiling) {
+    // Never move the head while a flush is walking it. `Serial.printf`/`println` can call the
+    // Teensy `yield()`, which services the USB-host MIDI task; a message delivered there appends
+    // to this ring. An eviction from that nested append advanced the head mid-record, so the
+    // flush's next header read was garbage and the whole ring was reset -- 10 355 bytes thrown
+    // away in `captures/s4f22-step3-base-04`, in the middle of a REVT burst, with every other
+    // loss counter at zero. A nested append that cannot fit is refused and counted instead.
+    if (sFlushInProgress) return reject();
     const bool headTierA = headRecordIsTierAText();
     const bool headCritical = headRecordIsCriticalText();
     if (!CaptureLineTier::incomingMayDisplace(incomingTierA, incomingCritical, headTierA,
@@ -1358,6 +1370,15 @@ SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t co
 }
 
 void flushCaptureBuffer(size_t maxRecords) {
+  // A nested flush would fight the outer one for the head for the same reason a nested append
+  // must not evict (see `appendCaptureRecord`): `Serial` writes can reach `yield()`.
+  if (sFlushInProgress) {
+    return;
+  }
+  sFlushInProgress = true;
+  struct FlushGuard {
+    ~FlushGuard() { sFlushInProgress = false; }
+  } flushGuard;
   incrementSaturated(sCaptureRing.flushCalls);
   // Never emit capture notices via USB Serial under timing-critical budgets.
   if (maxRecords > 8) {
