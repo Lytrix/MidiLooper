@@ -95,6 +95,15 @@ struct TrackCaptureStopTestAccess {
   static void setDeferredRevtsScanMode(Track& t, bool chunkScan) {
     t.deferredRecordRevtChunkScan = chunkScan;
   }
+  static std::vector<uint16_t> deferredRevtChunkIds(const Track& t) {
+    return std::vector<uint16_t>(t.deferredRecordRevtChunkRefs.begin(),
+                                 t.deferredRecordRevtChunkRefs.end());
+  }
+  /// The producer's own directory release, as the publication/retirement path performs it.
+  static void releaseRecordPassDirectory(Track& t, uint8_t slot) {
+    LoopEventStore::releaseChunkRefs(t.getLoop(slot).passes.recordPass.committedChunkIds);
+    t.getLoop(slot).passes.recordPass.committedChunkIds.clear();
+  }
   /// The transport-stop retarget, as `Track::stopOverdubbingToStopped` delivers it to a pending job.
   static void retargetPendingStopToStopped(Track& t) {
     t.requestDeferredOverdubStopToStopped();
@@ -1840,6 +1849,43 @@ void test_playing_record_scan_drains_the_bounded_walk_and_defers_the_merge() {
                             "the bounded chunk walk must drain during playback");
 }
 
+// The queued scan borrows the producer's chunk ids, and the publication/retirement that runs before
+// the deferred turn releases that directory -- which frees the chunks and makes `appendChunkRefEvent`
+// read nothing. On device that surfaced as `Queued REVT note-ons (deferred): 0` with zero `REVT`
+// rows on a take that had recorded, published and played. The pin must hold the chunks across the
+// deferral and be released when the scan finishes.
+void test_queued_revt_scan_pins_its_chunks_across_the_deferral() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, false, 0, 60);
+  stop(t, false, 768);
+  advanceToPhase(t, PendingStopPhase::RecordPublished);
+  const auto ids = TrackCaptureStopTestAccess::deferredRevtChunkIds(t);
+  TEST_ASSERT_FALSE_MESSAGE(ids.empty(),
+                            "precondition: the fast path copied the take's chunk directory");
+  std::vector<uint16_t> pinnedCounts;
+  for (uint16_t id : ids) {
+    pinnedCounts.push_back(LoopEventStore::chunkReferenceCount(id));
+  }
+  // The producer releases its own directory first, exactly as publication/retirement does.
+  TrackCaptureStopTestAccess::releaseRecordPassDirectory(t, 0);
+  for (size_t i = 0; i < ids.size(); ++i) {
+    TEST_ASSERT_GREATER_THAN_UINT16(0, LoopEventStore::chunkReferenceCount(ids[i]));
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+        pinnedCounts[i] - 1, LoopEventStore::chunkReferenceCount(ids[i]),
+        "the borrowed directory must keep the chunk alive after the producer releases it");
+  }
+  TrackCaptureStopTestAccess::serviceDeferredRevts(t);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::deferredRevtsPending(t));
+  for (size_t i = 0; i < ids.size(); ++i) {
+    // Two releases happened by now: the producer's and the pin's.
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+        pinnedCounts[i] - 2, LoopEventStore::chunkReferenceCount(ids[i]),
+        "the pin must be released when the scan completes");
+  }
+}
+
 // S4f.20 `invalidateCaches()` parity, proven against the actual consumer contract rather than
 // assumed from `Loop::notifyCommittedContentChanged`. The atomic handoff covers the Loop's own
 // derived caches, but the inline stop's `Track::invalidateCaches()` also drops the Track-level
@@ -2308,6 +2354,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_record_stop_admits_through_the_common_drive);
   RUN_TEST(test_deferred_record_publication_queues_revts_for_its_own_slot);
   RUN_TEST(test_playing_record_scan_drains_the_bounded_walk_and_defers_the_merge);
+  RUN_TEST(test_queued_revt_scan_pins_its_chunks_across_the_deferral);
   RUN_TEST(test_deferred_record_publication_invalidates_the_track_committed_scratch);
   RUN_TEST(test_record_stop_playback_reset_preserves_playing_destination);
   RUN_TEST(test_transport_retarget_of_a_record_job_resolves_stopped);
