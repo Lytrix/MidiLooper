@@ -361,6 +361,12 @@ void test_transport_and_persistence_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,21524068,ST,Track,STOPPED,ARMED"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,22800000,PERS,queue,1,2,3,ok"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,22800000,RECS,stop,1,0,0,0,1"));
+  // `RECA` is the record-start phase marker and belongs with `ST,`/`RECS,`: while it was not
+  // Tier-A, the timing-critical flush (`maxRecords <= 8`, which sheds while the head is *not*
+  // Tier-A) could silently drop it -- the record leg then had no start row even though the take
+  // had begun (captures/s4f22-base-device-06).
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,26294042,RECA,0,0"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,26294042,RECAX,0,0"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,7800000,HDR,v1"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,330913469,VCACHE,full,ev,1232,notes,299,first,21,last,37,total,77,dsz,77,dcnt,0,dirty,0"));

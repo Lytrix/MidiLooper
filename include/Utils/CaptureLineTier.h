@@ -115,7 +115,8 @@ inline bool isTierALine(const char* line) {
     return true;
   }
   return strncmp(tag, "ST,", 3) == 0 || strncmp(tag, "PERS,", 5) == 0 ||
-         strncmp(tag, "RECS,", 5) == 0 || strncmp(tag, "RID,", 4) == 0 ||
+         strncmp(tag, "RECS,", 5) == 0 || strncmp(tag, "RECA,", 5) == 0 ||
+         strncmp(tag, "RID,", 4) == 0 ||
          strncmp(tag, "HDR,", 4) == 0 ||
          strncmp(tag, "ODUB,stop,", 10) == 0 ||
          strncmp(tag, "VCACHE,", 7) == 0 ||
