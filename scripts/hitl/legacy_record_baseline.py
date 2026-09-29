@@ -166,6 +166,24 @@ STOP_STAGE_SEQUENCE: tuple[str, ...] = (
     "save_request",
 )
 
+# S4f.17: the production Record stop is a **deferred** job, so the edge no longer seals and
+# publishes inline. The stages above are the inline route's; on the deferred route `seal` and
+# `publish` do not exist at all, and the commit is evidenced by the worker's publication (the
+# `RecordPassAdded` undo entry and the loop's `PERS` rows, both asserted separately) rather than by
+# edge stage rows. The edge says which route ran: `finalize` carries the `deferred` outcome.
+#
+# This is a route-dependent requirement, not a relaxation: on the deferred route `finalize` must be
+# present *and* carry `deferred`, so a run that never handed the commit off fails here instead of
+# passing on a stage set that no longer exists.
+DEFERRED_STOP_STAGE_SEQUENCE: tuple[str, ...] = (
+    "record_stop",
+    "finalize",
+    "visual_cache_request",
+    "revt_queue",
+    "state_advance",
+    "save_request",
+)
+
 PERSISTENCE_STAGE_SEQUENCE: tuple[str, ...] = (
     "request",
     "dispatch",
@@ -2635,20 +2653,30 @@ def _summarize_record_stop_stages(
                 by_stage_completed[stage] = row
                 break
 
+    # S4f.17: which route the edge took decides which stage set is required. The deferred route is
+    # identified by its own evidence -- `finalize` reporting `deferred` -- so this never guesses.
+    finalize_row = by_stage_completed.get("finalize")
+    deferred_route = (
+        finalize_row is not None and str(finalize_row.get("outcome", "")).strip() == "deferred"
+    )
+    required_sequence = DEFERRED_STOP_STAGE_SEQUENCE if deferred_route else STOP_STAGE_SEQUENCE
+
     first_missing_stage: Optional[str] = None
-    for stage in STOP_STAGE_SEQUENCE:
+    for stage in required_sequence:
         if stage not in by_stage_completed:
             first_missing_stage = stage
             break
 
     slowest_completed_stage: Optional[dict[str, object]] = None
-    completed_rows = [by_stage_completed[s] for s in STOP_STAGE_SEQUENCE if s in by_stage_completed]
+    completed_rows = [by_stage_completed[s] for s in required_sequence if s in by_stage_completed]
     if completed_rows:
         slowest_completed_stage = max(completed_rows, key=lambda row: int(row.get("duration_us", 0)))
 
     return {
         "rows": stage_rows,
         "first_missing_stage": first_missing_stage,
+        "required_stages": list(required_sequence),
+        "deferred_route": deferred_route,
         "slowest_completed_stage": slowest_completed_stage,
     }
 

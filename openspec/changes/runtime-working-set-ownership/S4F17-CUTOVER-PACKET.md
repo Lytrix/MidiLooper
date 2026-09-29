@@ -502,3 +502,49 @@ before the record leg can be read as a pass.
 with the deferred route: the REVT queue is served only when the transport is fully
 idle (`processDeferredRecordRevts`' guard), which a continuous-transport
 overlap run never reaches. Their expectation likewise needs reconciling.
+
+### Oracle reconciliation and the third run, 2026-09-29
+
+**Landed: the stop-stage oracle is now route-aware.**
+`scripts/hitl/legacy_record_baseline.py` required a fixed stage set
+(`record_stop, seal, publish, finalize, …`). The deferred route has no `seal` and
+no `publish` — its commit is the worker's publication, evidenced by the
+`RecordPassAdded` undo entry and the loop's `PERS` rows, which the oracle already
+asserts separately — so the record leg reported `record_stop_stage_missing:seal`
+on every run while the stop published correctly.
+
+The required sequence is now selected from the edge's own evidence: a `finalize`
+row carrying the `deferred` outcome selects
+`record_stop, finalize, visual_cache_request, revt_queue, state_advance,
+save_request`; anything else keeps the inline sequence unchanged. This is
+route-dependent, **not** a blanket tolerance — without a `finalize` row the inline
+requirement stands, so a run that never handed the commit off still fails. Three
+host tests cover it (inline unchanged; deferred accepted; missing-`finalize` still
+reports `seal`), 51/51 in `scripts/test_capture_transitions.py`.
+
+**Third device run** (`captures/s4f22-base-device-02`, same pinning): the
+`record_stop_stage_missing:seal` issue is **gone** — the reconciliation reads the
+deferred route correctly on hardware. The run aborted for a different, earlier
+reason: *"record stop did not reach PLAYING"*, with the device log showing
+`Track 4 armed, waiting for clock to start recording` — **the transport was not
+running when the fixture's record press was sent**, so the press armed the track
+and the take only started once the transport did
+(`Recording started @ tick 0`, `Recording stopped (to STOPPED) @ tick 378
+length=768`), one bar instead of the configured two.
+
+The same signature explains the earlier length mismatch: press/transport pacing
+decides which bar the stop press lands in, and the stop-length policy then
+quantizes to the nearest bar with a half-bar grace (raw 2015 → 2304; raw 379 →
+768). So `record_loop_length_mismatch` is not evidence about the firmware — the
+oracle's `expected_final_length` assumes the press landed in the configured bar,
+which a wall-clock-paced fixture cannot guarantee.
+
+**Two recipe items are therefore outstanding, both in the fixture/oracle, neither
+a firmware defect:** (1) pace the transport start and the record press so the
+transport is verifiably running before the press (the oracle already has the
+receipts — `ST,Track,STOPPED,ARMED` and `DIAG,clk` — to gate on rather than wait);
+(2) make the length expectation prove the firmware's own policy — the committed
+length equals the documented quantization of the observed raw length — instead of
+assuming the press landed in the configured bar. Both belong to the HITL recipe
+correction; until they land, the S4f.22 device gate cannot be read as a pass, and
+no device acceptance is claimed.

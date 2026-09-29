@@ -549,6 +549,89 @@ class SerialVerificationRegressionTests(unittest.TestCase):
         self.assertIsNone(summary["first_missing_stage"])
         self.assertTrue(summary["dispatch_via_work"])
 
+    def _stop_stage_rows(self, stages: list[tuple[str, str]]) -> list[dict]:
+        return [
+            {
+                "timestamp": 100 + index,
+                "stage": stage,
+                "elapsed_us": index,
+                "duration_us": index,
+                "heap_before": 0,
+                "heap_after": 0,
+                "event_count": 0,
+                "chunk_ref_count": 0,
+                "outcome": outcome,
+            }
+            for index, (stage, outcome) in enumerate(stages)
+        ]
+
+    def test_inline_stop_stage_sequence_requires_seal_and_publish(self) -> None:
+        """The inline route's stage set is unchanged: seal and publish are still required."""
+        from hitl.legacy_record_baseline import _summarize_record_stop_stages
+
+        summary = _summarize_record_stop_stages(
+            self._stop_stage_rows(
+                [
+                    ("record_stop", "entered"),
+                    ("seal", "ok"),
+                    ("publish", "ok"),
+                    ("finalize", "ok"),
+                    ("visual_cache_request", "deferred"),
+                    ("revt_queue", "deferred"),
+                    ("state_advance", "ok"),
+                    ("save_request", "requested"),
+                ]
+            )
+        )
+        self.assertFalse(summary["deferred_route"])
+        self.assertIsNone(summary["first_missing_stage"])
+
+    def test_deferred_route_does_not_require_seal_or_publish(self) -> None:
+        """S4f.17: the deferred edge has no seal/publish stage; its commit is the worker's.
+
+        The production Record stop reports `finalize` with the `deferred` outcome, and the edge
+        emits exactly these stages. Requiring `seal`/`publish` here failed the record leg on
+        device (`record_stop_stage_missing:seal`) while the stop published correctly.
+        """
+        from hitl.legacy_record_baseline import _summarize_record_stop_stages
+
+        summary = _summarize_record_stop_stages(
+            self._stop_stage_rows(
+                [
+                    ("record_stop", "entered"),
+                    ("finalize", "deferred"),
+                    ("visual_cache_request", "deferred"),
+                    ("revt_queue", "deferred"),
+                    ("state_advance", "ok"),
+                    ("save_request", "deferred"),
+                ]
+            )
+        )
+        self.assertTrue(summary["deferred_route"])
+        self.assertIsNone(summary["first_missing_stage"])
+        self.assertNotIn("seal", summary["required_stages"])
+        self.assertNotIn("publish", summary["required_stages"])
+
+    def test_deferred_route_still_requires_its_own_finalize_stage(self) -> None:
+        """Route-awareness must not become a blanket tolerance: a missing `finalize` still fails."""
+        from hitl.legacy_record_baseline import _summarize_record_stop_stages
+
+        summary = _summarize_record_stop_stages(
+            self._stop_stage_rows(
+                [
+                    ("record_stop", "entered"),
+                    ("visual_cache_request", "deferred"),
+                    ("revt_queue", "deferred"),
+                    ("state_advance", "ok"),
+                    ("save_request", "deferred"),
+                ]
+            )
+        )
+        # Without a `finalize` row the edge cannot be shown to have taken the deferred route, so
+        # the inline requirement stands and the inline sequence's first gap is reported.
+        self.assertFalse(summary["deferred_route"])
+        self.assertEqual("seal", summary["first_missing_stage"])
+
 
 class UndoRedoDisplayOracleTests(unittest.TestCase):
     """A global undo/redo of a record/overdub entry must repaint the committed frame.
