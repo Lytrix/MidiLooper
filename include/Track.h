@@ -946,7 +946,9 @@ private:
 
   void resetDeferredRecordRevts();
   void queueDeferredRecordRevts(uint8_t slot);
-  void processDeferredRecordRevts(size_t maxEventsPerSlice = 64);
+  /// `allowMerge` false keeps the slice to the bounded chunk walk; the full-merge
+  /// fallback is a stop/idle-only cost and is skipped instead.
+  void processDeferredRecordRevts(size_t maxEventsPerSlice = 64, bool allowMerge = true);
 
   void resetDeferredStoredMidiVerification();
   void processDeferredStoredMidiVerification(size_t maxEventsPerSlice = 64);

@@ -87,6 +87,14 @@ struct TrackCaptureStopTestAccess {
   }
   static uint8_t deferredRevtsSlot(const Track& t) { return t.deferredRecordRevtsSlot; }
   static void serviceDeferredRevts(Track& t) { t.processDeferredRecordRevts(64); }
+  /// The slice the idle owner runs while a loop is audible: bounded chunk walk only.
+  static void serviceDeferredRevtsForPlayback(Track& t) {
+    t.processDeferredRecordRevts(32, /*allowMerge=*/false);
+  }
+  static bool deferredRevtsChunkScan(const Track& t) { return t.deferredRecordRevtChunkScan; }
+  static void setDeferredRevtsScanMode(Track& t, bool chunkScan) {
+    t.deferredRecordRevtChunkScan = chunkScan;
+  }
   /// The transport-stop retarget, as `Track::stopOverdubbingToStopped` delivers it to a pending job.
   static void retargetPendingStopToStopped(Track& t) {
     t.requestDeferredOverdubStopToStopped();
@@ -1797,6 +1805,41 @@ void test_deferred_record_publication_queues_revts_for_its_own_slot() {
                             "the slot-qualified scan must run to completion");
 }
 
+// The accepted-sequence acceptance window is continuously playing by contract, so a take's stored
+// note-on grid has to be able to drain while the loop is audible: gating it on a fully idle
+// transport left every overlap run reporting `record_stored_revt_missing` against a correct take.
+// The queue time already copied the committed chunk ids, so the playing slice is a bounded chunk
+// walk. A scan that still needs the full merge must NOT flatten the active passes on a playing
+// transport -- that cost is why the gate existed -- so it waits for the idle owner.
+void test_playing_record_scan_drains_the_bounded_walk_and_defers_the_merge() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, false, 0, 60);
+  stop(t, false, 768);
+  advanceToPhase(t, PendingStopPhase::RecordPublished);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::deferredRevtsPending(t));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredRevtsChunkScan(t),
+                           "precondition: the stop's own take queues the bounded chunk walk");
+  // The subject here is the *slice*, not the stop flow's own state (pinned by the fixtures above),
+  // so place the track in the audible state the accepted-sequence window holds.
+  t.forceSetState(TRACK_PLAYING);
+  TEST_ASSERT_TRUE_MESSAGE(t.isAudiblePlaybackActive(),
+                           "precondition: the slice under test runs while the loop is audible");
+
+  // A merge-requiring scan survives a playing slice untouched.
+  TrackCaptureStopTestAccess::setDeferredRevtsScanMode(t, false);
+  TrackCaptureStopTestAccess::serviceDeferredRevtsForPlayback(t);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::deferredRevtsPending(t),
+                           "the full merge belongs to the idle owner, not to a playing turn");
+
+  // The bounded walk drains on that same playing transport.
+  TrackCaptureStopTestAccess::setDeferredRevtsScanMode(t, true);
+  TrackCaptureStopTestAccess::serviceDeferredRevtsForPlayback(t);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::deferredRevtsPending(t),
+                            "the bounded chunk walk must drain during playback");
+}
+
 // S4f.20 `invalidateCaches()` parity, proven against the actual consumer contract rather than
 // assumed from `Loop::notifyCommittedContentChanged`. The atomic handoff covers the Loop's own
 // derived caches, but the inline stop's `Track::invalidateCaches()` also drops the Track-level
@@ -2264,6 +2307,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_native_midi_send_capture_records_a_direct_send);
   RUN_TEST(test_record_stop_admits_through_the_common_drive);
   RUN_TEST(test_deferred_record_publication_queues_revts_for_its_own_slot);
+  RUN_TEST(test_playing_record_scan_drains_the_bounded_walk_and_defers_the_merge);
   RUN_TEST(test_deferred_record_publication_invalidates_the_track_committed_scratch);
   RUN_TEST(test_record_stop_playback_reset_preserves_playing_destination);
   RUN_TEST(test_transport_retarget_of_a_record_job_resolves_stopped);
