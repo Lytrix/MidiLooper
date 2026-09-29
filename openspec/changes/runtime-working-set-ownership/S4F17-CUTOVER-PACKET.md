@@ -548,3 +548,46 @@ length equals the documented quantization of the observed raw length — instead
 assuming the press landed in the configured bar. Both belong to the HITL recipe
 correction; until they land, the S4f.22 device gate cannot be read as a pass, and
 no device acceptance is claimed.
+
+### HITL fixes and runs 05–06, 2026-09-29
+
+Three fixture/oracle defects were fixed to make the record leg readable, and two of
+them are verified on device.
+
+**Fixed — transport toggle race (scoped).** `ensure_midi_clock`'s press is a
+*toggle*, and this board emits no USB MIDI clock out, so its pulse wait always
+expires and the press always fires — pressing while the transport already ran
+stopped it (run 03: start 25.086, toggle 25.603, `Recording stopped (to STOPPED)`,
+"record stop did not reach PLAYING"). `ensure_transport_clock` now takes
+`started_since_index`; a caller that is confirming a start press it has just made
+passes the serial length captured *before* that press, and only that press's own
+`Transport started` acknowledgement may suppress the toggle. A stale start earlier
+in the run cannot, which is what over-corrected a first attempt into
+`SETUP_UNCONFIRMED` with no recording at all (run 04) — that attempt was reverted.
+
+**Fixed — receipt-anchored record stream** (`d8375b1c`): the record pass now paces
+its notes and stop from the firmware's `RECA` tick rather than a modelled
+transport-start wall clock, so the take is no longer outrun by its own stream.
+
+**Fixed — the record family is now `isCriticalLine`.** `RECA,`/`RECS,` join `RID,`:
+they are the only evidence of the record stop and are bounded per take. This did
+**not** restore them (see below), but the policy is right on its own terms.
+
+**Run 05** (all three fixes): the record leg ran correctly on device —
+`Recording started @ tick 378`, `Recording stopped @ tick 2392 (recStart=378
+length=2304)`, `Overdubbing started @ tick 2812`, then `Reentry window open slot=0`
+→ `Reentry released slot=0 generation=48`. No `record_loop_length_mismatch`.
+
+**Run 06** (after making the record family critical): the first overdub's stored
+content now verifies — `count_ok=True span_ok=True bars_ok=True` — and the second's
+`count_ok/bars_ok` pass. The run still aborts on *"second overdub transition not
+confirmed"*.
+
+**Open, and the reason the gate is still unreadable.** Both long runs carry **no
+`RECA`, `RECS` or `RID` rows at all** while the short run (`recvis-02`) carried all
+three. `RID,` was already critical before this change, so its loss **rules out ring
+displacement as the sole mechanism** — the record family is being dropped somewhere
+else (the flush-budget path, or the emitter's own drop policy), not merely evicted
+from the ring. Making `RECS` critical therefore changed nothing observable. That is
+the next thing to find: instrument the enqueue path for `RECA`/`RECS` and compare a
+short and a long run, rather than reasoning about tiers.

@@ -16,6 +16,7 @@ except ImportError as exc:  # pragma: no cover
 
 from hitl.serial_transport import (
     resolve_wall_tempo_bpm,
+    serial_global_transport_running,
     use_serial_transport_proxy,
 )
 from hitl.control_constants import (
@@ -139,10 +140,47 @@ def ensure_transport_clock(
     timeout_s: float,
     abort: Optional[Any] = None,
     after_index: int = 0,
+    started_since_index: int | None = None,
 ) -> tuple[bool, bool]:
-    """Return (ok, using_serial_proxy). Proxy = serial capture shows transport without USB clock in."""
+    """Return (ok, using_serial_proxy). Proxy = serial capture shows transport without USB clock in.
+
+    ``started_since_index`` is for the callers that invoke this **to confirm a transport start
+    press they have just made**: pass the serial length captured *before* that press. The press
+    inside ``ensure_midi_clock`` is a toggle, and this board emits no USB MIDI clock out, so its
+    pulse wait always expires and the press always fires -- pressing while the transport already
+    runs *stops* it. Measured on device (``captures/s4f22-base-device-03``): a start at 25.086 was
+    followed by a toggle press at 25.603 that stopped the transport, which the device correctly
+    resolved as a record stop to STOPPED ("record stop did not reach PLAYING", one-bar take).
+
+    Scoping the receipt to the caller's own press is what separates "my start was acknowledged"
+    from "a start is still needed": a stale ``Transport started`` from earlier in the run cannot
+    suppress the press (that over-correction left the device unstarted for a whole run), while the
+    press's own acknowledgement can. Callers that are not confirming a press leave this ``None``
+    and keep the previous behaviour.
+    """
     if use_serial_transport_proxy(args, serial_collector, after_index=after_index):
         return True, True
+
+    def _start_acknowledged() -> bool:
+        if started_since_index is None or serial_collector is None:
+            return False
+        return serial_global_transport_running(
+            serial_collector.snapshot(), after_index=started_since_index
+        )
+
+    if _start_acknowledged():
+        return True, True
+    if started_since_index is not None:
+        ack_deadline = time.monotonic() + min(max(timeout_s, 0.0), 2.0)
+        while time.monotonic() < ack_deadline:
+            if abort is not None and abort.check() is not None:
+                return False, False
+            if use_serial_transport_proxy(args, serial_collector, after_index=after_index):
+                return True, True
+            if _start_acknowledged():
+                return True, True
+            time.sleep(0.05)
+
     ok = ensure_midi_clock(
         in_port,
         out_port,

@@ -40,8 +40,17 @@ inline bool tagStartsWith(const char* line, const char* prefix) {
 // `RID,` (record-stop slot identity) is here because it is the one-shot evidence that explains a wrong
 // persistence target, and a Tier-A ring dropped it on the run that admitted `slot:5:0` — at most two
 // lines per take, so it cannot flood.
+//
+// `RECA,`/`RECS,` are here for the same measured reason. They are the only evidence of the record
+// stop (its start tick, its final geometry and its stage trace), and being merely Tier-A they were
+// displaced by the `DIAG,reentry`/`canonical_release`/`timing_max`/`midisvc` flood that an overdub
+// finalization produces: `captures/s4f22-base-device-05` recorded, published and retired a take with
+// **zero** `RECS` rows left, so the harness could only report `record_stop_stage_missing:record_stop`
+// and `record_first_note_missing` against a correct stop. Per take this is one `RECA` plus the
+// stop's geometry row and its bounded stage trace (six stages), so it cannot flood.
 inline bool isCriticalLine(const char* line) {
-  return tagStartsWith(line, "ODUB,stop,bridge_begin,") || tagStartsWith(line, "RID,");
+  return tagStartsWith(line, "ODUB,stop,bridge_begin,") || tagStartsWith(line, "RID,") ||
+         tagStartsWith(line, "RECA,") || tagStartsWith(line, "RECS,");
 }
 
 /// What a full capture ring must displace.
