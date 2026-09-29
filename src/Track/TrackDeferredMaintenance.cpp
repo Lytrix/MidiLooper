@@ -1110,19 +1110,28 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     return;
   }
 
-  // REVT and stored-MIDI verification: emit only when transport is fully idle (58d6c08 reference).
-  // Verification is one-shot per boot; it must not drain during PLAYING — the first slice still
-  // does a full merge and blocks MIDI for seconds on grown loops (session_20260813_020631).
-  if (!isAudiblePlaybackActive() && !isRecording() && !isStoppedRecording()) {
+  // REVT and stored-MIDI verification. The stored-content verification still needs a fully idle
+  // transport: its first slice flattens the active passes and blocks MIDI for seconds on grown
+  // loops (session_20260813_020631). The Record scan (REVT) does not: its queue time already copies
+  // the committed chunk ids, so the slice is a bounded chunk walk. It must be allowed to run while a
+  // loop plays, because the accepted-sequence window is continuously playing by contract and the
+  // take's stored note-on grid is otherwise never emitted (record_stored_revt_missing).
+  const bool transportFullyIdle =
+      !isAudiblePlaybackActive() && !isRecording() && !isStoppedRecording();
+  const bool playbackIdleOwner =
+      isAudiblePlaybackActive() && !isRecording() && !isStoppedRecording();
+  if (transportFullyIdle) {
     size_t revtSlice = 64;
     size_t verificationSlice = 64;
     if (StorageManager::hasDeferredSaveWork()) {
       revtSlice = 8;
       verificationSlice = 16;
     }
-    processDeferredRecordRevts(revtSlice);
+    processDeferredRecordRevts(revtSlice, /*allowMerge=*/true);
     processDeferredStoredMidiVerification(verificationSlice);
     processDeferredContentResolutionDeviceGate();
+  } else if (playbackIdleOwner) {
+    processDeferredRecordRevts(32, /*allowMerge=*/false);
   }
 
   const bool deferredDerivedViewMaintenance =
@@ -1353,7 +1362,7 @@ void Track::queueDeferredRecordRevts(uint8_t slot) {
   }
 }
 
-void Track::processDeferredRecordRevts(size_t maxEventsPerSlice) {
+void Track::processDeferredRecordRevts(size_t maxEventsPerSlice, bool allowMerge) {
   // The interval that queued this scan names itself; the active slot may have moved (and may hold
   // a successor take) by the time the idle owner runs.
   const uint8_t slot = deferredRecordRevtsSlot;
@@ -1402,6 +1411,11 @@ void Track::processDeferredRecordRevts(size_t maxEventsPerSlice) {
     return;
   }
 
+  if (!allowMerge) {
+    // Playback slice: the chunk walk above is bounded per turn, but flattening the active
+    // passes is not. Leave the merge for a fully idle transport rather than blocking MIDI.
+    return;
+  }
   if (deferredRecordRevtEvents.empty() && deferredRecordRevtCursor == 0) {
     loop.mergeActiveCapturePasses(deferredRecordRevtEvents);
   }
