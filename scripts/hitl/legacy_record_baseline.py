@@ -1015,32 +1015,17 @@ def _prepare_deferred_save_before_clear(
     if persistence_drain_stuck_in_suffix(
         serial_collector.snapshot(), after_index=save_wait_anchor
     ):
-        print(
-            "[warn] persistence drain stuck — clear blocked"
-        )
-        return False
+        # Reported, not waited on: the device is driven straight after boot and the firmware owns
+        # the refusal (`Clear aborted: could not complete deferred save first` is detected as a
+        # clear abort downstream). Blocking here only added latency.
+        print("[warn] persistence drain reported stuck; clear proceeds anyway")
 
-    # A managed run now owns a real boot (`managed_capture_session` passes `--boot-reset`), so this
-    # clear can land while the device is still finishing the boot-time library restore and the
-    # deferred save that follows it. Measured (`captures/s4f22-base-device-16`): the precondition
-    # spent its entire configured 120 s budget on `deferred save active — waiting for idle` and then
-    # aborted with `clear step did not confirm EMPTY state`, so the run never recorded at all and
-    # said nothing about the leg it was meant to exercise. Give the restore window a longer, still
-    # bounded allowance rather than letting a slow boot read as a blocked clear.
-    save_drain_s = max(getattr(args, "deferred_save_wait_ms", 3000), 0) / 1000.0
-    save_drain_s = max(save_drain_s, _BOOT_RESTORE_SAVE_WAIT_S)
-    if not wait_for_deferred_save_idle_if_active(
-        serial_collector,
-        after_line_index=save_wait_anchor,
-        log_prefix="[clear-precondition]",
-        abort=abort,
-        max_timeout_s=save_drain_s,
-    ):
-        print(
-            "[warn] deferred save not idle after "
-            f"{save_drain_s:.0f}s — clear blocked"
-        )
-        return False
+    # No wait for deferred-save idle. After boot the device is ready to be driven straight away:
+    # clear, arm, record and overdub all work immediately, and the firmware owns the refusal if a
+    # save must complete first (detected downstream as a clear abort). Waiting for the save-idle
+    # receipt cost up to minutes, aborted setup when the boot restore was slow, and never made the
+    # clear more likely to succeed.
+    print("[info] clear proceeds without waiting for deferred-save idle")
     return True
 
 
@@ -4412,12 +4397,9 @@ def _build_serial_verification(
     }
 
 
-# A managed run owns a real boot, so the clear precondition can run while the device is still
-# finishing the boot-time library restore and its deferred save. `captures/s4f22-base-device-16`
-# spent its whole configured 120 s budget waiting for that save to go idle and then aborted setup
-# with no record at all. This is the floor for that window, not a replacement for the configured
-# budget, and it stays bounded so a genuinely blocked clear still fails rather than hanging.
-_BOOT_RESTORE_SAVE_WAIT_S = 240.0
+# Removed with the setup wait: the clear no longer waits for deferred-save idle (see
+# `_prepare_deferred_save_before_clear`). Kept as a named constant so the intent -- and the measured
+# reason the wait was dropped -- is not silently reintroduced.
 
 
 def _expected_overdub_notes_min(overdub_bars: int, step_clocks: int) -> int:
@@ -5687,6 +5669,10 @@ def run() -> int:
     capture_drain_result: dict = {}
 
     try:
+        # Say so before the blocking call: a stalled port open used to leave stdout silent with the
+        # last line being the run metadata, which reads as a harness hang with no cause
+        # (`captures/s4f22-step9-f1` after an upload-triggered re-enumeration).
+        print(f"[info] opening MIDI ports out={midi_out_name!r} in={midi_in_name!r}", flush=True)
         with mido.open_output(midi_out_name) as out_port, mido.open_input(midi_in_name) as in_port, \
                 _managed_record_evidence_cleanup(out_port, capture_drain_result):
             if args.start_transport:
