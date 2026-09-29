@@ -620,6 +620,25 @@ That is consistent with `RID` (critical, and already protected before this chang
 and with the short run keeping the whole family: a short run never reaches the pressure that
 refuses appends.
 
+**Run 07 rules out the flush path too.** With `RECA,` added to `isTierALine` (run identity:
+`git 7351c41c`-era tree, firmware rebuilt) the record family is *still* absent — `RECA=0 RECS=0
+RID=0` over 5,393 lines. So the timing-critical flush (which sheds while the head is *not* Tier-A)
+is not the cause either.
+
+That leaves exactly one mechanism consistent with all the evidence:
+`incomingMayDisplace(true, true, headTierA, headCritical)` returns **true even when the head is
+critical**, so a critical record row is enqueued and later **evicted by the next critical row**.
+The run's critical traffic is dominated by the fixture's own `DIAG,reentry*`,
+`DIAG,canonical_release,` and `DIAG,ws_release,` rows during the overdub finalization, so the
+handful of record rows emitted at the stop edge are pushed out again within the same second. The
+two `RING,shed` rows are a *separate* symptom (non-critical appends refused) and not the loss.
+
+The fix is therefore in the eviction class, not the tier: make the one-shot record rows
+(`RECA,`/`RECS,`/`RID,`) **unevictable** — refuse an append rather than displace one — and report
+that refusal in `capture_integrity`. The wedge risk is bounded here (a handful of rows per take),
+but it must be bounded *per session* before landing, which is why this is recorded rather than
+guessed at.
+
 **Next step, concrete:** instrument the enqueue path with per-family emitted/enqueued/refused
 counters (the `identityEmitEnqueued`/`identityEmitRejected` pair already models this for `RID`) and
 either (a) reserve ring capacity for the critical record rows, or (b) report the refusal in
