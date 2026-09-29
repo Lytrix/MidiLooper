@@ -1017,7 +1017,15 @@ def _prepare_deferred_save_before_clear(
         )
         return False
 
+    # A managed run now owns a real boot (`managed_capture_session` passes `--boot-reset`), so this
+    # clear can land while the device is still finishing the boot-time library restore and the
+    # deferred save that follows it. Measured (`captures/s4f22-base-device-16`): the precondition
+    # spent its entire configured 120 s budget on `deferred save active — waiting for idle` and then
+    # aborted with `clear step did not confirm EMPTY state`, so the run never recorded at all and
+    # said nothing about the leg it was meant to exercise. Give the restore window a longer, still
+    # bounded allowance rather than letting a slow boot read as a blocked clear.
     save_drain_s = max(getattr(args, "deferred_save_wait_ms", 3000), 0) / 1000.0
+    save_drain_s = max(save_drain_s, _BOOT_RESTORE_SAVE_WAIT_S)
     if not wait_for_deferred_save_idle_if_active(
         serial_collector,
         after_line_index=save_wait_anchor,
@@ -4363,11 +4371,104 @@ def _build_serial_verification(
     }
 
 
+# A managed run owns a real boot, so the clear precondition can run while the device is still
+# finishing the boot-time library restore and its deferred save. `captures/s4f22-base-device-16`
+# spent its whole configured 120 s budget waiting for that save to go idle and then aborted setup
+# with no record at all. This is the floor for that window, not a replacement for the configured
+# budget, and it stays bounded so a genuinely blocked clear still fails rather than hanging.
+_BOOT_RESTORE_SAVE_WAIT_S = 240.0
+
+
 def _expected_overdub_notes_min(overdub_bars: int, step_clocks: int) -> int:
     if overdub_bars <= 0 or step_clocks <= 0:
         return 0
     notes_per_bar = MIDI_CLOCKS_PER_BAR // step_clocks
     return max(1, overdub_bars * notes_per_bar - 1)
+
+
+# The markers that end the *preceding* pass, and the receipts that say its deferred stop has
+# finished publishing/retiring. A successor start is only admitted after the receipt; pressing
+# before it is silently consumed (see `_await_successor_start_receipt`).
+SUCCESSOR_PREDECESSOR_STOP_MARKERS: tuple[str, ...] = (
+    "Recording stopped",
+    "Reentry window open",
+)
+SUCCESSOR_ADMISSION_RECEIPT_MARKERS: tuple[str, ...] = (
+    "Record pass undo reset for slot",
+    "Reentry released slot=",
+)
+
+
+def _await_successor_start_receipt(
+    serial_collector: Optional[Any],
+    *,
+    timeout_s: float,
+    abort: Optional[RunAbort] = None,
+    pass_label: str = "overdub",
+) -> Optional[str]:
+    """Wait for the preceding stop's completion receipt before pressing a successor start.
+
+    A successor start is admitted only once the deferred stop has published and retired. Pressing
+    while the stop is still finalizing is consumed with no diagnostic and no state change:
+    `captures/s4f22-base-device-11` pressed Record/Overdub 1.007 s after the Record stop, the
+    device's `Record pass undo reset for slot 0` landed 89 ms *after* that press, and
+    `PLAYING->OVERDUBBING` never happened -- the run aborted with "overdub transition not
+    confirmed", no overdub was ever recorded, and every overdub assertion was therefore empty.
+    The order that works is in `captures/s4f22-base-device-05`: stop 34.747 ->
+    `Record pass undo reset` 35.746 -> `Overdubbing started` 35.996.
+
+    The readiness is read from the device's own log, so this replaces a modelled delay with the
+    device's evidence. A receipt that never arrives is bounded and reported: the press still
+    happens, so a genuinely absent receipt surfaces as the existing transition failure rather
+    than as a hang.
+    """
+    if serial_collector is None:
+        return None
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while True:
+        lines = serial_collector.snapshot()
+        stop_index = -1
+        for index, line in enumerate(lines):
+            if any(marker in line for marker in SUCCESSOR_PREDECESSOR_STOP_MARKERS):
+                stop_index = index
+        receipt: Optional[str] = None
+        receipt_index = -1
+        for index, line in enumerate(lines):
+            if index <= stop_index:
+                continue
+            for marker in SUCCESSOR_ADMISSION_RECEIPT_MARKERS:
+                if marker in line:
+                    receipt = marker
+                    receipt_index = index
+        if receipt_index > stop_index:
+            print(f"[info] {pass_label} start admitted after stop receipt: {receipt!r}")
+            return receipt
+        if abort is not None and abort.check() is not None:
+            return None
+        if time.monotonic() >= deadline:
+            print(
+                f"[warn] {pass_label} start: no stop-completion receipt within "
+                f"{timeout_s:.1f}s; pressing anyway"
+            )
+            return None
+        time.sleep(0.02)
+
+
+def _successor_start_proved_absent(lines: list[str], baseline: int) -> bool:
+    """True when a successor start press can be shown to have produced nothing.
+
+    A start press on a PLAYING track is proven lost when the track is still PLAYING, **and** when
+    the device produced no state row at all after the press -- that second shape is the common one
+    on this path, and treating it as "not disproved" ended the request after a single press with
+    `EVIDENCE_UNAVAILABLE / timeout_without_disproof` and `retries=0`
+    (`captures/s4f22-base-device-12`: the second overdub start never reached the device, so
+    `PLAYING->OVERDUBBING` was never issued a second time and the run aborted with no overdub).
+
+    `request_state_transition` only consults this **after** its confirmation poll, so a press that
+    did land is confirmed first and is never re-pressed; the retry is bounded by `max_retries`.
+    """
+    latest = _latest_track_state(lines, after_index=baseline)
+    return latest in (None, "PLAYING")
 
 
 def _run_overdub_pass(
@@ -4394,6 +4495,14 @@ def _run_overdub_pass(
     reached_overdub = serial_collector is None
     if serial_collector is not None:
         timeout_s = args.state_sync_timeout_ms / 1000.0
+        # Do not press into the predecessor's finalization window: the successor start is only
+        # admitted once that stop has published/retired, and an early press is consumed silently.
+        _await_successor_start_receipt(
+            serial_collector,
+            timeout_s=max(timeout_s, 3.0),
+            abort=abort,
+            pass_label=pass_label,
+        )
         od_start = request_state_transition(
             snapshot=serial_collector.snapshot,
             requested="OVERDUBBING",
@@ -4401,9 +4510,7 @@ def _run_overdub_pass(
             confirmed=lambda lines, baseline: _serial_has_overdubbing_after(
                 lines, after_index=baseline
             ),
-            disproved=lambda lines, baseline: (
-                _latest_track_state(lines, after_index=baseline) == "PLAYING"
-            ),
+            disproved=lambda lines, baseline: _successor_start_proved_absent(lines, baseline),
             send_request=lambda: _send_short_press(
                 out_port,
                 note=RECORD_BUTTON_NOTE,
@@ -4411,7 +4518,7 @@ def _run_overdub_pass(
                 press_ms=args.press_ms,
             ),
             timeout_s=timeout_s,
-            max_retries=1,
+            max_retries=2,
             abort=abort,
             latest_state=lambda lines, baseline: _latest_track_state(
                 lines, after_index=baseline
