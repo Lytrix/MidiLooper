@@ -203,7 +203,19 @@ selected-slot invalidation and the REVT queue — is now applied by
 `Track::invalidateCommittedContentForSlot(slot, queueRecordRevts)` against the job's slot. Two
 fixtures, each with a failing mutation.
 
-**S17.5 remains open** (enforced gate, mutations, RAM1/PSRAM accounting, doc closeout).
+**S17.5 — gates, mutations and accounting (native leg): done.** The finalization suite is an
+**enforced** gate: `S4F16_REQUIRE_CONTRACT` is no longer read, so the ordinary suite asserts the
+deferred production shape unconditionally and there is no weaker mode to select. Nine mutations are
+red-proven, including the three the packet names. Accounting is the compile-time structure pins
+(`sizeof(Track) == 384`, `sizeof(CaptureStopJobs) == 28936`, active under
+SESSION_CAPTURE+PERF_TELEMETRY) plus the post-link RAM1 gate
+(`variables 96,192 / ITCM 393,216 (code 391,224 + padding 1,992) / locals 34,880`, floor 840).
+Strict matrix 47/47; full native 2,617 cases / 2,610 succeeded / 7 skipped; capture-serial SUCCESS.
+
+**Remaining for §3's exit:** transport Stop in every phase, an internal/external clock sweep, and
+load/clear interaction with a record stop in flight. Those are the exit list's own items; the
+transport-stop route is covered for the Stopped destination and the wrong-slot/successor-baseline
+cases are covered. No device acceptance is claimed from host results.
 
 ## 4. Finish correlated observations and correct the actual test recipes
 

@@ -1,7 +1,12 @@
 # S4f.17–S4f.21 — Record admission and caller cutover (execution packet)
 
-Status: **S17.1 + S17.2 landed 2026-09-29 (Record admission bind and both stop entry points routed
-through the drive); S17.3–S17.5 open.**
+Status: **S17.1–S17.5 landed 2026-09-29.** The production Record stop is a deferred job on every
+mode: admission binds the raw range, geometry and held-note receipts; both stop entry points run a
+bounded transport edge; a retained stop is driven by the common accepted-stop dispatch; the manager
+continuations consume the job-qualified geometry; the S4f.20 publication residuals are closed; and
+the strict R→R/R→OD/OD→R/OD→OD matrix is an **enforced** gate. §3's own exit list still owes a
+transport-stop-in-every-phase sweep, an internal/external clock sweep and load/clear interaction
+with a stop in flight — no device acceptance is claimed from host results.**
 Baseline `aac1e8df` (§1 preparation/publication boundaries, §2 record playback handoff both
 closed). Authority: [shared contract](SHARED-CAPTURE-FINALIZATION.md),
 [S4F-CLOSURE-PLAN.md](S4F-CLOSURE-PLAN.md) §3, DEC-093 — shared capture finalization,
@@ -258,7 +263,45 @@ publishing slot; a successor take does not redirect it; the scan runs to complet
 fresh, then the publication invalidates it — the `CommittedMidiScratch::isFresh` consumer contract,
 not an assumption). Removing either wiring fails its fixture.
 
-S17.5 remains open.
+**S17.5 — Gates, mutations and accounting: done for the native leg.**
+
+*Enforced gate.* The finalization suite no longer reads `S4F16_REQUIRE_CONTRACT`; every assertion,
+including the R→R/R→OD/OD→R/OD→OD rotation oracle, is unconditional. Ordinary suite success *is* the
+strict result, and the suite header says so and says why not to reintroduce a conditional. Running
+with and without the env var is now the same binary behaviour.
+
+*Mutation set* (each red-proven in this change):
+
+| Mutation | Fails |
+| --- | --- |
+| Reintroduce the inline `prepareRecordStop` + `commitCaptureForStop` Record route | 7 cases (the strict three plus four content fixtures) |
+| Drop the stop-edge `loopLengthTicks` stamp | 8 cases |
+| Close open tails at loop end instead of the stop playhead's phase | the three normalization inventories |
+| Require the live `loopLengthTicks` to equal the job's for a Record job (the old prologue clause) | the filtered-empty geometry case |
+| Retire while a frozen-window build still borrows the raw range | `test_published_record_interval_does_not_replay_the_return_window` |
+| Switch away from an accepted-but-unbound Record stop | `test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one` |
+| Read the stop-edge prediction instead of the published geometry | both S17.3b geometry fixtures |
+| Skip the deferred REVT queue | `test_deferred_record_publication_queues_revts_for_its_own_slot` |
+| Skip the Track-level committed-scratch invalidation | `test_deferred_record_publication_invalidates_the_track_committed_scratch` |
+
+*Accounting.* `scripts/check_ram1_budget.py` runs post-link on every firmware build:
+`variables 96,192 / ITCM 393,216 (code 391,224 + padding 1,992) / locals 34,880`, with
+`padding_floor 840` and `itcm_bytes` at 12 banks. The structural pins are compile-time and active
+in this configuration (`SESSION_CAPTURE=1`, `PERF_TELEMETRY=1`): `sizeof(Track) == 384` (the
+eight-way DTCM array) and `sizeof(CaptureStopJobs) == 28936` (the externally allocated,
+PSRAM-resident ring carrying the per-job Record receipts and the per-track preparation role).
+Net across the cutover: ITCM is 16 B *below* the approved baseline (391,224 vs 391,240) and RAM1
+variables are 32 B above it (the S17.3b geometry obligation), re-based deliberately in
+`scripts/ram1_budget.json` with the reason recorded there and in this packet.
+
+*Verification line.* Strict matrix 47/47; `pio test -e native` 2 617 cases / 2 610 succeeded /
+7 skipped; `pio run -e teensy41-capture-serial` SUCCESS.
+
+*Exit criteria not yet exercised* (they are the packet's own §3 exit list, not the slice gates):
+transport Stop in **every** phase, an internal/external clock sweep, and load/clear interaction
+with a record stop in flight. The transport-stop route itself is covered (Stopped destination) and
+the wrong-slot / successor-baseline cases are covered by S17.3a. These remain the next evidence
+step; no device acceptance is claimed from host results.
 
 ## Fixed fixture requirements (from the trace)
 
