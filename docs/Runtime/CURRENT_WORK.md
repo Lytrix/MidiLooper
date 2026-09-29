@@ -113,8 +113,14 @@ a LoopId bump, because clear preserves identity by design. Fixtures
 renamed to `test_stale_publication_is_superseded_without_persistence` (it previously encoded parking
 as the expected behaviour).
 
-**Still owed:** a deferred Record stop under an **external** clock source. No device acceptance is
-claimed from host results.
+**2026-09-29 — §3 S17.5c — the transport-not-running leg of a retained Record stop.** The clock source
+reaches this path through `isTransportRunning()` (false both for a stopped internal transport and a
+quiet external clock). `test_retained_record_stop_admits_stopped_once_the_transport_is_not_running`
+retains a PLAYING-destination Record stop behind another interval's job, stops the transport before
+the drive, and pins DEC-078 item 3: the stop admits STOPPED, the take still publishes and the
+transport resolves `TRACK_STOPPED`; replacing the re-derivation with the stored destination fails it.
+§3's exit list now has no unexercised item this environment can reach (the clock *classification* is
+covered by `test_clock_transport_master`). No device acceptance is claimed from host results.
 [Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md).
 
 **2026-09-28 — S4f.19 §2 — first-bar and onward playback handoff: delta work complete.**

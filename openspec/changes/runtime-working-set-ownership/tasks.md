@@ -2825,8 +2825,16 @@ own execution packet and records fixture/native/build/device results separately.
       `test_replaced_loop_during_a_record_finalization_retires_the_job` (the load / re-record shape)
       and `test_slot_clear_during_a_record_finalization_does_not_republish`, plus the overdub
       counterpart renamed to `test_stale_publication_is_superseded_without_persistence` (it previously
-      encoded parking as the expected behaviour). **Still owed:** a deferred Record stop under an
-      external clock source. No device acceptance is claimed from host results.
+      encoded parking as the expected behaviour).
+      **2026-09-29 S17.5c — the transport-not-running leg: done.** The clock source reaches this path
+      through `isTransportRunning()` (false both for a stopped internal transport and a quiet external
+      clock). `test_retained_record_stop_admits_stopped_once_the_transport_is_not_running` retains a
+      PLAYING-destination Record stop behind another interval's job, stops the transport before the
+      drive, and pins DEC-078 item 3: the stop admits STOPPED, the take still publishes, and the
+      transport resolves `TRACK_STOPPED`; replacing the re-derivation with the stored destination
+      fails it. §3's exit list now has no unexercised item this environment can reach (the clock
+      *classification* is covered by `test_clock_transport_master`). No device acceptance is claimed
+      from host results.
 - [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
       full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with

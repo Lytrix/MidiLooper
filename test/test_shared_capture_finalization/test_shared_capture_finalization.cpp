@@ -1888,6 +1888,62 @@ void test_slot_clear_during_a_record_finalization_does_not_republish() {
                                    "the cleared geometry must survive the retired job");
 }
 
+// S4f.21 / DEC-078 item 3: the accepted-stop drive re-derives the destination from **live**
+// transport state rather than the destination the retained request carried. That is the route the
+// clock source reaches this path through (`isTransportRunning()` is false both for a stopped
+// internal transport and for an external clock that has gone quiet), so a Record stop retained
+// while the transport ran must be admitted for STOPPED once it is not running -- and it must still
+// publish its take there, from its own job-qualified geometry.
+void test_retained_record_stop_admits_stopped_once_the_transport_is_not_running() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  prepareSlot(t, 1, false);
+  t.forceSetState(TRACK_PLAYING);
+
+  // (1) A's Record stop binds first and owns the ring.
+  start(t, 0, false, 0, 60);
+  clockManager.assignCurrentTickSilently(768);
+  t.stopRecordingToStopped(768);
+  TEST_ASSERT_TRUE(t.hasPendingDeferredOverdubStop());
+
+  // (2) B's **PLAYING**-destination Record stop is retained: A still owns the ring.
+  start(t, 1, false, 768, 62);
+  const uint64_t bInterval = TrackCaptureStopTestAccess::interval(t);
+  clockManager.assignCurrentTickSilently(1536);
+  t.stopRecording(1536);
+  TEST_ASSERT_TRUE_MESSAGE(t.hasAcceptedInteractionForSlot(1),
+                           "precondition: B's stop must be retained against slot 1");
+  TEST_ASSERT_FALSE(t.hasLiveCaptureStopJobForSlot(1));
+
+  // (3) A retires, and the transport stops before the drive runs.
+  for (int turn = 0; turn < 8192 && t.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::step(t);
+  }
+  TEST_ASSERT_FALSE(t.hasPendingDeferredOverdubStop());
+  nativeTransportRunning = false;
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::drive(t),
+                           "the retained stop must admit once the ring frees");
+
+  // (4) The destination was re-derived from live transport state, not taken from the request.
+  // The transport-state assert below is the discriminator: the PLAYING edge's own runtime reset
+  // also retargets a pending job's destination (that is the S4f.19 path this change pins
+  // separately), so the destination field alone can be Stopped even when the drive trusted the
+  // request. Only resolving the *transport state* from that retarget distinguishes the two.
+  auto& job = TrackCaptureStopTestAccess::head(t);
+  TEST_ASSERT_EQUAL_UINT8(1, job.slot);
+  TEST_ASSERT_EQUAL(CapturePhase::Record, job.mode);
+  TEST_ASSERT_EQUAL_UINT64(bInterval, job.interval);
+  TEST_ASSERT_EQUAL_MESSAGE(PendingStopDestination::Stopped, job.admission.destination,
+                            "a stop driven while the transport is not running must admit STOPPED");
+
+  driveStopToRetirement(t);
+  TEST_ASSERT_TRUE_MESSAGE(t.getLoop(1).passes.hasRecordPass(),
+                           "the STOPPED-admitted Record take must still publish");
+  TEST_ASSERT_EQUAL_MESSAGE(TRACK_STOPPED, t.getState(),
+                            "a stop driven while the transport is not running must resolve STOPPED");
+  nativeTransportRunning = true;  // leave the shim as the next fixture's setUp expects it
+}
+
 void test_private_grains_never_hold_the_global_ephemeral_seal() {
   Track& t0 = trackManager.getTrack(0);
   prepareSlot(t0, 0, false);
@@ -2189,6 +2245,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_transport_retarget_of_a_record_job_resolves_stopped);
   RUN_TEST(test_replaced_loop_during_a_record_finalization_retires_the_job);
   RUN_TEST(test_slot_clear_during_a_record_finalization_does_not_republish);
+  RUN_TEST(test_retained_record_stop_admits_stopped_once_the_transport_is_not_running);
   RUN_TEST(test_two_tracks_each_serve_their_own_deferred_window);
   RUN_TEST(test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source);
   RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);
