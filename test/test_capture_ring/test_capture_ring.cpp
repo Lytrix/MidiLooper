@@ -145,6 +145,27 @@ void test_allocation_failure_is_reported_after_safe_usb_retry() {
   TEST_ASSERT_EQUAL_STRING(output.c_str(), captureSerial.output.c_str());
 }
 
+void test_unreadable_head_is_reported_as_a_wipe() {
+  // A torn/garbage head record used to reset the ring silently: content was discarded with no
+  // eviction or shed outcome, so a phase that produced no rows could not be told from a phase whose
+  // emitters never ran. It must now count, latch a notice and invalidate the capture.
+  queueCaptureTextLine("#CAP,1,DIAG,idle_maint,12345");
+  TEST_ASSERT_GREATER_THAN_UINT32(0, sCaptureRing.used);
+  const size_t discarded = sCaptureRing.used;
+  // Zero-length payload at the head makes the record unreadable.
+  CaptureRecordHeader torn{static_cast<uint8_t>(CaptureRecordType::Text), 0};
+  writeBytesAt(sCaptureRing.head, &torn, sizeof(torn));
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.silentWipes);
+  flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.silentWipes);
+  TEST_ASSERT_EQUAL_UINT32(discarded, sCaptureRing.silentWipeBytes);
+  TEST_ASSERT_TRUE(sCaptureRing.wipedPending);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
+  flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("RING,wiped,1,") != std::string::npos);
+  TEST_ASSERT_FALSE(sCaptureRing.wipedPending);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_real_emitters_are_accounted_and_drained);
@@ -152,5 +173,6 @@ int main() {
   RUN_TEST(test_record_rows_have_a_reserved_ring_slice);
   RUN_TEST(test_critical_flood_counts_actual_family_eviction);
   RUN_TEST(test_allocation_failure_is_reported_after_safe_usb_retry);
+  RUN_TEST(test_unreadable_head_is_reported_as_a_wipe);
   return UNITY_END();
 }

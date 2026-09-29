@@ -83,7 +83,16 @@ class CaptureLineClockTests(unittest.TestCase):
         clock = CaptureLineClock()
         clock.note_line("#CAP,123,RING,shed,20", now=1.0)
         clock.note_line("#CAP,124,RING,record_stats,RECA,entered=1,enq=1,rej=0,tx=1,evict=0", now=2.0)
+        clock.note_line("#CAP,125,RING,stats,attempts=10,ok=9,flush=4,tx=8,shed=1", now=3.0)
         self.assertEqual(clock.integrity, CaptureIntegrity.COMPLETE)
+
+    def test_ring_wipe_invalidates_the_capture(self) -> None:
+        clock = CaptureLineClock()
+        clock.note_line("#CAP,123,RING,wiped,2,4096,1000", now=1.0)
+        clock.note_line("#CAP,124,ST,Track,PLAYING,PLAYING", now=2.0)
+        self.assertEqual(clock.integrity, CaptureIntegrity.INCOMPLETE)
+        self.assertEqual(clock.integrity_abort_reason(),
+                         "firmware capture ring discarded unreadable content")
 
 
 class FollowCaptureIntegrityTests(unittest.TestCase):
