@@ -16,7 +16,8 @@ from typing import Callable, Iterator, Optional
 
 from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT, HitlConfig
 from hitl.serial.protocol import (collect_library_observation, fenced_rows,
-                                  fenced_window, format_command_request)
+                                  fenced_window, format_command_request, record_evidence_stats,
+                                  record_evidence_row_counts, stopped_capture_queue_idle)
 
 _CAPTURE_SCRIPT = Path(__file__).resolve().parent.parent / "capture_session.py"
 _ACTIVE_LOCK = threading.Lock()
@@ -291,6 +292,107 @@ class ManagedCaptureSession:
             return False
         return True
 
+    def drain_record_evidence(self, send_transport_stop: Callable[[], None], *,
+                              timeout_s: float = 30.0) -> dict:
+        """End-of-leg retrieval, while the same serial owner and MIDI port are open.
+
+        Stop is idempotent MIDI Stop, not the control surface's transport toggle.
+        A gated stats reply confirms stopped; fence-only replies do not. Completion
+        concerns these three Record families, not persistence or the entire ring.
+        """
+        result = {"complete": False, "reason": "stopped stats unavailable", "drains": 0,
+                  "stopped_confirmed": False, "families": {}, "log_counts": {}}
+        deadline = time.monotonic() + max(timeout_s, 0.0)
+        previous = None
+        drain_start = None
+        drain_start_counts = None
+        reply_prefix = []
+
+        def log_lines():
+            return (self._session_log.read_text(encoding="utf-8", errors="replace").splitlines()
+                    if self._session_log else [])
+
+        def request(command):
+            nonlocal reply_prefix
+            nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
+            accepted, detail = self.send_command(command, nonce=nonce, end_nonce=end_nonce)
+            if not accepted:
+                result["reason"] = f"{command}: {detail}"
+                return None
+            rows = self.fenced_response(nonce, end_nonce,
+                                        timeout_s=min(3.0, max(0.0, deadline - time.monotonic())))
+            if rows is None:
+                result["reason"] = f"{command}: response fence missing"
+                return None
+            lines = log_lines()
+            window = fenced_window(lines, nonce, end_nonce)
+            if window is None:
+                result["reason"] = f"{command}: response log changed"
+                return None
+            # Match counters to exactly their response endpoint. Rows flushed after
+            # that fence belong to the next snapshot, not this one's tx count.
+            reply_prefix = lines[:window[1] + 1]
+            return rows
+
+        try:
+            send_transport_stop()
+            while time.monotonic() < deadline:
+                # Check the selected finalizer before taking the counters: otherwise
+                # it could emit its last rows between a stats snapshot and idle receipt.
+                status = request("!STOP_STATUS")
+                if status is None:
+                    return result
+                idle = stopped_capture_queue_idle(status)
+                rows = request("!CAP_IDENTITY_STATS")
+                if rows is None:
+                    return result
+                stats = record_evidence_stats(rows)
+                if stats is None:
+                    # Stop may still be queued when the first serial command runs.
+                    result["reason"] = "stopped stats unavailable or incomplete"
+                    time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+                    continue
+                result["stopped_confirmed"] = True
+                result["families"] = stats
+                for family, counts in stats.items():
+                    if any(value >= 0xFFFFFFFF for value in counts.values()):
+                        result["reason"] = f"{family}: saturated counters"
+                        return result
+                    if previous and any(counts[key] < previous[family][key] for key in counts):
+                        result["reason"] = f"{family}: counters regressed (possible reset)"
+                        return result
+                    if counts["rej"] or counts["evict"]:
+                        result["reason"] = f"{family}: rejected or evicted evidence"
+                        return result
+                    if counts["entered"] != counts["enq"] or counts["tx"] > counts["enq"]:
+                        result["reason"] = f"{family}: inconsistent counters"
+                        return result
+                previous = stats
+                if drain_start is None:
+                    # Counters span the boot, while this log can start later. Calibrate
+                    # retrieval here; earlier leg receipts remain the baseline verifier's
+                    # responsibility. Never require a reboot to zero historical tx counts.
+                    drain_start = stats
+                    drain_start_counts = record_evidence_row_counts(reply_prefix)
+                    result["before"] = stats
+                if idle and all(row["tx"] == row["enq"] for row in stats.values()):
+                    observed = record_evidence_row_counts(reply_prefix)
+                    result["log_counts"] = observed
+                    if any(observed[family] - drain_start_counts[family] !=
+                           stats[family]["tx"] - drain_start[family]["tx"] for family in stats):
+                        result["reason"] = "newly transmitted Record rows do not match this session log"
+                        return result
+                    result.update(complete=True, reason="queued Record rows drained into this session log")
+                    return result
+                if request("!TRACE_DRAIN") is None:
+                    return result
+                result["drains"] += 1
+                result["reason"] = "Record rows or selected stop queue still pending at drain deadline"
+            return result
+        except (OSError, ValueError, RuntimeError) as exc:
+            result["reason"] = f"Record evidence drain failed: {exc}"
+            return result
+
     def library_observation(self, nonce: str, end_nonce: str, *, timeout_s: float = 40.0,
                             poll_s: float = 0.05, drain_every_s: float = 2.0):
         """This request's complete library-observation family, or None.
@@ -384,6 +486,12 @@ def managed_capture_session(config: HitlConfig) -> Iterator[Path]:
         boot_wait_s=config.capture_boot_wait_s,
         out_dir=config.out_dir,
         arm_snapshot_yield=config.arm_snapshot_yield,
+        # A managed run must own a real boot: the accepted-sequence oracle's fresh-boot gate reads
+        # `#CAP,<us>,DIAG,boot_reset,` out of the capture, and a capture that attaches to an already
+        # running device has no banner at all (`captures/s4f22-base-device-11` had none, so that run
+        # could not be read as verdict-grade even though its record leg verified). `capture_session.py`
+        # asks the firmware for the reset before its boot settle, so the banner lands in this log.
+        boot_reset=True,
     )
     try:
         log_path = session.start()

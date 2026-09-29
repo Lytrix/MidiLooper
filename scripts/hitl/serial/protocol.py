@@ -265,3 +265,41 @@ def collect_library_observation(lines: list[str], after_index: int = 0,
     if begin is None:
         return None
     return ObservationWindow(collected, False)
+
+
+def record_evidence_stats(lines: list[str]) -> Optional[dict[str, dict[str, int]]]:
+    """Decode a complete stopped-only stats reply, never a partial/duplicate family."""
+    families: dict[str, dict[str, int]] = {}
+    required = ("entered", "enq", "rej", "tx", "evict")
+    for line in lines:
+        match = re.search(r"#CAP,\d+,(?:RID,stats,|RING,record_stats,(RECA|RECS),)(.*)$", line)
+        if not match:
+            continue
+        family = match[1] or "RID"
+        if family in families:
+            return None
+        fields = dict(re.findall(r"([A-Za-z]+)=([^,\s]+)", match[2]))
+        if any(not fields.get(key, "").isdigit() for key in required):
+            return None
+        families[family] = {key: int(fields[key]) for key in required}
+    return families if set(families) == {"RECA", "RECS", "RID"} else None
+
+
+def record_evidence_row_counts(lines: list[str]) -> dict[str, int]:
+    """Count receipts in the managed log, excluding read-back stats themselves."""
+    counts = dict.fromkeys(("RECA", "RECS", "RID"), 0)
+    for line in lines:
+        match = re.search(r"#CAP,\d+,(RECA|RECS|RID),([^,\s]+)", line)
+        if match and match[2] != "stats":
+            counts[match[1]] += 1
+    return counts
+
+
+def stopped_capture_queue_idle(lines: list[str]) -> bool:
+    """The selected Track's stopped-only status must explicitly report no jobs."""
+    for line in reversed(lines):
+        if "#STOP_STATUS," not in line:
+            continue
+        return (re.search(r",pending=0(?:,|$)", line) is not None
+                and re.search(r",queue=0/\d+(?:\s|$)", line) is not None)
+    return False

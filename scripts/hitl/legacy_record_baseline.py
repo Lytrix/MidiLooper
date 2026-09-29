@@ -19,6 +19,8 @@ writes the capture log plus JSON report before exiting.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import argparse
 import json
 import re
@@ -4802,6 +4804,25 @@ def _run_overdub_pass(
 _STUCK_CAPTURE_STATES = frozenset({"RECORDING", "OVERDUBBING"})
 
 
+@contextmanager
+def _managed_record_evidence_cleanup(out_port, result: dict):
+    """Keep MIDI open through end-of-run retrieval, including a failed leg."""
+    from hitl.managed_capture import active_managed_capture
+
+    session = active_managed_capture()
+    try:
+        yield
+    finally:
+        if session is not None:
+            try:
+                result.update(session.drain_record_evidence(
+                    lambda: out_port.send(mido.Message("stop"))))
+            except Exception as exc:
+                # Preserve the original leg exception; retrieval failure is explicit.
+                result.update(complete=False, reason=f"Record evidence cleanup failed: {exc}")
+            print(f"[hitl-capture] {result.get('reason', 'Record evidence drain incomplete')}")
+
+
 def _collector_capture_integrity(collector: Any | None) -> CaptureIntegrity:
     if collector is None:
         return CaptureIntegrity.UNKNOWN
@@ -5488,9 +5509,11 @@ def run() -> int:
     session_after_index = _collector_session_start_index(serial_collector)
     track_baseline_len = session_after_index
     capture_integrity_snapshot = CaptureIntegrity.UNKNOWN
+    capture_drain_result: dict = {}
 
     try:
-        with mido.open_output(midi_out_name) as out_port, mido.open_input(midi_in_name) as in_port:
+        with mido.open_output(midi_out_name) as out_port, mido.open_input(midi_in_name) as in_port, \
+                _managed_record_evidence_cleanup(out_port, capture_drain_result):
             if args.start_transport:
                 # Ensure transport is running without blindly toggling it off.
                 if _use_serial_transport_proxy(
@@ -6244,6 +6267,25 @@ def run() -> int:
             serial_error = serial_collector.error()
             capture_integrity_snapshot = _collector_capture_integrity(serial_collector)
             serial_collector.stop()
+            if capture_drain_result:
+                # Fenced replies prove rows are in this exact log; the follower can
+                # still lag the file at snapshot time. Re-read without reopening serial.
+                from hitl.managed_capture import active_managed_capture
+                session = active_managed_capture()
+                if session is not None and session.session_log is not None:
+                    try:
+                        serial_lines = session.session_log.read_text(encoding="utf-8", errors="replace").splitlines()
+                        from hitl.serial_collector import CaptureLineClock
+                        final_clock = CaptureLineClock()
+                        for line in serial_lines:
+                            final_clock.note_line(line)
+                        if final_clock.integrity is CaptureIntegrity.INCOMPLETE:
+                            capture_integrity_snapshot = CaptureIntegrity.INCOMPLETE
+                    except OSError as exc:
+                        capture_drain_result.update(complete=False, reason=f"capture log unavailable: {exc}")
+                if not capture_drain_result.get("complete"):
+                    capture_integrity_snapshot = CaptureIntegrity.INCOMPLETE
+                    abort_reason = abort_reason or str(capture_drain_result.get("reason"))
 
     verification_lines = serial_lines
     if not verification_lines and args.verify_serial_log is not None and args.verify_serial_log.exists():
@@ -6459,6 +6501,7 @@ def run() -> int:
         "transition_checks": transition_checks,
         "midi_in_message_count": midi_in_messages,
         "abort_reason": abort_reason or "",
+        "record_evidence_drain": capture_drain_result,
         "timed_out": abort_reason == "run deadline exceeded",
         "heartbeat_lost": bool(abort_reason and "heartbeat" in abort_reason),
         "precondition_failures": precondition_failures,
