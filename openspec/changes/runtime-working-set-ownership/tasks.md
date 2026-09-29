@@ -2848,6 +2848,16 @@ invalidation preserves a Record job's Playing destination/output barrier.
 Focused 156/156; native 2,619 passed / 7 skipped; capture-serial build PASS.
 Hardware confirmation awaits a recorded run of this candidate image; clear
 authorization for every slot on every track was granted 2026-09-29. -->
+<!-- 2026-09-29 evidence reliability (step 2, host-verified, no device claim):
+REVT drains during playback via the bounded chunk walk (32/turn; merge and
+stored-MIDI verification stay idle-only); the ring reserves 32 KiB of Record
+rows against displacement by ordinary traffic or another take; a missing
+telemetry row is INCONCLUSIVE/EVIDENCE_MISSING instead of a firmware
+contradiction, while a missing note event, a length mismatch and short
+span/count/bar sets stay contradictions. Native 2,628 / 2,621 passed /
+7 skipped; capture-serial SUCCESS, padding 2,072; both new fixtures
+mutation-red-proved. Bind evidence and the setup-precondition receipt are the
+remaining host-side items before the device rerun. -->
 - [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
       full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with

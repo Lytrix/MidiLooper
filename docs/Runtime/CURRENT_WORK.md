@@ -1,5 +1,24 @@
 # Current work (implementation scope)
 
+**2026-09-29 — evidence reliability before the next device attempt (step 2).**
+The in-flight S4f.21/S4f.22 slices were reviewed and checkpointed in six commits.
+Three evidence-reliability defects were then fixed, all host-verified:
+
+* the Record REVT scan drains while a loop is playing (bounded chunk walk, 32
+  events/turn); the full-merge fallback and the stored-MIDI verification still
+  require a fully idle transport;
+* the ring reserves 32 KiB that ordinary traffic cannot consume, so a take's
+  `RECA`/`RECS`/`RID` rows cannot be displaced by another take's;
+* a missing telemetry row is no longer reported as a firmware contradiction:
+  `EVIDENCE_MISSING` / `INCONCLUSIVE_CAPTURE` with
+  `assertions.evidence_gap_issues`, while a missing note *event*, a length
+  mismatch and a short span/count/bar set stay contradictions.
+
+Full native **2,628 cases / 2,621 succeeded / 7 skipped**; `teensy41-capture-serial`
+**SUCCESS**, RAM1 padding **2,072** (floor 840), variables 96,192, locals 34,880.
+Python suites 15/16/52/55/26/10 green; both new native fixtures red-proved by
+mutation. No upload and no device acceptance is claimed yet.
+
 **2026-09-29 — S4f.21 — Record playback invalidation retarget defect fixed.**
 Run 08's two immediate `Record stop retarget` rows led to a native reproduction:
 `completeAdmittedRecordStop` launches playback through a cache reset, but
