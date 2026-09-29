@@ -201,5 +201,29 @@ class DrainTests(unittest.TestCase):
         self.assertFalse(stopped_capture_queue_idle([]))
 
 
+class AttachStreamGateTests(unittest.TestCase):
+    """A capture that attached to a silent device must not run the measured sequence."""
+
+    def test_silent_attach_is_refused(self) -> None:
+        from hitl.managed_capture import attach_stream_is_usable
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "silent.log"
+            log.write_text("\n".join(f"line {i}" for i in range(15)), encoding="utf-8")
+            usable, detail = attach_stream_is_usable(log)
+        self.assertFalse(usable)
+        self.assertIn("15 line", detail)
+
+    def test_healthy_attach_is_accepted(self) -> None:
+        from hitl.managed_capture import attach_stream_is_usable
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "healthy.log"
+            rows = ["BOOT,load,ok"] + [f"#CAP,{i},ST,Track,PLAYING,PLAYING" for i in range(60)]
+            log.write_text("\n".join(rows), encoding="utf-8")
+            usable, detail = attach_stream_is_usable(log)
+        self.assertTrue(usable, detail)
+
+
 if __name__ == "__main__":
     unittest.main()

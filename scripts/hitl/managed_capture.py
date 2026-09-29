@@ -503,6 +503,29 @@ def managed_capture_session(config: HitlConfig) -> Iterator[Path]:
         session.stop()
 
 
+def attach_stream_is_usable(session_log: Path, *, min_lines: int = 40) -> tuple[bool, str]:
+    """Whether a capture that just attached has a usable device stream.
+
+    A capture can attach to a device that is silent or wedged -- most often after an
+    abruptly stopped previous session. The scenario then runs its whole measured sequence
+    against nothing and reports a confusing `SPARSE_CAPTURE`
+    (`captures/s4f22-step7-d1`: 15 lines, no `#CAP` row, `!STOP_STATUS` fence missing,
+    `clear_to_empty: clear_not_confirmed`). Setup must refuse that attach instead of
+    spending the run on it. A healthy attach has the boot rows and live capture rows
+    within the boot settle.
+    """
+    try:
+        text = session_log.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return False, f"session log unreadable: {exc}"
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < min_lines:
+        return False, f"device stream has {len(lines)} line(s); expected at least {min_lines}"
+    if not any(line.startswith("#CAP,") or line.startswith("#") for line in lines):
+        return False, "device stream carries no capture rows"
+    return True, f"{len(lines)} line(s)"
+
+
 def _run_with_watchdog(run_fn: Callable[[], int], timeout_s: float) -> int:
     """Run `run_fn` on a worker thread behind a wall-clock ceiling.
 
@@ -550,6 +573,12 @@ def run_with_managed_capture(
     """
     timeout = resolve_managed_run_timeout(timeout_s)
     with managed_capture_session(config) as log_path:
+        usable, detail = attach_stream_is_usable(log_path)
+        if not usable:
+            # Refuse before the measured sequence: a silent attach cannot produce a verdict.
+            print(f"[hitl] attached stream is not usable ({detail}); refusing to run the scenario")
+            write_metadata_best_effort(config, session_log=log_path)
+            return 3
         active = replace(config, follow_current_session=False, follow_serial_log=log_path,
                          legacy_extra_args=tuple(legacy_args_with_managed_capture(
                              list(config.legacy_extra_args), config, log_path)))
