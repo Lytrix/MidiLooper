@@ -979,3 +979,45 @@ written without a committed-inventory completeness check; a general gate changes
 may publish and would need its own fixtures for the "no content beyond the frontier" and "filtered-empty
 take" shapes (a wrong predicate turns the silent truncation into a permanent publication gap, the RC3
 class). Both are recorded in the plan and `DEC-094`, not silently dropped.
+
+## S4f.17 — the deferred overdub stop publishes its interval's undo entry (2026-09-30)
+
+Execution packet for the slice that closes the runtime `U:` discrepancy (a stopped overdub added no sidebar
+level until a reboot's content reconstruction supplied it). Root cause, evidence table and follow-ups:
+[`overdub_stop_undo_level_short_route_bugfix.md`](../../../docs/Plans/overdub_stop_undo_level_short_route_bugfix.md).
+Decision: `DEC-095`. User decision for the slice: **deferred overdub route only; publish the undo entry at pass
+publication, once per job; leave the full-route collection machinery intact.**
+
+### Identity and scope
+- **Status:** native verified (fixture red-proved with seven mutations); build verified; **device A/B verified
+  2026-09-30** on the clean-stop route (`undo_entries` 5→5 pre-fix → 5→6 fixed, with one
+  `src=deferred_short_route` row). Not committed yet.
+- **Packet/task IDs:** S4f.17 (stop admission / publication), contract `SHARED-CAPTURE-FINALIZATION.md`,
+  `DEC-063`, `DEC-068`, `DEC-088`, `DEC-095`.
+- **Owner and path:** `Track::processDeferredOverdubStopGrain` → `prepareDeferredOverdubUndoEntryFromReceipt` →
+  `TrackPreparedStopCommit::advanceAtomicTransferWithUndo` / `commitSupersededCausalBase` →
+  `TrackUndoPublication`; identity source `Loop::gatherSessionExitReceiptUndoIdentities`.
+- **Primary files:** `src/Track/TrackOverdubLifecycle.cpp`, `src/Track/TrackPreparedStopCommit.cpp`,
+  `src/Track/TrackUndoPublication.cpp`, `src/Loop/LoopOverdubSession.cpp`, `include/Track.h`,
+  `include/Loop.h`, `include/TrackPreparedStopCommit.h`, `include/TrackUndoPublication.h`. Harness:
+  `test/test_shared_capture_finalization` (production stop path).
+- **Preconditions present:** the full route (`CompanionHistory`/`UndoCollection`) already prepared and published
+  its entry. **Included here:** the short routes (clean-stop jump, stopped recovery, superseded causal base) and
+  the handoff's own correctness. **Non-goals:** the full-route collector, `PassReclaim`/capacity semantics,
+  stimulus/HITL-oracle change, the 3-bar stimulus-timing question.
+- **Commit boundary:** independently buildable; no new job fields, no size-pin change, no compatibility shim.
+
+### Oracle fixed before the behavior edit
+
+- **T-1** (`test_stopped_overdub_stop_publishes_one_undo_entry`): four legs on the production stop path — a
+  stopped overdub (short route), a second stopped overdub, a superseded causal base, and a clean stop that stages
+  no pass at all (its identity comes only from its receipt, seeded by `pushOverdubSessionPass` while the session
+  is open). Expected per leg: exactly one new global `OverdubPassAdded` entry for the slot
+  (`undoDepthForLoop` +1), naming the interval's own identity, with the canonical `passIds` tail invariant.
+  Counterexamples that must fail: any transfer variant that commits without publishing (each mutation above).
+- **T-2** (unchanged, as a guard): `test_stopped_publication_requests_own_slot_once` must keep retiring its
+  superseded/stopped job — it stalls if the fail-open guard is removed, so it pins "never park on an unnamed
+  entry".
+
+No task checkoff: S4f.17/S4f.18/S4f.20/S4f.21/S4f.22 stay open, and the response-driven device legs remain
+outstanding.

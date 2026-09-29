@@ -3397,3 +3397,38 @@ behavior to the DMA display route; it does not establish the precise DMA defect.
 Blocking SPI remains installed as a diagnostic workaround; no real-time timing
 acceptance or permanent DMA fix claimed. Serial capture remains open.
 Evidence: `captures/display-blocking-diagnostic-20260926/metadata.json` and session log.
+
+**2026-09-30 — S4f.17 sub-slice: the deferred overdub stop publishes its interval's undo entry.**
+The sidebar `U:` level (`TrackUndo::undoDepthForLoop`) counted only the record pass while a loop was live
+(`U:01` after recording plus overdubs against `U:03` after a reboot), and the base check
+`undo_redo_after_overdub_stop` logged `0 counts` against `expected_min: 1`. The deferred overdub stop drive
+prepared the interval's `OverdubPassAdded` entry only in the `CompanionHistory`/`UndoCollection` phases, so three
+correct production routes committed the pass with no entry: the **clean-stop jump** (`PrepareTransfer` with
+`SealOutcome::SkippedEmpty`; `stop_phase` trail `1,6,10,11`, the dominant device route), the **STOPPED
+destination without verified companion preparation** (the transport-Stop fallback published no entry by design),
+and the **superseded causal base** (its variant runs before what was then the audible-bridge handoff). The
+reported "3-bar record loses the levels" is the same defect reached through timing: a late record start is
+quantized up to 3 bars, shifting the later steps so the overdub stop lands as a clean stop. Two further defects
+kept the handoff from working once it existed: `job.undoPublicationReady` held `begin`'s *return* (the
+transaction only opens into `DetachRedo`), and `TrackUndoPublication::canPublish` required a *staged* pass
+identity a clean stop never has.
+**Fix** (user decision: deferred overdub route only; publish at pass publication, once per job; full-route
+collection machinery intact): new `Loop::gatherSessionExitReceiptUndoIdentities` reads the interval's **own**
+session-exit receipt (DEC-068) in `collectOverdubSessionUndoPasses` shape so the receipt type stays Loop-private;
+`Track::prepareDeferredOverdubUndoEntryFromReceipt` builds the canonical `OverdubPassAdded` entry from that
+receipt plus any staged final pass; the handoff sits at the **top of the `AtomicTransfer` phase**, once per job
+(`undoPublicationStarted`), and drives the protected transaction to `Ready` before any variant runs, so the
+audible bridge, the stopped recovery, the **no-staged** case and the superseded case each publish what was
+prepared (`commitSupersededCausalBase` now takes the stack as its publishability witness);
+`canPublish(…, kInvalidPassId)` means "this turn commits no pass of its own". Fail-open when the interval names
+no identity (publish nothing, always retire), fail-closed on a refused `begin` (retain and retry).
+Fixture `test_stopped_overdub_stop_publishes_one_undo_entry` (`test_shared_capture_finalization`, four legs
+including the clean stop); seven mutations red-proved and restored byte-identically (removing the prepare call
+site also stalls `test_stopped_publication_requests_own_slot_once`, proving the fail-open guard is load-bearing).
+Strict focused 56/56; full native 2 637 cases / 2 630 succeeded / 7 skipped / 0 failed; capture-serial SUCCESS,
+RAM1 padding 1 928 (floor 840). Device A/B on the clean route with an identical command:
+`captures/s4f20-odundo-07` (pre-fix) trail `1,6,10,11` and `undo_entries` 5→5, no short-route row;
+`captures/s4f20-odundo-10-1` (fixed) same trail, 5→6 with one `src=deferred_short_route` row; full-route control
+`captures/s4f20-odundo-09` 5→6 and `MIDI: Undo (entries=3)` (the reboot's `U:03`). Decision DEC-095; packet
+section and plan `overdub_stop_undo_level_short_route_bugfix.md`. No task checkoff: S4f.17/S4f.18/S4f.20/S4f.21/
+S4f.22 stay open.

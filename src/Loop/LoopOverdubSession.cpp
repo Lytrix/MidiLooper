@@ -296,6 +296,26 @@ LOOP_COLD_MEM void Loop::collectOverdubSessionUndoPasses(PassIdList& passIds,
   }
 }
 
+LOOP_COLD_MEM bool Loop::gatherSessionExitReceiptUndoIdentities(size_t ringIndex, PassIdList& passIds,
+                                                              EditPassIdList& companionIds) const {
+  passIds.clear();
+  companionIds.clear();
+  // DEC-068: the receipt is this interval's own; it left the shared session at its stop admission, so
+  // it is the only source that cannot describe a successor that reentered the session meanwhile.
+  const SessionExitSnapshotHandoff* receipt = sessionExitReceiptByRingIndex(ringIndex);
+  if (receipt == nullptr) return false;
+  passIds.reserve(receipt->passIds.size());
+  for (const PassId id : receipt->passIds) {
+    if (id != kInvalidPassId) passIds.push_back(id);
+  }
+  for (const EditPassIdList& row : receipt->companionIds) {
+    for (const EditPassId companionId : row) {
+      if (companionId != kInvalidEditPassId) companionIds.push_back(companionId);
+    }
+  }
+  return !passIds.empty();
+}
+
 LOOP_COLD_MEM uint64_t Loop::requiredSessionUndoCollectionGrains(
     size_t rows, size_t companions, size_t quantum) {
   if (!quantum || rows > 2048 || companions > 2048) return UINT64_MAX;

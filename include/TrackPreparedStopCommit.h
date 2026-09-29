@@ -47,10 +47,13 @@ bool completeDeferredCleanup(Loop& loop, LoopPlaybackRuntime& runtime,
 /// published root. Commit the accepted capture pass through the plain route and
 /// publish no audible bridge, so a stale PLAYING successor can never be selected
 /// and content the newer root already carries is not duplicated. The caller has
-/// already retired the preparation credits.
+/// already retired the preparation credits. `undo` (with `stack` as its
+/// publishability witness) is published in this same turn when it is ready --
+/// including when this turn stages no pass of its own, because the interval's
+/// take was already committed by its wraps.
 bool commitSupersededCausalBase(Loop& loop, PendingStopAdmission& stop,
-    PreparedCapturePassTransfer& transferred, TrackUndoPublication* undo,
-    PendingCapturePass* pendingPass = nullptr);
+    PreparedCapturePassTransfer& transferred, GlobalUndoStack* stack,
+    TrackUndoPublication* undo, PendingCapturePass* pendingPass = nullptr);
 // One admitted canonical preparation grain; setup and unused credit retirement
 // remain separate turns. Complete readiness queries consume no additional credit.
 RuntimePlaybackOrderBuildResult stepPreparation(Loop& loop, LoopPlaybackRuntime& runtime,

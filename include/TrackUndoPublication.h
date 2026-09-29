@@ -22,6 +22,9 @@ class TrackUndoPublication {
   bool prewarm(size_t redoCapacity);
   bool begin(GlobalUndoStack& stack, UndoEntry& preparedEntry);
   bool stepPrepare(size_t maximumUnits);
+  /// `finalPassId` is the identity the committing pass must have. Pass `kInvalidPassId` when this turn
+  /// commits **no** pass of its own -- a clean stop whose wraps already committed the interval's
+  /// content -- and the prepared entry's own identity is then the whole requirement.
   bool canPublish(const GlobalUndoStack& stack, LoopId loopId, PassId finalPassId) const;
   /// All fallible checks, including the joint audible/canonical proof, precede
   /// this call. The reserved append is the undo part of that same atomic turn.

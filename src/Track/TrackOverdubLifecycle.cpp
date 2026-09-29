@@ -1166,7 +1166,13 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoPublication(CaptureStopJob& job,
   if (!job.undoPublicationStarted) {
     job.undoPublicationStarted = true;
     // The transaction is exclusive: a predecessor must have finished draining.
-    job.undoPublicationReady = undo->begin(getGlobalUndoStack(), job.undoEntry);
+    const bool began = undo->begin(getGlobalUndoStack(), job.undoEntry);
+    // `begin` answering true only *opens* the transaction: it leaves the publication in `DetachRedo`
+    // and owes its prepare turns before the entry is publishable. This handoff flag therefore means
+    // "publishable" (`Ready`), not "opened" -- a caller that gates its drive on the flag (the
+    // AtomicTransfer handoff in the overdub lifecycle) would otherwise commit a pass whose entry is
+    // still detached, and the entry would be drained unpublished.
+    job.undoPublicationReady = false;
     (void)stop.consumeUndoCollectionGrain();
 #if defined(SESSION_CAPTURE)
     {
@@ -1175,7 +1181,7 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoPublication(CaptureStopJob& job,
       snprintf(line, sizeof(line),
                "#CAP,%lu,DIAG,gus,publish_begin,ok=%u,phase=%u,cursor=%zu,size=%zu,cap=%zu,"
                "passId=%lu,passIds_n=%u",
-               static_cast<unsigned long>(micros()), job.undoPublicationReady ? 1u : 0u,
+               static_cast<unsigned long>(micros()), began ? 1u : 0u,
                static_cast<unsigned>(undo->phase()), stack.cursor, stack.entries.size(),
                stack.entries.capacity(), static_cast<unsigned long>(job.undoEntry.passId),
                static_cast<unsigned>(job.undoEntry.passIds.size()));
@@ -1184,7 +1190,7 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoPublication(CaptureStopJob& job,
 #endif
     // A rejected begin leaves the entry intact and means "nothing to publish".
     // A successful begin still owes its prepare turns before it can publish.
-    if (!job.undoPublicationReady) return true;
+    if (!began) return true;
     return false;
   }
   if (!undo->protectedState()) {
@@ -1199,6 +1205,66 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoPublication(CaptureStopJob& job,
   job.undoPublicationReady = undo->phase() == TrackUndoPublication::Phase::Ready;
   return job.undoPublicationReady;
 }
+
+// Two overdub-stop routes never reach the CompanionHistory/UndoCollection phases: a clean stop whose
+// frozen staging holds no rows jumps straight to the transfer tail, and a STOPPED destination skips
+// companion preparation entirely. Both published the pass without this interval's `OverdubPassAdded`
+// entry, so a stopped overdub added no sidebar `U:` level at runtime -- only the post-reboot content
+// reconstruction (DEC-088) showed it. Build the entry from the interval's own session-exit receipt
+// (DEC-068: its wrap identities left the shared session at the stop admission) and hand it to the
+// existing protected transaction, so the pass and its undo entry cross the same publication boundary
+// (DEC-063) exactly once per job. The full route's prepared entry stays untouched. `false` means this
+// (DEC-063) exactly once per job. The full route's prepared entry stays untouched. `false` means this
+// interval names no pass to publish ("fail open"): the caller then leaves the transfer without an undo
+// level instead of driving a transaction that `begin` would refuse forever.
+TRACK_COLD_MEM bool Track::prepareDeferredOverdubUndoEntryFromReceipt(CaptureStopJob& job, Loop& loop,
+                                                                    PendingStopAdmission& stop) {
+  // The interval's identity set: the passes its **own** session-exit receipt names (its wrap commits,
+  // DEC-068) plus the pass this stop still stages when it owns one. A clean stop whose wraps already
+  // committed the take stages nothing -- that is the device's dominant stopped-overdub route (its
+  // `stop_phase` trail is `1,6,10,11`) -- so the receipt alone carries the identity there. Naming
+  // nothing at all means "no entry": fail open, never an error the caller must retry on.
+  PassIdList passIds;
+  EditPassIdList companionIds;
+  // The identities are Loop-owned and DEC-068-qualified: ask for them in that shape rather than reading
+  // the receipt's fields here (they are private to the Loop module).
+  (void)loop.gatherSessionExitReceiptUndoIdentities(stop.sessionExitReceiptRing, passIds, companionIds);
+  const PassId stagedPassId = job.ownsPendingPass ? job.pendingPass.id : loop.pendingCapturePass().id;
+  if (stagedPassId != kInvalidPassId && (passIds.empty() || passIds.back() != stagedPassId)) {
+    passIds.push_back(stagedPassId);
+  }
+  if (passIds.empty() || loop.loopId == kInvalidLoopId) return false;
+  UndoEntry& entry = job.undoEntry;
+  entry = UndoEntry{};
+  // The canonical `OverdubPassAdded` shape (`TrackUndo::pushOverdubSessionOnStop` ->
+  // `pushOverdubPassAdded`): `passId` is the interval's **last** identity, `passIds` carries the whole
+  // set only when it holds more than one (an undo must remove every pass this interval added), and the
+  // companion edit ids are flattened in receipt order.
+  entry.kind = UndoEntryKind::OverdubPassAdded;
+  entry.slotIndex = job.slot;
+  entry.loopId = loop.loopId;
+  entry.passId = passIds.back();
+  if (passIds.size() > 1) entry.passIds.swap(passIds);
+  entry.editPassIds.swap(companionIds);
+  entry.editPassType = EditPassType::Note;
+  entry.editPassIndex = kOverdubCompanionEditPassIndex;
+  entry.beforePublishedSnapshot = job.beforePublished;
+  entry.beforePublishedCoverage = job.beforePublishedCoverage;
+  job.undoCollectable = true;
+  job.undoCollected = true;
+#if defined(SESSION_CAPTURE)
+  {
+    char line[192];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,gus,slot,kind=%u,passId=%lu,passIds_n=%u,src=deferred_short_route",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(entry.kind),
+             static_cast<unsigned long>(entry.passId), static_cast<unsigned>(entry.passIds.size()));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+#endif
+  return true;
+}
+
 
 TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
   if (!hasPendingDeferredOverdubStop()) return;
@@ -2129,6 +2195,27 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     return false;
   }
   if (stop.phase == PendingStopPhase::AtomicTransfer) {
+    // Deferred-route only, and a no-op for the full CompanionHistory/UndoCollection route (its entry
+    // is already prepared and `Ready`): make sure this interval's undo entry exists and its protected
+    // transaction reaches `Ready` **before** any transfer variant runs, so every variant -- the
+    // superseded causal base, the stopped recovery and the audible bridge -- publishes the entry it
+    // just prepared. Two properties keep this honest: `undoPublicationStarted` marks the handoff, so a
+    // retry after a refused `begin` re-uses the same entry instead of building a second one; and a job
+    // that names **no** staged pass has nothing to publish, so its transfer stays fail-open exactly as
+    // it was before this handoff existed -- `begin` refuses an unnamed entry forever, and gating the
+    // drive on that refusal would park the stop instead of retiring it.
+    if (!job.undoPublicationStarted && job.undoEntry.passId == kInvalidPassId) {
+      (void)prepareDeferredOverdubUndoEntryFromReceipt(job, loop, stop);
+    }
+    if (job.undoEntry.passId != kInvalidPassId && !job.undoPublicationReady) {
+      if (!stepDeferredUndoPublication(job, stop)) return false;
+      if (!job.undoPublicationReady) {
+        // A refused begin retains the entry; retry when admission recovers, and never
+        // publish this pass without its undo level.
+        job.undoPublicationStarted = false;
+        return false;
+      }
+    }
     if (!causalBaseCurrent) {
       if (!stop.retireSupersededPreparation()) return false;
       SC_ODUB_STOP_STAGE("atomic_transfer", 0, 0, UINT32_MAX, UINT32_MAX,
@@ -2141,8 +2228,11 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
                                                         : loop.pendingCapturePass().id;
       const bool supersededPublishable = job.undoPublicationReady && supersededUndo != nullptr &&
           supersededUndo->canPublish(getGlobalUndoStack(), loop.loopId, jobFinalPassId);
+      // The stack is the entry's publishability witness, so the superseded transfer can publish an
+      // entry prepared for identities its wraps already committed (nothing staged this turn).
       if (!TrackPreparedStopCommit::commitSupersededCausalBase(
               loop, stop, supersededTransfer,
+              supersededPublishable ? &getGlobalUndoStack() : nullptr,
               supersededPublishable ? supersededUndo : nullptr,
               job.ownsPendingPass ? &job.pendingPass : nullptr))
         return false;
@@ -2163,6 +2253,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       stop.setPhase(PendingStopPhase::CompanionBridge);
       return false;
     }
+    // The entry stays prepared and `Ready` from the hoisted handoff above; nothing to redo here.
     PreparedCapturePassTransfer transferred{};
     TrackUndoPublication* undo = protectedUndo();
     // The caller must prove publishability before entering the undo path; a

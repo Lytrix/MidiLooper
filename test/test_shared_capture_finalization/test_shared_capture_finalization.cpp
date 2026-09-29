@@ -1857,6 +1857,119 @@ void test_deferred_record_publication_queues_the_record_session_exit_snapshot() 
                                    "the published root lost the take's last-bar note");
 }
 
+// The two short overdub-stop routes -- a clean stop whose frozen staging holds no rows, and the
+// STOPPED destination -- skip the CompanionHistory/UndoCollection phases, and with them this
+// interval's `OverdubPassAdded` entry: a stopped overdub added no sidebar `U:` level at runtime, and
+// the entry appeared only after a reboot's content reconstruction (DEC-088). The deferred publication
+// now builds it from the interval's own session-exit receipt (DEC-068) and commits it with the pass
+// across one boundary (DEC-063), exactly once per job.
+void test_stopped_overdub_stop_publishes_one_undo_entry() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, true);
+  t.forceSetState(TRACK_PLAYING);
+  t.setActiveLoopIndex(0);
+  Loop& loop = t.getLoop(0);
+  const size_t undoBefore = TrackUndo::getUndoCount(t);
+  const size_t depthBefore = TrackUndo::undoDepthForLoop(t, loop);
+
+  start(t, 0, true, 0, 60);
+  clockManager.assignCurrentTickSilently(768);
+  t.stopOverdubbingToStopped();  // STOPPED destination -> the route that skipped the entry
+  driveStopToRetirement(t);
+
+  TEST_ASSERT_TRUE_MESSAGE(loop.passes.hasRecordPass(),
+                           "precondition: the record pass survives the overdub stop");
+  TEST_ASSERT_EQUAL_UINT(1, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      undoBefore + 1, TrackUndo::getUndoCount(t),
+      "a stopped overdub must add exactly one global undo entry");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      depthBefore + 1, TrackUndo::undoDepthForLoop(t, loop),
+      "the sidebar U: level for this slot must gain the stopped overdub");
+  const auto& entries = t.getGlobalUndoStack().entries;
+  TEST_ASSERT_EQUAL(UndoEntryKind::OverdubPassAdded, entries.back().kind);
+  TEST_ASSERT_EQUAL_UINT8(0, entries.back().slotIndex);
+  TEST_ASSERT_EQUAL(loop.passes.overdubPasses.back().id, entries.back().passId);
+  // Canonical `OverdubPassAdded` shape (`TrackUndo::pushOverdubPassAdded`): when `passIds` carries a
+  // set, its tail is the entry's `passId`, so an undo removes exactly the passes this interval added.
+  if (!entries.back().passIds.empty()) {
+    TEST_ASSERT_EQUAL(entries.back().passId, entries.back().passIds.back());
+    for (const PassId id : entries.back().passIds) {
+      TEST_ASSERT_NOT_EQUAL(kInvalidPassId, id);
+    }
+  }
+
+  // A second stopped overdub on the same slot registers its **own** level. That is the device rule the
+  // sidebar must show: `U:02` after one stop and `U:03` after two, not one level that a later stop
+  // replaces -- and exactly what a reboot's content reconstruction (DEC-088) already reported.
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 768, 64);
+  clockManager.assignCurrentTickSilently(1536);
+  t.stopOverdubbingToStopped();
+  driveStopToRetirement(t);
+  TEST_ASSERT_EQUAL_UINT(2, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      undoBefore + 2, TrackUndo::getUndoCount(t),
+      "the second stopped overdub must add one more level, not replace the first");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      depthBefore + 2, TrackUndo::undoDepthForLoop(t, loop),
+      "the sidebar U: level must count both stopped overdubs");
+  TEST_ASSERT_EQUAL(loop.passes.overdubPasses.back().id,
+                    t.getGlobalUndoStack().entries.back().passId);
+
+  // A superseded causal base must publish its interval's level too. The superseded transfer variant
+  // commits the accepted pass with no bridge, and it runs *before* the audible-bridge handoff used to
+  // sit -- so the entry has to be prepared (and driven to `Ready`) at the top of the transfer phase.
+  // Same fault injection as `deferredPersistence(false, true, false)`: a replaced causal base.
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, true, 1536, 66);
+  clockManager.assignCurrentTickSilently(2304);
+  t.stopOverdubbingToStopped();
+  advanceToPhase(t, PendingStopPhase::AtomicTransfer);
+  ++loop.playbackRevision;
+  driveStopToRetirement(t);
+  TEST_ASSERT_FALSE_MESSAGE(t.hasStopInFlight(),
+                            "a superseded job must retire, not park on its undone entry");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      undoBefore + 3, TrackUndo::getUndoCount(t),
+      "a superseded stopped overdub must still publish its level");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      depthBefore + 3, TrackUndo::undoDepthForLoop(t, loop),
+      "the sidebar U: level must count the superseded stop as well");
+  TEST_ASSERT_EQUAL(loop.passes.overdubPasses.back().id,
+                    t.getGlobalUndoStack().entries.back().passId);
+
+  // The device's dominant stopped-overdub route: a **clean** stop whose wraps already committed the
+  // take (`stop_phase` trail `1,6,10,11`, no `CompanionHistory`/`UndoCollection`; the 3-bar device runs
+  // hit it). This stop stages no pass of its own -- no rows -- so the interval's identity comes from
+  // its own session-exit receipt: the pass its wrap recorded with `pushOverdubSessionPass`. Publishing
+  // that entry is this transfer's whole publication, and it is the level the sidebar used to lose.
+  t.forceSetState(TRACK_PLAYING);
+  const PassId wrappedPassId = loop.passes.overdubPasses.back().id;
+  const size_t passesBefore = loop.passes.overdubPasses.size();
+  t.setActiveLoopIndex(0);
+  t.startOverdubbing(2304);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  // The wrap commits the take *during* the live session; that is what puts the identity in the
+  // interval's own receipt at its stop admission.
+  loop.pushOverdubSessionPass(wrappedPassId, EditPassIdList{});
+  clockManager.assignCurrentTickSilently(3072);
+  t.stopOverdubbingToStopped();
+  driveStopToRetirement(t);
+  // The stop committed nothing new (its take was already committed by that wrap) ...
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(passesBefore, loop.passes.overdubPasses.size(),
+                                 "a clean stop stages no pass of its own");
+  // ... yet its interval still owns a level, named by the receipt's identity.
+  // ... yet its interval still owns a level, named by the receipt's identity.
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      undoBefore + 4, TrackUndo::getUndoCount(t),
+      "a clean stop whose wraps committed the take must publish the entry for those identities");
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(
+      depthBefore + 4, TrackUndo::undoDepthForLoop(t, loop),
+      "the sidebar U: level must gain the clean stop as well");
+  TEST_ASSERT_EQUAL(wrappedPassId, t.getGlobalUndoStack().entries.back().passId);
+}
+
 // S4f.20 deferred-REVT parity: the publication is the commit, so it queues the same stored
 // note-on scan the inline stop queued from `finalizeCommitSideEffects` -- for **its own slot**.
 // The queue is slot-qualified because the active index may already hold a successor take, which
@@ -2425,6 +2538,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_native_midi_send_capture_records_a_direct_send);
   RUN_TEST(test_record_stop_admits_through_the_common_drive);
   RUN_TEST(test_deferred_record_publication_queues_the_record_session_exit_snapshot);
+  RUN_TEST(test_stopped_overdub_stop_publishes_one_undo_entry);
   RUN_TEST(test_deferred_record_publication_queues_revts_for_its_own_slot);
   RUN_TEST(test_playing_record_scan_drains_the_bounded_walk_and_defers_the_merge);
   RUN_TEST(test_queued_revt_scan_pins_its_chunks_across_the_deferral);
