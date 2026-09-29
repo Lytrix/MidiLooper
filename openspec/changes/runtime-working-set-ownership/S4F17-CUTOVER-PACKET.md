@@ -1,6 +1,6 @@
 # S4f.17–S4f.21 — Record admission and caller cutover (execution packet)
 
-Status: **§3 scoping pinned 2026-09-28; no firmware behavior changed by this packet.**
+Status: **S17.1 landed 2026-09-29 (Record admission bind, no routing change); S17.2–S17.5 open.**
 Baseline `aac1e8df` (§1 preparation/publication boundaries, §2 record playback handoff both
 closed). Authority: [shared contract](SHARED-CAPTURE-FINALIZATION.md),
 [S4F-CLOSURE-PLAN.md](S4F-CLOSURE-PLAN.md) §3, DEC-093 — shared capture finalization,
@@ -13,8 +13,9 @@ executable slices).
 ```
 S4F16_REQUIRE_CONTRACT=1 pio test -e native -f test_shared_capture_finalization
 ```
-Current result: **45 cases, 3 failed, 41 succeeded** (OD→OD passes). The three failures are the
-oracle for this cutover:
+Current result: **46 cases, 3 failed, 43 succeeded** (OD→OD passes). One case was added by S17.1
+(`test_record_stop_admits_through_the_common_drive`); the three failures are unchanged and remain
+the oracle for this cutover:
 
 - `test_record_to_record` — *"A must own a deferred job before any worker grain (record
   currently publishes inline)"*.
@@ -82,6 +83,35 @@ suite success without `S4F16_REQUIRE_CONTRACT` is insufficient. Focused + full n
 capture-serial build with RAM1 padding ≥ 840 and per-track/job/raw/output/overlap PSRAM
 accounting. Mutations: reintroduce the inline Record commit; read live geometry after a void stop;
 retire a predecessor while a successor still owns it.
+
+## Slice status
+
+**S17.1 — Record admission bind: done (no routing change).**
+`Track::beginDeferredRecordStopForSlot(destination, currentTick, slot, interval)` in
+`src/Track/TrackOverdubLifecycle.cpp` (TRACK_COLD_MEM) admits against the interval's own slot and
+interval behind the same ring/latch guards as the overdub form. It binds: the raw cut under a
+`canSealCaptureRange` preflight so a refusal leaves the window untouched, the sealed-range borrow,
+the job-owned geometry receipt (`captureRecordGeometryReceipt`), the held-note receipt, the frozen
+generation (the interval identity), `ReservedClosure` with `remainingClosureGrains`, the
+owner/slot/loopId/mode/interval/phaseTick fields and the runtime capture-stop owner. The final
+length comes from `computeRecordStopLengthTicks` over the maintained maximum-tick summary — no
+store walk at the stop edge — and `canonicalCaptureOutputAdmitted()` only checks the output
+reserved at the record start.
+
+Evidence:
+
+- `test_record_stop_admits_through_the_common_drive` — the production admission, then the real
+  grains driven to `RecordPublished` and retirement, asserting the raw/held-note/geometry receipts,
+  one `RecordPassAdded` undo entry, once-only persistence and a drained queue.
+- Mutation: removing `captureRecordGeometryReceipt` fails the fixture.
+- Strict oracle 46/3 (the same three); full native 2 612 cases / 2 605 succeeded / 7 skipped;
+  `teensy41-capture-serial` SUCCESS with RAM1 padding 1 016 (floor 840).
+- RAM1: the held-note transfer's 160 B out-of-line `_Hashtable::swap` in ITCM was offset by moving
+  the cold `SESSION_CAPTURE`-gated `PersistenceDiagnostics::maybeEmitPeriodic` to FLASH; the floor
+  was not re-based.
+
+S17.2–S17.5 remain open. **Do not route one stop entry point without the other**: S17.2 must move
+`stopRecording` and `stopRecordingToStopped` together, and the strict failures stay red until then.
 
 ## Fixed fixture requirements (from the trace)
 

@@ -120,26 +120,30 @@ save. Make the strict contract an enforced regression gate; ordinary suite succe
 with `S4F16_REQUIRE_CONTRACT` unset is insufficient. Full native + capture-serial build,
 RAM1 padding >=840 and per-track/job/raw/output/overlap PSRAM accounting must pass.
 
-### §3 status — 2026-09-28 (scoping pinned)
+### §3 status — 2026-09-29 (S17.1 landed; cutover still open)
 
-The strict contract's current oracle after §1+§2 is
-`S4F16_REQUIRE_CONTRACT=1 pio test -e native -f test_shared_capture_finalization`:
-**45 cases, 3 failed** (R→R, R→OD: record still publishes inline; OD→R: B's deferred record job
-absent; OD→OD passes). The executable slice sequence S17.1–S17.5, with the mode-conditioned
-admission, the two stop entry points' rerouting, the manager continuations, the S4f.20 residuals,
-the fixed fixture requirements and the risks, is pinned in the
-[cutover packet](S4F17-CUTOVER-PACKET.md). No firmware behavior changed.
+The executable slice sequence S17.1–S17.5 — the mode-conditioned admission with the record
+receipts, rerouting both stop entry points through the drive, the manager continuations consuming
+a job-qualified geometry-ready result, the S4f.20 residuals, and the enforced gates and mutations
+— is pinned with the fixed fixture requirements and risks in the
+[cutover packet](S4F17-CUTOVER-PACKET.md).
 
-### §3 status — 2026-09-28 (scoping pinned)
+The strict contract after §1+§2 was **45 cases, 3 failed** (R→R and R→OD: record still publishes
+inline; OD→R: B's deferred record job is absent; OD→OD passes).
 
-The strict contract's current oracle after §1+§2 is
-`S4F16_REQUIRE_CONTRACT=1 pio test -e native -f test_shared_capture_finalization`:
-**45 cases, 3 failed** (R→R and R→OD: record still publishes inline; OD→R: B's deferred record
-job is absent; OD→OD passes). The executable slice sequence S17.1–S17.5 — the mode-conditioned
-admission with the record receipts, rerouting both stop entry points through the drive, the
-manager continuations consuming a job-qualified geometry-ready result, the S4f.20 residuals, and
-the enforced gates and mutations — is pinned with the fixed fixture requirements and risks in the
-[cutover packet](S4F17-CUTOVER-PACKET.md). No firmware behavior changed.
+**S17.1 — Record admission bind: done.** `Track::beginDeferredRecordStopForSlot` admits a Record
+stop through the same ring, interval-identity rule and capture-stop owner as the overdub form,
+binding the interval's own slot/interval, the `canSealCaptureRange`-preflighted raw cut, the
+job-owned geometry receipt and the held-note receipt, with the final length taken from the
+maintained maximum-tick summary (no store walk at the stop edge) and the private prepared output
+reserved at the record start (`prewarmCanonicalCaptureOutput`). No routing changed, so the strict
+oracle is **46 cases, 3 failed — the same three**. Full native: 2 612 cases, 2 605 succeeded,
+7 skipped. `teensy41-capture-serial`: SUCCESS, RAM1 padding 1 016 (floor 840).
+
+The ITCM cost of the slice — the held-note receipt transfer compiles to an out-of-line 160 B
+`_Hashtable::swap` that the linker keeps in ITCM and reaches from FLASH through an 8 B veneer —
+was reclaimed by moving the cold, `SESSION_CAPTURE`-gated `PersistenceDiagnostics::maybeEmitPeriodic`
+out of ITCM rather than by re-basing the floor.
 
 ## 4. Finish correlated observations and correct the actual test recipes
 
