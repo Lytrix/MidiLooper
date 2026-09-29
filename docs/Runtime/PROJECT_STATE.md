@@ -28,6 +28,12 @@ measure no in-run loss — h5's ring is clean (`shed=4, overflow=0, wipe=0`) and
 is the separate intermittent ring wipe. Full proposal, evidence and risks:
 [CURRENT_WORK](CURRENT_WORK.md).
 
+**Release state and rollback.** The fix and its docs are **local commits** (`1358a1cd`, `24af74e4`,
+`bd86f20a`) on `feature/runtime-working-set-ownership`, which has **no upstream** — nothing is pushed, so
+"approve release" means *approval to push the branch and open the PR into `dev`*, not sign-off on an
+already-published release. Rollback is host-only and must take every commit of this change **newest
+first** (a partial revert conflicts); the tested command is in [CURRENT_WORK](CURRENT_WORK.md).
+
 **2026-09-29 — the transport decision now anchors on device time, not line position.**
 Capture rows go through the firmware's fixed evidence ring, which flushes in batches, so a record the
 ring drained **late** lands after newer rows and an index window reads it as current. Measured in

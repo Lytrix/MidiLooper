@@ -19,9 +19,18 @@ Why this exists instead of a verdict re-score: the *verdict* consumer of `revt_m
 gate in the baseline (`if stored_record_grid.get("revt_missing"): issues.append(...)`), and the offline
 `--verify-only` path runs only scenario stimulus validation, so the extractor is the honest unit to pin.
 
+**Two modes, because "captures absent" must never look like a pass:**
+
+  * default: a missing capture is skipped, the run says so and exits 0 -- developer convenience only,
+    labelled `NON-BLOCKING`;
+  * `--require-captures`: release/CI validation. Every expected capture must be present; each missing one
+    is listed and the run exits **2** (a criteria violation exits 1).
+
 Usage:
-    .venv/bin/python scripts/hitl_replay_stored_record_grid.py                 # the nine stored runs
-    .venv/bin/python scripts/hitl_replay_stored_record_grid.py --captures-dir captures --run s4f22-step11-h5
+    .venv/bin/python scripts/hitl_replay_stored_record_grid.py                       # the nine stored runs
+    .venv/bin/python scripts/hitl_replay_stored_record_grid.py --require-captures    # release evidence
+    .venv/bin/python scripts/hitl_replay_stored_record_grid.py --run s4f22-step11-h5
+
 """
 
 from __future__ import annotations
@@ -117,17 +126,21 @@ def _session_log(captures_dir: Path, run: str) -> Path | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--captures-dir", type=Path, default=_REPO_ROOT / "captures")
+    parser.add_argument("--require-captures", action="store_true",
+                        help="Release/CI mode: every expected capture must be present (missing -> exit 2)")
     parser.add_argument("--run", action="append", default=None,
                         help="Replay only this capture directory name (repeatable; default: all)")
     args = parser.parse_args()
 
     runs = args.run or sorted(EXPECTED)
     failures: list[str] = []
+    missing: list[str] = []
     replayed = 0
     print(f"{'run':22s} {'pre-21b8ca8f':>13} {'current':>8} {'fixed':>6}  criteria")
     for run in runs:
         log = _session_log(args.captures_dir, run)
         if log is None:
+            missing.append(run)
             print(f"{run:22s} {'-':>13} {'-':>8} {'-':>6}  skipped (capture not present)")
             continue
         lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -171,14 +184,30 @@ def main() -> int:
         replayed += 1
         print(f"{run:22s} {len(pre):>13} {len(cur):>8} {len(fixed):>6}  {'; '.join(notes)}")
 
+    if args.require_captures and missing:
+        print(
+            f"\n[replay] FAILED (release mode): {len(missing)} expected capture(s) missing — "
+            "release evidence must cover the full set:"
+        )
+        for run in missing:
+            print(f"  - {run}")
+        return 2
     if replayed == 0:
-        print("[replay] no captures present; nothing to check (acceptance table: scripts/test_hitl_stored_record_grid.py)")
+        print(
+            "\n[replay] NON-BLOCKING: no captures present (they are gitignored, so a fresh clone has none). "
+            "This run is developer convenience only and is NOT release evidence — use --require-captures "
+            "in release validation."
+        )
         return 0
     if failures:
         print("\n[replay] FAILED:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
+    if missing:
+        print(f"\n[replay] OK (partial): {replayed} capture(s) meet the accepted criteria; "
+              f"{len(missing)} skipped — NON-BLOCKING, not release evidence")
+        return 0
     print(f"\n[replay] OK: {replayed} capture(s) meet the accepted criteria")
     return 0
 

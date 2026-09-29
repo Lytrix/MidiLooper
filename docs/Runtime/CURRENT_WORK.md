@@ -92,34 +92,76 @@ Findings, each classified, with the acceptance criteria the fix has to meet:
 *One maintainer authors every commit in this repository, so each row's decider is the same person; the role
 named per row says which hat the work is done in (`docs/Agents/README.md`).*
 
-**Release and rollback of the landed fix.** `1358a1cd` (code + fixtures + docs) and `24af74e4` (docs +
-the pre-regression invariant test) are local commits on `feature/runtime-working-set-ownership`, which has
-**no upstream** (not pushed). Release instrument per
-[`Git-Commit-And-PR-Workflow.mdc`](../../.cursor/rules/Git-Commit-And-PR-Workflow.mdc): push the branch and
-open the PR into `dev` — it changes verdict semantics, so it is not a direct-commit hygiene change.
-Rollback is `git revert 1358a1cd 24af74e4` (or re-applying the previous body of
-`_extract_revt_note_on_ticks`, still in `1358a1cd`'s parent). It is **host-only**: no firmware, no device
-state and no persistence are involved, so a rollback needs no device run and cannot invalidate a capture —
-its only effect is that the five runs above return to reporting `record_stored_revt_missing`.
+**Release state, release instrument, rollback (tested).** **Nothing is released yet:** `1358a1cd`,
+`24af74e4` and `bd86f20a` are local commits on `feature/runtime-working-set-ownership`, which has **no
+upstream** — nothing is pushed, so "approve release" means *approval to push the branch and open the PR
+into `dev`*, not sign-off on an already-published release. That instrument follows
+[`Git-Commit-And-PR-Workflow.mdc`](../../.cursor/rules/Git-Commit-And-PR-Workflow.mdc); it is a
+verdict-semantics change, so it is not a direct-commit hygiene change.
+
+**Rollback, tested rather than asserted.** Reverting only part of the chain **does not apply**: with a
+two-commit revert, `git revert --no-commit 1358a1cd` conflicts on `docs/Runtime/CURRENT_WORK.md`,
+`docs/Runtime/PROJECT_STATE.md` and (modify/delete) `scripts/test_hitl_stored_record_grid.py`, and even
+newest-first `24af74e4 1358a1cd` still conflicts on `CURRENT_WORK.md`, because the later docs commit
+rewrote the same block. The procedure that applies cleanly — tested in a scratch worktree at this tip —
+reverts **every commit of this change, newest first**: the three fix commits *and* the commit carrying
+this paragraph, because the docs edits touch the same blocks as `bd86f20a`:
+
+```bash
+git revert --no-commit 1358a1cd^..HEAD     # this docs commit, bd86f20a, 24af74e4, 1358a1cd
+# equivalently, by SHA (newest first): the docs commit, bd86f20a, 24af74e4, 1358a1cd
+```
+
+and the result was checked: the code file is byte-identical to the pre-fix commit
+(`git diff bcfd0ed7 -- scripts/hitl/legacy_record_baseline.py` empty), it compiles, and the reverted
+extractor restores the old behaviour (`s4f22-step11-h5`/`h6`/`step4-a1` → `revt_missing: true`,
+`note_on_count: 0`). The revert also removes the gate and its fixtures, which is correct: they belong to
+this change. Rollback is **host-only** — no firmware, device state or persistence — so it needs no device
+run and cannot invalidate a capture.
+
+**Pre-existing suite failures, linked to a baseline record.** Measured by toggling *only* this change in
+the same checkout and environment (the same `captures/`): with the change → `Ran 793 tests`,
+`FAILED (failures=7, errors=1)`; with `bd86f20a 24af74e4 1358a1cd` reverted in place → `Ran 784 tests`
+(the 9 grid fixtures are this change's), `FAILED (failures=7, errors=1)`, and the **identical eight
+names**: `test_all_6_3_host_gates_pass`, `test_materialize_to_event_vector_only_in_machinery_owners`,
+`test_pass_when_od1_stop_uses_odub_enter_without_st`,
+`test_record_overdub_capture_verifier_uses_base_report_config`,
+`test_session_exit_gap_predicate_only_in_visual_hold_owners`,
+`test_uses_last_complete_recording_window`, `test_verify_only_record_overdub_writes_report`, and ERROR
+`test_enter_fails_when_cycle_before_select`. A sibling `Ran 14 tests`, `FAILED (failures=2)` subprocess
+suite (spawned by the `6_3` gate) repeats two of them. To regenerate: apply the revert above, run
+`python -m unittest discover -s scripts -p 'test_*.py' -t scripts`, then `git revert --quit && git reset
+--hard bd86f20a`. An earlier attempt to measure this in a worktree at the branch's pre-session commit was
+**abandoned as confounded** — the suite writes into `captures/`, whose presence differs outside the main
+checkout.
 
 **Reproducing the verification.** The acceptance gate is
 `python scripts/hitl_replay_stored_record_grid.py` → a table per capture with the criteria; **exit 0** with
-`9 capture(s) meet the accepted criteria`, exit 1 on any violation (checked by feeding it a wrong expected
-count: it reports `COUNTS DIFFER FROM THE ACCEPTED TABLE` and exits 1), and a graceful skip when the
-captures are absent (they are gitignored). Its criteria: the fix equals the pre-regression set for a take
-without a successor, excludes a successor's rows, and never adds a tick the pre-regression extractor did
-not see. The consumer of `revt_missing` is the single inline gate
+`9 capture(s) meet the accepted criteria`, exit 1 on a violation (checked by feeding it a wrong expected
+count: `COUNTS DIFFER FROM THE ACCEPTED TABLE`). Its criteria: the fix equals the pre-regression set for a
+take without a successor, excludes a successor's rows, and never adds a tick the pre-regression extractor
+did not see.
+
+**Capture-absent is not a pass.** Because the captures are gitignored, a fresh clone has none, so the two
+modes are explicit: the default skips and prints
+`NON-BLOCKING: … developer convenience only and is NOT release evidence` (**exit 0**), and release
+validation uses `--require-captures`, which lists every missing capture and exits **2** (verified: exit 2
+with a missing set, exit 0 with all nine present). Partial presence in the default mode prints
+`OK (partial) … not release evidence`.
+The repository has **no CI configuration** (no `.github/workflows`), so the strict mode is a *manual
+release step* inside the release instrument above; the label plus the exit codes are what keep an absent
+fixture set from ever reading as evidence.
+
+The consumer of `revt_missing` is the single inline gate
 `if stored_record_grid.get("revt_missing"): issues.append("record_stored_revt_missing")`, which
-`scripts/test_hitl_stored_record_grid.py` (9 cases) pins directly; `python -m unittest discover -s scripts
--p 'test_*.py' -t scripts` → **793 cases in one process**, `FAILED (failures=7, errors=1)`, plus a nested
-subprocess suite (`Ran 14 tests`, `FAILED (failures=2)`) spawned by the `6_3` gate inside it, whose two
-failures repeat two of the eight. Those eight are pre-existing and identical before this fix (verified by
-stashing the changes); `test_rotation_marks_incomplete` additionally flaked once under that load and passes
-2/2 isolated (`python -m unittest scripts.test_hitl_capture_integrity`, 17 cases — a 2 s polling deadline
-in a background collector, unrelated). The isolated reruns are **not** part of the 793. A *verdict*-level
-offline re-score is not available: `--verify-only` runs only the scenario's stimulus validation (its own
-code says "use baseline JSON report for full gate checks") and the legacy baseline cannot be re-pointed at
-a log without risking device presses — so the extractor, not the verdict, is the pinned unit.
+`scripts/test_hitl_stored_record_grid.py` (9 cases) pins directly; the suite counts and their linked
+baseline are above. `test_rotation_marks_incomplete` additionally flaked once under the full-suite load and
+passes 2/2 isolated (`python -m unittest scripts.test_hitl_capture_integrity`, 17 cases — a 2 s polling
+deadline in a background collector, unrelated); the isolated reruns are **not** part of the 793. A
+*verdict*-level offline re-score is not available: `--verify-only` runs only the scenario's stimulus
+validation (its own code says "use baseline JSON report for full gate checks") and the legacy baseline
+cannot be re-pointed at a log without risking device presses — so the extractor, not the verdict, is the
+pinned unit.
 
 **Order:** (1) landed; **approve its release**; (2) and (3) await the decisions above, and the SEVT
 decision is required *before* any SEVT change; (5) after (2)/(3) show whether loss still occurs.
