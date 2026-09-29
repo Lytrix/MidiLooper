@@ -27,8 +27,17 @@ the slot rather than letting the worker publish the cleared take back into the s
 `test_replaced_loop_during_a_record_finalization_retires_the_job` (load / re-record shape) and
 `test_slot_clear_during_a_record_finalization_does_not_republish`, plus the overdub counterpart
 renamed to `test_stale_publication_is_superseded_without_persistence` (previously encoded parking as
-expected). **Still owed:** a deferred Record stop under an external clock source. No device
-acceptance is claimed from host results.
+expected).
+
+**2026-09-29 — §3 S17.5c — the transport-not-running leg of a retained Record stop.** The clock source
+reaches this path through `isTransportRunning()` (false both for a stopped internal transport and a
+quiet external clock). `test_retained_record_stop_admits_stopped_once_the_transport_is_not_running`
+retains a PLAYING-destination Record stop behind another interval's job, stops the transport before
+the drive, and pins DEC-078 item 3: the stop admits STOPPED, the take still publishes and the
+transport resolves `TRACK_STOPPED`; replacing the re-derivation with the stored destination fails it.
+With S17.5a–c, §3's exit list has no unexercised item this environment can reach (the clock
+*classification* is covered by `test_clock_transport_master`). No device acceptance is claimed from
+host results.
 
 **2026-09-29 — §3 gates (S17.5) — enforced gate, mutation set, accounting.** The finalization suite no
 longer reads `S4F16_REQUIRE_CONTRACT`: the R→R/R→OD/OD→R/OD→OD rotation oracle and every other

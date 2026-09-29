@@ -233,8 +233,14 @@ for the slot, instead of letting the worker publish the cleared take back into t
 emptied. Fixtures `test_replaced_loop_during_a_record_finalization_retires_the_job` (the load /
 re-record shape) and `test_slot_clear_during_a_record_finalization_does_not_republish`, plus the
 overdub counterpart renamed to `test_stale_publication_is_superseded_without_persistence`, which
-previously encoded parking as expected. **Still owed:** a deferred Record stop under an **external**
-clock source. No device acceptance is claimed from host results.
+previously encoded parking as expected. **S17.5c — the transport-not-running leg: done.** The clock source reaches this path through
+`isTransportRunning()` (false both for a stopped internal transport and a quiet external clock):
+`test_retained_record_stop_admits_stopped_once_the_transport_is_not_running` retains a
+PLAYING-destination Record stop, stops the transport before the drive, and pins the DEC-078 item 3
+re-derivation — STOPPED admission, take published, `TRACK_STOPPED` resolved; replacing it with the
+stored destination fails the fixture. §3's exit list now has no unexercised item this environment can
+reach; the clock *classification* is covered by `test_clock_transport_master`. No device acceptance
+is claimed from host results.
 
 ## 4. Finish correlated observations and correct the actual test recipes
 

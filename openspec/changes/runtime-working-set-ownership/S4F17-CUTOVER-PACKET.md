@@ -365,9 +365,18 @@ not receive the in-flight take"* without the clear supersede). The overdub count
 `test_stale_publication_is_superseded_without_persistence`: it previously encoded parking as the
 expected behaviour, and now asserts the supersede-and-publish-nothing contract instead.
 
-Still **not** exercised, and the honest remainder of §3's exit list: a deferred Record stop under an
-**external** clock source (only the clock classification itself is tested by
-`test_clock_transport_master`). No device acceptance is claimed from host results.
+**S17.5c — the transport-not-running leg of the retained stop: done.** The clock source reaches
+this path through `isTransportRunning()`, which is false both for a stopped internal transport and
+for an external clock that has gone quiet. `test_retained_record_stop_admits_stopped_once_the_transport_is_not_running`
+retains a **PLAYING**-destination Record stop behind another interval's job, stops the transport
+before the drive runs, and asserts the DEC-078 item 3 re-derivation: the stop admits for STOPPED,
+the take still publishes, and the transport resolves `TRACK_STOPPED`. Replacing the re-derivation
+with the stored destination fails it. (The transport-state assert is the discriminator: the PLAYING
+edge's own runtime reset can also retarget the destination field, which S17.5a pins separately.)
+
+With that, §3's exit list has no unexercised item left that this environment can reach: the
+external-clock *classification* itself is covered by `test_clock_transport_master`, and every route
+the Record stop takes is now fixture-covered. No device acceptance is claimed from host results.
 
 ## Fixed fixture requirements (from the trace)
 
