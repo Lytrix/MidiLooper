@@ -70,6 +70,41 @@ void test_tier_a_flood_cannot_evict_record_evidence() {
   TEST_ASSERT_TRUE(captureSerial.output.find("RECA,0,0") != std::string::npos);
 }
 
+static uint8_t reservedBacking[kRecordReserveBytes + 8192];
+
+void test_record_rows_have_a_reserved_ring_slice() {
+  sCaptureRing = {};
+  sCaptureRing.data = reservedBacking;
+  sCaptureRing.capacity = sizeof(reservedBacking);
+  captureSerial.output.clear();
+  // Ordinary Tier-A rows fill up to the non-reserved ceiling and then cycle there.
+  const std::string filler = "#CAP,1,DIAG,idle_maint," + std::string(90, 'x');
+  for (int i = 0; i < 200; ++i) queueCaptureTextLine(filler.c_str());
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(kRecordReserveBytes,
+                                      sCaptureRing.capacity - sCaptureRing.used);
+  // A take's rows get in, and none displaces another.
+  recStart(2, 100);
+  recStop("stop", 2, 800, 100, 700, 768, false);
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.recordStart.enqueued);
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.recordStop.enqueued);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.recordStart.evicted);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.recordStop.evicted);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.criticalRejectedPending);
+  // The ordinary region still cycles: once a Record row reaches the head its own traffic is
+  // refused and reported as timing shed -- never as displacement of the Record row.
+  for (int i = 0; i < 2000; ++i) queueCaptureTextLine(filler.c_str());
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.recordStart.evicted);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.recordStop.evicted);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.criticalRejectedPending);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(sCaptureRing.capacity, sCaptureRing.used);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, sCaptureRing.timingShedPending);
+  // A later take's identity row still lands in the reserve without displacing anything.
+  recSlotIdentity("start", 2, 0, 2, 2, 2, 0, 2, 'r', 'r', 0);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.identityEmitRejected);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.identityEvicted);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.criticalRejectedPending);
+}
+
 void test_critical_flood_counts_actual_family_eviction() {
   recStart(0, 0);
   recSlotIdentity("start", 1, 0, 0, 0, 0, 0, 0, 'r', 'r', 0);
@@ -114,6 +149,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_real_emitters_are_accounted_and_drained);
   RUN_TEST(test_tier_a_flood_cannot_evict_record_evidence);
+  RUN_TEST(test_record_rows_have_a_reserved_ring_slice);
   RUN_TEST(test_critical_flood_counts_actual_family_eviction);
   RUN_TEST(test_allocation_failure_is_reported_after_safe_usb_retry);
   return UNITY_END();
