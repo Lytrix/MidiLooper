@@ -1,5 +1,15 @@
 # Deliverable Tracking (Main vs Refinement)
 
+**2026-09-29 — S4f.22 device legs: the Record leg passes; capture loss is still under attribution.**
+Uploaded the candidate (`teensy41-capture-serial`, RAM1 padding 2,072) and ran the registered
+base preset. Attempt **a1** (fresh upload + boot reset) is a **PASS**: integrity COMPLETE,
+`issues []`, all five transition checks green, drain complete (RECA 1 / RECS 7 / RID 1
+reconciled) and **32 `REVT` rows** present. Repeat attempts on the same boot did not pass:
+**a2** `INCONCLUSIVE_CAPTURE` with `RING,wiped,1,15981` and **a3** `FAIL`
+(`second_overdub_first_note_missing`). Evidence in `captures/s4f22-step3-base-0{1,2}` and
+`captures/s4f22-step4-a{1,2,3}`. Repeatability is **NOT proven**; the remaining ring wipe is
+unattributed and the loss totals are now cumulative for the next run. No deployment claim.
+
 **2026-09-29 — evidence reliability before the next device attempt (step 2).**
 The in-flight S4f.21/S4f.22 slices were reviewed and checkpointed in six commits.
 Three evidence-reliability defects were then fixed, all host-verified: the Record
