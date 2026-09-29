@@ -344,7 +344,17 @@ void test_library_observation_lines_fit_capture_text_budget() {
   TEST_ASSERT_TRUE(CaptureLineTier::isCriticalLine(
       "#CAP,500,RID,start,take=1,t=5,ss=1,sp=1,cs=255,pt=255,ps=255,r=-,w=-,chg=0"));
   TEST_ASSERT_FALSE(CaptureLineTier::isCriticalLine("#CAP,500,RIDX,admit,take=1"));
-  TEST_ASSERT_FALSE(CaptureLineTier::isCriticalLine("#CAP,500,RECS,stage,x"));
+
+  // The record-stop family joins it: it is the only evidence of the stop, and being merely Tier-A it
+  // was displaced by the overdub finalization's Tier-A flood (`captures/s4f22-base-device-05` kept
+  // zero `RECS` rows for a take that recorded, published and retired). One `RECA` plus the stop's
+  // geometry row and its bounded six-stage trace per take, so it cannot flood.
+  TEST_ASSERT_TRUE(CaptureLineTier::isCriticalLine("#CAP,500,RECS,stage,x"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isCriticalLine(
+      "#CAP,25637710,RECS,stopToStopped,0,376,0,376,768,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isCriticalLine("#CAP,26294042,RECA,0,0"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isCriticalLine("#CAP,500,RECAX,0,0"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isCriticalLine("#CAP,500,RECSX,0,0"));
 }
 
 void test_transport_and_persistence_lines_are_tier_a() {

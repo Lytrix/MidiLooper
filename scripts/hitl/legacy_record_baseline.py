@@ -1847,6 +1847,11 @@ def _restart_transport_after_clear(
 ) -> tuple[bool, Optional[float]]:
     """Start global transport after record arm so the armed slot begins capturing."""
     print("[info] transport start after record arm")
+    # Serial length before the press: `ensure_transport_clock` may only suppress its own toggle on
+    # the acknowledgement of **this** press (see its `started_since_index` note).
+    start_press_baseline = (
+        len(serial_collector.snapshot()) if serial_collector is not None else None
+    )
     _send_short_press(
         out_port,
         note=GLOBAL_TRANSPORT_NOTE,
@@ -1866,6 +1871,7 @@ def _restart_transport_after_clear(
         min_clocks=24,
         timeout_s=3.0,
         abort=abort,
+        started_since_index=start_press_baseline,
     )
     if not clock_ok:
         print(
