@@ -40,6 +40,8 @@ except ImportError as exc:  # pragma: no cover - import guard
         "  python3 -m pip install mido python-rtmidi pyserial"
     ) from exc
 
+from hitl.device_time import device_stamp_us, human_line_device_us
+
 from hitl.capture_transitions import (
     _count_capture_state_entries,
     _count_capture_transitions,
@@ -124,6 +126,7 @@ from hitl.contract import (
     report_hitl_run,
 )
 from hitl.recovery import log_action_outcome, request_state_transition
+from hitl.device_time import device_stamp_us, human_line_device_us
 from hitl.serial_transport import (
     resolve_wall_tempo_for_proxy as _resolve_wall_tempo_for_proxy,
     serial_capture_active as _serial_capture_active,
@@ -1528,11 +1531,21 @@ def _transport_running_before_record_arm(
     latest = _latest_track_state(lines, after_index=after_index) if lines else None
     if latest in ("PLAYING", "OVERDUBBING", "RECORDING", "STOPPED_RECORDING"):
         return True
+    # "Did a take reach PLAYING after the last stop?" -- answered in **device time**, because the
+    # `ST,Track,…PLAYING` row goes through the evidence ring while `Transport stopped` is a directly
+    # printed logger line: comparing their line positions lets a record the ring drained late decide
+    # the answer (`captures/s4f22-step11-h2`). Fall back to positions only when either side has no
+    # clock, which is what the synthetic fixtures do.
+    last_to_playing_us: Optional[int] = None
+    last_transport_stopped_us: Optional[int] = None
     last_to_playing = -1
     last_transport_stopped = -1
     for index, line in enumerate(lines):
         if "Transport stopped" in line:
             last_transport_stopped = index
+            stopped_us = human_line_device_us(line)
+            if stopped_us is not None:
+                last_transport_stopped_us = stopped_us
         if "#CAP," not in line or ",ST,Track," not in line:
             continue
         parts = line.split(",")
@@ -1541,6 +1554,11 @@ def _transport_running_before_record_arm(
             continue
         if parts[5].strip() == "PLAYING":
             last_to_playing = index
+            playing_us = device_stamp_us(line)
+            if playing_us is not None:
+                last_to_playing_us = playing_us
+    if last_to_playing_us is not None and last_transport_stopped_us is not None:
+        return last_to_playing_us > last_transport_stopped_us
     return last_to_playing > last_transport_stopped
 
 
@@ -5915,10 +5933,15 @@ def run() -> int:
                         serial_collector is not None
                         and _serial_capture_active(args)
                         and serial_snap is not None
-                        and _serial_lines_show_transport_activity(serial_snap)
+                        # Anchored at this track's baseline: a row the ring drained late carries an
+                        # older device stamp than the run's own start and is not current activity
+                        # (`captures/s4f22-step11-h2`).
+                        and _serial_lines_show_transport_activity(
+                            serial_snap, after_index=track_baseline_len
+                        )
                     ):
                         print(
-                            "[info] Serial #CAP,BAR/DFRAME shows transport running; "
+                            "[info] Serial #CAP,BAR/DFRAME shows live transport activity; "
                             "skipping transport reset recovery (no USB MIDI clock on host)."
                         )
 
