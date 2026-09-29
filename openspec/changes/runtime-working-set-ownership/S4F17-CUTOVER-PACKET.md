@@ -591,3 +591,41 @@ else (the flush-budget path, or the emitter's own drop policy), not merely evict
 from the ring. Making `RECS` critical therefore changed nothing observable. That is
 the next thing to find: instrument the enqueue path for `RECA`/`RECS` and compare a
 short and a long run, rather than reasoning about tiers.
+
+### Record-family loss: pinned to the firmware identity, mechanism narrowed
+
+Run identity matters here and is now unambiguous (from each run's `metadata.json`):
+
+| run | git | firmware sha256 (first 16) |
+| --- | --- | --- |
+| 01–03 | `006b67c3` | `8aa70cd9aab9272c` |
+| 04–05 | `760acb6f` / `d8375b1c` (dirty) | `8aa70cd9aab9272c` (host-only fixes) |
+| 06 | `d8375b1c` (dirty) | `62599057cd79c11f` (the `isCriticalLine` build) |
+
+So run 06 **did** run with `RECA,`/`RECS,` in the critical set, and it still carried zero
+`RECA`/`RECS`/`RID` rows. **Making the record family critical changed nothing observable**, and
+that rules out ring *eviction* as the mechanism: a critical row is not a displacement candidate.
+
+Two drop points exist in the ring, and the evidence now points at the second:
+
+1. **Enqueue displacement** (`incomingMayDisplace`) — evicts the head when the incoming record may
+   displace it. An identity row lost here is counted (`identityEvicted` / `identityEmitRejected`).
+2. **Refused append** (`if (!incomingMayDisplace(...)) { noteTimingShed(); return false; }`) — the
+   incoming record is **dropped outright**. Run 06's log contains exactly two `RING,shed,1` rows
+   (16.424 s and 30.142 s), and `noteTimingShed()` is emitted *only* on that refused-append branch.
+   So appends were refused twice in that run, and a record family emitted inside such a window is
+   lost with no eviction involved.
+
+That is consistent with `RID` (critical, and already protected before this change) being lost too,
+and with the short run keeping the whole family: a short run never reaches the pressure that
+refuses appends.
+
+**Next step, concrete:** instrument the enqueue path with per-family emitted/enqueued/refused
+counters (the `identityEmitEnqueued`/`identityEmitRejected` pair already models this for `RID`) and
+either (a) reserve ring capacity for the critical record rows, or (b) report the refusal in
+`capture_integrity` so the oracle can say "lost under pressure" instead of
+`record_stop_stage_missing:record_stop`. Option (b) is the smaller change and keeps the failure
+attributable; option (a) is the one that makes the record leg readable on a long run.
+
+Not claimed: any device acceptance. The gate still aborts on the second overdub transition, and the
+record leg's own rows are still lost under pressure in a long run.
