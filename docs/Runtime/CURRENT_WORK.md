@@ -23,8 +23,23 @@ OD→R, OD→OD, with and without `S4F16_REQUIRE_CONTRACT`); full native **2 612
 succeeded, 7 skipped**; capture-serial build **PASS, RAM1 padding 2 040** (floor 840). Mutations
 red-proven: the inline Record commit (7 cases), the dropped stop-edge length stamp (8 cases), the
 loop-end tail-close policy (3 cases), the job-owned-geometry exemption (1 case).
-**Open:** S17.3 manager continuations (they still read the stop-edge-stamped length
-synchronously), S17.4 the S4f.20 residuals, S17.5 the enforced gate and mutations.
+**2026-09-29 — S4f.21 S17.3a — switch guard for a retained Record stop.** `finalizeCaptureAndSelectSlot`'s
+Record branch now mirrors the overdub branch's slot-scoped rule: an **admitted** Record job carries
+its own identity and does not hold the active slot, so the switch commits and a different-slot
+successor is not serialized behind predecessor cleanup; an **accepted-but-unbound** Record stop
+refuses the switch and leaves the active slot unchanged. This closed a silent content-loss
+regression introduced by S17.2 — the Record branch switched unconditionally, which advanced
+`captureInterval_` past the retained interval, after which `driveAcceptedInteraction` judged the
+obligation superseded and dropped the take. Fixture
+`test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one`; the guard-removal
+mutation fails it. Full native **2 613 cases, 2 606 succeeded, 7 skipped**; strict matrix 45/45;
+capture-serial **PASS, RAM1 padding 1 976**.
+
+**Open:** S17.3b — `stopRecordingTrack`, `finalizeCaptureAndSelectSlot` and `stopAllTracks` still
+read the stop-edge-stamped `loopLengthTicks` synchronously, so an all-filtered take can set
+`masterLoopLength` from geometry that is never published; they must consume a job-qualified
+geometry-ready result. Then S17.4 — the S4f.20 residuals — and S17.5 — the enforced gate and
+mutations.
 [Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md).
 
 **2026-09-28 — S4f.19 §2 — first-bar and onward playback handoff: delta work complete.**

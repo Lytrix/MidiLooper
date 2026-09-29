@@ -405,7 +405,21 @@ bool TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
   }
 
   if (t.isRecording()) {
-    t.stopRecordingToStopped(currentTick);
+    // S4f.17/S4f.21: a Record stop is admitted or retained exactly like an overdub stop, so the
+    // switch obeys the same **slot-scoped** rule. An *admitted* job carries its own identity
+    // (`job.owner`, `job.slot`, `job.loopId`, the interval latch and `captureStopOwner`) and does
+    // not hold the active slot, so the handoff may commit. An *accepted but unadmitted* stop does
+    // hold it: moving the slot here would advance `captureInterval_`, and the deferred owner would
+    // then judge the retained interval superseded and silently drop the take. The switch waits
+    // instead, which is the S4f.5 invariant the overdub branch below already enforces.
+    if (t.hasLiveCaptureStopJobForSlot(captureSlot)) {
+      // Bound: the deferred job finalizes from its own receipts.
+    } else if (t.hasAcceptedInteractionForSlot(captureSlot)) {
+      return false;
+    } else {
+      t.stopRecordingToStopped(currentTick);
+      if (t.hasAcceptedInteractionForSlot(captureSlot)) return false;
+    }
     uint32_t recordedLength = t.getLoopLength();
     if (recordedLength > 0 && masterLoopLength == 0) {
       setMasterLoopLength(recordedLength);

@@ -2749,6 +2749,21 @@ own execution packet and records fixture/native/build/device results separately.
       synchronous full-record fallback and caller-side duplicate save. Guard same-slot destructive start;
       retain different-slot successors. Verify master length/auto-align/rewind once, both destinations,
       transport Stop in each phase, internal/external clock, mixed starts and common in-flight guards.
+      **2026-09-29 S17.3a — same-slot/different-slot switch guard: done.** `finalizeCaptureAndSelectSlot`'s
+      Record branch now mirrors the overdub branch's slot-scoped rule: an **admitted** Record job carries its
+      own identity and does not hold the active slot, so the switch commits and the successor is not
+      serialized behind predecessor cleanup; an **accepted-but-unbound** Record stop refuses the switch and
+      leaves the active slot unchanged. Without this, S17.2's deferred stop let the switch advance
+      `captureInterval_` past the retained interval, after which `driveAcceptedInteraction` judged the
+      obligation superseded and dropped the take — silent content loss on a switch-while-finalizing
+      handoff. Fixture `test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one`
+      (refusal + unchanged active slot + retained obligation + post-bind commit + predecessor still
+      finalizing + its pass still committed); the guard-removal mutation fails it. Full native 2 613 cases /
+      2 606 succeeded / 7 skipped; capture-serial build PASS, RAM1 padding 1 976.
+      **Still open:** the geometry-result half — `stopRecordingTrack`, `finalizeCaptureAndSelectSlot` and
+      `stopAllTracks` still read the stop-edge-stamped `loopLengthTicks` synchronously, so an all-filtered
+      take can set `masterLoopLength` from a length that is never published. Those callers must consume a
+      job-qualified geometry-ready result instead.
 - [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
       full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with

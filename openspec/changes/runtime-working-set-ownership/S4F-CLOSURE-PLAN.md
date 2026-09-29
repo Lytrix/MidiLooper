@@ -166,8 +166,23 @@ grain prologue required the live loop length to equal the job's, parking a compl
 once an all-filtered take or a successor reset the slot; and the S4f.19 continuity gate waited on
 a frozen window build that only the playback owner can advance, deadlocking retirement on an empty
 take. All three are fixed in the slice, and the Record admission now declares its bounded
-preparation estimate. S17.3–S17.5 remain open: the manager continuations still read the
-stop-edge-stamped length synchronously.
+preparation estimate.
+
+**S17.3a — switch guard for a retained Record stop: done.** `finalizeCaptureAndSelectSlot`'s Record
+branch now mirrors the overdub branch's slot-scoped rule: an admitted Record job does not hold the
+active slot (the switch commits, so a different-slot successor is not serialized behind
+predecessor cleanup), and an accepted-but-unbound Record stop refuses the switch and leaves the
+active slot unchanged. Without it, S17.2's deferred stop let the switch advance `captureInterval_`
+past the retained interval, and `driveAcceptedInteraction` then judged the obligation superseded
+and dropped the take. Fixture `test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one`;
+the guard-removal mutation fails it. Full native 2 613 cases / 2 606 succeeded / 7 skipped;
+capture-serial build PASS, RAM1 padding 1 976.
+
+**S17.3b–S17.5 remain open.** The manager continuations (`stopRecordingTrack`,
+`finalizeCaptureAndSelectSlot`, `stopAllTracks`) still read the stop-edge-stamped `loopLengthTicks`
+synchronously; that stamp is the predicted length, so an all-filtered take can still set
+`masterLoopLength` from geometry that is never published. Those callers must consume a
+job-qualified geometry-ready result.
 
 ## 4. Finish correlated observations and correct the actual test recipes
 

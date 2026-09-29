@@ -1,5 +1,20 @@
 # Project state (execution context)
 
+**2026-09-29 — S4f.21 S17.3a — switch guard for a retained Record stop.** `finalizeCaptureAndSelectSlot`'s
+Record branch now mirrors the overdub branch's slot-scoped rule: an **admitted** Record job carries
+its own identity and does not hold the active slot (the switch commits; a different-slot successor
+is not serialized behind predecessor cleanup), while an **accepted-but-unbound** Record stop refuses
+the switch and leaves the active slot unchanged. This closed a silent content-loss regression
+introduced by S17.2: the Record branch switched unconditionally, which advanced `captureInterval_`
+past the retained interval, after which `driveAcceptedInteraction` judged the obligation
+superseded and dropped the take. Fixture
+`test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one` covers the refusal, the
+unchanged active slot, the retained obligation, the post-bind commit, the still-finalizing
+predecessor and its committed pass; removing the guard fails it. Full native **2 613 cases,
+2 606 succeeded, 7 skipped**; strict matrix 45/45; `teensy41-capture-serial` **PASS, RAM1 padding
+1 976** (floor 840). **Still open (S17.3b):** the manager continuations still read the
+stop-edge-stamped `loopLengthTicks` synchronously.
+
 **2026-09-29 — S4f.17 S17.1 + S17.2 — production Record admission and stop routing landed.**
 The production Record stop no longer finalizes inline. `stopRecording` and
 `stopRecordingToStopped` admit the interval through `beginDeferredRecordStopForSlot` (final length

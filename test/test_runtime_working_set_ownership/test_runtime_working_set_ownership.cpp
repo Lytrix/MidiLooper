@@ -1204,6 +1204,98 @@ void test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds()
 }
 
 
+/// **S4f.17/S4f.21 — a retained Record stop holds the active slot; an admitted one does not.**
+///
+/// S17.2 moved the production Record stop onto the deferred drive, so `stopRecordingToStopped` can
+/// now return with the interval *accepted but unadmitted*. `finalizeCaptureAndSelectSlot` used to
+/// switch unconditionally for a recording track (correct while the stop committed inline, because
+/// there was nothing left unadmitted). With the deferred route that would advance
+/// `captureInterval_` past the retained interval, and `driveAcceptedInteraction` would then judge
+/// the obligation **superseded** and drop the take -- silent content loss on an ordinary
+/// switch-while-finalizing handoff.
+///
+/// This fixture pins both halves of the rule the overdub branch already enforces:
+///   * an accepted-but-unbound Record stop **refuses** the switch and leaves the active slot alone;
+///   * once that stop binds, the switch commits while the predecessor still finalizes, so a
+///     different-slot successor is not serialized behind predecessor cleanup.
+void test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(2, true));
+
+  // (1) A records into slot 0 through the production stop route; the ring is free, so its stop is
+  // admitted and the interval is owned by the deferred job, not by the active slot.
+  track.forceSetState(TRACK_STOPPED);
+  TrackCaptureStopTestAccess::activateSlot(0, 0);
+  clockManager.assignCurrentTickSilently(0);
+  track.startRecording(0);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::isRecording(track));
+  inputNote(60, 12, 96);
+  clockManager.assignCurrentTickSilently(768);
+  track.stopRecordingToStopped(768);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 0),
+                           "precondition: A's Record stop must bind while the ring is free");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 0));
+
+  // (2) B records into slot 1 while A finalizes. A's job owns the ring, so B's stop is retained
+  // against B's own slot and interval rather than admitted.
+  TrackCaptureStopTestAccess::activateSlot(0, 1);
+  TEST_ASSERT_EQUAL_UINT8(1, TrackCaptureStopTestAccess::activeLoopIndex(track));
+  clockManager.assignCurrentTickSilently(768);
+  track.startRecording(768);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::isRecording(track));
+  inputNote(62, 780, 864);
+  clockManager.assignCurrentTickSilently(1536);
+  track.stopRecordingToStopped(1536);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
+                           "precondition: B's Record stop must be retained, not admitted");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 1));
+
+  // (3) The switch is REFUSED: an unbound stop must not have the active slot moved out from under
+  // it, or the retained interval would be superseded and its take dropped.
+  TEST_ASSERT_FALSE_MESSAGE(
+      trackManager.finalizeCaptureAndSelectSlot(0, 2, 1536),
+      "a switch away from an accepted-but-unbound Record stop must be refused");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "a refused switch must leave the active slot unchanged");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
+                           "a refused switch must not consume the retained obligation");
+
+  // (4) A retires, B's retained stop binds, and the same switch now commits -- before B's own
+  // finalization retires. That is the "successor is not serialized behind predecessor cleanup"
+  // half: the deferred job carries its own identity and does not hold the active slot.
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track));
+  for (int turn = 0; turn < 64 && !TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 1);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurn(track);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 1),
+                           "B's retained Record stop must bind once the ring frees");
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.finalizeCaptureAndSelectSlot(0, 2, 1536),
+                           "an admitted Record stop must not refuse the switch");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the switch must commit to the successor slot");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 1),
+                           "the predecessor must still be finalizing after the switch");
+
+  // (5) The predecessor's finalization still retires with its content intact after the switch.
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track));
+  TEST_ASSERT_TRUE_MESSAGE(track.getLoop(1).passes.hasRecordPass(),
+                           "the switched-away interval's take must still commit its pass");
+}
+
 /// **S4f.3 — the successor's take must COMMIT with content, not merely start.**
 ///
 /// Encodes a real device failure. On hardware the whole handoff chain worked -- A's finalizer outstanding,
@@ -1962,6 +2054,7 @@ int main() {
   RUN_TEST(test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds);
   // The successor's take must COMMIT with content -- the device failure a start marker hid.
   RUN_TEST(test_the_successor_take_commits_with_content_after_a_transport_stop);
+  RUN_TEST(test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one);
   // S4b.1 contract check 7 coverage, and the exactly-once half the committed carrier was missing.
   RUN_TEST(test_a_cross_track_successor_starts_while_the_predecessor_finalizes);
   RUN_TEST(test_a_cleared_successor_is_a_record_target_while_the_predecessor_finalizes);
