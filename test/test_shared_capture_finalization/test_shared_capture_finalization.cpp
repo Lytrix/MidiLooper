@@ -14,6 +14,7 @@
 #endif
 
 struct TrackCaptureStopTestAccess {
+  static bool outputBarrier(const Track& t) { return t.transportStopOutputBarrier_; }
   static auto& bindRecordClosure(Track& t, uint8_t slot, uint32_t phaseTick, uint32_t length) {
     TEST_ASSERT_TRUE(t.prewarmCaptureStopJobs());
     auto* job = t.captureStopJobTail();
@@ -1821,6 +1822,28 @@ void test_deferred_record_publication_invalidates_the_track_committed_scratch() 
 // (b) resolve the final transport state at retirement. Without (b) the track stayed TRACK_PLAYING
 // with a STOPPED destination, because `handleTransportStop`'s `isPlaying()` branch is unreachable
 // once the pending-job branch has taken the turn.
+void test_record_stop_playback_reset_preserves_playing_destination() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  start(t, 0, false, 0, 60);
+  clockManager.assignCurrentTickSilently(768);
+  t.stopRecording(768);
+  TEST_ASSERT_TRUE(t.isPlaying());
+  TEST_ASSERT_TRUE(t.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_MESSAGE(PendingStopDestination::Playing,
+      TrackCaptureStopTestAccess::head(t).admission.destination,
+      "cache invalidation at the Record playback edge must not retarget the job to STOPPED");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::outputBarrier(t),
+      "Record playback must not inherit the transport Stop MIDI barrier");
+  // A same-slot live successor must enter while its predecessor still finalizes.
+  t.startOverdubbing(800);
+  TEST_ASSERT_TRUE(t.isOverdubbing());
+  TEST_ASSERT_TRUE(t.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL(PendingStopDestination::Playing,
+      TrackCaptureStopTestAccess::head(t).admission.destination);
+}
+
 void test_transport_retarget_of_a_record_job_resolves_stopped() {
   Track& t = trackManager.getTrack(0);
   prepareSlot(t, 0, false);
@@ -2242,6 +2265,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_record_stop_admits_through_the_common_drive);
   RUN_TEST(test_deferred_record_publication_queues_revts_for_its_own_slot);
   RUN_TEST(test_deferred_record_publication_invalidates_the_track_committed_scratch);
+  RUN_TEST(test_record_stop_playback_reset_preserves_playing_destination);
   RUN_TEST(test_transport_retarget_of_a_record_job_resolves_stopped);
   RUN_TEST(test_replaced_loop_during_a_record_finalization_retires_the_job);
   RUN_TEST(test_slot_clear_during_a_record_finalization_does_not_republish);
