@@ -120,6 +120,16 @@ save. Make the strict contract an enforced regression gate; ordinary suite succe
 with `S4F16_REQUIRE_CONTRACT` unset is insufficient. Full native + capture-serial build,
 RAM1 padding >=840 and per-track/job/raw/output/overlap PSRAM accounting must pass.
 
+### §3 status — 2026-09-28 (scoping pinned)
+
+The strict contract's current oracle after §1+§2 is
+`S4F16_REQUIRE_CONTRACT=1 pio test -e native -f test_shared_capture_finalization`:
+**45 cases, 3 failed** (R→R, R→OD: record still publishes inline; OD→R: B's deferred record job
+absent; OD→OD passes). The executable slice sequence S17.1–S17.5, with the mode-conditioned
+admission, the two stop entry points' rerouting, the manager continuations, the S4f.20 residuals,
+the fixed fixture requirements and the risks, is pinned in the
+[cutover packet](S4F17-CUTOVER-PACKET.md). No firmware behavior changed.
+
 ## 4. Finish correlated observations and correct the actual test recipes
 
 Maps to HITL 1.1 — execution packet, 2 — observations, 3 — actions/lifecycle,
