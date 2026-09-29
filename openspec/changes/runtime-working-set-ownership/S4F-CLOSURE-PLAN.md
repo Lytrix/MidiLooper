@@ -203,6 +203,15 @@ selected-slot invalidation and the REVT queue — is now applied by
 `Track::invalidateCommittedContentForSlot(slot, queueRecordRevts)` against the job's slot. Two
 fixtures, each with a failing mutation.
 
+**S17.5a — transport stop during a Record finalization: done.** The retarget is mode-aware
+(`requestDeferredOverdubStopToStopped` returns after the destination change for a Record job,
+instead of running the overdub recovery against roles a Record job never populated), and
+"transport stop wins" is resolved at that edge (`TRACK_STOPPED` + silence + playback-state reset).
+Before this a transport stop during a Record finalization left the track in `TRACK_PLAYING` while
+the job's destination said STOPPED. The playback-runtime reset path deliberately does *not* force
+the transport state (its retained window is still the sounding source), which the playing-inventory
+fixture pins.
+
 **S17.5 — gates, mutations and accounting (native leg): done.** The finalization suite is an
 **enforced** gate: `S4F16_REQUIRE_CONTRACT` is no longer read, so the ordinary suite asserts the
 deferred production shape unconditionally and there is no weaker mode to select. Nine mutations are

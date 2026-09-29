@@ -82,10 +82,22 @@ invalidation). Accounting: compile-time pins `sizeof(Track) == 384` and `sizeof(
 Strict matrix **47/47**; full native **2 617 cases, 2 610 succeeded, 7 skipped**;
 `teensy41-capture-serial` **SUCCESS**.
 
+**2026-09-29 — §3 S17.5a — transport stop during a Record finalization.** The retarget path the
+packet flagged ("`runtime->reset`, retargetFrozenCommandEpoch, the DEC-070 raw-only fallback …
+assume a job exists for overdub") is now mode-aware: `requestDeferredOverdubStopToStopped` returns
+after the destination change for a Record job instead of running the overdub recovery
+(`restoreSupersededPreparedCompanionHistory` / `discardPreparedCompanionHistory` /
+`retargetStoppedRecovery`) against roles a Record job never populated, and "transport stop wins" is
+resolved at that edge (`TRACK_STOPPED` + silence + playback-state reset). Before this a transport
+stop during a Record finalization left the track in `TRACK_PLAYING` while the job's destination said
+STOPPED. The playback-runtime reset path deliberately does *not* force the transport state — its
+retained window is still the sounding source (S4f.19) — which the playing-inventory fixture pins.
+Fixture `test_transport_retarget_of_a_record_job_resolves_stopped`; removing the resolution fails it.
+
 **Remaining for §3's exit:** transport Stop in every phase, an internal/external clock sweep, and
-load/clear interaction with a record stop in flight. The transport-stop route is covered for the
-Stopped destination, and the wrong-slot/successor-baseline cases by S17.3a. No device acceptance is
-claimed from host results.
+load/clear interaction with a record stop in flight. The transport-stop route is now covered for the
+Stopped destination *and* for a Record finalization in flight; the wrong-slot/successor-baseline
+cases by S17.3a. No device acceptance is claimed from host results.
 [Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md).
 
 **2026-09-28 — S4f.19 §2 — first-bar and onward playback handoff: delta work complete.**

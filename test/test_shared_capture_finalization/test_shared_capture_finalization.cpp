@@ -86,6 +86,10 @@ struct TrackCaptureStopTestAccess {
   }
   static uint8_t deferredRevtsSlot(const Track& t) { return t.deferredRecordRevtsSlot; }
   static void serviceDeferredRevts(Track& t) { t.processDeferredRecordRevts(64); }
+  /// The transport-stop retarget, as `Track::stopOverdubbingToStopped` delivers it to a pending job.
+  static void retargetPendingStopToStopped(Track& t) {
+    t.requestDeferredOverdubStopToStopped();
+  }
   /// The Track-level committed-MIDI scratch has no public reader, so the fixture stamps it fresh
   /// and then observes whether a publication invalidated it -- which is exactly the consumer
   /// contract `CommittedMidiScratch::isFresh` encodes.
@@ -1803,6 +1807,33 @@ void test_deferred_record_publication_invalidates_the_track_committed_scratch() 
       "the deferred publication must invalidate the Track-level committed-MIDI scratch");
 }
 
+// S4f.21: a transport stop delivered while a **Record** job is finalizing. The stop edge already
+// launched PLAYING, so the retarget has to (a) be mode-aware -- the Record chain owns none of the
+// companion, canonical-tail or undo-collection roles the overdub recovery manipulates -- and
+// (b) resolve the final transport state at retirement. Without (b) the track stayed TRACK_PLAYING
+// with a STOPPED destination, because `handleTransportStop`'s `isPlaying()` branch is unreachable
+// once the pending-job branch has taken the turn.
+void test_transport_retarget_of_a_record_job_resolves_stopped() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  start(t, 0, false, 0, 60);
+
+  clockManager.assignCurrentTickSilently(768);
+  t.stopRecording(768);  // Playing destination: the edge launches playback while the job finalizes.
+  TEST_ASSERT_TRUE_MESSAGE(t.isPlaying(), "precondition: the Playing edge must launch playback");
+  TEST_ASSERT_TRUE(t.hasPendingDeferredOverdubStop());
+
+  TrackCaptureStopTestAccess::retargetPendingStopToStopped(t);
+  driveStopToRetirement(t);
+
+  TEST_ASSERT_FALSE(t.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_MESSAGE(TRACK_STOPPED, t.getState(),
+                            "a retargeted Record stop must end the transport at STOPPED");
+  TEST_ASSERT_TRUE_MESSAGE(t.getLoop(0).passes.hasRecordPass(),
+                           "the retargeted job must still commit its take");
+}
+
 void test_private_grains_never_hold_the_global_ephemeral_seal() {
   Track& t0 = trackManager.getTrack(0);
   prepareSlot(t0, 0, false);
@@ -2101,6 +2132,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_record_stop_admits_through_the_common_drive);
   RUN_TEST(test_deferred_record_publication_queues_revts_for_its_own_slot);
   RUN_TEST(test_deferred_record_publication_invalidates_the_track_committed_scratch);
+  RUN_TEST(test_transport_retarget_of_a_record_job_resolves_stopped);
   RUN_TEST(test_two_tracks_each_serve_their_own_deferred_window);
   RUN_TEST(test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source);
   RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);

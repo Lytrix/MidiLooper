@@ -1,5 +1,19 @@
 # Project state (execution context)
 
+**2026-09-29 — §3 S17.5a — transport stop during a Record finalization.** The retarget path the
+packet flagged (`runtime->reset`, `retargetFrozenCommandEpoch`, the DEC-070 raw-only fallback
+"assume a job exists for overdub") is now mode-aware: `requestDeferredOverdubStopToStopped` returns
+after the destination change for a Record job rather than running the overdub recovery against roles
+a Record job never populated, and "transport stop wins" is resolved at that edge (`TRACK_STOPPED` +
+silence + playback-state reset). Before this a transport stop during a Record finalization left the
+track in `TRACK_PLAYING` while the job's destination said STOPPED, because `handleTransportStop`'s
+`isPlaying()` branch is unreachable once the pending-job branch has taken the turn. The
+playback-runtime reset path deliberately does not force the transport state (its retained window is
+still the sounding source, S4f.19), which the playing-inventory fixture pins. Fixture
+`test_transport_retarget_of_a_record_job_resolves_stopped`; removing the resolution fails it. Only
+§3's breadth items remain (transport Stop in every phase, internal/external clock sweep, load/clear
+with a stop in flight); no device acceptance is claimed from host results.
+
 **2026-09-29 — §3 gates (S17.5) — enforced gate, mutation set, accounting.** The finalization suite no
 longer reads `S4F16_REQUIRE_CONTRACT`: the R→R/R→OD/OD→R/OD→OD rotation oracle and every other
 assertion are unconditional, so ordinary suite success is the strict result and there is no weaker
