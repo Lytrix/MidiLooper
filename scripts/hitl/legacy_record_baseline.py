@@ -58,6 +58,7 @@ from hitl.capture_transitions import (
     _serial_has_armed_after,
     _serial_has_playing_after_record_stop,
     _serial_has_overdubbing_after,
+    serial_issue_is_evidence_absent,
     _serial_has_overdubbing_stopped,
     _wait_for_armed_state,
     _wait_for_recording_active,
@@ -4975,16 +4976,26 @@ def _baseline_hitl_report(
         and abort_reason is None
     )
     issues = tuple(str(item) for item in (serial_verification or {}).get("issues") or [])
-    setup_ok = capture_complete and not setup_unconfirmed
-    firmware_issues = issues if capture_complete and not sparse else ()
+    # An issue whose rows are simply absent from the capture is not the device asserting the
+    # opposite. It must stay non-PASS -- the claim is unproven -- but it must not be reported as a
+    # firmware contradiction, or a take that was never emitted/drained reads as a behavior defect
+    # and hides the real one. Only positive inconsistencies remain contradictions.
+    if capture_complete and not sparse:
+        evidence_gaps = tuple(issue for issue in issues if serial_issue_is_evidence_absent(issue))
+        contradictions = tuple(issue for issue in issues if issue not in evidence_gaps)
+    else:
+        evidence_gaps, contradictions = (), ()
+    setup_ok = capture_complete and not setup_unconfirmed and not evidence_gaps
+    firmware_issues = contradictions if capture_complete and not sparse else ()
     return report_hitl_run(
         capture_complete=capture_complete,
         stimulus_valid=stimulus_valid,
         setup_transitions_confirmed=setup_ok,
         firmware_contradiction=bool(firmware_issues),
-        firmware_assertions_pass=not firmware_issues,
+        firmware_assertions_pass=not firmware_issues and not evidence_gaps,
         capture_integrity=integrity if serial_active else CaptureIntegrity.UNKNOWN,
         sparse_capture=sparse,
+        reason="EVIDENCE_MISSING" if evidence_gaps and not firmware_issues else "",
         issues=issues,
     )
 
@@ -6693,6 +6704,16 @@ def run() -> int:
         stimulus_valid=_stimulus_valid_for_baseline(verification_lines, args),
     )
     overall_ok = hitl_report.verdict is HitlVerdict.PASS
+    # Keep the split visible in the report: which issues were absent rows and which were the device
+    # contradicting itself. The verdict already distinguishes them (`EVIDENCE_MISSING` vs
+    # `FIRMWARE_CONTRADICTION`), but a reader must not have to infer it from the reason string.
+    _run_issues = [str(item) for item in (serial_verification or {}).get("issues") or []]
+    assertions["evidence_gap_issues"] = [
+        issue for issue in _run_issues if serial_issue_is_evidence_absent(issue)
+    ]
+    assertions["firmware_contradiction_issues"] = [
+        issue for issue in _run_issues if not serial_issue_is_evidence_absent(issue)
+    ]
 
     run_finished = datetime.now()
     args.out_dir.mkdir(parents=True, exist_ok=True)
