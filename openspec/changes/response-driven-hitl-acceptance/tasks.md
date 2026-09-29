@@ -118,6 +118,43 @@ Stage owner: stateless flows, registered scenarios and compatibility wrapper. Pr
 
 Stage owner: verify/reporting. Preconditions: complete per-phase identities and action trace. Postcondition: complete PASS conjunction and diagnostic non-success classifications. Invariants: existing runtime/content/timing gates retained, no guessed identity or waived event loss. Commit boundary: oracle/corpus slice.
 
+<!-- 2026-09-29 device-reliability slice (host automation; evidenced, not checked off).
+Fixed, each with a fixture and a device observation:
+  * `ensure_transport_clock` confirmed a caller's own Start by **toggling** transport when the
+    receipt was late, which stopped the transport the start had begun (`s4f22-base-device-03`
+    start 25.086/toggle 25.603; `s4f22-step7-d2` start 53.527/recording 53.974/press 54.526).
+    Confirmation after Start is now observation-only and a missing receipt is a **named failure**
+    (`scripts/test_transport_clock_observation.py`). A three-attempt campaign afterwards reports
+    `transport_press_count = 0`.
+  * `_await_successor_start_receipt` pressed anyway on timeout. A press without the predecessor's
+    stop receipt is a *different gesture* -- with the track stopped it starts a new capture -- and
+    produced a phantom one-bar take that the verifier then scored as the record leg
+    (`s4f22-step8-e2`). The leg is now **refused by name** with no press.
+  * The record leg was scored from the **last** candidate at three layers: phase pairing accepted
+    only `RECORDING -> STOPPED_RECORDING` (so a leg that resolved `RECORDING -> STOPPED` was not a
+    pair at all), `extract_phase_sessions` took `record_sessions[-1]`, and
+    `_verify_record_loop_length` took `_last_recs_row`. Replaying `s4f22-step8-e2` now selects the
+    intended 65.011 -> 70.204 leg (`length=2304`) instead of the stray 72.697 -> 73.795
+    (`length=768`); RECS rows and stored-grid ticks are scoped to the phase window.
+  * Readiness: the attach gate accepted any `#`-prefixed row, so 40 `#DMA_XFER` lines passed with
+    no capture rows. Readiness now comes from a fenced `!STOP_STATUS` **this run asks for**
+    (`state=STOPPED`, idle stop queue); line volume is diagnostics, and the volume rule applies
+    only to a run that owns the boot (an attaching run joins an idle device that emits nothing).
+  * Attribution: `_send_short_press` (clock helper) and `hitl.midi_io`'s primitives record every
+    outgoing control action with its caller; the report carries `transport_press_count` and
+    `control_actions`.
+  * Setup latency: the clear no longer waits for the deferred-save idle receipt (120 s configured,
+    240 s floored) -- it aborted setup when the boot restore was slow and never made the clear more
+    likely to succeed. The device is driven straight after boot; the firmware owns the refusal.
+Open: `s4f22-step10-g2` refused readiness because an **idle attached device never answered**
+`!STOP_STATUS` (that command is transport-gated and the transport was likely left running by an
+earlier killed run). Next: probe, and if there is no reply stop the transport once and probe again,
+then refuse by name only if it still does not answer.
+Open separately: the capture ring lost 384 571 bytes to zeros with self-consistent bookkeeping
+(`s4f22-step8-e3`: `head_bad op=4 type=0 plen=0`, zero prefix, `(tail-used) mod 1 MiB = head`);
+`RING,overlap` in `poolAlloc` is armed to identify whether an event-pool block is handed the
+ring's PSRAM, and `RING,head_bad` names any advance off a record boundary.
+-->
 - [ ] 5.1 Replace global counters/human-log inference with phase-scoped correlated input, accepted obligation, execution and retirement predicates for both modes; verify every missing/reordered/duplicate/wrong-identity edge, legacy deny-plus-latch versus true refusal, overlap miss, transport stop and clock change yields the specified non-PASS result.
 - [ ] 5.2 Integrate existing content parity and timing verifiers plus independent shutdown result; verify a failing content, timing or teardown result vetoes otherwise complete acceptance. Replay the preserved failure corpus and synthetic complete chains with deterministic expected verdicts.
 - [ ] 5.3 Run focused Python suites, architecture/import gates and full `pio test -e native`; record mutation results for former queue, timing and attribution bugs. Keep host success distinct from hardware qualification.

@@ -2858,6 +2858,22 @@ span/count/bar sets stay contradictions. Native 2,628 / 2,621 passed /
 7 skipped; capture-serial SUCCESS, padding 2,072; both new fixtures
 mutation-red-proved. Bind evidence and the setup-precondition receipt are the
 remaining host-side items before the device rerun. -->
+<!-- 2026-09-29 device evidence for S4f.22/S4f.13 (no device checkoff claimed).
+`s4f22-base-device-17`, `s4f22-step3-base-02`, `s4f22-step5-b1`, `s4f22-step6-c1`: **PASS** with
+complete capture integrity, all five transition checks green, drain reconciled (RECA 1 / RECS 7 /
+RID 1) and 32 `REVT` rows once the queued scan's chunk directory was pinned (it borrowed ids the
+producer then freed, so it read nothing: `Queued REVT note-ons (deferred): 0`). The playing REVT
+slice drains through the bounded chunk walk; merge and stored-MIDI verification stay idle-only.
+Record-family rows are unevictable by ordinary traffic (32 KiB reserved slice) and the ring reports
+its own losses (`RING,head_bad`, `RING,wiped`, `RING,stats`, `RING,overlap`).
+Not accepted: repeat attempts on one boot still fail, and the failures are now attributed. Two
+harness defects are fixed (transport toggle in the clock helper; a successor press without its stop
+receipt that created a phantom take scored as the record leg), and the record-leg pairing/selection
+is fixed so a later take cannot be scored. **Open:** the ring lost 384 571 bytes to zeros with
+self-consistent bookkeeping (`s4f22-step8-e3`) -- pool-over-ring overlap is armed for the next
+campaign; and the same-boot qualification campaign (six bundles, three consecutive passes per leg)
+has not run to completion.
+[Cutover packet](S4F17-CUTOVER-PACKET.md). -->
 - [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
       full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with
