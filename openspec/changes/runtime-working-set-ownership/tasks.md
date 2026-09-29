@@ -2835,6 +2835,19 @@ own execution packet and records fixture/native/build/device results separately.
       fails it. §3's exit list now has no unexercised item this environment can reach (the clock
       *classification* is covered by `test_clock_transport_master`). No device acceptance is claimed
       from host results.
+<!-- 2026-09-29: Record-evidence accounting slice is under verification in
+S4F17-CUTOVER-PACKET.md. The previous attribution to critical reentry/release
+traffic was disproven by the real-ring fixture: those diagnostics are Tier-A,
+not critical. Device loss attribution and integration acceptance remain open. -->
+<!-- Same-session drain follow-up: managed baseline now retrieves queued Record
+rows before MIDI/reader close, using stopped-only fences and counter/log deltas.
+Device-exercised read-only 2026-09-29 (captures/s4f22-base-device-17:
+record_evidence_drain.complete=true, RECA 1 / RECS 7 / RID 1 reconciled). -->
+<!-- 2026-09-29: run-08 Record retarget defect reproduced and fixed: cache
+invalidation preserves a Record job's Playing destination/output barrier.
+Focused 156/156; native 2,619 passed / 7 skipped; capture-serial build PASS.
+Hardware confirmation awaits a recorded run of this candidate image; clear
+authorization for every slot on every track was granted 2026-09-29. -->
 - [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
       full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with

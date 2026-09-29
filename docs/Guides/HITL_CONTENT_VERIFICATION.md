@@ -140,3 +140,46 @@ and the build's `free for local variables` checked afterwards — a long marker 
 - Scenario catalog: [`docs/Guides/HITL_TEST_SCENARIOS.md`](HITL_TEST_SCENARIOS.md)
 - Membership/construction decision: [DEC-047](../DECISION_LOG.md)
 - Execution bounds: [`docs/Authority/Architecture/ExecutionBounds.md`](../Authority/Architecture/ExecutionBounds.md)
+
+## Record evidence loss diagnostics
+
+`!CAP_IDENTITY_STATS` is a stopped-only, read-only request. It emits the existing
+`RID,stats` row and independent `RING,record_stats,RECA` / `RECS` rows. Each family
+reports emitter entries (`entered`), successful enqueues (`enq`), rejected
+appends (`rej`), transmitted rows (`tx`) and evicted rows (`evict`). Counters span
+the current boot, so compare before/after snapshots when attributing a single run;
+a queued row need not have been transmitted yet. The new RECA/RECS counters saturate
+at UINT32_MAX. These snapshots bypass the ring so pressure cannot erase the
+diagnostic answer. They do not assert content or timing correctness.
+
+`RING,critical_rejected,<count>,<first_failure_us>` reports a refused critical
+append, including failure to allocate the ring. Like `RING,overflow`, it makes
+`capture_integrity` INCOMPLETE. The notice is retained until a safe USB flush has
+space, even when there is no allocated ring. Ordinary `RING,shed` remains separate.
+Tier-A reentry/release diagnostics are not critical and cannot evict critical
+Record rows; actual critical-to-critical displacement remains possible.
+
+### Managed baseline end-of-run retrieval
+
+The managed baseline performs Record evidence retrieval after its measured leg,
+including when that leg aborts, while the MIDI port and the original serial
+reader remain open. It sends an idempotent MIDI Stop, confirms stopped-only
+fenced `!STOP_STATUS` / `!CAP_IDENTITY_STATS` replies, and repeats fenced
+`!TRACE_DRAIN` requests within a 30-second cap. Host-side serial quiet is not an
+empty-ring receipt. No serial reopen or reset is part of retrieval.
+
+Completion requires the selected Track's stop queue to be idle and each Record
+family to reconcile its counters. Newly transmitted rows must be present in this
+session log. The first stopped stats reply is the retrieval baseline; each count
+is matched to the exact reply fence, so prior-boot transmissions outside the log
+and later asynchronous flushes cannot distort the delta. Earlier leg evidence is
+still checked by the baseline verifier. Reported loss, saturation, reset/regression,
+missing replies or unaccounted transmissions leave retrieval incomplete. Existing
+boot-lifetime loss is conservatively unassignable without a pre-leg snapshot.
+
+The baseline report retains `assertions.record_evidence_drain`, including the
+before/after counters, batch count and reason. Its final verification reads the
+same capture file to include rows the follower thread has not yet consumed.
+An incomplete drain marks capture integrity incomplete without replacing the
+original leg failure. This proves retrieval of queued Record evidence, not full
+ring/persistence completion or acceptance of the measured behavior.

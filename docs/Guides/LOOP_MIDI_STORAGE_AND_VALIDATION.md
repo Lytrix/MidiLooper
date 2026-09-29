@@ -726,3 +726,12 @@ See [automatic runtime metadata repair](../Authority/Architecture/Storage.md#aut
 for DEC-089 — boot metadata repair: prerequisites, preserved files, replacement
 settings, failure hold and host/device verification boundary. This does not repair
 corrupt note content or recover original global undo chronology.
+
+### Record finalization and playback invalidation
+
+A deferred Record job can coexist with active playback or a live successor.
+`Track::invalidatePlaybackMergedMidiEvents` preserves that job's scratch,
+destination and MIDI output barrier; an ordinary cache/playhead reset does not
+request transport Stop. Explicit transport Stop still retargets the Record job
+through `requestDeferredOverdubStopToStopped`, silences output and resolves the
+stopped state. The existing overdub invalidation recovery is unchanged.

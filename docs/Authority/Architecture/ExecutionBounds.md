@@ -1471,3 +1471,14 @@ scalar work; busy/denied collection retains its obligation, and refused protecte
 publication retries the retained entry in a later turn. This is not a device
 latency measurement or completion of Record normalization/admission/playback.
 [Staging execution evidence](../../../openspec/changes/runtime-working-set-ownership/S4F18-STAGING-EXECUTION.md).
+
+### Capture evidence outcome accounting
+
+`DebugSessionCapture` Record-family accounting adds fixed scalar increments and
+bounded tag-prefix checks to the existing append/drain paths. It does not change
+the ring's displacement loop or its fixed 1 MiB capacity. Critical rejection
+latches a count/timestamp; serial reporting occurs only on a safe drain budget
+(`maxRecords > 8`), with USB capacity checked first. The explicit stopped-only
+`emitIdentityPathStats` request adds two fixed-format rows. No input-edge serial
+write or dynamically growing history is introduced. See the runtime change's
+[S4f.22 evidence-accounting packet](../../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md#s4f22--record-evidence-loss-accounting-2026-09-29).
