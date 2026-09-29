@@ -149,6 +149,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not spawn capture_session.py (use --serial-port for built-in serial instead)",
     )
     run_parser.add_argument(
+        "--no-boot-reset",
+        action="store_true",
+        help=(
+            "Attach to the running device without requesting a boot reset. Use for repeat "
+            "attempts after the first, so consecutive passes share one boot"
+        ),
+    )
+    run_parser.add_argument(
         "--arm-snapshot-yield",
         action="store_true",
         help="Ask managed capture to send !SNAPSHOT_YIELD after the first timing-critical ST line",
@@ -216,6 +224,7 @@ def _run_with_optional_managed_capture(
         capture_serial_port=getattr(args, "capture_port", DEFAULT_CAPTURE_SERIAL_PORT),
         capture_boot_wait_s=float(getattr(args, "capture_boot_wait", 10.0)),
         arm_snapshot_yield=bool(getattr(args, "arm_snapshot_yield", False)),
+        boot_reset=not bool(getattr(args, "no_boot_reset", False)),
         build_env=getattr(args, "build_env", "teensy41-capture-serial"),
     )
 
