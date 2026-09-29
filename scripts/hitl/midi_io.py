@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import time
 
 try:
@@ -42,9 +43,27 @@ def _send_long_press(
     out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
 
 
+def _record_control_press(action: str, *, note: int, channel_1based: int, caller: str) -> None:
+    """Record this press in the shared control-action ledger (never fails a run)."""
+    try:
+        from hitl.transport_clock import record_control_action
+    except Exception:  # pragma: no cover - the ledger is diagnostics only
+        return
+    record_control_action(action, note=note, channel_1based=channel_1based, caller=caller)
+
+
 def _send_short_press(
-    out_port: mido.ports.BaseOutput, *, note: int, channel_1based: int, press_ms: int
+    out_port: mido.ports.BaseOutput, *, note: int, channel_1based: int, press_ms: int,
+    _caller: str | None = None,
 ) -> None:
+    # The baseline's own presses belong in the same ledger as the clock helper's, so an
+    # unexpected transport press is attributable to its caller from the run report rather than
+    # inferred from the device's reaction. A multi-press passes its own caller down, so each
+    # constituent press is recorded once and attributed to the code that asked for the gesture.
+    _record_control_press(
+        "short_press", note=note, channel_1based=channel_1based,
+        caller=_caller or inspect.stack()[1].function,
+    )
     _send_long_press(
         out_port, note=note, channel_1based=channel_1based, press_ms=press_ms
     )
@@ -59,12 +78,16 @@ def _send_multi_short_press(
     count: int,
     gap_ms: int = 80,
 ) -> None:
+    caller = inspect.stack()[1].function
     for i in range(max(count, 0)):
+        # Each constituent press is the outgoing action; the composite is its composition, not a
+        # separate press, so recording both would double-count transport presses.
         _send_short_press(
             out_port,
             note=note,
             channel_1based=channel_1based,
             press_ms=press_ms,
+            _caller=caller,
         )
         if i + 1 < count:
             time.sleep(max(gap_ms, 1) / 1000.0)
