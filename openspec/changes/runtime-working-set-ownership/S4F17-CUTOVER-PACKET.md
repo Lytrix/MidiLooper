@@ -404,3 +404,56 @@ sleeps and no production pause hook. Existing S4f.16 evidence applies only to un
 
 No new owner, queue, schema, undo kind, or finalization capacity. No content-size walk at the stop
 edge. No full-take staging copy. No device acceptance claim from host results.
+
+## Device leg (S4f.22) — first attempt, 2026-09-29
+
+Run identity: `git_commit 006b67c3`, `build_env teensy41-capture-serial`,
+`firmware_hex_sha256 8aa70cd9aab9272c05c8ccf7ecb5bbea59d3350f2bfeff171ea71979c3b2ed9e`
+(captured by the harness in `captures/s4f22-base-device-01/metadata.json`, so the
+evidence is pinned to the build). Target: the authorized scratch slot, track 5 /
+slot 1 (internal track index 4, slot 0). Entry point: the authoritative baseline
+preset, `host_midi_hitl.py run --preset base`.
+
+**Verdict: `INCONCLUSIVE_CAPTURE` (`SERIAL_INCOMPLETE`) — not a pass, and not a
+firmware contradiction.** `firmware_contradiction: false`,
+`firmware_assertions_pass: true`, `stimulus_valid: true`,
+`capture_integrity: COMPLETE`, `setup_transitions_confirmed: false`,
+`capture_complete: false`.
+
+**What the device did establish (positive evidence for this change).** Boot banner
+present (`DIAG,boot_reset,crash=0`), no `RING,overflow`, no crash. Record started
+and stopped (`Recording started @ tick 362`, `Recording stopped @ tick 2377
+recStart=362 length=2304`). The overdub started and its **deferred stop chain ran
+on device**: `[TRACK] Reentry window open slot=0` at the overdub-stop button
+release, then `Reentry released slot=0 generation=48` 346 ms later — i.e. the
+accepted stop bound, the canonical capture owner retired and the reentry capacity
+was released. Memory stayed flat through it (≈5.1 MB external live, 370–372 free
+chunks, heap 160 KB). That is the S4f.17/S4f.21 admission-and-retirement path
+working on hardware.
+
+**What it did not establish.** The run aborted with *"second overdub transition
+not confirmed"*; the second overdub press never reached the device (the log's last
+button event is `MIDI Button A: Stop Overdub`), so **content, undo and persistence
+parity are not verified on device**. Treat the device gate as still open.
+
+**Two open observations, recorded rather than resolved.**
+
+1. *No record-family rows in the capture.* The session log contains `ST`, `PERS`,
+   `SEVT`, `VCACHE`, `MO`, `MI`, `DIAG` and `RRQ` families but **no `RECA`,
+   `RECS`, `ODUB` or `REVT` rows at all**, while `capture_integrity` reports
+   `COMPLETE`. The harness therefore reports `record_stop_stage_missing:record_stop`,
+   `record_first_note_missing` and `record_stored_revt_missing`. Two candidates,
+   not yet separated: (a) the capture ring's documented Tier-A displacement shed
+   them (`RECS,` is Tier-A and may be displaced by newer Tier-A rows — the same
+   mechanism that once dropped `RID,`), or (b) the record-stop emission path this
+   change rewrote no longer emits them. The separating test is a **short
+   record-only run** that greps the fresh log for `RECA`/`RECS`; until that is run,
+   neither explanation may be assumed.
+2. *Record length 2304 where the harness expected 1536.* The take quantized to
+   three bars, not two. Consistent with a late stop press (the length policy
+   quantizes the raw stop tick), but not yet attributed; the harness's own model
+   for this preset assumes two bars.
+
+Neither observation is evidence against the deferred Record stop: the stop
+admitted, retired and released its capacity on device. They are evidence that the
+**oracle** needs a short-run visibility check before the device gate can be read.
