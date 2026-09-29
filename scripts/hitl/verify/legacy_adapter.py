@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hitl.capture_transitions import serial_issue_is_evidence_absent
 from hitl.contract import CaptureIntegrity, HitlVerdict, report_hitl_run
 from hitl.verify.result import VerificationFailure, VerificationResult
 
@@ -22,14 +23,21 @@ def verification_from_legacy_dict(result: dict[str, object]) -> VerificationResu
     if result.get("capture_complete") is not None:
         capture_complete = bool(result.get("capture_complete"))
     integrity = CaptureIntegrity.INCOMPLETE if sparse else CaptureIntegrity.COMPLETE
+    # The same split as the baseline report: absent rows leave the claim unproven (non-PASS)
+    # without being read as the device asserting the opposite.
+    evidence_gaps = tuple(str(item) for item in issues if serial_issue_is_evidence_absent(str(item)))
+    contradictions = tuple(str(item) for item in issues if str(item) not in evidence_gaps)
     report = report_hitl_run(
         capture_complete=capture_complete,
         stimulus_valid=True,
-        setup_transitions_confirmed=capture_complete,
-        firmware_contradiction=bool(issues) and capture_complete,
-        firmware_assertions_pass=not issues if capture_complete else True,
+        setup_transitions_confirmed=capture_complete and not evidence_gaps,
+        firmware_contradiction=bool(contradictions) and capture_complete,
+        firmware_assertions_pass=(
+            (not contradictions and not evidence_gaps) if capture_complete else True
+        ),
         capture_integrity=integrity,
         sparse_capture=sparse,
+        reason="EVIDENCE_MISSING" if evidence_gaps and not contradictions else "",
         issues=tuple(str(issue) for issue in issues),
     )
     return VerificationResult(

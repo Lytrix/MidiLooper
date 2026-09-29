@@ -21,6 +21,7 @@ from hitl.capture_transitions import (
     _serial_has_overdubbing_stopped,
     _serial_has_playing_after_record_stop,
     _serial_has_recording_active,
+    serial_issue_is_evidence_absent,
 )
 from hitl.legacy_record_baseline import (
     _await_collector_marker,
@@ -506,6 +507,64 @@ class SerialHeartbeatNoiseTests(unittest.TestCase):
 
     def test_state_line_resets_heartbeat(self) -> None:
         self.assertTrue(serial_line_resets_heartbeat("#CAP,1,ST,Track,STOPPED,ARMED"))
+
+
+class EvidenceVersusContradictionTests(unittest.TestCase):
+    """Missing rows must not be read as the device asserting the opposite."""
+
+    def test_absent_row_issues_are_evidence_gaps(self) -> None:
+        for issue in (
+            "record_stored_revt_missing",
+            "record_recs_missing",
+            "missing_phase_boundaries",
+            "persistence_active_snapshot_unavailable_during_save",
+            "record_stop_stage_missing:record_stop",
+            "persist_admission_not_observed",
+        ):
+            with self.subTest(issue=issue):
+                self.assertTrue(serial_issue_is_evidence_absent(issue))
+
+    def test_positive_inconsistencies_stay_contradictions(self) -> None:
+        for issue in (
+            # A missing note event is behavioral, not merely a missing row.
+            "record_first_note_missing",
+            "overdub_first_note_missing",
+            "record_loop_length_mismatch",
+            "record_stored_note_grid_bad",
+            "record_note_span_too_short",
+            "overdub_stored_count_short",
+            "second_overdub_stored_bars_short",
+            "persistence_stop_save_not_deferred",
+            "persistence_stop_stage_content_sized",
+            "persistence_pers_save_slice_too_large",
+        ):
+            with self.subTest(issue=issue):
+                self.assertFalse(serial_issue_is_evidence_absent(issue))
+
+    def test_evidence_gap_keeps_the_run_non_pass_without_a_contradiction(self) -> None:
+        from hitl.contract import HitlVerdict, report_hitl_run
+
+        report = report_hitl_run(
+            capture_complete=True,
+            stimulus_valid=True,
+            setup_transitions_confirmed=False,
+            firmware_contradiction=False,
+            firmware_assertions_pass=False,
+            reason="EVIDENCE_MISSING",
+        )
+        self.assertIs(report.verdict, HitlVerdict.INCONCLUSIVE_CAPTURE)
+        self.assertEqual(report.reason, "EVIDENCE_MISSING")
+
+    def test_legacy_adapter_splits_the_two_kinds(self) -> None:
+        from hitl.contract import HitlVerdict
+        from hitl.verify.legacy_adapter import verification_from_legacy_dict
+
+        gap = verification_from_legacy_dict({"issues": ["record_stored_revt_missing"]})
+        self.assertIs(gap.verdict, HitlVerdict.INCONCLUSIVE_CAPTURE)
+        contradiction = verification_from_legacy_dict(
+            {"issues": ["record_loop_length_mismatch"]}
+        )
+        self.assertIs(contradiction.verdict, HitlVerdict.FAIL)
 
 
 class SerialVerificationRegressionTests(unittest.TestCase):

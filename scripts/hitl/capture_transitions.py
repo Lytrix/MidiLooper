@@ -124,6 +124,45 @@ def _is_cap_only_serial_issue(issue: str) -> bool:
     return issue in CAP_ONLY_SERIAL_ISSUES
 
 
+# Issues that mean "the rows which would prove this claim are not in the capture", as opposed to
+# "the device asserted the opposite". A take's stored note-on grid that was never emitted while the
+# transport played, a drained-away trace, or a stage row that never left the ring are all absence of
+# evidence: the claim stays unproven (non-PASS), but reporting them as a firmware contradiction
+# reads a missing row as a behavior defect and hides the real one.
+#
+# Deliberately NOT here: a missing note *event* (`record_first_note_missing` and its overdub
+# counterparts) is a behavioral claim -- the note should have sounded -- and stays a contradiction,
+# as do a length mismatch, a bad stored grid, a short span/count/bar set, a persistence slice that
+# exceeded its bound, and a stop whose save was not deferred. What this set covers is a missing
+# telemetry *row* for behavior that other evidence already places.
+EVIDENCE_ABSENT_SERIAL_ISSUES = frozenset(
+    {
+        "missing_phase_boundaries",
+        "second_overdub_missing_phase_boundaries",
+        "record_recs_missing",
+        "record_stored_revt_missing",
+        "overdub_stored_sevt_missing",
+        "second_overdub_stored_sevt_missing",
+        "persistence_active_snapshot_unavailable_during_save",
+        "persist_admission_not_observed",
+        "record_start_identity_missing",
+    }
+)
+
+
+def serial_issue_is_evidence_absent(issue: str) -> bool:
+    """True when the issue reports absent rows rather than a device contradiction."""
+    if issue.startswith(
+        (
+            "record_stop_stage_missing:",
+            "persistence_stage_missing:",
+            "display_",
+        )
+    ):
+        return True
+    return issue in EVIDENCE_ABSENT_SERIAL_ISSUES
+
+
 def _cap_ts_near_line(
     lines: list[str],
     index: int,
