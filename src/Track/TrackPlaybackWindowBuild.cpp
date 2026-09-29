@@ -539,9 +539,13 @@ TRACK_COLD_MEM void Track::releaseEligiblePlaybackRuntimeSlots(bool preserveLedg
 }
 
 TRACK_COLD_MEM void Track::invalidatePlaybackMergedMidiEvents(bool preserveLedger) {
-  // The job borrows generation-qualified scratch. Preserve it until STOPPED
-  // recovery has consumed accepted input; terminal cleanup retries this reset.
+  // Keep job-owned, generation-qualified scratch until terminal cleanup can
+  // retry the reset. Overdub uses STOPPED recovery; Record retains its playback.
   if (hasPendingDeferredOverdubStop()) {
+    // Record launches playback while its source/window is still job-owned. A
+    // cache reset is not a transport Stop: preserve that job and its audible
+    // destination until retirement. Explicit Stop retargets through its own entry.
+    if (captureStopJob().mode == CapturePhase::Record) return;
     suppressMidiOutputForTransportStop();
     requestDeferredOverdubStopToStopped();
     return;
