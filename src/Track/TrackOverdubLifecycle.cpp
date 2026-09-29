@@ -415,6 +415,57 @@ TRACK_COLD_MEM bool Track::retireJobCaptureSourceGrain(CaptureStopJob& job, Loop
   return true;
 }
 
+TRACK_COLD_MEM bool Track::supersedeDeferredStopJob(CaptureStopJob& job) {
+  if (!captureStopJobs_) return false;
+  const uint8_t slot = job.slot;
+  LoopPlaybackRuntime* runtime =
+      slot < Config::MAX_LOOPS_PER_TRACK ? playbackRuntime.slotIfAllocated(slot) : nullptr;
+  // One-time ownership release. The live interval is deliberately NOT mutated: it was loaded,
+  // replaced or cleared by its own owner, and a superseded finalization has no authority over it --
+  // so this never clears the new take's passes, geometry or capture, and never publishes.
+  if (job.mode != CapturePhase::None) {
+    if (job.mode == CapturePhase::Record && runtime != nullptr) {
+      runtime->releaseFrozenRecordWindow();
+    }
+    if (job.owner != nullptr) {
+      (void)job.owner->releasePendingNoteChangesBorrow(&job.admission);
+      (void)job.owner->releaseCapturePreviewBorrow(&job.admission);
+    }
+    if (runtime != nullptr) {
+      if (CaptureAdmissionStaging* views = runtime->captureStagingIfPrewarmed()) views->reset();
+      if (!runtime->canonicalCaptureOutput.store.empty()) {
+        runtime->canonicalCaptureOutput.store.clear();
+        runtime->canonicalCaptureOutput.phase = CapturePhase::None;
+        runtime->discardFrozenCaptureCanonicalOrder();
+      }
+    }
+    if (job.ownsPendingPass) {
+      LoopEventStore::releaseChunkRefs(job.pendingPass.committedChunkIds);
+      job.pendingPass = PendingCapturePass{};
+      job.ownsPendingPass = false;
+    }
+    job.passTransfer = LoopEventStoreCommitCursor{};
+    job.pendingNotes.clear();
+    job.mode = CapturePhase::None;  // marks the one-time release done for a resumable extent
+  }
+  // The owned extent returns one grain per turn, exactly as retirement does, so a superseded long
+  // take cannot blow the deferred owner's turn budget.
+  if (job.ownsRawRange && job.owner != nullptr) {
+    if (!retireJobCaptureSourceGrain(job, *job.owner, false)) return false;
+  } else {
+    job.ownsRawRange = false;
+  }
+  if (runtime != nullptr) {
+    (void)runtime->clearCaptureStopOwner(job.admission, job.admission.frozenGeneration);
+  }
+  job.owner = nullptr;
+  job.loopId = kInvalidLoopId;
+  captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;
+  --captureStopJobs_->count;
+  job.admission.reset();
+  return true;
+}
+
 TRACK_COLD_MEM Track::CaptureStopJob* Track::captureStopJobHead() {
   if (!captureStopJobs_ || captureStopJobs_->count == 0) return nullptr;
   return &captureStopJobs_->entries[captureStopJobs_->head];
@@ -1699,6 +1750,13 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     deferredStopStallNoted_ = true;
     logger.log(CAT_TRACK, LOG_WARNING, "Deferred stop stalled: %s", reason);
   };
+  // A supersede that still has an owned extent to return resumes here, before any identity guard:
+  // its one-time ownership release already ran (it is what cleared `mode`), so only the bounded
+  // grain-by-grain release and the ring advance are left.
+  if (job.mode == CapturePhase::None) {
+    (void)supersedeDeferredStopJob(job);
+    return true;
+  }
   // Never reinterpret a saved job through the currently selected slot.
   //
   // The geometry clause is an **overdub** invariant: an overdub job finalizes against the
@@ -1711,10 +1769,23 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   const bool geometryMatches =
       job.mode == CapturePhase::Record ||
       (job.owner != nullptr && job.owner->loopLengthTicks == job.loopLengthTicks);
-  if (!job.owner || !loopsAllocated() ||
+  // Identity loss is **not** a stall. S4f.4 transition 3: a load, a re-record or a clear can reuse
+  // the slot *number* while the interval this job identified is gone. Returning here would park the
+  // job forever -- holding its owned raw range, its capture-stop owner and its ring entry -- so no
+  // later stop on this track could ever be admitted. `driveAcceptedInteraction` already applies the
+  // supersede rule to a request that never bound; this is the same rule for one that did.
+  if (!job.owner || !loopsAllocated() || job.slot >= Config::MAX_LOOPS_PER_TRACK ||
       loopIdForSlot(job.slot) != job.loopId ||
-      &getLoop(job.slot) != job.owner || job.owner->loopId != job.loopId ||
-      !geometryMatches) {
+      &getLoop(job.slot) != job.owner || job.owner->loopId != job.loopId) {
+    logger.log(CAT_TRACK, LOG_INFO,
+               "Deferred stop superseded: its interval is gone (slot=%u)",
+               static_cast<unsigned>(job.slot));
+    (void)supersedeDeferredStopJob(job);
+    return true;
+  }
+  // Geometry alone is a stall, not an identity loss: the interval is still the one this job
+  // identified, so its own receipts remain authoritative and its owner will publish them.
+  if (!geometryMatches) {
     noteStallOnce("job owner or loop geometry no longer matches");
     return false;
   }

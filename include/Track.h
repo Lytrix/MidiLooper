@@ -866,6 +866,12 @@ private:
   /// FIFO head: the stable descriptor the one worker is servicing. Null when the
   /// ring is empty. A grain must bind this once and use it throughout, so a later
   /// head advance can never redirect work already in progress.
+  /// S4f.4 transition 3 / S4f.21: retire a job whose interval identity is gone (the slot was
+  /// loaded, replaced or cleared underneath it). Releases everything the job owns and retires its
+  /// ring entry **without** touching the live interval, so a superseded finalization cannot
+  /// resurrect or mutate a successor's content. Returns false while a long extent is still
+  /// returning its grains; the prologue re-enters until it is complete.
+  bool supersedeDeferredStopJob(CaptureStopJob& job);
   CaptureStopJob* captureStopJobHead();
   const CaptureStopJob* captureStopJobHead() const;
   /// OpenSpec 5.12 / D8: the staged pass the head job owns, or nullptr when it owns none.

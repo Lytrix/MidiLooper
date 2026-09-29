@@ -10,13 +10,25 @@ track in `TRACK_PLAYING` while the job's destination said STOPPED, because `hand
 `isPlaying()` branch is unreachable once the pending-job branch has taken the turn. The
 playback-runtime reset path deliberately does not force the transport state (its retained window is
 still the sounding source, S4f.19), which the playing-inventory fixture pins. Fixture
-`test_transport_retarget_of_a_record_job_resolves_stopped`; removing the resolution fails it. **§3 exit breadth.**
-Transport Stop is covered across the deferred stop's phases by `test_continuous_capture`
-(canonical-copy, mid-flight playing retarget, live successor, B03 retarget, accept-then-transport-stop)
-plus this change's Record retarget fixture, and clock-source classification by
-`test_clock_transport_master`. **Still owed:** a deferred Record stop under an external clock, and a
-slot load / slot clear issued while a Record stop is in flight (replacement is superseded correctly
-and is covered). No device acceptance is claimed from host results.
+`test_transport_retarget_of_a_record_job_resolves_stopped`; removing the resolution fails it.
+
+**2026-09-29 — §3 exit breadth.** Transport Stop is covered across the deferred stop's phases by
+`test_continuous_capture` (canonical-copy, mid-flight playing retarget, live successor, B03 retarget,
+accept-then-transport-stop) plus this change's Record retarget fixture, and clock-source
+classification by `test_clock_transport_master`.
+
+**2026-09-29 — §3 S17.5b — load/clear underneath a finalizing stop (two real defects).** An admitted
+job whose interval identity was gone parked forever on the deferred-grain prologue's LoopId guard,
+holding its raw range, capture-stop owner and ring entry; `supersedeDeferredStopJob` now applies the
+S4f.4 transition-3 supersede rule to a job that *did* bind, releasing everything it owns without
+touching the live interval. `Track::clear()` now supersedes a job that owns an unpublished take for
+the slot rather than letting the worker publish the cleared take back into the slot the user emptied
+(explicit supersede — clear preserves the LoopId by design). Fixtures
+`test_replaced_loop_during_a_record_finalization_retires_the_job` (load / re-record shape) and
+`test_slot_clear_during_a_record_finalization_does_not_republish`, plus the overdub counterpart
+renamed to `test_stale_publication_is_superseded_without_persistence` (previously encoded parking as
+expected). **Still owed:** a deferred Record stop under an external clock source. No device
+acceptance is claimed from host results.
 
 **2026-09-29 — §3 gates (S17.5) — enforced gate, mutation set, accounting.** The finalization suite no
 longer reads `S4F16_REQUIRE_CONTRACT`: the R→R/R→OD/OD→R/OD→OD rotation oracle and every other

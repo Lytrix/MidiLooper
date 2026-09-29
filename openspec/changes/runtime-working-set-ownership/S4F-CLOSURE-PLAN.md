@@ -224,10 +224,17 @@ Strict matrix 47/47; full native 2,617 cases / 2,610 succeeded / 7 skipped; capt
 **§3 exit breadth.** Transport Stop is covered across the deferred stop's phases by
 `test_continuous_capture` (canonical-copy, mid-flight playing retarget, live successor, B03
 retarget, accept-then-transport-stop) plus this change's Record retarget fixture; clock-source
-classification is covered by `test_clock_transport_master`. **Still owed:** a deferred Record stop
-under an **external** clock, and a slot **load** / slot **clear** issued while a Record stop is in
-flight (replacement is covered; load and clear are not). No device acceptance is claimed from host
-results.
+classification is covered by `test_clock_transport_master`. **S17.5b — load/clear underneath a finalizing stop: done, and it found two real defects.**
+An admitted job whose interval identity was gone used to park forever (the prologue's LoopId guard),
+holding its raw range, capture-stop owner and ring entry — `supersedeDeferredStopJob` now applies
+the S4f.4 transition-3 supersede rule to a job that *did* bind, releasing everything it owns without
+touching the live interval. And `Track::clear()` now supersedes a job that owned an unpublished take
+for the slot, instead of letting the worker publish the cleared take back into the slot the user
+emptied. Fixtures `test_replaced_loop_during_a_record_finalization_retires_the_job` (the load /
+re-record shape) and `test_slot_clear_during_a_record_finalization_does_not_republish`, plus the
+overdub counterpart renamed to `test_stale_publication_is_superseded_without_persistence`, which
+previously encoded parking as expected. **Still owed:** a deferred Record stop under an **external**
+clock source. No device acceptance is claimed from host results.
 
 ## 4. Finish correlated observations and correct the actual test recipes
 
