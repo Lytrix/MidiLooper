@@ -180,7 +180,30 @@ inline route published synchronously):
    the fixture's fixed slack. It now declares a bounded estimate (fixed MIDI-key scratch resets,
    row passes, chunk moves) read from O(1) scalars and consumes one credit per Record grain.
 
-S17.3–S17.5 remain open.
+**S17.3 — Caller continuations: partially done (S17.3a landed; geometry result still open).**
+`finalizeCaptureAndSelectSlot`'s Record branch now mirrors the overdub branch's slot-scoped rule.
+An **admitted** Record job carries its own identity (`job.owner`, `job.slot`, `job.loopId`, the
+interval latch, `captureStopOwner`) and does not hold the active slot, so the switch commits and a
+different-slot successor is not serialized behind predecessor cleanup. An **accepted-but-unbound**
+Record stop refuses the switch and leaves the active slot unchanged.
+
+This closed a silent content-loss regression introduced by S17.2: the Record branch switched
+unconditionally (correct only while the stop committed inline), which advanced `captureInterval_`
+past the retained interval, after which `driveAcceptedInteraction` judged the obligation
+superseded and dropped the take. Fixture
+`test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one` covers the refusal, the
+unchanged active slot, the retained obligation, the post-bind commit, the still-finalizing
+predecessor and its committed pass; removing the guard fails it.
+
+**Still owed (S17.3b):** `stopRecordingTrack`, `finalizeCaptureAndSelectSlot` and `stopAllTracks`
+still read the stop-edge-stamped `loopLengthTicks` synchronously. The stamp is the *predicted*
+length from the maintained maximum-tick summary, so an all-filtered take — whose published geometry
+is zero — can still set `masterLoopLength`, and auto-align can still be computed from it. The
+callers must consume a job-qualified geometry-ready result: the interval's geometry is final only
+once its admitted job has published (or its retained obligation has been superseded/consumed), and
+until then the manager must hold the master-length/auto-align obligation rather than latch it.
+
+S17.4–S17.5 remain open.
 
 ## Fixed fixture requirements (from the trace)
 
