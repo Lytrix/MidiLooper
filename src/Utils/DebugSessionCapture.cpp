@@ -6,6 +6,7 @@
 #ifdef SESSION_CAPTURE
 
 #include <Arduino.h>
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -61,6 +62,14 @@ constexpr size_t kCaptureRingBytes = 1024 * 1024;
 constexpr size_t kCaptureRingPressureBytes = (kCaptureRingBytes * 3) / 4;
 constexpr size_t kMaxCaptureTextBytes = 192;
 
+struct RecordFamilyStats {
+  uint32_t entered = 0;
+  uint32_t enqueued = 0;
+  uint32_t rejected = 0;
+  uint32_t transmitted = 0;
+  uint32_t evicted = 0;
+};
+
 struct CaptureRing {
   uint8_t* data = nullptr;
   size_t capacity = 0;
@@ -77,7 +86,7 @@ struct CaptureRing {
   //    as a degradation with counts instead of invalidating the capture. `captures/rcemem5-lazy-pool`
   //    hit this at ~150 s of a 24-bar two-overdub run, where the 1 MiB bound is simply reachable.
   //  * `overflowPending` -- a *critical* record was lost (critical may only be displaced by
-  //    critical, which cannot happen), so the capture really is incomplete and stays fatal.
+  //    critical, which the displacement policy permits), so the capture is incomplete and stays fatal.
   //
   // Timing-critical shedding is the third and least severe kind: playback deliberately discards
   // only non-Tier-A diagnostics instead of doing USB I/O, and that stays observable without
@@ -91,6 +100,10 @@ struct CaptureRing {
   uint32_t tierAFirstEvictedUs = 0;
   uint32_t tierAEvictedCount = 0;
   uint32_t timingShedPending = 0;
+  uint32_t criticalRejectedPending = 0;
+  uint32_t criticalFirstRejectedUs = 0;
+  RecordFamilyStats recordStart;
+  RecordFamilyStats recordStop;
 
   // S1.3 save/restore-survival: bounded identity-path counters. They separate "the branch was never
   // reached" from "capture disabled", "enqueue rejected", "evicted" and "delivered but not parsed",
@@ -115,6 +128,16 @@ struct CaptureRing {
 };
 
 CaptureRing sCaptureRing;
+
+SC_MEM_ATTR void incrementSaturated(uint32_t& value) {
+  if (value != UINT32_MAX) ++value;
+}
+
+SC_MEM_ATTR RecordFamilyStats* recordFamilyStats(const char* line) {
+  if (CaptureLineTier::tagStartsWith(line, "RECA,")) return &sCaptureRing.recordStart;
+  if (CaptureLineTier::tagStartsWith(line, "RECS,")) return &sCaptureRing.recordStop;
+  return nullptr;
+}
 
 bool readHeaderAt(size_t index, CaptureRecordHeader& headerOut);
 void readBytesAt(size_t index, void* dest, size_t len);
@@ -169,24 +192,16 @@ SC_MEM_ATTR bool headRecordIsCriticalText() {
   return isCriticalTextLine(line);
 }
 
-/// Whether the ring head is a slot-identity (`RID,`) text record, so an eviction of one can be
-/// counted. Same shape as the tier/critical head probes; header-only classification, no allocation.
-SC_MEM_ATTR bool headRecordIsIdentityText() {
-  if (sCaptureRing.used < sizeof(CaptureRecordHeader)) {
-    return false;
-  }
+// Read only the bounded prefix needed by record-family classifiers.
+SC_MEM_ATTR void headRecordTextPrefix(char (&line)[48]) {
+  line[0] = '\0';
   CaptureRecordHeader header{};
   if (!readHeaderAt(sCaptureRing.head, header) ||
-      header.type != static_cast<uint8_t>(CaptureRecordType::Text) || header.payloadLen == 0) {
-    return false;
-  }
-  char line[48] = {};
-  const size_t copyLen = static_cast<size_t>(header.payloadLen) < sizeof(line) - 1
-                             ? static_cast<size_t>(header.payloadLen)
-                             : sizeof(line) - 1;
+      header.type != static_cast<uint8_t>(CaptureRecordType::Text) || header.payloadLen == 0)
+    return;
+  const size_t copyLen = std::min<size_t>(header.payloadLen, sizeof(line) - 1);
   readBytesAt(sCaptureRing.head + sizeof(header), line, copyLen);
-  line[sizeof(line) - 1] = '\0';
-  return CaptureLineTier::tagStartsWith(line, "RID,");
+  line[copyLen] = '\0';
 }
 
 SC_MEM_ATTR bool shouldSampleMidiOutCapture() {  if (!captureRingPressureHigh()) {
@@ -370,65 +385,46 @@ void discardOldestRecord(CaptureLineTier::EvictionKind kind) {
 }
 
 SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload, uint16_t payloadLen) {
-  if (!ensureCaptureRingAllocated()) {
+  const char* text = type == CaptureRecordType::Text ? static_cast<const char*>(payload) : nullptr;
+  const bool incomingTierA = text != nullptr && isTierATextLine(text);
+  const bool incomingCritical = text != nullptr && isCriticalTextLine(text);
+  const bool incomingIdentity = CaptureLineTier::tagStartsWith(text, "RID,");
+  RecordFamilyStats* family = recordFamilyStats(text);
+  const auto reject = [&]() {
+    if (family != nullptr) incrementSaturated(family->rejected);
+    if (incomingIdentity) ++sCaptureRing.identityEmitRejected;
+    if (incomingCritical) {
+      if (sCaptureRing.criticalRejectedPending == 0)
+        sCaptureRing.criticalFirstRejectedUs = micros();
+      incrementSaturated(sCaptureRing.criticalRejectedPending);
+    } else {
+      noteTimingShed();
+    }
     return false;
-  }
-  const CaptureRecordHeader header{
-      static_cast<uint8_t>(type),
-      payloadLen,
   };
+  if (!ensureCaptureRingAllocated()) return reject();
+  const CaptureRecordHeader header{static_cast<uint8_t>(type), payloadLen};
   const size_t total = recordTotalBytes(header);
-  // Tier-A may only be displaced by Tier-A. Under a timing-critical flush budget the
-  // drop-only path in flushCaptureBuffer leaves Tier-A at the head untransmitted, so
-  // eviction here was the only way it could leave the ring: 141815 lost every DIAG timing
-  // window between 21.9s and 318.6s to Tier-B/C appends across a ~296s record/overdub pass.
-  // Allowing Tier-A to evict Tier-A keeps the newest windows and cannot wedge the ring.
-  const bool incomingTierA =
-      type == CaptureRecordType::Text && isTierATextLine(static_cast<const char*>(payload));
-  const bool incomingCritical =
-      type == CaptureRecordType::Text && isCriticalTextLine(static_cast<const char*>(payload));
-  const bool incomingIdentity =
-      type == CaptureRecordType::Text &&
-      CaptureLineTier::tagStartsWith(static_cast<const char*>(payload), "RID,");
-  if (incomingIdentity) {
-    ++sCaptureRing.identityEmitEnqueued;  // provisional; decremented below if the append is refused
-  }
+  if (total > sCaptureRing.capacity) return reject();
   while (sCaptureRing.used + total > sCaptureRing.capacity) {
     const bool headTierA = headRecordIsTierAText();
     const bool headCritical = headRecordIsCriticalText();
     if (!CaptureLineTier::incomingMayDisplace(incomingTierA, incomingCritical, headTierA,
-                                              headCritical)) {
-      // Preserve an actionable denial over ordinary timing telemetry.
-      noteTimingShed();
-      if (incomingIdentity) {
-        --sCaptureRing.identityEmitEnqueued;
-        ++sCaptureRing.identityEmitRejected;
-      }
-      return false;
-    }
-    // An identity record at the head is being displaced by this append: count it, so "the row was
-    // written and then evicted" is distinguishable from "the row was never written".
-    if (headRecordIsIdentityText()) {
-      ++sCaptureRing.identityEvicted;
-    }
+                                              headCritical)) return reject();
+    char head[48] = {};
+    headRecordTextPrefix(head);
+    if (CaptureLineTier::tagStartsWith(head, "RID,")) ++sCaptureRing.identityEvicted;
+    if (auto* evictedFamily = recordFamilyStats(head)) incrementSaturated(evictedFamily->evicted);
     const size_t usedBefore = sCaptureRing.used;
-    // A full ring may replace a non-Tier-A record without invalidating the
-    // timing/state trace.  Tier-A text may only be replaced by Tier-A text (that is what keeps
-    // the newest timing windows) and is reported as a degradation; only critical text loss
-    // invalidates the capture.
     discardOldestRecord(CaptureLineTier::evictionKindFor(headTierA, headCritical));
-    if (sCaptureRing.used == usedBefore) {
-      if (incomingIdentity) {
-        --sCaptureRing.identityEmitEnqueued;
-        ++sCaptureRing.identityEmitRejected;
-      }
-      return false;
-    }
+    if (sCaptureRing.used == usedBefore) return reject();
   }
   writeBytesAt(sCaptureRing.tail, &header, sizeof(header));
   writeBytesAt(sCaptureRing.tail + sizeof(header), payload, payloadLen);
   sCaptureRing.tail = (sCaptureRing.tail + total) % sCaptureRing.capacity;
   sCaptureRing.used += total;
+  if (family != nullptr) incrementSaturated(family->enqueued);
+  if (incomingIdentity) ++sCaptureRing.identityEmitEnqueued;
   return true;
 }
 
@@ -439,6 +435,16 @@ bool serialWriteRoom(size_t bytesNeeded) {
   // clock-driven bar LEDs keep moving while 16th LEDs (updateMidiLedsDeferred) stall.
   const int room = Serial.availableForWrite();
   return room < 0 || static_cast<size_t>(room) >= bytesNeeded;
+}
+
+SC_MEM_ATTR void emitCriticalRejectedNotice() {
+  if (sCaptureRing.criticalRejectedPending == 0 || !serialWriteRoom(96)) return;
+  Serial.printf_P(SC_FMT("#CAP,%lu,RING,critical_rejected,%lu,%lu\r\n"),
+                  static_cast<unsigned long>(micros()),
+                  static_cast<unsigned long>(sCaptureRing.criticalRejectedPending),
+                  static_cast<unsigned long>(sCaptureRing.criticalFirstRejectedUs));
+  sCaptureRing.criticalRejectedPending = 0;
+  sCaptureRing.criticalFirstRejectedUs = 0;
 }
 
 void emitOverflowNotice() {
@@ -685,11 +691,13 @@ SC_MEM_ATTR void clockSource(const char* from, const char* to) {
 }
 
 SC_MEM_ATTR void recStart(uint8_t slot, uint32_t tick) {
+  incrementSaturated(sCaptureRing.recordStart.entered);
   emitCapPrintf("#CAP,%lu,RECA,%u,%lu\r\n", (unsigned long)micros(), slot, (unsigned long)tick);
 }
 
 SC_MEM_ATTR void recStop(const char* kind, uint8_t slot, uint32_t tick, uint32_t startTick,
                          uint32_t rawLength, uint32_t finalLength, bool align) {
+  incrementSaturated(sCaptureRing.recordStop.entered);
   emitCapPrintf("#CAP,%lu,RECS,%s,%u,%lu,%lu,%lu,%lu,%d\r\n", (unsigned long)micros(), kind, slot,
                 (unsigned long)tick, (unsigned long)startTick, (unsigned long)rawLength,
                 (unsigned long)finalLength, align ? 1 : 0);
@@ -698,6 +706,7 @@ SC_MEM_ATTR void recStop(const char* kind, uint8_t slot, uint32_t tick, uint32_t
 SC_MEM_ATTR void recStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                               uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
                               size_t chunkRefCount, const char* outcome) {
+  incrementSaturated(sCaptureRing.recordStop.entered);
   emitCapPrintf("#CAP,%lu,RECS,stage,%s,%lu,%lu,%lu,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(),
                 stage, (unsigned long)elapsedUs, (unsigned long)durationUs,
                 (unsigned long)heapBefore, (unsigned long)heapAfter, (unsigned long)eventCount,
@@ -742,6 +751,13 @@ SC_MEM_ATTR void recSlotIdentity(const char* event, uint32_t takeId, uint8_t tra
 
 // S1.3 save/restore-survival: the read-back for the bounded identity-path counters. One fixed-size
 // record, emitted only from the stopped-only HITL command, so the record/persist path never prints.
+SC_MEM_ATTR void emitRecordFamilyStats(const char* family, const RecordFamilyStats& stats) {
+  Serial.printf(SC_FMT("#CAP,%lu,RING,record_stats,%s,entered=%lu,enq=%lu,rej=%lu,tx=%lu,evict=%lu\r\n"),
+                (unsigned long)micros(), family, (unsigned long)stats.entered,
+                (unsigned long)stats.enqueued, (unsigned long)stats.rejected,
+                (unsigned long)stats.transmitted, (unsigned long)stats.evicted);
+}
+
 SC_MEM_ATTR void emitIdentityPathStats() {
   // Emitted **directly**, not through the capture ring: the ring may reject or displace the row (that is
   // exactly the visibility problem these counters exist to diagnose), and this path is stopped-only,
@@ -761,6 +777,8 @@ SC_MEM_ATTR void emitIdentityPathStats() {
       static_cast<unsigned>(sCaptureRing.identityLastPersistTrack),
       static_cast<unsigned>(sCaptureRing.identityLastPersistSlot),
       sCaptureRing.identityLastEvent);
+  emitRecordFamilyStats("RECA", sCaptureRing.recordStart);
+  emitRecordFamilyStats("RECS", sCaptureRing.recordStop);
 }
 
 SC_MEM_ATTR void architectureCounter(const char* name, uint32_t value) {
@@ -1263,6 +1281,7 @@ SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t co
 void flushCaptureBuffer(size_t maxRecords) {
   // Never emit capture notices via USB Serial under timing-critical budgets.
   if (maxRecords > 8) {
+    emitCriticalRejectedNotice();
     emitOverflowNotice();
     emitTierADegradedNotice();
     emitTimingShedNotice();
@@ -1339,6 +1358,7 @@ void flushCaptureBuffer(size_t maxRecords) {
       if (CaptureLineTier::tagStartsWith(line, "RID,")) {
         ++sCaptureRing.identityTransmitted;
       }
+      if (auto* family = recordFamilyStats(line)) incrementSaturated(family->transmitted);
       Serial.println(line);
     } else if (header.type == static_cast<uint8_t>(CaptureRecordType::DiagTrace)) {
       if (header.payloadLen == sizeof(Diagnostics::DiagTraceRecord)) {

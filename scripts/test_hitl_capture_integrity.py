@@ -71,8 +71,40 @@ class CaptureLineClockTests(unittest.TestCase):
         self.assertEqual(clock.integrity, CaptureIntegrity.INCOMPLETE)
         self.assertEqual(clock.integrity_abort_reason(), "firmware capture ring overflow")
 
+    def test_critical_refusal_stays_incomplete_after_healthy_rows(self) -> None:
+        clock = CaptureLineClock()
+        clock.note_line("#CAP,123,RING,critical_rejected,2,100", now=1.0)
+        clock.note_line("#CAP,124,ST,Track,RECORDING,PLAYING", now=2.0)
+        self.assertEqual(clock.integrity, CaptureIntegrity.INCOMPLETE)
+        self.assertEqual(clock.integrity_abort_reason(),
+                         "firmware capture ring rejected critical evidence")
+
+    def test_ordinary_shed_and_clean_stats_do_not_invalidate(self) -> None:
+        clock = CaptureLineClock()
+        clock.note_line("#CAP,123,RING,shed,20", now=1.0)
+        clock.note_line("#CAP,124,RING,record_stats,RECA,entered=1,enq=1,rej=0,tx=1,evict=0", now=2.0)
+        self.assertEqual(clock.integrity, CaptureIntegrity.COMPLETE)
+
 
 class FollowCaptureIntegrityTests(unittest.TestCase):
+    def test_firmware_critical_refusal_reaches_follow_collector(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "session.log"
+            log_path.write_text("#CAP,123,RING,critical_rejected,1,100\n", encoding="utf-8")
+            collector = ExternalSerialFollowCollector(log_path, poll_interval_s=0.01)
+            collector.start()
+            try:
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    if collector.capture_integrity() is CaptureIntegrity.INCOMPLETE:
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(collector.capture_integrity(), CaptureIntegrity.INCOMPLETE)
+                self.assertIn("rejected critical evidence",
+                              collector.capture_abort_reason(timeout_s=30.0) or "")
+            finally:
+                collector.stop()
+
     def test_truncation_marks_incomplete_and_aborts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "session.log"

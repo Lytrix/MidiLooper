@@ -317,7 +317,8 @@ SC_MEM_ATTR void libraryObservationEnd(uint32_t windowStartUs, uint32_t windowEn
 /// from the stopped-only HITL command (`!CAP_IDENTITY_STATS`), never from the record/persist path:
 /// emitter entries, enqueue successes, enqueue rejections, transmissions and evictions, plus the last
 /// identity the emitter was handed. Separates "branch never reached" from "capture disabled",
-/// "enqueue rejected", "evicted" and "delivered but not parsed".
+/// "enqueue rejected", "evicted" and "delivered but not parsed". Also emits independent
+/// RING,record_stats rows for RECA and RECS. All counters cover the current boot.
 SC_MEM_ATTR void emitIdentityPathStats();
 SC_MEM_ATTR void persistenceBundle(const char* workType, uint32_t totalUs,
                                    uint32_t maxSliceUs, uint32_t sliceCount,
