@@ -173,6 +173,19 @@ def _pair_overdub_sessions(
             ts = _phase_ts_from_marker_line(lines, index)
             if ts is not None:
                 human_overdub_stops.append(ts)
+        # The production overdub stop is a **deferred** job, so it never logs `Overdubbing stopped`:
+        # it admits the stop (`Reentry window open slot=`) and completes it when the retiring owner
+        # releases the canonical capture (`Reentry released slot=N generation=G`). Those are the ends
+        # of the phase window in the shape the device actually emits, and `_next_unused_stop` takes
+        # the earliest match, so the admission line is the precise one. Without them a run whose
+        # `#CAP,ST,Track,OVERDUBBING,OVERDUB_STOPPING` / `…,OVERDUB_STOPPING,PLAYING` rows were
+        # dropped by the capture ring had no overdub stop at all, which surfaced as
+        # `missing_phase_boundaries` and then as a firmware contradiction once the transition counts
+        # were read correctly (`captures/s4f22-base-device-14`).
+        if "Reentry window open slot=" in line or "Reentry released slot=" in line:
+            ts = _phase_ts_from_marker_line(lines, index)
+            if ts is not None:
+                human_overdub_stops.append(ts)
         if "#CAP," in line and ",ODUB,stop,enter" in line:
             ts = _cap_ts(line)
             if ts is not None:

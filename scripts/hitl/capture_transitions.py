@@ -151,6 +151,8 @@ def _count_human_log_transition_events(lines: list[str]) -> dict[str, int]:
     playback_started = 0
     overdubbing_started = 0
     overdubbing_stopped = 0
+    overdubbing_stop_admitted = 0
+    overdubbing_stop_released = 0
     for line in lines:
         if "Recording started" in line:
             recording_started += 1
@@ -162,6 +164,20 @@ def _count_human_log_transition_events(lines: list[str]) -> dict[str, int]:
             overdubbing_started += 1
         if "Overdubbing stopped" in line:
             overdubbing_stopped += 1
+        # The production overdub stop is a **deferred** job, so it does not log
+        # `Overdubbing stopped`: it admits the stop (`Reentry window open slot=`) and completes it
+        # when the retiring owner releases the canonical capture (`Reentry released slot=N
+        # generation=G`). Those two lines are the boundary in the shape the device actually emits
+        # (`captures/s4f22-base-device-12`: stop 42.360 -> Reentry window open 42.360 -> Reentry
+        # released 42.690). Without them the fallback only knew the immediate shape, so a run whose
+        # `#CAP,ST,Track,OVERDUBBING,OVERDUB_STOPPING` and `…,OVERDUB_STOPPING,PLAYING` rows were
+        # dropped by the capture ring still counted zero completed overdub stops even though both
+        # overdubs ran (`captures/s4f22-base-device-13`), and the phase boundaries then read as
+        # missing.
+        if "Reentry window open slot=" in line:
+            overdubbing_stop_admitted += 1
+        if "Reentry released slot=" in line:
+            overdubbing_stop_released += 1
     playing_after_record = (
         min(recording_stopped, playback_started) if recording_stopped else playback_started
     )
@@ -171,6 +187,13 @@ def _count_human_log_transition_events(lines: list[str]) -> dict[str, int]:
         "playing_after_record": playing_after_record,
         "overdubbing_started": overdubbing_started,
         "overdubbing_stopped": overdubbing_stopped,
+        # The two halves of the deferred shape: the interval has left OVERDUBBING for
+        # OVERDUB_STOPPING (where the overdub phase window ends) and the retiring owner then
+        # releases the canonical capture. Kept apart from `overdubbing_stopped` because
+        # `_effective_transition_actual` *sums* the direct and deferred completion hops -- feeding
+        # one stop into both would count it twice.
+        "overdubbing_stop_admitted": overdubbing_stop_admitted,
+        "overdubbing_stop_released": overdubbing_stop_released,
     }
 
 
@@ -204,6 +227,14 @@ def _merge_transition_counts_with_evidence(
     merged[("OVERDUBBING", "PLAYING")] = max(
         merged.get(("OVERDUBBING", "PLAYING"), 0),
         events["overdubbing_stopped"],
+    )
+    merged[("OVERDUBBING", "OVERDUB_STOPPING")] = max(
+        merged.get(("OVERDUBBING", "OVERDUB_STOPPING"), 0),
+        events["overdubbing_stop_admitted"],
+    )
+    merged[("OVERDUB_STOPPING", "PLAYING")] = max(
+        merged.get(("OVERDUB_STOPPING", "PLAYING"), 0),
+        events["overdubbing_stop_released"],
     )
     return merged
 

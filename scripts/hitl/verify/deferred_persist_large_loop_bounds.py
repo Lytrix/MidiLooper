@@ -34,6 +34,10 @@ _REQUIRED_LOOP_PERSIST_PHASES = (
 _MAX_PERSIST_SLICE_US = 100_000
 _MAX_RECORD_STOP_STAGE_US = 100_000
 
+# Outcomes that mean "the stop handed the save off instead of saving inline". The production edge
+# emits `deferred` (both the Playing and the Stopped path); `requested` is kept for older captures.
+_SAVE_REQUEST_DEFERRED_OUTCOMES = frozenset({"deferred", "requested"})
+
 
 def _track_state_intervals(lines: list[str]) -> list[tuple[int, int, str]]:
     transitions: list[tuple[int, str]] = []
@@ -201,8 +205,16 @@ def summarize_deferred_persist_large_loop_bounds(
     save_request_rows = [
         row for row in stop_stage_rows if str(row.get("stage", "")) == "save_request"
     ]
+    # The stop edge logs `save_request` with the outcome the device actually emits. The production
+    # stop hands the save to the deferred writer on **both** paths (Playing and Stopped), so the row
+    # is `#CAP,<us>,RECS,stage,save_request,...,deferred` -- see `TrackCaptureStopCommit.cpp`. The
+    # oracle required the literal `requested`, a value no capture can contain, so every run reported
+    # `persistence_stop_save_not_deferred` even when the save *was* deferred and the record leg was
+    # otherwise green (`captures/s4f22-base-device-15`, whose only remaining issue was this one).
+    # `requested` stays accepted so an older capture keeps validating.
     save_request_deferred = any(
-        ",RECS,stage,save_request," in line and line.rstrip().endswith(",requested")
+        ",RECS,stage,save_request," in line
+        and line.rstrip().rsplit(",", 1)[-1] in _SAVE_REQUEST_DEFERRED_OUTCOMES
         for line in lines
     )
     slowest_stop_stage_us = max(
