@@ -136,6 +136,8 @@ from hitl.serial_transport import (
 )
 from hitl.transport_clock import (
     clock_seen_within as _clock_seen_within,
+    control_action_log as _control_action_log,
+    transport_press_count as _transport_press_count,
     ensure_midi_clock as _ensure_midi_clock,
     ensure_transport_clock as _ensure_midi_clock_or_serial_proxy,
     stream_pattern_for_bars as _stream_pattern_for_bars,
@@ -1886,8 +1888,9 @@ def _restart_transport_after_clear(
     )
     if not clock_ok:
         print(
-            "[error] MIDI clock / serial transport proxy missing after transport restart; "
-            "aborting track run."
+            "[error] transport start was not acknowledged and no MIDI clock arrived; refusing to "
+            "press transport again, because the helper's press is a toggle and would stop the "
+            "transport this press just started."
         )
         return False, None
     if using_serial_proxy:
@@ -5898,7 +5901,11 @@ def run() -> int:
                         abort=abort,
                     )
                     if not clock_ok:
-                        print("[error] MIDI clock missing before record phase; aborting track run.")
+                        print(
+                            "[error] no MIDI clock and no serial transport receipt before the "
+                            "record phase; refusing to toggle transport again (a toggle would "
+                            "stop the capture this phase is about to stream)."
+                        )
                         abort_reason = "midi clock missing before record phase"
                         break
                     wall_clock_tempo = _resolve_wall_tempo_for_proxy(
@@ -6714,6 +6721,10 @@ def run() -> int:
     assertions["firmware_contradiction_issues"] = [
         issue for issue in _run_issues if not serial_issue_is_evidence_absent(issue)
     ]
+    # Every outgoing control action with its caller, so an unexpected transport press is
+    # attributable from the report instead of inferred from its effect on the device.
+    assertions["transport_press_count"] = _transport_press_count()
+    assertions["control_actions"] = _control_action_log()
 
     run_finished = datetime.now()
     args.out_dir.mkdir(parents=True, exist_ok=True)

@@ -526,6 +526,69 @@ def attach_stream_is_usable(session_log: Path, *, min_lines: int = 40) -> tuple[
     return True, f"{len(lines)} line(s)"
 
 
+def establish_attach_readiness(*, timeout_s: float = 12.0) -> tuple[bool, str]:
+    """Readiness from a fresh fenced stopped-state reply, never from line count.
+
+    Line count says only that bytes arrived; it cannot separate a live device from a backlog left
+    by an abruptly stopped session, and it accepts any `#`-prefixed noise. What readiness needs is
+    a reply this run asked for: a fenced `!STOP_STATUS` whose rows appear **after** the attach,
+    reporting the selected track stopped, with no pending finalization and an empty stop queue
+    (`stopped_capture_queue_idle`). Persistence prerequisites stay with the caller's own save-idle
+    wait, which is the owner of that contract.
+    """
+    session = active_managed_capture()
+    if session is None:
+        return True, "no managed capture (readiness not applicable)"
+    log_path = session.session_log
+    if log_path is None:
+        return False, "managed capture has no session log"
+
+    def read_lines() -> list[str]:
+        try:
+            return log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as exc:
+            raise RuntimeError(f"session log unreadable: {exc}") from exc
+
+    try:
+        baseline = len(read_lines())
+        deadline = time.monotonic() + max(timeout_s, 0.0)
+        last = "no reply"
+        while time.monotonic() < deadline:
+            nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
+            accepted, detail = session.send_command("!STOP_STATUS", nonce=nonce, end_nonce=end_nonce)
+            if not accepted:
+                return False, f"!STOP_STATUS refused: {detail}"
+            rows = session.fenced_response(
+                nonce, end_nonce, timeout_s=min(3.0, max(0.1, deadline - time.monotonic()))
+            )
+            if rows is None:
+                last = "no fenced !STOP_STATUS reply"
+                continue
+            lines = read_lines()
+            window = fenced_window(lines, nonce, end_nonce)
+            if window is None:
+                last = "reply not present in the session log"
+                continue
+            if window[1] <= baseline:
+                last = "reply is not fresh (it precedes this attach)"
+                continue
+            status_rows = [row for row in rows if "#STOP_STATUS," in row]
+            if not status_rows:
+                last = "reply carried no #STOP_STATUS row"
+                continue
+            row = status_rows[-1]
+            if "state=STOPPED" not in row:
+                last = f"device is not stopped: {row.strip()}"
+                continue
+            if not stopped_capture_queue_idle([row]):
+                last = f"stop queue is not idle: {row.strip()}"
+                continue
+            return True, "fresh stopped reply with an idle stop queue"
+        return False, last
+    except (OSError, ValueError, RuntimeError) as exc:
+        return False, f"readiness probe failed: {exc}"
+
+
 def _run_with_watchdog(run_fn: Callable[[], int], timeout_s: float) -> int:
     """Run `run_fn` on a worker thread behind a wall-clock ceiling.
 
@@ -573,12 +636,19 @@ def run_with_managed_capture(
     """
     timeout = resolve_managed_run_timeout(timeout_s)
     with managed_capture_session(config) as log_path:
+        # Line count is diagnostic only; readiness comes from a reply this run asked for.
         usable, detail = attach_stream_is_usable(log_path)
+        print(f"[hitl] attach stream: {detail}")
         if not usable:
-            # Refuse before the measured sequence: a silent attach cannot produce a verdict.
             print(f"[hitl] attached stream is not usable ({detail}); refusing to run the scenario")
             write_metadata_best_effort(config, session_log=log_path)
             return 3
+        ready, reason = establish_attach_readiness()
+        if not ready:
+            print(f"[hitl] attach readiness failed ({reason}); refusing to run the scenario")
+            write_metadata_best_effort(config, session_log=log_path)
+            return 3
+        print(f"[hitl] attach readiness: {reason}")
         active = replace(config, follow_current_session=False, follow_serial_log=log_path,
                          legacy_extra_args=tuple(legacy_args_with_managed_capture(
                              list(config.legacy_extra_args), config, log_path)))

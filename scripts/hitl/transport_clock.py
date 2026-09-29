@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import collections
+import inspect
 import time
 from typing import Any, Optional
 
@@ -27,9 +29,50 @@ from hitl.control_constants import (
 )
 
 
+# Every outgoing control action, with the function that sent it. An unexpected transport
+# press is otherwise only inferable from its effect on the device
+# (`captures/s4f22-step7-d2`: start 53.527, recording 53.974, an unexplained transport press
+# 54.526 that stopped it, and the intended Record stop at 59.248 arming a new take).
+_CONTROL_ACTIONS: "collections.deque[dict[str, object]]" = collections.deque(maxlen=128)
+
+
+def record_control_action(action: str, *, note: int, channel_1based: int, caller: str) -> None:
+    _CONTROL_ACTIONS.append(
+        {
+            "action": action,
+            "note": int(note),
+            "channel_1based": int(channel_1based),
+            "caller": caller,
+            "monotonic_s": round(time.monotonic(), 6),
+        }
+    )
+
+
+def control_action_log() -> list[dict[str, object]]:
+    """Outgoing control actions, oldest first, for run attribution."""
+    return list(_CONTROL_ACTIONS)
+
+
+def clear_control_action_log() -> None:
+    _CONTROL_ACTIONS.clear()
+
+
+def _transport_actions() -> list[dict[str, object]]:
+    return [a for a in _CONTROL_ACTIONS if a.get("note") == GLOBAL_TRANSPORT_NOTE]
+
+
+def transport_press_count() -> int:
+    """How many global-transport presses this process has sent (all callers)."""
+    return len(_transport_actions())
+
+
 def _send_short_press(
-    out_port: mido.ports.BaseOutput, *, note: int, channel_1based: int, press_ms: int
+    out_port: mido.ports.BaseOutput, *, note: int, channel_1based: int, press_ms: int,
+    action: str = "short_press",
 ) -> None:
+    record_control_action(
+        action, note=note, channel_1based=channel_1based, caller=inspect.stack()[1].function
+    )
     ch = channel_1based - 1
     out_port.send(mido.Message("note_on", channel=ch, note=note, velocity=127))
     time.sleep(max(press_ms, 1) / 1000.0)
@@ -95,8 +138,15 @@ def ensure_midi_clock(
     min_clocks: int,
     timeout_s: float,
     abort: Optional[Any] = None,
+    allow_transport_press: bool = False,
 ) -> bool:
-    """Wait for incoming MIDI clock; toggle transport once if clock is missing."""
+    """Wait for incoming MIDI clock; toggle transport once only if explicitly allowed.
+
+    The toggle is a **toggle**: sent while the transport already runs it stops it. This board
+    emits no USB MIDI clock out, so the pulse wait always expires and a press always fires -- so
+    any caller that is *confirming* transport it already started must not allow it. Those callers
+    get a named failure instead (`ensure_transport_clock`).
+    """
     if min_clocks <= 0:
         return True
 
@@ -119,11 +169,15 @@ def ensure_midi_clock(
     if count_clocks(deadline) >= min_clocks:
         return True
 
+    if not allow_transport_press:
+        return False
+
     _send_short_press(
         out_port,
         note=GLOBAL_TRANSPORT_NOTE,
         channel_1based=CONTROL_CHANNEL_1BASED,
         press_ms=120,
+        action="midi_clock_toggle",
     )
     time.sleep(0.3)
     deadline = time.monotonic() + max(timeout_s, 0.0)
@@ -141,6 +195,7 @@ def ensure_transport_clock(
     abort: Optional[Any] = None,
     after_index: int = 0,
     started_since_index: int | None = None,
+    allow_transport_press: bool = False,
 ) -> tuple[bool, bool]:
     """Return (ok, using_serial_proxy). Proxy = serial capture shows transport without USB clock in.
 
@@ -181,12 +236,24 @@ def ensure_transport_clock(
                 return True, True
             time.sleep(0.05)
 
+    if started_since_index is not None:
+        # The caller has already sent Start and is only confirming it. `ensure_midi_clock`'s press
+        # is a toggle, so a late acknowledgement would stop the transport that start just began --
+        # measured twice on device (`captures/s4f22-base-device-03`: start 25.086, toggle 25.603;
+        # `captures/s4f22-step7-d2`: start 53.527, recording 53.974, unexplained press 54.526).
+        # Missing clocks or a delayed receipt is a named failure for the caller, never a re-press.
+        return False, False
+
+    if not allow_transport_press:
+        return False, False
+
     ok = ensure_midi_clock(
         in_port,
         out_port,
         min_clocks=min_clocks,
         timeout_s=timeout_s,
         abort=abort,
+        allow_transport_press=True,
     )
     return ok, False
 
