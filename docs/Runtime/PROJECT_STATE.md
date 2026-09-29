@@ -1,5 +1,18 @@
 # Project state (execution context)
 
+**2026-09-29 — the extra transport press, named and removed; readiness proven from a fresh reply.**
+`captures/s4f22-step7-d2` carried an unexplained Global Transport press between start and the
+intended Record stop (53.527 start, 53.974 recording, 54.526 press, 59.248 Record stop -> armed a
+new take). Cause: `ensure_transport_clock` waited for the caller's own start acknowledgement and
+then fell through to `ensure_midi_clock`, whose press is a **toggle**, so a late receipt stopped
+the transport the start had just begun (same signature as `s4f22-base-device-03`). Fixed:
+confirmation after Start is observation-only with a **named failure** instead of a re-press
+(regression `scripts/test_transport_clock_observation.py`); attach readiness comes from a **fenced
+`!STOP_STATUS`** this run asks for (`state=STOPPED`, idle stop queue), line count diagnostic only;
+and every control action is recorded with its caller in `assertions.control_actions`. **Ring-wipe
+investigation stays open** -- no `head_bad` in two runs does not clear it. Next: bounded same-boot
+campaign preserving every attempt and the content/timing gates.
+
 **2026-09-29 — head-boundary detector armed; the wipe did not reproduce; setup variance dominates.**
 `captures/s4f22-step7-d1/d2` (two same-boot attempts, `RING,head_bad` armed): **no `head_bad`
 row and no wipe**. d1 attached to a device whose log held 15 lines, aborted with
