@@ -273,6 +273,14 @@ class ManagedCaptureActiveTests(unittest.TestCase):
         target = config.out_dir / "new-session.log"
         @contextmanager
         def session(_config):
+            # The attach gate reads the capture the session owns, so the fixture must provide a
+            # usable one (a real capture_session writes it before the scenario starts).
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "BOOT,load,ok\n"
+                + "\n".join(f"#CAP,{i},ST,Track,PLAYING,PLAYING" for i in range(60)),
+                encoding="utf-8",
+            )
             yield target
         def check(active):
             self.assertEqual(target, active.follow_serial_log)
