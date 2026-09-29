@@ -594,6 +594,11 @@ short and a long run, rather than reasoning about tiers.
 
 ### Record-family loss: pinned to the firmware identity, mechanism narrowed
 
+> Historical hypotheses below are superseded by the 2026-09-29 Record evidence
+> loss accounting discovery at the end of this packet. Firmware identity is useful
+> evidence, but the claimed elimination of loss paths and attribution to critical
+> reentry/release traffic were not established.
+
 Run identity matters here and is now unambiguous (from each run's `metadata.json`):
 
 | run | git | firmware sha256 (first 16) |
@@ -648,3 +653,244 @@ attributable; option (a) is the one that makes the record leg readable on a long
 
 Not claimed: any device acceptance. The gate still aborts on the second overdub transition, and the
 record leg's own rows are still lost under pressure in a long run.
+
+### S4f.22 — Record evidence loss accounting (2026-09-29)
+
+Status: specified; baseline `cb2fa7e4`, clean tree. This slice extends the existing
+DebugSessionCapture owner and CaptureLineClock integrity consumer. No retention-policy
+change or device acceptance is implied.
+
+**G0 discovery / historical review.** VERIFIED: `recStart`, `recStop`,
+`recStopStage`, and `recSlotIdentity` enqueue text through `appendCaptureRecord`;
+the fixed 1 MiB ring is drained only under a safe serial budget. `RECA`, `RECS`,
+and `RID` are critical and Tier-A. Contrary to the previous paragraph,
+`DIAG,reentry*`, `canonical_release`, and `ws_release` are Tier-A **but not
+critical** and cannot evict a critical head. Critical-to-critical eviction is
+possible, but its attribution to that diagnostic traffic is disproven by
+`CaptureLineTier::isCriticalLine`. The device loss mechanism remains UNKNOWN
+until entry/enqueue/reject/evict/transmit counts are observed. Existing RID counters
+are the extension point; no new owner, store, transport, persistence or undo path.
+DECISION_LOG searches: capture ring, Tier-A, telemetry, instrumentation; preserve
+the existing capture-only instrumentation and no USB fallback on append failure.
+G0 PASS for accounting; not approval of an unevictable-row policy.
+
+**Contract and G2 review.** Count RECA and RECS emitter entries and each ring
+outcome independently, alongside the existing RID counters. Counters have boot
+lifetime, fixed storage and saturating increments for the new families. Read them
+through the existing stopped-only `!CAP_IDENTITY_STATS` command, directly over
+serial so ring pressure cannot erase the answer. Keep the legacy RID stats row.
+Any refused critical append (including allocation failure) must latch a separate
+`RING,critical_rejected` notice until safe USB capacity exists; host capture
+integrity becomes INCOMPLETE and stays so after later healthy rows. Ordinary
+diagnostic rejection remains timing shed. Do not block/flush USB on append.
+
+COVERED: overlapping tracks share the existing ring; source/job ownership, slot
+switch, undo, load/save, geometry and playback are unchanged. Counters add only
+fixed arithmetic and bounded tag tests; no new allocation or scan. TIGHTENING:
+new stats must also count allocation failure, and notices must survive serial
+backpressure; real-ring native fixtures are required, not just a tier truth table.
+Resource allowance: 40 bytes for two five-counter families plus two 32-bit
+critical-rejection notice fields (48 bytes before section alignment); no PSRAM
+increase, Track/job growth or new playback role. Measure linker result against
+the unchanged 840-byte padding floor. G2 PASS with these requirements.
+
+**Transition oracle, fixed before edits.**
+- R1: emit each family into a controlled ring, drain, assert entry/enqueue/transmit
+  conservation and emitted text; existing RID wire fields remain compatible.
+- R2: place RECA at the head, saturate with Tier-A diagnostics: the critical head
+  remains and RECA eviction stays zero; saturate with actual critical rows and
+  assert eviction attribution.
+- R3: force ring allocation failure: entry=1, rejected=1, enqueued=0; no immediate
+  USB write; safe flush emits critical rejection even without an allocated ring.
+- R4: USB backpressure retains that notice; retry emits it once. Critical vs
+  ordinary rejection must not be conflated. Host marks critical rejection
+  incomplete, including through the file-follow collector, and never recovers
+  integrity from a later healthy row.
+
+**Verification recipe.** Native fixture includes the production capture TU with
+only Arduino/serial hardware seams; supply fixed ring backing in the fixture.
+Focused native ring/tier suites and Python capture-integrity suite, full native,
+`pio run -e teensy41-capture-serial`, OpenSpec validation. Reuse the registered
+baseline stimulus for eventual device comparison. No SD mutation or upload in this
+accounting slice. Device mechanism and S4f.22 acceptance remain open.
+
+**Completion record (2026-09-29).** Native verified, not device verified.
+- `pio test -e native -f test_capture_ring`: 4/4. It links the actual
+  DebugSessionCapture TU; only serial/Arduino are substituted, fixed ring bytes
+  are fixture-owned. Both record families and existing RID are exercised.
+- `pio test -e native`: 2,625 cases, 2,618 succeeded, 7 skipped, no failures.
+- `.venv/bin/python -m unittest scripts/test_hitl_capture_integrity.py`: 16/16.
+- `.venv/bin/python -m unittest scripts/test_hitl_command_forwarding.py scripts/test_hitl_identity_one_session.py`: 40/40.
+- Mutation in an isolated `/tmp` source copy (working source unchanged): removing
+  the critical-refusal latch yields 1/4 failures, expected 2 notices vs observed 0.
+- `pio run -e teensy41-capture-serial`: PASS. Linker reports variables 96,192 /
+  ITCM 393,216 (code 391,224 + padding 1,992) / locals 34,880. Whole-link totals
+  remain at the approved baseline despite the 48-byte ring-state addition; no
+  budget rebase, view/job field, or additional PSRAM allocation. ELF symbol size
+  for `sCaptureRing` is 120 bytes on ARM.
+- `openspec validate runtime-working-set-ownership --strict`: PASS.
+- Stimulus inventory inspected; reuse `STIM-BASE-2-2-01@v1` for eventual device
+  comparison. Device test NOT RUN; no firmware upload or SD operation.
+
+Logs for this execution are `/tmp/capture-ring-test.log`,
+`/tmp/capture-full-native.log`, `/tmp/capture-integrity-test.log`,
+`/tmp/capture-related-host.log`, `/tmp/capture-mutation.log`, and
+`/tmp/capture-firmware-build.log`; those are ephemeral execution logs, not device
+acceptance artifacts. Production source at this checkpoint is the working diff
+on `cb2fa7e4`. Oracle unchanged. Runtime docs, guide, bounds inventory and task
+notes updated. No new ownership/architecture decision or exclusion: the existing
+packet already required per-family accounting before a retention change. No task
+checkbox changed; S4f.22 remains open. Next device evidence must use before/after
+boot-lifetime counter snapshots, drain queued rows, and reconcile counters with
+observed rows before selecting a retention fix.
+
+### S4f.22 — same-session Record evidence drain (2026-09-29)
+
+Specified before host edits. Device run `s4f22-base-device-08` (reported firmware
+hash prefix `d126bb86fb3c9553`) reports RID 1/1/0/1/0, RECA 1/1/0/1/0,
+RECS 7/7/0/0/0 for entered/enqueued/rejected/transmitted/evicted. This supports
+queued-but-undrained RECS. Transmitted means the firmware called Serial.println;
+it does not prove receipt by this managed log. Earlier eviction hypotheses are
+not supported for this boot. Follow-up reconnect/drain is inconclusive because
+it may reset the source ring.
+
+Trace: the baseline closes its MIDI contexts, then waits for host-side quiet and
+snapshots/stops its collector; ManagedCaptureSession.stop later kills the serial
+owner. No final !TRACE_DRAIN is issued. Quiet is not an empty-ring receipt.
+
+Host-only contract: after the measured leg, before either MIDI or capture reader
+closes, send one idempotent MIDI Stop (never a transport toggle), obtain the
+existing stopped-only fenced stats response, then perform bounded fenced drains.
+Wait for the selected track's stop queue to settle using !STOP_STATUS; reconcile
+all three families' emitted/enqueued/transmitted/lost counts and the actual rows
+in this same managed log. Missing fences, incomplete stats, saturated counters,
+loss or missing transmitted rows fail closed. Do not infer completion from quiet.
+This is Record evidence retrieval, not a new persistence-completion assertion.
+The original leg failure remains the primary abort reason. No measured-sequence
+Stop, reconnect, firmware change, SD clear or acceptance checkoff is authorized
+by this slice. The existing owner/serial protocol parser are extended.
+
+Tests must prove: Stop before drain, repeated 64-row drains, delayed finalizer,
+actual file receipt, missing gate response, stats loss, counter regression,
+exception cleanup before port close, and non-managed no-op. Preserve the single
+serial owner and outstanding command exclusion. Deadline bounds the entire
+retrieval; no arbitrary settle sleep is evidence. Full native rerun requested by
+user; host fixture tests and strict OpenSpec validation required. Device rerun
+remains separate.
+
+**Completion record — host implementation verified.** `ManagedCaptureSession`
+owns the bounded retrieval; `serial.protocol` owns stats/status/receipt parsing;
+the baseline's inner cleanup context runs before the MIDI contexts exit, including
+on leg exceptions. Final verification re-reads the original capture file after
+collector shutdown, accounting for follower lag and late integrity notices.
+The report preserves both the original abort reason and the retrieval result.
+
+Accounting tightening from review: firmware counters span a boot, so compare
+new transmissions to new log rows from the first stopped stats reply, using the
+exact fence endpoint of each reply (not a later moving file tail). This supports
+an attached run with prior transmissions and catches asynchronous post-fence
+flushes without arbitrary sleeps. Earlier leg rows remain the baseline verifier's
+responsibility. Boot-lifetime loss still fails conservatively when no pre-leg
+snapshot can attribute it; this slice does not erase loss or certify persistence.
+
+- Full native rerun requested by user: `pio test -e native` — 2,625 cases,
+  2,618 succeeded, 7 skipped, no failures (`/tmp/capture-full-native-rerun.log`).
+- Host: `python -m unittest` through `.venv/bin/python`, covering
+  `test_managed_record_drain`, `test_hitl_capture_integrity`,
+  `test_hitl_command_forwarding`, `test_capture_transitions`,
+  `test_device_shutdown`, `test_record_target_precondition`, and
+  `test_hitl_identity_one_session` — 154/154, `/tmp/managed-drain-all-host.log`.
+  Fifteen new cases drive the real managed sender, fence parser, log file and
+  cleanup context against a controlled endpoint. Deliberate missing transmission,
+  lost fence, counter regression, saturation and leg-exception cases fail closed.
+- `openspec validate runtime-working-set-ownership --strict`: PASS.
+- Firmware source unchanged in this follow-up; no build/upload required for this
+  host-only change. No device run, reconnect, clear or other SD operation.
+- Runtime docs, delivery notes, guide and task notes updated. No checkbox changes:
+  S4f.22 and the original overdub-transition device gate remain open. Next rerun
+  must inspect `assertions.record_evidence_drain` and the same-session RECS rows;
+  retrieval success does not override the original transition failure.
+
+### S4f.21 — Record playback invalidation is not transport Stop (2026-09-29)
+
+G0 VERIFIED: run 08 logs `Recording stopped`, two `Record stop retarget` rows,
+then `Playback started`, all on the Record stop edge. `completeAdmittedRecordStop`
+calls `resetPlaybackState`, which calls `invalidatePlaybackMergedMidiEvents`.
+That method unconditionally suppresses output and calls the explicit transport-stop
+retarget for any deferred job, including a new Record job. The existing native
+fixture asserts PLAYING after the edge but not the job destination/output barrier,
+so the later state assignment masks the defect. No harness stub hides this path.
+The same owner is reused; DEC-093 shared finalization requires retained PLAYING
+playback while Record publishes. G0 PASS; device attribution beyond this matched
+trace remains to verify.
+
+Contract: a Record job owns retained playback/source lifetime across cache resets.
+Ordinary merged-cache invalidation must leave that job's destination and output
+barrier untouched, retaining its scratch until retirement. Explicit
+`stopRecordingToStopped` and `requestDeferredOverdubStopToStopped` continue to
+resolve STOPPED and suppress output. Keep the overdub recovery path unchanged.
+No new field, role, allocation, work loop, undo or persistence behavior.
+
+G2: COVERED explicit Stop calls retarget directly before reset; recursive reset
+must not manufacture another Stop. Slot reset/load/clear use the existing
+supersession owner; successor identity and window pinning remain unchanged.
+Oracle before edit: actual Record start -> actual stop-to-playing leaves a pending
+Playing-destination job, output barrier clear, then a real same-slot overdub start
+is live while the predecessor remains owned. Existing stopped-retarget and
+normalization fixtures must remain green. Mutation is the pre-fix implementation.
+Focused shared-finalization + continuous-capture tests; full native and default
+capture-serial build/RAM1 gate required. Hardware rerun requires slot-clear
+permission; no checkoff from native proof.
+
+**Completion record — native verified (not device verified).**
+- Pre-fix `pio test -e native -f test_shared_capture_finalization`: new case
+  `test_record_stop_playback_reset_preserves_playing_destination` fails:
+  expected Playing (0), observed Stopped (1). `/tmp/record-invalidation-red.log`.
+- Fix extends the existing invalidation owner with a constant mode guard. No
+  field, allocation, role, new Stop action, persistence or undo change.
+- Strengthened fixture checks output barrier clear and starts a same-slot
+  overdub while the Record predecessor remains pending/Playing-destination.
+- `pio test -e native -f test_shared_capture_finalization -f test_continuous_capture`:
+  156/156; `/tmp/record-invalidation-green.log`. Includes explicit Record
+  transport Stop and existing overdub recovery coverage.
+- `pio test -e native`: 2,626 cases, 2,619 succeeded, 7 skipped, no failures;
+  `/tmp/record-invalidation-native.log`.
+- `pio run -e teensy41-capture-serial`: PASS; variables 96,192, ITCM 393,216
+  (code 391,144 + padding 2,072), locals 34,880; floor 840 unchanged.
+  `/tmp/record-invalidation-build.log`.
+- Strict OpenSpec validation and diff whitespace checks pass. Guide, runtime
+  state/current scope, delivery and task notes updated. No architecture decision
+  superseded: this implements the existing shared-finalization continuity contract.
+- Device run not performed: explicit track 5 / slot 1 clear permission requested
+  and still pending. No upload, port open/reset, or device-SD operation. The local
+  build now contains the fix; the previously reported device build does not.
+  S4f.21/S4f.22 stay open until their remaining gates pass.
+
+## S4f.22 device legs — 2026-09-29, after the HITL corrections
+
+The host-side corrections (managed boot reset, successor-start receipts, deferred-shape
+oracle, `save_request` outcome) made the legs readable. Evidence, newest first:
+
+| run | fixture | verdict | notes |
+| --- | --- | --- | --- |
+| `captures/s4f22-base-device-17` | registered base (record → OD → OD, one press each) | **PASS** | `issues []`, integrity COMPLETE, `boot_reset` present, `critical_rejected 0`, `RING,overflow 0`; record `32/32`, OD1 `16/16`, OD2 `8/8`, both stored spans `count_ok/span_ok/bars_ok`, `display overdub_ok=True` |
+| `captures/s4f22-r-od-overlap` | **temp variant** `STIM-BASE-2-ONE-OD-01-TEMP-R-OD-OVERLAP` (successor one beat after the record stop) | FAIL (FIRMWARE_CONTRADICTION) | overlap **exercised** — `OVERDUBBING: 2`, `OVERDUB_STOPPING: 1` on continuous transport; transitions and content green (`32/32` record, `16/16` OD1, stored span ok, `display overdub_ok=True`); residual issues `record_stored_revt_missing`, `persistence_active_snapshot_unavailable_during_save` |
+
+The temp variant is a non-registered sidecar and was **not** promoted; the canonical
+`STIM-BASE-2-ONE-OD-01` was not edited.
+
+**Residual, and what it is not.** `record_stored_revt_missing` is intermittent across
+otherwise-identical runs (absent in run 17, present here): the deferred REVT scan is served only
+when the transport is fully idle, which a continuous-transport overlap leg does not guarantee.
+`persistence_active_snapshot_unavailable_during_save` is the large-loop bounds check. Neither is a
+transition or content failure, and neither was waived.
+
+**Setup flake, measured.** A boot-reset capture can leave the device finishing its boot-time
+restore, and the clear precondition then spends its whole save-idle budget without observing idle:
+120 s → 24 polls → blocked (`s4f22-base-device-16`); 240 s → 48 polls → same
+(`s4f22-base-device-18`). Doubling the timeout scales the polling and changes nothing, so the
+precondition is **not time-limited** — it needs a receipt for a boot-restore save that is already
+complete before the fixture's baseline, not a longer wait.
+
+No task checkoff: S4f.17/S4f.18/S4f.20/S4f.21/S4f.22 stay open, and the OD→OD and R→R device legs
+are still outstanding.
