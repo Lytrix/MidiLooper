@@ -136,6 +136,21 @@ struct CaptureRing {
   uint8_t silentWipeType = 0;
   uint16_t silentWipePayloadLen = 0;
   uint8_t silentWipePrefix[kSilentWipePrefixBytes] = {};
+  // Boundary plausibility: the only two places that read a header and advance by it are
+  // `discardOldestRecord` and the flush walk. If either advances by a total that does not match
+  // the record it sat on, the head lands mid-record, the *next* read is text and the ring is
+  // wiped. Checking right after each advance names the operation that did it, instead of only
+  // reporting the wipe it caused (`captures/s4f22-step6-c2`: type=50, prefix "295,4294967295,1").
+  uint32_t headBadCount = 0;
+  uint32_t headBadFirstUs = 0;
+  uint32_t headBadHead = 0;
+  uint32_t headBadTail = 0;
+  uint32_t headBadUsed = 0;
+  uint8_t headBadOp = 0;
+  uint8_t headBadType = 0;
+  uint16_t headBadPayloadLen = 0;
+  uint8_t headBadPrefix[kSilentWipePrefixBytes] = {};
+  bool headBadPending = false;
   bool wipedPending = false;
   RecordFamilyStats recordStart;
   RecordFamilyStats recordStop;
@@ -181,6 +196,7 @@ SC_MEM_ATTR RecordFamilyStats* recordFamilyStats(const char* line) {
 
 bool readHeaderAt(size_t index, CaptureRecordHeader& headerOut);
 void readBytesAt(size_t index, void* dest, size_t len);
+bool serialWriteRoom(size_t bytesNeeded);
 
 SC_MEM_ATTR bool isTierATextLine(const char* line) {
   return CaptureLineTier::isTierALine(line);
@@ -411,6 +427,58 @@ SC_MEM_ATTR void noteSilentWipe() {
   sCaptureRing.wipedPending = true;
 }
 
+/// Record the first head that is not a record boundary, naming the operation that produced it.
+/// Op codes: 1 append entry, 2 flush entry, 3 after `discardOldestRecord` advance, 4 after the
+/// flush walk's advance.
+SC_MEM_ATTR void checkHeadPlausible(uint8_t op) {
+  if (sCaptureRing.capacity == 0 || sCaptureRing.used < sizeof(CaptureRecordHeader)) {
+    return;  // nothing live to check (an empty or <header>-sized tail is not a boundary question)
+  }
+  CaptureRecordHeader header{};
+  (void)readHeaderAt(sCaptureRing.head, header);
+  const size_t total = recordTotalBytes(header);
+  if (header.payloadLen != 0 && total <= sCaptureRing.used) {
+    return;
+  }
+  if (sCaptureRing.headBadCount == 0) {
+    sCaptureRing.headBadFirstUs = micros();
+    sCaptureRing.headBadHead = static_cast<uint32_t>(sCaptureRing.head);
+    sCaptureRing.headBadTail = static_cast<uint32_t>(sCaptureRing.tail);
+    sCaptureRing.headBadUsed = static_cast<uint32_t>(sCaptureRing.used);
+    sCaptureRing.headBadOp = op;
+    sCaptureRing.headBadType = header.type;
+    sCaptureRing.headBadPayloadLen = header.payloadLen;
+    for (size_t i = 0; i < kSilentWipePrefixBytes; ++i) {
+      sCaptureRing.headBadPrefix[i] = readByteAt(sCaptureRing.head + i);
+    }
+  }
+  incrementSaturated(sCaptureRing.headBadCount);
+  sCaptureRing.headBadPending = true;
+}
+
+SC_MEM_ATTR void emitHeadBadNotice() {
+  if (!sCaptureRing.headBadPending || !serialWriteRoom(160)) {
+    return;
+  }
+  char prefix[kSilentWipePrefixBytes * 2 + 1] = {};
+  static const char* kHex = "0123456789abcdef";
+  for (size_t i = 0; i < kSilentWipePrefixBytes; ++i) {
+    prefix[i * 2] = kHex[(sCaptureRing.headBadPrefix[i] >> 4) & 0x0F];
+    prefix[i * 2 + 1] = kHex[sCaptureRing.headBadPrefix[i] & 0x0F];
+  }
+  sCaptureRing.headBadPending = false;
+  Serial.printf(SC_FMT("#CAP,%lu,RING,head_bad,%lu,op=%u,head=%lu,tail=%lu,used=%lu,type=%u,"
+                      "plen=%u,prefix=%s\r\n"),
+                static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(sCaptureRing.headBadCount),
+                static_cast<unsigned>(sCaptureRing.headBadOp),
+                static_cast<unsigned long>(sCaptureRing.headBadHead),
+                static_cast<unsigned long>(sCaptureRing.headBadTail),
+                static_cast<unsigned long>(sCaptureRing.headBadUsed),
+                static_cast<unsigned>(sCaptureRing.headBadType),
+                static_cast<unsigned>(sCaptureRing.headBadPayloadLen), prefix);
+}
+
 SC_MEM_ATTR void resetRingAfterUnreadableHead() {
   noteSilentWipe();
   sCaptureRing.head = sCaptureRing.tail;
@@ -436,6 +504,7 @@ void discardOldestRecord(CaptureLineTier::EvictionKind kind) {
     return;
   }
   advanceHead(total);
+  checkHeadPlausible(3);
   switch (kind) {
     case CaptureLineTier::EvictionKind::TimingShed:
       noteTimingShed();
@@ -460,6 +529,7 @@ void discardOldestRecord(CaptureLineTier::EvictionKind kind) {
 
 SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload, uint16_t payloadLen) {
   incrementSaturated(sCaptureRing.appendAttempts);
+  checkHeadPlausible(1);
   const char* text = type == CaptureRecordType::Text ? static_cast<const char*>(payload) : nullptr;
   const bool incomingTierA = text != nullptr && isTierATextLine(text);
   const bool incomingCritical = text != nullptr && isCriticalTextLine(text);
@@ -1430,11 +1500,13 @@ void flushCaptureBuffer(size_t maxRecords) {
     ~FlushGuard() { sFlushInProgress = false; }
   } flushGuard;
   incrementSaturated(sCaptureRing.flushCalls);
+  checkHeadPlausible(2);
   // Never emit capture notices via USB Serial under timing-critical budgets.
   if (maxRecords > 8) {
     emitCriticalRejectedNotice();
     emitOverflowNotice();
     emitTierADegradedNotice();
+    emitHeadBadNotice();
     emitWipedNotice();
     emitTimingShedNotice();
   }
@@ -1520,6 +1592,7 @@ void flushCaptureBuffer(size_t maxRecords) {
     }
 
     advanceHead(total);
+    checkHeadPlausible(4);
     ++flushed;
     incrementSaturated(sCaptureRing.flushTransmitted);
   }

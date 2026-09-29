@@ -190,6 +190,23 @@ void test_nested_append_during_a_flush_cannot_evict_the_head() {
   sFlushInProgress = false;
 }
 
+void test_a_non_boundary_head_is_reported_with_its_operation() {
+  // The wipe's own detail showed the head sitting mid-text (`type=50`, prefix
+  // "295,4294967295,1"): something advanced by a total that did not match its record. The check
+  // right after each advance must name that operation instead of only the wipe it causes.
+  queueCaptureTextLine("#CAP,1,DIAG,idle_maint,12345");
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.headBadCount);
+  sCaptureRing.head = (sCaptureRing.head + 2) % sCaptureRing.capacity;
+  sCaptureRing.used -= 2;
+  checkHeadPlausible(4);
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.headBadCount);
+  TEST_ASSERT_EQUAL_UINT8(4, sCaptureRing.headBadOp);
+  TEST_ASSERT_TRUE(sCaptureRing.headBadPending);
+  flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("RING,head_bad,") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find(",op=4,") != std::string::npos);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_real_emitters_are_accounted_and_drained);
@@ -199,5 +216,6 @@ int main() {
   RUN_TEST(test_allocation_failure_is_reported_after_safe_usb_retry);
   RUN_TEST(test_unreadable_head_is_reported_as_a_wipe);
   RUN_TEST(test_nested_append_during_a_flush_cannot_evict_the_head);
+  RUN_TEST(test_a_non_boundary_head_is_reported_with_its_operation);
   return UNITY_END();
 }
