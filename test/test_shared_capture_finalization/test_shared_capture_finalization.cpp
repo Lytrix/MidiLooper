@@ -1785,6 +1785,78 @@ void test_record_stop_admits_through_the_common_drive() {
   TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::stopQueueDepth(t));
 }
 
+// S4f.20 parity -- the session-exit queue the inline stop owned. `Loop::commitPendingCapturePass`
+// ends by queuing the interval's session-exit snapshot publication, and that queue is the only
+// enumeration of the **committed Record pass** into the pending box. The pass does not exist at the
+// stop edge (the job owns it until this grain), so the deferred publication must own the queue.
+// Without it the box publishes the retained live-record candidate alone: that candidate's content
+// stops at the completed-bar frontier while its declared length is handed off to the sealed length,
+// and the successor's exit stamps the root current -- the device shape behind
+// `captures/session_20260929_225529.log` (Record pass's last bar missing from the display until an
+// overdub undo made the root non-current).
+void test_deferred_record_publication_queues_the_record_session_exit_snapshot() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_PLAYING);
+  Loop& loop = t.getLoop(0);
+  // Two bars recorded, stopped inside bar 2: the live-record candidate can only have covered the
+  // *completed* bar (768), one bar short of the sealed length (1536).
+  t.setActiveLoopIndex(0);
+  t.startRecording(0);
+  t.noteOn(1, 60, 100, 12);
+  t.noteOff(1, 60, 0, 96);
+  t.noteOn(1, 62, 100, 800);
+  t.noteOff(1, 62, 0, 900);
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 2;
+  // The idle owner's live-record turns, with the completed-bar frontier short of the take.
+  for (size_t turn = 0;
+       turn < 64 && loop.liveRecordAppliedCompletedTicks() < Config::TICKS_PER_BAR; ++turn) {
+    loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(Config::TICKS_PER_BAR, loop.liveRecordAppliedCompletedTicks(),
+                                   "precondition: the candidate covers the completed bar only");
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+  TEST_ASSERT_FALSE_MESSAGE(loop.pendingSnapshotSessionExitQueued(),
+                            "a live Record candidate is pending here, not a session exit");
+
+  stop(t, false, Config::TICKS_PER_BAR * 2);
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR * 2, loop.loopLengthTicks);
+  advanceToPhase(t, PendingStopPhase::RecordPublished);
+  TEST_ASSERT_TRUE_MESSAGE(loop.passes.hasRecordPass(),
+                           "precondition: the deferred publication commits a Record pass");
+
+  // The contract this fixture exists for.
+  TEST_ASSERT_TRUE_MESSAGE(loop.pendingSnapshotSessionExitQueued(),
+                           "the deferred Record publication must queue the record session exit");
+  TEST_ASSERT_TRUE_MESSAGE(loop.pendingSnapshotQueuedPassCount() > 0,
+                           "the committed Record pass must be enumerated, not left to the "
+                           "completed-bar-prefix candidate");
+
+  size_t drain = 0;
+  while (loop.hasPendingSnapshotPublish() && drain < 10000) {
+    loop.stepPendingSnapshotPublish(1);
+    ++drain;
+  }
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasPendingSnapshotPublish(),
+                            "the queued session exit must drain to a published root");
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                           "the root published from the retained candidate must cover the Record pass");
+  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR * 2, loop.publishedSnapshot()->loopLengthTicks());
+  // Content, not just currency: the note beyond the completed-bar frontier must be in the root.
+  SessionMidiEventVec events;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(events, 0, loop.loopLengthTicks));
+  uint32_t barOneNote = 0;
+  uint32_t lastBarNote = 0;
+  for (const MidiEvent& row : events) {
+    if (!row.isNoteOn()) continue;
+    if (row.data.noteData.note == 60) ++barOneNote;
+    if (row.data.noteData.note == 62) ++lastBarNote;
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, barOneNote);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, lastBarNote,
+                                   "the published root lost the take's last-bar note");
+}
+
 // S4f.20 deferred-REVT parity: the publication is the commit, so it queues the same stored
 // note-on scan the inline stop queued from `finalizeCommitSideEffects` -- for **its own slot**.
 // The queue is slot-qualified because the active index may already hold a successor take, which
@@ -2352,6 +2424,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_deferred_record_interval_is_audible_only_with_a_bound_window);
   RUN_TEST(test_native_midi_send_capture_records_a_direct_send);
   RUN_TEST(test_record_stop_admits_through_the_common_drive);
+  RUN_TEST(test_deferred_record_publication_queues_the_record_session_exit_snapshot);
   RUN_TEST(test_deferred_record_publication_queues_revts_for_its_own_slot);
   RUN_TEST(test_playing_record_scan_drains_the_bounded_walk_and_defers_the_merge);
   RUN_TEST(test_queued_revt_scan_pins_its_chunks_across_the_deferral);

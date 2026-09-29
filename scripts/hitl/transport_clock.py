@@ -336,7 +336,9 @@ def stream_pattern_for_bars(
         if msg.type in ("start", "stop", "continue", "clock"):
             continue
     stop_press_trigger_clock: Optional[int] = None
-    if stop_press_note is not None and stop_press_advance_clocks > 0:
+    if stop_press_note is not None and stop_press_advance_clocks < 0:
+        stop_press_trigger_clock = target_clocks
+    elif stop_press_note is not None and stop_press_advance_clocks > 0:
         stop_press_trigger_clock = max(1, target_clocks - stop_press_advance_clocks)
     stop_press_sent_during_stream = False
     stop_press_noteoff_due_at: Optional[float] = None

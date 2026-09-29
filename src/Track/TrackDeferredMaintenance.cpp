@@ -134,7 +134,11 @@ TRACK_COLD_MEM void logDisplayNoteDiffs(const char* tag, const NoteUtils::Displa
   uint32_t logged = 0;
   for (const NoteUtils::DisplayNote& note : expected) {
     bool matched = false;
+    const NoteUtils::DisplayNote* sameId = nullptr;
     for (const NoteUtils::DisplayNote& other : actual) {
+      if (other.noteId == note.noteId) {
+        sameId = &other;
+      }
       if (displayNoteIdentityMatch(note, other)) {
         matched = true;
         break;
@@ -145,8 +149,17 @@ TRACK_COLD_MEM void logDisplayNoteDiffs(const char* tag, const NoteUtils::Displa
     }
     const NoteUtils::DisplayNote* geom = findDisplayNoteGeometry(actual, note.note, note.startTick,
                                                                  note.endTick);
-    char line[192];
-    if (geom != nullptr) {
+    char line[224];
+    if (sameId != nullptr) {
+      snprintf(line, sizeof(line),
+               "#CAP,%lu,DIAG,lcr,vch,%s,id=%lu,n=%u,s=%lu,e=%lu,sameid_n=%u,sameid_s=%lu,sameid_e=%lu",
+               static_cast<unsigned long>(micros()), tag,
+               static_cast<unsigned long>(note.noteId), static_cast<unsigned>(note.note),
+               static_cast<unsigned long>(note.startTick),
+               static_cast<unsigned long>(note.endTick), static_cast<unsigned>(sameId->note),
+               static_cast<unsigned long>(sameId->startTick),
+               static_cast<unsigned long>(sameId->endTick));
+    } else if (geom != nullptr) {
       snprintf(line, sizeof(line),
                "#CAP,%lu,DIAG,lcr,vch,%s,id=%lu,n=%u,s=%lu,e=%lu,alt=%lu",
                static_cast<unsigned long>(micros()), tag,

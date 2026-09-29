@@ -2058,7 +2058,14 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
       }
     }
   }
-  const auto* pendingReceipt = oldestPendingSessionExitReceipt();
+  // DEC-068/DEC-094: a session-exit receipt carries an **overdub** session's identity handoff
+  // (`captureSessionExitTail` is only reachable from an overdub stop), so it may only stand in for the
+  // pass of an overdub exit. A Record exit must take its own just-committed pass: a ready-but-unconsumed
+  // receipt from an earlier overdub session would otherwise make this request enumerate that session's
+  // pass -- or, with an unfilled id, nothing at all -- while the coverage watermark below still advances,
+  // which is exactly the truncated-current-root shape DEC-094 closes.
+  const auto* pendingReceipt =
+      isOverdubSessionExit(reason) ? oldestPendingSessionExitReceipt() : nullptr;
   const PassId finalPassId = pendingReceipt ? pendingReceipt->lastPassId : lastCommittedPassId_;
   if (finalPassId != kInvalidPassId && !passAlreadyTracked(box, finalPassId)) {
     box.queuedPassIds.push_back(finalPassId);

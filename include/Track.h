@@ -905,7 +905,10 @@ private:
   /// publication transaction is S4f.20 completion).
   LoopEventStoreRewriteResult stepDeferredRecordPassTransfer(CaptureStopJob& job);
   /// Record-only atomic publication over `RecordPassReady`: commit the staged pass,
-  /// push its Record undo and admit persistence once. Advances to `RecordPublished`.
+  /// push its Record undo, queue the interval's session-exit snapshot publication
+  /// (`Loop::queueSessionExitSnapshot` -- the only enumeration of the committed Record
+  /// pass into the pending snapshot box, which the inline stop performed and this route
+  /// must own, DEC-094) and admit persistence once. Advances to `RecordPublished`.
   LoopEventStoreRewriteResult stepDeferredRecordPublication(CaptureStopJob& job);
   /// Record-only terminal over `RecordEmpty`: an accepted Record take that
   /// prepared no content keeps the inline route's no-content geometry/undo/

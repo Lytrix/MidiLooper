@@ -894,3 +894,88 @@ complete before the fixture's baseline, not a longer wait.
 
 No task checkoff: S4f.17/S4f.18/S4f.20/S4f.21/S4f.22 stay open, and the OD→OD and R→R device legs
 are still outstanding.
+
+## S4f.20 — the deferred Record publication queues the record session-exit snapshot (2026-09-29)
+
+Execution packet for the slice that closes the "issue 2" device symptom (Record-pass last-bar notes
+missing from the display after the first overdub stop, restored by an overdub undo). Root cause, full
+evidence table and non-goals: [`record_session_exit_snapshot_queue_deferred_publication_bugfix.md`](../../../docs/Plans/record_session_exit_snapshot_queue_deferred_publication_bugfix.md).
+Decision: `DEC-094`.
+
+### Identity and scope
+- **Status:** native verified; build verified; **device verified 2026-09-29** — base HITL **PASS**
+  (`overall_ok=true`) with a complete published root (32/32 Record notes), and the reported symptom
+  reproduced by a one-line A/B on the same stimulus (26/32).
+- **Packet/task IDs:** S4f.20 (mode-correct atomic publication — inline-parity list), reached through
+  S4f.17/S4f.21; contract `SHARED-CAPTURE-FINALIZATION.md`, `DEC-073`, `DEC-094`.
+- **Owner and path:** production Record stop → `Track::beginDeferredRecordStopForSlot` →
+  `Track::stepDeferredRecordPublication` → `Loop::queueSessionExitSnapshot` → idle publisher
+  (`Track::processDeferredIdleMaintenance` → `Loop::stepPendingSnapshotPublish`) → `storePublishedSnapshot`.
+- **Primary files:** `src/Track/TrackOverdubLifecycle.cpp` (`stepDeferredRecordPublication`),
+  `src/Loop/LoopSnapshotPublish.cpp` (`queueSessionExitSnapshot` receipt selection),
+  `include/Track.h` (declared contract). Test harness:
+  `test/test_shared_capture_finalization` (production route, `HARNESS_REAL_CAPTURE_STOP`),
+  `test/test_loop_take_survival` (Loop-level publisher).
+- **Preconditions present:** the deferred Record route already mirrored the inline stop's undo, display,
+  scratch and persistence side effects. **Included here:** the missing session-exit queue.
+  **Non-goals:** watermark rewrite, `remainingSessionExitPublishWork` change, inline-route change,
+  publication-latency work, HITL/stimulus change, upload.
+- **Commit boundary:** independently buildable; no compatibility shim; no temporary code.
+
+### Oracle fixed before the behavior edit
+
+- **T-1** (`test_deferred_record_publication_queues_the_record_session_exit_snapshot`): two bars recorded
+  with the live-record frontier one bar short and a note in the bar that was still being written; the
+  deferred stop then publication grainsteps to `RecordPublished`. Expected after the publication:
+  `pendingSnapshotSessionExitQueued()` true, `pendingSnapshotQueuedPassCount() > 0`, and after draining —
+  a current root of the sealed length whose snapshot window holds **both** notes (the tail note can only
+  come from the enumerated Record pass). Counterexample that must fail: without the queue,
+  `pendingSnapshotSessionExitQueued()` is false and no root publishes.
+- **L-1** (`test_record_session_exit_with_a_truncated_candidate_keeps_the_take_tail`): Loop-level
+  (`commitCapturePass`) with `applyLiveRecordCompletedTicks` at the completed bar, sealed 2 bars and a
+  note in bar 2. Expected: session exit queued with the pass on the queue, then a **current** root of the
+  sealed length containing both notes. Counterexample: no queue → nothing publishes.
+- **L-2** (`test_record_session_exit_ignores_a_pending_overdub_receipt`): a ready-but-unconsumed receipt
+  from an earlier overdub session (unfilled pass id, the shape the legacy one-shot handoff produces when
+  its interval committed no pass) is still in the ring when the Record exit is queued. Expected: the
+  `RecordStop` arm still enumerates its own pass, publishes a current root and holds the take's note —
+  i.e. the selection rule, not a dependency on the ring being drained. Counterexample: the unfiltered
+  receipt selection enumerates nothing (or a stale id) while the watermark advances.
+- **Preserved invariants:** the inline route is untouched; a candidate is still retained across the stop
+  (RC1); companions, undo and persistence ordering unchanged; no new per-turn work.
+
+### Controls and coverage
+
+- Production paths exercised: production Record admission, the deferred worker grain chain, the real
+  publication, the real publisher and the real snapshot gather. No mock on the asserted path; the
+  fixtures drive `Loop::stepPendingSnapshotPublish` exactly as the idle owner does.
+- Busy/stale/failure cases relevant here are covered by the existing suite (supersede, clear/replace
+  during finalization, retained stop, transport retarget, R→R/R→OD/OD→R/OD→OD rotation), all green.
+- Independent expected content: snapshot window gather compared against the take's own notes; numeric
+  limits from `Config::TICKS_PER_BAR` and the recorded device run.
+- Bounded drains in both fixtures; no fuzzing needed (deterministic single-take fixtures).
+
+### Verification recipe and completion record
+
+| Check | Command | Result |
+|---|---|---|
+| Focused (deferred route) | `pio test -e native -f test_shared_capture_finalization` | **55/55 passed** |
+| Focused (Loop route) | `pio test -e native -f test_loop_take_survival` | **143/143 passed** |
+| Both | `pio test -e native -f test_loop_take_survival -f test_shared_capture_finalization` | **198/198 passed** |
+| Broad | `pio test -e native` | **2 636 cases / 2 629 succeeded / 7 skipped / 0 failed** |
+| Build | `pio run -e teensy41-capture-serial` | **SUCCESS**; ITCM 393,216 (code 391,288 + padding **1,928**), variables 96,192, locals 34,880; floor 840 |
+| Mutation (deferred queue removed) | same focused command | fails **only** the new deferred fixture (`must queue the record session exit`); source restored byte-identical |
+| Mutation (receipt selection unfiltered) | same Loop focused command | fails **only** `test_record_session_exit_ignores_a_pending_overdub_receipt` (`must enumerate its own pass, not the stale receipt`); restored byte-identical |
+| Mutation (Loop queue removed) | same Loop focused command | the Loop fixtures fail (`must queue its publication`); restored byte-identical |
+| Device (2026-09-29) | `host_midi_hitl.py run --preset base --track 5 --loop-slot 1 --midi-channel 1 --boot-reset` (registered `STIM-BASE-2-2-01`, reused), three runs: pre-fix A/B, fixed ×2 | **matched A/B (both 3-bar takes, notes crossing the frontier 1536):** pre-fix `s4f20-ab-prefix-02` publishes **26/32** Record notes (omitted 74–79 at 1530–1770 = the frontier set) → `visual=42` = the reported class; fixed `s4f20-lencheck-01` publishes **32/32** (`from=snapshot,notes=32`, `srcspan count=32`, `48` after OD1 = 32 + 16) → `DISP frame=48 visual=32` and **PASS** (`overall_ok=true`); fixed `…-snapshot-02` publishes 28/32 (see residual). Mechanism: the fixed image publishes `kind=publish,a=1` **0.3 s after the record stop, before the first overdub**; the pre-fix image publishes nothing until after the overdub stop and then only `a=1` (OD1). Identity `git_commit 300af1fa` (`dirty`), hex `0e7d549e…` / `df665ce5…`. All change-relevant checks green in every run (record grid `32 delta 47-49 bad=0`, `CLN record sent=32`, overdub `16/16`, second overdub `8/8`, `display … overdub_ok/transport_ok=True`, `MIDI-boundary … overflow_free=True call_sites=True`, `RAM2 77 824 B`). Evidence `captures/s4f20-{record-exit-snapshot-0{1,2},ab-prefix-0{1,2},lencheck-01}` |
+| Device residual | (a) **28/32 seen once** in the fixed 2-bar run (missing pitches 76–79; frontier cannot explain it) and **not** reproduced in the fixed 3-bar run (32/32) — open, attribution candidates: note-pair resolution across fragment caps, or loop-phase/rotation projection. That run's distinguishing feature is a ~5× divergence of the host's wall-clock tempo proxy (its tick model reported 355 ticks where the device ran raw 1891). (b) **Take length is host stop-press timing, not this slice:** the same fixed image produced a 2-bar (raw 1891 ≤ 384-tick grace) and a 3-bar take (raw 1997 > grace); the length is stamped in the stop *admission* (`Track::beginDeferredRecordStopForSlot` → `computeRecordStopLengthTicks`), before the publication queue. The instrument for the residual late stop (~0.46–0.63 bar) is the host's strict `--require-midi-clock` mode, which needs the device clock on USB MIDI in |
+
+**Risks / residual.** Two adversarially-reviewed properties are recorded rather than fixed:
+(a) `queueSessionExitSnapshot` re-arms `box.companionsApplied` from `box.companionIds`, so a box already
+parked mid-companion-batch can re-run the batch when this queue lands; the publisher resets the box after a
+completed publish and snapshot membership is keyed by note id, so no content defect was demonstrated — it is
+confined to the parked window and shared with the inline route. (b) The DEC-073 coverage watermark is still
+written without a committed-inventory completeness check; a general gate changes *when* a session-exit root
+may publish and would need its own fixtures for the "no content beyond the frontier" and "filtered-empty
+take" shapes (a wrong predicate turns the silent truncation into a permanent publication gap, the RC3
+class). Both are recorded in the plan and `DEC-094`, not silently dropped.

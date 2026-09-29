@@ -50,6 +50,16 @@ class SerialTickAnchorTests(unittest.TestCase):
         self.assertEqual(anchor.anchor_tick, 768)
 
 
+    def test_record_receipt_overrides_stale_bar_anchor(self) -> None:
+        lines = [
+            "#CAP,1,BAR,768,1",
+            "#CAP,2,RECA,0,0",
+        ]
+        collector = mock.Mock()
+        collector.snapshot.return_value = lines
+        anchor = TransportTickAnchor.from_collector(collector, 120.0, fallback_tick=0)
+        self.assertEqual(anchor.anchor_tick, 0)
+
     def test_transport_record_start_monotonic(self) -> None:
         sent = 1000.0
         start = transport_record_start_monotonic(sent, press_ms=120)

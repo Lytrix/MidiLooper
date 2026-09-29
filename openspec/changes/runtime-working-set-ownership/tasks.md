@@ -2275,7 +2275,7 @@ own execution packet and records fixture/native/build/device results separately.
       ownership, record interval stamp, deferred persistence). Full native: 2,490 passed / 7 skipped;
       final focused suite 4/4. Closure, bounds, retained-state measurements and limitations:
       [S4F16-EXECUTION.md](S4F16-EXECUTION.md). Fixture completion only; shared firmware behavior remains open.
-- [ ] S4f.17 **Common interval and stop admission.** Extend Track's existing latch/job/drive to both modes;
+- [x] S4f.17 **Common interval and stop admission.** Extend Track's existing latch/job/drive to both modes;
       stamp every actual start, carry mode/geometry/raw/held-note receipts, preserve failed-preflight ownership
       and accept busy-owner stops. Verify R→R, R→OD, OD→R, OD→OD at controlled grains, repeated drive,
       stale identity, empty capture, terminal wait and runtime regeneration; no new ring/capacity owner.
@@ -2306,7 +2306,7 @@ own execution packet and records fixture/native/build/device results separately.
       window build that only the playback owner can advance, deadlocking retirement on an empty take.
       The Record admission also declares its bounded preparation estimate so the job's declared work is
       honest. Caller conversion (S4f.17 remainder) and S4f.18's task checkbox stay open.
-- [ ] S4f.18 **Bounded record preparation.** Add the record source mode to existing preparation, using
+- [x] S4f.18 **Bounded record preparation.** Add the record source mode to existing preparation, using
       frozen canonical raw ranges and maintained length summaries; defer normalization/closure/order/pass
       construction without a full-take staging copy or changed input capacity. Verify exact short/dense/long
       content, held notes, stop-length edges, resource failure and bounded units; mutation restoring an
@@ -2538,7 +2538,7 @@ own execution packet and records fixture/native/build/device results separately.
       job-owned state intact and that the same binding retries to `RecordPassReady`; red-proved by
       removing the probe guard. RAM1 padding unchanged at **840**. See the same
       [closure-boundaries evidence](S4F18-CLOSURE-BOUNDARIES-EXECUTION.md) § review follow-ups.
-- [ ] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
+- [x] S4f.19 **First-bar and onward playback handoff.** Bind generation/geometry-correct retained coverage,
       preserve source borrowers through successor start, and prepare later windows from the owned frozen
       source until canonical publication. Verify incomplete readiness, sub-bar stop, remapped/held notes,
       playback beyond bar one and wrap before finalization completes, plus multiple sounding tracks.
@@ -2727,7 +2727,7 @@ own execution packet and records fixture/native/build/device results separately.
       ownership through successor/publication/retirement, and discriminating mutations.
       Focused **234/234** (playback-prewarm + shared-finalization); full native **2,604 passed /
       7 skipped**; capture-serial PASS, padding **888**.
-- [ ] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
+- [x] S4f.20 **Mode-correct atomic publication and retirement.** Prepare record undo/geometry and slot-history
       pruning in the existing protected transaction; publish pass/undo/source consistently, attach snapshots
       to the correct entry and schedule persistence once by job identity. Verify pre/post-commit undo/redo,
       note edit, failed preparation, stale cleanup, replacement/load/clear/save, exact persisted content and
@@ -2743,8 +2743,28 @@ own execution packet and records fixture/native/build/device results separately.
       consumed collection and prepared protected publication. Denied collection keeps
       its obligation; refused publication retains/retries the entry. Dense production
       and denial/recovery assertions pass; [staging execution evidence](S4F18-STAGING-EXECUTION.md).
+      **2026-09-29 parity gap — the deferred route must queue its own session-exit publication.** The
+      inline Record stop queued the interval's session-exit snapshot publication at the end of
+      `Loop::commitPendingCapturePass`, and that queue is the only enumeration of the *committed Record
+      pass* into the pending box. The caller migration left it behind: the deferred publication mirrored
+      undo/display/scratch/persistence but never queued it, so a mid-bar take's box published the retained
+      live-record candidate (content stops at the completed-bar frontier) with its declared length handed
+      off to the sealed length, and a successor's exit stamped the root current — the "issue 2" device
+      symptom (Record-pass last bar missing from the display, restored by an overdub undo). Fixed in
+      `Track::stepDeferredRecordPublication` with the mode-correct reason; verified by
+      `test_deferred_record_publication_queues_the_record_session_exit_snapshot` (red-proved by removing
+      the call) and the Loop-level `test_record_session_exit_with_a_truncated_candidate_keeps_the_take_tail`
+      and `test_record_session_exit_ignores_a_pending_overdub_receipt` (a session-exit receipt belongs to
+      an *overdub* session, so `queueSessionExitSnapshot` now reads it only for an overdub exit -- a Record
+      exit always enumerates its own just-committed pass; that selection is red-proved by restoring the
+      unfiltered read).
+      Focused **198/198**, full native **2 636 cases / 2 629 succeeded / 7 skipped**, `teensy41-capture-serial`
+      **SUCCESS** with RAM1 padding **1,928** (floor 840). Decision **DEC-094**; residual (the DEC-073
+      coverage watermark is written without a completeness check) is recorded, not fixed.
+      [Plan](../../../docs/Plans/record_session_exit_snapshot_queue_deferred_publication_bugfix.md),
+      [packet](S4F17-CUTOVER-PACKET.md).
 
-- [ ] S4f.21 **Migrate all record-stop continuations.** Convert stopRecordingTrack, finalizeCaptureAndSelectSlot,
+- [x] S4f.21 **Migrate all record-stop continuations.** Convert stopRecordingTrack, finalizeCaptureAndSelectSlot,
       stopAllTracks and direct stop entry points to identity-qualified execution/geometry results; remove
       synchronous full-record fallback and caller-side duplicate save. Guard same-slot destructive start;
       retain different-slot successors. Verify master length/auto-align/rewind once, both destinations,

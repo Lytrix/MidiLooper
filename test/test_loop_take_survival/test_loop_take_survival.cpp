@@ -5144,6 +5144,49 @@ void test_draw_source_retains_unpublished_visual_cache_over_stale_gather_214900(
   TEST_ASSERT_TRUE(found66);
 }
 
+/// Focused reproduction for the device report: a three-bar Record take with a note crossing
+/// the bar-2 boundary must retain its Record-pass display geometry after the first overdub stops.
+void test_three_bar_record_first_overdub_stop_keeps_record_display_geometry() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 2304;
+
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(1400, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(1650, 1, 60, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(1800, 1, 61, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2000, 1, 61, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 2304));
+  drainPendingSnapshotPublish(loop);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(900, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(1100, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 1100));
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStop, {}));
+  loop.closeOverdubSession();
+  drainPendingSnapshotPublish(loop);
+
+  NoteUtils::DisplayNoteVec frame;
+  gatherDrawSourceDisplayNotes(loop, 0, 2, 0, 0, 127, frame);
+  bool recordCrossingNote = false;
+  bool recordBarThreeNote = false;
+  bool overdubNote = false;
+  for (const NoteUtils::DisplayNote& note : frame) {
+    recordCrossingNote |= note.note == 60 && note.startTick == 1400 && note.endTick == 1650;
+    recordBarThreeNote |= note.note == 61 && note.startTick == 1800 && note.endTick == 2000;
+    overdubNote |= note.note == 72 && note.startTick == 900 && note.endTick == 1100;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(recordCrossingNote, "Record note crossing bar 2 lost or shortened");
+  TEST_ASSERT_TRUE_MESSAGE(recordBarThreeNote, "Record bar-3 note disappeared after overdub stop");
+  TEST_ASSERT_TRUE_MESSAGE(overdubNote, "first overdub note missing after overdub stop");
+}
+
 void adoptFourBarLinearCache(Loop& loop, NoteId pitch39Id) {
   NoteUtils::DisplayNoteVec adopted;
   adopted.push_back(makeAdoptedNote(1, 60, 48, 64));
@@ -6118,6 +6161,90 @@ void test_session_exit_handoff_when_candidate_shorter_than_sealed_length() {
   TEST_ASSERT_EQUAL(kSealedLength, loop.publishedSnapshot()->loopLengthTicks());
 }
 
+/// The handoff invariant RC1 relies on: a live-record candidate whose content stops at the
+/// completed-bar frontier may have its *declared* length extended to the sealed length, but the
+/// published root must still carry the take's tail -- that content can only come from the committed
+/// Record pass being enumerated into the same box. Device evidence for the truncated shape:
+/// `captures/session_20260929_225529.log` (frontier 1536 of 2304; the display lost the Record pass's
+/// last bar until the root stopped being current).
+void test_record_session_exit_with_a_truncated_candidate_keeps_the_take_tail() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  constexpr uint32_t kSealedLength = Config::TICKS_PER_BAR * 2;
+  constexpr uint32_t kCompletedTicks = Config::TICKS_PER_BAR;
+  loop.loopLengthTicks = kSealedLength;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(12, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(96, 1, 60, 0)));
+  // In the bar that was still being written at the stop.
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(kCompletedTicks + 32, 1, 62, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kCompletedTicks + 132, 1, 62, 0)));
+  applyLiveRecordCompletedTicks(loop, kCompletedTicks);
+  TEST_ASSERT_EQUAL(kCompletedTicks, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, kCompletedTicks + 132));
+  TEST_ASSERT_TRUE_MESSAGE(loop.pendingSnapshotSessionExitQueued(),
+                           "a Record session exit must queue its publication");
+  TEST_ASSERT_TRUE_MESSAGE(loop.pendingSnapshotQueuedPassCount() > 0,
+                           "the committed Record pass must be enumerated into the box");
+  TEST_ASSERT_EQUAL(kSealedLength, loop.loopLengthTicks);
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(kSealedLength, loop.publishedSnapshot()->loopLengthTicks());
+  SessionMidiEventVec snapshotEvents;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(snapshotEvents, 0, kSealedLength));
+  TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 60));
+  TEST_ASSERT_EQUAL_MESSAGE(1, countNoteOns(snapshotEvents, 62),
+                            "the handoff-extended candidate must not truncate the take's tail");
+}
+
+/// A Record session exit must enumerate its **own** just-committed pass. A session-exit receipt belongs
+/// to an *overdub* session's identity handoff (DEC-068), so trusting `oldestPendingSessionExitReceipt()`
+/// here made the request enumerate that session's pass -- or, with an unfilled id, nothing at all --
+/// while the coverage watermark still advanced: the truncated-current-root shape of
+/// `captures/session_20260929_225529.log`. The receipt is left ready with an unfilled id, which the
+/// legacy one-shot handoff (`Loop::handoffSessionExitSnapshot` captures `lastCommittedPassId_` as-is)
+/// can produce when its interval committed no pass. This fixture also covers the `RecordStop`
+/// (transport keeps playing) arm of the mode-correct reason.
+void test_record_session_exit_ignores_a_pending_overdub_receipt() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(12, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(96, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok,
+                    loop.sealCapture(Config::TICKS_PER_BAR, CommitReason::RecordStop));
+
+  // A previous overdub session's exit left a ready receipt the publisher never consumed.
+  TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+  loop.openOverdubSession(0);
+  const size_t ring = loop.captureSessionExitTail(CommitReason::OverdubStop);
+  TEST_ASSERT_NOT_EQUAL(Loop::kInvalidSessionExitReceipt, ring);
+  TEST_ASSERT_TRUE(loop.markSessionExitTailReady(ring, kInvalidPassId));
+  TEST_ASSERT_TRUE(loop.hasPendingSessionExitReceipt());
+  loop.closeOverdubSession();
+
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE_MESSAGE(loop.pendingSnapshotSessionExitQueued(),
+                           "the Record exit must queue its own publication");
+  TEST_ASSERT_TRUE_MESSAGE(loop.pendingSnapshotQueuedPassCount() > 0,
+                           "the Record exit must enumerate its own pass, not the stale receipt");
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  SessionMidiEventVec snapshotEvents;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(
+      snapshotEvents, 0, loop.loopLengthTicks));
+  TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 60));
+}
+
 void test_session_exit_discards_when_applied_ticks_exceed_sealed_length() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -6885,10 +7012,13 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot);
   RUN_TEST(test_session_exit_handoff_when_live_record_notes_fit_sealed_length);
   RUN_TEST(test_session_exit_handoff_when_candidate_shorter_than_sealed_length);
+  RUN_TEST(test_record_session_exit_with_a_truncated_candidate_keeps_the_take_tail);
+  RUN_TEST(test_record_session_exit_ignores_a_pending_overdub_receipt);
   RUN_TEST(test_session_exit_discards_when_applied_ticks_exceed_sealed_length);
   RUN_TEST(test_session_exit_pass_starts_as_journal_capped_fragments);
   RUN_TEST(test_session_exit_published_undo_attach_targets_originating_entry_id);
   RUN_TEST(test_clear_slot_before_published_snapshot_field_retains_root);
   RUN_TEST(test_overdub_without_parent_does_not_invent_snapshot);
+  RUN_TEST(test_three_bar_record_first_overdub_stop_keeps_record_display_geometry);
   return UNITY_END();
 }

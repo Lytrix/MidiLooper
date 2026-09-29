@@ -1822,8 +1822,9 @@ def _stream_fixture_record(
     for step_notes in fixture_by_step.values():
         step_notes.sort(key=lambda n: n.pitch)
     target_clocks = target_bars * MIDI_CLOCKS_PER_BAR
-    stop_trigger: Optional[int] = None
-    if stop_press_advance_clocks > 0:
+    if stop_press_advance_clocks < 0:
+        stop_trigger = target_clocks
+    elif stop_press_advance_clocks > 0:
         stop_trigger = max(1, target_clocks - stop_press_advance_clocks)
     stop_sent = False
     phase_clock = 0
