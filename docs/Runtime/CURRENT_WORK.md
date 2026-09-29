@@ -29,6 +29,18 @@ Evidence: `captures/s4f22-step11-h1` (9 s of blind retries replaced by a named r
 run verdict `INCONCLUSIVE_CAPTURE` on the pre-existing ring/REVT loss). Open: the attaching-run
 transport proxy still reads line position, not device time, for a drained backlog. No firmware change.
 
+Second half of the same slice, from the `--boot-reset` (force) device run: a fresh boot settles in
+3.7 s and readiness passes immediately, but `s4f22-step11-h4` then died at its *clear* with
+`clear_not_confirmed` and no cause. The firmware had named it — `Clear refused: deferred save
+temporarily blocked by post_load_holdoff; slot left untouched, save still owed` — a **temporary**
+refusal (distinct from `Clear aborted`), which the transition never retried because it only retries a
+*disproved* request. Now: `_serial_clear_refusal` reads the reason, the clear waits for the owner of
+that condition (the save-idle receipt, 30 s bound) and presses once more (`CLEAR_REFUSAL_RETRIES` 2),
+and a surviving refusal is returned as `clear_refused_<reason>`. `s4f22-step11-h5` then reported
+`clear refused by the firmware (waiting_commit_gate)` → waited → **CONFIRMED** EMPTY → record + two
+overdubs, exit 0 (its `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` verdict is the pre-existing
+`record_stored_revt_missing` / persistence-evidence loss, not setup).
+
 **2026-09-29 — the record-leg misattribution, fixed at the phase pairing.**
 `record_loop_length_mismatch` / `record_note_span_too_short` were never a firmware defect. The phase
 pairing accepted only `RECORDING -> STOPPED_RECORDING`, so a take that resolved to a full transport
