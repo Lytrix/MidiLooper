@@ -64,6 +64,8 @@ constexpr size_t kMaxCaptureTextBytes = 192;
 // Ring slice only Record rows may consume. A take's start/stop/stage/identity rows are at most a
 // few kilobytes, so 32 KiB holds them many times over while costing ordinary traffic 3% of the ring.
 constexpr size_t kRecordReserveBytes = 32 * 1024;
+// Bytes of the unreadable head record kept for the wipe diagnostic (32 hex chars in the row).
+constexpr size_t kSilentWipePrefixBytes = 16;
 
 struct RecordFamilyStats {
   uint32_t entered = 0;
@@ -127,6 +129,13 @@ struct CaptureRing {
   uint32_t tierAEvictedTotal = 0;
   uint32_t overflowTotal = 0;
   uint32_t criticalRejectedTotal = 0;
+  // First wipe's evidence: indices, the header field that failed the read, and the first bytes.
+  uint32_t silentWipeHead = 0;
+  uint32_t silentWipeTail = 0;
+  uint32_t silentWipeUsed = 0;
+  uint8_t silentWipeType = 0;
+  uint16_t silentWipePayloadLen = 0;
+  uint8_t silentWipePrefix[kSilentWipePrefixBytes] = {};
   bool wipedPending = false;
   RecordFamilyStats recordStart;
   RecordFamilyStats recordStop;
@@ -377,12 +386,28 @@ void noteTimingShed() {
 
 /// Account for a ring reset that discards content without an eviction/shed outcome. The bytes are
 /// the occupancy the reset threw away, which is what makes the loss a number rather than a mystery.
+/// The head/tail/used triple, the header field that failed the read and the first bytes of the
+/// record are captured too: the wipe fires at a same-boot attach boundary
+/// (`captures/s4f22-step5-b2`, first wipe at the same device timestamp as b3's), and those fields
+/// are what distinguish a torn header from a stale tail or a wrapped-read bug.
 SC_MEM_ATTR void noteSilentWipe() {
   if (sCaptureRing.silentWipes == 0) {
     sCaptureRing.silentWipeFirstUs = micros();
   }
   incrementSaturated(sCaptureRing.silentWipes);
   sCaptureRing.silentWipeBytes += static_cast<uint32_t>(sCaptureRing.used);
+  if (sCaptureRing.silentWipes == 1) {
+    sCaptureRing.silentWipeHead = static_cast<uint32_t>(sCaptureRing.head);
+    sCaptureRing.silentWipeTail = static_cast<uint32_t>(sCaptureRing.tail);
+    sCaptureRing.silentWipeUsed = static_cast<uint32_t>(sCaptureRing.used);
+    CaptureRecordHeader header{};
+    (void)readHeaderAt(sCaptureRing.head, header);
+    sCaptureRing.silentWipeType = header.type;
+    sCaptureRing.silentWipePayloadLen = header.payloadLen;
+    for (size_t i = 0; i < kSilentWipePrefixBytes; ++i) {
+      sCaptureRing.silentWipePrefix[i] = readByteAt(sCaptureRing.head + i);
+    }
+  }
   sCaptureRing.wipedPending = true;
 }
 
@@ -584,6 +609,19 @@ void emitWipedNotice() {
   Serial.printf_P(SC_FMT("#CAP,%lu,RING,wiped,%lu,%lu,%lu\r\n"),
                   static_cast<unsigned long>(micros()), static_cast<unsigned long>(wipes),
                   static_cast<unsigned long>(bytes), static_cast<unsigned long>(firstUs));
+  char prefix[kSilentWipePrefixBytes * 2 + 1] = {};
+  for (size_t i = 0; i < kSilentWipePrefixBytes; ++i) {
+    static const char* kHex = "0123456789abcdef";
+    prefix[i * 2] = kHex[(sCaptureRing.silentWipePrefix[i] >> 4) & 0x0F];
+    prefix[i * 2 + 1] = kHex[sCaptureRing.silentWipePrefix[i] & 0x0F];
+  }
+  Serial.printf(SC_FMT("#CAP,%lu,RING,wipe_detail,head=%lu,tail=%lu,used=%lu,type=%u,plen=%u,prefix=%s\r\n"),
+                static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(sCaptureRing.silentWipeHead),
+                static_cast<unsigned long>(sCaptureRing.silentWipeTail),
+                static_cast<unsigned long>(sCaptureRing.silentWipeUsed),
+                static_cast<unsigned>(sCaptureRing.silentWipeType),
+                static_cast<unsigned>(sCaptureRing.silentWipePayloadLen), prefix);
 }
 
 void flushOneRevtRecord(const PendingRevt& revt) {
