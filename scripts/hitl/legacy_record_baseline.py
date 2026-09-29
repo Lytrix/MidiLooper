@@ -1412,20 +1412,14 @@ def _stream_fixture_record_bars(
             "recorded length is reported, not enforced."
         )
 
-    if record_schedule_start_mono is not None:
-        rec_notes, rec_clocks, stop_sent = _stream_fixture_record_wall_scheduled(
-            out_port,
-            fixture=fixture,
-            target_bars=target_bars,
-            midi_channel_1based=midi_channel_1based,
-            record_start_mono=record_schedule_start_mono,
-            bpm=proxy_bpm,
-            stop_press_advance_clocks=int(getattr(args, "stop_press_advance_clocks", 0) or 0),
-            press_ms=args.press_ms,
-            abort=abort,
-        )
-        return rec_notes, rec_clocks, True, stop_sent
-
+    # S4f.22 recipe fix: prefer the device's **own** record-start receipt over the modelled
+    # transport-start wall clock. `record_schedule_start_mono` is
+    # `transport_press_sent + modelled debounce`, so a transport that actually begins capturing
+    # seconds later puts the whole fixture note stream and the stop press *ahead* of the take.
+    # Measured on device (`captures/s4f22-base-device-03`): `Recording started @ tick 0` and the
+    # stop press 0.5 s later -- a one-bar take instead of the requested two. The receipt path
+    # anchors on the firmware's own `RECA` tick, the same evidence every assertion in this file is
+    # read against; the modelled path stays as the fallback for a run with no serial capture.
     if using_serial_proxy and serial_collector is not None:
         from hitl.serial_tick_anchor import parse_record_start_tick
 
@@ -1446,6 +1440,20 @@ def _stream_fixture_record_bars(
                 abort=abort,
             )
             return rec_notes, rec_clocks, True, False
+
+    if record_schedule_start_mono is not None:
+        rec_notes, rec_clocks, stop_sent = _stream_fixture_record_wall_scheduled(
+            out_port,
+            fixture=fixture,
+            target_bars=target_bars,
+            midi_channel_1based=midi_channel_1based,
+            record_start_mono=record_schedule_start_mono,
+            bpm=proxy_bpm,
+            stop_press_advance_clocks=int(getattr(args, "stop_press_advance_clocks", 0) or 0),
+            press_ms=args.press_ms,
+            abort=abort,
+        )
+        return rec_notes, rec_clocks, True, stop_sent
 
     from host_midi_automation_edit_baseline import _stream_fixture_record
 
