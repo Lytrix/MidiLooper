@@ -265,6 +265,17 @@ class AttachStreamGateTests(unittest.TestCase):
                 ready, reason = mc.establish_attach_readiness(timeout_s=1.0)
         self.assertTrue(ready, reason)
 
+    def test_idle_device_attach_is_not_judged_by_line_count(self) -> None:
+        """An attaching run joins a running, idle device that emits nothing until spoken to."""
+        from hitl.managed_capture import attach_stream_is_usable
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "idle.log"
+            log.write_text("\n".join(f"line {i}" for i in range(21)), encoding="utf-8")
+            usable, detail = attach_stream_is_usable(log, require_stream=False)
+        self.assertTrue(usable, detail)
+        self.assertIn("attaching", detail)
+
     def test_healthy_attach_is_accepted(self) -> None:
         from hitl.managed_capture import attach_stream_is_usable
 
