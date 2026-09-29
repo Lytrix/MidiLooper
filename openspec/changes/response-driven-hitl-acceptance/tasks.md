@@ -163,8 +163,25 @@ Fixed, each with a fixture and a device observation:
     readiness refusal (verdict `INCONCLUSIVE_CAPTURE` on the pre-existing ring/REVT loss, not setup).
 Open: an **attaching** run (`--no-boot-reset`, the acceptance contract's same-boot campaign) still
 answers "is the transport running?" from **line position**, so a drained backlog of old `BAR`/`DFRAME`
-rows can authorize a wrong phase and there is no reboot to clear it (`s4f22-step11-h2`). The proxy
-owner must anchor on device time (`#CAP,<us>`), not on the follow index.
+rows can authorize a wrong phase and there is no reboot to clear it (`s4f22-step11-h2`). **Fixed**: the
+phase decisions now read device time (`scripts/hitl/device_time.py`, `filter_live_lines`), the arm-time
+answer compares the drained `ST,...PLAYING` record with the `Transport stopped` logger line in device
+time, and the call site anchors at its track baseline; h2's prefix replay flips those decisions, and
+`s4f22-step11-h6` no longer printed the stale conclusion. Residual: with a large drain lag the newest
+transport row can itself be late — the transport-gated `!STOP_STATUS` is the authoritative answer and
+is not yet wired into these decisions.
+  * **Content-evidence decision (2026-09-29):** the `record_stored_revt_missing` /
+    `overdub_stored_span_too_short` / `persistence_stage_missing:result` issues are evidence-attribution,
+    not loss. `git log -S` puts the REVT bound (`ts > recs_stop_ts`, a **flush** clock) at `21b8ca8f`,
+    against the function's own `373566a7` docstring; **fixed** by bounding the take by its row span
+    (9-run replay: h5/h6 now 32 rows + `grid_ok`, a1/b1/e3/base-01/e1/h3 unchanged, `s4f22-step8-e2`
+    4 -> 0 by design). The SEVT stored-span set cannot be fixed the same way: its blocks sit outside
+    every phase window (pre-run restoration walks), so it needs a take/leg id in telemetry or a
+    redefined check — **awaiting a direction**, as is accepting `already_pending` for the persistence
+    `result` (risk: a save that never settles would read as passing). Firmware protection for
+    `CaptureRecordType::Revt`/`SEVT,` is **preventative**: no in-run loss is measured (h5 `shed=4`,
+    `overflow=0`, `wipe=0`; h3's `shed=73 217`/`tierA_evict=7 966` accumulated pre-run). Full proposal:
+    `docs/Runtime/CURRENT_WORK.md`.
   * Clear refusals are named and retried (PX1, second half). The **force** reset path settled in 3.7 s
     (`boot_loaded`) and passed readiness on the first probe, but `s4f22-step11-h4` then died at its clear
     with `clear_not_confirmed` and no cause: the firmware had printed `Clear refused: deferred save
