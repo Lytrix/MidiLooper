@@ -130,6 +130,17 @@ admission, the two stop entry points' rerouting, the manager continuations, the 
 the fixed fixture requirements and the risks, is pinned in the
 [cutover packet](S4F17-CUTOVER-PACKET.md). No firmware behavior changed.
 
+### §3 status — 2026-09-28 (scoping pinned)
+
+The strict contract's current oracle after §1+§2 is
+`S4F16_REQUIRE_CONTRACT=1 pio test -e native -f test_shared_capture_finalization`:
+**45 cases, 3 failed** (R→R and R→OD: record still publishes inline; OD→R: B's deferred record
+job is absent; OD→OD passes). The executable slice sequence S17.1–S17.5 — the mode-conditioned
+admission with the record receipts, rerouting both stop entry points through the drive, the
+manager continuations consuming a job-qualified geometry-ready result, the S4f.20 residuals, and
+the enforced gates and mutations — is pinned with the fixed fixture requirements and risks in the
+[cutover packet](S4F17-CUTOVER-PACKET.md). No firmware behavior changed.
+
 ## 4. Finish correlated observations and correct the actual test recipes
 
 Maps to HITL 1.1 — execution packet, 2 — observations, 3 — actions/lifecycle,
