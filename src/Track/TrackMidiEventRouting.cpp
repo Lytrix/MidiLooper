@@ -32,12 +32,12 @@ const MidiEventVec& Track::editAwareMidiEvents() const {
   return editManager.editMidiEvents(*this);
 }
 
-void Track::invalidateLoopDerivedCaches() {
+void Track::invalidateLoopDerivedCachesForSlot(uint8_t slot) {
   CommittedMidiScratch::invalidate(committedMidiScratchRevision_,
                                    committedMidiScratchPublishedIdentity_);
-  Loop& activeLoop = getActiveLoop();
-  activeLoop.invalidateCaches();
-  activeLoop.playbackOrderDirty = true;
+  Loop& loop = getLoop(slot);
+  loop.invalidateCaches();
+  loop.playbackOrderDirty = true;
   if (!editManager.isNoteEditActive()) {
     return;
   }
@@ -46,11 +46,30 @@ void Track::invalidateLoopDerivedCaches() {
       continue;
     }
     const uint8_t selectedSlot = trackManager.getSelectedSlotIndex(trackIndex);
-    if (selectedSlot != activeLoopIndex) {
+    if (selectedSlot != slot) {
       getLoop(selectedSlot).invalidateCaches();
     }
     break;
   }
+}
+
+void Track::invalidateLoopDerivedCaches() {
+  invalidateLoopDerivedCachesForSlot(activeLoopIndex);
+}
+
+TRACK_COLD_MEM void Track::invalidateCommittedContentForSlot(uint8_t slot,
+                                                             bool queueRecordRevts) {
+  if (!loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) return;
+  // S4f.20/S4f.21 parity. The deferred publication's atomic handoff already called
+  // `Loop::notifyCommittedContentChanged`, which is `markPassDerivedStale` -- a superset of
+  // `Loop::invalidateCaches()` for this loop (playbackOrderDirty, visualCacheDirty,
+  // invalidatePlaybackCaches). What it does **not** cover, and the inline
+  // `finalizeCommitSideEffects` did, is the Track-level committed-MIDI scratch, the note-edit
+  // selected-slot invalidation, and the deferred REVT queue. Those are applied here against the
+  // **job's** slot: the publication runs while a successor may own the active slot, so the
+  // active-index form would invalidate (and queue against) the wrong interval.
+  invalidateLoopDerivedCachesForSlot(slot);
+  if (queueRecordRevts) queueDeferredRecordRevts(slot);
 }
 
 void Track::invalidateCaches(bool refreshPlaybackPreview) {

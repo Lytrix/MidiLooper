@@ -232,7 +232,33 @@ re-based deliberately (`ram1_variables` 96,160 → 96,192, `locals_free` 34,912 
 reason recorded here and in the file's note; `itcm_bytes` (12 banks) and `padding_floor` (840) are
 unchanged.
 
-S17.4–S17.5 remain open.
+**S17.4 — S4f.20 residuals: done.**
+
+*Deferred REVT validation.* The deferred Record publication now queues the stored note-on scan the
+inline `finalizeCommitSideEffects` queued on commit. The queue was also made **slot-qualified**:
+`deferredRecordRevtsPending` (a bool) became `deferredRecordRevtsSlot` (the same byte, holding the
+interval's slot or `Config::INVALID_LOOP_SLOT`), `queueDeferredRecordRevts(slot)` names the
+publishing interval, and `processDeferredRecordRevts` scans *that* loop rather than
+`getActiveLoop()`. Before this the side effect was missing entirely on the deferred route, and an
+active-slot read would have scanned a successor take (or found nothing to scan).
+
+*`invalidateCaches()` parity.* The atomic handoff calls `Loop::notifyCommittedContentChanged`,
+which is `markPassDerivedStale` — `playbackOrderDirty`, `visualCacheDirty` and
+`invalidatePlaybackCaches` (which itself covers `noteCache` and `eventIndexValid`). That is a
+superset of `Loop::invalidateCaches()` for the job's own loop, so the remaining gap was the
+**Track-level** work the inline `Track::invalidateCaches()` did: the committed-MIDI scratch
+(`CommittedMidiScratch::invalidate`), the note-edit selected-slot invalidation, and the REVT queue.
+`Track::invalidateCommittedContentForSlot(slot, queueRecordRevts)` now applies exactly those,
+against the job's slot, and `invalidateLoopDerivedCaches()` delegates to the same slot-qualified
+body with the active index.
+
+Fixtures: `test_deferred_record_publication_queues_revts_for_its_own_slot` (queued for the
+publishing slot; a successor take does not redirect it; the scan runs to completion) and
+`test_deferred_record_publication_invalidates_the_track_committed_scratch` (the scratch is stamped
+fresh, then the publication invalidates it — the `CommittedMidiScratch::isFresh` consumer contract,
+not an assumption). Removing either wiring fails its fixture.
+
+S17.5 remains open.
 
 ## Fixed fixture requirements (from the trace)
 

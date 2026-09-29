@@ -1307,7 +1307,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
 }
 
 void Track::resetDeferredRecordRevts() {
-  deferredRecordRevtsPending = false;
+  deferredRecordRevtsSlot = Config::INVALID_LOOP_SLOT;
   deferredRecordRevtChunkScan = false;
   deferredRecordRevtCursor = 0;
   deferredRecordRevtEvents.clear();
@@ -1317,15 +1317,19 @@ void Track::resetDeferredRecordRevts() {
   deferredRecordRevtChunkEventCursor = 0;
 }
 
-void Track::queueDeferredRecordRevts() {
-  const Loop& loop = getActiveLoop();
+void Track::queueDeferredRecordRevts(uint8_t slot) {
+  if (!loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) {
+    resetDeferredRecordRevts();
+    return;
+  }
+  const Loop& loop = getLoop(slot);
   if (!loop.hasCommittedPasses()) {
     resetDeferredRecordRevts();
     return;
   }
 
   resetDeferredRecordRevts();
-  deferredRecordRevtsPending = true;
+  deferredRecordRevtsSlot = slot;
 
   const bool hasActiveRecordPass =
       loop.passes.hasRecordPass() &&
@@ -1350,15 +1354,19 @@ void Track::queueDeferredRecordRevts() {
 }
 
 void Track::processDeferredRecordRevts(size_t maxEventsPerSlice) {
-  if (!deferredRecordRevtsPending) {
+  // The interval that queued this scan names itself; the active slot may have moved (and may hold
+  // a successor take) by the time the idle owner runs.
+  const uint8_t slot = deferredRecordRevtsSlot;
+  if (slot == Config::INVALID_LOOP_SLOT) {
     return;
   }
 
-  const Loop& loop = getActiveLoop();
-  if (!loop.hasCommittedPasses()) {
+  if (!loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK ||
+      !getLoop(slot).hasCommittedPasses()) {
     resetDeferredRecordRevts();
     return;
   }
+  const Loop& loop = getLoop(slot);
 
   if (deferredRecordRevtChunkScan) {
     size_t queued = 0;

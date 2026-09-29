@@ -1,4 +1,10 @@
 // S4f.16: actual stop/worker/undo/storage owners; no copied stop implementation.
+//
+// S4f.17/S4f.21: this suite is the **enforced** finalization gate, not an opt-in one. The
+// R→R / R→OD / OD→R / OD→OD rotation oracle asserts the deferred production shape unconditionally
+// -- `S4F16_REQUIRE_CONTRACT` is no longer read here, so ordinary suite success IS the strict
+// result and there is no weaker mode to select. Do not reintroduce a conditional: a mode in which
+// the Record stop may still publish inline is exactly the regression this suite exists to catch.
 #define HARNESS_REAL_PLAYBACK_HOT_PATH
 #define HARNESS_REAL_CAPTURE_STOP
 #include "../test_support/capture_storage_harness.inc"
@@ -75,6 +81,22 @@ struct TrackCaptureStopTestAccess {
     return t.beginDeferredRecordStopForSlot(PendingStopDestination::Playing, tick, 0, interval);
   }
   static size_t trackHeldNotes(const Track& t) { return t.pendingNotes.size(); }
+  static bool deferredRevtsPending(const Track& t) {
+    return t.deferredRecordRevtsSlot != Config::INVALID_LOOP_SLOT;
+  }
+  static uint8_t deferredRevtsSlot(const Track& t) { return t.deferredRecordRevtsSlot; }
+  static void serviceDeferredRevts(Track& t) { t.processDeferredRecordRevts(64); }
+  /// The Track-level committed-MIDI scratch has no public reader, so the fixture stamps it fresh
+  /// and then observes whether a publication invalidated it -- which is exactly the consumer
+  /// contract `CommittedMidiScratch::isFresh` encodes.
+  static void markCommittedScratchFresh(Track& t) {
+    t.committedMidiScratchRevision_ = 0;
+    t.committedMidiScratchPublishedIdentity_ = reinterpret_cast<const void*>(1);
+  }
+  static bool committedScratchInvalidated(const Track& t) {
+    return t.committedMidiScratchRevision_ == UINT32_MAX &&
+           t.committedMidiScratchPublishedIdentity_ == nullptr;
+  }
   static Track::CaptureStopJob& head(Track& t) { return *t.captureStopJobHead(); }
   static LoopPlaybackRuntime& runtimeFor(Track& t, uint8_t slot) {
     return *t.playbackRuntime.slotIfAllocated(slot);
@@ -1733,6 +1755,54 @@ void test_record_stop_admits_through_the_common_drive() {
   TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::stopQueueDepth(t));
 }
 
+// S4f.20 deferred-REVT parity: the publication is the commit, so it queues the same stored
+// note-on scan the inline stop queued from `finalizeCommitSideEffects` -- for **its own slot**.
+// The queue is slot-qualified because the active index may already hold a successor take, which
+// an active-slot read would scan instead (or would find nothing to scan at all).
+void test_deferred_record_publication_queues_revts_for_its_own_slot() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  prepareSlot(t, 1, false);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, false, 0, 60);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::deferredRevtsPending(t),
+                            "nothing may be queued before the pass commits");
+  stop(t, false, 768);
+  advanceToPhase(t, PendingStopPhase::RecordPublished);
+  TEST_ASSERT_TRUE_MESSAGE(t.getLoop(0).passes.hasRecordPass(),
+                           "precondition: the deferred publication must commit a Record pass");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, TrackCaptureStopTestAccess::deferredRevtsSlot(t),
+                                  "the publication must queue the REVT scan for its own slot");
+
+  // A successor take now owns the active slot. The queued scan must still name slot 0.
+  start(t, 1, false, 768, 62);
+  TEST_ASSERT_EQUAL_UINT8(1, t.getActiveLoopIndex());
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, TrackCaptureStopTestAccess::deferredRevtsSlot(t),
+                                  "a successor take must not redirect the queued scan");
+  TrackCaptureStopTestAccess::serviceDeferredRevts(t);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::deferredRevtsPending(t),
+                            "the slot-qualified scan must run to completion");
+}
+
+// S4f.20 `invalidateCaches()` parity, proven against the actual consumer contract rather than
+// assumed from `Loop::notifyCommittedContentChanged`. The atomic handoff covers the Loop's own
+// derived caches, but the inline stop's `Track::invalidateCaches()` also drops the Track-level
+// committed-MIDI scratch (`CommittedMidiScratch::isFresh` compares revision + published identity).
+// The deferred publication must do the same, for the job's slot.
+void test_deferred_record_publication_invalidates_the_track_committed_scratch() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_PLAYING);
+  start(t, 0, false, 0, 60);
+  TrackCaptureStopTestAccess::markCommittedScratchFresh(t);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::committedScratchInvalidated(t));
+  stop(t, false, 768);
+  advanceToPhase(t, PendingStopPhase::RecordPublished);
+  TEST_ASSERT_TRUE_MESSAGE(
+      TrackCaptureStopTestAccess::committedScratchInvalidated(t),
+      "the deferred publication must invalidate the Track-level committed-MIDI scratch");
+}
+
 void test_private_grains_never_hold_the_global_ephemeral_seal() {
   Track& t0 = trackManager.getTrack(0);
   prepareSlot(t0, 0, false);
@@ -2029,6 +2099,8 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_deferred_record_interval_is_audible_only_with_a_bound_window);
   RUN_TEST(test_native_midi_send_capture_records_a_direct_send);
   RUN_TEST(test_record_stop_admits_through_the_common_drive);
+  RUN_TEST(test_deferred_record_publication_queues_revts_for_its_own_slot);
+  RUN_TEST(test_deferred_record_publication_invalidates_the_track_committed_scratch);
   RUN_TEST(test_two_tracks_each_serve_their_own_deferred_window);
   RUN_TEST(test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source);
   RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);
