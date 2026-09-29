@@ -67,6 +67,10 @@ class CaptureLineClock:
             self.mark_incomplete("firmware capture ring overflow")
         if "#CAP," in line and ",RING,critical_rejected," in line:
             self.mark_incomplete("firmware capture ring rejected critical evidence")
+        if "#CAP," in line and ",RING,wiped," in line:
+            # The ring reset after an unreadable head record, discarding whatever it held. That is
+            # content this session cannot account for, so it never supports trace parity.
+            self.mark_incomplete("firmware capture ring discarded unreadable content")
         if serial_line_resets_heartbeat(line):
             self.last_firmware_at = stamp
         if serial_line_is_transport(line):

@@ -105,6 +105,21 @@ struct CaptureRing {
   uint32_t timingShedPending = 0;
   uint32_t criticalRejectedPending = 0;
   uint32_t criticalFirstRejectedUs = 0;
+  // Append/flush accounting. Every *counted* loss path above is a policy outcome; these counters
+  // exist for the one that was not: `flushCaptureBuffer` and `discardOldestRecord` reset the whole
+  // ring when the head record cannot be read (`payloadLen == 0` or a length past `used`). That
+  // discard was silent, so a capture that produced no rows for a whole phase could not be told from
+  // a phase whose emitters never ran (measured: `captures/s4f22-step3-base-01` has 2 888 rows with
+  // 34-44.5 s timestamps, 2 688 after 72 s, and zero rows at all between -- with every shed,
+  // eviction and overflow counter at 0 or 1).
+  uint32_t appendAttempts = 0;
+  uint32_t appendsOk = 0;
+  uint32_t flushCalls = 0;
+  uint32_t flushTransmitted = 0;
+  uint32_t silentWipes = 0;
+  uint32_t silentWipeBytes = 0;
+  uint32_t silentWipeFirstUs = 0;
+  bool wipedPending = false;
   RecordFamilyStats recordStart;
   RecordFamilyStats recordStop;
 
@@ -346,6 +361,23 @@ void noteTimingShed() {
   }
 }
 
+/// Account for a ring reset that discards content without an eviction/shed outcome. The bytes are
+/// the occupancy the reset threw away, which is what makes the loss a number rather than a mystery.
+SC_MEM_ATTR void noteSilentWipe() {
+  if (sCaptureRing.silentWipes == 0) {
+    sCaptureRing.silentWipeFirstUs = micros();
+  }
+  incrementSaturated(sCaptureRing.silentWipes);
+  sCaptureRing.silentWipeBytes += static_cast<uint32_t>(sCaptureRing.used);
+  sCaptureRing.wipedPending = true;
+}
+
+SC_MEM_ATTR void resetRingAfterUnreadableHead() {
+  noteSilentWipe();
+  sCaptureRing.head = sCaptureRing.tail;
+  sCaptureRing.used = 0;
+}
+
 /// The kind comes from `CaptureLineTier::evictionKindFor`, which the host tests pin directly
 /// (this translation unit needs Arduino, so the policy lives in the header).
 void discardOldestRecord(CaptureLineTier::EvictionKind kind) {
@@ -356,14 +388,12 @@ void discardOldestRecord(CaptureLineTier::EvictionKind kind) {
   }
   CaptureRecordHeader header{};
   if (!readHeaderAt(sCaptureRing.head, header)) {
-    sCaptureRing.head = sCaptureRing.tail;
-    sCaptureRing.used = 0;
+    resetRingAfterUnreadableHead();
     return;
   }
   const size_t total = recordTotalBytes(header);
   if (total > sCaptureRing.used) {
-    sCaptureRing.head = sCaptureRing.tail;
-    sCaptureRing.used = 0;
+    resetRingAfterUnreadableHead();
     return;
   }
   advanceHead(total);
@@ -388,6 +418,7 @@ void discardOldestRecord(CaptureLineTier::EvictionKind kind) {
 }
 
 SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload, uint16_t payloadLen) {
+  incrementSaturated(sCaptureRing.appendAttempts);
   const char* text = type == CaptureRecordType::Text ? static_cast<const char*>(payload) : nullptr;
   const bool incomingTierA = text != nullptr && isTierATextLine(text);
   const bool incomingCritical = text != nullptr && isCriticalTextLine(text);
@@ -439,6 +470,7 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
   sCaptureRing.used += total;
   if (family != nullptr) incrementSaturated(family->enqueued);
   if (incomingIdentity) ++sCaptureRing.identityEmitEnqueued;
+  incrementSaturated(sCaptureRing.appendsOk);
   return true;
 }
 
@@ -510,6 +542,24 @@ void emitTimingShedNotice() {
   sCaptureRing.timingShedPending = 0;
   Serial.printf("#CAP,%lu,RING,shed,%lu\r\n", (unsigned long)micros(),
                 (unsigned long)shed);
+}
+
+/// A ring reset discarded content whose head record could not be read. That is a capture loss with
+/// no eviction/shed outcome to report, so it gets its own notice and invalidates the capture.
+void emitWipedNotice() {
+  if (!sCaptureRing.wipedPending) {
+    return;
+  }
+  if (!serialWriteRoom(96)) {
+    return;  // keep pending; never block main on the diagnostic notice
+  }
+  const uint32_t wipes = sCaptureRing.silentWipes;
+  const uint32_t bytes = sCaptureRing.silentWipeBytes;
+  const uint32_t firstUs = sCaptureRing.silentWipeFirstUs;
+  sCaptureRing.wipedPending = false;
+  Serial.printf_P(SC_FMT("#CAP,%lu,RING,wiped,%lu,%lu,%lu\r\n"),
+                  static_cast<unsigned long>(micros()), static_cast<unsigned long>(wipes),
+                  static_cast<unsigned long>(bytes), static_cast<unsigned long>(firstUs));
 }
 
 void flushOneRevtRecord(const PendingRevt& revt) {
@@ -793,6 +843,21 @@ SC_MEM_ATTR void emitIdentityPathStats() {
       sCaptureRing.identityLastEvent);
   emitRecordFamilyStats("RECA", sCaptureRing.recordStart);
   emitRecordFamilyStats("RECS", sCaptureRing.recordStop);
+  // Ring-level accounting: attempts/appends separate "the emitters never ran" from "the appends
+  // were refused", and wipes name the one content-discarding path that has no eviction outcome.
+  Serial.printf(SC_FMT("#CAP,%lu,RING,stats,attempts=%lu,ok=%lu,flush=%lu,tx=%lu,shed=%lu,"
+                       "tierA_evict=%lu,overflow=%lu,crit_rej=%lu,wipe=%lu,wipe_bytes=%lu\r\n"),
+                static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(sCaptureRing.appendAttempts),
+                static_cast<unsigned long>(sCaptureRing.appendsOk),
+                static_cast<unsigned long>(sCaptureRing.flushCalls),
+                static_cast<unsigned long>(sCaptureRing.flushTransmitted),
+                static_cast<unsigned long>(sCaptureRing.timingShedPending),
+                static_cast<unsigned long>(sCaptureRing.tierAEvictedCount),
+                static_cast<unsigned long>(sCaptureRing.overflowPending ? 1 : 0),
+                static_cast<unsigned long>(sCaptureRing.criticalRejectedPending),
+                static_cast<unsigned long>(sCaptureRing.silentWipes),
+                static_cast<unsigned long>(sCaptureRing.silentWipeBytes));
 }
 
 SC_MEM_ATTR void architectureCounter(const char* name, uint32_t value) {
@@ -1293,11 +1358,13 @@ SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t co
 }
 
 void flushCaptureBuffer(size_t maxRecords) {
+  incrementSaturated(sCaptureRing.flushCalls);
   // Never emit capture notices via USB Serial under timing-critical budgets.
   if (maxRecords > 8) {
     emitCriticalRejectedNotice();
     emitOverflowNotice();
     emitTierADegradedNotice();
+    emitWipedNotice();
     emitTimingShedNotice();
   }
   if (sCaptureRing.data == nullptr || sCaptureRing.used == 0) {
@@ -1340,8 +1407,7 @@ void flushCaptureBuffer(size_t maxRecords) {
     readBytesAt(sCaptureRing.head, &header, sizeof(header));
     const size_t total = recordTotalBytes(header);
     if (header.payloadLen == 0 || total > sCaptureRing.used) {
-      sCaptureRing.head = sCaptureRing.tail;
-      sCaptureRing.used = 0;
+      resetRingAfterUnreadableHead();
       break;
     }
 
@@ -1384,6 +1450,7 @@ void flushCaptureBuffer(size_t maxRecords) {
 
     advanceHead(total);
     ++flushed;
+    incrementSaturated(sCaptureRing.flushTransmitted);
   }
 }
 
