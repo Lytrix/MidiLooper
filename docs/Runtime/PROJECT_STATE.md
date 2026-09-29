@@ -1,5 +1,19 @@
 # Project state (execution context)
 
+**2026-09-29 — toggle defect verified gone; ring wipe is content loss (zeros), not a stray advance.**
+`s4f22-step8-e1/e2/e3`: `transport_press_count` is **0** in all three runs, so the clock helper no
+longer toggles transport to confirm a start; the readiness gate passed each attempt. (Ledger caveat:
+it covers clock-helper presses only, so the baseline's own presses are not yet attributed.) No
+attempt passed: e1 never started an overdub and reported `record_loop_length_mismatch` +
+`record_note_span_too_short` + `persistence_loop_persist_not_sliced`; e2 repeated
+`ARMED->RECORDING` four times with the same length/span mismatch -- a **second independent defect**
+(the Record take's length/span) beside the ring. e3 lost 384 571 bytes to one wipe:
+`head_bad op=4 head=724595 tail=60590 used=384571 type=0 plen=0 prefix=0000...`; `(tail-used) mod 1 MiB
+= head`, so the bookkeeping is consistent and the head points at **zeros** -- the ring holds 384 KB
+that was never written or was zeroed under it, i.e. reclamation/reuse rather than a bad advance. The
+ring (1 MiB `extmem_malloc`, freed nowhere) and the event-pool blocks (same heap, zeroed per block on
+open) are the next thing to check for overlap. Ring investigation **open**.
+
 **2026-09-29 — the extra transport press, named and removed; readiness proven from a fresh reply.**
 `captures/s4f22-step7-d2` carried an unexplained Global Transport press between start and the
 intended Record stop (53.527 start, 53.974 recording, 54.526 press, 59.248 Record stop -> armed a

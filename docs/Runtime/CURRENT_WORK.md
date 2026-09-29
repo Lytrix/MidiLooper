@@ -1,5 +1,32 @@
 # Current work (implementation scope)
 
+**2026-09-29 — toggle defect verified gone on device; the ring wipe is content loss, not a stray advance.**
+Three same-boot attempts after the fix (`captures/s4f22-step8-e1/e2/e3`): **`transport_press_count`
+is 0 in all three**, so the clock helper no longer toggles transport to confirm a start -- the d2
+sequence cannot recur. The attach readiness gate passed every attempt (no refusal). Caveat on the
+ledger: it currently covers only presses made *through the clock helper* (`transport_clock._send_short_press`);
+the baseline's own presses go through its own helper and are not yet in it, so `0` proves "no
+clock-helper toggle", not "no transport press at all". Routing the baseline's press primitives
+through the same ledger is the next attribution step.
+
+No attempt passed. **e1** (1 970 rows) never started an overdub and reported
+`record_loop_length_mismatch`, `record_note_span_too_short`,
+`persistence_loop_persist_not_sliced`. **e2** (10 794 rows) repeated `ARMED->RECORDING` four times
+and reported the same length/span mismatch plus short stored overdub spans. A **second independent
+defect** is therefore open beside the ring: the Record take's length/span is wrong. **e3** lost
+384 571 bytes to one wipe, with the decisive detail:
+
+`RING,head_bad,1,op=4,head=724595,tail=60590,used=384571,type=0,plen=0,prefix=0000...0000`
+
+`(tail - used) mod 1 MiB = 724595 = head`, so the ring's bookkeeping is **self-consistent** and the
+head points at **zeros**, not at a torn row. The ring believes it holds 384 KB that was never
+written or was zeroed under it -- content loss by reclamation/reuse, not by a bad advance, which also
+means the earlier `op` reasoning does not apply. Both the ring (`extmem_malloc`, 1 MiB, freed
+nowhere) and the event-pool blocks (`LoopEventStore::poolAlloc` -> `extmem_malloc`, zeroed per block
+on open) come from the same external heap, so the next step is to verify they cannot overlap: check
+whether any unguarded `extmem_free`/`std::free` misclassification can free a region inside the
+ring's 1 MiB, and whether a pool block can be opened over it. Ring investigation stays **open**.
+
 **2026-09-29 — the extra transport press, named and removed; readiness now proven from a fresh reply.**
 The d2 trace showed an unexplained extra Global Transport press between the start and the intended
 Record stop (start 53.527, recording 53.974, press 54.526, Record stop 59.248 -> armed a new take),
