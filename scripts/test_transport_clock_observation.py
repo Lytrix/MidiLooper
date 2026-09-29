@@ -112,6 +112,28 @@ class ClockObservationTests(unittest.TestCase):
         self.assertFalse(using_proxy)
         self.assertEqual(0, len(out_port.sent))
 
+    def test_baseline_presses_land_in_the_same_ledger(self) -> None:
+        """The baseline's own press primitives must be attributable too, not just the clock's."""
+        from hitl.midi_io import _send_multi_short_press, _send_short_press
+
+        out_port = FakePort()
+        _send_short_press(
+            out_port, note=GLOBAL_TRANSPORT_NOTE, channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=1,
+        )
+        _send_multi_short_press(
+            out_port, note=GLOBAL_TRANSPORT_NOTE, channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=1, count=2, gap_ms=1,
+        )
+        actions = control_action_log()
+        # One short press plus the two constituent presses of the multi gesture.
+        self.assertEqual(3, len(actions))
+        self.assertEqual(
+            ["test_baseline_presses_land_in_the_same_ledger"] * 3,
+            [a["caller"] for a in actions],
+        )
+        self.assertEqual(3, transport_press_count())
+
     def test_control_action_ledger_names_the_caller(self) -> None:
         from hitl.transport_clock import _send_short_press
 
