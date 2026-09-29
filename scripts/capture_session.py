@@ -230,6 +230,9 @@ def main() -> int:
             return
 
     boot_reset_done = False
+    boot_reset_attempts = 0
+    boot_banner_seen = False
+    boot_reset_settle_s = max(args.boot_reset_settle, 0.0)
 
     with out_path.open("ab") as log:
         try:
@@ -250,15 +253,12 @@ def main() -> int:
                         continue
 
                     if args.boot_reset and not boot_reset_done:
-                        # A 1200-baud touch reboots the board, so this session owns a real
-                        # boot: the banner lands inside this capture instead of before any
-                        # owner attached, which is what the accepted-sequence oracle's
-                        # fresh-boot gate requires.
-                        # The capture owner asks the running firmware to reset, then drops
-                        # the port so the reconnect path reopens it and the boot banner
-                        # starts this capture. A 1200-baud touch is not honoured on this
-                        # board (measured, 2026-09-28), and the oracle requires the banner in
-                        # the first lines, so the reset must happen before the boot settle.
+                        # The capture owner asks the running firmware to reset, then drops the port
+                        # so the reconnect path reopens it and the boot banner starts this capture.
+                        # A 1200-baud touch is not honoured on this board (measured, 2026-09-28), and
+                        # the oracle requires the banner in the first lines, so the reset must happen
+                        # before the boot settle. `!REBOOT` is transport-gated, so the request is
+                        # retried below until the banner actually lands rather than assumed.
                         try:
                             ser.write(b"!REBOOT\n")
                             ser.flush()
@@ -271,8 +271,12 @@ def main() -> int:
                             pass
                         ser = None
                         boot_reset_done = True
-                        print("[capture] boot reset requested (1200-baud touch)", flush=True)
-                        time.sleep(max(args.boot_reset_settle, 0.0))
+                        boot_reset_attempts += 1
+                        print(
+                            f"[capture] boot reset requested (attempt {boot_reset_attempts})",
+                            flush=True,
+                        )
+                        time.sleep(boot_reset_settle_s)
                         continue
                     if not boot_wait_done:
                         deadline = time.monotonic() + args.boot_wait
@@ -287,8 +291,28 @@ def main() -> int:
                                 if chunk:
                                     log.write(chunk)
                                     _sync_log(log)
+                                    if b"DIAG,boot_reset," in chunk:
+                                        boot_banner_seen = True
                             else:
                                 time.sleep(0.05)
+                        if args.boot_reset and not boot_banner_seen and boot_reset_attempts < 3:
+                            # `!REBOOT` is refused while the transport runs, and a run whose capture
+                            # has no banner cannot be read as verdict-grade evidence. Retry the
+                            # request instead of recording a reset that never happened; bounded, so a
+                            # device that cannot be reset still fails visibly rather than hanging.
+                            print(
+                                "[capture] no boot banner after reset request; retrying "
+                                f"(attempt {boot_reset_attempts} of 3)",
+                                flush=True,
+                            )
+                            boot_reset_done = False
+                            continue
+                        if args.boot_reset and not boot_banner_seen:
+                            print(
+                                "[capture] WARNING: no boot banner observed after reset attempts; "
+                                "this capture has no fresh-boot evidence",
+                                flush=True,
+                            )
                         if args.run_token:
                             ser.write(f"!TRACE_FENCE {args.run_token}\n".encode("ascii"))
                             ser.flush()
