@@ -1,5 +1,52 @@
 # Current work (implementation scope)
 
+**2026-09-29 — S4f.21 — Record playback invalidation retarget defect fixed.**
+Run 08's two immediate `Record stop retarget` rows led to a native reproduction:
+`completeAdmittedRecordStop` launches playback through a cache reset, but
+`invalidatePlaybackMergedMidiEvents` treated every pending job as a transport
+Stop. The track returned PLAYING while its Record job already targeted STOPPED
+and had suppressed MIDI output. The new fixture fails on that destination before
+the fix. Ordinary invalidation now preserves a Record job's scratch, destination
+and output barrier; explicit Stop and overdub recovery retain their existing paths.
+The fixture also asserts an audible barrier state and a live same-slot overdub
+successor while Record still finalizes. Focused 156/156; full native 2,619 passed /
+7 skipped; capture-serial build PASS, padding 2,072, variables 96,192, locals 34,880.
+Not uploaded or device-verified in that slice. Clear authorization for all slots on
+all tracks was granted on 2026-09-29; that slice made no device mutation. [Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md#s4f21--record-playback-invalidation-is-not-transport-stop-2026-09-29).
+
+
+**2026-09-29 — S4f.22 — same-session Record evidence drain.**
+Run 08 counter evidence reports seven RECS enqueues with zero transmissions,
+refusals or evictions. The baseline previously waited only for host serial quiet
+before stopping its reader. End-of-leg cleanup now runs before MIDI/reader close:
+idempotent MIDI Stop, stopped-only fenced replies, repeated bounded trace drains,
+selected finalizer-idle check and transmission-delta reconciliation against this
+same log. Counter snapshots use their exact fence endpoint; historical tx counts
+do not require reboot. Failed retrieval remains incomplete and preserves the
+original leg abort. This does not add Stop within the measured sequence or prove
+persistence completion. Device-exercised read-only on 2026-09-29:
+`captures/s4f22-base-device-17` reports `record_evidence_drain.complete=true` with
+RECA 1 / RECS 7 / RID 1 reconciled against that same log. The device loss mechanism
+itself remains unproven, and that follow-up uploaded nothing. [Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md#s4f22--same-session-record-evidence-drain-2026-09-29).
+
+
+**2026-09-29 — S4f.22 — Record evidence loss accounting, native verified.**
+The real capture-ring fixture disproves the previous attribution to critical
+reentry/release traffic: those diagnostics are Tier-A, not critical, and cannot
+evict a critical Record row. `DebugSessionCapture` now counts RECA/RECS emitter
+entries, enqueue successes/refusals, transmissions and evictions alongside RID;
+read-only `!CAP_IDENTITY_STATS` returns all three families. Critical append
+refusal (including ring allocation failure) latches a safe-flush notice that makes
+host `capture_integrity` INCOMPLETE. No retention policy changed. Four real-ring
+fixtures pass, including USB backpressure and actual critical-to-critical eviction;
+removing the refusal latch fails the allocation-failure fixture. Host integrity
+16/16 and forwarding/identity 40/40; full native 2,618 passed / 7 skipped;
+capture-serial build PASS, padding 1,992 (floor 840), variables 96,192, locals 34,880.
+No upload, SD mutation or device acceptance. The actual device loss mechanism
+remains unproven; next compare stopped before/after family snapshots around the
+registered baseline. [Execution record](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md#s4f22--record-evidence-loss-accounting-2026-09-29).
+
+
 **2026-09-29 — S4f.17 S17.1 + S17.2 — production Record admission and stop routing landed.**
 `stopRecording` and `stopRecordingToStopped` now admit the interval through
 `beginDeferredRecordStopForSlot` and keep their destination behaviour at the stop edge in
@@ -3921,6 +3968,32 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ---
 
 ## Now implementing
+
+### S4f.21 — preserve Record playback across cache invalidation (2026-09-29)
+
+Investigate and fix the run-08 Record stop edge's unintended STOPPED retarget in
+`invalidatePlaybackMergedMidiEvents`, using the real finalization fixture before
+firmware edits. Preserve explicit transport Stop and the existing overdub recovery
+behavior. Contract and oracle are appended to the cutover packet.
+
+
+### S4f.22 — same-session Record evidence drain (2026-09-29)
+
+Device counters identify undrained RECS in run 08. Extend baseline end-of-run
+cleanup to stop and retrieve evidence before closing MIDI or the managed reader;
+use fenced stopped-only replies, bounded repeated drains and counter/log
+reconciliation. Preserve the failed leg verdict. This host-only follow-up is
+specified in the cutover packet; it does not change the always-playing measured
+sequence or certify persistence completion.
+
+### S4f.22 — Record evidence loss accounting (2026-09-29)
+
+Continue the cutover packet's unreadable-device-evidence blocker: extend the
+existing capture ring's per-family outcome counters and make critical enqueue
+refusal visible to capture integrity. Preserve eviction policy until measured
+counters establish the loss path. No device clear, upload, or acceptance in this
+slice. Contract and oracle: [cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md#s4f22--record-evidence-loss-accounting-2026-09-29).
+
 
 ### S4f.17–S4f.21 — connected shared capture finalization (authorized; 2026-09-27)
 
