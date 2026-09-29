@@ -263,6 +263,33 @@ publishing slot; a successor take does not redirect it; the scan runs to complet
 fresh, then the publication invalidates it — the `CommittedMidiScratch::isFresh` consumer contract,
 not an assumption). Removing either wiring fails its fixture.
 
+**S17.5a — the transport-stop / retarget path for a Record job: done.** The packet's risk list
+named this: *"The transport-stop and retarget paths (`runtime->reset`, `retargetFrozenCommandEpoch`,
+the DEC-070 raw-only fallback) currently assume a job exists for overdub; Record jobs must be
+handled deliberately rather than by falling into the overdub fallback."* They now are.
+
+`requestDeferredOverdubStopToStopped` is mode-aware: for a **Record** job the destination change
+(`requestTransportStop`) is the whole retarget, because the Record chain owns none of the companion,
+canonical-tail or undo-collection roles the overdub recovery manipulates — falling through would
+call `restoreSupersededPreparedCompanionHistory` / `discardPreparedCompanionHistory` and
+`retargetStoppedRecovery` against roles a Record job never populated, and would arm the overdub
+grain's `CanonicalTail..CompanionBridge` stall fallback for phases a Record job never enters.
+
+"Transport stop wins" is then resolved at that edge, once, for the Record job and only while the
+interval still owns the live transport: `silenceTrackMidiOutput` + `TRACK_STOPPED` +
+`resetPlaybackState`. Before this, a transport stop during a Record finalization left the track in
+`TRACK_PLAYING` while the job's destination said STOPPED — `handleTransportStop`'s `isPlaying()`
+branch is unreachable once the pending-job branch has taken the turn, and a Record job has no
+deferred cleanup to resolve it.
+
+It is deliberately **not** in the playback-runtime reset path: `LoopPlaybackRuntime::reset` also
+calls `requestTransportStop()` to retarget a job whose window it is about to discard, and that is
+not a user transport stop — the interval's retained window is still the sounding source (S4f.19),
+so that path keeps the transport state. The distinction is fixture-visible:
+`test_record_normalization_playing_inventory` (a runtime reset during the drive) still ends PLAYING,
+while `test_transport_retarget_of_a_record_job_resolves_stopped` ends STOPPED and still commits the
+take. Removing the resolution fails the latter.
+
 **S17.5 — Gates, mutations and accounting: done for the native leg.**
 
 *Enforced gate.* The finalization suite no longer reads `S4F16_REQUIRE_CONTRACT`; every assertion,

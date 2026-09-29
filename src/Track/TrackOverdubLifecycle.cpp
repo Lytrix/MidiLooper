@@ -1154,6 +1154,33 @@ TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
   CaptureStopJob& job = captureStopJob();
   const uint8_t phaseAtRetarget = static_cast<uint8_t>(job.admission.phase);
   job.admission.requestTransportStop();
+  // S4f.21: the retarget is mode-sensitive. A **Record** job owns no companion history, canonical
+  // tail or undo-collection role -- the Record chain has none of those resources -- so the
+  // destination change above is the whole retarget. Falling through would call the overdub
+  // recovery against roles the Record job never populated, and its `retargetedFromPlaying` flag
+  // would then arm the overdub grain's `CanonicalTail..CompanionBridge` stall fallback for a job
+  // that never enters those phases. The retirement grain resolves the final transport state.
+  if (job.mode == CapturePhase::Record) {
+    logger.log(CAT_TRACK, LOG_INFO, "Record stop retarget: phase=%u dest=%u",
+               static_cast<unsigned>(phaseAtRetarget),
+               static_cast<unsigned>(job.admission.destination));
+    // A Record job has no deferred-cleanup terminal, so "transport stop wins" is resolved here, at
+    // the retarget edge, where the policy belongs -- and only while this interval still owns the
+    // live transport. Without it the record edge's `TRACK_PLAYING` survived a transport stop.
+    //
+    // Deliberately NOT in the playback-runtime reset path: `LoopPlaybackRuntime::reset` also calls
+    // `requestTransportStop()` to retarget a job whose window it is about to discard, and that is
+    // not a user transport stop -- the interval's retained window is still the sounding source
+    // (S4f.19), so the transport state must not be forced to STOPPED from there.
+    if (job.admission.destination == PendingStopDestination::Stopped &&
+        job.interval == captureInterval_ && job.slot == activeLoopIndex &&
+        trackState != TRACK_STOPPED && trackState != TRACK_EMPTY) {
+      silenceTrackMidiOutput();
+      setState(TRACK_STOPPED);
+      resetPlaybackState(clockManager.getCurrentTick());
+    }
+    return;
+  }
   // DEC-070: a job admitted for PLAYING and retargeted to STOPPED keeps the companion (note-edit)
   // preparation its interval contracted. That representation is what the display resolves the
   // overdubbed notes from, and its `UndoCollection` phase is what publishes the protected undo

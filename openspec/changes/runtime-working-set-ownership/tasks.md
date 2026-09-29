@@ -2799,9 +2799,18 @@ own execution packet and records fixture/native/build/device results separately.
       geometry; retirement while a frozen-window build still borrows the raw range). Structural
       accounting is compile-time and active (`sizeof(Track) == 384`, `sizeof(CaptureStopJobs) ==
       28936` under SESSION_CAPTURE+PERF_TELEMETRY) plus the post-link RAM1 gate. Strict 47/47; full
-      native 2 617 cases / 2 610 succeeded / 7 skipped; capture-serial SUCCESS. **Still open for
-      §3's exit:** transport Stop in every phase, an internal/external clock sweep, and load/clear
-      interaction with a stop in flight; no device acceptance is claimed from host results.
+      native 2 617 cases / 2 610 succeeded / 7 skipped; capture-serial SUCCESS.
+      **2026-09-29 S17.5a — transport stop during a Record finalization.** The retarget is now
+      mode-aware (`requestDeferredOverdubStopToStopped` returns after the destination change for a
+      Record job rather than running the overdub recovery against roles a Record job never
+      populated), and "transport stop wins" is resolved at that edge (`TRACK_STOPPED` + silence +
+      playback-state reset); previously the track stayed TRACK_PLAYING while the job's destination
+      said STOPPED. The playback-runtime reset path deliberately does not force the transport state,
+      pinned by the playing-inventory fixture. Fixture
+      `test_transport_retarget_of_a_record_job_resolves_stopped`; removing the resolution fails it.
+      **Still open for §3's exit:** transport Stop in every phase, an internal/external clock sweep,
+      and load/clear interaction with a stop in flight; no device acceptance is claimed from host
+      results.
 - [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
       full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with
