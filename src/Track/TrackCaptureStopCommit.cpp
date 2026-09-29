@@ -370,79 +370,45 @@ uint32_t Track::prepareRecordStop(uint32_t currentTick, const char* guardLabel) 
   }
   return rawLength;
 }
-void Track::stopRecording(uint32_t currentTick) {
-  if (!setState(TRACK_STOPPED_RECORDING)) return;
 
-  [[maybe_unused]] const bool captureAlignFlag = alignLoopOriginOnNextStop;
-  const uint8_t recordedSlotIndex = activeLoopIndex;
-  Loop& loop = getActiveLoop();
-  const uint32_t stopPathStartUs = micros();
-  logRecordStopStage(loop, stopPathStartUs, "record_stop", 0,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     DebugSessionCapture::kUnsampledHeapBytes, "entered");
-
-  const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecording");
-  pendingNotes.clear();
-
-  // Validate AFTER loopLengthTicks is known so wrap-matching and open-tail closing
-  // (the second pass and synthetic note-offs) are active for this record-stop.
-  // Record-stop must close open tails at loop end, not at the stop playhead tick.
-  const uint32_t closeTick = UINT32_MAX;
-  const uint32_t finalizeStartUs = micros();
-  const CommitResult sideEffectResult =
-      commitCaptureForStop(CommitReason::RecordStop, currentTick, closeTick, getActiveLoopIndex());
-  const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
-  const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
-  logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     DebugSessionCapture::kUnsampledHeapBytes, commitResultLabel(sideEffectResult),
-                     &stopPathStats);
-
-  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
-                     &stopPathStats);
-
-  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
-                     &stopPathStats);
-
-  if (alignLoopOriginOnNextStop) {
-    alignLoopOriginOnNextStop = false;
-    uint32_t absRecStart = loop.startLoopTick;
-    uint32_t remBar = absRecStart % TICKS_PER_BAR;
-    uint32_t graceBar = TICKS_PER_BAR / 2;
-    uint32_t snapBar;
-    if (remBar <= graceBar) {
-      snapBar = absRecStart - remBar;
-    } else {
-      snapBar = absRecStart - remBar + TICKS_PER_BAR;
-    }
-    int64_t delta = (int64_t)snapBar - (int64_t)absRecStart;
+TRACK_COLD_MEM void Track::completeAdmittedRecordStop(PendingStopDestination destination,
+                                                      uint32_t currentTick, uint8_t slot,
+                                                      uint32_t rawLength) {
+  if (!loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) return;
+  Loop& loop = getLoop(slot);
+  // Admission stamped the interval's final length from the maintained maximum summary, so the
+  // edge needs no store walk: it is the bounded scalar part of the old inline stop.
+  const uint32_t finalLength = loop.loopLengthTicks;
+  const bool toPlaying = destination == PendingStopDestination::Playing;
+  // A stop whose interval no longer owns the live slot still gets its loop-local geometry, but
+  // must not move the track-global transport or the shared clock under a successor.
+  const bool ownsTrackState = slot == activeLoopIndex;
+  const bool alignRequested = toPlaying && alignLoopOriginOnNextStop;
+  alignLoopOriginOnNextStop = false;
+  if (alignRequested) {
+    const uint32_t absRecStart = loop.startLoopTick;
+    const uint32_t remBar = absRecStart % TICKS_PER_BAR;
+    const uint32_t graceBar = TICKS_PER_BAR / 2;
+    const uint32_t snapBar = remBar <= graceBar ? absRecStart - remBar
+                                                : absRecStart - remBar + TICKS_PER_BAR;
+    const int64_t delta = static_cast<int64_t>(snapBar) - static_cast<int64_t>(absRecStart);
     if (delta != 0 && loop.hasCommittedPasses()) {
       loop.shiftActiveCapturePassTicks(delta);
       loop.invalidatePlaybackCaches();
     }
   }
-
   loop.nextEventIndex = 0;
-  uint32_t recordStartTick = loop.startLoopTick;
-  uint32_t finalLength = loop.loopLengthTicks;
-
+  const uint32_t recordStartTick = loop.startLoopTick;
   uint32_t playbackTick = currentTick;
   const uint32_t rewindTicks =
       RecordStopLength::computeTruncationRewindTicks(rawLength, finalLength);
   if (rewindTicks > 0) {
     playbackTick = currentTick - rewindTicks;
-    clockManager.assignCurrentTickSilently(playbackTick);
+    if (ownsTrackState) clockManager.assignCurrentTickSilently(playbackTick);
     logger.log(CAT_TRACK, LOG_INFO,
                "Record stop truncation rewind: raw=%lu final=%lu rewind=%lu playbackTick=%lu positionInBar=%lu",
                rawLength, finalLength, rewindTicks, playbackTick, rawLength % Config::TICKS_PER_BAR);
   }
-
   loop.startLoopTick = recordStartTick;
   loop.lastTickInLoop = (finalLength > 0)
                             ? tickPhaseInLoop(playbackTick, recordStartTick, finalLength)
@@ -452,176 +418,133 @@ void Track::stopRecording(uint32_t currentTick) {
     projectionCycleStartTick =
         static_cast<int32_t>(playbackTick) - static_cast<int32_t>(loop.lastTickInLoop);
   }
-
   invalidatePlaybackCaches();
-  SC_REC_STOP("stop", activeLoopIndex, playbackTick, recordStartTick, rawLength, finalLength, captureAlignFlag);
-  logger.logTrackEvent("Recording stopped", playbackTick, "recStart=%lu length=%lu",
-                       static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(finalLength));
-  logger.debug("Final ticks: playbackTick=%lu recStart=%lu rawLength=%lu length=%lu", playbackTick,
-               static_cast<unsigned long>(recordStartTick), static_cast<unsigned long>(rawLength),
-               static_cast<unsigned long>(finalLength));
-
-  // Empty record-stop: reset capture slot geometry so hasDataInSlot stays false.
-  if (loop.loopLengthTicks == 0 || loop.activeCapturePassCount() == 0) {
+  SC_REC_STOP(toPlaying ? "stop" : "stopToStopped", slot, playbackTick, recordStartTick, rawLength,
+              finalLength, alignRequested);
+  logger.logTrackEvent(toPlaying ? "Recording stopped" : "Recording stopped (to STOPPED)",
+                       playbackTick, "recStart=%lu length=%lu",
+                       static_cast<unsigned long>(recordStartTick),
+                       static_cast<unsigned long>(finalLength));
+  if (!ownsTrackState) return;
+  // RECORDING -> STOPPED_RECORDING is this stop's own edge; the destination then resolves
+  // exactly as the inline route's did. Emptiness is deliberately NOT decided here: a take that
+  // passes the length policy can still be filtered out downstream, which
+  // `stepDeferredRecordEmptyResult` resolves once, against the published result.
+  (void)setState(TRACK_STOPPED_RECORDING);
+  if (!toPlaying) {
+    setState(TRACK_STOPPED);
+    return;
+  }
+  if (finalLength == 0) {
     resetActiveLoopAfterEmptyCapture(loop);
-    logRecordStopStage(loop, stopPathStartUs, "state_advance", 0,
-                       DebugSessionCapture::kUnsampledHeapBytes,
-                       DebugSessionCapture::kUnsampledHeapBytes, "skipped_empty", &stopPathStats);
-    logRecordStopStage(loop, stopPathStartUs, "save_request", 0,
-                       DebugSessionCapture::kUnsampledHeapBytes,
-                       DebugSessionCapture::kUnsampledHeapBytes,
-                       sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
-                       &stopPathStats);
     setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
     return;
   }
-
-  // Return to playback after record-stop. Overdub starts on the next explicit
-  // record press from PLAYING (record -> play -> overdub -> play flow).
-  logRecordStopStage(loop, stopPathStartUs, "pre_state_advance", 0,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     DebugSessionCapture::kUnsampledHeapBytes, "enter", &stopPathStats);
   // Silence live/held notes on the wire before loop playback catch-up; CC123 is not stored.
   sendAllNotesOff();
   resetPlaybackState(playbackTick);
-  if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(recordedSlotIndex)) {
-    // Final length is known only now. Bind the already prepared bar-1 view
-    // before the normal PLAYING transition, so launch stays on this boundary.
+  if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot)) {
+    // The final length is known only now. Bind the already prepared bar-1 view before the
+    // normal PLAYING transition, so launch stays on this boundary while the deferred worker
+    // finalizes the take. (The frozen return window the closure grain binds keeps the interval
+    // audible after it.)
     if (!runtime->bindFirstRecordingBar(finalLength)) {
       logger.log(CAT_TRACK, LOG_WARNING,
                  "First-record bar-1 playback binding unavailable length=%lu",
                  static_cast<unsigned long>(finalLength));
     }
   }
-  const uint32_t stateAdvanceStartUs = micros();
   startPlaying(playbackTick, true);
-  displayManager.refreshViewportAfterRecordStop(*this, activeLoopIndex, storagePhaseTickAtStop);
-  const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
-  logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     trackState == TRACK_PLAYING ? "ok" : "failed", &stopPathStats);
-  logRecordStopStage(loop, stopPathStartUs, "save_request", 0,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
-                     &stopPathStats);
-  if (sideEffectResult == CommitResult::Committed) {
-    const RecordStopPersistTarget target =
-        resolveRecordStopPersistTarget(*this, recordedSlotIndex);
-    // S1.3 save/restore-survival: correlate the take's start slot with the slot this stop persists.
-    // Capture-gated, one bounded line per take; a mismatch here is the fixture's stop condition.
-    {
-      const uint32_t identity = recordStartSlotIdentityPacked();
-      const uint8_t startSlot = static_cast<uint8_t>(identity >> 24);
-      SC_REC_SLOT_IDENTITY("admit", identity & 0x00FFFFFFu, target.trackIndex, startSlot,
-                           recordedSlotIndex, recordedSlotIndex, target.trackIndex, target.slotIndex,
-                           'r', 'L', (startSlot != 0xFF && startSlot != target.slotIndex) ? 1 : 0);
-    }
-    StorageManager::markLoopSlotMaterialDirty(target.trackIndex, target.slotIndex);
-    StorageManager::admitLoopSlotPersist(target.trackIndex, target.slotIndex);
-    StorageManager::requestDeferredSaveState(looperState.getLooperState(),
-                                             MemoryMonitor::getInternalHeapFreeBytes(), true);
-  }
+  displayManager.refreshViewportAfterRecordStop(*this, slot, storagePhaseTickAtStop);
 }
 
-TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
-  if (!setState(TRACK_STOPPED_RECORDING)) return;
-
-  alignLoopOriginOnNextStop = false;
+void Track::stopRecording(uint32_t currentTick) {
+  // Only a live Record interval can be stopped. A repeat press on a stop already in flight is a
+  // no-op here; the accepted obligation carries it exactly once.
+  if (!isRecording()) return;
   const uint8_t recordedSlotIndex = activeLoopIndex;
-  Loop& loop = getActiveLoop();
+  const uint64_t interval = captureInterval_;
+  Loop& loop = getLoop(recordedSlotIndex);
   const uint32_t stopPathStartUs = micros();
   logRecordStopStage(loop, stopPathStartUs, "record_stop", 0,
                      DebugSessionCapture::kUnsampledHeapBytes,
                      DebugSessionCapture::kUnsampledHeapBytes, "entered");
 
-  const uint32_t rawLength = prepareRecordStop(currentTick, "stopRecordingToStopped");
-  pendingNotes.clear();
-
-  // Validate AFTER loopLengthTicks is known (see stopRecording for rationale).
-  const uint32_t closeTick = UINT32_MAX;
-  const uint32_t finalizeStartUs = micros();
-  const CommitResult sideEffectResult =
-      commitCaptureForStop(CommitReason::RecordStopToStopped, currentTick, closeTick, getActiveLoopIndex());
-  const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
-  const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
-  logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     DebugSessionCapture::kUnsampledHeapBytes, commitResultLabel(sideEffectResult),
-                     &stopPathStats);
-
-  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
-                     &stopPathStats);
-
-  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     sideEffectResult == CommitResult::Committed ? "deferred" : "skipped",
-                     &stopPathStats);
-
-  [[maybe_unused]] const uint32_t recordStartTickStopped = loop.startLoopTick;
-  loop.nextEventIndex = 0;
-  uint32_t playbackTick = currentTick;
-  const uint32_t rewindTicks =
-      RecordStopLength::computeTruncationRewindTicks(rawLength, loop.loopLengthTicks);
-  if (rewindTicks > 0) {
-    playbackTick = currentTick - rewindTicks;
-    clockManager.assignCurrentTickSilently(playbackTick);
-  }
-  loop.startLoopTick = recordStartTickStopped;
-  loop.lastTickInLoop = (loop.loopLengthTicks > 0)
-                            ? tickPhaseInLoop(playbackTick, recordStartTickStopped, loop.loopLengthTicks)
-                            : 0;
-  invalidatePlaybackCaches();
-
-  SC_REC_STOP("stopToStopped", activeLoopIndex, playbackTick, recordStartTickStopped,
-              rawLength, loop.loopLengthTicks, false);
-  logger.logTrackEvent("Recording stopped (to STOPPED)", playbackTick, "length=%lu",
-                       static_cast<unsigned long>(loop.loopLengthTicks));
-
-  if (!loop.hasData()) {
-    resetActiveLoopAfterEmptyCapture(loop);
-    logRecordStopStage(loop, stopPathStartUs, "state_advance", 0,
+  // S4f.17: admit the interval as a deferred job. The transport edge (rewind, destination state
+  // and the record-stop playback handoff) runs inside the admission, so the live press and the
+  // accepted-stop drive take exactly the same route. The pass, the `RecordPassAdded` undo entry
+  // and persistence come from the worker's publication, not from here.
+  if (!beginDeferredRecordStopForSlot(PendingStopDestination::Playing, currentTick,
+                                      recordedSlotIndex, interval)) {
+    // Capacity denial, not a refusal (DEC-067 / invariant 31): the interval keeps recording with
+    // its rows, pending notes and reservations intact, and the deferred drive admits the retained
+    // obligation exactly once when the finalization owner frees. The user never presses twice.
+    latchAcceptedStop(PendingStopDestination::Playing, recordedSlotIndex, interval);
+    logRecordStopStage(loop, stopPathStartUs, "finalize", micros() - stopPathStartUs,
                        DebugSessionCapture::kUnsampledHeapBytes,
-                       DebugSessionCapture::kUnsampledHeapBytes, "skipped_empty", &stopPathStats);
-    logRecordStopStage(loop, stopPathStartUs, "save_request", 0,
-                       DebugSessionCapture::kUnsampledHeapBytes,
-                       DebugSessionCapture::kUnsampledHeapBytes, "skipped", &stopPathStats);
-    setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
+                       DebugSessionCapture::kUnsampledHeapBytes, "accepted_wait");
     return;
   }
+  const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
+  const uint32_t edgeUs = micros() - stopPathStartUs;
+  logRecordStopStage(loop, stopPathStartUs, "finalize", edgeUs,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, "deferred", &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, "deferred", &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, "deferred", &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "state_advance", edgeUs,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     trackState == TRACK_PLAYING ? "ok" : "failed", &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "save_request", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, "deferred", &stopPathStats);
+}
 
-  const uint32_t stateAdvanceStartUs = micros();
-  setState(TRACK_STOPPED);
-  const uint32_t stateAdvanceDurationUs = micros() - stateAdvanceStartUs;
-  logRecordStopStage(loop, stopPathStartUs, "state_advance", stateAdvanceDurationUs,
+TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
+  if (!isRecording()) return;
+  // The STOPPED destination never aligns the take's origin; clear the request the same way the
+  // inline route did before it touched anything.
+  alignLoopOriginOnNextStop = false;
+  const uint8_t recordedSlotIndex = activeLoopIndex;
+  const uint64_t interval = captureInterval_;
+  Loop& loop = getLoop(recordedSlotIndex);
+  const uint32_t stopPathStartUs = micros();
+  logRecordStopStage(loop, stopPathStartUs, "record_stop", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, "entered");
+
+  // S4f.17: same admission as the PLAYING stop, with the stopped destination. See
+  // `stopRecording` for why the edge lives in the admission and a denial is a retained
+  // obligation rather than a dropped stop.
+  if (!beginDeferredRecordStopForSlot(PendingStopDestination::Stopped, currentTick,
+                                      recordedSlotIndex, interval)) {
+    latchAcceptedStop(PendingStopDestination::Stopped, recordedSlotIndex, interval);
+    logRecordStopStage(loop, stopPathStartUs, "finalize", micros() - stopPathStartUs,
+                       DebugSessionCapture::kUnsampledHeapBytes,
+                       DebugSessionCapture::kUnsampledHeapBytes, "accepted_wait");
+    return;
+  }
+  const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
+  const uint32_t edgeUs = micros() - stopPathStartUs;
+  logRecordStopStage(loop, stopPathStartUs, "finalize", edgeUs,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, "deferred", &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "visual_cache_request", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, "deferred", &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "revt_queue", 0,
+                     DebugSessionCapture::kUnsampledHeapBytes,
+                     DebugSessionCapture::kUnsampledHeapBytes, "deferred", &stopPathStats);
+  logRecordStopStage(loop, stopPathStartUs, "state_advance", edgeUs,
                      DebugSessionCapture::kUnsampledHeapBytes,
                      DebugSessionCapture::kUnsampledHeapBytes,
                      trackState == TRACK_STOPPED ? "ok" : "failed", &stopPathStats);
   logRecordStopStage(loop, stopPathStartUs, "save_request", 0,
                      DebugSessionCapture::kUnsampledHeapBytes,
-                     DebugSessionCapture::kUnsampledHeapBytes,
-                     sideEffectResult == CommitResult::Committed ? "requested" : "skipped",
-                     &stopPathStats);
-  if (sideEffectResult == CommitResult::Committed) {
-    const RecordStopPersistTarget target =
-        resolveRecordStopPersistTarget(*this, recordedSlotIndex);
-    // S1.3 save/restore-survival: correlate the take's start slot with the slot this stop persists.
-    // Capture-gated, one bounded line per take; a mismatch here is the fixture's stop condition.
-    {
-      const uint32_t identity = recordStartSlotIdentityPacked();
-      const uint8_t startSlot = static_cast<uint8_t>(identity >> 24);
-      SC_REC_SLOT_IDENTITY("admit", identity & 0x00FFFFFFu, target.trackIndex, startSlot,
-                           recordedSlotIndex, recordedSlotIndex, target.trackIndex, target.slotIndex,
-                           'S', 'L', (startSlot != 0xFF && startSlot != target.slotIndex) ? 1 : 0);
-    }
-    StorageManager::markLoopSlotMaterialDirty(target.trackIndex, target.slotIndex);
-    StorageManager::admitLoopSlotPersist(target.trackIndex, target.slotIndex);
-    StorageManager::requestDeferredSaveState(looperState.getLooperState(),
-                                             MemoryMonitor::getInternalHeapFreeBytes(), true);
-  }
+                     DebugSessionCapture::kUnsampledHeapBytes, "deferred", &stopPathStats);
 }

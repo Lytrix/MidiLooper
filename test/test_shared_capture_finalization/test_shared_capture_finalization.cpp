@@ -272,6 +272,31 @@ void stop(Track& t, bool overdub, uint32_t tick) {
   clockManager.assignCurrentTickSilently(tick);
   if (overdub) t.stopOverdubbing(); else t.stopRecordingToStopped(tick);
 }
+/// S4f.17: the production stop edge admits a deferred Record job and returns; the pass,
+/// its undo entry and its persistence admission come from the worker's grains. Every
+/// Record fixture must therefore consume the chain before it asserts published content.
+void driveStopToRetirement(Track& t) {
+  const uint64_t declared = TrackCaptureStopTestAccess::budget(t);
+  uint64_t turns = 0;
+  const uint64_t cap = declared + 4096;
+  while (t.hasStopInFlight() && turns < cap && turns < 20000) {
+    ++turns;
+    TrackCaptureStopTestAccess::step(t);
+  }
+  if (t.hasStopInFlight()) {
+    const size_t jobs = TrackCaptureStopTestAccess::jobs(t);
+    char msg[224];
+    snprintf(msg, sizeof(msg),
+             "deferred Record stop did not retire: turns=%llu declared=%llu jobs=%zu pending_latch=%d "
+             "phase=%u length=%u capture_store=%s",
+             static_cast<unsigned long long>(turns), static_cast<unsigned long long>(declared), jobs,
+             static_cast<int>(t.hasAcceptedUnexecutedInteraction()),
+             jobs ? static_cast<unsigned>(TrackCaptureStopTestAccess::phase(t)) : 99u,
+             static_cast<unsigned>(t.getLoop(0).loopLengthTicks),
+             t.getLoop(0).capture.store.empty() ? "empty" : "populated");
+    TEST_ASSERT_TRUE_MESSAGE(false, msg);
+  }
+}
 void assertContent(Track& t, uint8_t slot, bool overdub, uint8_t note) {
   const Loop& loop = t.getLoop(slot);
   TEST_ASSERT_EQUAL_UINT32(768, loop.loopLengthTicks);
@@ -297,23 +322,20 @@ void rotation(bool aOverdub, bool bOverdub) {
   start(t, 0, aOverdub, 0, 60);
   const uint64_t a = TrackCaptureStopTestAccess::interval(t);
   stop(t, aOverdub, 768);
-  const bool contract = std::getenv("S4F16_REQUIRE_CONTRACT") != nullptr;
-  if (contract || aOverdub) {
-    TEST_ASSERT_EQUAL_UINT_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
-      "A must own a deferred job before any worker grain (record currently publishes inline)");
-  } else {
-    TEST_ASSERT_EQUAL_UINT(0, TrackCaptureStopTestAccess::jobs(t));
-  }
+  // S4f.17: both stop entry points admit a deferred job, so the deferred shape is the
+  // production shape on every mode rotation -- it is no longer a contract-gated expectation.
+  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, TrackCaptureStopTestAccess::jobs(t),
+    "A must own a deferred job before any worker grain");
   start(t, 1, bOverdub, 768, 62);
   const uint64_t b = TrackCaptureStopTestAccess::interval(t);
   TEST_ASSERT_TRUE_MESSAGE(b > a, "each actual start needs a fresh interval");
-  if (contract || aOverdub) TrackCaptureStopTestAccess::assertHead(
+  TrackCaptureStopTestAccess::assertHead(
       t, 0, a, aOverdub ? CapturePhase::Overdub : CapturePhase::Record);
   stop(t, bOverdub, 1536);
-  if (contract || (aOverdub && bOverdub)) {
-    TEST_ASSERT_TRUE(t.hasAcceptedUnexecutedInteraction());
-    TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
-  }
+  // A's job still owns the ring, so B's stop is retained rather than admitted. That is the
+  // DEC-067/DEC-078 obligation, identical on the Record and overdub routes.
+  TEST_ASSERT_TRUE(t.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_EQUAL_UINT(1, TrackCaptureStopTestAccess::jobs(t));
   const auto freeBefore = LoopEventStore::freeChunkCount();
   unsigned turns = 0;
   uint64_t allowance = 2; // At most two accepted-interaction admission turns.
@@ -601,6 +623,7 @@ void test_record_stop_commits_exact_held_note_closures() {
   const NoteId first = loop.capture.store.at(0).noteId;
   const NoteId second = loop.capture.store.at(1).noteId;
   t.stopRecordingToStopped(868);
+  driveStopToRetirement(t);
   TEST_ASSERT_EQUAL(768, loop.loopLengthTicks);
   TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::heldCount(t));
   SessionMidiEventVec rows;
@@ -1814,6 +1837,7 @@ void recordNormalizationInventory(bool playing, bool removeShort) {
   TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::heldCount(t));
   clockManager.assignCurrentTickSilently(origin + 900);
   if (playing) t.stopRecording(origin + 900); else t.stopRecordingToStopped(origin + 900);
+  driveStopToRetirement(t);
   TEST_ASSERT_EQUAL(768, loop.loopLengthTicks);
   TEST_ASSERT_TRUE(loop.passes.hasRecordPass());
   TEST_ASSERT_EQUAL(0, loop.passes.overdubPasses.size());
@@ -1847,6 +1871,7 @@ void test_record_normalization_preserves_take_larger_than_overdub_staging() {
   const uint32_t length = static_cast<uint32_t>(((pairs * 48 + 767) / 768) * 768);
   clockManager.assignCurrentTickSilently(768 + length);
   t.stopRecordingToStopped(768 + length);
+  driveStopToRetirement(t);
   TEST_ASSERT_EQUAL(length, t.getLoop(0).loopLengthTicks);
   assertRecordRows(t.getLoop(0), expected);
 }
@@ -1859,6 +1884,7 @@ void test_record_normalization_filtered_empty_resets_geometry() {
   TEST_ASSERT_EQUAL(2, t.getLoop(0).capture.store.size());
   clockManager.assignCurrentTickSilently(1536);
   t.stopRecordingToStopped(1536);
+  driveStopToRetirement(t);
   TEST_ASSERT_FALSE(t.getLoop(0).passes.hasRecordPass());
   TEST_ASSERT_EQUAL(0, t.getLoop(0).loopLengthTicks);
   TEST_ASSERT_EQUAL(0, t.getLoop(0).capture.store.size());

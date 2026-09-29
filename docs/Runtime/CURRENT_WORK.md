@@ -1,5 +1,32 @@
 # Current work (implementation scope)
 
+**2026-09-29 — S4f.17 S17.1 + S17.2 — production Record admission and stop routing landed.**
+`stopRecording` and `stopRecordingToStopped` now admit the interval through
+`beginDeferredRecordStopForSlot` and keep their destination behaviour at the stop edge in
+`Track::completeAdmittedRecordStop` (origin alignment, truncation rewind, loop phase,
+`TRACK_STOPPED_RECORDING` → PLAYING/STOPPED, and the record-stop playback handoff). A denied stop
+is retained as an accepted obligation and admitted later by `driveAcceptedInteraction`, which now
+dispatches on the request's capture mode, so a Record obligation runs the Record chain. The inline
+`prepareRecordStop` + `commitCaptureForStop` Record route is gone from both entry points; the
+pass, the `RecordPassAdded` undo entry and the once-only persistence admission come from
+`stepDeferredRecordPublication`. Fixtures converted from the inline oracle now verify the deferred
+chain's **content**: the three `recordNormalizationInventory` modes, the larger-than-staging take
+(2 056 rows), the filtered-empty geometry reset, the exact held-note closures, and the
+working-set transport-stop successor take. They exposed and the slice fixes three defects that the
+synchronous route had hidden — the deferred normalization closed open tails at loop end instead of
+the stop playhead's loop phase (wrong published rows); the deferred-grain prologue required the
+live loop length to equal the job's, parking a completed job forever after an all-filtered take or
+a successor reset; and the S4f.19 continuity gate waited on a frozen window build only the playback
+owner can advance, deadlocking retirement on an empty take. The Record admission also declares its
+bounded preparation estimate, read from O(1) scalars. **Strict matrix green: 45/45** (R→R, R→OD,
+OD→R, OD→OD, with and without `S4F16_REQUIRE_CONTRACT`); full native **2 612 cases, 2 605
+succeeded, 7 skipped**; capture-serial build **PASS, RAM1 padding 2 040** (floor 840). Mutations
+red-proven: the inline Record commit (7 cases), the dropped stop-edge length stamp (8 cases), the
+loop-end tail-close policy (3 cases), the job-owned-geometry exemption (1 case).
+**Open:** S17.3 manager continuations (they still read the stop-edge-stamped length
+synchronously), S17.4 the S4f.20 residuals, S17.5 the enforced gate and mutations.
+[Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md).
+
 **2026-09-28 — S4f.19 §2 — first-bar and onward playback handoff: delta work complete.**
 Landed and verified (rounds 2-11): deferred return-window bind with content projection and an
 atomic refusal; the native `MidiSendCapture` wire boundary; the ownership/audibility predicate
@@ -3804,9 +3831,21 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 User-requested firmware contract is recorded in the existing runtime OpenSpec:
 [shared capture finalization](../../openspec/changes/runtime-working-set-ownership/SHARED-CAPTURE-FINALIZATION.md).
 S4f.15 — contract and S4f.16 — production finalization fixtures are complete.
-S4f.17–S4f.22 remain open. Next extend the existing interval/latch/job admission to both
-modes against the linked fixtures; retain the strict deferred-ownership oracle. No weaker record
-oracle is authorized. Response-driven HITL tasks remain the automation dependency.
+S4f.17–S4f.22 remain open. **S17.1 + S17.2 are landed (2026-09-29): the production Record stop no
+longer finalizes inline.** Both Record stop entry points admit a deferred job
+(`beginDeferredRecordStopForSlot`), run their bounded transport edge
+(`Track::completeAdmittedRecordStop`) and return; a denied stop is retained and admitted later by
+`driveAcceptedInteraction`, which now dispatches on the retained request's capture mode; the pass,
+its `RecordPassAdded` undo entry and its persistence admission come from the worker's publication.
+The strict matrix — R→R, R→OD, OD→R, OD→OD — is green (45/45 with and without
+`S4F16_REQUIRE_CONTRACT`), full native is 2 612 cases / 2 605 succeeded / 7 skipped, and the
+capture-serial build passes with RAM1 padding 2 040 (floor 840).
+[Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md).
+Next: S17.3 — convert `stopRecordingTrack`, `finalizeCaptureAndSelectSlot` and `stopAllTracks`
+from reading the stop-edge-stamped length to consuming a job-qualified geometry-ready result,
+protecting a same-slot destructive restart while permitting a different-slot successor. Then
+S17.4 — the S4f.20 residuals — and S17.5's enforced gate and mutations. No weaker record oracle
+is authorized. Response-driven HITL tasks remain the automation dependency.
 
 S4f.18 — frozen-source consumer prerequisite is implemented: the existing bounded playback
 fill reads exclusive raw chunks, projects record-stop ticks and denies stale or failed reads.

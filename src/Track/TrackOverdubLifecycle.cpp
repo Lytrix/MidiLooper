@@ -34,6 +34,28 @@ constexpr StopAdmissionContract kDeferredStopContract{
 
 constexpr uint16_t kDeferredStopPreparationQuantum = 32;
 
+/// S4f.17: upper bound on the **Record** stop chain's bounded preparation service turns.
+/// The Record route has no companion, ranked or history-recycle preparation, so what it must
+/// declare is the private composition over the frozen take: the two fixed MIDI-key scratch
+/// resets (wrap-tail repair and minimum length) that walk their lane arrays at the declared
+/// quantum, the resumable row passes (canonical order, identity completion, tail read, tail
+/// output, filter preflight/read, compaction and the private reorder) and the bounded chunk
+/// moves of source staging, pass transfer and retirement. Every term is an O(1) scalar read
+/// at admission; this is an upper bound, not a work list, so a job retires its unused credits.
+uint64_t recordStopPreparationGrainBound(size_t rowCount, size_t chunkCount, size_t quantum) {
+  if (quantum == 0) return 0;
+  const auto grains = [quantum](size_t units) {
+    return static_cast<uint64_t>((units + quantum - 1) / quantum);
+  };
+  const uint64_t laneResets =
+      2 * grains(LoopStopFinalize::TailRepairWorkspace::kLanes);
+  // One turn may advance several of the row passes, so the coefficient is deliberately
+  // generous: this is a liveness bound, never a service ceiling.
+  const uint64_t rowPasses = 8 * grains(rowCount);
+  const uint64_t chunkMoves = 3 * grains(chunkCount) + 2;
+  return laneResets + rowPasses + chunkMoves + 4;
+}
+
 /// OpenSpec 5.6: one compact resource-denial record from the admission owner. A macro keeps the
 /// decision label a literal at its branch (so each denial row names its own resource) and keeps
 /// the whole call compiled out of a non-capture build.
@@ -251,8 +273,16 @@ TRACK_COLD_MEM bool Track::driveAcceptedInteraction() {
   // stored absolute tick or a destination that transport stop has since retargeted.
   const PendingStopDestination destination =
       clockManager.isTransportRunning() ? request.destination : PendingStopDestination::Stopped;
-  if (beginDeferredOverdubStopForSlot(destination, clockManager.getCurrentTick(), request.slot,
-                                      request.interval)) {
+  // S4f.17: the accepted obligation is admitted by the mode its interval was captured in. A
+  // Record interval runs the Record chain (its own receipts and geometry) and its own transport
+  // edge; the overdub form keeps the staging-dependent path.
+  const bool admitted =
+      request.mode == CapturePhase::Record
+          ? beginDeferredRecordStopForSlot(destination, clockManager.getCurrentTick(),
+                                           request.slot, request.interval)
+          : beginDeferredOverdubStopForSlot(destination, clockManager.getCurrentTick(),
+                                            request.slot, request.interval);
+  if (admitted) {
     consumeAcceptedStopObligation();
     return true;
   }
@@ -557,13 +587,25 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   if (!runtime->canonicalCaptureOutputAdmitted()) {
     return false;
   }
+  // Pure predicate, resolved before the seal so no fallible step follows the transfer.
+  if (!isValidStateTransition(TRACK_STOPPED_RECORDING)) {
+    return false;
+  }
+  // The interval's final geometry is a scalar the caller continuations read at the stop
+  // edge (the inline route stamped it here too). It is the same value the worker publishes.
+  loop.loopLengthTicks = finalLength;
   // No fallible step may follow the ownership transfer.
   job.owner = &loop;
   job.slot = slot;
   job.loopId = loop.loopId;
   job.mode = CapturePhase::Record;
   job.interval = interval;
-  job.phaseTick = currentTick;
+  // The closure Off lands at this interval's **loop phase** of the stop playhead, exactly as
+  // `finalizePendingNotes` projects it on the inline route (which reaches `capturePhaseTick`
+  // after leaving RECORDING). `stepDeferredRecordClosure` then clamps to `loopLengthTicks - 1`.
+  job.phaseTick = finalLength > 0
+                      ? tickPhaseInLoop(currentTick, loop.startLoopTick, finalLength)
+                      : 0;
   job.loopLengthTicks = finalLength;
   if (hasRawExtent) {
     if (!loop.capture.store.sealCaptureRange(job.rawRange) ||
@@ -577,15 +619,35 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   takeHeldNotesInto(job);
   job.admission.pending = true;
   job.admission.destination = destination;
+  // The declared Record preparation bound. Unlike the overdub route there is no ranked or
+  // companion preparation, so this is the private composition over the take: the fixed
+  // scratch resets, the resumable row passes and the bounded chunk moves. Read here from
+  // O(1) scalars, then consumed one grain at a time by the Record phases.
+  job.admission.remainingCanonicalPreparationGrains = recordStopPreparationGrainBound(
+      loop.capture.store.size(), loop.capture.store.chunkIds().size(),
+      kDeferredStopPreparationQuantum);
+  job.admission.canonicalPreparationQuantum = kDeferredStopPreparationQuantum;
   // The frozen token is the interval identity: unique per actual start and the same space the
   // worker compares against the runtime owner generation.
   job.admission.frozenGeneration = static_cast<uint32_t>(interval);
   job.admission.stopTick = currentTick;
-  job.admission.setPhase(PendingStopPhase::ReservedClosure);
-  job.admission.remainingClosureGrains = job.pendingNotes.size();
+  if (job.ownsRawRange) {
+    job.admission.setPhase(PendingStopPhase::ReservedClosure);
+    job.admission.remainingClosureGrains = job.pendingNotes.size();
+  } else {
+    // The producer owns no extent: there is no interval to close, stage or publish, so the
+    // empty terminal *is* the whole job. Entering `ReservedClosure` here would wedge the job,
+    // because every Record grain past it requires an owned raw range.
+    job.admission.setPhase(PendingStopPhase::RecordEmpty);
+    job.admission.remainingClosureGrains = 0;
+  }
   runtime->setCaptureStopOwner(job.admission, job.admission.frozenGeneration);
   captureRecordGeometryReceipt(job);
   ++captureStopJobs_->count;
+  // The interval is frozen into the job and the producer directory is free, so the transport
+  // edge runs here: every admission route (the live stop and the accepted-stop drive) gets the
+  // same destination behaviour from this one place.
+  completeAdmittedRecordStop(destination, currentTick, slot, rawLength);
   return true;
 }
 
@@ -1321,8 +1383,12 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordNormalizatio
       return LoopEventStoreRewriteResult::Denied;
     RecordPreparation::Geometry geometry{};
     geometry.loopLengthTicks = job.loopLengthTicks;
-    // The inline Record stop closes open tails at loop end, not at the playhead.
-    geometry.openTailCloseTick = UINT32_MAX;
+    // The inline Record stop closes an open tail at the stop playhead's loop phase
+    // (`Loop::finalizeCaptureWrapWindowAtStop`) and at `loopLengthTicks - 1` when that phase
+    // precedes the note's own start -- the same rule the stop projection used. Passing
+    // `UINT32_MAX` here would close every tail at loop end, which is the *overdub* policy, and
+    // it changes the published row set (a tail Off at the playhead vs. at loop end).
+    geometry.openTailCloseTick = job.phaseTick;
     geometry.wrapWindow = Config::TICKS_PER_BAR;
     geometry.minLengthTicks = noteMinLengthTicks;
     geometry.minLengthRemoveEnabled = noteMinLengthRemoveEnabled;
@@ -1508,7 +1574,8 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordEmptyResult(
   // job-owned raw range carries this interval's rows, and a live successor may
   // already own the Loop's producer directory.
   Loop& loop = *job.owner;
-  if (loop.activeCapturePassCount() == 0) {
+  const bool resetGeometry = loop.activeCapturePassCount() == 0;
+  if (resetGeometry) {
     loop.resetPassTimeline();
     loop.loopLengthTicks = 0;
     loop.loopStartTick = 0;
@@ -1518,6 +1585,13 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordEmptyResult(
     loop.invalidatePlaybackCaches();
   }
   loop.markDisplayCachesStale();
+  // The transport edge ran at admission and cannot know the take was filtered out until this
+  // grain, so it may have optimistically entered PLAYING. The inline empty take ended
+  // STOPPED/EMPTY and never started playback; resolve that here, once, and only while this
+  // interval still owns the live transport.
+  if (resetGeometry && job.interval == captureInterval_ && job.slot == activeLoopIndex) {
+    setState(hasAnySlotData() ? TRACK_STOPPED : TRACK_EMPTY);
+  }
   stop.setPhase(PendingStopPhase::RecordPublished);
   return LoopEventStoreRewriteResult::Complete;
 }
@@ -1538,7 +1612,13 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
   // and then drops the range-derived window before the first release grain. The bound bar-1
   // return window is deliberately kept: it is served until a replacement *view* is handed
   // off, and it owns copies, not the range.
-  if (runtime != nullptr && runtime->frozenWindowBuildActive()) {
+  //
+  // The wait is only meaningful while this slot still has an audible source. An empty take
+  // resets the interval's geometry to zero, and the build is advanced *only* by the playback
+  // owner, which never runs for a slot with no audible source: waiting there would hold the
+  // job, its raw range and the capture-stop owner forever instead of transferring them.
+  const bool intervalHasGeometry = loop.loopLengthTicks != 0;
+  if (runtime != nullptr && runtime->frozenWindowBuildActive() && intervalHasGeometry) {
     return LoopEventStoreRewriteResult::Pending;
   }
   if (runtime != nullptr) runtime->releaseFrozenRecordWindow();
@@ -1576,10 +1656,21 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     logger.log(CAT_TRACK, LOG_WARNING, "Deferred stop stalled: %s", reason);
   };
   // Never reinterpret a saved job through the currently selected slot.
+  //
+  // The geometry clause is an **overdub** invariant: an overdub job finalizes against the
+  // interval's frozen length, so the live scalar must still match. A Record job owns its
+  // geometry as a job receipt and both *publishes* it and, when the take is filtered out,
+  // resets the live scalar to zero -- and a successor take on the same slot resets it too.
+  // Requiring equality there parks a completed Record job forever (the retirement grain never
+  // runs, so the raw range, the capture-stop owner and the ring slot are all held). The
+  // owner/slot/loopId clauses below still prove the interval was not replaced or reinterpreted.
+  const bool geometryMatches =
+      job.mode == CapturePhase::Record ||
+      (job.owner != nullptr && job.owner->loopLengthTicks == job.loopLengthTicks);
   if (!job.owner || !loopsAllocated() ||
       loopIdForSlot(job.slot) != job.loopId ||
       &getLoop(job.slot) != job.owner || job.owner->loopId != job.loopId ||
-      job.owner->loopLengthTicks != job.loopLengthTicks) {
+      !geometryMatches) {
     noteStallOnce("job owner or loop geometry no longer matches");
     return false;
   }
@@ -1589,26 +1680,35 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   // staging and (later) the preparation composition over the job's frozen range.
   // Overdub keeps the staging-dependent path below.
   if (job.mode == CapturePhase::Record) {
+    // S4f.17: one declared Record preparation credit per consuming turn. `ReservedClosure`
+    // turns are already counted by `remainingClosureGrains`, which must reach zero before
+    // this class may decrement -- `consumeCanonicalPreparationGrain` enforces exactly that.
+    // The declared value is an upper bound, so exhausting it never blocks a phase.
+    const auto advance = [&](LoopEventStoreRewriteResult result) {
+      if (result != LoopEventStoreRewriteResult::Denied)
+        (void)stop.consumeCanonicalPreparationGrain();
+      return result != LoopEventStoreRewriteResult::Denied;
+    };
     if (stop.phase == PendingStopPhase::ReservedClosure) {
-      return stepDeferredRecordClosure(job) != LoopEventStoreRewriteResult::Denied;
+      return advance(stepDeferredRecordClosure(job));
     }
     if (stop.phase == PendingStopPhase::RecordSourceStaging) {
-      return stepDeferredRecordSourceStaging(job) != LoopEventStoreRewriteResult::Denied;
+      return advance(stepDeferredRecordSourceStaging(job));
     }
     if (stop.phase == PendingStopPhase::CanonicalOrder) {
-      return stepDeferredRecordNormalization(job) != LoopEventStoreRewriteResult::Denied;
+      return advance(stepDeferredRecordNormalization(job));
     }
     if (stop.phase == PendingStopPhase::RecordPrepared) {
-      return stepDeferredRecordPassTransfer(job) != LoopEventStoreRewriteResult::Denied;
+      return advance(stepDeferredRecordPassTransfer(job));
     }
     if (stop.phase == PendingStopPhase::RecordPassReady) {
-      return stepDeferredRecordPublication(job) != LoopEventStoreRewriteResult::Denied;
+      return advance(stepDeferredRecordPublication(job));
     }
     if (stop.phase == PendingStopPhase::RecordEmpty) {
-      return stepDeferredRecordEmptyResult(job) != LoopEventStoreRewriteResult::Denied;
+      return advance(stepDeferredRecordEmptyResult(job));
     }
     if (stop.phase == PendingStopPhase::RecordPublished) {
-      return stepDeferredRecordRetirement(job) != LoopEventStoreRewriteResult::Denied;
+      return advance(stepDeferredRecordRetirement(job));
     }
     return false;
   }
