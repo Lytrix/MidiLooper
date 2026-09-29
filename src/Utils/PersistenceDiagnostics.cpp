@@ -3,6 +3,8 @@
 
 #include "Utils/PersistenceDiagnostics.h"
 
+#include "Utils/TrackMem.h"
+
 #if defined(SESSION_CAPTURE)
 
 #include "LoopEventStore.h"
@@ -110,8 +112,12 @@ void maybeEmitPoolPressureWarning() {
   }
 }
 
-void maybeEmitPeriodic(bool captureOrTransportActive, bool savePending, bool saveInProgress,
-                       bool sdIoActive, const BacklogSnapshot* backlog) {
+// FLASHMEM: periodic idle diagnostic, called from the deferred save scheduler, never from
+// the MIDI edge. Moved out of ITCM to keep the S4f.17 Record admission's held-note receipt
+// transfer (an out-of-line `unordered_map::swap`) inside the RAM1 floor.
+TRACK_COLD_MEM void maybeEmitPeriodic(bool captureOrTransportActive, bool savePending,
+                                      bool saveInProgress, bool sdIoActive,
+                                      const BacklogSnapshot* backlog) {
   maybeEmitPoolPressureWarning();
 
   const bool hasDeferredWork = savePending || saveInProgress;

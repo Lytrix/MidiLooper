@@ -511,6 +511,84 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
                                          captureInterval_);
 }
 
+TRACK_COLD_MEM void Track::takeHeldNotesInto(CaptureStopJob& job) {
+  job.pendingNotes.swap(pendingNotes);
+}
+
+TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination destination,
+                                                          uint32_t currentTick, uint8_t slot,
+                                                          uint64_t interval) {
+  // S4f.17 Record admission. Same ring, same interval-identity rule, same owner as the
+  // overdub form; the resources it needs are the Record chain's, not the overdub staging's.
+  if (!captureStopJobs_ || hasPendingDeferredOverdubStop()) {
+    return false;
+  }
+  if (slot >= Config::MAX_LOOPS_PER_TRACK || interval != captureInterval_) {
+    return false;  // a superseded request is not a refusal of a user interaction
+  }
+  if (!loopsAllocated()) {
+    return false;
+  }
+  Loop& loop = getLoop(slot);
+  if (loop.capture.phase != CapturePhase::Record) {
+    return false;  // the named interval is not the live Record capture
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  if (runtime == nullptr || runtime->captureStopOwner != nullptr) {
+    return false;  // no runtime, or the slot's finalizer is busy
+  }
+  CaptureStopJob* admission = captureStopJobTail();
+  if (admission == nullptr || !admission->pendingNotes.empty()) {
+    return false;
+  }
+  CaptureStopJob& job = *admission;
+  // Final geometry from the maintained summary: the stop edge performs no store walk.
+  const uint32_t rawLength =
+      currentTick >= loop.startLoopTick ? currentTick - loop.startLoopTick : 0;
+  const uint32_t finalLength = computeRecordStopLengthTicks(rawLength, loop.captureMaximumTick());
+  // Prove the raw ownership transfer before any mutation. An empty capture owns no extent
+  // and stays on the producer path.
+  const bool hasRawExtent = !loop.capture.store.empty();
+  if (hasRawExtent && !loop.capture.store.canSealCaptureRange(job.rawRange)) {
+    return false;
+  }
+  // The private prepared output is reserved at the record start; admission only checks it,
+  // so no allocation happens at the stop edge.
+  if (!runtime->canonicalCaptureOutputAdmitted()) {
+    return false;
+  }
+  // No fallible step may follow the ownership transfer.
+  job.owner = &loop;
+  job.slot = slot;
+  job.loopId = loop.loopId;
+  job.mode = CapturePhase::Record;
+  job.interval = interval;
+  job.phaseTick = currentTick;
+  job.loopLengthTicks = finalLength;
+  if (hasRawExtent) {
+    if (!loop.capture.store.sealCaptureRange(job.rawRange) ||
+        !loop.borrowSealedCaptureRange(job.rawRange, &job.admission)) {
+      return false;
+    }
+    job.ownsRawRange = true;
+  }
+  // The held-note receipt moves to the job: the closure grain emits one terminal Off per
+  // entry from the job's own map, so a successor's input cannot rewrite it.
+  takeHeldNotesInto(job);
+  job.admission.pending = true;
+  job.admission.destination = destination;
+  // The frozen token is the interval identity: unique per actual start and the same space the
+  // worker compares against the runtime owner generation.
+  job.admission.frozenGeneration = static_cast<uint32_t>(interval);
+  job.admission.stopTick = currentTick;
+  job.admission.setPhase(PendingStopPhase::ReservedClosure);
+  job.admission.remainingClosureGrains = job.pendingNotes.size();
+  runtime->setCaptureStopOwner(job.admission, job.admission.frozenGeneration);
+  captureRecordGeometryReceipt(job);
+  ++captureStopJobs_->count;
+  return true;
+}
+
 TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestination destination,
                                                            uint32_t currentTick, uint8_t slot,
                                                            uint64_t interval) {
@@ -746,7 +824,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   job.causalBaseSnapshot = std::move(causalBaseSnapshot);
   if (!job.causalBase.snapshotIdentity) job.causalBaseSnapshot = {};
   job.causalBaseRecorded = true;
-  job.pendingNotes.swap(pendingNotes);
+  takeHeldNotesInto(job);
   ++captureStopJobs_->count;
   // Ownership transfer. The precheck proved this cut and nothing between it and
   // here mutates the producer or the destination directory, so admission has no

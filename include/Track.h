@@ -932,6 +932,23 @@ private:
                                        uint8_t slot, uint64_t interval);
   /// Live-edge wrapper: admits against the currently active slot and live interval.
   bool beginDeferredOverdubStop(PendingStopDestination destination, uint32_t currentTick);
+  /// S4f.17: admit a **Record** stop through the same ring/latch drive. Binds the interval's
+  /// own slot/interval, its frozen raw range (under a no-partial-cut preflight), its
+  /// held-note receipt and its job-owned geometry; the final length comes from the
+  /// maintained maximum-tick summary, so no store walk runs at the stop edge. Every
+  /// fallible step is resolved before the ownership transfer, and the private prepared
+  /// output must already be admitted (reserved at the record start).
+  bool beginDeferredRecordStopForSlot(PendingStopDestination destination, uint32_t currentTick,
+                                      uint8_t slot, uint64_t interval);
+  /// Move this interval's held-note receipt into the job. Both admissions (Record and overdub)
+  /// transfer through this one helper so the ownership move has a single reviewed home.
+  ///
+  /// Cost note: the transfer stays out-of-line. `std::unordered_map::swap` is emitted as a
+  /// 160 B weak `_Hashtable::swap` that the linker keeps in ITCM and reaches from FLASH
+  /// through an 8 B veneer; routing both call sites here did not inline it. The ITCM budget
+  /// for this slice was therefore reclaimed elsewhere (`PersistenceDiagnostics::maybeEmitPeriodic`,
+  /// moved to FLASH).
+  void takeHeldNotesInto(CaptureStopJob& job);
   static bool appendReservedCaptureNoteOffForOwner(
       Loop& loop, CaptureAdmissionStaging& staging,
       CaptureNoteReservation& reservation, uint32_t phaseTick);

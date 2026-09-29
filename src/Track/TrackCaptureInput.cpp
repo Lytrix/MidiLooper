@@ -427,6 +427,11 @@ void Track::startRecording(uint32_t currentTick) {
       (void)runtime->releaseFirstRecordingBarReturnWindow();
     }
     const bool firstBarReady = runtime->prepareFirstRecordingBar(Config::TICKS_PER_BAR);
+    // S4f.17: the deferred Record chain needs its private prepared output admitted before
+    // the stop edge. Reserve it here, at the record START, so admission itself performs no
+    // allocation (the overdub route prewarms its transfer horizon the same way). A denial
+    // is not an input-rejection policy: the first-bar admission above still governs.
+    (void)runtime->prewarmCanonicalCaptureOutput();
     ExternalPoolAccounting::endTag();
     if (!firstBarReady) {
       logger.log(CAT_TRACK, LOG_WARNING,

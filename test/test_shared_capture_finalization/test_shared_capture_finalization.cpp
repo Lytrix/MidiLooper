@@ -71,6 +71,11 @@ struct TrackCaptureStopTestAccess {
   static bool audibleSource(const Track& t, uint8_t slot) {
     return t.hasAudiblePlaybackSource(slot);
   }
+  static bool admitRecordStop(Track& t, uint32_t tick, uint64_t interval) {
+    return t.beginDeferredRecordStopForSlot(PendingStopDestination::Playing, tick, 0, interval);
+  }
+  static size_t trackHeldNotes(const Track& t) { return t.pendingNotes.size(); }
+  static Track::CaptureStopJob& head(Track& t) { return *t.captureStopJobHead(); }
   static LoopPlaybackRuntime& runtimeFor(Track& t, uint8_t slot) {
     return *t.playbackRuntime.slotIfAllocated(slot);
   }
@@ -1641,6 +1646,70 @@ void test_two_tracks_each_serve_their_own_deferred_window() {
   TEST_ASSERT_EQUAL_UINT32(1, note62);
 }
 
+// S4f.17 S17.1: a Record stop admitted through the **production** admission binds a job with
+// the record receipts (raw range, held notes, job geometry) and the existing worker drives it to
+// exactly-once publication and retirement. This is the gate that lets S17.2 route the stop
+// entry points through the drive.
+void test_record_stop_admits_through_the_common_drive() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  Loop& loop = t.getLoop(0);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  if (runtime.viewSetIfPrewarmed() == nullptr) {
+    TEST_ASSERT_TRUE(runtime.prewarmViews(loop.companionRowHorizonBound(),
+                                          loop.fullTakePlaybackViewAdmissible()));
+  }
+  t.startRecording(100);
+  // Left held: the held-note receipt and the terminal closure Off are part of the bind.
+  t.noteOn(1, 60, 100, 112);
+  const uint64_t interval = TrackCaptureStopTestAccess::interval(t);
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::trackHeldNotes(t)));
+
+  // Production admission: no controlled bind, no manual receipt construction.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::admitRecordStop(t, 768, interval));
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::jobs(t)));
+  auto& job = TrackCaptureStopTestAccess::head(t);
+  TEST_ASSERT_EQUAL(CapturePhase::Record, job.mode);
+  TEST_ASSERT_TRUE(job.ownsRawRange);
+  TEST_ASSERT_TRUE(job.rawRange.ready());
+  TEST_ASSERT_TRUE(job.admission.pending);
+  TEST_ASSERT_EQUAL_UINT64(interval, job.interval);
+  TEST_ASSERT_EQUAL(PendingStopPhase::ReservedClosure, job.admission.phase);
+  TEST_ASSERT_EQUAL_UINT32(job.pendingNotes.size(),
+                           static_cast<uint32_t>(job.admission.remainingClosureGrains));
+  // The held-note receipt moved to the job, so a successor cannot rewrite it.
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::trackHeldNotes(t)));
+  TEST_ASSERT_GREATER_THAN_UINT32(0, job.loopLengthTicks);
+  // The geometry receipt is the job's own.
+  TEST_ASSERT_TRUE(job.hasRecordGeometry);
+  TEST_ASSERT_EQUAL(job.loopId, job.recordGeometryLoopId);
+  const uint32_t finalLength = job.loopLengthTicks;
+  // The execution boundary stamps the interval's final geometry once (S17.2 does this in the
+  // stop entry point; here the fixture supplies it so the publication geometry is well defined).
+  loop.loopLengthTicks = finalLength;
+
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::closureGrain));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::stagingGrain));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::normalizationGrain));
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon());
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::passTransferGrain));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::publicationGrain));
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPublished, job.admission.phase);
+  // Exactly-once publication: one pass, one RecordPassAdded entry, one persistence request.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasRecordPass(t, 0));
+  TEST_ASSERT_EQUAL(1, TrackUndo::getUndoCount(t));
+  TEST_ASSERT_EQUAL(UndoEntryKind::RecordPassAdded, t.getGlobalUndoStack().entries.back().kind);
+  TEST_ASSERT_TRUE(StorageManagerInternal::currentSetLoopSlotDirty[0][0]);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::retirementGrain));
+  TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::stopQueueDepth(t));
+}
+
 void test_private_grains_never_hold_the_global_ephemeral_seal() {
   Track& t0 = trackManager.getTrack(0);
   prepareSlot(t0, 0, false);
@@ -1933,6 +2002,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_empty_record_take_all_filtered_retires_without_content);
   RUN_TEST(test_deferred_record_interval_is_audible_only_with_a_bound_window);
   RUN_TEST(test_native_midi_send_capture_records_a_direct_send);
+  RUN_TEST(test_record_stop_admits_through_the_common_drive);
   RUN_TEST(test_two_tracks_each_serve_their_own_deferred_window);
   RUN_TEST(test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source);
   RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);
