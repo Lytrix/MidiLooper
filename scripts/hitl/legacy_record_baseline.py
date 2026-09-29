@@ -2522,6 +2522,35 @@ def _bar_aligned_final_length(raw_length: int, *, ticks_per_bar: int) -> int:
     return bars * ticks_per_bar
 
 
+def _scope_recs_lengths_to_phase(
+    rows: list[dict[str, int]],
+    phase_start_ts: Optional[int],
+    phase_stop_ts: Optional[int],
+    *,
+    tolerance_us: int = 500_000,
+) -> list[dict[str, int]]:
+    """Keep only the take(s) inside the record phase window.
+
+    `_verify_record_loop_length` reads the **last** RECS row, so any later take is scored as the
+    record leg. Measured (`captures/s4f22-step8-e2`): the intended take stopped at tick 2366
+    (`length=2304`), a stray re-arm produced a second one-bar take (`length=768`) 2.5 s later, and
+    the run reported `record_loop_length_mismatch 768/1536` plus `record_note_span_too_short`
+    against a correct take. A take outside its phase window is a different leg, not this one.
+
+    Rows without a usable timestamp keep the previous behaviour (the window cannot judge them), and
+    an empty window result returns empty rather than falling back to every row: "no take in this
+    phase" is evidence loss, not permission to score a foreign take.
+    """
+    if phase_start_ts is None or phase_stop_ts is None:
+        return rows
+    timed = [row for row in rows if int(row.get("timestamp") or 0) > 0]
+    if not timed:
+        return rows
+    low = int(phase_start_ts) - int(tolerance_us)
+    high = int(phase_stop_ts) + int(tolerance_us)
+    return [row for row in timed if low <= int(row["timestamp"]) <= high]
+
+
 def _verify_record_loop_length(
     recs_lengths: list[dict[str, int]],
     *,
@@ -2949,6 +2978,10 @@ def _extract_revt_note_on_ticks(lines: list[str]) -> list[int]:
         except ValueError:
             continue
         if record_start_ts is not None and ts < record_start_ts:
+            continue
+        # Bound the grid to the take that owns the first stop row: a later take's stored notes
+        # would otherwise be counted into this one (unbounded scan before this).
+        if recs_stop_ts is not None and ts > recs_stop_ts:
             continue
         ticks.append(tick)
     return ticks
@@ -4024,6 +4057,10 @@ def _build_serial_verification(
     recs_lengths = extract_recs_stop_lengths(lines)
     if not recs_lengths:
         recs_lengths = _extract_recs_lengths_from_human_logs(lines)
+    # Score the take that belongs to the record phase; a later stray take is a different leg.
+    recs_lengths = _scope_recs_lengths_to_phase(
+        recs_lengths, boundaries.get("record_start_ts"), boundaries.get("record_stop_ts")
+    )
     record_loop_length: Optional[dict[str, object]] = None
     record_note_span: Optional[dict[str, object]] = None
     stored_record_grid: Optional[dict[str, object]] = None
