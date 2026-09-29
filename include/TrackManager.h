@@ -82,6 +82,10 @@ public:
   /// Free non-capturing tracks' playback merge buffers before capture (multi-track headroom).
   void releaseBackgroundPlaybackMergedMidiEventsMemory(uint8_t captureTrackIndex);
   void stopRecordingTrack(uint8_t trackIndex);
+  /// S4f.21: consume any Record-stop geometry obligation whose interval's job has since published or
+  /// been superseded. Called once per dispatch boundary; a no-op when nothing is owed. Public like its
+  /// sibling dispatch-boundary services (`handlePendingRecordStart`, `handleQuantizedStop`).
+  void servicePendingRecordStopGeometry();
   /// Queue recording into slotIndex. refSlotForPhase is a valid slot index for loop-phase punch-in, or
   /// Config::INVALID_LOOP_SLOT for next bar line only.
   void queueRecordingTrack(uint8_t trackIndex, uint8_t slotIndex,
@@ -229,6 +233,21 @@ private:
   /// Slot whose loop phase defines punch-in instant, or Config::INVALID_LOOP_SLOT for bar boundary only.
   uint8_t pendingRecordRefSlot[Config::NUM_TRACKS];
   bool pendingStop[Config::NUM_TRACKS] = {false};
+  /// S4f.21: a Record stop whose interval was still finalizing at the stop edge. The stop edge
+  /// stamps a *predicted* length; latching `masterLoopLength` from it, or auto-aligning with it,
+  /// would adopt geometry the worker may never publish (an all-filtered take publishes zero). The
+  /// obligation is held here and consumed by `servicePendingRecordStopGeometry` once the interval's
+  /// stop is no longer in flight -- the job-qualified result, read exactly once.
+  ///
+  /// One bit per track plus the interval's own slot: RAM1 variables are a gated budget, so the
+  /// owed-set is packed rather than an array of bools. `Config::NUM_TRACKS <= 8` is static-asserted.
+  /// S4f.21: adopt the interval's finalized Record-stop geometry once -- master length on the first
+  /// take, auto-align on every take. Slot-qualified because the obligation outlives the stop edge.
+  void retainRecordStopGeometryObligation(uint8_t trackIndex, uint8_t slot);
+  void applyRecordStopGeometry(uint8_t trackIndex, uint8_t slot, uint32_t recordedLength);
+  uint8_t pendingRecordGeometryMask = 0;
+  uint8_t pendingRecordGeometrySlot[Config::NUM_TRACKS] = {0};
+  static_assert(Config::NUM_TRACKS <= 8, "pendingRecordGeometryMask is a one-byte bit set");
   bool heldLayerSlot[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK] = {{false}};
 
   // Slot-level playback (multi-slot enable + per-slot mute)

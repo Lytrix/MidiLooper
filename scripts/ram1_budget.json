@@ -20,10 +20,10 @@
   "environments": {
     "teensy41-capture-serial": {
       "itcm_bytes": 393216,
-      "ram1_variables": 96160,
-      "locals_free": 34912,
-      "padding": 872,
-      "note": "Default capture/acceptance env. ITCM unchanged at 12 banks (code 391,304 + padding 1,912). RAM1 variables 96,192 -> 96,160 and locals free 34,880 -> 34,912 by the S1.3 record-stop slot-identity diagnostic and the bounded identity-path counters: the mutable counters and the last-take identity live with the capture ring state in DTCM (sCaptureRing) while the counter-handling functions (recSlotIdentity, emitIdentityPathStats) are FLASH-placed (SC_MEM_ATTR), and the take identity is packed into one 32-bit word in the TrackCaptureInput TU rather than a Track member, so Track's pinned sizeof(384) is untouched. Net effect is 32 B of DTCM returned to the local allowance, not a cost. Recorded in openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md (\u00a7 Recorded-slot -> persistence-target correctness)."
+      "ram1_variables": 96192,
+      "locals_free": 34880,
+      "padding": 1992,
+      "note": "Default capture/acceptance env. ITCM unchanged at 12 banks (code 391,304 + padding 1,912). RAM1 variables 96,192 -> 96,160 and locals free 34,880 -> 34,912 by the S1.3 record-stop slot-identity diagnostic and the bounded identity-path counters: the mutable counters and the last-take identity live with the capture ring state in DTCM (sCaptureRing) while the counter-handling functions (recSlotIdentity, emitIdentityPathStats) are FLASH-placed (SC_MEM_ATTR), and the take identity is packed into one 32-bit word in the TrackCaptureInput TU rather than a Track member, so Track's pinned sizeof(384) is untouched. Net effect is 32 B of DTCM returned to the local allowance, not a cost. Recorded in openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md (§ Recorded-slot -> persistence-target correctness). S4f.21 (2026-09-29) job-qualified Record-stop geometry: the manager now holds, per track, one owed bit plus the interval's own slot (9 B, 32 B of DTCM at the section granularity) so `masterLoopLength` and auto-align are adopted from the interval's **published** geometry rather than from the stop edge's prediction. The same slice moved `TrackManager::stopRecordingTrack`, `retainRecordStopGeometryObligation` and `servicePendingRecordStopGeometry` to FLASH, so ITCM code fell 391,240 -> 391,208 and padding rose 1,976 -> 2,008: 32 B of DTCM traded for 32 B of ITCM headroom. `itcm_bytes` (12 banks) and `padding_floor` are unchanged. Recorded in openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md (S17.3b)."
     },
     "teensy41-capture-serial-no-grain": "teensy41-capture-serial",
     "teensy41-capture-serial-investigation-diag": "teensy41-capture-serial",

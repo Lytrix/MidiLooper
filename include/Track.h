@@ -425,6 +425,23 @@ public:
   /// blocking a *different* target: after a switch handoff the successor on another slot must be able
   /// to start while the predecessor finalizes.
   bool hasStopInFlightForSlot(uint8_t slot) const;
+  /// S4f.21: the geometry result of an interval's Record stop, qualified by the job that owns it.
+  /// The stop edge stamps the interval's **predicted** length from the maintained maximum-tick
+  /// summary; an all-filtered take publishes zero instead. A caller that latches a master length or
+  /// auto-aligns from that stamp can therefore adopt geometry that is never published, so it must
+  /// consume this instead: `Final` means no stop is in flight for `slot`, and `loopLengthOut` is the
+  /// authoritative committed length (zero for a take that published nothing). `PendingStop` means
+  /// an admitted job or a retained obligation still owns the slot's geometry -- the caller holds
+  /// its obligation until a later boundary reads `Final`, rather than reading a prediction.
+  ///
+  /// Deliberately mode-neutral: it reports the slot's stop obligation, not the capture mode, so a
+  /// Record stop and an overdub stop resolve the same way.
+  enum class RecordStopGeometryState : uint8_t { Final, PendingStop };
+  RecordStopGeometryState recordStopGeometryForSlot(uint8_t slot, uint32_t& loopLengthOut) const;
+  /// S4f.21: a slot-qualified `setLoopLength`. The auto-align continuation consumes a geometry
+  /// result that names **its own** slot, which by then may no longer be the active one, so the
+  /// active-slot setter would rewrite the wrong interval's length.
+  void setLoopLengthForSlot(uint8_t slot, uint32_t ticks);
   /// S4.1: the slot a **capture work item** must be keyed to -- the interval's own slot, never a
   /// stand-in for it. The live capture's slot *is* the active slot (only it may RECORD/OVERDUB), but a
   /// stop in flight is pinned to ITS interval's slot across an active-slot change (S4f.3), so the active

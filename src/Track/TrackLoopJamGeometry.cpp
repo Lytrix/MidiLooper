@@ -70,6 +70,21 @@ void Track::setLoopLength(uint32_t ticks) {
   persistActiveLoopGeometryChange(*this);
 }
 
+TRACK_COLD_MEM void Track::setLoopLengthForSlot(uint8_t slotIndex, uint32_t ticks) {
+  if (!loopsAllocated() || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  Loop& loop = getLoop(slotIndex);
+  if (loop.loopLengthTicks == ticks) return;
+  loop.loopLengthTicks = ticks;
+  requestActiveLoopSlotPersist(*this, slotIndex);
+  if (slotIndex == activeLoopIndex) {
+    invalidateCaches();
+  } else {
+    // A non-active slot has no live derived-cache reader; its own caches are rebuilt on
+    // activation. Invalidate them anyway so a later activation cannot read the old geometry.
+    loop.invalidatePlaybackCaches();
+  }
+}
+
 void Track::setLoopLengthWithWrapping(uint32_t newLoopLength) {
   Loop& loop = getActiveLoop();
   if (newLoopLength == loop.loopLengthTicks) return;

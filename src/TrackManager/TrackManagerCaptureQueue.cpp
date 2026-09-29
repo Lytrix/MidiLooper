@@ -114,18 +114,57 @@ void TrackManager::releaseBackgroundPlaybackMergedMidiEventsMemory(uint8_t captu
   }
 }
 
-void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
+FLASHMEM void TrackManager::stopRecordingTrack(uint8_t trackIndex) {
   if (trackIndex >= Config::NUM_TRACKS) return;
 
+  // S4f.21: the interval's slot is captured **before** the stop, because the stop edge may move
+  // state and, for a switched-away interval, the active index is no longer its authority.
+  const uint8_t captureSlot = tracks[trackIndex].getActiveLoopIndex();
   tracks[trackIndex].stopRecording(clockManager.getCurrentTick());
-  uint32_t recordedLength = tracks[trackIndex].getLoopLength();
 
-  if (masterLoopLength == 0) {
+  // S4f.21: consume the interval's geometry only when it is **final**. The stop edge stamped the
+  // predicted length from the maintained maximum-tick summary; an all-filtered take publishes zero
+  // instead, so latching `masterLoopLength` from that stamp -- or auto-aligning with it -- adopts
+  // geometry the worker never publishes. While the admitted job (or a retained obligation) still
+  // owns this slot, hold the obligation and let `servicePendingRecordStopGeometry` read the
+  // job-qualified result exactly once.
+  uint32_t recordedLength = 0;
+  if (tracks[trackIndex].recordStopGeometryForSlot(captureSlot, recordedLength) !=
+      Track::RecordStopGeometryState::Final) {
+    retainRecordStopGeometryObligation(trackIndex, captureSlot);
+    return;
+  }
+  applyRecordStopGeometry(trackIndex, captureSlot, recordedLength);
+}
+
+FLASHMEM void TrackManager::retainRecordStopGeometryObligation(uint8_t trackIndex, uint8_t slot) {
+  pendingRecordGeometryMask =
+      static_cast<uint8_t>(pendingRecordGeometryMask | (1u << trackIndex));
+  pendingRecordGeometrySlot[trackIndex] = slot;
+}
+
+FLASHMEM void TrackManager::applyRecordStopGeometry(uint8_t trackIndex, uint8_t slot,
+                                                    uint32_t recordedLength) {
+  if (recordedLength > 0 && masterLoopLength == 0) {
     setMasterLoopLength(recordedLength);  // First loop sets master length
   }
-
   if (autoAlignEnabled) {
-    tracks[trackIndex].setLoopLength(masterLoopLength);
+    tracks[trackIndex].setLoopLengthForSlot(slot, masterLoopLength);
+  }
+}
+
+FLASHMEM void TrackManager::servicePendingRecordStopGeometry() {
+  if (pendingRecordGeometryMask == 0) return;
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    const uint8_t bit = static_cast<uint8_t>(1u << i);
+    if ((pendingRecordGeometryMask & bit) == 0) continue;
+    uint32_t recordedLength = 0;
+    if (tracks[i].recordStopGeometryForSlot(pendingRecordGeometrySlot[i], recordedLength) !=
+        Track::RecordStopGeometryState::Final) {
+      continue;  // Still finalizing; the next dispatch boundary re-reads it.
+    }
+    pendingRecordGeometryMask = static_cast<uint8_t>(pendingRecordGeometryMask & ~bit);
+    applyRecordStopGeometry(i, pendingRecordGeometrySlot[i], recordedLength);
   }
 }
 
@@ -420,12 +459,16 @@ bool TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
       t.stopRecordingToStopped(currentTick);
       if (t.hasAcceptedInteractionForSlot(captureSlot)) return false;
     }
-    uint32_t recordedLength = t.getLoopLength();
-    if (recordedLength > 0 && masterLoopLength == 0) {
-      setMasterLoopLength(recordedLength);
-    }
-    if (autoAlignEnabled) {
-      t.setLoopLength(masterLoopLength);
+    // S4f.21: the same job-qualified geometry rule as `stopRecordingTrack`. The stop above either
+    // bound (falls through, job owns its receipts) or was refused earlier, so this reads the
+    // finalized length when it is already decided and otherwise holds the obligation. Reading the
+    // stop-edge prediction here would latch a length the worker may never publish.
+    uint32_t recordedLength = 0;
+    if (t.recordStopGeometryForSlot(captureSlot, recordedLength) ==
+        Track::RecordStopGeometryState::Final) {
+      applyRecordStopGeometry(trackIndex, captureSlot, recordedLength);
+    } else {
+      retainRecordStopGeometryObligation(trackIndex, captureSlot);
     }
     // Qualified to this TU's local overload. `TrackInternal.h` also declares a global
     // `requestLoopSlotPersistAndSaveState(Track&, uint8_t, uint8_t)` (defined in

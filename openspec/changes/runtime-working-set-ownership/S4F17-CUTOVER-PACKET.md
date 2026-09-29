@@ -195,13 +195,42 @@ superseded and dropped the take. Fixture
 unchanged active slot, the retained obligation, the post-bind commit, the still-finalizing
 predecessor and its committed pass; removing the guard fails it.
 
-**Still owed (S17.3b):** `stopRecordingTrack`, `finalizeCaptureAndSelectSlot` and `stopAllTracks`
-still read the stop-edge-stamped `loopLengthTicks` synchronously. The stamp is the *predicted*
-length from the maintained maximum-tick summary, so an all-filtered take — whose published geometry
-is zero — can still set `masterLoopLength`, and auto-align can still be computed from it. The
-callers must consume a job-qualified geometry-ready result: the interval's geometry is final only
-once its admitted job has published (or its retained obligation has been superseded/consumed), and
-until then the manager must hold the master-length/auto-align obligation rather than latch it.
+**S17.3b — job-qualified geometry result: done.** `Track::recordStopGeometryForSlot(slot,
+lengthOut)` is the qualified read: `Final` means no stop is in flight for that slot, so
+`lengthOut` is the authoritative committed length (zero for a take that published nothing);
+`PendingStop` means an admitted job or a retained obligation still owns the slot. It is
+deliberately **mode-neutral** (it reports the slot's stop obligation, not the capture mode) and
+slot-scoped (`hasStopInFlightForSlot`), so another interval's finalization cannot make this one
+look undecided.
+
+`stopRecordingTrack`, `finalizeCaptureAndSelectSlot`'s Record branch and `handleTransportStop`
+(the transport-stop continuation; there is no separate `stopAllTracks` symbol) now adopt the
+geometry **once**, only when it is final. Until then they retain a per-track obligation
+(`pendingRecordGeometryMask` + `pendingRecordGeometrySlot`) that
+`servicePendingRecordStopGeometry` consumes at the next dispatch boundary, and auto-align is
+applied through the new slot-qualified `Track::setLoopLengthForSlot` because by then the
+obligation's slot may no longer be the active one.
+
+The fix is observable, not cosmetic: the stop edge stamps the *predicted* length (one quantized
+bar for a sub-bar take), so the old synchronous read adopted a `masterLoopLength` from a take the
+minimum-length policy then deleted, and auto-aligned the emptied interval with it. Fixtures:
+`test_record_stop_adopts_published_geometry_not_the_stop_edge_prediction` (nothing adopted at the
+stop edge; the published 768 adopted exactly once after the worker retires) and
+`test_filtered_record_take_publishes_no_master_length` (a 20-tick pair removed by the policy
+adopts nothing). Reverting the transport continuation to the stop-edge read fails both, the second
+with the exact defect message.
+
+Coverage boundary: this suite keeps `Track::startPlaying` fail-closed (the play branch is out of
+scope), so the *PLAYING*-destination `stopRecordingTrack` wrapper is not driven there; it calls the
+same two helpers, and the STOPPED-destination transport-stop route is the one exercised end to end.
+
+RAM1: 32 B of DTCM for the obligation (9 B of state at the section granularity). The same slice
+moved `stopRecordingTrack`, `retainRecordStopGeometryObligation` and
+`servicePendingRecordStopGeometry` to FLASH, so ITCM code fell 391,240 → 391,224 and padding rose
+1,976 → 1,992 — the trade is 32 B of DTCM for ITCM headroom. `scripts/ram1_budget.json` was
+re-based deliberately (`ram1_variables` 96,160 → 96,192, `locals_free` 34,912 → 34,880) with the
+reason recorded here and in the file's note; `itcm_bytes` (12 banks) and `padding_floor` (840) are
+unchanged.
 
 S17.4–S17.5 remain open.
 

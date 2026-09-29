@@ -114,6 +114,18 @@ TRACK_COLD_MEM bool Track::hasStopInFlight() const {
   return hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction();
 }
 
+TRACK_COLD_MEM Track::RecordStopGeometryState Track::recordStopGeometryForSlot(
+    uint8_t slot, uint32_t& loopLengthOut) const {
+  if (!loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) {
+    return RecordStopGeometryState::PendingStop;
+  }
+  // Slot-scoped on purpose: a *different* interval's finalization must not make this one look
+  // undecided, exactly as `hasStopInFlightForSlot` is slot-scoped for the same reason.
+  if (hasStopInFlightForSlot(slot)) return RecordStopGeometryState::PendingStop;
+  loopLengthOut = getLoop(slot).loopLengthTicks;
+  return RecordStopGeometryState::Final;
+}
+
 TRACK_COLD_MEM bool Track::hasStopInFlightForSlot(uint8_t slot) const {
   if (const Track::CaptureStopJob* job = captureStopJobHead()) {
     if (job->slot == slot) {
