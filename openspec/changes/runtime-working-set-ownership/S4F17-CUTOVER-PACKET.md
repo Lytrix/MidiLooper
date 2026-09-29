@@ -1021,3 +1021,40 @@ publication, once per job; leave the full-route collection machinery intact.**
 
 No task checkoff: S4f.17/S4f.18/S4f.20/S4f.21/S4f.22 stay open, and the response-driven device legs remain
 outstanding.
+
+## S4f.22 device legs — 2026-09-30, against the committed undo-level fix (`3307f33d`)
+
+Fresh response-driven legs on the committed build, with a **clean-tree pinned identity**
+(`metadata.json`: `git_commit=3307f33daec1ce1e9924df191588d905b36f2aef`,
+`firmware_hex_sha256=351b2e996682802f783a6026f78d6f5216d160b89c78d33b37e6534a7d2c834b`, no `git_dirty`
+key). Authorized scratch slots for this session: **track 8, slots 4 and 5** (both cleared; the driver's
+scoped clear plus `scripts/hitl_clear_drain_a37.py`).
+
+| run | fixture | verdict | notes |
+| --- | --- | --- | --- |
+| `captures/s4f22-rec-rec-01` | **R→R** (`hitl_accepted_sequence.py --leg rec`, track 8, A=4, B=5) | `SETUP_INCOMPLETE` — **overlap NOT_EXERCISED** | the leg **drove end-to-end**: A seeded (`prepare_slot_a: ALREADY_EMPTY`, `seed_a_recording confirmed`), then `select_track → a_record_start → a_stop → b_switch_start → b_stop`, one press per stop, `device_shutdown complete` (2 stop+drain cycles, verified persistence idle). Oracle: `telemetry_present` ok, `identity_pinned` ok, `L1_a_stop_accepted_once` ok, `L2_no_capacity_denial` ok; **`L3_a_finalization_window` FAIL** ("A never froze into a deferred finalization"), `L4_a_capacity_released` FAIL, `L5_successor_started` FAIL (no start follows A's stop); setup gates `fresh_boot` FAIL (no `BOOT,usb` banner in the first 80 lines — the capture attached without a reset) and `overflow_free` FAIL (one `#CAP,62641732,RING,shed,1`). |
+| `captures/s4f22-od-od-03` | **OD→OD** (`--leg od`, track 8, A=4, B=5) | `PREPARATION_FAILED` | reproducible blocker at the **second seed**: B's seed records and stops fine (`Recording stopped … length=1536`), then the A-slot press is answered `[63.913] Loop 4: Overdub finalization pending` and the following stop press is **consumed as a session undo** (`[67.711] Record pass undo reset for slot 4: removed=1`) — so A never records. Same signature as `captures/s4f22-od-od-01` (`… finalization pending` → `Queued playback switch (filled slot)` → `Record pass undo reset for slot 4: removed=4`) and as the 2026-09-29 finding in `tasks.md`. |
+
+**Why the record leg cannot show overlap.** The R→R leg's successor start must land inside A's *deferred*
+finalization window (L3/L4/L5), but the production record stop publishes **inline**; the deferred
+capture-stop window belongs to the overdub path. That is the same "shared overlap oracle is blocked"
+finding recorded on 2026-09-27, now re-confirmed on the committed build: the record leg **drives** the
+sequence but cannot exercise the acceptance, which S4f.22 classifies as **NOT_EXERCISED**, not a pass.
+
+**What still blocks closure.**
+
+1. **OD→OD prepare**: an A-slot gesture arriving after a predecessor's stop is consumed as an overdub-session
+   undo instead of switching/seeding, so the leg cannot reach its overlap stage. Needs a decision on the
+   gesture semantics (firmware) or the driver's gesture order — not a timeout or a retry.
+2. **Mixed record-A → overdub-B**: the retention-handoff shape (`scripts/hitl_retention_handoff.py`) needs
+   **three** authorized slots (A/B/C) and this session authorized only two (track 8 slots 4–5); no third slot
+   was cleared.
+3. **Freshness/ring gates**: the acceptance oracle wants a `BOOT,usb` banner in the first 80 lines (a capture
+   attached across a reset) and zero ring-loss rows; `RING,shed,1` appeared once at boot here (the identity/
+   telemetry shed the packet already records; it must be distinguished from an eviction).
+4. **Content parity** (`inventory_equal`) remains open from the 2026-09-29 run and was not re-reached, because
+   the legs above did not produce the overlap that the pipeline is meant to verify.
+
+**No task checkoff.** S4f.17/S4f.18/S4f.20/S4f.21/S4f.22 stay open; S4f.22 now has a clean-tree device leg
+(R→R driven, overlap classified NOT_EXERCISED) plus a reproducible OD→OD prepare blocker, and its remaining
+obligations are the three items above.

@@ -3432,3 +3432,29 @@ RAM1 padding 1 928 (floor 840). Device A/B on the clean route with an identical 
 `captures/s4f20-odundo-09` 5→6 and `MIDI: Undo (entries=3)` (the reboot's `U:03`). Decision DEC-095; packet
 section and plan `overdub_stop_undo_level_short_route_bugfix.md`. No task checkoff: S4f.17/S4f.18/S4f.20/S4f.21/
 S4f.22 stay open.
+
+**2026-09-30 — S4f.22 device attempt against the committed build (`3307f33d`): the R→R leg drives, overlap
+NOT_EXERCISED; the OD→OD leg is blocked at prepare. S4f.22 stays open.**
+Fresh response-driven legs on the committed clean tree (identity pinned: `git_commit=3307f33daec1ce1e
+9924df191588d905b36f2aef`, `firmware_hex_sha256=351b2e99…`, no `git_dirty`). Authorized scratch slots:
+track 8 slots 4 and 5 (both cleared this session).
+**R→R** (`captures/s4f22-rec-rec-01`, `hitl_accepted_sequence.py --leg rec`, track 8 A=4 B=5): the leg drove
+end-to-end — A seeded (`prepare_slot_a: ALREADY_EMPTY`, `seed_a_recording confirmed`), then
+`select_track → a_record_start → a_stop → b_switch_start → b_stop` with one press per stop and a clean
+persistence-aware shutdown (2 stop+drain cycles). Oracle: `telemetry_present`, `identity_pinned`,
+`L1_a_stop_accepted_once` and `L2_no_capacity_denial` OK; **`L3_a_finalization_window`** fails ("A never froze
+into a deferred finalization"), so `L4`/`L5` are NOT_EXERCISED — the required classification when the overlap
+window is missing. Setup gates: `fresh_boot` FAIL (capture attached without a reset, so no `BOOT,usb` banner)
+and `overflow_free` FAIL (one `#CAP,62641732,RING,shed,1`). The reason the record leg cannot show the window is
+the recorded design fact that the production record stop publishes **inline**, while the deferred capture-stop
+window belongs to the overdub path (2026-09-27 finding, re-confirmed).
+**OD→OD** (`captures/s4f22-od-od-03`, `--leg od`, same pair): `PREPARATION_FAILED` at the second seed — B's seed
+records and stops (`length=1536`), then the A-slot press is answered `Loop 4: Overdub finalization pending` and
+the following stop press is consumed as a session undo (`Record pass undo reset for slot 4: removed=1`), so A
+never records. The same signature appears in `captures/s4f22-od-od-01` and in this file's 2026-09-29
+classification ("the next gesture is consumed as `Overdub session undo`"). **This is the leg's blocker: a
+decision on the gesture semantics (firmware) or the driver's gesture order, not a timeout or a retry.**
+**Not attempted:** the mixed record-A → overdub-B leg — the retention-handoff shape
+(`scripts/hitl_retention_handoff.py`) needs three authorized slots (A/B/C) and this session authorized two.
+**Content parity** (`inventory_equal`) was not re-reached, since no leg produced the overlap the pipeline is
+meant to verify. No task checkoff; the packet records the same evidence and the four remaining closure items.
