@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "LoopEventStore.h"
+#include "Utils/DebugSessionCapture.h"
 
 #include <algorithm>
 #include <cstring>
@@ -25,9 +26,30 @@
 namespace {
 
 void* poolAlloc(size_t bytes) {
+  void* p = nullptr;
 #if defined(ARDUINO) && defined(__IMXRT1062__)
-  void* p = extmem_malloc(bytes);
+  p = extmem_malloc(bytes);
   if (p) {
+#if defined(SESSION_CAPTURE)
+    // The ring and these blocks share the extmem smalloc pool. An overlap means a stale or
+    // misclassified free poisoned the pool's free list, and the block's zeroing would erase the
+    // ring's live content (`captures/s4f22-step8-e3`). Report it where it happens.
+    uintptr_t ringStart = 0;
+    size_t ringBytes = 0;
+    if (DebugSessionCapture::captureRingRange(ringStart, ringBytes)) {
+      const uintptr_t blockStart = reinterpret_cast<uintptr_t>(p);
+      const uintptr_t blockEnd = blockStart + bytes;
+      if (blockStart < ringStart + ringBytes && ringStart < blockEnd) {
+        char line[160];
+        snprintf(line, sizeof(line),
+                 "#CAP,%lu,RING,overlap,block=%lu,bytes=%lu,ring=%lu,ring_bytes=%lu",
+                 static_cast<unsigned long>(micros()),
+                 static_cast<unsigned long>(blockStart), static_cast<unsigned long>(bytes),
+                 static_cast<unsigned long>(ringStart), static_cast<unsigned long>(ringBytes));
+        DebugSessionCapture::appendCaptureTextLine(line);
+      }
+    }
+#endif
     return p;
   }
 #endif
