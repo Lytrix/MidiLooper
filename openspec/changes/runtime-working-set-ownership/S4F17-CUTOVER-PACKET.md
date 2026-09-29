@@ -457,3 +457,48 @@ parity are not verified on device**. Treat the device gate as still open.
 Neither observation is evidence against the deferred Record stop: the stop
 admitted, retired and released its capacity on device. They are evidence that the
 **oracle** needs a short-run visibility check before the device gate can be read.
+
+### Device leg — second probe (visibility), 2026-09-29
+
+A short record-leg probe (`run --preset base` with `--second-overdub-bars 0
+--no-stop-after-overdub --no-undo-redo-after-overdub-stop`, same scratch slot)
+after a **fresh upload**, `captures/s4f22-recvis-02`. This is *not* a gate run —
+it deliberately changes the registered stimulus's args, so
+`setup_transitions_confirmed` is false by construction — it exists only to
+separate the two open observations. It does.
+
+**Both observations resolved, neither was a firmware defect.**
+
+1. *The record family is emitted and visible.* The fresh short log carries
+   `RECA` ×1, `RECS` ×7 and `RID` ×1, including
+   `RECS,stopToStopped,0,379,0,379,768,0` and every stage row this change added:
+   `RECS,stage,record_stop,...,entered`, `…,finalize,…,deferred`,
+   `…,visual_cache_request,…,deferred`, `…,revt_queue,…,deferred`,
+   `…,state_advance,…,ok`. The first run's absence was therefore **capture
+   visibility** — the documented Tier-A ring displacement over a long, noisy run
+   (`DIAG,reentry`/`DIAG,canonical_release`/`timing_max`/`midisvc`/`tracks` are all
+   Tier-A and flood during an overdub finalization) — not an emission regression.
+   A second, invalid probe is also recorded: re-running **without** re-uploading
+   produced a log with no `#CAP` framing at all and
+   `INCONCLUSIVE_CAPTURE (SPARSE_CAPTURE)`. That is the skill's documented
+   "device did not reset" failure and it must be re-uploaded before any content
+   run.
+2. *Record length.* The valid short run stopped at tick 379 with `length=768` for
+   its own one-bar configuration, and the earlier valid run's second attempt
+   reported `length=1536` (two bars). The first attempt's 2304 was a late stop
+   press, not a length-policy change.
+
+**New oracle gap found (belongs to the recipe correction, §4).** With the record
+family visible, the harness's next missing stage is
+`record_stop_stage_missing:seal`. The inline path emitted a `seal` stage from
+`Loop::commitCapturePass`; the deferred route has no such stage — its commit
+happens in the worker's publication and the edge reports
+`finalize,…,deferred`. The canonical oracle still looks for `seal`, so a valid
+long run would report the same miss even though the stop published correctly. That
+is a **recipe/oracle reconciliation**, not a firmware defect, and it must land
+before the record leg can be read as a pass.
+
+`record_first_note_missing` and `record_stored_revt_missing` are also consistent
+with the deferred route: the REVT queue is served only when the transport is fully
+idle (`processDeferredRecordRevts`' guard), which a continuous-transport
+overlap run never reaches. Their expectation likewise needs reconciling.
