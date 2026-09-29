@@ -82,17 +82,47 @@ Findings, each classified, with the acceptance criteria the fix has to meet:
 
 **Next decisions, owners and the evidence each needs.**
 
-| Decision | Owner | Evidence before acting |
+| Decision | Decider / technical owner | Evidence before acting |
 |---|---|---|
-| SEVT attribution direction, (a) firmware take/leg id vs (b) redefined invariant | verifier/reporting stage owner of `response-driven-hitl-acceptance` §5 (the check's owner); the (a) half with the capture-telemetry owner (`Utils/DebugSessionCapture.cpp`, `Track/TrackDeferredMaintenance.cpp`) | for (a): the same seam that already queues `Revt` per take (`deferredRecordRevtsSlot`) is the natural id source; the upload needs explicit approval. For (b): a written statement of what the check would no longer prove (leg attribution) and who accepts that loss |
-| `Revt`/`SEVT,` tier protection + per-family counters | capture-telemetry owner | an **in-run** loss demonstration for these families — a run where `RING,record_stats`/`RING,stats` deltas rise for them while their rows are absent. The counters do not exist yet, so the honest sequence is counters first (no semantics), measure, then decide protection. A policy decision that unattributable absence is unacceptable is the alternative trigger |
-| `already_pending` accepted in the persistence handoff | verifier/reporting stage owner of §5 | a run whose in-sequence save **settles inside the measured sequence** (a `PERS,result,…,ok` for an in-sequence request) — i.e. after the post-boot commit holdoff stops deferring (`post_load_holdoff` / `waiting_commit_gate`, recorded open in the PX1 note) |
-| Successor-take residual of the REVT span rule | record-leg/verifier owner named by `21b8ca8f` | none needed to accept: the failure direction is evidence-loss, not a pass (0 false negatives in nine runs). Revisit with the same take/leg id as SEVT (a) |
+| SEVT attribution direction, (a) firmware take/leg id vs (b) redefined invariant | **Eelke Jager** (repository owner, `Lytrix/MidiLooper`) decides; the check's technical owner acts in the `response-driven-hitl-acceptance` §5 verify/reporting role, and the (a) half in the `docs/Agents/builder.md` role over `Utils/DebugSessionCapture.cpp` + `Track/TrackDeferredMaintenance.cpp` | for (a): the same seam that already queues `Revt` per take (`deferredRecordRevtsSlot`) is the natural id source; the upload needs explicit approval. For (b): a written statement of what the check would no longer prove (leg attribution) and who accepts that loss |
+| `Revt`/`SEVT,` tier protection + per-family counters | **Eelke Jager** decides; technical owner acts in the `docs/Agents/builder.md` role over the capture telemetry | an **in-run** loss demonstration for these families — a run where `RING,record_stats`/`RING,stats` deltas rise for them while their rows are absent. The counters do not exist yet, so the honest sequence is counters first (no semantics), measure, then decide protection. A policy decision that unattributable absence is unacceptable is the alternative trigger |
+| `already_pending` accepted in the persistence handoff | **Eelke Jager** decides; technical owner acts in the §5 verify/reporting role | a run whose in-sequence save **settles inside the measured sequence** (a `PERS,result,…,ok` for an in-sequence request) — i.e. after the post-boot commit holdoff stops deferring (`post_load_holdoff` / `waiting_commit_gate`, recorded open in the PX1 note) |
+| Successor-take residual of the REVT span rule | **Eelke Jager** decides (record-leg owner named by `21b8ca8f`) | none needed to accept: the failure direction is evidence-loss, not a pass (0 false negatives in nine runs). Revisit with the same take/leg id as SEVT (a) |
 
-**Order:** (1) landed and awaiting release approval; (2) and (3) await the decisions above; (5) after
-(2)/(3) show whether loss still occurs.
-Fixtures: `scripts/test_hitl_stored_record_grid.py` (9 cases, including the pre-regression equivalence
-invariant) plus the three-extractor replay.
+*One maintainer authors every commit in this repository, so each row's decider is the same person; the role
+named per row says which hat the work is done in (`docs/Agents/README.md`).*
+
+**Release and rollback of the landed fix.** `1358a1cd` (code + fixtures + docs) and `24af74e4` (docs +
+the pre-regression invariant test) are local commits on `feature/runtime-working-set-ownership`, which has
+**no upstream** (not pushed). Release instrument per
+[`Git-Commit-And-PR-Workflow.mdc`](../../.cursor/rules/Git-Commit-And-PR-Workflow.mdc): push the branch and
+open the PR into `dev` — it changes verdict semantics, so it is not a direct-commit hygiene change.
+Rollback is `git revert 1358a1cd 24af74e4` (or re-applying the previous body of
+`_extract_revt_note_on_ticks`, still in `1358a1cd`'s parent). It is **host-only**: no firmware, no device
+state and no persistence are involved, so a rollback needs no device run and cannot invalidate a capture —
+its only effect is that the five runs above return to reporting `record_stored_revt_missing`.
+
+**Reproducing the verification.** The acceptance gate is
+`python scripts/hitl_replay_stored_record_grid.py` → a table per capture with the criteria; **exit 0** with
+`9 capture(s) meet the accepted criteria`, exit 1 on any violation (checked by feeding it a wrong expected
+count: it reports `COUNTS DIFFER FROM THE ACCEPTED TABLE` and exits 1), and a graceful skip when the
+captures are absent (they are gitignored). Its criteria: the fix equals the pre-regression set for a take
+without a successor, excludes a successor's rows, and never adds a tick the pre-regression extractor did
+not see. The consumer of `revt_missing` is the single inline gate
+`if stored_record_grid.get("revt_missing"): issues.append("record_stored_revt_missing")`, which
+`scripts/test_hitl_stored_record_grid.py` (9 cases) pins directly; `python -m unittest discover -s scripts
+-p 'test_*.py' -t scripts` → **793 cases in one process**, `FAILED (failures=7, errors=1)`, plus a nested
+subprocess suite (`Ran 14 tests`, `FAILED (failures=2)`) spawned by the `6_3` gate inside it, whose two
+failures repeat two of the eight. Those eight are pre-existing and identical before this fix (verified by
+stashing the changes); `test_rotation_marks_incomplete` additionally flaked once under that load and passes
+2/2 isolated (`python -m unittest scripts.test_hitl_capture_integrity`, 17 cases — a 2 s polling deadline
+in a background collector, unrelated). The isolated reruns are **not** part of the 793. A *verdict*-level
+offline re-score is not available: `--verify-only` runs only the scenario's stimulus validation (its own
+code says "use baseline JSON report for full gate checks") and the legacy baseline cannot be re-pointed at
+a log without risking device presses — so the extractor, not the verdict, is the pinned unit.
+
+**Order:** (1) landed; **approve its release**; (2) and (3) await the decisions above, and the SEVT
+decision is required *before* any SEVT change; (5) after (2)/(3) show whether loss still occurs.
 
 
 
