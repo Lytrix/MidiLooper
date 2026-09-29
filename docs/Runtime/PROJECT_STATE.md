@@ -1,5 +1,17 @@
 # Project state (execution context)
 
+**2026-09-29 — correction: the "Record length/span" defect was a misattributed second take.**
+`s4f22-step8-e2`: the intended record leg completed correctly (`Recording stopped (to STOPPED) @ tick
+2366 (recStart=382 length=2304)`) at 70.20 s. The `overdub start` phase then pressed transport while
+the track was STOPPED (71.69), starting an empty-slot capture, and a **second unplanned one-bar
+take** appeared (`Recording started` 72.70, stopped 73.80 at `length=768`) -- which the verifier
+scored as the record leg. The harness had printed `[warn] overdub start: no stop-completion receipt
+within 8.0s; pressing anyway` just before: a press **without** the stop-completion receipt, the same
+pattern the clock fix removed. **No Record-length firmware defect.** Open: make a missing successor
+receipt a named failure instead of a blind press, and read the record-leg take from the record phase
+window rather than the last `RECA`/`RECS` pair. Ring investigation open; the control ledger now
+covers the baseline's own presses.
+
 **2026-09-29 — toggle defect verified gone; ring wipe is content loss (zeros), not a stray advance.**
 `s4f22-step8-e1/e2/e3`: `transport_press_count` is **0** in all three runs, so the clock helper no
 longer toggles transport to confirm a start; the readiness gate passed each attempt. (Ledger caveat:
