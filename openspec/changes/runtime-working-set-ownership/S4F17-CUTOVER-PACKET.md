@@ -334,12 +334,40 @@ stop's phases by existing fixtures plus this change: `test_continuous_capture` c
 S17.5a's retarget fixture. Clock-source *classification* is covered by
 `test_clock_transport_master` (internal master, external active, external timed out).
 
-Still **not** exercised, and the honest remainder of §3's exit list: (1) a deferred Record stop
-under an **external** clock source (only the clock classification itself is tested); (2) a slot
-**load** and a slot **clear** issued while a Record stop is in flight — replacement (LoopId bump /
-capture-mode change) is covered by `test_replaced_loop_supersedes_accepted_stop` and
-`test_changed_capture_mode_supersedes_accepted_stop`, but load and clear are not. No device
-acceptance is claimed from host results.
+**S17.5b — load/clear underneath a finalizing stop: done.** Two real defects, both found by
+writing the fixtures the packet's exit list asked for.
+
+*An admitted job whose interval identity is gone used to park forever.* The deferred-grain prologue
+returned early when `loopIdForSlot(job.slot) != job.loopId`, so a slot load or re-record adopting a
+new LoopId over a finalizing take held the job, its owned raw range, its capture-stop owner and its
+ring entry indefinitely — no later stop on that track could ever be admitted. S4f.4 transition 3
+already says such a request is **superseded** — reported and retired — and `driveAcceptedInteraction`
+applies that to a request that never bound; `supersedeDeferredStopJob` now applies it to one that
+did. It releases everything the job owns (frozen window, staging role, note-change and preview
+borrows, owned pass chunks, private canonical output, and the sealed extent one grain per turn) and
+retires the ring entry **without** touching the live interval, so a superseded finalization can
+never resurrect or mutate a successor's content. A latch needs nothing here: the replacement fails
+its own identity check and is consumed.
+
+*Clearing the slot could receive the in-flight take back.* `Track::clear()` destroys the interval's
+ledger, but a job that still owned an unpublished take for that slot would go on to publish it into
+the slot the user had just emptied. `clear()` now supersedes that job (its one-time ownership
+release runs on the user's action, the bounded extent release and ring advance finish on the
+deferred owner's turn via the grain's `mode == None` resume path). `Track::clear()` deliberately
+does **not** bump the LoopId — identity preservation is existing behaviour with its own consumers —
+so this is an explicit supersede, not a side effect.
+
+Fixtures: `test_replaced_loop_during_a_record_finalization_retires_the_job` (LoopId adoption — the
+load/re-record shape; fails by parking without the fix) and
+`test_slot_clear_during_a_record_finalization_does_not_republish` (fails with *"a cleared slot must
+not receive the in-flight take"* without the clear supersede). The overdub counterpart is
+`deferredPersistence(stale=true)`, renamed to
+`test_stale_publication_is_superseded_without_persistence`: it previously encoded parking as the
+expected behaviour, and now asserts the supersede-and-publish-nothing contract instead.
+
+Still **not** exercised, and the honest remainder of §3's exit list: a deferred Record stop under an
+**external** clock source (only the clock classification itself is tested by
+`test_clock_transport_master`). No device acceptance is claimed from host results.
 
 ## Fixed fixture requirements (from the trace)
 

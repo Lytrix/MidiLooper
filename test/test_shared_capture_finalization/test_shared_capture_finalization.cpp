@@ -564,14 +564,22 @@ void deferredPersistence(bool stopped, bool superseded, bool stale) {
   Loop& owner = t.getLoop(0);
   TEST_ASSERT_EQUAL_UINT(0, owner.passes.overdubPasses.size());
   if (stale) {
+    // Fault-inject the adoption: a replacement interval reuses the slot *number* with a new LoopId.
+    // S4f.4 transition 3 makes such a job **superseded** -- reported and retired -- rather than
+    // parked: parking would wait forever for an interval that can never return, holding the job's
+    // raw range, its capture-stop owner and its ring entry so no later stop on this track could be
+    // admitted. It must publish nothing and admit no persistence for the interval that is gone.
     const LoopId original = owner.loopId;
     ++owner.loopId;
-    for (unsigned i = 0; i < 3; ++i) TrackCaptureStopTestAccess::step(t);
-    const auto phaseWhileStale = TrackCaptureStopTestAccess::phase(t);
+    for (unsigned i = 0; i < 4; ++i) TrackCaptureStopTestAccess::step(t);
     owner.loopId = original; // restore even when the assertion below aborts this case
     assertNoPersistenceRequest();
-    TEST_ASSERT_EQUAL(PendingStopPhase::AtomicTransfer, phaseWhileStale);
+    TEST_ASSERT_FALSE_MESSAGE(t.hasStopInFlight(),
+                              "a job whose interval identity is gone must be superseded, not parked");
     TEST_ASSERT_EQUAL_UINT(0, owner.passes.overdubPasses.size());
+    TEST_ASSERT_TRUE(t.isOverdubbing());
+    TEST_ASSERT_EQUAL_UINT(2, t.getLoop(1).capture.store.size());
+    return;
   }
   if (superseded) ++owner.playbackRevision; // fault-inject a replaced causal base
   advanceToPhase(t, PendingStopPhase::DeferredCleanup);
@@ -605,7 +613,7 @@ void deferredPersistence(bool stopped, bool superseded, bool stale) {
 void test_deferred_publication_requests_own_slot_once() { deferredPersistence(false, false, false); }
 void test_stopped_publication_requests_own_slot_once() { deferredPersistence(true, false, false); }
 void test_superseded_publication_requests_own_slot_once() { deferredPersistence(false, true, false); }
-void test_stale_publication_waits_before_persistence() { deferredPersistence(false, false, true); }
+void test_stale_publication_is_superseded_without_persistence() { deferredPersistence(false, false, true); }
 void test_record_closures_keep_identity_after_raw_source_freezes() {
   Track& t = trackManager.getTrack(0);
   prepareSlot(t, 0, false);
@@ -1834,6 +1842,52 @@ void test_transport_retarget_of_a_record_job_resolves_stopped() {
                            "the retargeted job must still commit its take");
 }
 
+// S4f.21: a **replacement** interval (slot load / re-record) adopted over the slot while a Record
+// stop is in flight. The S4f.4 transition-3 rule is that such a request is *superseded* -- reported
+// and retired -- not parked: the prologue's LoopId guard must not be able to hold the job, its raw
+// range, its capture-stop owner and its ring entry forever.
+void test_replaced_loop_during_a_record_finalization_retires_the_job() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  start(t, 0, false, 0, 60);
+  clockManager.assignCurrentTickSilently(768);
+  t.stopRecordingToStopped(768);
+  TEST_ASSERT_TRUE_MESSAGE(t.hasPendingDeferredOverdubStop(),
+                           "precondition: the Record stop must be admitted");
+  // Fault-inject the adoption: a replacement interval reuses the slot number with a new LoopId.
+  ++t.getLoop(0).loopId;
+  driveStopToRetirement(t);
+  TEST_ASSERT_FALSE_MESSAGE(t.hasPendingDeferredOverdubStop(),
+                            "a superseded Record job must retire, not hold the ring forever");
+}
+
+// S4f.21: a slot **clear** issued while a Record stop is in flight. The clear destroys the
+// interval's ledger, so the job must be superseded -- otherwise the worker would publish the cleared
+// take back into the slot the user just emptied. The one-time ownership release runs on the clear
+// (the user's action), and the bounded extent release plus the ring advance finish on the deferred
+// owner's turn.
+void test_slot_clear_during_a_record_finalization_does_not_republish() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  start(t, 0, false, 0, 60);
+  clockManager.assignCurrentTickSilently(768);
+  t.stopRecordingToStopped(768);
+  TEST_ASSERT_TRUE_MESSAGE(t.hasPendingDeferredOverdubStop(),
+                           "precondition: the Record stop must be admitted");
+
+  t.clear();
+
+  driveStopToRetirement(t);
+  TEST_ASSERT_FALSE_MESSAGE(t.hasPendingDeferredOverdubStop(),
+                            "a cleared slot's Record job must retire, not hold the ring");
+  TEST_ASSERT_FALSE_MESSAGE(t.getLoop(0).passes.hasRecordPass(),
+                            "a cleared slot must not receive the in-flight take");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, t.getLoop(0).loopLengthTicks,
+                                   "the cleared geometry must survive the retired job");
+}
+
 void test_private_grains_never_hold_the_global_ephemeral_seal() {
   Track& t0 = trackManager.getTrack(0);
   prepareSlot(t0, 0, false);
@@ -2133,6 +2187,8 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_deferred_record_publication_queues_revts_for_its_own_slot);
   RUN_TEST(test_deferred_record_publication_invalidates_the_track_committed_scratch);
   RUN_TEST(test_transport_retarget_of_a_record_job_resolves_stopped);
+  RUN_TEST(test_replaced_loop_during_a_record_finalization_retires_the_job);
+  RUN_TEST(test_slot_clear_during_a_record_finalization_does_not_republish);
   RUN_TEST(test_two_tracks_each_serve_their_own_deferred_window);
   RUN_TEST(test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source);
   RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);
@@ -2146,7 +2202,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_deferred_publication_requests_own_slot_once);
   RUN_TEST(test_stopped_publication_requests_own_slot_once);
   RUN_TEST(test_superseded_publication_requests_own_slot_once);
-  RUN_TEST(test_stale_publication_waits_before_persistence);
+  RUN_TEST(test_stale_publication_is_superseded_without_persistence);
   RUN_TEST(test_denied_record_preflight_preserves_content_and_interval_then_retries);
   RUN_TEST(test_replaced_loop_supersedes_accepted_stop);
   RUN_TEST(test_changed_capture_mode_supersedes_accepted_stop);

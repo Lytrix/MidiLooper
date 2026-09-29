@@ -38,6 +38,16 @@ TRACK_COLD_MEM void Track::clear() {
         return;
     }
 
+    // S4f.21: clearing the slot destroys the interval's ledger, so a deferred stop that still owns
+    // an unpublished take for **this** slot is superseded -- otherwise the worker would publish the
+    // cleared take back into the slot the user just emptied. The one-time ownership release runs
+    // here; the bounded extent release and the ring advance finish on the deferred owner's turn
+    // (the grain's `mode == None` resume path). A *retained* (unadmitted) stop needs nothing here:
+    // `discardCapture()` clears its producer rows and closes the capture phase, which is exactly
+    // the identity check `driveAcceptedInteraction` uses to supersede it.
+    if (CaptureStopJob* job = captureStopJobHead()) {
+      if (job->slot == activeLoopIndex) (void)supersedeDeferredStopJob(*job);
+    }
     Loop& loop = getActiveLoop();
     loop.resetPassTimeline();
     loop.discardCapture();

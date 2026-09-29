@@ -97,9 +97,23 @@ Fixture `test_transport_retarget_of_a_record_job_resolves_stopped`; removing the
 **§3 exit breadth.** Transport Stop is covered across the deferred stop's phases by
 `test_continuous_capture` (canonical-copy, mid-flight playing retarget, live successor, B03
 retarget, accept-then-transport-stop) plus this change's Record retarget fixture; clock-source
-classification by `test_clock_transport_master`. **Still owed:** a deferred Record stop under an
-**external** clock, and a slot **load** / slot **clear** issued while a Record stop is in flight
-(replacement is covered by the supersede fixtures; load and clear are not). No device acceptance is
+classification by `test_clock_transport_master`.
+
+**2026-09-29 — §3 S17.5b — load/clear underneath a finalizing stop (two real defects).** An admitted
+job whose interval identity was gone used to park forever on the deferred-grain prologue's LoopId
+guard, holding its raw range, its capture-stop owner and its ring entry so no later stop on the track
+could be admitted; `supersedeDeferredStopJob` now applies the S4f.4 transition-3 supersede rule to a
+job that *did* bind, releasing everything it owns (window, staging role, borrows, owned pass chunks,
+private canonical output, sealed extent one grain per turn) without touching the live interval. And
+`Track::clear()` now supersedes a job that owns an unpublished take for the slot, instead of letting
+the worker publish the cleared take back into the slot the user emptied — an explicit supersede, not
+a LoopId bump, because clear preserves identity by design. Fixtures
+`test_replaced_loop_during_a_record_finalization_retires_the_job` and
+`test_slot_clear_during_a_record_finalization_does_not_republish`, plus the overdub counterpart
+renamed to `test_stale_publication_is_superseded_without_persistence` (it previously encoded parking
+as the expected behaviour).
+
+**Still owed:** a deferred Record stop under an **external** clock source. No device acceptance is
 claimed from host results.
 [Cutover packet](../../openspec/changes/runtime-working-set-ownership/S4F17-CUTOVER-PACKET.md).
 

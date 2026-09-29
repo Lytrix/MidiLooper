@@ -2811,10 +2811,22 @@ own execution packet and records fixture/native/build/device results separately.
       **§3 exit breadth.** Transport Stop is covered across the deferred stop's phases by
       `test_continuous_capture` (canonical-copy, mid-flight playing retarget, live successor, B03
       retarget, accept-then-transport-stop) plus this change's Record retarget fixture, and
-      clock-source classification by `test_clock_transport_master`. **Still owed:** a deferred
-      Record stop under an external clock, and a slot load / slot clear issued while a Record stop
-      is in flight (replacement is superseded correctly and is covered). No device acceptance is
-      claimed from host results.
+      clock-source classification by `test_clock_transport_master`.
+      **2026-09-29 S17.5b — load/clear underneath a finalizing stop: done (two real defects found).**
+      An admitted job whose interval identity was gone used to park forever on the deferred-grain
+      prologue's LoopId guard, holding its raw range, its capture-stop owner and its ring entry so no
+      later stop on that track could be admitted; `supersedeDeferredStopJob` now applies the S4f.4
+      transition-3 supersede rule to a job that *did* bind, releasing everything it owns (frozen
+      window, staging role, note-change and preview borrows, owned pass chunks, private canonical
+      output and the sealed extent one grain per turn) without touching the live interval. And
+      `Track::clear()` now supersedes a job that owns an unpublished take for the slot instead of
+      letting the worker publish the cleared take back into the slot the user emptied — an explicit
+      supersede, not a LoopId bump, because clear preserves identity by design. Fixtures
+      `test_replaced_loop_during_a_record_finalization_retires_the_job` (the load / re-record shape)
+      and `test_slot_clear_during_a_record_finalization_does_not_republish`, plus the overdub
+      counterpart renamed to `test_stale_publication_is_superseded_without_persistence` (it previously
+      encoded parking as the expected behaviour). **Still owed:** a deferred Record stop under an
+      external clock source. No device acceptance is claimed from host results.
 - [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
       full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with
