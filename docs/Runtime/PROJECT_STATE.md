@@ -1,5 +1,24 @@
 # Project state (execution context)
 
+**2026-09-29 — the content-evidence issues are mostly the verifier reading the wrong clock.**
+Settled the open `INCONCLUSIVE_CAPTURE` issues without a firmware change: **the stored rows exist and
+the checks look at the wrong time.** `s4f22-step11-h5` carries **32 `REVT` rows at 72.97 s** while
+`_extract_revt_note_on_ticks` keeps only rows inside `[RECA_ts, RECS_stop_ts]` (= 36.65 s) — but a REVT
+row's `#CAP,<us>` is when it was *flushed* out of the ring, and its own docstring says the emission is
+deferred, so all 32 are discarded → `revt_missing: true`. The first-overdub stored-span check passes no
+window at all, so it counts every `SEVT,N` row in the log (h5: 64 rows, `last_tick=2130`,
+`bars_reached=3` for a 2-bar loop → `span_ok=False`, while `count_ok=True` and `bars_match_ok=True` —
+the contradiction that names the cause); h6's 32 rows spanning exactly 2 bars pass.
+`persistence_stage_missing:result` is the same shape: all seven in-sequence `PERS,request` rows are
+`already_pending` (the boot commit holdoff, `post_load_holdoff`/`waiting_commit_gate`), and the verifier
+demands a `result` for a request that was deduplicated. The device-side loss path is real but separate:
+`CaptureRecordType::Revt` and `SEVT,` are not tier-protected and have no per-family counters
+(`appendCaptureRecord` classifies from `text`, null for Revt; `isTierALine` has no `SEVT,`), which is
+why h3 reads `RECA 1/1/1, RECS 7/7/7, evict 0` and no REVT rows at all — the same defect already fixed
+for `DIAG,reentry*`. h5's ring is numerically clean (`ok 13339, tx 13335, shed 4, overflow 0, wipe 0`)
+yet its stored rows arrive 36 s late; h6's abort is the separate intermittent ring wipe.
+Full findings and the ranked fixes: [CURRENT_WORK](CURRENT_WORK.md).
+
 **2026-09-29 — the transport decision now anchors on device time, not line position.**
 Capture rows go through the firmware's fixed evidence ring, which flushes in batches, so a record the
 ring drained **late** lands after newer rows and an index window reads it as current. Measured in
