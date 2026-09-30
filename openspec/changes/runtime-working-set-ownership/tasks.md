@@ -3458,3 +3458,64 @@ decision on the gesture semantics (firmware) or the driver's gesture order, not 
 (`scripts/hitl_retention_handoff.py`) needs three authorized slots (A/B/C) and this session authorized two.
 **Content parity** (`inventory_equal`) was not re-reached, since no leg produced the overlap the pipeline is
 meant to verify. No task checkoff; the packet records the same evidence and the four remaining closure items.
+
+**2026-09-30 — DEC-096 host/build pass; S4f.22 device gate attempted, not accepted.** The user's pending-finalization rule is implemented in `MidiButtonActions`; both production-owner native fixtures pass. Focused suite 28/28; full native passed; `teensy41-capture-serial` SUCCESS, RAM1 padding 1,928 (floor 840); strict OpenSpec validation passed. User authorized track 8 slots 3–5, and only those targets were identity-grade cleared. Fresh read-only census found no committed events/passes/length in them; verified payload files remain. Device evidence: `captures/s4f22-dec096-od-01` OD→OD drove but oracle `SETUP_INCOMPLETE` (3 `RING,shed` rows; missing overdub identity links); `captures/s4f22-dec096-rec-01` stopped before recording after LOOP_EDIT/double-press setup; `captures/s4f22-dec096-mixed-01` seeded slot 4 but stopped before slot 3's seed because startup LOOP_EDIT routed the slot gesture to geometry editing. The partial mixed attempt leaves test content on authorized scratch slot 4. No content-parity run; no S4f.22 checkoff. Stop device retries here; a corrected, specific device path is required before further upload/run.
+
+      **2026-09-30 — the oracle's `overflow_free` gate no longer counts a timing shed as ring loss.**
+      `DebugSessionCapture` sheds only non-Tier-A diagnostics in the playback flush instead of blocking the
+      transport on USB I/O and reports it as neither loss kind; `scripts/hitl/serial_collector.py` already
+      marked only `overflow`/`critical_rejected`/`wiped` incomplete, and `midi_boundary_timing.py` never
+      counted a shed. `scripts/hitl/accepted_sequence_probe.py` grouped `RING,shed` with
+      `RING,tier_a_evicted`, so **every** fresh-boot leg was `SETUP_INCOMPLETE` on a shed row alone — the
+      over-strict gate recorded here on 2026-09-27 and again for `captures/s4f22-dec096-od-01`. The gate now
+      fails only on `tier_a_evicted`/`overflow`/`critical_rejected`/`wiped`, reports shed as a non-fatal
+      `ring_shed_diagnostics_only` check plus `evidence.ring_shed`, and (second fix in the same pass) treats
+      an **absent L3 window / L4 release as a staging outcome**, i.e. "the acceptance was not exercised" in
+      the oracle's own L3 wording, matching the packet's NOT_EXERCISED classification instead of labelling a
+      NOT_EXERCISED run a chain violation. Re-graded with **no device action**: `s4f22-dec096-od-01`
+      `SETUP_INCOMPLETE`(3) → `INSUFFICIENT_EVIDENCE`(4); `s4f13-od4` keeps `SETUP_INCOMPLETE`;
+      `s4f13-od*`/`carrier` move to `INSUFFICIENT_EVIDENCE` (all remain non-passes). Host:
+      `scripts/test_accepted_sequence.py` **54/54** and `scripts/test_accepted_sequence_corpus.py` **3/3**
+      (new coverage: each session-invalidating ring row is a setup failure, a shed alone is not), plus
+      integrity 17/17, command-forwarding 26/26, drain 20/20, transitions 61/61, shutdown 15/15;
+      `git diff --check` clean. No firmware change: the defect was host-side classification.
+
+      **2026-09-30 — clear-first device rerun attempted; blocked in the driver's census precondition.**
+      `captures/s4f22-dec096-od-02` (`scripts/hitl_accepted_sequence.py --leg od --track 8 --slot-a 4
+      --slot-b 5`, the driver's default clear-first path) uploaded the unchanged image `8d07faec…e05f`
+      (`git_commit=f0c4b26d`, dirty tree) and failed at the clear, before any leg gesture: the initial
+      read-only census was lost, so `known_occupied` was `None`, the filled non-selected target was not
+      pre-selected, and its long press was answered `Loop 4: Queued playback switch (filled slot)`
+      (`#CAP,68054720,ST,Track,STOPPED,PLAYING` — the switch started the transport instead of clearing);
+      the follow-up census also went unanswered (`census_lost`), so `stopped_preparation.clear_slot`
+      returned `UNCONFIRMED` and the driver failed closed (`PREPARATION_FAILED`, no seed, no take). The
+      shutdown reached only `incomplete_timeout` (persistence not verified idle within 30 s), which latched
+      `captures/.device-shutdown-incomplete.json` (`context: accepted-sequence-od`) and correctly refused
+      the next upload/reset. A read-only canonical check afterwards (`captures/dec096-recovery-check-01`)
+      reached **verified persistence idle** (`2 stop+drain cycle(s)`, tail `SAVE,idle,0`,
+      `FinalizeWorkspace … done,ok`), so the device is known good and the latch is the only gate before
+      another reset. The proven identity-grade clear for a filled target is
+      `scripts/hitl_retention_handoff.py --prepare-only` (`captures/s4f22-dec096-prepare-02` cleared track 8
+      slots 3/4/5 with no census precondition). No S4f.22 acceptance, no content parity, no checkoff;
+      driver-numbered slot 4 still holds its `f0c4b26d`-era seed.
+
+      **2026-09-30 — the driver's device path is corrected (host tooling only; no firmware, no device action).** The
+      three failed legs above are each a **named** failure now, not a silent press or a traceback:
+      `scripts/hitl_accepted_sequence.py` retries the read-only census on a bounded set (`--census-attempts`) and
+      **refuses before any gesture** while a target's occupancy is unknown (the old fallback long-pressed a filled,
+      non-selected target, which `CLEAR_TRACK_FOR_SLOT`'s not-selected branch answers with
+      `Loop N: long-press start (not playing)` — playback, never a clear); a filled target's **selection** must be
+      named by its own `#CAP,<us>,DISP,<slot0>,…` row before the clear; the seed press must produce a slot-scoped
+      `DISP,<slot0>,ARMED` receipt over a bounded press set (`DEFAULT_SEED_PRESS_ATTEMPTS = 3`, because
+      `captures/s4f22-dec096-mixed-01` shows press 1 silent and press 2 only moving focus) with **no**
+      transport-start fallback; repeated presses of one button stay outside the firmware's tap window
+      (`captures/s4f22-dec096-rec-01`: two taps 0 ms apart became `Loop 3 (double)` = `OVERDUB_FOR_SLOT`); and
+      every seed abort is a reported `PreparationFailure`, so the run writes its `accepted-sequence.json` at all
+      (`rec-01` and `mixed-01` wrote none). The seed's post-commit finalization receipt is recorded, not gated.
+      Evidence: `test_accepted_sequence` **63/63** (9 new), four mutations red-proved and restored
+      byte-identically, 15 neighbouring host suites **369/369** together, the new gates replayed against the real
+      logs, `git diff --check` clean. One unrelated pre-existing flake recorded:
+      `test_midi_clock`'s `test_pumped_host_phase_waits_on_the_pump_instead_of_sending` failed 1/8 isolated runs
+      (0/8 with these suites first). **No checkoff:** S4f.22 stays open on its device half, the leg has not been
+      driven on this fix, and `captures/.device-shutdown-incomplete.json` is still latched (`context:
+      accepted-sequence-od`), so an upload/`--boot-reset` needs approval.

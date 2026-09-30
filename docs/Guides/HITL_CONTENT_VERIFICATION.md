@@ -6,6 +6,10 @@ and which differences are expected. The executable recipe is the
 [`hitl-content-verification`](../../.agents/skills/hitl-content-verification/SKILL.md)
 skill; this guide is the durable semantics it cites.
 
+Musical timing for these runs (bar counts, phase lengths, the device's real tempo) is a separate
+contract: [`HITL_MIDI_CLOCK.md`](HITL_MIDI_CLOCK.md) documents the device's USB MIDI clock, how
+the host reads it, and how the host can drive it.
+
 ## What it proves
 
 The procedure answers one question: **does the content the device committed
@@ -20,6 +24,42 @@ capture chunks ──commit/seal──▶ committed passes ──materialize─�
 It is a *representation/parity* check, not a timing or musicality check. A
 `content-review.json` verdict is about **inventory** (which rows, how many);
 order and timing are reported separately.
+
+## The device boots into LOOP_EDIT — set it explicitly
+
+**The Teensy always starts in `LOOP_EDIT` after a reboot.** That is a boot-state fact and it is
+still not something a run may rely on: the gestures a HITL run performs (the pre-transport clear
+selects a track row and a loop row and long-presses record; a rollback or a manual session does
+the same) move the device **out of** `LOOP_EDIT`, and the record/overdub gestures mean something
+else once it is gone — a loop-row select becomes geometry editing, and the record arm lands on a
+different slot (`RECA slot=0`).
+
+So every record/overdub leg **establishes** `LOOP_EDIT` explicitly and proves it from the device's
+own acks (`hitl.edit_mode_precondition.ensure_loop_edit_before_record`). The mode is *caused*,
+because the device only announces it when a session event happens:
+`ControlSurfaceManager::sendEditSessionMidi` logs `Edit session: <MODE> (Program N, Note M trigger)`
+**when a session opens**, and leaving `NOTE_EDIT` logs `MIDI Encoder: Long press - exited edit mode`.
+A capture that attached after the boot's session-open event holds neither, so sampling for a row
+that is not there proves nothing:
+
+* the capture already names `LOOP_EDIT` → nothing to do;
+* otherwise the edit button (note 38, `MidiConfig::NOTE_EDIT_MODE`) is held **long** — its bound
+  `EXIT_EDIT_MODE` action, which always ends in `LOOP_EDIT` (`EditManager::exitEditMode` →
+  `sendEditSessionChange(EditSessionType::Loop)`) — and the ack that press leaves is required:
+  either `Edit session: LOOP_EDIT` or the `exited edit mode` row. Device evidence
+  (`captures/session_20260930_142350.log`): `Long press detected: duration=663 >= effectiveLongPress=600`
+  → `Button press: Edit Mode (long)` → `MIDI Encoder: Long press - exited edit mode`;
+* `LOOP_EDIT` cannot be proven → **refuse by name**, with the `--boot-reset` remedy (that puts the
+  boot's `Edit session: LOOP_EDIT` row in the capture). An unproven mode is not accepted: running
+  with the wrong gesture meaning produced the `missing_phase_boundaries` /
+  `overdub start refused: no predecessor stop-completion receipt` class, where the record leg
+  looked fine and the successor leg could never be admitted.
+
+The **short** press is deliberately not the proof: it is bound to `CYCLE_EDIT_MODE`, so what it
+lands in depends on the mode the run is trying to prove. Never press the edit button twice inside
+the double-tap window (300 ms) either — a double press opens the load/save overlay.
+
+Do not "fix" a run by assuming the reboot put the device in `LOOP_EDIT`; assert it.
 
 ## The three captured views
 
@@ -156,6 +196,14 @@ diagnostic answer. They do not assert content or timing correctness.
 append, including failure to allocate the ring. Like `RING,overflow`, it makes
 `capture_integrity` INCOMPLETE. The notice is retained until a safe USB flush has
 space, even when there is no allocated ring. Ordinary `RING,shed` remains separate.
+
+Ordinary `RING,shed,<count>` stays a **non-loss**: the playback flush discards only
+non-Tier-A diagnostics rather than blocking the transport on USB I/O and reports it as
+neither loss kind, so no oracle may fail a run on a shed row alone. The session-invalidating
+set is `overflow`, `critical_rejected` and `wiped` — the three `scripts/hitl/serial_collector.py`
+marks `CaptureIntegrity.INCOMPLETE` — plus `tier_a_evicted` where an oracle's own gate pins it
+(`scripts/hitl/accepted_sequence_probe.py`, which reports shed separately as
+`ring_shed_diagnostics_only`).
 Tier-A reentry/release diagnostics are not critical and cannot evict critical
 Record rows; actual critical-to-critical displacement remains possible.
 

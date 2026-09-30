@@ -265,6 +265,13 @@ plus the design's mixed record-A → overdub-B sequence. Require observed natura
 press, continuous transport, exact content/persistence/undo, timing gates and proper retirement.
 A missed natural window is NOT_EXERCISED; no criterion is waived and no reboot prepares repeats.
 
+## S4f.22 — pending overdub finalization slot gesture (DEC-096)
+
+**Owner/API:** `MidiButtonActions::executeAction(CLEAR_TRACK_FOR_SLOT)` delegates to the existing `handleToggleRecordForSlot`; `TrackManager` continues to own selected slot, playback transition and queued record start. No new state or queue.
+
+**Transition oracle:** admitted overdub stop → track reports PLAYING while its job remains pending → one slot-button event. A populated target follows the existing playback selection/queue path; an empty target follows the existing record arm/start path. In both cases the stop job remains pending and bound to its predecessor; no clear or session undo occurs. Active OVERDUBBING session-undo semantics (DEC-038) are unchanged.
+
+**Fixture / verification:** `test_slot_button_during_pending_overdub_finalization_queues_populated_target` and `test_slot_button_during_pending_overdub_finalization_arms_empty_target` exercise existing production Track/TrackManager owners with the worker paused. Focused native suite: `pio test -e native -f test_runtime_working_set_ownership`. Full native, capture-serial build and device acceptance remain required before S4f.22 closure. Track 8 slots 4–5 were previously authorized; exactly one additional slot (3 or 6) is authorized for the mixed leg. Census targets read-only before any clear; do not clear both alternatives. Upload requires approval after successful build.
 Completion: S4f.16 production fixtures are implemented; see [fixture evidence](S4F16-EXECUTION.md).
 The user approved connected S4f.17–S4f.21 implementation. Common start identity, typed accepted-stop
 identity and maintained record-length metadata are prerequisites in progress/verification; see

@@ -1049,9 +1049,37 @@ sequence but cannot exercise the acceptance, which S4f.22 classifies as **NOT_EX
 2. **Mixed record-A → overdub-B**: the retention-handoff shape (`scripts/hitl_retention_handoff.py`) needs
    **three** authorized slots (A/B/C) and this session authorized only two (track 8 slots 4–5); no third slot
    was cleared.
-3. **Freshness/ring gates**: the acceptance oracle wants a `BOOT,usb` banner in the first 80 lines (a capture
-   attached across a reset) and zero ring-loss rows; `RING,shed,1` appeared once at boot here (the identity/
-   telemetry shed the packet already records; it must be distinguished from an eviction).
+3. **Freshness/ring gates** — **ring half fixed 2026-09-30 (host).** The acceptance oracle wanted a
+   `BOOT,usb` banner in the first 80 lines (a capture attached across a reset) and zero ring-loss rows;
+   `RING,shed,1` appeared once at boot here (the identity/telemetry shed this packet already records). A
+   *shed* is now classified as what the firmware says it is — deliberate, non-Tier-A-only discarding in the
+   playback flush, which `DebugSessionCapture` reports as neither loss kind, which `serial_collector.py`
+   never marked incomplete and which `midi_boundary_timing.py` never counted — so
+   `scripts/hitl/accepted_sequence_probe.py` fails the gate only on
+   `tier_a_evicted`/`overflow`/`critical_rejected`/`wiped` and reports shed as a visible, non-fatal
+   `ring_shed_diagnostics_only` row. The same pass reclassified an **absent L3 window / L4 release as a
+   staging outcome** ("the acceptance was not exercised", this packet's NOT_EXERCISED wording) rather than a
+   chain violation, so `captures/s4f22-dec096-od-01` now grades `INSUFFICIENT_EVIDENCE`(4) instead of
+   `SETUP_INCOMPLETE`(3) and the `s4f22-rec-rec-01` R→R shape is no longer labelled a firmware
+   contradiction. Fresh boot is still required and still unmet by any run whose capture attached across a
+   reset. The clear-first rerun `captures/s4f22-dec096-od-02` failed earlier than these gates, at the
+   driver's census precondition (see `tasks.md`, 2026-09-30), so no fresh-boot-clean leg exists yet.
+   **Driver half fixed 2026-09-30 (host, no device action).** The census-*precondition* failure was the
+   driver's own device path, and it is repaired in `scripts/hitl_accepted_sequence.py`: the census is retried
+   on a bounded set (`--census-attempts`) and an unknown target **refuses before any gesture** (the old
+   fallback long-pressed a filled, non-selected target, which the firmware answers with
+   `Loop N: long-press start (not playing)` — it starts playback, never a clear); a filled target's selection
+   must be named by its own `#CAP,<us>,DISP,<slot0>,…` row before the clear; a seed press must produce a
+   slot-scoped `DISP,<slot0>,ARMED` receipt over a bounded press set with **no** transport-start fallback
+   (`captures/s4f22-dec096-mixed-01`); repeated presses of one button stay outside the firmware's tap window
+   (`captures/s4f22-dec096-rec-01`: two taps 0 ms apart became `Loop 3 (double)` = `OVERDUB_FOR_SLOT`); and
+   every seed abort is now a reported `PreparationFailure` instead of a traceback, so the run writes its
+   `accepted-sequence.json` at all. `test_accepted_sequence` **63/63** (9 new), four mutations red-proved and
+   restored byte-identically, 15 neighbouring host suites **369/369**, the gates replayed against the real
+   logs, `git diff --check` clean. Fresh boot is still required and still unmet, and
+   `captures/.device-shutdown-incomplete.json` is still latched (context `accepted-sequence-od`), which blocks
+   the next upload/reset without approval; no leg has been driven on this fix, so this item stays open on its
+   device half.
 4. **Content parity** (`inventory_equal`) remains open from the 2026-09-29 run and was not re-reached, because
    the legs above did not produce the overlap that the pipeline is meant to verify.
 
