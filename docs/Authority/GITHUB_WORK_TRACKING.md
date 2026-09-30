@@ -466,6 +466,8 @@ Direct commits on `dev` are allowed only when you **explicitly** choose that pat
 
 Do **not** treat “small refinement” as automatic permission to skip a branch/PR. Prefer the short-lived branch → PR → `dev` path for TU extraction and similar Tasks.
 
+**Agent lanes ([Git-Commit-And-PR-Workflow.mdc](../../.cursor/rules/Git-Commit-And-PR-Workflow.mdc)).** Coding agents split the same model in two: small **doc-only** hygiene goes **direct on `dev`** in one batched commit when the user wants it shipped, while **firmware, refactor and host-tooling stages** (scripts, probes, host modules, their tests) commit on the **working branch** — each verified stage *updates that branch*, never `dev`, until the user asks for a PR. `dev` is the last stable version; day-to-day integration is the active long-lived branch (`feature/runtime-working-set-ownership` here).
+
 ### Relation to Project status
 
 ```text

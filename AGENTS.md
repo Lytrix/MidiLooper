@@ -79,9 +79,12 @@ path and confidence when alternatives exist; do not block on vagueness.
   short name, including repeats and link labels: **S2b — boot/load admission**,
   **DEC-046 — round-robin playback admission**. Follow
   [short names beside IDs](docs/Authority/NAMING.md#short-names-beside-ids-in-chat).
-- **Git:** small hygiene/doc change → direct commit on `dev`, no PR. Reviewable
-  firmware → short-lived `feature/` or `refactor/` branch off `dev`, PR into
-  `dev`. No auto-PR; a large-work direct commit on `dev` needs an explicit
+- **Git:** small doc-only hygiene → direct commit on `dev`, no PR. Firmware,
+  refactor and **host-tooling** stages (scripts, probes, host modules, their
+  tests) → commit on the **working branch**, never `dev`: `dev` holds the last
+  stable version and day-to-day integration is the active long-lived branch
+  (currently `feature/runtime-working-set-ownership`). PR only on explicit
+  request. No auto-PR; a large-work direct commit on `dev` needs an explicit
   exception.
 
 ## Closeout (always)
