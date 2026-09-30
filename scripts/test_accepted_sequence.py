@@ -811,6 +811,157 @@ class ManagedRunTests(unittest.TestCase):
             self.assertEqual("complete", report["shutdown"]["status"])
 
 
+    def test_a_cancelled_run_reports_the_cancel_and_sends_nothing_after_it(self):
+        """The requirement's order: cancel, no further test gesture, teardown, then the capture is released."""
+        import contextlib
+        import json
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        import mido
+
+        from hitl.actions.cancellation import active_cancel_scope, cancel_active_run
+        from hitl_accepted_sequence import main
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            log = root / "session.log"
+            log.write_text("")
+            capture = SimpleNamespace(
+                session_log=log,
+                send_command=lambda *a, **k: (False, "no census requested in this fixture"),
+                library_observation=lambda *a, **k: None)
+            shutdown = SimpleNamespace(result=SimpleNamespace(
+                ok=True, as_dict=lambda: {"status": "complete"}))
+            exits = []
+
+            @contextlib.contextmanager
+            def managed(**kw):
+                try:
+                    yield capture
+                finally:
+                    exits.append("capture")
+
+            @contextlib.contextmanager
+            def device(**kw):
+                try:
+                    yield shutdown
+                finally:
+                    # The real `DeviceSession.__exit__` drains on *every* exit, including the cancellation
+                    # unwinding through it; the fixture records it the same way.
+                    exits.append("shutdown")
+
+            port = FakePort()
+            edges_before_cancel: list[int] = []
+
+            with contextlib.ExitStack() as stack:
+                def mock(name, **kw):
+                    return stack.enter_context(patch("hitl_accepted_sequence." + name, **kw))
+
+                mock("ManagedCaptureSession", side_effect=managed)
+                mock("DeviceSession", side_effect=device)
+                mock("mido.open_output", return_value=port)
+                mock("_find_midi_port", return_value="fake")
+                mock("slots.press_track")
+                mock("slots.press_slot_record", side_effect=answering_presses(log))
+                mock("_ensure_transport", return_value=True)
+                mock("_wait_for", return_value=True); mock("_await_markers", return_value=True)
+                mock("time.sleep")
+
+                def cancelled_plan(out_port, *_a, **_k):
+                    # The leg's first gesture is where the watchdog fires: the run is cancelled and the plan
+                    # then tries to press anyway, which must leave nothing on the wire.
+                    cancel_active_run("managed run watchdog 1.0s")
+                    edges_before_cancel.append(len(port.sent))
+                    out_port.send(mido.Message("note_on", note=36, channel=15, velocity=100))
+                    return "DROVE_LEG"
+
+                mock("_run_plan", side_effect=cancelled_plan)
+                stack.enter_context(patch("builtins.print"))
+                out = root / "run"
+                rc = main(["--leg", "od", "--track", "8", "--slot-a", "4",
+                           "--slot-b", "5", "--notes", "1", "--no-upload", "--no-clear-targets",
+                           "--out-dir", str(out)])
+            report = json.loads((out / "accepted-sequence.json").read_text())
+            self.assertEqual(3, rc, "a cancelled run is not a success")
+            self.assertEqual("CANCELLED", report["result"])
+            self.assertIn("watchdog", report["cancel_reason"])
+            after = port.sent[edges_before_cancel[0]:]
+            self.assertEqual(report["midi"]["release_edges"], len(after),
+                             "only the guard's own note release went out after the cancel")
+            self.assertNotIn("note_on", [message[0] for message in after],
+                             "the cancelled run put no further test edge on the wire")
+            self.assertGreaterEqual(report["midi"]["refused_after_cancel"], 1)
+            self.assertEqual("complete", report["shutdown"]["status"], "the teardown still ran")
+            self.assertEqual(["shutdown", "capture"], exits,
+                             "the capture is released only after the run stopped and drained")
+            self.assertIsNone(active_cancel_scope(), "the run is unregistered when it ends")
+
+    def test_a_note_held_when_the_cancel_lands_is_released(self):
+        """A cancel between a `note_on` and its `note_off` leaves a sounding note; the guard clears it."""
+        import contextlib
+        import json
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from hitl.actions.cancellation import cancel_active_run
+        from hitl_accepted_sequence import main
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            log = root / "session.log"
+            log.write_text("")
+            capture = SimpleNamespace(
+                session_log=log,
+                send_command=lambda *a, **k: (False, "no census requested in this fixture"),
+                library_observation=lambda *a, **k: None)
+            shutdown = SimpleNamespace(result=SimpleNamespace(
+                ok=True, as_dict=lambda: {"status": "complete"}))
+
+            @contextlib.contextmanager
+            def managed(**kw):
+                yield capture
+
+            @contextlib.contextmanager
+            def device(**kw):
+                yield shutdown
+
+            port = FakePort()
+            cancelled = {"done": False}
+
+            def cancel_mid_press(seconds):
+                """Land the cancel between a press's note-on and its note-off."""
+                if not cancelled["done"]:
+                    cancelled["done"] = True
+                    cancel_active_run("managed run watchdog 1.0s")
+
+            with contextlib.ExitStack() as stack:
+                def mock(name, **kw):
+                    return stack.enter_context(patch("hitl_accepted_sequence." + name, **kw))
+
+                mock("ManagedCaptureSession", side_effect=managed)
+                mock("DeviceSession", side_effect=device)
+                mock("mido.open_output", return_value=port)
+                mock("_find_midi_port", return_value="fake")
+                stack.enter_context(patch("hitl.midi_io.time.sleep", side_effect=cancel_mid_press))
+                stack.enter_context(patch("builtins.print"))
+                out = root / "run"
+                rc = main(["--leg", "od", "--track", "8", "--slot-a", "4",
+                           "--slot-b", "5", "--no-upload", "--no-clear-targets",
+                           "--out-dir", str(out)])
+            report = json.loads((out / "accepted-sequence.json").read_text())
+            kinds = [message[0] for message in port.sent]
+            self.assertEqual(3, rc)
+            self.assertEqual("CANCELLED", report["result"])
+            self.assertIn("note_on", kinds, "the press began")
+            self.assertIn("note_off", kinds[-3:], "the held note was released")
+            self.assertEqual(3, report["midi"]["released_notes"],
+                             "the held note plus one channel silence")
+            self.assertEqual("complete", report["shutdown"]["status"])
+
+
 class EvidenceGateTests(unittest.TestCase):
     """Every gesture is gated on the device's own slot-scoped evidence.
 

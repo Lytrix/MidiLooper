@@ -121,6 +121,74 @@ class ManagedCaptureTests(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertLess(elapsed, 5.0, "watchdog must return promptly on a stall")
 
+    def test_watchdog_cancels_a_registered_run_and_joins_it_before_release(self) -> None:
+        """A registered run is cancelled and *joined* before the watchdog returns (the capture is released after).
+
+        The scenario here is what a driver looks like: it holds a note, sleeps in slices behind its scope, and
+        releases what it was holding when the cancel arrives. The assertions are the requirement's order --
+        cancel, then the run leaves the wire, then the capture is released -- plus "nothing is sent after the
+        abort" and the bounded grace.
+        """
+        import time as _time
+
+        import mido
+
+        from hitl.actions.cancellation import (
+            CancelScope,
+            GuardedMidiOut,
+            RunCancelled,
+            begin_run,
+            cancellable_sleep,
+            end_run,
+        )
+        from hitl.managed_capture import _run_with_watchdog
+
+        class Port:
+            def __init__(self) -> None:
+                self.sent = []
+
+            def send(self, message) -> None:
+                self.sent.append(message)
+
+        port = Port()
+        scope = begin_run(scope=CancelScope(name="watchdog-test"))
+        guard = GuardedMidiOut(port, scope=scope)
+        seen: dict[str, object] = {}
+
+        def scenario() -> int:
+            guard.send(mido.Message("note_on", channel=3, note=60, velocity=100))
+            try:
+                while True:
+                    cancellable_sleep(0.05, scope=scope)
+            except RunCancelled:
+                try:
+                    guard.send(mido.Message("note_on", channel=3, note=61, velocity=100))
+                except RunCancelled:
+                    seen["refused_after_cancel"] = True
+                guard.release_held_notes()
+            # A run needs *time* to leave the wire, and the grace is what the watchdog waits for: this takes a
+            # slice of it before recording that the run stopped. Without the join, the watchdog would return
+            # while the scenario was still inside this sleep.
+            _time.sleep(0.3)
+            seen["stopped"] = True
+            return 3
+
+        try:
+            started = _time.monotonic()
+            code = _run_with_watchdog(scenario, 0.25, grace_s=5.0)
+            elapsed = _time.monotonic() - started
+        finally:
+            end_run(scope)
+        self.assertEqual(3, code)
+        self.assertTrue(seen.get("stopped"), "the cancelled run was joined before the watchdog returned")
+        self.assertTrue(seen.get("refused_after_cancel"), "a post-cancel send must be refused")
+        self.assertEqual(["note_on", "note_off", "control_change", "control_change"],
+                         [message.type for message in port.sent],
+                         "only the held note was released; the refused edge never went out")
+        self.assertLess(elapsed, 6.0, "the watchdog stays bounded after cancelling")
+        self.assertTrue(scope.cancelled)
+        self.assertIn("watchdog", scope.reason or "")
+
     def test_watchdog_disabled_when_nonpositive(self) -> None:
         from hitl.managed_capture import _run_with_watchdog
 

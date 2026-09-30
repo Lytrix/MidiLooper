@@ -18,6 +18,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hitl.control_constants import LOOP_SELECT_NOTE_BASE, TRACK_SELECT_NOTE_BASE  # noqa: E402
 
+from hitl.actions.cancellation import (  # noqa: E402
+    RunCancelled,
+    begin_run,
+    cancel_active_run,
+    end_run,
+)
 from hitl.actions.correlation import Wire  # noqa: E402
 from hitl_retention_handoff import (  # noqa: E402
     Gesture,
@@ -27,6 +33,7 @@ from hitl_retention_handoff import (  # noqa: E402
     _seed_arm_wires,
     _seed_recording_wires,
     _stage_report,
+    _wait_for_any,
     cleared_slot_from_lines,
     critical_window_gestures,
     target_precondition,
@@ -359,6 +366,45 @@ class SeedReceiptTests(unittest.TestCase):
         self.assertIn(Wire("Loop 5: Start Recording"), arm)
         self.assertIn(Wire(",RECA,4,", ()), take)
         self.assertIn(Wire("Recording started"), take)
+
+
+class CancellationTests(unittest.TestCase):
+    """A cancelled run leaves the driver's waits with its own reason instead of a wrong verdict.
+
+    Both waits are the run's longest bounds, so a cancel that left them running would keep the scenario on the
+    capture until the bound expired. `RunCancelled` (not a `False`) is the point: the caller reports the cancel
+    rather than reading a cancelled wait as "the device never answered".
+    """
+
+    def tearDown(self) -> None:
+        end_run()
+
+    def _log(self, lines: list[str]) -> Path:
+        import tempfile
+        path = Path(tempfile.mkdtemp()) / "session.log"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
+
+    def test_a_cancelled_seed_wait_stops_with_the_runs_reason(self):
+        log = self._log(["[10.000] [INFO] Transport stopped",
+                         "[10.100] [INFO] Button press: Loop 5 (short)"])
+        scope = begin_run(name="retention")
+        scope.cancel("managed run watchdog 360.0s")
+        with self.assertRaises(RunCancelled):
+            _await_seed_receipt(log, 2, slot_number=5, stage="arm", timeout_s=5.0)
+
+    def test_a_cancelled_marker_wait_stops_the_same_way(self):
+        log = self._log(["[10.000] [INFO] Transport stopped"])
+        begin_run(name="retention")
+        cancel_active_run("managed run watchdog 360.0s")
+        with self.assertRaises(RunCancelled):
+            _wait_for_any(log, after=0, markers=("never",), timeout_s=5.0)
+
+    def test_an_uncancelled_wait_keeps_its_own_answer(self):
+        log = self._log(["[10.000] [INFO] Transport stopped"])
+        begin_run(name="retention")
+        self.assertTrue(_wait_for_any(log, after=0, markers=("Transport stopped",), timeout_s=0.3))
+        self.assertFalse(_wait_for_any(log, after=0, markers=("never",), timeout_s=0.0))
 
 
 if __name__ == "__main__":

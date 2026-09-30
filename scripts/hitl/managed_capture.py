@@ -14,6 +14,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
+from hitl.actions.cancellation import active_cancel_scope, cancel_active_run
+
 from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT, HitlConfig
 from hitl.serial.protocol import (collect_library_observation, fenced_rows,
                                   fenced_window, format_command_request, record_evidence_stats,
@@ -50,6 +52,11 @@ _ACTIVE_SESSION: Optional["ManagedCaptureSession"] = None
 DEFAULT_MANAGED_RUN_TIMEOUT_S = 360.0
 _RUN_TIMEOUT_ENV = "HITL_MANAGED_RUN_TIMEOUT_S"
 
+# How long a cancelled scenario is given to leave the wire before the capture child is released. Bounded on
+# purpose: an abandoned run must not hold the capture, and its sends are refused once it is cancelled anyway.
+DEFAULT_CANCEL_GRACE_S = 30.0
+_CANCEL_GRACE_ENV = "HITL_CANCEL_GRACE_S"
+
 
 def resolve_managed_run_timeout(timeout_s: Optional[float] = None) -> float:
     """Resolve the managed-run watchdog ceiling in seconds (<= 0 disables)."""
@@ -62,6 +69,19 @@ def resolve_managed_run_timeout(timeout_s: Optional[float] = None) -> float:
         except ValueError:
             pass
     return DEFAULT_MANAGED_RUN_TIMEOUT_S
+
+
+def resolve_cancel_grace(grace_s: Optional[float] = None) -> float:
+    """Resolve how long a cancelled scenario may take to stop before the capture is released."""
+    if grace_s is not None:
+        return max(float(grace_s), 0.0)
+    raw = os.environ.get(_CANCEL_GRACE_ENV)
+    if raw:
+        try:
+            return max(float(raw), 0.0)
+        except ValueError:
+            pass
+    return DEFAULT_CANCEL_GRACE_S
 
 
 def active_managed_capture() -> Optional["ManagedCaptureSession"]:
@@ -723,11 +743,19 @@ def transport_stop_sender(config: HitlConfig, sent: dict) -> Callable[[], None]:
     return _send
 
 
-def _run_with_watchdog(run_fn: Callable[[], int], timeout_s: float) -> int:
+def _run_with_watchdog(run_fn: Callable[[], int], timeout_s: float,
+                       *, grace_s: Optional[float] = None) -> int:
     """Run `run_fn` on a worker thread behind a wall-clock ceiling.
 
     Returns the run code, or 3 if the ceiling is exceeded. Exceptions from the
     worker are re-raised here so callers keep normal failure semantics.
+
+    When the ceiling is exceeded the run is **cancelled first** and given a bounded grace to leave the wire,
+    and only then does this return -- its caller's `managed_capture_session` context releases the capture child
+    on the way out. That order is the point: a scenario still pressing while the capture is being released is
+    the defect, and `hitl.actions.cancellation` guarantees it cannot press once cancelled. A scenario that will
+    not stop is reported and abandoned rather than waited on forever, because an abandoned run must not hold
+    the capture or the serial port.
     """
     if timeout_s <= 0:
         return run_fn()
@@ -743,11 +771,31 @@ def _run_with_watchdog(run_fn: Callable[[], int], timeout_s: float) -> int:
     worker.start()
     worker.join(timeout_s)
     if worker.is_alive():
+        grace = resolve_cancel_grace(grace_s)
+        scope = active_cancel_scope()
+        cancelled = cancel_active_run(f"managed run watchdog {timeout_s:.1f}s")
         print(
             f"[hitl-capture] scenario exceeded {timeout_s:.1f}s watchdog; "
-            "aborting run and releasing capture",
+            + ("cancelling the run and giving it " if cancelled
+               else "no run scope is registered; giving it " if scope is None
+               else "the run was already cancelled; giving it ")
+            + f"{grace:.1f}s to stop before the capture is released",
             flush=True,
         )
+        if scope is None:
+            # Nothing to cancel, and nothing that promised to stop: releasing and returning is the right
+            # behaviour here, and it keeps the harness bounded.
+            print("[hitl-capture] releasing the capture without waiting (no run scope to cancel)", flush=True)
+            return 3
+        worker.join(grace)
+        if worker.is_alive():
+            print(
+                "[hitl-capture] the scenario did not stop after cancellation; releasing the capture anyway "
+                "(its sends are refused from here on)",
+                flush=True,
+            )
+        else:
+            print("[hitl-capture] the scenario stopped after cancellation; releasing the capture", flush=True)
         return 3
     if "exc" in outcome:
         raise outcome["exc"]  # type: ignore[misc]

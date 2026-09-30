@@ -71,7 +71,12 @@ import mido
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from hitl.actions import slots  # noqa: E402
-from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT  # noqa: E402
+from hitl.actions.cancellation import (  # noqa: E402
+    GuardedMidiOut,
+    active_cancel_scope,
+    begin_run,
+    cancellable_sleep,
+)
 from hitl.actions.correlation import (  # noqa: E402
     CorrelatedGesture,
     PendingSwitchGate,
@@ -79,6 +84,7 @@ from hitl.actions.correlation import (  # noqa: E402
     StageRules,
     Wire,
 )
+from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT  # noqa: E402
 from hitl.control_constants import (  # noqa: E402
     CONTROL_CHANNEL_1BASED,
     GLOBAL_TRANSPORT_NOTE,
@@ -439,17 +445,30 @@ def _await_slot_disp(capture_log: Path, after: int, slot0: int,
             next_drain = now + DRAIN_EVERY_S
         return _slot_disp_rows(capture_log, after, slot0, states, human)
 
-    if not gesture.wait_for(Stage.ACCEPT, rows, timeout_s=timeout_s, poll_s=0.05):
+    scope = active_cancel_scope()
+    met = gesture.wait_for(Stage.ACCEPT, rows, timeout_s=timeout_s, poll_s=0.05,
+                           cancel=(None if scope is None else lambda: scope.cancelled))
+    if scope is not None:
+        # A cancelled run leaves here with its own reason instead of being reported as a missing receipt.
+        scope.check()
+    if not met:
         return None
     return gesture.evidence[Stage.ACCEPT]
 
 
 def _await_markers(capture_log: Path, after: int, markers: tuple[str, ...], timeout_s: float,
                    *, drain=None) -> bool:
-    """Wait for any of `markers` in the rows after `after`, flushing the capture ring as it waits."""
+    """Wait for any of `markers` in the rows after `after`, flushing the capture ring as it waits.
+
+    Cancel-aware like the receipt waits: a cancelled run stops here with its own reason instead of sitting out
+    a commitment/persistence bound while the capture is being released.
+    """
     deadline = time.monotonic() + max(timeout_s, 0.0)
     next_drain = time.monotonic() + DRAIN_EVERY_S
     while True:
+        scope = active_cancel_scope()
+        if scope is not None:
+            scope.check()
         tail = _lines(capture_log)[after:]
         if any(marker in line for line in tail for marker in markers):
             return True
@@ -780,7 +799,11 @@ def main(argv: list[str] | None = None) -> int:
         anchor_row = len(_lines(capture_log))
         report["anchor_row"] = anchor_row
 
-        out_port = mido.open_output(_find_midi_port("Teensy", is_input=False))
+        # The run's own scope and its guarded output. Every test edge goes through the guard, so a cancelled run
+        # cannot press again; `guard.run()` below absorbs the cancellation, releases whatever was held, and
+        # unregisters the run, while the shutdown inside it still stops the transport and drains.
+        scene = begin_run(name=f"accepted-sequence-{args.leg}")
+        out_port = GuardedMidiOut(mido.open_output(_find_midi_port("Teensy", is_input=False)), scope=scene)
         ctx = _Ctx(out_port)
 
         # The capture ring holds rows until its owner is asked to flush them, so a receipt wait drains too.
@@ -795,11 +818,13 @@ def main(argv: list[str] | None = None) -> int:
             """
             (out_dir / "accepted-sequence.json").write_text(json.dumps(report, indent=2) + "\n")
 
-        with DeviceSession(
+        with out_port.run() as run_record, DeviceSession(
                 capture_log_getter=lambda: capture_log,
-                send_transport_stop=lambda: _ensure_transport(
+                # The shutdown's transport stop is a teardown edge, not a test gesture: it runs in the guard's
+                # permitted phase, so a cancelled run can still leave the device stopped and drained.
+                send_transport_stop=lambda: out_port.teardown_call(lambda: _ensure_transport(
                     out_port, capture_log, running=False, press_ms=args.press_ms, events=events,
-                    label="shutdown"),
+                    label="shutdown")),
                 out_dir=out_dir,
                 context=f"accepted-sequence-{args.leg}",
                 events=events) as shutdown_session:
@@ -1063,7 +1088,9 @@ def main(argv: list[str] | None = None) -> int:
                         out_port, capture_log, plan, slot_b=args.slot_b, press_ms=args.press_ms,
                         phase_timeout_s=args.phase_timeout_s, events=events,
                         note_channel=t0, overdub_notes=args.notes, drain=drain)
-            time.sleep(args.settle_s)
+            # The leg's settle is the run's longest stretch with nothing on the wire, so it is the one place a
+            # cancel would otherwise wait out a whole phase before the capture could be released.
+            cancellable_sleep(args.settle_s, scope=scene)
             report["leg_rows"] = len(_lines(capture_log)) - leg_mark
 
             _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
@@ -1080,6 +1107,17 @@ def main(argv: list[str] | None = None) -> int:
             report["leg_end_row"] = len(_lines(capture_log))
             write_report()
 
+    # The run's own record, whether it finished or was cancelled. A cancelled run keeps the partial report it
+    # has: the result names the cancel (with its reason and the guard's edge counts) instead of the milestone
+    # it happened to stop at, and the process still exits nonzero below.
+    report["midi"] = run_record.as_dict()
+    if run_record.cancelled:
+        report["result"] = "CANCELLED"
+        report["cancel_reason"] = run_record.reason
+        events.append({"event": "run_cancelled", "reason": run_record.reason,
+                       "released_notes": run_record.released_notes,
+                       "refused_after_cancel": run_record.record.get("refused_after_cancel")})
+        print(f"[s4f13] run cancelled: {run_record.reason}", flush=True)
     report["shutdown"] = shutdown_session.result.as_dict()
     if not shutdown_session.result.ok:
         report["result"] = f"SHUTDOWN_{shutdown_session.result.status.upper()}"
