@@ -610,7 +610,9 @@ def verdict_bundle(
     run's teardown result are recorded verbatim, and `verify_report_bundle` re-runs the same rule over them.
     `UNKNOWN` counts as not-ok on purpose -- "the required edge is absent" is not a pass -- and a pass needs the
     run's own teardown to have succeeded ("shutdown failure SHALL prevent overall success"), which is why the
-    driver's report is passed in: without it the bundle says so instead of claiming a pass.
+    driver's report is passed in: without it the bundle says so instead of claiming a pass. The run's own
+    authorization record travels the same way, so a sealed verdict names the scope the run was driven under
+    (task 4.1) instead of leaving the bundle's `authorization` section empty.
     """
     teardown = (run_report or {}).get("shutdown") if run_report else None
     predicates = [
@@ -630,6 +632,7 @@ def verdict_bundle(
         status=analysis.verdict,
         claims_success=(analysis.verdict == "ACCEPTED_SEQUENCE_PASS"),
         predicates=predicates,
+        authorization=_authorization_section(run_report),
         teardown=dict(teardown) if isinstance(teardown, dict) else None,
         evidence={
             "leg": leg,
@@ -644,6 +647,12 @@ def verdict_bundle(
             "the run's own teardown result is part of the verdict: a pass needs a successful drain",
         ] + list(analysis.limitations)),
     )
+
+
+def _authorization_section(run_report: Optional[dict]) -> Optional[dict]:
+    """The run's own authorization record, verbatim, for the bundle's `authorization` section."""
+    record = (run_report or {}).get("authorization")
+    return dict(record) if isinstance(record, dict) else None
 
 
 def main(argv: list[str] | None = None) -> int:

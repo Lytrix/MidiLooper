@@ -1667,6 +1667,25 @@ class SealedVerdictTests(unittest.TestCase):
         self.assertEqual("the verdict is the accepted-sequence oracle's; every check it made is a predicate here",
                          record["notes"][0])
 
+    def test_the_runs_authorization_record_travels_into_the_sealed_bundle(self):
+        """Task 4.1: a sealed verdict names the scope the run was driven under, not an empty section."""
+        import json
+        import tempfile
+
+        analysis = self._analysis(Check("L2_no_capacity_denial", "ok", "no denial", "evidence"))
+        authorization = {"source": "manifest", "value": "STIM-BASE-2-2-01", "fingerprint": "STIM-BASE-2-2-01@v1",
+                         "track": 8, "slots": [4, 5], "targets": "track 8 slots 4,5", "declared": None}
+        with tempfile.TemporaryDirectory() as tmp:
+            carried = self._seal(tmp, analysis, run_report={
+                "shutdown": {"ok": True, "status": "complete"}, "authorization": authorization,
+                "result": "DROVE_LEG"})
+            absent = self._seal(Path(tmp) / "second", analysis, run_report={
+                "shutdown": {"ok": True, "status": "complete"}, "result": "DROVE_LEG"})
+            with_record = json.loads(carried.read_text())["authorization"]
+            without_record = json.loads(absent.read_text())["authorization"]
+        self.assertEqual(authorization, with_record)
+        self.assertIsNone(without_record, "a run that recorded no authorization says so")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

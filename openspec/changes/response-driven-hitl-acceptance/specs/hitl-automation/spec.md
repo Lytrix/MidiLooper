@@ -53,6 +53,11 @@ The runner SHALL prepare only explicitly authorized track/slot targets and SHALL
 - **THEN** their clear and persistence completion are verified before new seeding or capture
 - **AND** unrelated content remains unchanged and boot identity is preserved
 
+#### Scenario: Target outside the run's authorization
+- **WHEN** a run names a track or slot that its authorization does not cover
+- **THEN** it stops before the board is reset and before any clear, seed or other mutation
+- **AND** its report names the refused target and the scope that was authorized
+
 #### Scenario: SD residue or persistence failure
 - **WHEN** a cleared target still has SD content or persistence did not complete successfully
 - **THEN** preparation reports SETUP_INCOMPLETE
