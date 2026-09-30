@@ -191,10 +191,18 @@ def by_name(result):
 
 
 
+def family_stat(family: str, *, entered: int, enq: int, rej: int = 0, tx: int | None = None,
+                evict: int = 0, us: int = 9000000) -> str:
+    """One `RING,record_stats,<family>,…` read-back row, in the owner's own wire form."""
+    return (f"#CAP,{us},RING,record_stats,{family},entered={entered},enq={enq},rej={rej},"
+            f"tx={entered if tx is None else tx},evict={evict}")
+
+
 def od_chain_log(*, a_start: bool = True, a_bindings: int = 1, a_binding_interval: int | None = None,
                  b_start: bool = True, b_start_after_a_release: bool = False, b_terminals: int = 1,
                  a_release: bool = True, b_release: bool = True, a_requests: int = 1, b_requests: int = 1,
-                 seed_records: bool = True, fallback: bool = False, b_interval: int = 4) -> str:
+                 seed_records: bool = True, fallback: bool = False, b_interval: int = 4,
+                 family_rows: tuple[str, ...] = ()) -> str:
     """A synthetic **overdub**-leg log: each keyword removes or duplicates exactly one identity link.
 
     Written against the wire forms the owners emit. Firmware rows are 0-based, so A = slot 4 = 3 and B = slot
@@ -227,6 +235,8 @@ def od_chain_log(*, a_start: bool = True, a_bindings: int = 1, a_binding_interva
         lines.append(f"[25.{100 + i}] [INFO] Loop 5: Switch gesture from slot 4")
     for i in range(b_requests):
         lines.append(f"[27.{100 + i}] [INFO] Loop 5: Stop Overdub")
+    # The stopped-only read-back the leg's own driver asks for (task 2.2's accounting gate reads these).
+    lines.extend(family_rows)
     return "\n".join(lines) + "\n"
 
 
@@ -1272,6 +1282,90 @@ class OverdubIdentityOracleTests(unittest.TestCase):
                         metadata=METADATA, base_report=BASE_REPORT)
         self.assertNotEqual(0, wrong.exit_code)
         self.assertEqual("unknown", by_name(wrong)["overdub_interval_identity"].status)
+
+
+class FamilyAccountingGateTests(unittest.TestCase):
+    """Task 2.2's "required event loss is detectable", as a verdict input.
+
+    The firmware counts each family it relies on and the stopped-only read-back reports those counters, so a leg
+    can be gated on its **own** accounting: a refused append or a displaced row inside the capture means the
+    capture lost the rows it counts, and a chain cannot be concluded from it. The scope matters as much as the
+    gate: the counters are per boot, so the baseline is the capture's own first read-back -- a loss that
+    happened before the capture is outside its window, and failing a leg for it would invent a verdict. A
+    capture with no read-back at all adds no check (the read-back is the driver's obligation).
+    """
+
+    def test_a_capture_whose_own_counters_report_loss_cannot_pass(self):
+        text = od_chain_log(family_rows=(
+            family_stat("DIAG,latch", entered=2, enq=2),
+            family_stat("DIAG,latch", entered=3, enq=2, rej=1),
+        ))
+        result = run_od(text)
+        link = by_name(result)["family_accounting"]
+        self.assertEqual("fail", link.status)
+        self.assertEqual("setup", link.kind, "lost evidence is a capture problem, like a ring loss")
+        self.assertIn("1 refused append(s)", link.detail)
+        self.assertEqual("SETUP_INCOMPLETE", result.verdict)
+        self.assertEqual(3, result.exit_code)
+
+    def test_a_displaced_row_is_reported_too(self):
+        text = od_chain_log(family_rows=(
+            family_stat("DIAG,latch", entered=4, enq=4, evict=0),
+            family_stat("DIAG,latch", entered=4, enq=4, evict=2),
+        ))
+        result = run_od(text)
+        self.assertEqual("fail", by_name(result)["family_accounting"].status)
+        self.assertIn("2 displaced row(s)", by_name(result)["family_accounting"].detail)
+
+    def test_an_inconsistent_family_arithmetic_is_a_finding(self):
+        """`entered != enq + rej` means the emitter's own count and the ring's disagree."""
+        text = od_chain_log(family_rows=(
+            family_stat("RECS", entered=9, enq=7, tx=7),
+        ))
+        result = run_od(text)
+        link = by_name(result)["family_accounting"]
+        self.assertEqual("fail", link.status)
+        self.assertIn("entered 9 != enqueued 7 + rejected 0", link.detail)
+
+    def test_clean_counters_do_not_change_the_verdict(self):
+        clean = (family_stat("DIAG,latch", entered=2, enq=2),
+                 family_stat("RECA", entered=1, enq=1),
+                 family_stat("DIAG,latch", entered=2, enq=2))
+        with_rows = run_od(od_chain_log(family_rows=clean))
+        without = run_od(od_chain_log())
+        self.assertEqual(without.verdict, with_rows.verdict)
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", with_rows.verdict)
+        self.assertEqual("ok", by_name(with_rows)["family_accounting"].status)
+        self.assertIn("2 counted famil(ies)", by_name(with_rows)["family_accounting"].detail)
+        self.assertEqual(2, len(with_rows.evidence["family_stats"]))
+
+    def test_a_boot_scoped_loss_before_the_capture_does_not_fail_the_leg(self):
+        """Measured before this capture, reported in both snapshots: outside its window, so not this leg's."""
+        text = od_chain_log(family_rows=(
+            family_stat("DIAG,latch", entered=5, enq=3, rej=2, tx=3),
+            family_stat("DIAG,latch", entered=6, enq=4, rej=2, tx=4),
+        ))
+        result = run_od(text)
+        self.assertEqual("ok", by_name(result)["family_accounting"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+    def test_no_read_back_row_adds_no_check(self):
+        """The read-back is the driver's obligation; requiring it here would invalidate captures that never asked."""
+        result = run_od(od_chain_log())
+        self.assertNotIn("family_accounting", by_name(result))
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+    def test_the_gate_reads_the_device_wire_form_verbatim(self):
+        """The row below is copied from `captures/base_20260930_164240_serial.log` (flashed image
+        `577841d6…`), so the gate's regex is pinned against what the firmware actually prints -- including the
+        family tag's own comma."""
+        real = ("#CAP,64968688,RING,record_stats,DIAG,latch,entered=0,enq=0,rej=0,tx=0,evict=0")
+        result = run_od(od_chain_log(family_rows=(real,)))
+        link = by_name(result)["family_accounting"]
+        self.assertEqual("ok", link.status)
+        self.assertIn("DIAG,latch", link.detail)
+        self.assertEqual(["DIAG,latch: {'entered': 0, 'enq': 0, 'rej': 0, 'tx': 0, 'evict': 0}"],
+                         result.evidence["family_stats"])
 
 
 class OverdubIdentityDeviceExcerpt(unittest.TestCase):

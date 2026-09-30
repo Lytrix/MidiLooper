@@ -419,7 +419,10 @@ class ManagedCaptureSession:
                     if any(value >= 0xFFFFFFFF for value in counts.values()):
                         result["reason"] = f"{family}: saturated counters"
                         return result
-                    if previous and any(counts[key] < previous[family][key] for key in counts):
+                    # `previous` is this retrieval's own earlier snapshot; a family it did not carry (an
+                    # older reply shape) has no baseline to regress against, so it is compared only with itself.
+                    previous_family = previous.get(family) if previous else None
+                    if previous_family and any(counts[key] < previous_family[key] for key in counts):
                         result["reason"] = f"{family}: counters regressed (possible reset)"
                         return result
                     if counts["rej"] or counts["evict"]:

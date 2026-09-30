@@ -268,11 +268,20 @@ def collect_library_observation(lines: list[str], after_index: int = 0,
 
 
 def record_evidence_stats(lines: list[str]) -> Optional[dict[str, dict[str, int]]]:
-    """Decode a complete stopped-only stats reply, never a partial/duplicate family."""
+    """Decode a complete stopped-only stats reply, never a partial/duplicate family.
+
+    Every family the firmware reports is carried through: `RID,stats,` for the identity path and
+    `RING,record_stats,<family>,` for each counted family (`RECA`, `RECS`, and -- since task 2.2's latch
+    evidence -- `DIAG,latch`). The **record trio must be complete** for the reply to count, because that is
+    what the managed retrieval reconciles against the log's own rows; other families are reported rather than
+    dropped, because a family that is silently ignored cannot have its loss detected -- which is the whole
+    point of counting it.
+    """
     families: dict[str, dict[str, int]] = {}
     required = ("entered", "enq", "rej", "tx", "evict")
     for line in lines:
-        match = re.search(r"#CAP,\d+,(?:RID,stats,|RING,record_stats,(RECA|RECS),)(.*)$", line)
+        match = re.search(r"#CAP,\d+,(?:RID,stats,|RING,record_stats,([A-Za-z_]+(?:,[A-Za-z_]+)?),)(.*)$",
+                          line)
         if not match:
             continue
         family = match[1] or "RID"
@@ -282,7 +291,7 @@ def record_evidence_stats(lines: list[str]) -> Optional[dict[str, dict[str, int]
         if any(not fields.get(key, "").isdigit() for key in required):
             return None
         families[family] = {key: int(fields[key]) for key in required}
-    return families if set(families) == {"RECA", "RECS", "RID"} else None
+    return families if {"RECA", "RECS", "RID"} <= set(families) else None
 
 
 def record_evidence_row_counts(lines: list[str]) -> dict[str, int]:

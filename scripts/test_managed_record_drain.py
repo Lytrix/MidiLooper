@@ -200,6 +200,32 @@ class DrainTests(unittest.TestCase):
         self.assertFalse(stopped_capture_queue_idle(["#STOP_STATUS,us=1,pending=0,queue=1/2"]))
         self.assertFalse(stopped_capture_queue_idle([]))
 
+    def test_parser_carries_every_counted_family_not_only_the_record_trio(self):
+        """Task 2.2: a family that is silently dropped cannot have its loss detected.
+
+        The reply now carries `DIAG,latch` alongside the record trio (measured on the flashed image:
+        `captures/base_20260930_164240_serial.log`). The trio must still be complete for the reply to count --
+        that is what the managed retrieval reconciles against the log -- but the extra family is *reported*
+        rather than ignored, so the retrieval's refusal/displacement gate covers it.
+        """
+        reply = [
+            "#CAP,1,RID,stats,entered=1,enq=1,rej=0,tx=1,evict=0",
+            "#CAP,1,RING,record_stats,RECA,entered=1,enq=1,rej=0,tx=1,evict=0",
+            "#CAP,1,RING,record_stats,RECS,entered=7,enq=7,rej=0,tx=7,evict=0",
+            "#CAP,1,RING,record_stats,DIAG,latch,entered=0,enq=0,rej=0,tx=0,evict=0",
+        ]
+        stats = record_evidence_stats(reply)
+        self.assertIsNotNone(stats)
+        self.assertEqual({"RID", "RECA", "RECS", "DIAG,latch"}, set(stats))
+        self.assertEqual({"entered": 0, "enq": 0, "rej": 0, "tx": 0, "evict": 0}, stats["DIAG,latch"])
+        # A reply that holds the extra family but misses a record family is still incomplete.
+        self.assertIsNone(record_evidence_stats([row for row in reply if ",RECS," not in row]))
+        # A duplicate family is refused, extra or not.
+        self.assertIsNone(record_evidence_stats(reply + [reply[-1]]))
+        # A malformed counter is refused rather than read as zero.
+        self.assertIsNone(record_evidence_stats(reply[:-1] + [
+            "#CAP,1,RING,record_stats,DIAG,latch,entered=,enq=0,rej=0,tx=0,evict=0"]))
+
 
 class AttachStreamGateTests(unittest.TestCase):
     """A capture that attached to a silent device must not run the measured sequence."""

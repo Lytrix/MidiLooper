@@ -286,6 +286,27 @@ def _gesture_clock_us(capture_log: Path, after: int) -> Optional[int]:
     return best
 
 
+def _read_family_counters(capture, *, timeout_s: float = 6.0) -> Optional[list[str]]:
+    """Ask the stopped-only owner for its per-family counters; None when the request cannot be made.
+
+    Task 2.2: the read-back is what makes a **counted** loss visible, so the leg's own capture can be gated on
+    it (the oracle's `family_accounting`). Read-only and fenced like the drain, and deliberately non-fatal: a
+    session that cannot answer costs the accounting evidence, never the leg.
+    """
+    send = getattr(capture, "send_command", None)
+    fenced = getattr(capture, "fenced_response", None)
+    if send is None or fenced is None:
+        return None
+    nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
+    try:
+        accepted, _detail = send("!CAP_IDENTITY_STATS", nonce=nonce, end_nonce=end_nonce)
+        if not accepted:
+            return None
+        return fenced(nonce, end_nonce, timeout_s=timeout_s)
+    except Exception:  # a read-back must never be the thing that fails a run
+        return None
+
+
 def _drain_now(drain) -> None:
     """Ask the capture owner to flush the ring, tolerating a session that has already gone."""
     if drain is None:
@@ -999,6 +1020,15 @@ def main(argv: list[str] | None = None) -> int:
 
             _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
                               events=events, label="final")
+            # Task 2.2: the leg's own accounting, read back while the transport is stopped (the request is
+            # stopped-only). The oracle gates on these counters, so a leg whose counted families lost rows --
+            # the latch's family included -- cannot read as accepted. Bounded and non-fatal: a session that
+            # cannot answer costs the accounting evidence, and the leg still reports what it drove.
+            stats_rows = _read_family_counters(capture)
+            report["identity_stats_rows"] = len(stats_rows or [])
+            events.append({"event": "family_counters_read_back", "rows": report["identity_stats_rows"]})
+            _drain_now(drain)
+            time.sleep(0.2)
             report["leg_end_row"] = len(_lines(capture_log))
             write_report()
 
