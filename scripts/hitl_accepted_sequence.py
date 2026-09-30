@@ -371,11 +371,15 @@ def _await_markers(capture_log: Path, after: int, markers: tuple[str, ...], time
 
 #: How often a receipt wait may ask the owner to flush the capture ring.
 DRAIN_EVERY_S = 2.0
-#: The census is a read-only *request*: one lost window is a delivery outcome, so it is retried inside the
-#: run's bound before a target is declared undecidable (`captures/s4f22-dec096-od-02`: the first request was
-#: lost, the next answered 64 slots, settled).
-DEFAULT_CENSUS_ATTEMPTS = 3
-DEFAULT_CENSUS_RETRY_DELAY_S = 2.0
+#: The census is a read-only *request* whose answer depends on the device's own state, so it is retried inside
+#: the run's bound before a target is declared undecidable. Two measured shapes need the retries:
+#: a **lost** window (`captures/s4f22-dec096-od-02`: the first request was lost, the next answered 64 slots,
+#: settled) and an **incomplete sweep while the boot restore is still running** (`…-od-06`/`…-od-07`: the
+#: focus track's slots are restored at boot, so the census read 8, then 9, then 14 of 64 slots as known and the
+#: run's own target stayed unknown -- the earlier runs read `occupied: 64, unknown: 0` because their census
+#: landed after the restore had finished). The budget is sized for that restore, not for the request.
+DEFAULT_CENSUS_ATTEMPTS = 8
+DEFAULT_CENSUS_RETRY_DELAY_S = 4.0
 #: Bound for the device to name a gesture's effect with its own slot-scoped `DISP` row. Measured: a selection
 #: change appears in ~0.2 s and an arm in ~0.04 s, while a *swallowed* press never appears at all.
 DEFAULT_ARM_TIMEOUT_S = 6.0
@@ -718,12 +722,19 @@ def main(argv: list[str] | None = None) -> int:
                     # before any gesture (see the docstring).
                     known_occupied = census.get((t0, slot0)) if census is not None else None
                     if known_occupied is None:
+                        observed = [e for e in events if e.get("event") == "census"]
+                        last = observed[-1] if observed else {}
                         events.append({"event": f"prepare_slot_{label}_census_unavailable",
-                                       "slot": slot_number})
+                                       "slot": slot_number, **last})
                         raise PreparationFailure(
                             f"census unavailable for slot {slot_number} after "
-                            f"{args.census_attempts} attempt(s); refusing before any gesture (a filled, "
-                            "non-selected target is started by a long press instead of cleared)")
+                            f"{args.census_attempts} attempt(s); "
+                            + (f"the last observation read {last['occupied']} occupied / "
+                               f"{last['unknown']} unknown of {last['slots']} slots "
+                               f"(device_settled={last['device_settled']}). "
+                               if "occupied" in last else "no observation completed. ")
+                            + "Refusing before any gesture (a filled, non-selected target is started by a "
+                              "long press instead of cleared)")
                     if known_occupied is False:
                         preparation.append({"slot": slot_number, "status": "ALREADY_EMPTY",
                                             "detail": "census: no committed content"})
