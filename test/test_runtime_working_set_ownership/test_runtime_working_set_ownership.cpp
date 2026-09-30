@@ -2110,6 +2110,51 @@ void test_s4_1_capture_work_slot_uses_the_pinned_interval_slot() {
   track.forceSetState(TRACK_PLAYING);
 }
 
+/// During deferred overdub finalization the track has returned to PLAYING, so a slot gesture
+/// must follow ordinary populated-slot playback selection rather than be rejected as a session undo.
+void test_slot_button_during_pending_overdub_finalization_queues_populated_target() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 1);
+  track.forceSetState(TRACK_PLAYING);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  track.startOverdubbing(96);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(60, 97, 120);
+  track.stopOverdubbing();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+
+  midiButtonActions.handleToggleRecordForSlot(1);
+
+  TEST_ASSERT_EQUAL_UINT8(1, trackManager.getSelectedSlotIndex(0));
+  TEST_ASSERT_TRUE(track.hasDataInSlot(1));
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+}
+
+/// The same single slot gesture arms an empty target through the existing queued-record path.
+void test_slot_button_during_pending_overdub_finalization_arms_empty_target() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  track.forceSetState(TRACK_PLAYING);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  track.startOverdubbing(96);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(60, 97, 120);
+  track.stopOverdubbing();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+
+  midiButtonActions.handleToggleRecordForSlot(1);
+
+  TEST_ASSERT_EQUAL_UINT8(1, track.getActiveLoopIndex());
+  TEST_ASSERT_TRUE(trackManager.isRecordingQueued(0, 1) || track.isRecording());
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
@@ -2139,6 +2184,8 @@ int main() {
   RUN_TEST(test_a_cross_track_successor_starts_while_the_predecessor_finalizes);
   RUN_TEST(test_a_cleared_successor_is_a_record_target_while_the_predecessor_finalizes);
   RUN_TEST(test_a_populated_successor_overdubs_on_its_own_phase_while_the_predecessor_finalizes);
+  RUN_TEST(test_slot_button_during_pending_overdub_finalization_queues_populated_target);
+  RUN_TEST(test_slot_button_during_pending_overdub_finalization_arms_empty_target);
   RUN_TEST(test_the_switch_carried_start_executes_exactly_once);
   // The two exactly-once routes the fixture above left uncovered.
   RUN_TEST(test_the_arm_and_wait_requeue_retains_then_executes_exactly_once);
