@@ -278,4 +278,8 @@ declaration (`spec.py`), the per-profile scope (`registry.py`), the resolution a
 - **Fixture implemented**: NOT APPLICABLE (documentation slice).
 - **Task IDs eligible for checkoff**: **1.1** (this packet exists with every required field audited and the one
   open ownership decision recorded and routed to 4.1).
-- **Stage gates still open**: 4.1–4.4, 5.1–5.3, 6.1–6.4, and the `[~]` device legs of 2.1/2.2.
+- **Stage gates still open**: 6.1–6.4 (hardware qualification), the `[~]` device legs of 2.1/2.2 and of
+  4.1/4.2/4.3, and 5.1's *mixed record-predecessor/overdub-successor* leg (the record leg's switch-carried plan
+  from 4.2 removed 5.1's other blocker). Everything else in 1.x–5.3 is `[x]`; the host record for the whole
+  change is the sweep **1,067 tests / 75 suites** plus `pio test -e native` **2,643 cases / 7 skipped /
+  2,636 succeeded**, with the seven pre-existing failures unchanged.

@@ -554,7 +554,27 @@ ring's PSRAM, and `RING,head_bad` names any advance off a record boundary.
       difference). [ACCEPTANCE-VETO-EXECUTION.md](ACCEPTANCE-VETO-EXECUTION.md). **Owed to 6.3:** a live run whose
       bundle actually carries the three reports -- and, for the content half, the per-interval inventory the
       content pipeline records rather than the library-level manifest comparison used here.
-- [ ] 5.3 Run focused Python suites, architecture/import gates and full `pio test -e native`; record mutation results for former queue, timing and attribution bugs. Keep host success distinct from hardware qualification.
+- [x] 5.3 Run focused Python suites, architecture/import gates and full `pio test -e native`; record mutation results for former queue, timing and attribution bugs. Keep host success distinct from hardware qualification.
+      **2026-09-30 — gates run and the former bugs' mutations recorded.** Focused suites and the whole host sweep:
+      **1,067 tests / 75 suites** with only the seven pre-existing unrelated failures (none referencing this
+      change's modules). Import gate `test_hitl_import_gate` **5/5** — the new `hitl/acceptance_evidence.py` is
+      reached from the oracle and the oracle from the scenario, so the flow/scenario rules still hold.
+      Architecture/compatibility gates all green (`test_b1_narrow_session_exit_compat_gate` 3/3,
+      `test_b2_b5_b6_…` 4/4, `test_b3_b4_…` 5/5, `test_b7_b8_construction_consumer_gate` 3/3,
+      `test_collapse_legacy_cli_args` 2/2, `test_hitl_actions` 2/2). Full `pio test -e native`: **2,643 cases /
+      7 skipped / 2,636 succeeded / 0 failed** — the same fingerprint as every earlier slice of this change, and
+      firmware files are untouched by all of them. **Former-bug mutations** (`mutate_53.py`, all red-proved with
+      byte-identical restores): the late-Start "confirmed by another press" timing bug and the attribution bug
+      (the control-action ledger losing its caller) on `test_transport_clock_observation`; the queue bug (a
+      queued playback switch no longer blocking the next press — the double-countdown defect) on
+      `test_accepted_sequence`; and the record-leg "last candidate" scoring on `test_hitl_serial_timing`. One
+      mutation **survived the first run and was a real coverage gap** — dropping the observation-only branch
+      changed nothing a test could see, because the `allow_transport_press` gate stopped the fall-through — so
+      `test_a_late_ack_for_the_callers_own_start_is_never_re_pressed` now pins that rule and the mutation is red.
+      **Host success stays distinct from hardware qualification:** no host slice of this change drove the board,
+      the native suite is a firmware gate rather than a device gate, and the device legs of 4.1/4.2/4.3 and all of
+      6.1–6.4 remain open behind a per-session upload/target authorization.
+      [REGRESSION-GATES-EXECUTION.md](REGRESSION-GATES-EXECUTION.md).
 
 ## 6. Qualify on hardware and close evidence
 
