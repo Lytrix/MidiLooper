@@ -412,15 +412,23 @@ DEFAULT_ARM_TIMEOUT_S = 6.0
 #: (`captures/s4f22-dec096-mixed-01`): press 1 left no row at all (a predecessor's in-flight job held the
 #: selection), press 2 only moved the focus (`DISP,2,STOPPED`), so the arm takes a third press once the
 #: target really is selected -- while a *healthy* target arms on the first one and never reaches the bound.
+#: A target the run has *already* armed (the clear's own selection press does that on an empty slot) is not
+#: pressed at all: that press is a toggle (`captures/s4f22-dec096-od-10`).
 DEFAULT_SEED_PRESS_ATTEMPTS = 3
 #: Bound for the seeded take's finalization receipt after its commit stop. Informational: the seed's own
 #: selection/arm receipts are the gates, and this only records whether the release edge arrived.
 DEFAULT_SEED_SETTLE_TIMEOUT_S = 10.0
 
 
+def _leg_deferral_row(capture_log: Path, after: int) -> str:
+    """The device's own row explaining why it deferred a record admission after `after`, or ""."""
+    return next((line.strip() for line in _lines(capture_log)[max(after, 0):]
+                 if "record admission deferred" in line or "Overdub start rejected" in line), "")
+
+
 def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int,
               press_ms: int, phase_timeout_s: float, events: list[dict],
-              note_channel: int = 7, overdub_notes: int = 16) -> str:
+              note_channel: int = 7, overdub_notes: int = 16, drain=None) -> str:
     """Drive one bounded leg, stopping before the next press on a bad transition."""
     leg_mark = len(_lines(capture_log))
     last_slot_press_at = 0.0
@@ -446,9 +454,17 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int,
         events.append({"event": f"gesture:{gesture.step}", "line": mark,
                        "host_monotonic_ns": time.monotonic_ns()})
         if gesture.step in ("a_overdub_start", "b_overdub_start"):
-            if not _wait_for(capture_log, mark, ("Overdubbing started @ tick",), phase_timeout_s):
-                events.append({"event": "leg_aborted_start_unconfirmed", "gesture": gesture.step})
-                return "OVERDUB_START_UNCONFIRMED"
+            if not _await_markers(capture_log, mark, ("Overdubbing started @ tick",), phase_timeout_s,
+                                  drain=drain):
+                # The device names its own reason when it defers: `record admission deferred while a stop
+                # obligation is live for slot N` (measured, `captures/s4f22-dec096-od-11`, where the
+                # predecessor take's publication only landed 38 s after its stop -- long after the seed's own
+                # settle bound). A deferred admission is not an absent take, so it is reported as what the
+                # device said instead of a bare "start unconfirmed".
+                device_row = _leg_deferral_row(capture_log, mark)
+                events.append({"event": "leg_aborted_start_unconfirmed", "gesture": gesture.step,
+                               "device_row": device_row[:180]})
+                return "OVERDUB_START_DEFERRED" if device_row else "OVERDUB_START_UNCONFIRMED"
             # An empty overdub retires too quickly to stage the successor. Give
             # A real work, and B a distinct note for the subsequent content check.
             count = max(1, overdub_notes) if gesture.step == "a_overdub_start" else 1
@@ -461,10 +477,11 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int,
             events.append({"event": f"{gesture.step}_notes", "count": count,
                            "channel": note_channel, "note_base": base})
         elif gesture.step == "b_switch":
-            if not _wait_for(capture_log, mark,
-                             (f"Loop {slot_b}: Switch gesture from slot ",
-                              f"Loop {slot_b}: Queued playback switch",
-                              f"Loop {slot_b}: Reaffirmed playback switch"), phase_timeout_s):
+            if not _await_markers(capture_log, mark,
+                                  (f"Loop {slot_b}: Switch gesture from slot ",
+                                   f"Loop {slot_b}: Queued playback switch",
+                                   f"Loop {slot_b}: Reaffirmed playback switch"),
+                                  phase_timeout_s, drain=drain):
                 return "SWITCH_UNCONFIRMED"
         time.sleep(DEFAULT_TAP_WINDOW_S)
     return "DROVE_LEG"
@@ -953,7 +970,7 @@ def main(argv: list[str] | None = None) -> int:
                     report["result"] = _run_plan(
                         out_port, capture_log, plan, slot_b=args.slot_b, press_ms=args.press_ms,
                         phase_timeout_s=args.phase_timeout_s, events=events,
-                        note_channel=t0, overdub_notes=args.notes)
+                        note_channel=t0, overdub_notes=args.notes, drain=drain)
             time.sleep(args.settle_s)
             report["leg_rows"] = len(_lines(capture_log)) - leg_mark
 
