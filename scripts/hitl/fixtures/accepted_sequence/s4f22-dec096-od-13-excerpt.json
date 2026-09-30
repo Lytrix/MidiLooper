@@ -1,0 +1,18 @@
+{
+  "fixture": "s4f22-dec096-od-13-excerpt.log",
+  "excerpt_sha256": "715f097cb57ff1c84d0e1087ef37bbb0137fbb3ff7d08e0505f2ed2725a3ed99",
+  "leg": "od",
+  "slot_a": 4,
+  "slot_b": 5,
+  "source": "captures/s4f22-dec096-od-13/session_20260930_155939.log",
+  "source_line_numbers": [1, 2, 21739, 21756, 21775, 26413, 29354, 29356, 30957, 31246, 31316, 31368],
+  "source_capture": "captures/s4f22-dec096-od-13",
+  "driver_report": "captures/s4f22-dec096-od-13/accepted-sequence.json",
+  "driver_command": "scripts/hitl_accepted_sequence.py --leg od --track 8 --slot-a 4 --slot-b 5",
+  "stimulus": "STIM-BASE-2-ONE-OD-01-TEMP-ACCEPTED-SEQ-OD",
+  "run_result": "DROVE_LEG",
+  "git_commit": "cf6c1853bb6c77c75598e21303a3bf08776bb997",
+  "firmware_hex_sha256": "8d07faec7a5dc680926c8e7ccd1502e004b1cd9b6274c1fd20059badb1aee05f",
+  "excluded": "every other row of the run: the DISP/ODUB/RING families, the seeds' RECA/RECS rows, the button-press rows and all pre-leg boot rows",
+  "why": "The overdub leg's own identity chain, taken verbatim (one row per source line) from the device run that drove the whole plan. It is the acceptance evidence task 2.2 asks for: each link is on the interval's own Tier-A row rather than on the seeds' record rows. The excerpt keeps the run's DEC-070 retarget fallback row so that 'reported and not fatal' is pinned by a fixture instead of described in prose."
+}

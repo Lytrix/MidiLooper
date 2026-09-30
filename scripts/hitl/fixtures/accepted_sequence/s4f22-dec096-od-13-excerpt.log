@@ -1,0 +1,12 @@
+Logger initialized with level: 3
+BOOT,usb_host,deferred
+[57.162] [INFO] Loop 5: Switch gesture from slot 4
+[58.539] [WARN] [TRACK] Overdub stop retarget: companion path stalled; raw pass only
+[59.141] [INFO] Loop 5: Stop Overdub
+#CAP,55762691,DIAG,reentry,admit,612,3,3,0
+#CAP,57034862,DIAG,reentry,bound,1049,3,3,0
+#CAP,57034934,DIAG,reentry_window_open,3,1049,1536
+#CAP,58214195,DIAG,reentry,admit,1454,4,4,1
+#CAP,58772331,DIAG,canonical_release,3,32,1536,8
+#CAP,59142018,DIAG,stop_state,7,4,7,5,1764,59141922,5456,59108481,59111391,2910
+#CAP,59193642,DIAG,canonical_release,4,0,1536,8

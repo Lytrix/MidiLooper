@@ -3,23 +3,43 @@
 
 The requirement (DEC-078 / invariant 31) is that a stop is **accepted on one press** and executed by the
 pipeline, so the successor can start while the predecessor still finalizes and no user ever presses twice.
-The leg is therefore proven only as an **ordered chain**, each link on its own evidence:
+The leg is therefore proven only as an **ordered chain**, each link on its own evidence (the names are the
+check names this oracle emits):
 
-    L1  A's stop was accepted and latched (or admitted) exactly once
+    L1  A's stop was accepted and bound to its interval exactly once (`L1_a_stop_accepted_once`)
     L2  no capacity denial: `successor_stop_denied_capacity` and `reentryDecision("deny", …)` are absent
-    L3  A's finalization window opened (the predecessor is finalizing)
-    L4  B started while A still finalized -- the acceptance, not a queue that never ran
-    L5  B's stop executed exactly once, after A released
-    L6  no second press was needed: exactly one stop request per interval
-L7  the transport/display stayed healthy: `overflow_free` (no capture-ring loss), transport_ok
+    L3  A's finalization window opened (the predecessor is finalizing: `L3_a_finalization_window`)
+    L4  A's finalization capacity was released (`L4_a_capacity_released`)
+    L5  B started while A still finalized -- the acceptance, not a queue that never ran
+        (`L5_successor_started`)
+    L6  B's stop executed exactly once (`L6_b_stop_executes_once`)
+    L7  one press per stop (`L7_one_press_per_stop`)
+
+**Which rows each link reads depends on the leg, and that is the whole point of the identity work** (OpenSpec
+`response-driven-hitl-acceptance` task 2.2):
+
+  * **Record leg** (`--leg rec`): the `RECA`/`RECS` family, which names its slot. One `RECS` stop row for A is
+    the accepted stop; one for B is B's execution.
+  * **Overdub leg** (`--leg od`): A and B are *seeded by a record* first, so their `RECA`/`RECS` rows are the
+    **seeds'** stops and must never stand in for the leg's own overdub stops. The links come from the
+    interval's own identity rows instead: the start admission (`DIAG,reentry,admit`), the accepted-stop
+    binding edge (`DIAG,reentry,bound`), the execution (`DIAG,stop_state` 6→7 entry and 7→5|1 terminal), the
+    retirement (`DIAG,canonical_release`), and the button action's own `Loop N:` **request** rows for L7. The
+    od leg also reports `overdub_interval_identity`: `ok` only when each interval is identified by its own
+    start, accepted stop and retirement rows, with A's and B's identities distinct.
+  * **Absence is still not a pass, but on the overdub leg it is a *gap*, not a violation**: those families are
+    only as complete as the capture (a cut excerpt, an evicted Tier-A row), so a missing overdub row reads as
+    `unknown` (fix the telemetry). A *contradiction* -- a second acceptance, a second execution, a binding that
+    names another interval, two intervals claiming one identity -- stays a `FAIL`.
 
 A missing or reordered link is never a pass. Verdicts and exit codes keep "not this shape" apart from "this run
 is not evidence":
 
-  * `SETUP_INCOMPLETE` (3): freshness/identity/staging -- fix the run. Staging includes the *shape* links:
-    if A's finalization window or its release never appeared, the acceptance was not exercised
-    (`captures/s4f22-rec-rec-01` and `.../s4f13-od4-20260927_020114` are NOT_EXERCISED runs, not a
-    firmware verdict).
+  * `SETUP_INCOMPLETE` (3): freshness/identity/staging -- fix the run. Staging includes the *shape* links: if
+    A's finalization window or its release never appeared, the acceptance was not exercised
+    (`captures/s4f22-rec-rec-01` and `.../s4f13-od4-20260927_020114` are NOT_EXERCISED runs, not a firmware
+    verdict) -- and on the overdub leg a successor that began *after* A released is the same class, because
+    S4f.22's own device-leg text says "missing overlap is NOT_EXERCISED".
   * `INSUFFICIENT_EVIDENCE` (4): staged, but a link has no supporting telemetry -- fix the telemetry
   * `ACCEPTED_SEQUENCE_FAIL` (2): the chain is violated
   * `ACCEPTED_SEQUENCE_PASS` (0): every link on its own evidence
@@ -48,6 +68,22 @@ RECA_RE = re.compile(r"^RECA,(\d+),")
 WINDOW_OPEN_RE = re.compile(r"^DIAG,reentry_window_open,(\d+),")
 CANONICAL_RELEASE_RE = re.compile(r"^DIAG,canonical_release,(\d+),")
 REENTRY_RE = re.compile(r"^DIAG,reentry,([a-z_]+),")
+# The **overdub** leg's own identity chain (`response-driven-hitl-acceptance` task 2.2). `RECA`/`RECS` above
+# describe the *record* lifecycle; an overdub interval's start, accepted stop, execution and retirement are
+# emitted by different owners, each naming the interval identity a correlation needs:
+#   start      `DIAG,reentry,admit,<tick>,<interval>,<slot>,<depth>`      the start admission
+#   accepted   `DIAG,reentry,bound,<tick>,<interval>,<slot>,<depth>`      the S4f.3 binding edge ("so a denied
+#              request and its later binding can be correlated instead of inferred", its own comment)
+#   executed   `DIAG,stop_state,<track>,<slot>,6,7,...` and `...,7,5|1,...`  the stop entry and terminal
+#   retired    `DIAG,canonical_release,<slot>,<generation>,<len>,<chunks>`   (`CANONICAL_RELEASE_RE`)
+# All four families are Tier-A, so an evicted row is already the `overflow_free` setup gate rather than a
+# silent gap. Per-interval stop *requests* are the button action's own `Loop N:` rows (1-based, like the other
+# human rows).
+ODUB_START_RE = re.compile(r"^DIAG,reentry,admit,(\d+),(\d+),(\d+),(\d+)$")
+ODUB_BOUND_RE = re.compile(r"^DIAG,reentry,bound,(\d+),(\d+),(\d+),(\d+)$")
+STOP_STATE_RE = re.compile(r"^DIAG,stop_state,(\d+),(\d+),(\d+),(\d+),")
+HUMAN_STOP_OVERDUB_RE = re.compile(r"Loop (\d+): Stop Overdub")
+HUMAN_SWITCH_SOURCE_RE = re.compile(r"Loop \d+: Switch gesture from slot (\d+)")
 DENIAL_STAGE_RE = re.compile(r"^ODUB,stop,admission,.*,successor_stop_denied_capacity$")
 HUMAN_DENIAL_RE = re.compile(r"Overdub stop refused")
 HUMAN_WINDOW_RE = re.compile(r"Reentry window open slot=(\d+)")
@@ -103,6 +139,46 @@ def parse_entries(text: str) -> list[Entry]:
         if m:
             out.append(Entry(int(m.group(1)), m.group(2)))
     return out
+
+
+def _overdub_identity(entries: list[Entry], slot: int) -> dict:
+    """One overdub interval's own start / accepted-stop / execution / retirement rows, by firmware slot.
+
+    `interval` is `captureInterval_` as the emitting owner stamped it, so two rows belong to one interval only
+    when they agree on it -- that is what keeps another slot's rows from substituting for this interval's.
+    """
+    starts = [(e.us, int(m.group(2)), e.body) for e in entries
+              if (m := ODUB_START_RE.match(e.body)) and int(m.group(3)) == slot]
+    bindings = [(e.us, int(m.group(2)), e.body) for e in entries
+                if (m := ODUB_BOUND_RE.match(e.body)) and int(m.group(3)) == slot]
+    stop_rows = [(e.us, int(m.group(3)), int(m.group(4)), e.body) for e in entries
+                 if (m := STOP_STATE_RE.match(e.body)) and int(m.group(2)) == slot]
+    intervals = {iv for _, iv, _ in starts} | {iv for _, iv, _ in bindings}
+    return {
+        "starts": starts,
+        "bindings": bindings,
+        "stop_entries": [r for r in stop_rows if r[1] == 6 and r[2] == 7],
+        "stop_terminals": [r for r in stop_rows if r[1] == 7 and r[2] in (5, 1)],
+        "releases": [(e.us, e.body) for e in entries
+                     if (m := CANONICAL_RELEASE_RE.match(e.body)) and int(m.group(1)) == slot],
+        "interval": next(iter(intervals)) if len(intervals) == 1 else None,
+    }
+
+
+def _overdub_stop_requests(lines: list[str], slots_1based: tuple[int, ...]) -> dict[int, int]:
+    """Per-interval stop *requests* from the device's own `Loop N:` rows (1-based slot numbers).
+
+    `Loop N: Stop Overdub` is the press that asked for N's stop. `Loop T: Switch gesture from slot S` is a press
+    that stops S -- in this leg's shape the capture-switch *is* A's stop -- so the request is counted against the
+    slot that was stopped, not against the button that was pressed.
+    """
+    counts = {s: 0 for s in slots_1based}
+    for line in lines:
+        if (m := HUMAN_STOP_OVERDUB_RE.search(line)) and int(m.group(1)) in counts:
+            counts[int(m.group(1))] += 1
+        elif (m := HUMAN_SWITCH_SOURCE_RE.search(line)) and int(m.group(1)) in counts:
+            counts[int(m.group(1))] += 1
+    return counts
 
 
 def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
@@ -164,15 +240,67 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
         f"loss; first: {shed_hits[0]}", "setup")
     evidence["ring_shed"] = shed_hits
 
-    # ---------------- L1/L6: the stop requests ----------------
-    stops_a = [(e.us, e.body) for e in entries
-               if (m := RECS_STOP_RE.match(e.body)) and int(m.group(1)) == a0]
-    stops_b = [(e.us, e.body) for e in entries
-               if (m := RECS_STOP_RE.match(e.body)) and int(m.group(1)) == b0]
+    # The DEC-070 bounded retarget fallback (`companion path stalled; raw pass only`) is **not** a link of this
+    # oracle: its closure condition belongs to `successor-capture-reentry-unguarding` task 5.11 / gate 6.2. It is
+    # reported anyway, because a PASS here is a statement about this chain's links and must never be read as "the
+    # successor path ran without its fallback".
+    fallback_rows = [l.strip()[:140] for l in lines
+                     if "companion path stalled" in l or "raw pass only" in l]
+    evidence["dec070_retarget_fallback"] = fallback_rows
+
+    # ---------------- L1/L6: the accepted stop and its execution ----------------
+    # The record leg's evidence is a `RECS` stop row for that slot. On the **overdub** leg A and B are seeded by
+    # a *record* first, so their `RECS` rows are the seeds' stops: reading them as the leg's own overdub stops
+    # is the false acceptance the corpus fixture pins. The overdub interval's identity chain is used instead.
+    od_a = od_b = None
+    if leg == "od":
+        od_a, od_b = _overdub_identity(entries, a0), _overdub_identity(entries, b0)
+    stops_a = ([] if leg == "od" else
+               [(e.us, e.body) for e in entries
+                if (m := RECS_STOP_RE.match(e.body)) and int(m.group(1)) == a0])
+    stops_b = ([] if leg == "od" else
+               [(e.us, e.body) for e in entries
+                if (m := RECS_STOP_RE.match(e.body)) and int(m.group(1)) == b0])
     for us, body in stops_a + stops_b:
         evidence["stop_requests"].append(f"{us}: {body}")
 
-    if not stops_a:
+    if leg == "od":
+        # L1 -- the acceptance. `DIAG,reentry,bound` is the edge at which the accepted stop is bound to the
+        # interval the request named (the S4f.3 binding edge), so one binding is one accepted overdub stop. An
+        # absent family reads as an evidence gap -- the overdub rows are only as complete as the capture, and a
+        # cut excerpt or an evicted Tier-A row must not be reported as a chain violation -- while a duplicate or
+        # a conflicting identity is a real finding.
+        ids_a = {iv for _, iv, _ in od_a["starts"]} | {iv for _, iv, _ in od_a["bindings"]}
+        if len(ids_a) > 1:
+            add("L1_a_stop_accepted_once", UNKNOWN,
+                f"A's overdub rows carry conflicting interval identities ({sorted(ids_a)}), so the acceptance "
+                "cannot be attributed to one interval", "evidence", "L1")
+        elif not od_a["bindings"]:
+            add("L1_a_stop_accepted_once", UNKNOWN,
+                f"no `DIAG,reentry,bound` row for A (firmware slot {a0}): the capture does not show A's overdub "
+                "stop being accepted and bound to its interval", "evidence", "L1")
+        else:
+            add("L1_a_stop_accepted_once", OK if len(od_a["bindings"]) == 1 else FAIL,
+                f"{len(od_a['bindings'])} accepted-stop binding(s) for A at interval {od_a['interval']}: "
+                f"{od_a['bindings'][0][2]}" + ("" if len(od_a["bindings"]) == 1 else
+                                               " -- more than one means a stop was accepted twice"),
+                "retention", "L1")
+        # L6 -- the execution. The terminal stop-state edge is the execution itself; without it, the retirement
+        # edge is the next witness that the stop ran.
+        executions = ([(us, body) for us, _from, _to, body in od_b["stop_terminals"]]
+                      or od_b["releases"])
+        if len(od_b["stop_terminals"]) > 1 or len(od_b["releases"]) > 1:
+            add("L6_b_stop_executes_once", FAIL,
+                f"{len(od_b['stop_terminals'])} terminal edge(s) and {len(od_b['releases'])} retirement(s) for B "
+                f"(firmware slot {b0}): B's stop executed more than once", "retention", "L6")
+        elif not executions:
+            add("L6_b_stop_executes_once", UNKNOWN,
+                f"no `DIAG,stop_state` terminal edge and no `DIAG,canonical_release` row for B (firmware slot "
+                f"{b0}): the capture does not show B's overdub stop executing", "evidence", "L6")
+        else:
+            add("L6_b_stop_executes_once", OK,
+                f"one stop execution for B: {executions[0][1]}", "retention", "L6")
+    elif not stops_a:
         add("L1_a_stop_accepted_once", FAIL,
             f"no successful stop record for A (firmware slot {a0}): A's stop never executed", "retention", "L1")
     else:
@@ -181,13 +309,14 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
             ("" if len(stops_a) == 1 else " -- more than one means a stop was executed twice"),
             "retention", "L1")
 
-    if not stops_b:
-        add("L6_b_stop_executes_once", UNKNOWN,
-            f"no successful stop record for B (firmware slot {b0}); in the overdub leg B's stop is the one the "
-            "DEC-078 shape bounds, so its absence is the link to close", "evidence", "L6")
-    else:
-        add("L6_b_stop_executes_once", OK if len(stops_b) == 1 else FAIL,
-            f"{len(stops_b)} stop record(s) for B: {stops_b[0][1]}", "retention", "L6")
+    if leg != "od":
+        if not stops_b:
+            add("L6_b_stop_executes_once", UNKNOWN,
+                f"no successful stop record for B (firmware slot {b0}); in the overdub leg B's stop is the one the "
+                "DEC-078 shape bounds, so its absence is the link to close", "evidence", "L6")
+        else:
+            add("L6_b_stop_executes_once", OK if len(stops_b) == 1 else FAIL,
+                f"{len(stops_b)} stop record(s) for B: {stops_b[0][1]}", "retention", "L6")
 
     # ---------------- L2: no capacity denial anywhere ----------------
     denials = [l.strip()[:140] for l in lines if HUMAN_DENIAL_RE.search(l)]
@@ -246,54 +375,135 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
     # ---------------- L5: the successor started while A finalized ----------------
     # A *successor* start is one that follows A's stop; a start before it is the seed that set the leg up, and
     # counting it would let a leg with no successor at all still satisfy L5.
-    a_stop_us = stops_a[0][0] if stops_a else None
-    all_starts = [(e.us, e.body) for e in entries
-                  if (m := RECA_RE.match(e.body)) and int(m.group(1)) == b0]
-    starts = [(us, body) for us, body in all_starts if a_stop_us is None or us > a_stop_us]
-    for us, body in all_starts:
+    if leg == "od":
+        # The overdub start's identity row is the start admission (`DIAG,reentry,admit`), and the stop it
+        # follows is the *binding* edge -- not a `RECS` row, which on this leg belongs to the record seed.
+        a_stop_us = od_a["bindings"][0][0] if od_a["bindings"] else None
+        all_starts = [(us, body, iv) for us, iv, body in od_b["starts"]]
+    else:
+        a_stop_us = stops_a[0][0] if stops_a else None
+        all_starts = [(e.us, e.body, None) for e in entries
+                      if (m := RECA_RE.match(e.body)) and int(m.group(1)) == b0]
+    starts = [row for row in all_starts if a_stop_us is None or row[0] > a_stop_us]
+    for us, body, iv in all_starts:
         evidence["successor_start"].append(
-            f"{us}: {body}" + ("" if (us, body) in starts else "  (before A's stop: the seed)"))
+            f"{us}: {body}" + ("" if (us, body, iv) in starts else "  (before A's stop: the seed)"))
     release_us = releases[0][0] if releases else (
         # Fall back to the human window's line position, which is all a human row can offer.
         None)
     if not starts:
-        add("L5_successor_started", FAIL,
-            "no start follows A's stop: nothing succeeded the predecessor, so the acceptance was not exercised"
-            + ("" if a_stop_us is None else f" (A's stop was at {a_stop_us} us)"), "retention", "L5")
+        if leg == "od" and (not all_starts or a_stop_us is None):
+            # Absence is a gap to fix, not a violation: the overdub families are only as complete as the
+            # capture (a cut excerpt, or an evicted Tier-A row), and A's own acceptance edge is the floor the
+            # ordering would be measured from.
+            add("L5_successor_started", UNKNOWN,
+                f"no overdub successor start for B (firmware slot {b0}): no `DIAG,reentry,admit` row follows "
+                f"A's stop" + ("; A's accepted-stop binding edge is missing as well, so the ordering has no "
+                               "floor" if a_stop_us is None else ""), "evidence", "L5")
+        else:
+            add("L5_successor_started", FAIL,
+                "no start follows A's stop: nothing succeeded the predecessor, so the acceptance was not exercised"
+                + ("" if a_stop_us is None else f" (A's stop was at {a_stop_us} us)"), "retention", "L5")
     else:
-        after_release = [u for u, _ in starts if release_us is not None and u > release_us]
+        after_release = [row[0] for row in starts if release_us is not None and row[0] > release_us]
         overlap = (a_stop_us is not None and release_us is not None
-                   and any(a_stop_us < us < release_us for us, _ in starts))
-        add("L5_successor_started", OK if overlap else (UNKNOWN if release_us is None else FAIL),
-            f"{len(starts)} start(s): " + ", ".join(b for _, b in starts[:4])
-            + (f"; {len(after_release)} after A's release edge" if release_us is not None else
-               "; A's release edge is human-positioned only, so the ordering is positional"),
-            "retention", "L5")
+                   and any(a_stop_us < us < release_us for us, _b, _iv in starts))
+        if leg == "od" and not overlap and a_stop_us is not None and release_us is not None:
+            # This leg's own rule (`tasks.md` S4f.22, the device leg's text): "Missing overlap is
+            # NOT_EXERCISED." A successor that begins after the predecessor released did not put the
+            # acceptance on trial -- the run has to be arranged so it overlaps -- so it is a staging outcome
+            # to fix in the run, never a chain violation to attribute to the firmware. The record leg keeps
+            # its pinned FAIL: there the successor start is its own explicit press and the existing suite
+            # pins that reading.
+            add("L5_successor_started", FAIL,
+                f"{len(starts)} start(s), all after A's release edge ({release_us} us): the successor began "
+                f"after the predecessor finished finalizing, so the acceptance was not exercised (missing "
+                f"overlap is NOT_EXERCISED, not a chain violation)", "setup", "L5")
+        else:
+            add("L5_successor_started", OK if overlap else (UNKNOWN if release_us is None else FAIL),
+                f"{len(starts)} start(s): " + ", ".join(body for _u, body, _iv in starts[:4])
+                + (f"; {len(after_release)} after A's release edge" if release_us is not None else
+                   "; A's release edge is human-positioned only, so the ordering is positional"),
+                "retention", "L5")
 
     # ---------------- L7: no second press ----------------
-    # A second press would show as a *second* stop request for the same interval, which L1/L6 already count;
-    # this link states the user-facing consequence explicitly.
-    # Successful executions do not count button requests: retries may collapse
-    # into one execution. The driver gesture report is a separate required input.
-    second_press = (len(stops_a) > 1) or (len(stops_b) > 1)
-    add("L7_one_press_per_stop", FAIL if second_press else UNKNOWN,
-        "a second stop request exists for an interval, so a press was required twice" if second_press else
-        "stop executions alone cannot prove one input press; correlate the driver's gesture report",
-        "retention", "L7")
+    # A single execution cannot prove a single press (a retried press may collapse into one execution), so this
+    # link counts the device's own per-interval **request** rows: `Loop N: Stop Overdub` is the press that asked
+    # for N's stop, and `Loop T: Switch gesture from slot S` is a press that stops S -- in this leg's shape the
+    # capture-switch *is* A's stop. Both name the interval, so another slot's press cannot substitute. On the
+    # record leg the same question is answered by the stop rows themselves (a second press is a second stop).
+    if leg == "od":
+        requests = _overdub_stop_requests(lines, (slot_a, slot_b))
+        requests_a, requests_b = requests[slot_a], requests[slot_b]
+        duplicated = (len(od_a["bindings"]) > 1 or len(od_b["stop_terminals"]) > 1
+                      or len(od_b["releases"]) > 1)
+        evidence["stop_requests"] = [l.strip()[:120] for l in lines
+                                     if HUMAN_STOP_OVERDUB_RE.search(l) or HUMAN_SWITCH_SOURCE_RE.search(l)]
+        if duplicated:
+            add("L7_one_press_per_stop", FAIL,
+                "an interval shows a second accepted stop or a second execution, so a press was needed twice",
+                "retention", "L7")
+        elif requests_a == 0 and requests_b == 0:
+            add("L7_one_press_per_stop", UNKNOWN,
+                "the capture holds no per-interval stop-request row (`Loop N: Stop Overdub` or "
+                "`Loop T: Switch gesture from slot S`), so the press count is not established", "evidence", "L7")
+        else:
+            add("L7_one_press_per_stop", OK if (requests_a == 1 and requests_b == 1) else FAIL,
+                f"{requests_a} stop request(s) for A and {requests_b} for B, with one accepted stop for A and "
+                f"one execution for B", "retention", "L7")
+    else:
+        # A second press would show as a *second* stop request for the same interval, which L1/L6 already count;
+        # this link states the user-facing consequence explicitly.
+        # Successful executions do not count button requests: retries may collapse
+        # into one execution. The driver gesture report is a separate required input.
+        second_press = (len(stops_a) > 1) or (len(stops_b) > 1)
+        add("L7_one_press_per_stop", FAIL if second_press else UNKNOWN,
+            "a second stop request exists for an interval, so a press was required twice" if second_press else
+            "stop executions alone cannot prove one input press; correlate the driver's gesture report",
+            "retention", "L7")
 
     if leg == "od":
-        # RECA and RECS are emitted by record start/stop, not overdub lifecycle.
-        # In the old driver these were the seeds, producing a false acceptance.
-        for check in checks:
-            if check.name in ("L1_a_stop_accepted_once", "L6_b_stop_executes_once",
-                               "L5_successor_started", "L7_one_press_per_stop"):
-                check.status = UNKNOWN
-                check.kind = "evidence"
-                check.detail = "Record-only RECA/RECS cannot establish this overdub link"
-        add("overdub_interval_identity", UNKNOWN,
-            "RECA/RECS do not identify overdub intervals. Correlated overdub start, accepted-stop and "
-            "retirement evidence for A and B is still required; record seeds cannot close this leg",
-            "evidence")
+        # `overdub_interval_identity`: is the leg's own identity chain established for **both** intervals --
+        # start, accepted stop and retirement, each on its own slot? This is the link S4f.22's OD acceptance
+        # reads, and it is `ok` only when every part is present and consistent; otherwise it names each missing
+        # part, so a run is never called accepted on its record seeds. Every row is a Tier-A family, so an
+        # evicted one is already the `overflow_free` setup gate rather than a silent gap.
+        ids_a = {iv for _, iv, _ in od_a["starts"]} | {iv for _, iv, _ in od_a["bindings"]}
+        ids_b = {iv for _, iv, _ in od_b["starts"]} | {iv for _, iv, _ in od_b["bindings"]}
+        missing: list[str] = []
+        for label, ident, accepts in (("A", od_a, "bindings"), ("B", od_b, None)):
+            if not ident["starts"]:
+                missing.append(f"{label}: no start admission (`DIAG,reentry,admit`)")
+            if accepts is not None and not ident[accepts]:
+                missing.append(f"{label}: no accepted stop (`DIAG,reentry,bound`)")
+            if accepts is None and not (ident["stop_terminals"] or ident["releases"]):
+                missing.append(f"{label}: no stop execution (`DIAG,stop_state`) and no retirement edge")
+            if not ident["releases"]:
+                missing.append(f"{label}: no retirement edge (`DIAG,canonical_release`)")
+        if len(ids_a) > 1 or len(ids_b) > 1:
+            missing.append("an interval reports more than one identity")
+        elif ids_a and ids_b and ids_a & ids_b:
+            # The correlation the whole link rests on: two intervals of one leg must not claim one identity,
+            # or another slot's rows could stand in for this interval's.
+            missing.append(f"A and B report the same interval identity {sorted(ids_a & ids_b)}")
+        for label, ident in (("A", od_a), ("B", od_b)):
+            for part in ("starts", "bindings", "stop_terminals", "releases"):
+                for us, *_rest in ident[part]:
+                    evidence.setdefault("overdub_identity", []).append(
+                        f"{label} {part}: {us} us" + (f" interval {_rest[0]}" if part in ("starts", "bindings") else ""))
+        if missing:
+            add("overdub_interval_identity", UNKNOWN,
+                "the overdub intervals' own identity chain is incomplete: " + "; ".join(missing)
+                + " -- the seeds' `RECA`/`RECS` rows describe the record lifecycle and cannot stand in for it",
+                "evidence")
+        else:
+            add("overdub_interval_identity", OK,
+                f"both intervals identified by their own rows: A interval {od_a['interval']} slot {a0} "
+                f"(start {od_a['starts'][0][0]} us, accepted {od_a['bindings'][0][0]} us, retired "
+                f"{od_a['releases'][0][0]} us); B interval {od_b['interval']} slot {b0} "
+                f"(start {od_b['starts'][0][0]} us, executed "
+                f"{(od_b['stop_terminals'] or od_b['releases'])[0][0]} us, retired {od_b['releases'][0][0]} us)",
+                "retention")
 
     # ---------------- verdict ----------------
     if any(c.status == FAIL and c.kind == "setup" for c in checks):
@@ -312,6 +522,12 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
     limitations.append(
         "Content parity for both intervals is the `hitl-content-verification` inventory pipeline's job, not "
         "this oracle's: pointer to that pipeline rather than a duplicate of it.")
+    if fallback_rows:
+        limitations.append(
+            "this run logs the DEC-070 bounded retarget fallback (`Overdub stop retarget: companion path "
+            "stalled; raw pass only`), once per occurrence. It is not a link of this oracle and does not change "
+            "the verdict above: the fallback's own closure condition is `successor-capture-reentry-unguarding` "
+            "task 5.11, so this verdict says nothing about whether the fallback is gone.")
     return Analysis(verdict, checks, evidence, limitations)
 
 
