@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-096](#dec-096--slot-gestures-during-pending-overdub-finalization-select-instead-of-undo-or-clear) | 2026-09-30 | During pending overdub finalization, a slot gesture selects/queues a populated target or arms an empty one; it never clears or undoes | Accepted; host/native/build verified; device attempts SETUP_INCOMPLETE; S4f.22 open |
 | [DEC-093](#dec-093--record-and-overdub-share-the-existing-deferred-finalization-lifecycle) | 2026-09-27 | Record and overdub share existing deferred finalization; preserve original overlap acceptance | Accepted implementation contract; firmware/device proof open |
 | [DEC-092](#dec-092--response-driven-hitl-preserves-continuous-playback-and-same-boot-preparation) | 2026-09-27 | Response-driven HITL, continuous-play acceptance, scoped same-boot preparation | Accepted user constraints; design recorded, implementation/device evidence open |
 | [DEC-094](#dec-094--a-pass-commit-queues-its-own-session-exit-snapshot-publication-and-coverage-is-only-claimed-for-content-the-box-enumerated) | 2026-09-29 | A pass commit queues its own session-exit snapshot publication (the deferred Record route restored that parity), and coverage is claimed only for content the box enumerated | Accepted — implemented, native verified (fixture red-proved); build verified; device re-run separate |
@@ -104,7 +105,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-095 -->
+<!-- Append new entries below (newest first). Next ID: DEC-099 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -5555,3 +5556,157 @@ No schema, capacity, ownership or transport change; no new job fields and no siz
 `UndoCollection`/`CompanionHistory` phases and their prepared entry are unchanged, so their native fixtures keep
 their meaning; the new fixture is the regression gate for the short routes. `canPublish`'s `kInvalidPassId` form is
 strictly additional (an entry identity is still required in all cases).
+
+## DEC-096 — Slot gestures during pending overdub finalization select instead of undo or clear
+
+**Date:** 2026-09-30
+**Status:** Accepted by user; implemented; focused/full native verified; capture-serial build verified; device gate attempted but incomplete, S4f.22 remains open.
+**Owner:** `MidiButtonActions` dispatches the slot gesture through its existing `handleToggleRecordForSlot` action; `TrackManager` retains existing playback/record queue ownership.
+**Governing gate:** `runtime-working-set-ownership` S4f.22 — shared finalization integration/device acceptance.
+
+### Decision
+
+After an overdub stop returns the track to PLAYING while its deferred finalization remains pending, one slot-button gesture uses ordinary short-press semantics: populated target → select/queue playback; empty target → select/arm through the existing record-start path. It does not clear content or invoke session undo. The predecessor finalizer continues against its captured slot/interval identity.
+
+This does not change DEC-038's session-gated undo while the track is actively OVERDUBBING: pending finalization is the post-stop, PLAYING state.
+
+### Evidence and bounds
+
+Two production-owner native fixtures cover populated and empty targets while a deferred stop remains pending. Full native and capture-serial build verified. No new state, queue, owner, persistence format or undo representation is introduced. S4f.22 remains unchecked from host evidence.
+**Device evidence (not acceptance):** `captures/s4f22-dec096-od-01` drove the OD→OD sequence and observed A's finalization window/release, but the oracle returned `SETUP_INCOMPLETE` (three ring-shed rows; overdub identity and L1/L5/L6/L7 unknown). The R→R capture stopped before recording; the mixed retention attempt seeded slot B but stopped before slot A's seed because boot LOOP_EDIT routed the slot gesture to geometry editing. No content parity was run. Track 8 slots 3–5 were the only cleared targets; post-clear read-only census showed no committed events/passes and zero lengths. Do not count these attempts as an S4f.22 device pass.
+
+
+## DEC-097 — HITL musical timing comes from the device's USB MIDI clock, which exists
+
+**Date:** 2026-09-30
+**Owner:** HITL host layer (`scripts/hitl/midi_clock.py`, `scripts/hitl_midi_clock_probe.py`)
+**Status:** Accepted (supersedes the "no USB MIDI clock out" premise recorded in HITL comments,
+the baseline guide and `scripts/test_transport_clock_observation.py`)
+
+### Problem
+HITL runs could not time phases properly. The tree treated "this board emits no USB MIDI clock
+out" as measured fact, so bar pacing fell back to a serial wall-clock proxy whose tempo source
+does not exist in the mandated build, and bar counts could not be trusted against the device's
+own grid. **DEC-086**'s rationale ("the host has no clock output path") rested on the same
+reading, and a 2026-09-17 clock-paced stream failed (`captures/pacing-fix-01`, an 8-bar request
+recorded 20 bars), which read as confirmation.
+
+### Decision
+The device's USB MIDI clock is the HITL timebase, in both directions, through one module:
+
+* **Read (default).** `MidiClockReader` bulk-drains the input port and maintains a
+  **phase-locked** pulse index: it advances on a monotonic clock and every pulse re-anchors it
+  to the nearest grid position, so a dropout does not stall the phase and a burst after a host
+  deschedule does not double-count it. `bpm()` learns the device tempo from the clock;
+  `wait_pulse`/`wait_bars` express phase length in 24-PPQN grid positions.
+* **Drive (opt-in).** `MidiClockMaster` sends 24 PPQN against absolute deadlines with a spin
+  tail; the device slaves on the first pulse and reverts on the 500 ms timeout.
+* The corrected premise: clock exists **only while the device's transport runs**
+  (`ClockManager::updateInternalClock`), and a bare realtime `Start`/`Continue` without clock
+  puts the device in `CLOCK_EXTERNAL` where it emits none. Those, not absence, are the real
+  constraints.
+
+### Measured (device, 2026-09-30, `teensy41-capture-serial` family)
+Device clock 48.00 Hz = exactly 24 PPQN at 120.00 BPM, 384/384 pulses per 8 s, jitter 0.72–1.55
+ms stdev, occasional short dropouts on a busy run; `Start` ~0.31 s after a transport press.
+Host drive: 2.8 ms mean / ≤19 ms max per-pulse error, ≤3 ms cumulative drift over 4 bars; the
+device emitted 0 clock pulses while driven (slaved) and resumed its own clock 0.53 s after
+release. Bar boundaries tracked the device grid with a constant offset within ±1 ms and ≤7 ms
+drift over 6 bars. Driving moves the device's live tempo by ±1–3 BPM (its own 24-pulse window);
+an exact pin still needs the CC102 tempo fader.
+
+### Constraints created
+Reproduce clocks only through the module; do not re-derive pacing from `#CAP,BPM`, which the
+mandated build drops (`SESSION_CAPTURE_BPM` defaults to 0, and `SC_BPM` is called only from
+`ClockManager::onMidiClockPulse`). A readiness probe must press the transport first and then
+confirm with `wait_pulse`. Never send a bare realtime `Start`/`Continue`. Driving is not a tempo
+*control*: DEC-086's CC102 fader remains the tempo owner for pinning.
+
+### Related OpenSpec / migration
+Host-side only; no firmware change, no persistence, SD or wire-protocol change. The legacy
+streamers (`stream_pattern_for_bars` via `wall_clock_tempo_bpm`) are **not** yet pulse-paced —
+that conversion is the next slice and must be built on this module. Guide:
+[`docs/Guides/HITL_MIDI_CLOCK.md`](Guides/HITL_MIDI_CLOCK.md).
+
+### Verification
+Host: `scripts/test_midi_clock.py` **10/10** (clean tempo, dropout, burst, stall+burst, poll-only
+port drain, grid landing and stopped-device timeout, master drift and pacing, Start/Stop, drive
+echo). Existing clock/stop harness tests stay green (`scripts/test_transport_clock_observation.py`
+**5/5**). Device: `scripts/hitl_midi_clock_probe.py --observe-bars 6 --drive-bars 4` **PASS**,
+evidence `captures/midi-clock-probe/midi_clock_probe.json`. The premise strings were corrected in
+`scripts/hitl/transport_clock.py`, `scripts/hitl/serial_transport.py`, `scripts/hitl/edit_controls.py`,
+`scripts/hitl/legacy_record_baseline.py`, `scripts/hitl/legacy_edit_baseline.py` and
+`scripts/test_transport_clock_observation.py`.
+
+## DEC-098 — In host clock mode the host owns the transport and drives one continuous pump, and `LOOP_EDIT` is proved by causing an ack
+
+**Date:** 2026-09-30
+**Owner:** HITL host layer (`scripts/hitl/midi_clock.py`, `scripts/hitl/transport_clock.py`,
+`scripts/hitl/legacy_record_baseline.py`, `scripts/hitl/edit_mode_precondition.py`)
+**Status:** Accepted (completes DEC-097's drive direction; the earlier slice wired the phases but
+could not finish a host-driven run)
+
+### Problem
+`--clock-source host` aborted at the record leg (`recording not confirmed before note stream`) and,
+once it got further, produced `INCONCLUSIVE_CAPTURE (EVIDENCE_MISSING)`. Two causes, both host-side:
+
+1. **The host drive was not continuous.** It started the transport with a realtime `Start` and then
+   sent pulses only *inside* a phase, while the device's slaving is a timeout, not a latch:
+   `ClockManager::checkClockSource` leaves `CLOCK_EXTERNAL` 500 ms after the last pulse and the
+   device resumes advancing its own tick from the internal clock. Every gap (arm → phase,
+   phase → phase) therefore ran on the device's own grid.
+2. **The arm flow was not the host's.** `_ensure_transport_stopped_before_record_arm` issued its
+   realtime `Stop` only when *serial evidence* showed a running transport, and a slaved device emits
+   none of the master-side `BPM`/`BAR` activity rows that evidence is built from — so the stop was
+   skipped exactly when it was needed. The arm press then landed on a running sequencer: the track
+   jumped `STOPPED → RECORDING`, skipping `ARMED`, the phase streamed into a take whose bounds were
+   already set, and a stray first take followed
+   (`captures/session_20260930_141936.log`: two `RECA` rows 7.4 s apart, the first stopping as
+   `stopToStopped` at 2304 raw ticks against the requested 1536). That extra take pushed the scoring
+   take's `REVT` rows outside the span `_verify_stored_record_note_grid` bounds by row order, so a
+   functionally correct take was reported as missing stored-grid evidence.
+
+Separately, the edit-mode precondition could not prove `LOOP_EDIT` at all. The device announces a
+mode only when a **session event** happens (`ControlSurfaceManager::sendEditSessionMidi` logs
+`Edit session: <MODE>` on session *open*), so a capture that attached after the boot's event holds
+none of those rows; the previous "select the track's loop row" path could not create one (a row
+select does not open a session) and the old short-press exit would have been bound to
+`CYCLE_EDIT_MODE`, whose result depends on the mode being proved.
+
+### Decision
+* **One continuous host drive.** `MidiClockMaster.start_pump(bpm=...)` runs a 24 PPQN thread on one
+  absolute schedule for as long as the transport runs; phases wait on the pulses it owes
+  (`wait_pulse`) instead of writing their own clock. `start(bpm=...)` sends realtime `Start` and
+  starts the pump; `stop()` sends realtime `Stop` and stops the pump. `send_pulses` stays for
+  caller-paced one-shot drives.
+* **The arm flow is the host's and unconditional:** realtime `Stop` → Record press → `ARMED` →
+  realtime `Start` + pump → `RECORDING`. A control-surface transport press is not the alternative:
+  while the device is slaved it only toggles the device's own `sequencerRunning` flag (a fresh
+  external clock makes `shouldEmitMidiTransportAsMaster` false, so no `Stop` goes out and the mode
+  stays `CLOCK_EXTERNAL`), leaving host and device disagreeing about the transport.
+* **`LOOP_EDIT` is proved by causing a session event.** Hold the edit button (note 38,
+  `MidiConfig::NOTE_EDIT_MODE`) **long** — its bound `EXIT_EDIT_MODE`, which always ends in
+  `LOOP_EDIT` (`EditManager::exitEditMode` → `sendEditSessionChange(EditSessionType::Loop)`) — and
+  require the ack that press leaves (`Edit session: LOOP_EDIT` or `MIDI Encoder: Long press -
+  exited edit mode`). Never the short press (it cycles), never twice inside the 300 ms double-tap
+  window (that opens the load/save overlay). Unproven refuses by name with the `--boot-reset`
+  remedy.
+
+### Verification
+Device, same harness tree, base preset (`--track 5 --loop-slot 1 --midi-channel 1`):
+
+| Run | Capture | Record | Loop length | Stored grid (REVT) | First-note clocks | Result |
+|---|---|---|---|---|---|---|
+| host | `captures/session_20260930_142350.log` | 32/32 | 1536/1536 | count=32, delta 48–48, bad 0/2 | 12/2 | **PASS** |
+| device | `captures/session_20260930_142518.log` | 32/32 | 1536/1536 | count=31, delta 47–49, bad 0/2 | 3/3 | **PASS** |
+
+Both also verify the overdub passes (16/16 and 8/8 note-ons, stored `SEVT` spans 2 bars each). The
+host run's exact 48-tick deltas are the pump's point: the host's pulse grid is the only grid in
+play. The `LOOP_EDIT` proof fired in both runs (`[hitl] edit mode unproven in this capture; long
+edit press to land in LOOP_EDIT` → `[hitl] LOOP_EDIT proven by the ack the long edit press left`,
+against `Long press detected: duration=663 >= effectiveLongPress=600` → `Button press: Edit Mode
+(long)` → `MIDI Encoder: Long press - exited edit mode`). Host: `scripts/test_midi_clock.py`
+**18/18** (four new pump/pumped-phase tests), `scripts/test_edit_mode_precondition.py` **9/9**,
+`scripts/test_clear_before_record_precondition.py` **39/39**, transport-clock 5/5, serial-timing
+33/33, capture-transitions 61/61, accepted-sequence 54/54. Device left stopped (0.00 Hz). Guide:
+[`docs/Guides/HITL_MIDI_CLOCK.md`](Guides/HITL_MIDI_CLOCK.md).
