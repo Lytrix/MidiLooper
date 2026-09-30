@@ -136,3 +136,21 @@ Owed and **not** claimed: the device leg (§4) needs an upload; the sequenced *g
 absent (a slot press leaves only its in-ring `DISP` row and a human `Loop N:` line); and the counters are read
 back by a stopped-only request rather than by the on-demand observation poll, so "consumption between polls" is
 provable from the ring rows plus the counter read-back, not yet from a single poll.
+
+## 6. Device status (2026-09-30): accounting verified on hardware, the latch rows still owed
+
+Image flashed: `teensy41-capture-serial`, sha256 `577841d6…`, `interactionLatchTransition` present in the ELF.
+Three capture attempts through the authoritative entry point (`scripts/host_midi_hitl.py run --preset base
+--track 5 --loop-slot 1 --midi-channel 1`):
+
+| attempt | run | what it shows |
+|---|---|---|
+| plain base preset | `captures/session_20260930_164133.log`, report `…164240.json` | **the family is wired on hardware**: the stopped-only `!CAP_IDENTITY_STATS` returns `RING,record_stats,DIAG,latch,entered=0,enq=0,rej=0,tx=0,evict=0` — present, counted, read back. `entered=0` because **both overdub stops were admitted immediately** (`OVERDUBBING → OVERDUB_STOPPING → PLAYING` within 26 µs each; no denial), so no latch existed to report. Record 32/32, overdubs 16/16 + 8/8, `overflow_free=true`, `tier_a_evicted_count=0`; the run's only issue is the documented pre-existing `persistence_stage_missing:result`. |
+| successor-reentry reproducer (task 7.2's own flags: `--record-bars 8 --overdub-bars 5 --overdub-start-delay-bars 1 --stop-press-advance-clocks 48 --second-overdub-bars 0 --successor-reentry-delay-ms 400 --successor-reentry-stop-delay-ms 0 --successor-reentry-stream-bars 2`), twice | `captures/session_20260930_164337.log` (report `…164504.json`), `captures/session_20260930_164616.log` (report `…164616.json`) | both aborted at the **host** guard `overdub start refused: no predecessor stop-completion receipt`, so the overdub (and therefore every overdub stop) never ran: the run's own counters are `DIAG,latch,entered=0` for the whole boot and it carries no `successor_stop_denied_capacity`, no `DIAG,reentry,*` and no `ODUB,stop,` row at all. **The new instrumentation emitted nothing in these runs, so it cannot be implicated in that abort** — the guard is the documented host refusal to press without the predecessor's stop-completion receipt, and the 8-bar shape that satisfied it on 2026-09-17 predates two weeks of Record-publication work. |
+
+**So, on device: the accounting half is verified and the latch rows are not.** A `DIAG,latch,accept` →
+`consume(…)` sequence needs a stop that is actually *denied*, and both documented recipes that produce one
+(the retention handoff driver; the stop-interruption wrapper) **clear a named scratch slot**, which needs
+content authorization in this session. Until such a run exists, the row content rests on the native transition
+fixture (which drives the real latch, park and consumption paths) and on the read-back showing the family at
+zero rather than being absent.
