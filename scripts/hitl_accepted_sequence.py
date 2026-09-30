@@ -20,6 +20,22 @@ own clear evidence (`CLEARED` or an idempotent `ALREADY_EMPTY`); a refusal, abor
 wrong target or unconfirmed request stops the leg before any record gesture. No
 manual clear and no reboot prepare a repeat.
 
+Every gesture is gated on the device's own slot-scoped evidence, and a silent gesture is a named
+failure rather than a reason to press again (`captures/s4f22-dec096-od-02`, `…-rec-01`, `…-mixed-01`
+are the three measured shapes this closes):
+
+* the read-only census is retried on the run's own bound, and a target whose occupancy is still
+  unknown **refuses before any gesture** -- a lost census used to leave the driver long-pressing a
+  filled, non-selected target, which the firmware answers by starting playback, not by clearing;
+* a filled target is selected first and the selection must be named by its own `DISP` row before the
+  clear is pressed;
+* a seed press must produce a slot-scoped `DISP … ARMED` row for **that** slot (a predecessor's
+  in-flight stop can hold the selection, and the gesture is then swallowed silently), and the
+  transition to `RECORDING` is read the same way;
+* repeated presses of the same button are kept outside the firmware's tap window, so a retry cannot
+  be merged into `Loop N (double)` = `OVERDUB_FOR_SLOT`;
+* every seed abort is a `PreparationFailure`, so the run still writes its report.
+
 Stimulus provenance (AGENTS.md: never edit a canonical stimulus; no registered stimulus covers this shape):
 each leg is a **TEMP variant** forked from `STIM-BASE-2-ONE-OD-01` via the sanctioned
 `scripts/host_midi_hitl.py stimulus temp` mechanism -- `…-TEMP-ACCEPTED-SEQ-REC` and `…-TEMP-ACCEPTED-SEQ-OD`,
@@ -41,6 +57,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import time
@@ -53,15 +70,18 @@ import mido
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-
 from hitl.actions import slots  # noqa: E402
 from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT  # noqa: E402
 from hitl.control_constants import (  # noqa: E402
     CONTROL_CHANNEL_1BASED,
     GLOBAL_TRANSPORT_NOTE,
+    LOOP_SELECT_NOTE_BASE,
     RECORD_BUTTON_NOTE,
+    TRACK_SELECT_NOTE_BASE,
 )
+
 from hitl.device_shutdown import DeviceSession, refuse_reset_if_latched  # noqa: E402
+from hitl.device_time import filter_live_lines  # noqa: E402
 from hitl.flows import stopped_preparation  # noqa: E402
 from hitl.library_observation import observation_window  # noqa: E402
 from hitl.managed_capture import ManagedCaptureSession  # noqa: E402
@@ -194,6 +214,101 @@ def _switch_pending(capture_log: Path, since: int, slot: int) -> bool:
                and f"Loop {slot}:" in line for line in _lines(capture_log)[since:])
 
 
+class _PressSpacing:
+    """Keep a repeated press of the same note outside the firmware's tap window.
+
+    A loop button discriminates short / double / triple / long, so the firmware *holds* the second tap until
+    its window expires, and a repeat press inside it merges into the next gesture up. Measured on device
+    2026-09-30 (`captures/s4f22-dec096-rec-01`): two `Loop 3` taps 0 ms apart were reported as
+    `Button press: Loop 3 (double)` -- `OVERDUB_FOR_SLOT` -- so the seed's record press never happened at all.
+    The same applies to a press that lands *before* a long press, which truncates it (measured 2026-09-28:
+    900 ms requested, 458 ms recognized).
+    """
+
+    def __init__(self, min_gap_s: float = DEFAULT_TAP_WINDOW_S, *, sleep=None, now=None):
+        self._min_gap_s = min_gap_s
+        self._sleep = sleep
+        self._now = now
+        self._last_press: dict[int, float] = {}
+
+    def before(self, note: int) -> float:
+        """Block until `note` may be pressed again. Returns the seconds waited (0.0 when already outside)."""
+        sleep = self._sleep or time.sleep
+        now = (self._now or time.monotonic)()
+        last = self._last_press.get(note)
+        waited = 0.0
+        if last is not None:
+            gap = now - last
+            if gap < self._min_gap_s:
+                waited = self._min_gap_s - gap
+                sleep(waited)
+        self._last_press[note] = (self._now or time.monotonic)()
+        return waited
+
+
+#: The firmware's own per-slot display row: `#CAP,<us>,DISP,<slot0>,<STATE>,…`. A focus change emits one for
+#: the newly focused slot and an arm/record transition emits one for the slot it belongs to, so it is the
+#: slot-scoped receipt a gesture can be confirmed against -- and its **absence** is the evidence that the
+#: gesture was swallowed. Measured (`captures/s4f22-dec096-mixed-01`): the press that did select its target
+#: (`Loop 4 (short)` 17.021 s) left `#CAP,17202864,DISP,3,STOPPED,0,0`, while the two presses a pending
+#: predecessor Record job swallowed (`Loop 3 (short)` 39.520 s and 42.647 s) left **no** `DISP` row for that
+#: slot at all -- which is how a silent press used to turn into a leg with no take.
+_SLOT_DISP_RE = re.compile(r"^#CAP,(\d+),DISP,(\d+),([A-Z_]+)")
+
+
+def _slot_disp_state(line: str) -> Optional[tuple[int, str]]:
+    """`(slot0, state)` of a `DISP` row, or None when the line is not one."""
+    match = _SLOT_DISP_RE.match(line.strip())
+    if match is None:
+        return None
+    return int(match.group(2)), match.group(3)
+
+
+def _slot_disp_rows(capture_log: Path, after: int, slot0: int,
+                    states: Optional[tuple[str, ...]] = None) -> list[str]:
+    """Live (not drained) `DISP` rows naming `slot0` from `after` on, optionally restricted to `states`."""
+    rows: list[str] = []
+    for line in filter_live_lines(_lines(capture_log), after_index=after):
+        parsed = _slot_disp_state(line)
+        if parsed is None or parsed[0] != slot0:
+            continue
+        if states is not None and parsed[1] not in states:
+            continue
+        rows.append(line)
+    return rows
+
+
+def _await_slot_disp(capture_log: Path, after: int, slot0: int,
+                     states: Optional[tuple[str, ...]], timeout_s: float) -> Optional[str]:
+    """Wait for a live `DISP` row naming `slot0`; None when none arrives inside `timeout_s`."""
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while True:
+        rows = _slot_disp_rows(capture_log, after, slot0, states)
+        if rows:
+            return rows[-1]
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.05)
+
+
+#: The census is a read-only *request*: one lost window is a delivery outcome, so it is retried inside the
+#: run's bound before a target is declared undecidable (`captures/s4f22-dec096-od-02`: the first request was
+#: lost, the next answered 64 slots, settled).
+DEFAULT_CENSUS_ATTEMPTS = 3
+DEFAULT_CENSUS_RETRY_DELAY_S = 2.0
+#: Bound for the device to name a gesture's effect with its own slot-scoped `DISP` row. Measured: a selection
+#: change appears in ~0.2 s and an arm in ~0.04 s, while a *swallowed* press never appears at all.
+DEFAULT_ARM_TIMEOUT_S = 6.0
+#: Bounded seed presses, each gated on a slot-scoped `DISP … ARMED` row. Measured on device
+#: (`captures/s4f22-dec096-mixed-01`): press 1 left no row at all (a predecessor's in-flight job held the
+#: selection), press 2 only moved the focus (`DISP,2,STOPPED`), so the arm takes a third press once the
+#: target really is selected -- while a *healthy* target arms on the first one and never reaches the bound.
+DEFAULT_SEED_PRESS_ATTEMPTS = 3
+#: Bound for the seeded take's finalization receipt after its commit stop. Informational: the seed's own
+#: selection/arm receipts are the gates, and this only records whether the release edge arrived.
+DEFAULT_SEED_SETTLE_TIMEOUT_S = 10.0
+
+
 def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int,
               press_ms: int, phase_timeout_s: float, events: list[dict],
               note_channel: int = 7, overdub_notes: int = 16) -> str:
@@ -287,12 +402,13 @@ def _build_identity() -> dict:
     return identity
 
 
-def _run_census(capture, capture_log: Path, events: list[dict]) -> Optional[dict]:
-    """Read-only per-slot occupancy for scoped preparation; None when it cannot be trusted.
+def _run_census_once(capture, capture_log: Path, events: list[dict]) -> Optional[dict]:
+    """One read-only per-slot occupancy request; None when it cannot be trusted.
 
     The observation is requested through the single serial owner and decoded once by the
-    library-observation owner. An incomplete window returns None, and the caller then falls
-    back to the gesture-only preparation rather than treating "unknown" as "empty".
+    library-observation owner. An incomplete window returns None; the caller retries it a
+    bounded number of times and then refuses by name rather than treating "unknown" as
+    "empty" or pressing into an unknown target.
     """
     nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
     ok, detail = capture.send_command("!LIB_OBSERVE", nonce=nonce, end_nonce=end_nonce)
@@ -313,6 +429,27 @@ def _run_census(capture, capture_log: Path, events: list[dict]) -> Optional[dict
                    "unknown": 0 if occupied is None else sum(1 for v in occupied.values() if v is None),
                    "device_settled": bool(device_complete)})
     return occupied
+
+
+def _run_census(capture, capture_log: Path, events: list[dict], *,
+                attempts: int = DEFAULT_CENSUS_ATTEMPTS,
+                retry_delay_s: float = DEFAULT_CENSUS_RETRY_DELAY_S) -> Optional[dict]:
+    """The census with a bounded retry, because one lost window is not an unknown library.
+
+    A `census_lost` window is a delivery outcome, not a property of the library: in
+    `captures/s4f22-dec096-od-02` the first request was lost and the *next* one answered with 64 slots and
+    a settled device. Retrying inside the same bound is what turns that into a decidable target; a census
+    that still cannot be read is returned as None and the caller refuses **before any gesture**.
+    """
+    total = max(1, attempts)
+    for attempt in range(total):
+        occupied = _run_census_once(capture, capture_log, events)
+        if occupied is not None:
+            return occupied
+        if attempt + 1 < total:
+            events.append({"event": "census_retry", "attempt": attempt + 1})
+            time.sleep(retry_delay_s)
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -343,6 +480,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--clear-retry-delay-s", type=float, default=4.0)
     p.add_argument("--clear-timeout-s", type=float, default=stopped_preparation.DEFAULT_CLEAR_TIMEOUT_S,
                    help="Bound for one scoped stopped clear's own completion evidence")
+    p.add_argument("--census-attempts", type=int, default=DEFAULT_CENSUS_ATTEMPTS,
+                   help="Bounded retries of the read-only census; one lost window is not an unknown "
+                        "library, and a census that still cannot be read refuses before any gesture")
+    p.add_argument("--census-retry-delay-s", type=float, default=DEFAULT_CENSUS_RETRY_DELAY_S)
+    p.add_argument("--arm-timeout-s", type=float, default=DEFAULT_ARM_TIMEOUT_S,
+                   help="Bound for the device to name a gesture's effect with its own slot-scoped DISP "
+                        "row (a selection change or an arm); a swallowed press never names one")
+    p.add_argument("--seed-settle-timeout-s", type=float, default=DEFAULT_SEED_SETTLE_TIMEOUT_S,
+                   help="Bound for a seeded take's finalization receipt after its commit stop (recorded, "
+                        "not a gate)")
     p.add_argument("--no-clear-targets", dest="clear_targets", action="store_false", default=True,
                    help="Do not clear the target slots first; requires them to be empty already")
     args = p.parse_args(argv)
@@ -423,11 +570,25 @@ def main(argv: list[str] | None = None) -> int:
                 context=f"accepted-sequence-{args.leg}",
                 events=events) as shutdown_session:
 
-            census = _run_census(capture, capture_log, events) if args.clear_targets else None
+            census = (_run_census(capture, capture_log, events, attempts=args.census_attempts,
+                                  retry_delay_s=args.census_retry_delay_s)
+                      if args.clear_targets else None)
             report["census"] = (
                 None if census is None else
                 {f"{track}:{slot}": (None if value is None else bool(value))
                  for (track, slot), value in sorted(census.items())})
+
+            spacing = _PressSpacing()
+
+            def _press_slot(slot_number: int) -> None:
+                """Short-press a loop button, never inside another press's tap window.
+
+                A repeat press inside the firmware's window merges into the next gesture up
+                (`Loop N (double)` = `OVERDUB_FOR_SLOT`), which is how `captures/s4f22-dec096-rec-01` lost its
+                seed press entirely: two taps of the same button arrived 0 ms apart.
+                """
+                spacing.before(LOOP_SELECT_NOTE_BASE + slot_number - 1)
+                slots.press_slot_record(ctx, slot_number, press_ms=args.press_ms)
 
             def seed(slot_number: int, label: str, note_base: int) -> None:
                 """Record a short take into `slot_number`, committed, so it is a *filled* slot afterwards.
@@ -435,33 +596,69 @@ def main(argv: list[str] | None = None) -> int:
                 The overdub leg seeds B first and A last, as in the retention
                 driver. A short press while A is capturing then stops A and
                 switches to populated B, which can actually overdub.
+
+                Every step is confirmed from the device's own slot-scoped evidence, and every abort is a
+                named `PreparationFailure` -- which the caller catches, so the run still writes its report
+                instead of dying with a traceback (measured: `captures/s4f22-dec096-rec-01` and
+                `…-mixed-01` produced no report at all, so their cause had to be reconstructed from the log).
+
+                * the census decides whether a clear is needed; an **unavailable** census refuses
+                  *before any gesture*, because a lost census made this driver long-press a filled,
+                  non-selected target, which the firmware answers by *starting playback*
+                  (`Loop N: long-press start (not playing)`), never by clearing
+                  (`captures/s4f22-dec096-od-02`);
+                * a filled target is selected first and the selection must be named by its own `DISP`
+                  row, because a long press on a filled, non-selected slot starts playback;
+                * the seed press must produce a slot-scoped `DISP … ARMED` row for **this** slot: a
+                  predecessor's in-flight stop can hold the selection, and the firmware then swallows the
+                  gesture silently (`captures/s4f22-dec096-mixed-01`: `Loop 3 (short)` at 39.520 s and
+                  42.647 s left no slot-3 row at all). Silence is therefore a named failure here, never a
+                  blind re-press plus a transport start.
                 """
+                slot0 = to_firmware_slot(slot_number)
+                spacing.before(TRACK_SELECT_NOTE_BASE + args.track - 1)
                 slots.press_track(ctx, args.track, press_ms=args.press_ms)
                 time.sleep(0.4)
                 if not _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
                                          events=events, label=f"seed_{label}_stop"):
-                    raise RuntimeError("could not stop the transport before seeding")
+                    raise PreparationFailure("could not stop the transport before seeding")
                 if args.clear_targets:
                     # Scoped stopped preparation (task 4.1): the read-only census decides
                     # whether a clear is needed at all, then the target's own loop-button
                     # gesture clears it and the firmware's evidence must confirm. No reboot,
-                    # no manual step, and a lost census never reads as "empty".
-                    slot0 = to_firmware_slot(slot_number)
-                    known_occupied = None if census is None else census.get((t0, slot0))
+                    # no manual step, and a lost census never reads as "empty" -- it refuses
+                    # before any gesture (see the docstring).
+                    known_occupied = census.get((t0, slot0)) if census is not None else None
+                    if known_occupied is None:
+                        events.append({"event": f"prepare_slot_{label}_census_unavailable",
+                                       "slot": slot_number})
+                        raise PreparationFailure(
+                            f"census unavailable for slot {slot_number} after "
+                            f"{args.census_attempts} attempt(s); refusing before any gesture (a filled, "
+                            "non-selected target is started by a long press instead of cleared)")
                     if known_occupied is False:
                         preparation.append({"slot": slot_number, "status": "ALREADY_EMPTY",
                                             "detail": "census: no committed content"})
                         events.append({"event": f"prepare_slot_{label}", "slot": slot_number,
                                        "status": "ALREADY_EMPTY", "detail": "census"})
                     else:
-                        if known_occupied is True:
-                            # A filled target that is not the selected slot would switch
-                            # playback on a long press instead of clearing, so select it
-                            # first (the operator's own gesture). An unavailable census stays
-                            # fail-closed: long-press only, which clears a selected slot and
-                            # otherwise refuses without arming an empty one.
-                            slots.press_slot_record(ctx, slot_number, press_ms=args.press_ms)
-                            time.sleep(0.45)
+                        # A filled target that is not the selected slot would *start playback* on a
+                        # long press (`CLEAR_TRACK_FOR_SLOT`'s not-selected branch) instead of
+                        # clearing, so select it first (the operator's own gesture) and require the
+                        # device's own slot-scoped receipt for that selection before pressing the
+                        # clear. A refused selection is not a reason to clear anyway.
+                        select_mark = len(_lines(capture_log))
+                        _press_slot(slot_number)
+                        selected_row = _await_slot_disp(capture_log, select_mark, slot0, None,
+                                                        args.arm_timeout_s)
+                        events.append({"event": f"prepare_slot_{label}_selected", "slot": slot_number,
+                                       "confirmed": selected_row is not None,
+                                       "row": None if selected_row is None else selected_row.strip()})
+                        if selected_row is None:
+                            raise PreparationFailure(
+                                f"slot {slot_number} was not selected by its own press (no DISP row for "
+                                f"slot {slot0} within {args.arm_timeout_s:g}s); still filled and not "
+                                "selected, where a long press starts playback instead of clearing")
                         # A refused or aborted clear means the firmware could not
                         # complete its deferred save first; that is an explicit
                         # "save in flight", so wait for it to quiesce and retry the
@@ -476,12 +673,15 @@ def main(argv: list[str] | None = None) -> int:
                             gesture before deciding, so a silent slot is only ALREADY_EMPTY when the
                             census independently classifies it empty (RAM and SD both observed absent).
                             """
-                            fresh = _run_census(capture, capture_log, events)
+                            fresh = _run_census(capture, capture_log, events,
+                                                attempts=args.census_attempts,
+                                                retry_delay_s=args.census_retry_delay_s)
                             if fresh is None:
                                 return None
                             return fresh.get((t0, slot0))
 
                         for attempt in range(attempts):
+                            spacing.before(LOOP_SELECT_NOTE_BASE + slot_number - 1)
                             outcome = stopped_preparation.clear_slot(
                                 ctx, capture_log, track_index0=t0, slot0=slot0,
                                 timeout_s=args.clear_timeout_s,
@@ -499,23 +699,38 @@ def main(argv: list[str] | None = None) -> int:
                             raise PreparationFailure(
                                 f"slot {slot_number} scoped clear {outcome.status.value}: "
                                 f"{outcome.detail}")
-                before = len(_lines(capture_log))
-                slots.press_slot_record(ctx, slot_number, press_ms=args.press_ms)
-                if not _wait_for(capture_log, before,
-                                 (",ST,Track,STOPPED,ARMED", "Start Recording",
-                                  ",ST,Track,STOPPED,RECORDING"), timeout_s=4.0):
-                    slots.press_slot_record(ctx, slot_number, press_ms=args.press_ms)
-                    events.append({"event": f"seed_{label}_second_press"})
+                # Seed the take. The press must arm **this** slot, and the device names that with its own
+                # slot-scoped `DISP … ARMED` row. A predecessor's in-flight stop can hold the selection of a
+                # filled target and the firmware then swallows the gesture silently, so silence is a named
+                # failure here -- never a blind re-press plus a transport start, which is how the mixed leg
+                # produced a leg with no take at all.
+                armed_row = None
+                press_attempts = DEFAULT_SEED_PRESS_ATTEMPTS
+                press_mark = len(_lines(capture_log))
+                for attempt in range(press_attempts):
+                    press_mark = len(_lines(capture_log))
+                    _press_slot(slot_number)
+                    armed_row = _await_slot_disp(capture_log, press_mark, slot0,
+                                                 ("ARMED", "RECORDING"), args.arm_timeout_s)
+                    events.append({"event": f"seed_{label}_press", "attempt": attempt,
+                                   "slot": slot_number, "armed": armed_row is not None})
+                    if armed_row is not None:
+                        break
+                if armed_row is None:
+                    raise PreparationFailure(
+                        f"slot {slot_number} never armed: {press_attempts} press(es) left no DISP row for "
+                        f"slot {slot0} within {args.arm_timeout_s:g}s (a predecessor's in-flight stop holds "
+                        "the selection of a filled target; pressing again and starting the transport would "
+                        "record nothing)")
                 _ensure_transport(out_port, capture_log, running=True, press_ms=args.press_ms,
                                   events=events, label=f"seed_{label}_start")
-                recording = _wait_for(capture_log, before, ("Recording started", ",RECA,"),
-                                      timeout_s=args.phase_timeout_s)
+                recording = _await_slot_disp(capture_log, press_mark, slot0, ("RECORDING",),
+                                             args.phase_timeout_s) is not None
                 events.append({"event": f"seed_{label}_recording", "confirmed": recording})
                 if not recording:
-                    raise RuntimeError(
-                        f"slot {slot_number} never started recording after a "
-                        f"{'confirmed clear' if args.clear_targets else 'no-clear run'}; "
-                        "the target is not an empty recording target")
+                    raise PreparationFailure(
+                        f"slot {slot_number} armed but never reached RECORDING within "
+                        f"{args.phase_timeout_s:g}s; there is no take to score")
                 span_s = max(args.bars, 1) * 2.0
                 gap_s = span_s / (args.notes + 1)
                 for i in range(args.notes):
@@ -526,13 +741,22 @@ def main(argv: list[str] | None = None) -> int:
                     time.sleep(max(gap_s - 0.03, 0.01))
                 _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
                                   events=events, label=f"seed_{label}_commit")
-                committed = _wait_for(capture_log, before,
-                                      (f",RECS,stop,{to_firmware_slot(slot_number)},",
-                                       f",RECS,stopToStopped,{to_firmware_slot(slot_number)},"),
+                commit_mark = len(_lines(capture_log))
+                committed = _wait_for(capture_log, commit_mark,
+                                      (f",RECS,stop,{slot0},", f",RECS,stopToStopped,{slot0},"),
                                       timeout_s=args.phase_timeout_s)
                 events.append({"event": f"seed_{label}_committed", "confirmed": committed})
                 if not committed:
-                    raise RuntimeError(f"slot {slot_number} seed commit unconfirmed")
+                    raise PreparationFailure(f"slot {slot_number} seed commit unconfirmed")
+                # Recorded, not gated: whether the seeded take's finalization release edge arrived inside the
+                # bound. The *next* seed's own selection/arm receipts are its gates, and they fail by name when
+                # a predecessor still holds the selection, so this only has to make the latency attributable.
+                settled = _wait_for(capture_log, commit_mark,
+                                    (f"Reentry released slot={slot0}",
+                                     f"Record pass undo reset for slot {slot0}",
+                                     "PERS,result,"), timeout_s=args.seed_settle_timeout_s)
+                events.append({"event": f"seed_{label}_finalization_settled", "slot": slot_number,
+                               "confirmed": settled})
 
             # B must contain a loop for the overdub successor. A is seeded last
             # so its record-button gesture addresses A without a playback queue.
