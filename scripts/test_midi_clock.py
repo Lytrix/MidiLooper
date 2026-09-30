@@ -294,6 +294,38 @@ class MasterTests(unittest.TestCase):
         self.assertEqual(int(report["device_clock_echo_pulses"]), 1)
         self.assertEqual(int(report["device_clock_echo_tail_pulses"]), 0)
 
+    def test_pump_drives_continuously_and_reports_its_pulses(self) -> None:
+        port = PulsePort(VirtualClock(), period=0.02)
+        master = MidiClockMaster(port)
+        master.start_pump(bpm=6000.0)
+        try:
+            self.assertTrue(master.pump_running())
+            self.assertTrue(master.wait_pulse(3, timeout_s=1.0))
+            # The point of the pump: pulses keep arriving with no caller asking for them, which is
+            # what keeps the device slaved across the gaps between the phases.
+            self.assertTrue(master.wait_pulse(20, timeout_s=2.0))
+            self.assertGreaterEqual(master.pulses_sent(), 20)
+            self.assertEqual(
+                [m.type for m in port.sent].count("clock"), master.pulses_sent(),
+                "every pulse the pump owes is one clock message on the port",
+            )
+        finally:
+            master.stop_pump()
+        self.assertFalse(master.pump_running())
+        settled = master.pulses_sent()
+        time.sleep(0.05)
+        self.assertEqual(master.pulses_sent(), settled, "a stopped pump sends nothing more")
+
+    def test_start_with_bpm_starts_the_pump_and_stop_ends_it(self) -> None:
+        port = PulsePort(VirtualClock(), period=0.02)
+        master = MidiClockMaster(port)
+        master.start(bpm=6000.0)
+        self.assertEqual([m.type for m in port.sent][0], "start")
+        self.assertTrue(master.pump_running(), "Start is the downbeat the pump continues from")
+        master.stop()
+        self.assertFalse(master.pump_running())
+        self.assertEqual([m.type for m in port.sent][-1], "stop")
+
 
 
 class TickingClock:
@@ -475,6 +507,43 @@ class StreamerGridPacingTests(unittest.TestCase):
         self.assertEqual(kinds[:first_note].count("clock"), 1)
         second_note = kinds.index("note_on", first_note + 1)
         self.assertEqual(kinds[:second_note].count("clock"), 1 + 6, "step k belongs to pulse k")
+
+    def test_pumped_host_phase_waits_on_the_pump_instead_of_sending(self) -> None:
+        """With the pump running, the phase writes no clock of its own: it waits on the one grid.
+
+        That is what makes a host-driven run hold together across the gaps a phase does not cover
+        (the device leaves `CLOCK_EXTERNAL` 500 ms after the last pulse).
+        """
+        virtual = VirtualClock()
+        in_port = PollOnlyPort(virtual, period=PERIOD_120_BPM)
+        out_port = PulsePort(virtual, period=PERIOD_120_BPM)
+        master = MidiClockMaster(out_port)
+        master.start(bpm=6000.0)
+        try:
+            _notes, _cc, clocks, timing = stream_pattern_for_bars(
+                out_port, in_port, master=master, wall_clock_tempo_bpm=6000.0, **self._kwargs()
+            )
+        finally:
+            master.stop_pump()
+
+        self.assertEqual(timing["clock_source"], "host_clock")
+        self.assertEqual(clocks, 2 * MIDI_CLOCKS_PER_BAR)
+        self.assertEqual(int(timing["clock_pulses_counted"]), 2 * MIDI_CLOCKS_PER_BAR)
+        kinds = [message.type for message in out_port.sent]
+        self.assertEqual(kinds.count("start"), 1, "the caller owns Start")
+        self.assertEqual(kinds.count("note_on"), 32)
+        first_note = kinds.index("note_on")
+        last_note = len(kinds) - 1 - kinds[::-1].index("note_on")
+        # Step k of the phase sits on the pump's grid position k, so the span between the first and
+        # the last step is 31 steps of 6 clocks. The pump is a thread on its own absolute schedule,
+        # so it may already be a pulse ahead of the phase's own count: allow exactly that one.
+        self.assertLessEqual(abs(kinds[first_note:last_note].count("clock") - 31 * 6), 1)
+        # Every step lands on its grid position: the phase added no clock of its own, it followed
+        # the pump. 32 note-ons in all, one of them the immediate first step and the other 31 the
+        # steady-state grid steps that `grid_steps_emitted` counts.
+        self.assertEqual(timing["grid_steps_emitted"], 31.0)
+        self.assertEqual(timing["max_abs_grid_jitter_clocks"], 0.0)
+        self.assertEqual(timing["max_abs_grid_jitter_clocks"], 0.0)
 
 
 if __name__ == "__main__":

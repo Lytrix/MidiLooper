@@ -60,16 +60,37 @@ reader.wait_bars(8, timeout_s=30.0)                 # 8 bars on the device's gri
 
 ## Drive: the host is clock master (pinned tempo)
 
-Only when a run needs the *host* to own the tempo.
+Only when a run needs the *host* to own the tempo. Two shapes, one contract: the host sends the
+clock, so the host also owns the transport and the note grid is the host's pulse grid.
 
 ```python
 from hitl.midi_clock import MidiClockMaster
 
 master = MidiClockMaster(out_port)
-master.start()                    # realtime Start: the device begins at tick 0
-master.bars(8, bpm=120.0)         # absolute-deadline pacing; returns the pacing report
-# release by simply stopping: do NOT send a realtime Stop unless the transport must stop too
+master.start(bpm=120.0)   # realtime Start *and* the continuous pump
+master.wait_pulse(...)    # a phase waits on the pulses the pump owes
+master.stop()             # realtime Stop; stops the pump with it
 ```
+
+* **The pump is the sender.** `start_pump(bpm=...)` runs a thread that emits one pulse per interval
+  on one absolute schedule for as long as the transport runs, and the phases wait on it
+  (`MidiClockMaster.wait_pulse`) instead of writing clock between their own notes. This is not
+  cosmetic: the device's slaving is a **timeout, not a latch** — `ClockManager::checkClockSource`
+  leaves `CLOCK_EXTERNAL` 500 ms after the last pulse and the device then advances its own tick
+  from the internal clock. A host that only sends pulses *inside* a phase does not own the device's
+  grid across the gaps (arm → phase, phase → phase), and a recorded take inherits that drift.
+  `send_pulses` (the caller-paced shape) remains for a one-shot drive such as
+  `hitl_midi_clock_probe.py`.
+* **The arm flow is the host's, and it is unconditional.** Record arm needs the transport
+  *stopped* (`--clock-source host`: realtime `Stop` → Record press → ARMED → realtime `Start` +
+  pump → RECORDING). Do **not** gate that stop on serial evidence that the transport runs: a slaved
+  device emits none of the master-side `BPM`/`BAR` activity rows, so the evidence is absent exactly
+  when the stop is needed. Skipping it made the arm press land on a running sequencer, so the track
+  jumped `STOPPED -> RECORDING` (skipping ARMED) and a stray first take appeared
+  (`captures/session_20260930_141936.log`: two `RECA` rows 7.4 s apart, the first stopping as
+  `stopToStopped` at 2304 raw ticks against the requested 1536) — which also pushed the take's
+  `REVT` rows out of the span the stored-grid check bounds. A control-surface transport press is
+  not the alternative: it only toggles the device's own sequencer flag while the host keeps driving.
 
 The device slaving to the host is *observable*: while it is slaved it emits no clock of its
 own. `bars(..., echo_reader=reader)` reports both totals, and the tail count (after the first
@@ -100,6 +121,7 @@ brief window before `ClockManager::checkClockSource` applies `CLOCK_EXTERNAL`.
 | Driving moves the device's live tempo | Residual ±1–3 BPM. When a run needs an exact figure, pin it with the documented tempo control instead: `.venv/bin/python scripts/hitl_tempo_fader_probe.py --set-tempo 120` (ch16 CC102, 1 BPM per step, DEC-086). |
 | `Stop` is not a "release" | A realtime `Stop` stops the device's transport. To release a host drive while keeping the transport, just stop sending clock (resume latency 0.53 s). |
 | Closing the serial fd early | Keep the port open through the stop/drain protocol (see the HITL content-verification skill's recovery table). |
+| A local transport press while slaved | It toggles only the device's own `sequencerRunning` flag (a fresh external clock means `shouldEmitMidiTransportAsMaster` is false, so no `Stop` goes out and the mode stays `CLOCK_EXTERNAL`); host and device then disagree about whether the transport runs. Use the master's realtime `Stop`/`Start`. |
 
 ## Running the device check
 
@@ -120,12 +142,25 @@ resumed afterwards. `#CAP,BPM` rows and `DIAG,clockrate` are reported as *adviso
 verdicts*: the first needs a build with `SESSION_CAPTURE_BPM=1` (only
 `teensy41-capture-serial-investigation-diag`), the second is emitted on the telemetry window.
 
-## Not yet wired
+## Wired, and how it is verified
 
-The legacy streamers still pace by the wall-clock proxy: `stream_pattern_for_bars` is called
-with `wall_clock_tempo_bpm`, so note streaming is not yet pulse-paced, and an earlier attempt to
-prefer the clock there (`captures/pacing-fix-01`, an 8-bar request recorded 20 bars) failed
-before the device-BAR end condition existed. Converting that path to `wait_pulse`/`wait_bars`
-is the next slice; this guide plus the module is what it should be built on, and the reason the
-premise correction matters is that the old comment read as evidence that the clock was
-unavailable.
+Both directions now pace the record and overdub phases of the base preset:
+
+* `--clock-source device` (default) — each phase is timed by the device's own USB MIDI clock
+  (`clock=reader`), the first step on the next pulse of the device's grid;
+* `--clock-source host` — the host drives the pump and the phase counts the pulses the pump owes
+  (`master=`), with the arm flow above.
+
+The phases report the source they used (`clock_source` = `device_clock` / `host_clock` /
+`received_clock`), and the wall-clock proxy is only the fallback for a run where no clock flows.
+Device evidence, both `Result: PASS` on the base preset (`--track 5 --loop-slot 1
+--midi-channel 1`), same harness tree:
+
+| Run | Capture | Record | Loop length | Stored grid (REVT) | First-note clocks |
+|---|---|---|---|---|---|
+| `--clock-source host` | `captures/session_20260930_142350.log` | 32/32 | 1536/1536 | count=32, delta 48–48, bad 0/2 | 12/2 |
+| `--clock-source device` | `captures/session_20260930_142518.log` | 32/32 | 1536/1536 | count=31, delta 47–49, bad 0/2 | 3/3 |
+
+Both also verify the overdub passes (16/16 and 8/8 note-ons, stored `SEVT` spans 2 bars each).
+Host mode's exact 48-tick `REVT` deltas are the point of the pump: the host's pulse grid is the
+only grid in play, so every stored step is one 16th (48 ticks) from the previous one.
