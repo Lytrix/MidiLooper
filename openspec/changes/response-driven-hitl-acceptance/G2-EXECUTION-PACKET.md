@@ -165,7 +165,13 @@ declaration (`spec.py`), the per-profile scope (`registry.py`), the resolution a
 - **Controls/coverage**: legacy translation table, unknown/unsupported combination, scenario listing,
   verify-only (no ports) path.
 - **Verification recipe**: `test_hitl_import_gate`, the layered suites, and a `--list-scenarios` smoke.
-- **Completion record**: to be filled.
+- **Completion record**: **partly landed 2026-09-30.** Registration, translation, refusals, listing, verdict
+  identity and unchanged classic behaviour are in (`test_accepted_sequence_scenario` 32/32, 10 mutations
+  red-proved, the excerpt and a non-pass fixture agreeing through both entry points). **Open (4.4b):** the
+  standalone driver *becomes* a wrapper to the runner, which first needs the leg body moved into a stateless
+  flow and an owner chosen for the family-counter read-back under the flow import gate (`hitl.serial` is
+  closed to both a flow and a scenario). Record:
+  [SCENARIO-REGISTRATION-EXECUTION.md](SCENARIO-REGISTRATION-EXECUTION.md).
 
 ## Slice 5.1–5.3 — oracle and gates
 
