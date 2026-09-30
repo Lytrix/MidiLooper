@@ -12,7 +12,24 @@ oracle to accommodate today's inline path. Existing completed host fixtures rema
 
 Stage owner: HITL session/protocol and existing MIDI button processor. Preconditions: design discovery and adversarial review read; prior dirty driver work preserved. Postcondition: deterministic fixtures expose former failures. Invariants: no runtime behavior change, no device access. Commit boundary: fixture/contract slice.
 
-- [ ] 1.1 Write the first G2 execution packet using `docs/Templates/EXECUTION_PACKET.md`: pin dependency closure, exact observation fields/events, fixed memory/work budgets, transition oracles and baseline linker/timing gates; verify every required field has an existing authoritative owner and no unresolved ownership decision.
+- [x] 1.1 Write the first G2 execution packet using `docs/Templates/EXECUTION_PACKET.md`: pin dependency closure, exact observation fields/events, fixed memory/work budgets, transition oracles and baseline linker/timing gates; verify every required field has an existing authoritative owner and no unresolved ownership decision.
+      **2026-09-30 — written.** [G2-EXECUTION-PACKET.md](G2-EXECUTION-PACKET.md) is the change-level packet: it pins the
+      fields every slice shares — dependency closure (design §Dependency resolved + the runtime change's
+      `SHARED-CAPTURE-FINALIZATION.md`), the **observation vocabulary** (each row family with its emitting owner and the
+      one place that decodes it), the **budgets** (managed ceiling 360 s / cancellation grace 30 s / per-action
+      deadlines / the RAM1 free-for-locals floor **840** with the bank-arithmetic rule as the mechanism / the fixed-buffer
+      ring with "loss is detectable" as a gate), the **gates** (`pio test -e native`, the `teensy41-capture-serial` build,
+      upload only on approval, the mandated HITL entry points) and where each **transition oracle** is fixed (oracle
+      links, recipe transitions in design decision 5, the S22 latch transitions, the 3.3 bundle rule) — then audits every
+      required field for an owner and carries one compact section per remaining slice (4.1–4.4, 5.1–5.3, 6.1–6.4) with the
+      template's fields. **Audit result:** all fields owned except one, which is now a **recorded decision** rather than
+      an open question — the run-scoped **authorization manifest** belongs to the stimulus registry (it already declares
+      each profile's recipe and limits, and `stimulus list` is the mandated discovery path), with the drivers' explicit
+      CLI targets kept as the compatibility path and the record of what a run was given; 4.1 implements it. The per-turn
+      **observation work number** is deliberately unset: its mechanism owner exists (capture-gated bounded service) and
+      6.2 is the measurement gate that gives it a value. Landed slices keep their own artifacts, linked from the packet
+      rather than restated. Documentation only: no code, firmware, build or device action; `openspec validate --strict`
+      and `git diff --check` clean.
 - [x] 1.2 Preserve minimal attributed excerpts from the named failed device runs with provenance and expected non-PASS results; add replay cases for seed contamination, wrong slot/track, duplicate stop, stale boot and missing metadata; verify no case passes with the current evidence gaps.
 - [x] 1.3 Add controllable-time native fixtures running production `MidiButtonProcessor` and real DROID mappings, covering short/double/triple/long thresholds, interleaved controls, held notes and USB/DROID routing; verify a mutation restoring premature follow-up presses or momentary-button substitution is caught.
 
