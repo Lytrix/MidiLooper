@@ -40,45 +40,58 @@ content, B's stop). So the leg composes the two verified sequences instead of du
 stimulus variant it was driven as (`STIM-BASE-2-MIXED-01-TEMP-ACCEPTED-SEQ-MIXED`): the mixed leg's *profile*
 (A empty **and** B seeded — a different preparation from either existing profile) is not registered yet.
 
-## What is deliberately **not** done: grading
+## The grading mode (landed the same day, as its own verified slice)
 
-`analyse(leg="mixed")` **refuses by name** rather than misgrading: A is a record interval and B an overdub
-interval, so the links need A's record vocabulary (`RECS`, the finalization window) on one side and the overdub
-families (`DIAG,reentry,admit|bound`, `stop_state`, `canonical_release`) on the other. Grading with either
-existing mode would fail a conforming run, so the verdict is `SETUP_INCOMPLETE` with a `mixed_leg_grading` check
-that says exactly that. The consequences, stated rather than implied:
+`analyse(leg="mixed")` now grades the leg with **A's record vocabulary beside B's overdub vocabulary**, and each
+site is explicit about which it is:
 
-- a mixed run is **drivable and ungradable** today, and the report says so in its own vocabulary;
-- the mixed leg is **not registered** as a scenario, so the runner route cannot reach it yet;
-- its stimulus profile is not declared, so it runs on the wrapper's `cli` authorization path only.
+| Link | The mixed leg's reading |
+|---|---|
+| `L1_a_stop_accepted_once` | A is a *record* interval: exactly one `RECS` stop row for A's slot (the record leg's own reading), not the overdub `DIAG,reentry,bound` edge — A has no overdub chain, and requiring one would fail a conforming run |
+| `L2` / `L3` / `L4` | unchanged: no capacity denial, A's `reentry_window_open` (the scenario's "A's identified ownership window") and A's `canonical_release` |
+| `L5_successor_started` | B's start is its own admission (`DIAG,reentry,admit`) and the stop it follows is A's **`RECS`** floor — the pairing each existing mode held half of. The "missing overlap is NOT_EXERCISED" mapping applies here too |
+| `L5b_b_start_route` | the route decision spans A's record stop to B's admission, and the production row is the **capture-switch** (`Loop B: Switch gesture from slot A`): B has committed passes, so the S4f.6 carrier does not apply |
+| `L6_b_stop_executes_once` | B is an *overdub* interval: its `stop_state` terminal edge (or its retirement) is the execution |
+| `L7_one_press_per_stop` | the overdub leg's request counting: A's request is the switch gesture, B's is `Loop B: Stop Overdub` |
+| `overdub_interval_identity` | **B only** — its admission, execution and retirement — and the check says A's chain is the record one, so a conforming mixed run is not failed for lacking an overdub chain on A |
+| window / `family_accounting` / content / timing / teardown | unchanged and leg-independent |
 
-The oracle sites that need the mixed vocabulary, identified while scoping: the identity extraction and L1 (A's
-`RECS` stop side vs B's overdub side), L5 (B's start from `od_b["starts"]` while A's stop comes from `stops_a`),
-L5b (the route span from A's record stop to B's overdub admission, with the capture-switch as the production
-row), L6 (B's `stop_state` execution), L7 (the overdub request counting) — each of which the existing branches
-already implement for one side.
+**Evidence for the mode:** `MixedLegOracleTests` **7/7** — a complete mixed chain is `ACCEPTED_SEQUENCE_PASS` with
+every link read in its own vocabulary; a second A stop fails L1; a playback answer instead of the capture-switch
+fails `L5b_b_start_route` naming the route; a missing A stop is a FAIL rather than a gap; a window-less chain is a
+staging outcome (`SETUP_INCOMPLETE`, exit 3); the *record* leg's own chain cannot prove a mixed leg; and the CLI
+accepts the leg. **4 mutations red-proved** with byte-identical restores (`mutate_mixed2.py`): A's stop read with
+the binding vocabulary, A's overdub chain required again, the production row read with the record carrier
+vocabulary, and the execution link not computed for the mixed leg at all.
+
+**The whole slice in numbers:** `test_accepted_sequence` **151/151** (13 new across both halves — 6 flow, 7
+grading, with two of the flow-half pins superseded by the grading ones), corpus **3/3** (every retained fixture
+keeps its verdict, so the record and overdub modes are untouched by the condition changes), scenario **38/38**,
+authorization 24/24, `test_retention_handoff_plan` 33/33, host sweep **1,068 tests / 75 suites** re-measured for
+this slice (single-process `unittest discover` over `scripts/test_*.py`, identical per-module), with only the
+pre-existing failing suites — six, none of which imports this change's modules; `test_revision_load_serial_debug`
+and `test_note_edit_fader_motor_timing` are direct-run harnesses with no `unittest` tests — and **8 mutations
+red-proved** (4 flow, 4 grading), every file restored byte-identically and sha256-verified.
 
 ## Evidence
 
-- `scripts/test_accepted_sequence.py` **146/146**, of which 6 are new: `MixedLegTests` (the plan as data —
-  no transport gesture, no A slot press, one B slot gesture plus one B stop press, two record presses; the plan
-  driven against the device's own rows to `DROVE_LEG`; and a populated A answering playback/overdub as a named
-  `WRONG_MODE_ROUTE`) and `MixedLegOracleTests` (the refusal, and the CLI accepting the leg). One
-  preparation-level pin in `EvidenceGateTests`: B is seeded while A is prepared empty and idle.
-- Neighbours green together: corpus 3/3, scenario 38/38, authorization 24/24.
-- Full host sweep **1,074 tests / 75 suites**, with only the seven pre-existing unrelated failures.
-- **4 mutations red-proved** with byte-identical restores (`mutate_mixed.py`): B's overdub start dropped, B's
-  stop turned into a record press, A no longer required to be empty and idle, and the oracle's refusal removed so
-  the mixed leg would be graded with the record vocabulary.
+- The **flow half**'s pins: `MixedLegTests` (the plan as data — no transport gesture, no A slot press, one B slot
+  gesture plus one B stop press, two record presses; the plan driven against the device's own rows to `DROVE_LEG`;
+  a populated A answering playback/overdub as a named `WRONG_MODE_ROUTE`) plus a preparation pin in
+  `EvidenceGateTests` that B is seeded while A is prepared empty and idle.
 - `git diff --check` clean, `openspec validate --strict` valid.
 
 ## What remains for the mixed leg
 
-1. the oracle's `mixed` mode (the site list above), with its own tests over a synthetic mixed chain — A's stop
-   from `RECS`/the window, B's identity from the overdub families — and the corpus-style determinism the other
-   modes have;
-2. registration (`accepted_sequence_mixed`, preset membership) and the scenario's translation/refusals;
-3. the mixed stimulus profile with its own declared authorization (A empty + B seeded), which is what the spec's
-   *Scoped same-boot fixture preparation* asks for ("record and overdub fixtures MUST have different verified
-   content preconditions");
-4. the device leg, with the rest of 6.x, under a per-session upload/target authorization.
+1. **the mixed edge for the *window*:** the leg is drivable and gradable, but a *driven* mixed run still needs the
+   spec's own gates closed end to end on one capture — content parity for **both** intervals being the
+   content-pipeline half 5.2 integrated;
+2. **registration** (`accepted_sequence_mixed` and preset membership) with the scenario's translation/refusals, so
+   the runner route reaches the leg the wrapper CLI already accepts;
+3. **the mixed stimulus profile** with its own declared authorization (A empty + B seeded), which is what the
+   spec's *Scoped same-boot fixture preparation* asks for ("record and overdub fixtures MUST have different
+   verified content preconditions");
+4. **the device leg**, with the rest of 6.x, under a per-session upload/target authorization.
+
+Until 2 and 3 land the leg runs on the wrapper's `cli` authorization path only, and its run report names the
+temporary stimulus variant it was driven as (`STIM-BASE-2-MIXED-01-TEMP-ACCEPTED-SEQ-MIXED`).
