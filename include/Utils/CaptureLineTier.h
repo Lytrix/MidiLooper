@@ -147,6 +147,7 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,stop_phase,", 16) == 0 ||
          strncmp(tag, "DIAG,stop_grain,", 16) == 0 ||
          strncmp(tag, "DIAG,stop_state,", 16) == 0 ||
+         strncmp(tag, "DIAG,latch,", 11) == 0 ||
          strncmp(tag, "DIAG,stop_service,", 18) == 0 ||
          strncmp(tag, "DIAG,stop_emit,", 15) == 0 ||
          strncmp(tag, "DIAG,stop_trace_drop,", 21) == 0 ||
