@@ -194,12 +194,31 @@ def _legacy_has_serial_follow(legacy: list[str]) -> bool:
     return "--follow-current-session" in legacy or "--follow-serial-log" in legacy
 
 
-def _should_use_managed_capture(args: argparse.Namespace, legacy: list[str]) -> bool:
+def scenarios_own_capture(scenario_ids: list[str]) -> bool:
+    """True when any resolved scenario declares it owns its own device session (task 4.4).
+
+    Two owners of one serial port is a broken run, not a compatibility question, so the runner steps out of
+    the way and lets the scenario open the capture itself. The declaration is on the scenario spec, so the
+    behaviour is a property of the scenario rather than of the particular ids this runner happens to know.
+    """
+    from hitl.registry import get_registry
+
+    registry = get_registry()
+    return any(bool(getattr(registry.get(sid), "owns_capture", False)) for sid in scenario_ids)
+
+
+def _should_use_managed_capture(args: argparse.Namespace, legacy: list[str], scenario_ids: list[str]) -> bool:
     if getattr(args, "verify_only", False):
         return False
     if getattr(args, "no_managed_capture", False):
         return False
     if "--serial-port" in legacy:
+        return False
+    if scenarios_own_capture(scenario_ids):
+        print(
+            "[hitl] scenario owns its capture (capture-owning scenario): the runner will not wrap the run "
+            "in managed capture; the scenario opens its own session"
+        )
         return False
     return True
 
@@ -210,7 +229,7 @@ def _run_with_optional_managed_capture(
     scenario_ids: list[str],
     run_fn: Callable[[], int],
 ) -> int:
-    if not _should_use_managed_capture(args, legacy):
+    if not _should_use_managed_capture(args, legacy, scenario_ids):
         return run_fn()
     from hitl.config import HitlConfig
     from hitl.managed_capture import legacy_args_with_managed_capture, run_with_managed_capture

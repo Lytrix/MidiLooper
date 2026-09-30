@@ -132,6 +132,19 @@ def _run_layered_preset_inner(config: HitlConfig) -> int:
         flush=True,
     )
 
+    # An id this runner does not know is a named refusal, not a `KeyError` traceback. The classic registry
+    # (`hitl.registry`) carries scenarios that are not layered — the response-driven acceptance legs among
+    # them (task 4.4) — and `--layered` with one of those must say so instead of dying mid-run.
+    unknown = [scenario_id for scenario_id in scenario_ids if scenario_id not in registry]
+    if unknown:
+        known = ", ".join(sorted(registry))
+        print(
+            f"[hitl-layered] unsupported combination: {', '.join(unknown)} is not a layered scenario. "
+            f"Known layered scenarios: {known}. The classic registry's scenarios (for example the "
+            "response-driven acceptance legs) run without --layered."
+        )
+        return 2
+
     session = bootstrap.build_session(config)
     exit_code = 0
     try:

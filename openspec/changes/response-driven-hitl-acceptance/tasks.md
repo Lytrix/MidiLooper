@@ -318,7 +318,33 @@ Stage owner: stateless flows, registered scenarios and compatibility wrapper. Pr
       [AUTHORIZATION-MANIFEST-EXECUTION.md](AUTHORIZATION-MANIFEST-EXECUTION.md).
 - [ ] 4.2 Implement record recipe with genuinely empty SD-aware A/B, real record mode, switch-carried B start and one stop per interval; verify production dispatch and host scheduling with delayed observations, premature retirement and wrong-mode routes. A populated-A mutation must fail.
 - [ ] 4.3 Implement overdub recipe using confirmed seeds and the proven single capture-switch gesture, followed by B's recognized overdub start and stop; verify no separate A stop, no playback re-affirmation and no wait for predecessor retirement in the critical window.
-- [ ] 4.4 Register both scenarios and route the standalone CLI through the same runner; verify legacy argument translation, explicit unsupported combinations, scenario listing, identical verdicts via both entry points and unchanged base/edit_full behavior.
+- [~] 4.4 Register both scenarios and route the standalone CLI through the same runner; verify legacy argument translation, explicit unsupported combinations, scenario listing, identical verdicts via both entry points and unchanged base/edit_full behavior.
+      **2026-09-30 — registration, translation, refusals, listing and verdict identity landed; the flow
+      extraction is named as the remainder.** Both legs are registered in the existing registry
+      (`accepted_sequence_rec`, `accepted_sequence_od`, plus the `accepted_sequence` preset) with the
+      **offline oracle** as their verifier, so `--verify-only` through the runner re-derives the acceptance
+      verdict from a log without a device; `ScenarioSpec` gained the declarative `owns_capture` field (the
+      runner steps out of the way instead of wrapping a capture-owning sequence in a second capture on one
+      port) and `--layered` with a classic-registry id is now a named refusal instead of a `KeyError`.
+      `hitl/scenarios/accepted_sequence.py` translates the runner's targets plus an allowlist of wrapper flags
+      into one readable argv per run, defaults the run's **authorization to the registered profile's own
+      manifest** (task 4.1: `STIM-BASE-2-2-01` for the record leg, `STIM-BASE-2-ONE-OD-01` for the overdub
+      leg — stricter than the wrapper's `cli` default), and refuses by name every combination the leg cannot
+      honour (a mismatched `--leg`; a missing track/first/second target or note channel; an ambiguous first
+      target; the same target twice; two different statements of the channel; a channel that is not the
+      track's own; an unknown flag; a stray positional) — before any device action. **Evidence:**
+      `test_accepted_sequence_scenario` **32/32**, `test_accepted_sequence` **98/98** and corpus **3/3**, the
+      full host sweep **1,018 tests / 75 suites** with only the seven pre-existing unrelated failures
+      (`test_foundation_runner` and `test_layered_verifiers` re-confirmed identical with this slice's files
+      stashed), `pio test -e native` 2,643 cases (7 skipped, 2,636 succeeded), **10 mutations red-proved** with
+      byte-identical restores. The verdict identity is two-sided on the retained fixtures: the excerpt is
+      `ACCEPTED_SEQUENCE_PASS` through both the standalone oracle CLI and `runner --verify-only`, and
+      `s4f13-od-20260927_015145.log` is `INSUFFICIENT_EVIDENCE` through both. **Remainder (4.4b):** the design's
+      stronger form — the leg sequence in a stateless flow with the driver reduced to a wrapper — needs the
+      ~700-line body moved out of `hitl_accepted_sequence.py` under the flow import gate, and it must first
+      answer *who owns the family-counter read-back* (the driver reaches `hitl.serial`, which neither a flow nor
+      a scenario may import) rather than answer it during the move. See
+      [SCENARIO-REGISTRATION-EXECUTION.md](SCENARIO-REGISTRATION-EXECUTION.md).
 
 ## 5. Complete acceptance oracle and regression gates
 

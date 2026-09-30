@@ -16,6 +16,11 @@ class ScenarioSpec:
     run: Optional[RunFn] = None
     verify: Optional[VerifyFn] = None
     preset: Optional[str] = None
+    #: True when the scenario owns its own device session (capture + MIDI guard). The runner then does not
+    #: wrap it in managed capture: two owners of one serial port is not a compatibility question, it is a
+    #: broken run. The response-driven acceptance legs declare it because their sequence owns its own
+    #: correlation, cancellation and report.
+    owns_capture: bool = False
 
 
 PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
@@ -33,6 +38,9 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     ),
     "edit_overdub_during_note_edit": ("base", "edit_overdub_during_note_edit"),
     "note_edit_reselect_stacked": ("base", "note_edit_reselect_stacked"),
+    # Task 4.4: the two response-driven acceptance legs. Both are capture-owning (see `ScenarioSpec`), so
+    # the preset drives them in order through the wrapper's own sessions, one leg per boot anchor.
+    "accepted_sequence": ("accepted_sequence_rec", "accepted_sequence_od"),
 }
 
 
@@ -58,6 +66,11 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     from hitl.scenarios.note_edit_reselect_stacked import (
         run_note_edit_reselect_stacked,
         verify_note_edit_reselect_stacked,
+    )
+    # Task 4.4: the two response-driven acceptance legs (capture-owning; see `ScenarioSpec`).
+    from hitl.scenarios.accepted_sequence import (
+        run_accepted_sequence,
+        verify_accepted_sequence,
     )
 
     return {
@@ -134,6 +147,26 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             ),
             run=run_note_edit_reselect_stacked,
             verify=verify_note_edit_reselect_stacked,
+        ),
+        "accepted_sequence_rec": ScenarioSpec(
+            scenario_id="accepted_sequence_rec",
+            description=(
+                "S4f.13(a) record leg: prepare two targets, real record mode, "
+                "a slot switch that carries the first target's stop, one stop per interval"
+            ),
+            run=run_accepted_sequence,
+            verify=verify_accepted_sequence,
+            owns_capture=True,
+        ),
+        "accepted_sequence_od": ScenarioSpec(
+            scenario_id="accepted_sequence_od",
+            description=(
+                "S4f.13(b) overdub leg: confirmed seeds, the proven single capture-switch "
+                "gesture, the successor's recognized overdub start and stop"
+            ),
+            run=run_accepted_sequence,
+            verify=verify_accepted_sequence,
+            owns_capture=True,
         ),
     }
 
