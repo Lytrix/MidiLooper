@@ -81,7 +81,7 @@ from hitl.control_constants import (  # noqa: E402
 )
 
 from hitl.device_shutdown import DeviceSession, refuse_reset_if_latched  # noqa: E402
-from hitl.device_time import filter_live_lines  # noqa: E402
+from hitl.device_time import device_stamp_us, filter_live_lines, human_line_device_us  # noqa: E402
 from hitl.flows import stopped_preparation  # noqa: E402
 from hitl.library_observation import observation_window  # noqa: E402
 from hitl.managed_capture import ManagedCaptureSession  # noqa: E402
@@ -264,15 +264,52 @@ def _slot_disp_state(line: str) -> Optional[tuple[int, str]]:
     return int(match.group(2)), match.group(3)
 
 
+def _gesture_clock_us(capture_log: Path, after: int, slot_number: int) -> Optional[int]:
+    """The device clock of the loop-button gesture at `after` (1-based `slot_number`).
+
+    The gesture's own human row (`[<s>.<ms>] [INFO] Button press: Loop N (short)`) carries the device clock,
+    so it is the exact floor for "did the device name this gesture's effect?". When the row is not there yet
+    (not recognized, or not flushed), the newest human stamp *before* the gesture is used instead.
+    """
+    lines = _lines(capture_log)
+    marker = f"Button press: Loop {slot_number} (short)"
+    for line in reversed(lines[max(after, 0):]):
+        if marker in line:
+            stamp = human_line_device_us(line)
+            if stamp is not None:
+                return stamp
+    best: Optional[int] = None
+    for line in lines[:max(after, 0)]:
+        stamp = human_line_device_us(line)
+        if stamp is not None and (best is None or stamp > best):
+            best = stamp
+    return best
+
+
 def _slot_disp_rows(capture_log: Path, after: int, slot0: int,
                     states: Optional[tuple[str, ...]] = None) -> list[str]:
-    """Live (not drained) `DISP` rows naming `slot0` from `after` on, optionally restricted to `states`."""
+    """`DISP` rows naming `slot0` that were **emitted after** the gesture at `after`.
+
+    Qualified by the device's own stamp, not by file position: the capture ring flushes in batches, so a
+    take's later rows can land *before* an earlier flood of them in the file. Measured on device
+    (`captures/s4f22-dec096-od-03`): the seed's `DISP,4,RECORDING` rows (stamps 56.81 s onward, ~30/s for
+    the whole take) were followed in file order by rows stamped 85.98 s, so an order-based freshness filter
+    read the RECORDING rows as drained history and reported that the take never started -- while the
+    device had started it, and `Recording started @ tick 0` with `RECA,4,0` was in the same log. A stamp
+    floor keeps the anti-stale property (a row emitted *before* the gesture is never its receipt) without
+    depending on the order the ring happened to flush.
+    """
+    lines = _lines(capture_log)
+    floor = _gesture_clock_us(capture_log, after, slot0 + 1)
     rows: list[str] = []
-    for line in filter_live_lines(_lines(capture_log), after_index=after):
+    for line in lines[max(after, 0):]:
         parsed = _slot_disp_state(line)
         if parsed is None or parsed[0] != slot0:
             continue
         if states is not None and parsed[1] not in states:
+            continue
+        stamp = device_stamp_us(line)
+        if floor is not None and stamp is not None and stamp <= floor:
             continue
         rows.append(line)
     return rows
