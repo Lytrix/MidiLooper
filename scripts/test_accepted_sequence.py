@@ -11,6 +11,8 @@ Two things are pinned here without a device:
 
 Run: .venv/bin/python scripts/test_accepted_sequence.py
 """
+import hashlib
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -187,6 +189,49 @@ def by_name(result):
     return {c.name: c for c in result.checks}
 
 
+
+
+def od_chain_log(*, a_start: bool = True, a_bindings: int = 1, a_binding_interval: int | None = None,
+                 b_start: bool = True, b_start_after_a_release: bool = False, b_terminals: int = 1,
+                 a_release: bool = True, b_release: bool = True, a_requests: int = 1, b_requests: int = 1,
+                 seed_records: bool = True, fallback: bool = False, b_interval: int = 4) -> str:
+    """A synthetic **overdub**-leg log: each keyword removes or duplicates exactly one identity link.
+
+    Written against the wire forms the owners emit. Firmware rows are 0-based, so A = slot 4 = 3 and B = slot
+    5 = 4. The seeds' `RECA`/`RECS` rows are present by default, because those are exactly what must **not** be
+    read as the leg's own overdub evidence (the record leg's vocabulary does not describe an overdub interval).
+    """
+    lines = [BOOT]
+    if seed_records:
+        lines += ["#CAP,100000,RECA,3,0",
+                  "#CAP,150000,RECS,stopToStopped,3,140000,0,140000,1536,0",
+                  "#CAP,200000,RECA,4,0",
+                  "#CAP,250000,RECS,stopToStopped,4,240000,0,240000,1536,0"]
+    if a_start:
+        lines.append("#CAP,1000000,DIAG,reentry,admit,100,3,3,0")
+    for i in range(a_bindings):
+        lines.append(f"#CAP,{2000000 + i},DIAG,reentry,bound,200,{a_binding_interval or 3},3,0")
+    lines.append("#CAP,2000100,DIAG,reentry_window_open,3,200,1536")
+    if fallback:
+        lines.append("[26.900] [WARN] [TRACK] Overdub stop retarget: companion path stalled; raw pass only")
+    if b_start:
+        stamp = 6000000 if b_start_after_a_release else 3000000
+        lines.append(f"#CAP,{stamp},DIAG,reentry,admit,300,{b_interval},4,1")
+    if a_release:
+        lines.append("#CAP,5000000,DIAG,canonical_release,3,40,1536,8")
+    for i in range(b_terminals):
+        lines.append(f"#CAP,{7000000 + i},DIAG,stop_state,7,4,7,5,900,{7000000 + i},1,0,0,0")
+    if b_release:
+        lines.append("#CAP,8000000,DIAG,canonical_release,4,0,1536,8")
+    for i in range(a_requests):
+        lines.append(f"[25.{100 + i}] [INFO] Loop 5: Switch gesture from slot 4")
+    for i in range(b_requests):
+        lines.append(f"[27.{100 + i}] [INFO] Loop 5: Stop Overdub")
+    return "\n".join(lines) + "\n"
+
+
+def run_od(text, **kw):
+    return analyse(text, leg="od", slot_a=4, slot_b=5, metadata=METADATA, base_report=BASE_REPORT, **kw)
 class SwitchRepeatGuardTests(unittest.TestCase):
     """Regression for the double-countdown defect found on device 2026-09-27.
 
@@ -1124,6 +1169,164 @@ class OracleTests(unittest.TestCase):
         # Reading the same log with the wrong base finds no stop for A at all.
         wrong = run(chain_log(), slot_a=3, slot_b=4)
         self.assertEqual("fail", by_name(wrong)["L1_a_stop_accepted_once"].status)
+
+
+FIXTURES = Path(__file__).parent / "hitl" / "fixtures" / "accepted_sequence"
+OD_EXCERPT = FIXTURES / "s4f22-dec096-od-13-excerpt.log"
+OD_EXCERPT_PROVENANCE = FIXTURES / "s4f22-dec096-od-13-excerpt.json"
+
+
+class OverdubIdentityOracleTests(unittest.TestCase):
+    """Task 2.2 of `response-driven-hitl-acceptance`: the overdub leg's links come from the intervals' own rows.
+
+    Measured on `captures/s4f22-dec096-od-13` (the leg that drove the whole plan): the start admission
+    (`DIAG,reentry,admit`), the accepted-stop binding (`DIAG,reentry,bound`), the execution (`DIAG,stop_state`
+    terminal) and the retirement (`DIAG,canonical_release`) each name the interval, and the button action's own
+    `Loop N:` rows name which interval each stop *request* was for. Before this the oracle force-unknown'd
+    L1/L5/L6/L7 on the overdub leg, which was correct while its only vocabulary was `RECA`/`RECS`.
+    """
+
+    def test_a_complete_overdub_chain_is_ok_on_every_link(self):
+        result = run_od(od_chain_log())
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict,
+                         [(c.name, c.status, c.detail) for c in result.checks])
+        self.assertEqual(0, result.exit_code)
+        for name in ("L1_a_stop_accepted_once", "L2_no_capacity_denial", "L3_a_finalization_window",
+                     "L4_a_capacity_released", "L5_successor_started", "L6_b_stop_executes_once",
+                     "L7_one_press_per_stop", "overdub_interval_identity"):
+            self.assertEqual("ok", by_name(result)[name].status, name)
+
+    def test_the_seeds_record_rows_are_not_the_overdub_evidence(self):
+        """The same chain with and without the seeds' `RECA`/`RECS` rows must read identically."""
+        with_seeds = run_od(od_chain_log(seed_records=True))
+        without = run_od(od_chain_log(seed_records=False))
+        self.assertEqual(with_seeds.verdict, without.verdict)
+        self.assertEqual([(c.name, c.status) for c in with_seeds.checks],
+                         [(c.name, c.status) for c in without.checks])
+
+    def test_a_missing_successor_start_is_a_gap_not_a_violation_on_the_overdub_leg(self):
+        """The overdub families are only as complete as the capture, so absence names a gap to fix."""
+        result = run_od(od_chain_log(b_start=False))
+        self.assertEqual("unknown", by_name(result)["L5_successor_started"].status)
+        self.assertEqual("unknown", by_name(result)["overdub_interval_identity"].status)
+        self.assertEqual("INSUFFICIENT_EVIDENCE", result.verdict)
+        self.assertNotEqual(0, result.exit_code)
+
+    def test_a_successor_start_after_the_release_is_NOT_EXERCISED_never_a_violation(self):
+        """S4f.22's own device-leg text: "Missing overlap is NOT_EXERCISED" -- the run's shape, not firmware."""
+        result = run_od(od_chain_log(b_start_after_a_release=True))
+        link = by_name(result)["L5_successor_started"]
+        self.assertEqual("fail", link.status)
+        self.assertEqual("setup", link.kind, "a staging outcome must stay out of the chain-violation class")
+        self.assertIn("NOT_EXERCISED", link.detail)
+        self.assertEqual("SETUP_INCOMPLETE", result.verdict)
+        self.assertEqual(3, result.exit_code)
+
+    def test_a_second_accepted_stop_fails_L1_and_the_press_link(self):
+        result = run_od(od_chain_log(a_bindings=2))
+        self.assertEqual("fail", by_name(result)["L1_a_stop_accepted_once"].status)
+        self.assertEqual("fail", by_name(result)["L7_one_press_per_stop"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+    def test_a_second_execution_for_b_fails_the_execution_link(self):
+        result = run_od(od_chain_log(b_terminals=2))
+        self.assertEqual("fail", by_name(result)["L6_b_stop_executes_once"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+    def test_a_binding_for_another_interval_cannot_close_L1(self):
+        """The binding edge must name the *same* interval the start admission did."""
+        result = run_od(od_chain_log(a_binding_interval=9))
+        self.assertEqual("unknown", by_name(result)["L1_a_stop_accepted_once"].status)
+        self.assertEqual("unknown", by_name(result)["overdub_interval_identity"].status)
+        self.assertNotEqual(0, result.exit_code)
+
+    def test_two_intervals_cannot_share_one_identity(self):
+        result = run_od(od_chain_log(b_interval=3))
+        self.assertEqual("unknown", by_name(result)["overdub_interval_identity"].status)
+        self.assertIn("the same interval identity", by_name(result)["overdub_interval_identity"].detail)
+        self.assertNotEqual(0, result.exit_code)
+
+    def test_two_stop_requests_for_one_interval_fail_the_press_link(self):
+        result = run_od(od_chain_log(a_requests=2))
+        self.assertEqual("fail", by_name(result)["L7_one_press_per_stop"].status)
+
+    def test_no_request_rows_leave_the_press_count_unestablished(self):
+        result = run_od(od_chain_log(a_requests=0, b_requests=0))
+        self.assertEqual("unknown", by_name(result)["L7_one_press_per_stop"].status)
+        self.assertNotEqual(0, result.exit_code)
+
+    def test_the_dec070_retarget_fallback_is_reported_and_does_not_change_the_verdict(self):
+        """The fallback's closure condition is the sibling change's task 5.11, not a link of this oracle."""
+        with_fallback = run_od(od_chain_log(fallback=True))
+        without = run_od(od_chain_log())
+        self.assertEqual(without.verdict, with_fallback.verdict)
+        self.assertEqual(1, len(with_fallback.evidence["dec070_retarget_fallback"]))
+        self.assertEqual([], without.evidence["dec070_retarget_fallback"])
+        self.assertTrue(any("task 5.11" in lim for lim in with_fallback.limitations),
+                        "the report must say the fallback is not this verdict's subject")
+        self.assertFalse(any("task 5.11" in lim for lim in without.limitations))
+
+    def test_the_slot_base_conversion_is_applied_on_the_overdub_leg(self):
+        """The rows are 0-based; the driver's CLI numbers are 1-based and converted in one place."""
+        wrong = analyse(od_chain_log(), leg="od", slot_a=3, slot_b=4,
+                        metadata=METADATA, base_report=BASE_REPORT)
+        self.assertNotEqual(0, wrong.exit_code)
+        self.assertEqual("unknown", by_name(wrong)["overdub_interval_identity"].status)
+
+
+class OverdubIdentityDeviceExcerpt(unittest.TestCase):
+    """The driven device run's own identity chain, pinned row-by-row against the log it came from."""
+
+    def setUp(self):
+        self.provenance = json.loads(OD_EXCERPT_PROVENANCE.read_text())
+        self.text = OD_EXCERPT.read_text()
+        self.metadata = {"git_commit": self.provenance["git_commit"],
+                         "firmware_hex_sha256": self.provenance["firmware_hex_sha256"]}
+
+    def run_excerpt(self, text=None):
+        return analyse(text if text is not None else self.text, leg=self.provenance["leg"],
+                       slot_a=self.provenance["slot_a"], slot_b=self.provenance["slot_b"],
+                       metadata=self.metadata, base_report=BASE_REPORT)
+
+    def test_the_excerpt_is_the_byte_exact_row_set_it_claims(self):
+        self.assertEqual(self.provenance["excerpt_sha256"],
+                         hashlib.sha256(self.text.encode()).hexdigest())
+
+    def test_the_excerpt_is_an_accepted_overdub_leg_on_its_own_rows(self):
+        result = self.run_excerpt()
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict,
+                         [(c.name, c.status, c.detail) for c in result.checks])
+        self.assertEqual(0, result.exit_code)
+        for name in ("L1_a_stop_accepted_once", "L5_successor_started", "L6_b_stop_executes_once",
+                     "L7_one_press_per_stop", "overdub_interval_identity"):
+            self.assertEqual("ok", by_name(result)[name].status, name)
+
+    def test_every_excerpt_row_is_verbatim_at_its_recorded_source_line(self):
+        source = Path(__file__).resolve().parents[1] / self.provenance["source"]
+        if not source.exists():
+            self.skipTest(f"{self.provenance['source']} is absent (captures/ is gitignored): this is an "
+                          "offline provenance check, not release evidence")
+        lines = source.read_text(errors="replace").splitlines()
+        self.assertLessEqual(max(self.provenance["source_line_numbers"]), len(lines),
+                             "the capture is shorter than the excerpt's own provenance claims")
+        self.assertEqual(len(self.text.splitlines()), len(self.provenance["source_line_numbers"]))
+        for excerpt_line, number in zip(self.text.splitlines(), self.provenance["source_line_numbers"]):
+            self.assertEqual(excerpt_line, lines[number - 1].strip(), f"source line {number}")
+
+    def test_removing_the_successor_start_from_the_excerpt_does_not_pass(self):
+        """Load-bearing check: the excerpt is not a rubber stamp for the verdict it carries."""
+        mutated = self.text.replace("#CAP,58214195,DIAG,reentry,admit,1454,4,4,1\n", "")
+        self.assertNotEqual(self.text, mutated)
+        result = self.run_excerpt(mutated)
+        self.assertNotEqual(0, result.exit_code)
+        self.assertEqual("unknown", by_name(result)["L5_successor_started"].status)
+        self.assertEqual("unknown", by_name(result)["overdub_interval_identity"].status)
+
+    def test_the_runs_dec070_fallback_row_is_reported_and_not_fatal(self):
+        result = self.run_excerpt()
+        self.assertEqual(1, len(result.evidence["dec070_retarget_fallback"]))
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+        self.assertTrue(any("task 5.11" in lim for lim in result.limitations))
 
 
 if __name__ == "__main__":
