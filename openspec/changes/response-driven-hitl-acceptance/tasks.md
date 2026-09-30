@@ -68,8 +68,21 @@ Stage owner: existing serial command/capture service and operation owners. Preco
       exercised on hardware — the family reads back at `entered=0` and every attempted recipe either admitted
       both stops or aborted in host tooling (packet §6/§6.1), so the remaining route is host tooling, not
       firmware; (b) sequenced *gesture/switch* rows (a slot press still leaves only its in-ring `DISP` row and
-      a human `Loop N:` line); (c) a poll-shaped readout of the counters, so consumption between polls is
-      provable from one poll rather than from the ring rows plus the read-back.
+      a human `Loop N:` line); (c) the counters are now read back by the leg itself and **gated** by the oracle
+      (`family_accounting`: a refused append or a displaced row inside the capture fails the leg's setup class,
+      a pre-capture loss does not, and a capture with no read-back adds no check -- see packet §7), but that
+      read-back is not yet part of the on-demand *observation poll* (`LIBOBS`), so consumption between polls
+      still rests on the ring rows plus the read-back rather than on one snapshot.
+      **2026-09-30 (host) — the "required event loss is detectable" clause is now enforced, not just possible.**
+      The family's counters were counted and read back but unused: the managed retrieval's parser matched only
+      `(RECA|RECS)` and required exactly the record trio (so `DIAG,latch` escaped its refusal/displacement gate,
+      and a `[^,]+` family name mis-filed `DIAG,latch` as `DIAG`), its regression check assumed every family had
+      a baseline, and the accepted-sequence driver never asked for the read-back at all. All three are fixed, and
+      the oracle's new `family_accounting` check gates the verdict on the leg's own accounting. Evidence:
+      `test_accepted_sequence` **90/90** (7 new, including one pinning a verbatim device row),
+      `test_managed_record_drain` **21/21**, 15 neighbouring Python suites green from the repository root, full
+      native **2,643 / 2,636 succeeded / 7 skipped / 0 failed** on an unchanged firmware tree, four mutations
+      red-proved and restored byte-identically, and `captures/s4f22-dec096-od-13` re-graded unchanged. Packet §7.
       **2026-09-30 (host; the read half of this task's "including record and overdub interval identity").** The
       overdub leg already *has* identity-bearing rows at its owners -- start admission `DIAG,reentry,admit`, the
       accepted-stop binding edge `DIAG,reentry,bound` (S4f.3), the execution `DIAG,stop_state` 6→7 / 7→5|1, the

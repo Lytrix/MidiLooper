@@ -84,6 +84,14 @@ ODUB_BOUND_RE = re.compile(r"^DIAG,reentry,bound,(\d+),(\d+),(\d+),(\d+)$")
 STOP_STATE_RE = re.compile(r"^DIAG,stop_state,(\d+),(\d+),(\d+),(\d+),")
 HUMAN_STOP_OVERDUB_RE = re.compile(r"Loop (\d+): Stop Overdub")
 HUMAN_SWITCH_SOURCE_RE = re.compile(r"Loop \d+: Switch gesture from slot (\d+)")
+# The per-family counters, as the stopped-only read-back reports them: `RING,record_stats,<family>,entered=…,
+# enq=…,rej=…,tx=…,evict=…`. A family tag may itself carry a comma (`DIAG,latch`), so the name is matched as
+# one or two identifier parts, never as "everything up to the next comma". `enq` counts appends that reached
+# the ring, `rej` refused appends, `evict` displaced rows; `entered == enq + rej` is the emitter's own
+# arithmetic, and an inconsistency is a finding.
+FAMILY_STATS_RE = re.compile(r"^RING,record_stats,(?P<family>[A-Za-z_]+(?:,[A-Za-z_]+)?),"
+                             r"entered=(?P<entered>\d+),enq=(?P<enq>\d+),rej=(?P<rej>\d+),"
+                             r"tx=(?P<tx>\d+),evict=(?P<evict>\d+)$")
 DENIAL_STAGE_RE = re.compile(r"^ODUB,stop,admission,.*,successor_stop_denied_capacity$")
 HUMAN_DENIAL_RE = re.compile(r"Overdub stop refused")
 HUMAN_WINDOW_RE = re.compile(r"Reentry window open slot=(\d+)")
@@ -229,6 +237,46 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
         "no capture-ring eviction or critical loss" if not ring_hits else
         f"{len(ring_hits)} ring-loss row(s), first: {ring_hits[0]}", "setup")
     evidence["ring_loss"] = ring_hits
+
+    # ---------------- family accounting: a counted loss is a verdict input ----------------
+    # Task 2.2's "required event loss is detectable", turned into a gate: the firmware counts every family it
+    # relies on (`RING,record_stats,<family>,entered=…,enq=…,rej=…,tx=…,evict=…`) and the stopped-only
+    # read-back reports those counters. A family that *refused* an append or had a row *displaced* inside this
+    # capture lost evidence, and a chain cannot be concluded from a capture that lost the rows it counts.
+    #
+    # Scoping: the counters are per boot, so the comparison is against this capture's **own first** read-back
+    # (the two snapshots a managed run takes), never against zero -- loss that happened before the capture is
+    # outside its window, and failing a leg for it would invent a verdict. A capture with **no** read-back row
+    # adds no check: the read-back is the driver's obligation (the managed retrieval asks for it, and the
+    # accepted-sequence driver does too), and requiring it here would invalidate captures that never asked.
+    family_rows: dict[str, list[dict[str, int]]] = {}
+    for e in entries:
+        m = FAMILY_STATS_RE.match(e.body)
+        if m:
+            family_rows.setdefault(m.group("family"), []).append(
+                {key: int(m.group(key)) for key in ("entered", "enq", "rej", "tx", "evict")})
+    if family_rows:
+        problems: list[str] = []
+        attached: list[str] = []
+        for family, rows in sorted(family_rows.items()):
+            first, last = rows[0], rows[-1]
+            attached.append(f"{family}: {last}" + ("" if len(rows) == 1 else f" (from {first})"))
+            if last["entered"] != last["enq"] + last["rej"]:
+                problems.append(f"{family}: entered {last['entered']} != enqueued {last['enq']} + "
+                                f"rejected {last['rej']}")
+            if last["rej"] > first["rej"]:
+                problems.append(f"{family}: {last['rej'] - first['rej']} refused append(s) during the capture")
+            if last["evict"] > first["evict"]:
+                problems.append(f"{family}: {last['evict'] - first['evict']} displaced row(s) during the capture")
+        evidence["family_stats"] = attached
+        if problems:
+            add("family_accounting", FAIL,
+                "this capture's own family counters report loss: " + "; ".join(problems)
+                + " -- a counted edge cannot be used as evidence once its family lost rows", "setup")
+        else:
+            add("family_accounting", OK,
+                f"{len(family_rows)} counted famil(ies) with no refusal or displacement in this capture: "
+                + ", ".join(sorted(family_rows)), "setup")
 
     # Timing shedding is reported, never fatal: the policy discards non-Tier-A diagnostics so the playback
     # turn never blocks on USB I/O, and it is distinguishable from "nothing was dropped at all" only by

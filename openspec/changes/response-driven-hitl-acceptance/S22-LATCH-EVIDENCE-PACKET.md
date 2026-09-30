@@ -174,3 +174,45 @@ denied step it deliberately omits (its overdub plan is `critical_window_gestures
 Either way the firmware side is done and needs no further change: the family is wired, counted and read back on
 hardware, and the row content is pinned by the native transition fixture that drives the real latch, park and
 consumption paths.
+
+## 7. "Loss is detectable" is now a gate, not a hope (2026-09-30, host)
+
+Task 2.2's second clause was only half true: the firmware counted the new family and the stopped-only read-back
+reported it, but nothing *used* those counters. Two of the three consumers silently dropped the family, and the
+third never asked for it:
+
+* `scripts/hitl/serial/protocol.py::record_evidence_stats` matched only `(RECA|RECS)` and then required
+  `set(families) == {"RECA","RECS","RID"}`, so `DIAG,latch` was invisible to the managed retrieval's own
+  refusal/displacement gate (its `rej`/`evict` check). Now every family the reply carries is reported, the
+  record trio must still be complete for the reply to count, and a duplicate or malformed counter is still
+  refused. The family tag's own comma is handled (`[A-Za-z_]+(?:,[A-Za-z_]+)?`) — a `[^,]+` name matched
+  `DIAG` and mis-filed the row.
+* `scripts/hitl/managed_capture.py`: the counter-regression check now compares only families the earlier
+  snapshot carried, so a family that appears mid-retrieval has no baseline to "regress" against.
+* `scripts/hitl_accepted_sequence.py`: the leg now asks for the read-back itself, once, after its final
+  transport stop (stopped-only, fenced, bounded, non-fatal), so an acceptance run carries its own accounting
+  and the oracle has an input to gate on.
+
+The oracle's new check is `family_accounting` (setup kind, so a lost capture cannot read as a chain verdict):
+
+| condition | verdict input |
+|---|---|
+| a family's `rej` or `evict` **rose** between this capture's first and last read-back | FAIL — the capture lost rows of a family it counts |
+| a family's final `entered != enq + rej` | FAIL — the emitter's own count and the ring's disagree |
+| both snapshots already show the same loss | **no finding** — the counters are per boot, so a loss before this capture is outside its window and failing the leg for it would invent a verdict |
+| the capture holds no read-back row at all | **no check added** — the read-back is the driver's obligation, and requiring it here would invalidate captures that never asked (e.g. `s4f22-dec096-od-13`) |
+
+Evidence: `test_accepted_sequence` **90/90** (7 new: refused-append delta, displaced-row delta, emitter
+arithmetic, clean counters leaving the verdict unchanged, a pre-capture loss not failing the leg, absence adding
+no check, and a **verbatim device row** — `#CAP,64968688,RING,record_stats,DIAG,latch,entered=0,enq=0,rej=0,
+tx=0,evict=0` from `captures/base_20260930_164240_serial.log` — so the regex stays pinned to the printed form);
+`test_managed_record_drain` **21/21** (1 new, covering the parser's new breadth and its preserved refusals);
+15 neighbouring Python suites green from the repository root (`test_hitl_serial_timing` 33/33 — it assumes
+cwd = repo root, so a `cd scripts` invocation misreads its own relative marker, which is a harness
+assumption, not a defect); full `pio test -e native` **2,643 cases / 2,636 succeeded / 7 skipped / 0 failed**
+on an unchanged firmware tree (no C++ in this slice). Four mutations red-proved and restored byte-identically:
+the refused-append delta, the emitter arithmetic, the capture-scoped baseline (comparing against zero instead
+fails the pre-capture-loss case), and the parser's family breadth. Re-graded with no device action:
+`captures/s4f22-dec096-od-13` still `ACCEPTED_SEQUENCE_PASS` (it carries no read-back, so no check is added).
+
+**Still owed in 2.2:** the latch rows exercised on hardware (§6/§6.1), and sequenced gesture/switch rows.
