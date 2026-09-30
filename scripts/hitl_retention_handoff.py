@@ -60,6 +60,12 @@ from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT  # noqa: E402
 from hitl.device_shutdown import DeviceSession, clear_latch, refuse_reset_if_latched  # noqa: E402
 from hitl.managed_capture import ManagedCaptureSession  # noqa: E402
 from hitl.midi_io import _find_midi_port, _send_long_press, _send_short_press  # noqa: E402
+from hitl.actions.cancellation import (  # noqa: E402
+    GuardedMidiOut,
+    active_cancel_scope,
+    begin_run,
+    cancellable_sleep,
+)
 from hitl.actions.correlation import CorrelatedGesture, Stage, StageRules, Wire  # noqa: E402
 from hitl.device_time import newest_row_clock_us  # noqa: E402
 
@@ -190,8 +196,16 @@ def _lines(path: Path) -> list[str]:
 
 def _wait_for_any(capture_log: Path, *, after: int, markers: tuple[str, ...],
                   timeout_s: float) -> bool:
+    """Wait for any of `markers` in the rows after `after`.
+
+    Cancel-aware: a cancelled run leaves here with its own reason (`RunCancelled`) instead of sitting out a
+    marker bound while the capture is being released.
+    """
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
+        scope = active_cancel_scope()
+        if scope is not None:
+            scope.check()
         tail = _lines(capture_log)[after:]
         if any(m in line for line in tail for m in markers):
             return True
@@ -286,8 +300,13 @@ def _await_seed_receipt(capture_log: Path, after: int, *, slot_number: int, stag
     gesture.mark_sent(note=LOOP_SELECT_NOTE_BASE + slot0, channel=CONTROL_CHANNEL_1BASED,
                       kind="short", before_device_us=_device_floor_us(capture_log, after))
     target = Stage.ACCEPT if stage == "arm" else Stage.EXECUTE
+    scope = active_cancel_scope()
     met = gesture.wait_for(target, lambda: _lines(capture_log)[max(after, 0):], timeout_s=timeout_s,
-                           poll_s=0.05)
+                           poll_s=0.05,
+                           cancel=(None if scope is None else lambda: scope.cancelled))
+    if scope is not None:
+        # A cancelled run leaves here with its own reason instead of being reported as a missing receipt.
+        scope.check()
     if events is not None:
         events.append({"event": label or f"seed_{slot_number}_{stage}", "confirmed": met,
                        "row": gesture.evidence.get(target, ""), "record": _stage_report(gesture)})
@@ -642,7 +661,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         capture_log = capture.session_log
         if capture_log is None:
             raise RuntimeError("managed capture did not publish a session log")
-        out_port = mido.open_output(_find_midi_port("Teensy", is_input=False))
+        # The run's own scope and guarded output: every test edge goes through the guard, so a cancelled run
+        # cannot press again, and `out_port.run()` below absorbs the cancellation, releases whatever was held
+        # and unregisters the run while the shutdown inside it still stops the transport and drains.
+        scene = begin_run(name=f"retention-handoff {'prepare-only' if args.prepare_only else 'run'}")
+        out_port = GuardedMidiOut(mido.open_output(_find_midi_port("Teensy", is_input=False)), scope=scene)
         events.append({"event": "midi_output_opened"})
 
         # --- canonical shutdown covers EVERY exit from here: normal, early return, or exception ---
@@ -650,12 +673,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         # forgotten when a new `return` is added. `--prepare-only` returning here, the SETUP_INCOMPLETE
         # return, the normal completion and any exception all drain through `__exit__`, which keeps the
         # serial port open until persistence is *verified* idle (not slept) and latches an incomplete
-        # shutdown so the next run refuses to reset.
-        with DeviceSession(
+        # shutdown so the next run refuses to reset. `out_port.run()` is the outer context: a cancelled run
+        # leaves it with a reason, its held notes released and the run unregistered, after the drain.
+        with out_port.run() as run_record, DeviceSession(
                 capture_log_getter=lambda: capture_log,
-                send_transport_stop=lambda: _ensure_transport(
+                # The shutdown's transport stop is a teardown edge, not a test gesture: it runs in the guard's
+                # permitted phase, so a cancelled run still leaves the device stopped and drained.
+                send_transport_stop=lambda: out_port.teardown_call(lambda: _ensure_transport(
                     out_port, capture_log, running=False, press_ms=args.press_ms, events=events,
-                    label="shutdown"),
+                    label="shutdown")),
                 out_dir=out_dir,
                 context=f"retention-handoff {'prepare-only' if args.prepare_only else 'run'}",
                 events=events) as shutdown_session:
@@ -854,20 +880,20 @@ def main(argv: Optional[list[str]] = None) -> int:
 
             if started:
                 # Let the successor take run, then inject the note the oracle will look for.
-                time.sleep(2.0)
+                cancellable_sleep(2.0, scope=scene)
                 # mido channels are 0-based; the device's per-track input channel for track N is N-1.
                 out_port.send(mido.Message("note_on", note=args.successor_note, velocity=100,
                                            channel=note_channel))
-                time.sleep(0.4)
+                cancellable_sleep(0.4, scope=scene)
                 out_port.send(mido.Message("note_off", note=args.successor_note, velocity=0,
                                            channel=note_channel))
                 events.append({"event": "successor_note_injected", "note": args.successor_note})
-                time.sleep(2.0)
+                cancellable_sleep(2.0, scope=scene)
 
             # Stop the transport so the content dump's preconditions hold, and let persistence settle.
             _send_short_press(out_port, note=GLOBAL_TRANSPORT_NOTE,
                               channel_1based=CONTROL_CHANNEL_1BASED, press_ms=args.press_ms)
-            time.sleep(4.0)
+            cancellable_sleep(4.0, scope=scene)
             _confirm(capture_log, label="transport_stopped", markers=(",ST,Track,",),
                      timeout_s=args.phase_timeout_s, events=events)
             report["result"] = "DROVE_SEQUENCE" if started else "SEQUENCE_INCOMPLETE"
@@ -880,6 +906,15 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"  {e}")
         print("[retention] targets prepared; now run without --prepare-only")
         return 0
+    # The run's own record, whether it finished or was cancelled: a cancelled run keeps the partial report and
+    # names its cause instead of the milestone it stopped at, and the process still exits nonzero below.
+    report["midi"] = run_record.as_dict()
+    if run_record.cancelled:
+        report["result"] = "CANCELLED"
+        report["cancel_reason"] = run_record.reason
+        events.append({"event": "run_cancelled", "reason": run_record.reason,
+                       "released_notes": run_record.released_notes})
+        print(f"[retention] run cancelled: {run_record.reason}", flush=True)
     report["session_log"] = str(capture_log)
     report["shutdown"] = shutdown_session.result.as_dict()
     if not shutdown_session.result.ok:

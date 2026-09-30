@@ -217,15 +217,22 @@ class CorrelatedGesture:
         return stage
 
     def wait_for(self, stage: Stage, rows: Callable[[], Sequence[str]], *, timeout_s: float,
-                 poll_s: float = 0.02) -> bool:
+                 poll_s: float = 0.02, cancel: Optional[Callable[[], bool]] = None) -> bool:
         """Bounded wait for `stage`, fed by `rows()`. Returns whether it was met; never presses anything.
 
         Every pass re-reads the whole snapshot the caller supplies (so a caller that must flush a lagging ring
         can do that inside `rows()`, on its own cadence), and a refused or contradicted stage returns False
         immediately rather than waiting out the bound.
+
+        `cancel` is the run's own scope check (`hitl.actions.cancellation`): once it says the run is over, this
+        wait stops at once instead of sleeping out the rest of its bound, because a watchdog that fired has
+        already taken that decision. A cancelled wait is a *stopped* wait, not a met one, so a caller that needs
+        to tell them apart asks its scope (whose reason is the cause).
         """
         deadline = self.now() + max(timeout_s, 0.0)
         while True:
+            if cancel is not None and cancel():
+                return False
             for line in rows():
                 self.consider(line)
             if self.met(stage):

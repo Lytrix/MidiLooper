@@ -187,7 +187,28 @@ Stage owner: actions, narrow verify wait facade, session/managed capture and rep
       halves and every file restored byte-identically; the two unrelated pre-existing suite failures re-confirmed
       identical with this slice's files stashed. Host tooling only: no firmware row, build or device action.
       [Correlated-actions evidence](CORRELATED-ACTIONS-EXECUTION.md).
-- [ ] 3.2 Make cancellation suppress every subsequent test MIDI edge, release held notes safely, complete worker cancellation before capture release and preserve persistence-aware teardown; inject timeout/exception at every action boundary and verify partial report, nonzero exit and no post-abort press.
+- [x] 3.2 Make cancellation suppress every subsequent test MIDI edge, release held notes safely, complete worker cancellation before capture release and preserve persistence-aware teardown; inject timeout/exception at every action boundary and verify partial report, nonzero exit and no post-abort press.
+      **2026-09-30 — done.** `scripts/hitl/actions/cancellation.py` owns the three properties: every test edge goes through
+      one `GuardedMidiOut`, which **refuses to send once the run is cancelled** (counting the refusal and raising
+      `RunCancelled`), **releases the notes it was holding** (`note_off` per held note plus `All Sound Off`/`All Notes
+      Off` per channel the run touched), and permits the teardown in an explicitly counted phase (`teardown_call`) so the
+      shutdown's transport stop still goes out while nothing else does. Cancellation is cooperative and observable
+      (`CancelScope.check`, `cancellable_sleep`, `wait_for(cancel=…)`, first reason wins) and the run in progress is
+      registered (`begin_run`/`active_cancel_scope`/`cancel_active_run`) because the watchdog lives in `managed_capture`
+      while the driver owns the scenario; `GuardedMidiOut.run()` is the outer context a driver adopts to absorb the
+      cancel, release, record and unregister — with the driver's `DeviceSession` inner, so the drain runs first.
+      **`managed_capture._run_with_watchdog` now cancels, waits a bounded grace (`HITL_CANCEL_GRACE_S`, default 30 s) for
+      the scenario to leave the wire, and only then returns** — and its caller's context releases the capture child after
+      that (no run scope registered keeps the earlier immediate-release behaviour). **Both drivers** register the run, open
+      through the guard, keep their shutdown inner, make their waits cancel-aware (raising their run's own reason instead
+      of a false "no receipt") and report `result = "CANCELLED"` + `cancel_reason` + the guard's own `midi` record in the
+      same partial report they write on every other exit (nonzero). **Evidence:** new `scripts/test_hitl_cancellation.py`
+      **21/21**; `test_managed_capture` **13/13** (the watchdog cancels, joins the scenario's own stop, refuses the
+      post-cancel send and releases exactly the held note); `test_accepted_sequence` **93/93** (a cancelled run writes
+      `CANCELLED`, sends nothing after the cancel but the release, still drains, and releases the capture **after** the
+      shutdown); `test_retention_handoff_plan` **33/33**; neighbouring suites together — **405 tests / 15 suites**; seven
+      mutations red-proved and every file restored byte-identically. Host tooling only: no firmware, build or device
+      action. [Cancellation evidence](CANCELLATION-EXECUTION.md).
 - [ ] 3.3 Use the managed watchdog/metadata path and immutable versioned report schema; verify setup failures, protocol absence, teardown failure and verify-only replay without ports. Resolve the import gate only for the narrow architecture-approved observation-wait facade and run the import-gate suite.
 
 ## 4. Prepare and drive both continuous-play recipes
