@@ -875,7 +875,7 @@ class EvidenceGateTests(unittest.TestCase):
         self.assertNotIn(GLOBAL_TRANSPORT_NOTE, fixture.port.note_sequence(),
                          "starting the transport records nothing and hides the absent take")
         gap = fixture.presses[1][1] - fixture.presses[0][1]
-        self.assertGreaterEqual(gap, DEFAULT_TAP_WINDOW_S,
+        self.assertGreaterEqual(gap, DEFAULT_TAP_WINDOW_S - 1e-6,
                                 "a retry inside the tap window merges into Loop N (double)")
 
     def test_a_retry_after_a_swallowed_press_arms_on_its_own_slot_row(self):

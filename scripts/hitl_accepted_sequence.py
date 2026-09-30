@@ -513,23 +513,27 @@ def _run_census_once(capture, capture_log: Path, events: list[dict]) -> Optional
 
 def _run_census(capture, capture_log: Path, events: list[dict], *,
                 attempts: int = DEFAULT_CENSUS_ATTEMPTS,
-                retry_delay_s: float = DEFAULT_CENSUS_RETRY_DELAY_S) -> Optional[dict]:
-    """The census with a bounded retry, because one lost window is not an unknown library.
+                retry_delay_s: float = DEFAULT_CENSUS_RETRY_DELAY_S,
+                require: tuple[tuple[int, int], ...] = ()) -> Optional[dict]:
+    """The census with a bounded retry, because one bad window is not an unknown library.
 
-    A `census_lost` window is a delivery outcome, not a property of the library: in
-    `captures/s4f22-dec096-od-02` the first request was lost and the *next* one answered with 64 slots and
-    a settled device. Retrying inside the same bound is what turns that into a decidable target; a census
-    that still cannot be read is returned as None and the caller refuses **before any gesture**.
+    Two measured shapes are delivery outcomes rather than properties of the library, and both are retried inside
+    the same bound: a **lost** window (`captures/s4f22-dec096-od-02`: the first request was lost, the next
+    answered 64 slots and a settled device) and an **incomplete sweep** (`…-od-06`: the family closed with only
+    8 of 64 slots carrying evidence and `x=0`, so 56 slots read as unknown). `require` names the targets the
+    caller must actually be able to decide -- the retry keeps trying while any of them is unknown, and the last
+    observation is returned either way, so the caller refuses by name rather than treating unknown as empty.
     """
     total = max(1, attempts)
+    occupied: Optional[dict] = None
     for attempt in range(total):
         occupied = _run_census_once(capture, capture_log, events)
-        if occupied is not None:
+        if occupied is not None and all(occupied.get(key) is not None for key in require):
             return occupied
         if attempt + 1 < total:
             events.append({"event": "census_retry", "attempt": attempt + 1})
             time.sleep(retry_delay_s)
-    return None
+    return occupied
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -654,7 +658,8 @@ def main(argv: list[str] | None = None) -> int:
                 events=events) as shutdown_session:
 
             census = (_run_census(capture, capture_log, events, attempts=args.census_attempts,
-                                  retry_delay_s=args.census_retry_delay_s)
+                                  retry_delay_s=args.census_retry_delay_s,
+                                  require=((t0, a0), (t0, b0)))
                       if args.clear_targets else None)
             report["census"] = (
                 None if census is None else
@@ -758,7 +763,8 @@ def main(argv: list[str] | None = None) -> int:
                             """
                             fresh = _run_census(capture, capture_log, events,
                                                 attempts=args.census_attempts,
-                                                retry_delay_s=args.census_retry_delay_s)
+                                                retry_delay_s=args.census_retry_delay_s,
+                                                require=((t0, slot0),))
                             if fresh is None:
                                 return None
                             return fresh.get((t0, slot0))
