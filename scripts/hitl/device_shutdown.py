@@ -71,7 +71,10 @@ class ShutdownResult:
         return self.status == COMPLETE
 
     def as_dict(self) -> dict:
-        return {"status": self.status, "drains": self.drains, "detail": self.detail}
+        #  `ok` travels with the record: it is this owner's own verdict, and the reader that vetoes a pass on an
+        #  incomplete drain (`hitl.reporting.derive_verdict`) asks for exactly this key. Without it a *real* run's
+        #  shutdown record could never satisfy that rule, however cleanly it drained.
+        return {"status": self.status, "drains": self.drains, "detail": self.detail, "ok": self.ok}
 
 
 def shutdown_device(

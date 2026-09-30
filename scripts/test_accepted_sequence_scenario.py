@@ -70,6 +70,26 @@ def fixture_evidence(tmp: Path) -> tuple[Path, Path]:
     base_report.write_text(json.dumps(BASE_REPORT))
     return metadata, base_report
 
+def conjunction_evidence(tmp: Path) -> list[str]:
+    """The extra argv that supplies the conjunction's external halves (task 5.2), for the identity tests.
+
+    The reports are written in their owners' own shapes (`hitl.library_manifest.compare_manifests`,
+    `hitl.verify.midi_boundary_timing`, `hitl.device_shutdown.ShutdownResult.as_dict`), because both routes must
+    read the same evidence the owners produce -- and the run report carries the shutdown record.
+    """
+    content = tmp / "content-report.json"
+    content.write_text(json.dumps({"unexplained_manifest_differences": [],
+                                   "unexplained_lifecycle_differences": [], "count_differences": {},
+                                   "pass": True, "verdict": "pass"}))
+    timing = tmp / "timing-report.json"
+    timing.write_text(json.dumps({"overflow_free": True, "overflow_intervals": [], "call_site_gate_ok": True,
+                                  "stop_timeline": {"drops": 0, "malformed": 0, "uncorrelated_emissions": 0}}))
+    run_report = tmp / "run-report.json"
+    run_report.write_text(json.dumps({"result": "DROVE_LEG",
+                                      "shutdown": {"status": "complete", "drains": 2, "ok": True}}))
+    return ["--content-report", str(content), "--timing-report", str(timing), "--run-report", str(run_report)]
+
+
 
 def verify_report_paths(out_dir: Path) -> Path:
     found = sorted(p for p in out_dir.iterdir() if p.name.startswith("host_midi_hitl_verify"))
@@ -267,17 +287,31 @@ class VerdictIdentityTests(unittest.TestCase):
     """Both entry points reach the same verdict on the same log, evidence included."""
 
     def test_the_wired_verifier_agrees_with_the_oracle_on_the_retained_fixtures(self):
-        for fixture, expected in ((OD_EXCERPT, "ACCEPTED_SEQUENCE_PASS"), (OD_NON_PASS, "INSUFFICIENT_EVIDENCE")):
-            with self.subTest(fixture=fixture.name):
+        """Both routes read the same evidence, including the conjunction's external halves (task 5.2).
+
+        The excerpt is a cut row set: it proves the chain and nothing else, so without a content/timing report and
+        the run's own shutdown record it grades `INSUFFICIENT_EVIDENCE` through *both* routes -- and with them
+        supplied it grades `ACCEPTED_SEQUENCE_PASS` through both, which is the agreement 4.4 asks for.
+        """
+        for fixture, expected, supplied in ((OD_EXCERPT, "INSUFFICIENT_EVIDENCE", False),
+                                            (OD_NON_PASS, "INSUFFICIENT_EVIDENCE", False),
+                                            (OD_EXCERPT, "ACCEPTED_SEQUENCE_PASS", True)):
+            with self.subTest(fixture=fixture.name, supplied=supplied):
                 text = fixture.read_text()
                 with tempfile.TemporaryDirectory() as tmp:
                     metadata, base_report = fixture_evidence(Path(tmp))
-                    legacy = ["--slot-b", "5", "--metadata", str(metadata), "--base-report", str(base_report)]
+                    extra = conjunction_evidence(Path(tmp)) if supplied else []
+                    legacy = ["--slot-b", "5", "--metadata", str(metadata),
+                              "--base-report", str(base_report)] + extra
                     wired = scenario.verify_accepted_sequence(
                         text.splitlines(), runner_args(active_scenario_id=OD, legacy_args=legacy))
+                    inputs = {"content_parity": json.loads((Path(tmp) / "content-report.json").read_text()),
+                              "timing": json.loads((Path(tmp) / "timing-report.json").read_text()),
+                              "shutdown": json.loads((Path(tmp) / "run-report.json").read_text())["shutdown"]} \
+                        if supplied else None
                     direct = analyse(text, leg="od", slot_a=4, slot_b=5,
                                      metadata=json.loads(metadata.read_text()),
-                                     base_report=json.loads(base_report.read_text()))
+                                     base_report=json.loads(base_report.read_text()), inputs=inputs)
                 self.assertEqual(direct.verdict, wired["verdict"])
                 self.assertEqual(direct.verdict, expected)
                 self.assertEqual(direct.verdict == "ACCEPTED_SEQUENCE_PASS", wired["ok"])
@@ -287,23 +321,28 @@ class VerdictIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             metadata, base_report = fixture_evidence(tmp_path)
+            extras = conjunction_evidence(tmp_path)
             cases = [
-                (OD_EXCERPT, True),
-                (OD_NON_PASS, False),
+                # The excerpt with the conjunction's other halves supplied: a pass through both entry points.
+                (OD_EXCERPT, True, extras),
+                # The same rows without them: an evidence gap, and both routes must say so.
+                (OD_EXCERPT, False, []),
+                # A device capture that never staged the acceptance: a non-pass either way.
+                (OD_NON_PASS, False, extras),
             ]
-            for fixture, should_pass in cases:
-                with self.subTest(fixture=fixture.name):
-                    oracle_out = tmp_path / f"oracle-{fixture.stem}.json"
+            for index, (fixture, should_pass, extra) in enumerate(cases):
+                with self.subTest(fixture=fixture.name, supplied=bool(extra)):
+                    oracle_out = tmp_path / f"oracle-{fixture.stem}-{index}.json"
                     oracle_code = probe_main(["--session-log", str(fixture), "--leg", "od", "--slot-a", "4",
                                               "--slot-b", "5", "--metadata", str(metadata),
-                                              "--base-report", str(base_report), "--out", str(oracle_out)])
-                    runner_out = tmp_path / f"runner-{fixture.stem}"
+                                              "--base-report", str(base_report), "--out", str(oracle_out)] + extra)
+                    runner_out = tmp_path / f"runner-{fixture.stem}-{index}"
                     with contextlib.redirect_stdout(io.StringIO()):
                         runner_code = runner_main([
                             "run", "--verify-only", "--verify-serial-log", str(fixture),
                             "--scenarios", OD, "--track", "8", "--loop-slot", "4", "--midi-channel", "8",
                             "--slot-b", "5", "--metadata", str(metadata), "--base-report", str(base_report),
-                            "--out-dir", str(runner_out)])
+                            "--out-dir", str(runner_out)] + extra)
                     wired = json.loads(verify_report_paths(runner_out).read_text())["results"][OD]
                     oracle = json.loads(oracle_out.read_text())
                     self.assertEqual(oracle["verdict"], wired["verdict"])

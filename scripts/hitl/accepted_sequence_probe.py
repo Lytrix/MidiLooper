@@ -60,8 +60,16 @@ from pathlib import Path
 from typing import Any, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
+#  Running this file directly puts its *own* directory (`scripts/hitl`) on `sys.path[0]`, where it **shadows
+#  pyserial**: `scripts/hitl/serial/` then answers `import serial`, which is how the serial-stack modules reachable
+#  from a verifier fail to import in the CLI that the tests never exercise (the tests import this module). Dropping
+#  the entry is safe -- every import below is a `hitl.…` package path, resolved through `scripts`.
+for _entry in (str(Path(__file__).resolve().parent),):
+    if _entry in sys.path:
+        sys.path.remove(_entry)
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from hitl import acceptance_evidence  # noqa: E402
 from hitl.reporting import build_report_bundle, write_report_bundle  # noqa: E402
 
 OK, FAIL, UNKNOWN = "ok", "fail", "unknown"
@@ -212,7 +220,7 @@ def _overdub_stop_requests(lines: list[str], slots_1based: tuple[int, ...]) -> d
 
 def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
             metadata: Optional[dict] = None, base_report: Optional[dict] = None,
-            window: Optional[tuple[int, int]] = None) -> Analysis:
+            window: Optional[tuple[int, int]] = None, inputs: Optional[dict] = None) -> Analysis:
     checks: list[Check] = []
     evidence: dict[str, list[str]] = {"stop_requests": [], "window_open": [], "releases": [],
                                       "successor_start": [], "denials": []}
@@ -299,6 +307,32 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
             add("family_accounting", OK,
                 f"{len(family_rows)} counted famil(ies) with no refusal or displacement in this capture: "
                 + ", ".join(sorted(family_rows)), "setup")
+
+    # ---------------- the conjunction's *external* halves: content, timing, teardown (task 5.2) ----------------
+    # Design decision 6: "Require matched input → recognition → accepted obligation → execution →
+    # publication/retirement, continuous transport, **content parity and the existing timing gates**", and
+    # "Shutdown result remains an independent field and can veto overall success". Each of the three is a check
+    # that can veto an otherwise complete acceptance, and each is read from the owner that already decides it --
+    # `hitl.acceptance_evidence` does the reading, this block only grades it:
+    #
+    #   * a verifier that *failed* is a FAIL of the conjunction's own kind (`content`/`timing` ⇒
+    #     ACCEPTED_SEQUENCE_FAIL);
+    #   * a teardown that did not complete is a **setup** failure: a run that did not drain is not verdict-grade,
+    #     which is how the sealed bundle's own rule already reads it (`hitl.reporting.derive_verdict`);
+    #   * **not supplied** is UNKNOWN, never a pass -- "PASS only for the complete conjunction" -- so a capture
+    #     that carries no content or timing evidence can be graded, but not passed.
+    supplied = dict(inputs or {})
+    for check_name, kind, (ok, detail) in (
+            ("content_parity", "content",
+             acceptance_evidence.content_parity(supplied.get("content_parity") or supplied.get("content"))),
+            ("timing_gates", "timing",
+             acceptance_evidence.timing_gates(supplied.get("timing") or supplied.get("timing_gates"))),
+            ("teardown", "setup",
+             acceptance_evidence.teardown(supplied.get("teardown") or supplied.get("shutdown"))),
+    ):
+        status = UNKNOWN if ok is None else (OK if ok else FAIL)
+        add(check_name, status, detail, kind)
+        evidence[check_name] = [detail]
 
     # Timing shedding is reported, never fatal: the policy discards non-Tier-A diagnostics so the playback
     # turn never blocks on USB I/O, and it is distinguishable from "nothing was dropped at all" only by
@@ -859,6 +893,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", type=Path, default=None)
     p.add_argument("--run-report", type=Path, default=None,
                    help="the driver's accepted-sequence.json: its teardown result joins the sealed verdict")
+    p.add_argument("--content-report", type=Path, default=None,
+                   help="the content-parity owner's report (hitl.library_manifest.compare_manifests): a failure "
+                        "vetoes an otherwise complete acceptance, and its absence is an evidence gap")
+    p.add_argument("--timing-report", type=Path, default=None,
+                   help="the timing owner's summary (hitl.verify.midi_boundary_timing): a reported issue vetoes an "
+                        "otherwise complete acceptance, and its absence is an evidence gap")
     p.add_argument("--emit-bundle", type=Path, default=None,
                    help="seal this verdict as a run bundle (default: none; needs --run-report for a pass)")
     args = p.parse_args(argv)
@@ -868,8 +908,15 @@ def main(argv: list[str] | None = None) -> int:
     base = json.loads(args.base_report.read_text()) if args.base_report and args.base_report.exists() else None
     run_report = (json.loads(args.run_report.read_text())
                   if args.run_report and args.run_report.exists() else None)
+    # The external halves of the conjunction come from their owners' own reports; the teardown is the run's own
+    # shutdown record, which the driver already wrote into its report.
+    inputs = {
+        "content_parity": acceptance_evidence.load_report(args.content_report),
+        "timing": acceptance_evidence.load_report(args.timing_report),
+        "shutdown": (run_report or {}).get("shutdown"),
+    }
     analysis = analyse(text, leg=args.leg, slot_a=args.slot_a, slot_b=args.slot_b,
-                       metadata=meta, base_report=base, window=_run_window(run_report))
+                       metadata=meta, base_report=base, window=_run_window(run_report), inputs=inputs)
     identity = {k: (meta or {}).get(k) for k in ("git_commit", "firmware_hex_sha256")} if meta else {}
     payload = report_dict(analysis, identity)
     out = args.out or (args.session_log.parent / "accepted-sequence-review.json")
