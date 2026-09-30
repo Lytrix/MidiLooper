@@ -316,7 +316,30 @@ Stage owner: stateless flows, registered scenarios and compatibility wrapper. Pr
       target selection, the RAM/SD census and persistence-completion proof on a repeat run without a reset,
       which need an explicit per-session upload/target authorization. See
       [AUTHORIZATION-MANIFEST-EXECUTION.md](AUTHORIZATION-MANIFEST-EXECUTION.md).
-- [ ] 4.2 Implement record recipe with genuinely empty SD-aware A/B, real record mode, switch-carried B start and one stop per interval; verify production dispatch and host scheduling with delayed observations, premature retirement and wrong-mode routes. A populated-A mutation must fail.
+- [~] 4.2 Implement record recipe with genuinely empty SD-aware A/B, real record mode, switch-carried B start and one stop per interval; verify production dispatch and host scheduling with delayed observations, premature retirement and wrong-mode routes. A populated-A mutation must fail.
+      **2026-09-30 — the recipe, its route checks and their host verification landed; its device leg is 6.3.**
+      The record leg no longer stops the transport: its plan is `select_track → a_record_start → b_switch_start →
+      b_stop`, where B's single slot gesture carries **both** edges (`MidiButtonActions::handleToggleRecordForSlot`
+      finalizes A's capture and, for a target with no committed passes, queues or retains B's record start in the
+      same gesture -- S4f.6/S4f.3), which is also why the measured-window predicate (5.1) can pass a record leg at
+      all. Preparation is split: `prepare_empty` (4.1's census + scoped clear) now prepares **both** targets and
+      `seed_take` belongs to the overdub leg, because the carrier path requires genuinely empty targets -- and
+      `require_idle` refuses a target the clear left armed or recording, since the firmware's own
+      `handleArmedRecordPress` *cancels* an arm under a running transport. The recipe's waits observe the
+      device's own rows: A's record start (immediate/quantized/punch-in **and** its slot-scoped `RECORDING`
+      execution, so a queued start is seen through its execution), the switch's carrier (or the retained twin,
+      which is legitimate and no longer trips the overdub leg's retained-switch guard), and B's single stop. A
+      playback/overdub answer is a **named** `WRONG_MODE_ROUTE` (never a substitute), an uncarried switch is
+      `SWITCH_NOT_CARRIED` / `B_RECORD_START_UNCONFIRMED`, and the wait never presses. The oracle reads the same
+      vocabulary as `L5b_b_start_route` over the **route decision span** (A's accepted stop → B's start), so a
+      later `Playback started` is not a wrong route; the stale "the record stop publishes inline" note was
+      corrected against this firmware's deferred record-stop obligation. Evidence: `test_accepted_sequence`
+      **126/126** (15 new), corpus 3/3, neighbours green, host sweep **1,053 tests / 75 suites** with only the
+      seven pre-existing failures, **8 mutations** red-proved byte-identically (one survived the first run: the
+      route span, which is why the span-boundary test now asserts `unknown` with no carrier).
+      [RECORD-RECIPE-EXECUTION.md](RECORD-RECIPE-EXECUTION.md). **What 4.2 still owes:** its device leg — the
+      accept vocabulary is read from the firmware's own emitters and has never been confirmed on real rows
+      (6.3), which is also where a firmware that does not carry the start would surface as `SWITCH_NOT_CARRIED`.
 - [ ] 4.3 Implement overdub recipe using confirmed seeds and the proven single capture-switch gesture, followed by B's recognized overdub start and stop; verify no separate A stop, no playback re-affirmation and no wait for predecessor retirement in the critical window.
 - [x] 4.4 Register both scenarios and route the standalone CLI through the same runner; verify legacy argument translation, explicit unsupported combinations, scenario listing, identical verdicts via both entry points and unchanged base/edit_full behavior.
       **2026-09-30 — registration, translation, refusals, listing and verdict identity landed; the flow

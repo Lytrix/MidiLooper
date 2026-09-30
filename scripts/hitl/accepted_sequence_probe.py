@@ -105,6 +105,14 @@ HUMAN_STOP_RECORDING_RE = re.compile(r"Loop \d+: Stop Recording")
 FAMILY_STATS_RE = re.compile(r"^RING,record_stats,(?P<family>[A-Za-z_]+(?:,[A-Za-z_]+)?),"
                              r"entered=(?P<entered>\d+),enq=(?P<enq>\d+),rej=(?P<rej>\d+),"
                              r"tx=(?P<tx>\d+),evict=(?P<evict>\d+)$")
+#  The firmware's own record-start vocabulary and its wrong-route rows, for the record leg's B start route
+#  (task 4.2). Kept in step with `hitl.flows.accepted_sequence`'s `WRONG_MODE_ROUTE_MARKERS` by name and by
+#  intent: `Playback started` is deliberately absent, because `PendingSwitchGate` owns it as the marker that a
+#  switch *landed* -- so a predecessor's loop resuming after a legitimate switch is not a wrong route.
+WRONG_MODE_ROUTE_ROWS = ("Queued playback switch", "Reaffirmed playback switch",
+                         "Live Overdub", "Overdubbing started", "Toggle Play/Stop",
+                         "long-press start (not playing)")
+RECORD_START_CARRIED_ROWS = ("Record start carried on the switch", "switch and record start retained")
 DENIAL_STAGE_RE = re.compile(r"^ODUB,stop,admission,.*,successor_stop_denied_capacity$")
 HUMAN_DENIAL_RE = re.compile(r"Overdub stop refused")
 HUMAN_WINDOW_RE = re.compile(r"Reentry window open slot=(\d+)")
@@ -414,8 +422,14 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
         # stop never froze the predecessor has not put the acceptance on trial, and calling that a
         # chain violation would invent a firmware verdict (`captures/s4f13-od4-20260927_020114` ended
         # mid-sequence after a queued switch, and both the S4f.17 packet and `tasks.md` attribute it
-        # to the leg plan). The same applies to the record leg by design: its production stop publishes
-        # inline, so no window is the expected shape there and the packet classifies it NOT_EXERCISED.
+        # to the leg plan).
+        #
+        # The **record** leg is held to the same shape, and this was previously read the other way round
+        # ("its production stop publishes inline, so no window is the expected shape there"). That is no longer
+        # true of this firmware: `finalizeCaptureAndSelectSlot`'s record branch admits or retains a Record stop
+        # "exactly like an overdub stop", and `retainRecordStopGeometryObligation` is the same deferred
+        # obligation -- so the spec's record scenario ("its single stop acceptance during A's ownership window")
+        # asks for exactly this window, and its absence is the same staging outcome rather than a device defect.
         add("L3_a_finalization_window", FAIL,
             f"no `reentry_window_open` and no `Reentry window open slot={a0}` row: A never froze into a "
             "deferred finalization, so this sequence did not exercise the acceptance", "setup", "L3")
@@ -487,6 +501,48 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
                 + (f"; {len(after_release)} after A's release edge" if release_us is not None else
                    "; A's release edge is human-positioned only, so the ordering is positional"),
                 "retention", "L5")
+
+    # ---------------- L5b: the record leg's B start route (task 4.2) ----------------
+    # The spec's record scenario: "one slot gesture accepts A's stop and **starts the intended record successor
+    # through the production route**". The production route has its own row -- the S4f.6 carrier
+    # (`Loop N: Record start carried on the switch`) or its retained twin (`Track T loop N: switch and record
+    # start retained (stop not yet admitted)`) -- and a *wrong* route has its own too (the playback/overdub
+    # branches `handleToggleRecordForSlot` takes when the target is not genuinely empty).
+    #
+    # The span is the **route decision**: from A's accepted record stop to B's record start. Measuring it over
+    # the whole capture would read a later, legitimate `Playback started` -- the switched loop resuming -- as a
+    # wrong route, which is why the endpoint is the successor's own start row rather than the end of the log.
+    # Absence of either vocabulary is an evidence gap (an older capture, or a cut excerpt), never a pass.
+    if leg == "rec":
+        def _row_body(line: str) -> str:
+            """The `#CAP` body of a raw line, or the line itself for the directly printed rows."""
+            m = CAP_RE.match(line.strip())
+            return m.group(2) if m else line
+
+        a_stop_at = [i for i, l in enumerate(lines)
+                     if (m := RECS_STOP_RE.match(_row_body(l))) and int(m.group(1)) == a0]
+        b_start_at = [i for i, l in enumerate(lines)
+                      if (m := RECA_RE.match(_row_body(l))) and int(m.group(1)) == b0]
+        if not a_stop_at:
+            add("L5b_b_start_route", UNKNOWN,
+                f"no accepted record stop for A (firmware slot {a0}) in this capture, so the switch that should "
+                "carry B's start is not located", "evidence", "L5b")
+        else:
+            span = lines[a_stop_at[0]:(b_start_at[0] + 1 if b_start_at else len(lines))]
+            carried = [l.strip()[:120] for l in span if any(r in l for r in RECORD_START_CARRIED_ROWS)]
+            wrong = [l.strip()[:120] for l in span if any(r in l for r in WRONG_MODE_ROUTE_ROWS)]
+            evidence["b_start_route"] = carried + wrong
+            if carried:
+                add("L5b_b_start_route", OK,
+                    "the production route named itself on the switch: " + carried[0], "retention", "L5b")
+            elif wrong:
+                add("L5b_b_start_route", FAIL,
+                    "the switch was answered as playback/overdub instead of a carried record start: "
+                    + wrong[0] + " -- design decision 5 refuses a wrong route as a substitute", "retention", "L5b")
+            else:
+                add("L5b_b_start_route", UNKNOWN,
+                    "neither the carrier row nor a wrong-route row appears between A's stop and B's start, so "
+                    "which route started B is not established by this capture", "evidence", "L5b")
 
     # ---------------- L7: no second press ----------------
     # A single execution cannot prove a single press (a retried press may collapse into one execution), so this

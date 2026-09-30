@@ -120,13 +120,33 @@ def answering_presses(log: Path, *, states: tuple[str, ...] = ("ARMED", "RECORDI
 
 class GesturePlanTests(unittest.TestCase):
     def test_the_record_leg_order_is_the_requirement(self):
+        """Task 4.2: the switch-carried plan -- one slot gesture for A's stop, one press for B's stop."""
         plan = leg_gestures("rec", track=8, a=4, b=5)
         self.assertEqual(
-            ["select_track", "a_record_start", "a_stop", "b_switch_start", "b_stop"],
+            ["select_track", "a_record_start", "b_switch_start", "b_stop"],
             [g.step for g in plan])
-        # A's stop is ONE gesture, and it precedes the switch to B.
-        self.assertLess([g.step for g in plan].index("a_stop"),
+        # There is no separate A stop: the switch to B carries it, and it starts B's record in the same gesture.
+        self.assertNotIn("a_stop", [g.step for g in plan])
+        self.assertLess([g.step for g in plan].index("a_record_start"),
                         [g.step for g in plan].index("b_switch_start"))
+        self.assertEqual([("record", 0), ("slot_record", 5), ("record", 0)],
+                         [(g.kind, g.value) for g in plan[1:]])
+
+    def test_the_record_leg_never_touches_the_transport(self):
+        """The spec's record scenario: "global transport does not stop" -- for the whole leg, not just for a window.
+
+        This is what the measured-window predicate reads, so the plan may not contain a transport gesture at all:
+        A's stop is the switch and B's is its own single press, both inside the window.
+        """
+        plan = leg_gestures("rec", track=8, a=4, b=5)
+        notes = emit_all(plan).note_sequence()
+        self.assertNotIn(GLOBAL_TRANSPORT_NOTE, notes,
+                         "the record leg must not stop the transport, not even once")
+        self.assertEqual([loop_note(5)],
+                         [n for n in notes if LOOP_SELECT_NOTE_BASE <= n < TRACK_SELECT_NOTE_BASE],
+                         "exactly ONE slot gesture: B's, which is A's stop and B's start")
+        self.assertEqual(2, notes.count(RECORD_BUTTON_NOTE),
+                         "one record press to start A's capture and one to stop B's")
 
     def test_the_overdub_leg_order_is_the_requirement(self):
         plan = leg_gestures("od", track=8, a=4, b=5)
@@ -152,11 +172,6 @@ class GesturePlanTests(unittest.TestCase):
         self.assertNotIn(GLOBAL_TRANSPORT_NOTE, notes,
                          "the overdub leg drives the transport only through explicit transport gestures")
 
-    def test_the_record_leg_uses_the_transport_for_its_stops(self):
-        plan = leg_gestures("rec", track=8, a=4, b=5)
-        notes = emit_all(plan).note_sequence()
-        self.assertEqual(1, notes.count(GLOBAL_TRANSPORT_NOTE),
-                         "A is stopped by the transport; B by the record button, one press each")
 
     def test_overdub_start_and_stop_use_different_buttons(self):
         plan = leg_gestures("od", track=8, a=4, b=5)
@@ -576,16 +591,24 @@ class PreparationIntegrationTests(unittest.TestCase):
             report = json.loads((out / "accepted-sequence.json").read_text())
             # The refused clear is the target's own failure: the only press is the selection that
             # precedes it, and no seed (arm) press follows.
+            # A refused clear is the target's own failure: the only press is the selection that precedes it, no
+            # arm/leg press follows, and the run stops before the leg's first gesture.
             self.assertEqual(1, record_press.call_count)
-            self.assertIn("prepare_slot_a_selected", [e.get("event") for e in report["events"]])
-            self.assertNotIn("seed_a_press", [e.get("event") for e in report["events"]])
+            events = [e.get("event") for e in report["events"]]
+            self.assertIn("prepare_slot_b_selected", events)
+            self.assertFalse([e for e in events if e.startswith("gesture:")],
+                             "no leg gesture may follow a refused clear")
+            self.assertNotIn("a_record_start", events)
             self.assertEqual(3, rc)
             report = json.loads((out / "accepted-sequence.json").read_text())
             self.assertEqual("PREPARATION_FAILED", report["result"])
             self.assertTrue(report["clear_targets"])
-            self.assertEqual([{"slot": 4, "status": "REFUSED", "detail": "save still owed"}],
-                             report["preparation"])
-            self.assertIn("scoped clear REFUSED", report["preparation_error"])
+            # B is prepared first so that A is the selected target when the leg starts (the record button acts
+            # on the selected slot). The entry's own `slot` field is the mocked clear outcome's, so only the
+            # *failure* is asserted here -- the refused target's number is named in the error below.
+            self.assertEqual(["REFUSED"], [p["status"] for p in report["preparation"]])
+            self.assertIn("slot 5 scoped clear REFUSED", report["preparation_error"])
+            self.assertIn("slot 5 scoped clear REFUSED", report["preparation_error"])
 
     def test_each_seeded_target_is_cleared_first(self):
         import contextlib
@@ -1337,6 +1360,50 @@ class EvidenceGateTests(unittest.TestCase):
                         window=(report["leg_start_row"], report["leg_end_row"]))
         self.assertEqual("fail", by_name(after)["continuous_transport"].status)
 
+    def test_a_record_leg_refuses_a_target_that_is_left_armed(self):
+        """Task 4.2's "genuinely empty" precondition: an armed target is *not* an idle empty one.
+
+        The clear's own selection press can leave a target armed (`handleToggleRecordForSlot` on an empty slot),
+        and the firmware's record press on an armed slot with a running transport **cancels the arm**
+        (`handleArmedRecordPress`) -- so driving on would consume the recipe's start press against a target that
+        never started. The record leg names the state instead.
+        """
+        def press(log: Path, slot_number: int, attempt: int) -> None:
+            # The selection press is confirmed by its own display row; the *clear's* own gesture is what leaves
+            # the target armed, which is the state this test refuses to drive on.
+            with log.open("a", encoding="utf-8") as handle:
+                handle.write(disp_row(slot_number, "STOPPED") + "\n")
+
+        def arm_on_clear(log: Path, slot_number: int, attempt: int) -> None:
+            press(log, slot_number, attempt)
+            if attempt > 1:
+                return
+            with log.open("a", encoding="utf-8") as handle:
+                handle.write(f"Loop {slot_number}: Start Recording\n")
+
+        fixture = self._drive(["--leg", "rec", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1"],
+                              census={(7, 3): False, (7, 4): True}, press=arm_on_clear)
+        self.assertEqual("PREPARATION_FAILED", fixture.report["result"])
+        self.assertIn("armed after its scoped clear", fixture.report["preparation_error"])
+        self.assertFalse([e for e in fixture.events if e.startswith("gesture:")],
+                         "no leg gesture may follow a target that is not idle")
+
+    def test_a_populated_a_that_cannot_be_cleared_stops_the_record_leg(self):
+        """Task 4.2: "A populated-A mutation must fail" -- A is not genuinely empty, so the recipe cannot run."""
+        def press(log: Path, slot_number: int, attempt: int) -> None:
+            # A populated target is selected first, and that selection must be named by its own display row --
+            # only then does the clear gesture follow, which this fixture refuses.
+            with log.open("a", encoding="utf-8") as handle:
+                handle.write(disp_row(slot_number, "STOPPED") + "\n")
+
+        fixture = self._drive(["--leg", "rec", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1"],
+                              census={(7, 3): True, (7, 4): False}, press=press,
+                              clear=stopped_preparation.ClearOutcome(4, ClearStatus.REFUSED, "save still owed"))
+        self.assertEqual(3, fixture.rc)
+        self.assertEqual("PREPARATION_FAILED", fixture.report["result"])
+        self.assertIn("slot 4 scoped clear REFUSED", fixture.report["preparation_error"])
+        self.assertFalse([e for e in fixture.events if e.startswith("gesture:")])
+
 
 
 class PressSpacingTests(unittest.TestCase):
@@ -1957,6 +2024,252 @@ class SealedVerdictTests(unittest.TestCase):
             without_record = json.loads(absent.read_text())["authorization"]
         self.assertEqual(authorization, with_record)
         self.assertIsNone(without_record, "a run that recorded no authorization says so")
+class RecordRecipeRouteTests(unittest.TestCase):
+    """Task 4.2: the record recipe's *route* is checked, and a wrong route is named rather than substituted.
+
+    Each test drives `_run_plan` over a log the fake port writes into -- the press is the emission, the device's
+    answer is the row -- so the four conditions task 4.2 names are pinned without a device: production dispatch,
+    a **delayed** observation, a **premature retirement**, and a **wrong-mode route** (plus the two halves of
+    "the switch did not carry the start"). The oracle reads the same vocabulary from a capture in
+    `RecordStartRouteOracleTests` below.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.log = Path(self.tmp.name) / "session.log"
+        self.log.write_text("")
+
+    def write(self, *rows):
+        with self.log.open("a", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(row + "\n")
+
+    def drive(self, answer, *, plan=None, sleeps=None, timeout_s=0.01):
+        """Run the record plan; `answer(log, gesture)` is the device, `sleeps` may defer a row to a later poll."""
+        from unittest.mock import patch
+        events: list[dict] = []
+        port = FakePort()
+
+        def emit(_port, gesture, **kw):
+            answer(self.log, gesture)
+
+        def sleep(seconds):
+            if sleeps is not None:
+                sleeps(self.log, seconds)
+
+        with patch(_patch_target("_emit"), side_effect=emit), \
+             patch(_patch_target("_ensure_transport"), return_value=True), \
+             patch(_patch_target("time.sleep"), side_effect=sleep):
+            result = _run_plan(port, self.log, plan or leg_gestures("rec", track=8, a=4, b=5),
+                               slot_b=5, slot_a=4, press_ms=120, phase_timeout_s=timeout_s,
+                               events=events, note_channel=7, overdub_notes=1)
+        return result, events, port
+
+    def event_names(self, events):
+        return [e.get("event") for e in events]
+
+    def test_the_recipe_drives_every_step_through_its_own_receipt(self):
+        def answer(log, gesture):
+            if gesture.step == "a_record_start":
+                self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
+            elif gesture.step == "b_switch_start":
+                self.write("Loop 5: Switch gesture from slot 4",
+                           "Loop 5: Record start carried on the switch",
+                           disp_row(5, "RECORDING", stamp_us=20_000_000))
+            elif gesture.step == "b_stop":
+                self.write("MIDI Button A: Stop Recording")
+
+        result, events, port = self.drive(answer)
+        self.assertEqual("DROVE_LEG", result, events)
+        self.assertEqual(["a_record_start", "a_record_content", "b_switch_start", "b_record_content", "b_stop"],
+                         [n for n in self.event_names(events) if n in (
+                             "a_record_start", "a_record_content", "b_switch_start", "b_record_content", "b_stop")])
+        self.assertTrue(all(e.get("confirmed") for e in events
+                            if e.get("event") in ("a_record_start", "b_switch_start", "b_stop")))
+        # B's content goes out only after B's take is actually running, and A's take got real work first.
+        notes = port.note_sequence()
+        self.assertEqual([60, 79], [n for n in notes if n in (60, 79)])
+
+    def test_a_quantized_start_is_observed_through_its_execution(self):
+        """The device may queue the start on the loop-phase boundary: the accept row is not the execution."""
+        def answer(log, gesture):
+            if gesture.step == "a_record_start":
+                self.write("Loop 4: Queued recording (loop phase or bar)")
+            elif gesture.step == "b_switch_start":
+                self.write("Loop 5: Switch gesture from slot 4",
+                           "Loop 5: Record start carried on the switch",
+                           disp_row(5, "RECORDING", stamp_us=20_000_000))
+            elif gesture.step == "b_stop":
+                self.write("MIDI Button A: Stop Recording")
+
+        def sleeps(log, seconds):
+            # The execution row arrives late -- on the third poll -- as a drained ring row does on device.
+            sleeps.n += 1
+            if sleeps.n == 3:
+                self.write(disp_row(4, "RECORDING", stamp_us=15_000_000))
+
+        sleeps.n = 0
+        result, events, _port = self.drive(answer, sleeps=sleeps)
+        self.assertEqual("DROVE_LEG", result, events)
+        self.assertEqual([True], [e["confirmed"] for e in events if e.get("event") == "a_record_start"])
+
+    def test_a_retained_carrier_still_drives_the_leg(self):
+        """The retained form is the *same* route: the start is queued and dispatched on its own boundary.
+
+        This is also the pin for the recorded-leg guard's scope: `UNEXPECTED_RETAINED_SWITCH` belongs to the
+        overdub leg's plan, and a record leg that aborted on its own legitimate accept would never drive.
+        """
+        def answer(log, gesture):
+            if gesture.step == "a_record_start":
+                self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
+            elif gesture.step == "b_switch_start":
+                self.write("Loop 5: Switch gesture from slot 4",
+                           "Track 7 loop 5: switch and record start retained (stop not yet admitted)",
+                           disp_row(5, "RECORDING", stamp_us=20_000_000))
+            elif gesture.step == "b_stop":
+                self.write("MIDI Button A: Stop Recording")
+
+        result, events, _port = self.drive(answer)
+        self.assertEqual("DROVE_LEG", result, events)
+        self.assertNotIn("leg_aborted_retained_switch", self.event_names(events))
+
+    def test_an_early_predecessor_retirement_does_not_stop_the_leg(self):
+        """Design decision 5: critical-window waits must not wait for the predecessor's retirement.
+
+        A retires while B is still being driven (the run's own `Reentry released slot=3` /
+        `canonical_release` rows), and the leg still reaches every step: the flow's waits are bounded by the
+        device's *next causal response*, never by the release edge -- which is the oracle's business, not the
+        driver's.
+        """
+        def answer(log, gesture):
+            if gesture.step == "a_record_start":
+                self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000),
+                           "Reentry released slot=3 generation=0",
+                           "#CAP,11000000,DIAG,canonical_release,3,40,2304,8")
+            elif gesture.step == "b_switch_start":
+                self.write("Loop 5: Switch gesture from slot 4",
+                           "Loop 5: Record start carried on the switch",
+                           disp_row(5, "RECORDING", stamp_us=20_000_000))
+            elif gesture.step == "b_stop":
+                self.write("MIDI Button A: Stop Recording")
+
+        result, events, _port = self.drive(answer)
+        self.assertEqual("DROVE_LEG", result, events)
+
+    def test_a_playback_route_is_named_and_no_second_press_is_sent(self):
+        """The wrong-mode route: a filled target answers playback, and the design refuses the substitute."""
+        presses = []
+
+        def answer(log, gesture):
+            presses.append(gesture.step)
+            if gesture.step == "a_record_start":
+                self.write("Loop 4: Queued playback switch (filled slot)")
+
+        result, events, _port = self.drive(answer)
+        self.assertEqual("WRONG_MODE_ROUTE", result, events)
+        self.assertEqual("a_record_start", presses[-1], "the leg stops at the wrong route")
+        self.assertNotIn("b_switch_start", presses)
+        self.assertEqual([True], [bool(e["wrong_route_row"]) for e in events
+                                  if e.get("event") == "a_record_start"])
+
+    def test_an_overdub_route_is_a_wrong_route_too(self):
+        def answer(log, gesture):
+            if gesture.step == "a_record_start":
+                self.write("MIDI Button A: Live Overdub", "Overdubbing started @ tick 10")
+
+        result, _events, _port = self.drive(answer)
+        self.assertEqual("WRONG_MODE_ROUTE", result)
+
+    def test_a_switch_that_is_not_carried_is_named_apart_from_a_start_that_never_came(self):
+        def only_the_gesture(log, gesture):
+            if gesture.step == "a_record_start":
+                self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
+            elif gesture.step == "b_switch_start":
+                self.write("Loop 5: Switch gesture from slot 4")
+
+        result, _events, _port = self.drive(only_the_gesture)
+        self.assertEqual("SWITCH_NOT_CARRIED", result)
+
+        def carried_but_never_started(log, gesture):
+            if gesture.step == "a_record_start":
+                self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
+            elif gesture.step == "b_switch_start":
+                self.write("Loop 5: Switch gesture from slot 4",
+                           "Loop 5: Record start carried on the switch")
+
+        result, _events, _port = self.drive(carried_but_never_started)
+        self.assertEqual("B_RECORD_START_UNCONFIRMED", result)
+
+
+def rec_route_log(*, carrier="Loop 5: Record start carried on the switch", wrong=None,
+                  wrong_after_start=False, b_start=True) -> str:
+    """A record-leg chain whose route row(s) sit around B's start row.
+
+    The carrier belongs *before* B's start (it is the route decision); a `wrong` row goes before it too, unless
+    `wrong_after_start` asks for the "a later playback row is not the route" case.
+    """
+    text = chain_log()
+    b_start_row = "#CAP,3500000,RECA,4,2304"
+    before = [row for row in (carrier,) if row]
+    after: list[str] = []
+    if wrong:
+        (after if wrong_after_start else before).append(wrong)
+    if before:
+        text = text.replace(b_start_row, "\n".join(before + [b_start_row]))
+    if after:
+        text = text.replace(b_start_row, "\n".join([b_start_row] + after))
+    if not b_start:
+        text = text.replace(b_start_row + "\n", "")
+    return text
+
+
+class RecordStartRouteOracleTests(unittest.TestCase):
+    """The record leg's B start route as a capture predicate (task 4.2's "production route" clause)."""
+
+    def route(self, text):
+        return by_name(analyse(text, leg="rec", slot_a=4, slot_b=5,
+                               metadata=METADATA, base_report=BASE_REPORT))["L5b_b_start_route"]
+
+    def test_the_carrier_row_is_the_production_route(self):
+        check = self.route(rec_route_log())
+        self.assertEqual("ok", check.status, check.detail)
+        self.assertIn("carried on the switch", check.detail)
+
+    def test_a_retained_start_is_the_same_route(self):
+        check = self.route(rec_route_log(
+            carrier="Track 7 loop 5: switch and record start retained (stop not yet admitted)"))
+        self.assertEqual("ok", check.status, check.detail)
+
+    def test_a_playback_branch_in_the_route_span_fails(self):
+        text = rec_route_log(carrier=None, wrong="Loop 5: Queued playback switch (filled slot)")
+        check = self.route(text)
+        self.assertEqual("fail", check.status, check.detail)
+        result = analyse(text, leg="rec", slot_a=4, slot_b=5, metadata=METADATA, base_report=BASE_REPORT)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+    def test_a_wrong_route_row_after_b_started_is_not_the_route(self):
+        """The span is the *route decision*: a later playback row (the switched loop resuming) is not one.
+
+        With no carrier row in the span the answer is UNKNOWN, and it must not become FAIL because a *later*
+        playback row exists -- that is the difference between reading a route and reading the rest of the take.
+        A carrier row inside the span does win over a later wrong-route row: the route was named, and what
+        follows the successor's own start is not the route decision.
+        """
+        later = rec_route_log(carrier=None, wrong="Loop 4: Reaffirmed playback switch", wrong_after_start=True)
+        self.assertEqual("unknown", self.route(later).status, self.route(later).detail)
+        both = rec_route_log(wrong="Loop 4: Reaffirmed playback switch", wrong_after_start=True)
+        self.assertEqual("ok", self.route(both).status)
+
+    def test_a_capture_that_names_neither_route_is_unknown_never_a_pass(self):
+        check = self.route(rec_route_log(carrier=None))
+        self.assertEqual("unknown", check.status, check.detail)
+        result = analyse(rec_route_log(carrier=None), leg="rec", slot_a=4, slot_b=5,
+                         metadata=METADATA, base_report=BASE_REPORT)
+        self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+
 
 
 if __name__ == "__main__":
