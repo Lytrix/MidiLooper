@@ -279,11 +279,14 @@ declaration (`spec.py`), the per-profile scope (`registry.py`), the resolution a
 - **Task IDs eligible for checkoff**: **1.1** (this packet exists with every required field audited and the one
   open ownership decision recorded and routed to 4.1).
 - **Stage gates still open**: 6.1–6.4 (hardware qualification), the `[~]` device legs of 2.1/2.2 and of
-  4.1/4.2/4.3, and 5.1's *mixed record-predecessor/overdub-successor* leg, which **landed** 2026-09-30 --
-  flow and grading both (`leg_gestures("mixed")`, its own preparation branch, the composed record + overdub
-  steps, and a grading mode that reads A with the record vocabulary beside B with the overdub families; see
-  [MIXED-LEG-EXECUTION.md](MIXED-LEG-EXECUTION.md)). Its **registration, stimulus profile and device leg**
-  remain. Everything else in 1.x–5.3 is `[x]`; the host record for the whole change is the sweep
+  4.1/4.2/4.3, and 5.1's *mixed record-predecessor/overdub-successor* leg, which **landed** 2026-09-30 (flow and
+  grading: `leg_gestures("mixed")`, its own preparation branch, the composed record + overdub steps, and a
+  grading mode that reads A with the record vocabulary beside B with the overdub families; see
+  [MIXED-LEG-EXECUTION.md](MIXED-LEG-EXECUTION.md)) and whose **registration and stimulus profile landed
+  2026-10-01** (the scenario `accepted_sequence_mixed` — runner route, preset order `(rec, od, mixed)`,
+  capture-owning — and its own `STIM-BASE-2-MIXED-01` profile declaring the bench scope; see
+  [MIXED-LEG-REGISTRATION-EXECUTION.md](MIXED-LEG-REGISTRATION-EXECUTION.md)). Only its **device leg** remains.
+  Everything else in 1.x–5.3 is `[x]`; the host record for the whole change is the sweep
   **1,068 tests / 75 suites** (re-measured 2026-10-01: single-process `unittest discover` over
   `scripts/test_*.py`, identical per-module) plus `pio test -e native` **2,643 cases / 7 skipped /
   2,636 succeeded**, with the pre-existing failing suites unchanged (six under this method; two further

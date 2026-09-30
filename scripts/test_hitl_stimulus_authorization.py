@@ -37,6 +37,7 @@ from hitl.stimuli.registry import (  # noqa: E402
     BENCH_SLOTS,
     BENCH_TRACK,
     STIM_BASE_2_2_01,
+    STIM_BASE_2_MIXED_01,
     STIM_BASE_2_ONE_OD_01,
     authorization_for,
     format_stimulus_list_lines,
@@ -106,7 +107,7 @@ class RegistryAuthorizationTests(unittest.TestCase):
     """The registry is the manifest's authority, so the declarations are pinned there."""
 
     def test_the_response_driven_profiles_declare_the_bench_scope(self):
-        for spec in (STIM_BASE_2_2_01, STIM_BASE_2_ONE_OD_01):
+        for spec in (STIM_BASE_2_2_01, STIM_BASE_2_ONE_OD_01, STIM_BASE_2_MIXED_01):
             with self.subTest(spec.stimulus_id):
                 declared = spec.authorization
                 self.assertIsNotNone(declared, f"{spec.stimulus_id} drives the legs and must declare a scope")

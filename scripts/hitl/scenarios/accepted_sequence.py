@@ -30,6 +30,7 @@ from typing import Optional
 LEG_FOR_SCENARIO: dict[str, str] = {
     "accepted_sequence_rec": "rec",
     "accepted_sequence_od": "od",
+    "accepted_sequence_mixed": "mixed",
 }
 
 #: Registered scenario id -> the stimulus profile whose declared target scope authorizes the run (task
@@ -37,6 +38,7 @@ LEG_FOR_SCENARIO: dict[str, str] = {
 PROFILE_FOR_SCENARIO: dict[str, str] = {
     "accepted_sequence_rec": "STIM-BASE-2-2-01",
     "accepted_sequence_od": "STIM-BASE-2-ONE-OD-01",
+    "accepted_sequence_mixed": "STIM-BASE-2-MIXED-01",
 }
 
 #: The wrapper flags a legacy argument list may carry through to the leg, verbatim.

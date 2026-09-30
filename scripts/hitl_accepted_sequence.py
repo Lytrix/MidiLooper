@@ -24,11 +24,15 @@ slot's own loop button and requires the firmware's own clear evidence (`CLEARED`
 gesture. No manual clear and no reboot prepare a repeat.
 
 Stimulus provenance (AGENTS.md: never edit a canonical stimulus; no registered stimulus covers this shape):
-each leg is a **TEMP variant** forked from `STIM-BASE-2-ONE-OD-01` via the sanctioned
-`scripts/host_midi_hitl.py stimulus temp` mechanism -- `…-TEMP-ACCEPTED-SEQ-REC` and `…-TEMP-ACCEPTED-SEQ-OD`,
-written under `captures/stimuli/` and deliberately **not registered**. The registered scenarios
-(`accepted_sequence_rec`/`_od`) drive the same wrapper; promote a canonical stimulus only if the owner accepts
-it as the reproducer.
+each leg is driven as a **TEMP variant** forked via the sanctioned `scripts/host_midi_hitl.py stimulus temp`
+mechanism from the profile registered for its own scenario -- the record and overdub legs fork
+`STIM-BASE-2-ONE-OD-01` (`…-TEMP-ACCEPTED-SEQ-REC`/`-OD`), and the mixed leg forks its own registered
+`STIM-BASE-2-MIXED-01` (`…-TEMP-ACCEPTED-SEQ-MIXED`, whose declaration is what authorizes its two targets: the
+record predecessor verified empty and idle, the overdub successor seeded and verified). The temp variants are
+written under `captures/stimuli/` and deliberately **not registered**; promote one to a canonical stimulus only
+if the owner accepts it as the reproducer. The registered scenarios
+(`accepted_sequence_rec`/`_od`/`_mixed`) drive this same wrapper, each authorized by its own profile's
+declared scope (task 4.1).
 
 Base convention: this CLI and the action layer are **1-based** (the loop-button number); the firmware's
 `RECA`/`RECS`/`reentry`/`ws_release` slot fields are **0-based**; human `Loop N:` rows are 1-based. The single

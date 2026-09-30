@@ -42,6 +42,7 @@ from hitl.accepted_sequence_probe import analyse, main as probe_main  # noqa: E4
 from hitl.registry import PRESET_SCENARIOS, get_registry, resolve_scenarios  # noqa: E402
 from hitl.runner import _should_use_managed_capture, main as runner_main, scenarios_own_capture  # noqa: E402
 from hitl.scenarios import accepted_sequence as scenario  # noqa: E402
+from hitl.stimuli import authorization_for, get_stimulus  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "hitl" / "fixtures" / "accepted_sequence"
 OD_EXCERPT = FIXTURES / "s4f22-dec096-od-13-excerpt.log"
@@ -52,6 +53,7 @@ BASE_REPORT = {"capture_integrity": "COMPLETE", "capture_complete": True,
                "setup_transitions_confirmed": True, "issues": []}
 REC = "accepted_sequence_rec"
 OD = "accepted_sequence_od"
+MIXED = "accepted_sequence_mixed"
 
 
 def runner_args(**overrides) -> SimpleNamespace:
@@ -98,11 +100,11 @@ def verify_report_paths(out_dir: Path) -> Path:
 
 
 class RegistrationTests(unittest.TestCase):
-    """Both legs are registered, listed, and declared as capture-owning."""
+    """All three legs are registered, listed, and declared as capture-owning."""
 
-    def test_both_legs_are_registered_with_the_oracle_as_their_verifier(self):
+    def test_every_leg_is_registered_with_the_oracle_as_its_verifier(self):
         registry = get_registry()
-        for scenario_id, leg in ((REC, "rec"), (OD, "od")):
+        for scenario_id, leg in ((REC, "rec"), (OD, "od"), (MIXED, "mixed")):
             with self.subTest(scenario_id):
                 spec = registry[scenario_id]
                 self.assertIs(spec.run, scenario.run_accepted_sequence)
@@ -112,10 +114,31 @@ class RegistrationTests(unittest.TestCase):
                 self.assertIn(spec.description, spec.description)
                 self.assertTrue(spec.description.strip())
 
-    def test_the_preset_drives_both_legs_in_order(self):
-        self.assertEqual((REC, OD), tuple(resolve_scenarios(preset="accepted_sequence", scenario_ids=None)))
+    def test_every_leg_names_a_registered_stimulus_profile(self):
+        """The runner authorizes by the profile, so every registered leg must have one (task 4.1)."""
+        for scenario_id in (REC, OD, MIXED):
+            with self.subTest(scenario_id):
+                profile = scenario.PROFILE_FOR_SCENARIO[scenario_id]
+                spec = get_stimulus(profile)
+                self.assertEqual(profile, spec.stimulus_id)
+                declared = authorization_for(profile)
+                self.assertIsNotNone(declared, f"{profile} must declare the scope its leg runs in")
+                assert declared is not None
+                self.assertTrue(declared.allows(track=8, slots=(4, 5)))
+                self.assertEqual(8, declared.track)
+                self.assertEqual((4, 5), declared.slots)
+        # The table itself is pinned, so a leg cannot be pointed at another leg's profile without failing:
+        # each leg's scope is its own declaration (the mixed leg's two targets carry different verified
+        # content preconditions -- `Scoped same-boot fixture preparation`).
+        self.assertEqual({REC: "STIM-BASE-2-2-01", OD: "STIM-BASE-2-ONE-OD-01",
+                          MIXED: "STIM-BASE-2-MIXED-01"}, scenario.PROFILE_FOR_SCENARIO)
+        self.assertEqual({REC: "rec", OD: "od", MIXED: "mixed"}, scenario.LEG_FOR_SCENARIO)
 
-    def test_the_listing_shows_both_legs(self):
+    def test_the_preset_drives_every_leg_in_order(self):
+        self.assertEqual((REC, OD, MIXED),
+                         tuple(resolve_scenarios(preset="accepted_sequence", scenario_ids=None)))
+
+    def test_the_listing_shows_every_leg(self):
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             code = runner_main(["run", "--list-scenarios"])
@@ -123,10 +146,12 @@ class RegistrationTests(unittest.TestCase):
         listed = buffer.getvalue().split()
         self.assertIn(REC, listed)
         self.assertIn(OD, listed)
+        self.assertIn(MIXED, listed)
 
     def test_capture_owning_scenarios_step_the_runner_out_of_managed_capture(self):
         self.assertTrue(scenarios_own_capture([REC]))
         self.assertTrue(scenarios_own_capture(["base", OD]))
+        self.assertTrue(scenarios_own_capture(["base", MIXED]))
         self.assertFalse(scenarios_own_capture(["base"]))
         self.assertTrue(_should_use_managed_capture(runner_args(), [], ["base"]),
                         "a scenario that does not own its capture keeps the runner's managed capture")
@@ -171,6 +196,25 @@ class TranslationTests(unittest.TestCase):
             runner_args(active_scenario_id=OD, legacy_args=["--slot-b", "5"]), scenario_id=OD)
         self.assertEqual("od", argv[argv.index("--leg") + 1])
         self.assertEqual("STIM-BASE-2-ONE-OD-01", argv[argv.index("--authorization") + 1])
+
+    def test_the_runner_route_reaches_the_mixed_leg_with_its_own_profile(self):
+        """Task 5.1: the leg the wrapper CLI already accepted is now reachable through the runner.
+
+        Registration is what closes that gap: the scenario's leg comes from `LEG_FOR_SCENARIO` (never from the
+        command line) and its authorization from the profile the registration names, so the mixed run is
+        `--leg mixed` under `STIM-BASE-2-MIXED-01` rather than a temporary variant or either other leg's scope.
+        """
+        argv = scenario.accepted_sequence_argv(
+            runner_args(active_scenario_id=MIXED, legacy_args=["--slot-b", "5"]), scenario_id=MIXED)
+        self.assertEqual("mixed", argv[argv.index("--leg") + 1])
+        self.assertEqual("STIM-BASE-2-MIXED-01", argv[argv.index("--authorization") + 1])
+        self.assertEqual(
+            "/tmp/hitl-out/accepted-sequence-mixed", argv[argv.index("--out-dir") + 1])
+        # The leg is the registration's, so asking for another incarnation through the same scenario refuses.
+        with self.assertRaises(scenario.UnsupportedCombination):
+            scenario.accepted_sequence_argv(
+                runner_args(active_scenario_id=MIXED, legacy_args=["--slot-b", "5", "--leg", "od"]),
+                scenario_id=MIXED)
 
     def test_an_explicit_authorization_replaces_the_profile_default(self):
         argv = scenario.accepted_sequence_argv(
@@ -519,9 +563,9 @@ class UnchangedClassicBehaviourTests(unittest.TestCase):
         mismatched = sorted(sid for sid, spec in get_registry().items() if spec.scenario_id != sid)
         self.assertEqual([], mismatched)
 
-    def test_only_the_two_new_scenarios_declare_capture_ownership(self):
+    def test_only_the_three_new_scenarios_declare_capture_ownership(self):
         owners = sorted(sid for sid, spec in get_registry().items() if spec.owns_capture)
-        self.assertEqual([OD, REC], owners)
+        self.assertEqual([MIXED, OD, REC], owners)
 
 
 if __name__ == "__main__":

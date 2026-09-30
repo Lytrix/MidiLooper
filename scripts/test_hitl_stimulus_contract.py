@@ -18,6 +18,7 @@ from hitl.runner import main as hitl_main
 from hitl.stimuli import (
     STIM_BASE_2_2_01,
     STIM_BASE_2_FIXTURE_01,
+    STIM_BASE_2_MIXED_01,
     STIM_BASE_2_ONE_OD_01,
     STIM_EDIT_OD_DURING_NE_01,
     STIM_NE_OD_COMPOSE_01,
@@ -119,6 +120,29 @@ class StimulusRegistryTests(unittest.TestCase):
             resolve_scenarios(preset="note_edit_reselect_stacked", scenario_ids=None),
             ["base", "note_edit_reselect_stacked"],
         )
+
+    def test_the_mixed_leg_has_its_own_registered_profile_and_scope(self) -> None:
+        """Task 5.1's mixed leg is registered as a profile of its own, with its own declared scope.
+
+        Its two targets carry *different* verified content preconditions -- slot A must be verified empty and
+        idle, slot B carries verified committed content -- which is what the requirement `Scoped same-boot
+        fixture preparation` asks for, so it is a declaration rather than a reuse of either leg's profile.
+        """
+        spec = get_stimulus("STIM-BASE-2-MIXED-01")
+        self.assertIs(spec, STIM_BASE_2_MIXED_01)
+        self.assertEqual("accepted_sequence_mixed", spec.scenario_id)
+        self.assertEqual("canonical", spec.kind)
+        self.assertEqual(1, spec.version)
+        self.assertEqual("flow:accepted_sequence(mixed)", spec.generator)
+        declared = spec.authorization
+        self.assertIsNotNone(declared)
+        assert declared is not None
+        self.assertEqual(("track 8 slots 4,5"), declared.targets_text())
+        # The two preconditions are stated, not implied: the predecessor empty, the successor committed.
+        self.assertIn("empty and idle", spec.description)
+        self.assertIn("committed content verified", spec.description)
+        # And it is *not* the record leg's or the overdub leg's profile, even though it shares their bench.
+        self.assertNotIn(spec.stimulus_id, (STIM_BASE_2_2_01.stimulus_id, STIM_BASE_2_ONE_OD_01.stimulus_id))
 
     def test_occupy_header_requires_two_overdubs_and_undo(self) -> None:
         lines = prepend_hitl_header(

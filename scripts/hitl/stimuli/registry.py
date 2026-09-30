@@ -247,6 +247,36 @@ STIM_BASE_2_2_01 = StimulusSpec(
     authorization=_bench_authorization(),
 )
 
+#: The **mixed** response-driven leg's profile (task 5.1's *Mixed record predecessor and overdub successor*
+#: scenario). Its two targets deliberately carry **different verified content preconditions**, which the
+#: requirement *Scoped same-boot fixture preparation* demands ("Record and overdub fixtures MUST have different
+#: verified content preconditions"): slot A is the **record** target and must be verified empty *and idle*
+#: before the recipe's start press (`require_idle` -- an armed or recording target would consume the press), and
+#: slot B is the **overdub** target and must carry committed, verified content whose seed receipt is confirmed
+#: before it is overdubbed (`seed_take`). Its predecessor/successor shape is a property of the driver, not of a
+#: legacy argument recipe, so the generator names the flow rather than a canonical argument builder.
+STIM_BASE_2_MIXED_01 = StimulusSpec(
+    stimulus_id="STIM-BASE-2-MIXED-01",
+    version=1,
+    kind=KIND_CANONICAL,
+    scenario_id="accepted_sequence_mixed",
+    description=(
+        "S4f.13(c) mixed leg: a record predecessor (A verified empty and idle) and a seeded overdub "
+        "successor (B's committed content verified), one switch and one stop request each"
+    ),
+    generator="flow:accepted_sequence(mixed)",
+    base_bars=2,
+    base_pattern="BASE-2-MIXED",
+    base_stimulus_id=STIM_BASE_2_2_01.stimulus_id,
+    overdubs=(
+        OverdubRecipe(name="SUCCESSOR", bars=2, pattern="BASELINE_OVERDUB", note_low=24, note_high=39),
+    ),
+    interactions=(),
+    must_prove=("predecessor_recorded", "successor_committed", "successor_overdub_started"),
+    human_checks=("predecessor loop plays, then the successor's overdub layer is audible",),
+    authorization=_bench_authorization(),
+)
+
 STIM_BASE_2_FIXTURE_01 = StimulusSpec(
     stimulus_id="STIM-BASE-2-FIXTURE-01",
     version=1,
@@ -349,6 +379,7 @@ _STIMULI: dict[str, StimulusSpec] = {
     STIM_BASE_2_ONE_OD_01.stimulus_id: STIM_BASE_2_ONE_OD_01,
     STIM_BASE_2_2_01.stimulus_id: STIM_BASE_2_2_01,
     STIM_BASE_2_FIXTURE_01.stimulus_id: STIM_BASE_2_FIXTURE_01,
+    STIM_BASE_2_MIXED_01.stimulus_id: STIM_BASE_2_MIXED_01,
     STIM_NE_OD_COMPOSE_01.stimulus_id: STIM_NE_OD_COMPOSE_01,
     STIM_NE_OD_COMPOSE_02.stimulus_id: STIM_NE_OD_COMPOSE_02,
     STIM_NE_OD_COMPOSE_03.stimulus_id: STIM_NE_OD_COMPOSE_03,
