@@ -20,6 +20,7 @@ from hitl.capture_transitions import (
     _latest_track_state,
     _record_entry_to_recording_count,
 )
+from hitl.control_constants import TRACK_SELECT_NOTE_BASE  # noqa: E402
 from host_midi_automation_baseline import (
     _arm_already_satisfied,
     _can_skip_clear_before_record,
@@ -478,6 +479,194 @@ class ClearRefusalTests(unittest.TestCase):
         self.assertGreaterEqual(self.baseline.CLEAR_REFUSAL_RETRIES, 1)
         self.assertLessEqual(self.baseline.CLEAR_REFUSAL_RETRIES, 3)
         self.assertGreater(self.baseline.CLEAR_REFUSAL_SAVE_WAIT_S, 0.0)
+
+
+class ClearBeforeTransportTests(unittest.TestCase):
+    """The pre-transport clear pass (`_clear_tracks_before_transport`).
+
+    Requirement (2026-09-30): every (track, slot) the run will touch is cleared **before** the
+    transport start press, and the per-track path then skips a clear it already did. This pins the
+    pass's own contract -- one clear per track, the verdict rows it contributes, and the named
+    failure that stops the run before any transport press.
+    """
+
+    @staticmethod
+    def _args(**overrides):
+        kwargs = dict(
+            first_track_index=0,
+            track_count=2,
+            press_ms=120,
+            phase_wait_ms=5,
+            no_loop_edit_precondition=True,
+            loop_slot=0,
+        )
+        kwargs.update(overrides)
+        return SimpleNamespace(**kwargs)
+
+    def test_every_track_is_selected_and_cleared_once(self) -> None:
+        collector = Mock()
+        collector.snapshot.return_value = []
+        results: list[dict[str, object]] = []
+        failures: list[dict[str, object]] = []
+        presses: list[int] = []
+        with patch.object(
+            baseline, "_send_short_press",
+            side_effect=lambda _port, **kwargs: presses.append(kwargs["note"]),
+        ), patch.object(
+            baseline, "_run_clear_before_record", return_value=(True, "clear_log_confirmed")
+        ) as clear, patch.object(baseline.time, "sleep"):
+            ok, cleared = baseline._clear_tracks_before_transport(
+                Mock(), Mock(), collector, self._args(),
+                abort=Mock(check=Mock(return_value=None)),
+                clear_results=results,
+                precondition_failures=failures,
+            )
+        self.assertTrue(ok)
+        self.assertEqual(set(cleared), {0, 1})
+        # One track select per track, and each track is cleared before the transport is started.
+        self.assertEqual(presses, [TRACK_SELECT_NOTE_BASE, TRACK_SELECT_NOTE_BASE + 1])
+        self.assertEqual(clear.call_count, 2)
+        self.assertEqual(
+            results,
+            [
+                {"track_index": 0, "result": "clear_log_confirmed"},
+                {"track_index": 1, "result": "clear_log_confirmed"},
+            ],
+        )
+        self.assertEqual(failures, [])
+
+    def test_a_failed_clear_stops_the_pass_with_the_verdict_row(self) -> None:
+        collector = Mock()
+        collector.snapshot.return_value = []
+        results: list[dict[str, object]] = []
+        failures: list[dict[str, object]] = []
+        with patch.object(baseline.time, "sleep"), patch.object(
+            baseline, "_send_short_press"
+        ), patch.object(
+            baseline, "_run_clear_before_record",
+            side_effect=[(True, "empty_transition"), (False, "clear_not_confirmed")],
+        ):
+            ok, cleared = baseline._clear_tracks_before_transport(
+                Mock(), Mock(), collector, self._args(),
+                abort=Mock(check=Mock(return_value=None)),
+                clear_results=results,
+                precondition_failures=failures,
+            )
+        self.assertFalse(ok)
+        # Only the track that cleared is recorded, and it is the one the per-track path may skip.
+        self.assertEqual(set(cleared), {0})
+        self.assertEqual(results, [{"track_index": 0, "result": "empty_transition"}])
+        self.assertEqual(
+            failures,
+            [
+                {
+                    "track_index": 1,
+                    "step": "clear_to_empty",
+                    "reason": "clear_not_confirmed",
+                }
+            ],
+        )
+
+    def test_an_abort_stops_the_pass_without_touching_the_next_track(self) -> None:
+        collector = Mock()
+        collector.snapshot.return_value = []
+        with patch.object(baseline.time, "sleep"), patch.object(
+            baseline, "_send_short_press"
+        ), patch.object(baseline, "_run_clear_before_record") as clear:
+            ok, cleared = baseline._clear_tracks_before_transport(
+                Mock(), Mock(), collector, self._args(),
+                abort=Mock(check=Mock(return_value="run deadline")),
+                clear_results=[],
+                precondition_failures=[],
+            )
+        self.assertFalse(ok)
+        self.assertEqual(cleared, {})
+        self.assertEqual(clear.call_count, 0)
+
+
+class LoopEditPreconditionTests(unittest.TestCase):
+    """The device boots into LOOP_EDIT, but a run must *establish* it, not assume it.
+
+    Requirement (2026-09-30): the record/overdub gestures mean something else outside LOOP_EDIT,
+    and this run's own pre-transport clear (row selects plus a long press) can leave the mode, so
+    an unproven edit mode must not be accepted silently -- it is either entered explicitly by
+    selecting the track's loop row (proven from serial) or refused by name.
+    """
+
+    class _Collector:
+        def __init__(self, lines: list[str]) -> None:
+            self._lines = lines
+
+        def snapshot(self) -> list[str]:
+            return list(self._lines)
+
+    class _Port:
+        def __init__(self) -> None:
+            self.sent: list = []
+
+        def send(self, message) -> None:
+            self.sent.append(message)
+
+    def _precondition(self, lines: list[str], *, track_number: int, loop_slot: int, confirm: str):
+        from hitl.edit_mode_precondition import ensure_loop_edit_before_record
+
+        collector = self._Collector(lines)
+        port = self._Port()
+        # The serial evidence that the loop-row select produced, i.e. what confirmation looks like.
+        original_snapshot = collector.snapshot
+        state = {"sent": False}
+
+        def snapshot() -> list[str]:
+            if state["sent"] and confirm:
+                return original_snapshot() + [confirm]
+            return original_snapshot()
+
+        def _send(message) -> None:
+            state["sent"] = True
+            port.sent.append(message)
+
+        collector.snapshot = snapshot  # type: ignore[method-assign]
+        port.send = _send  # type: ignore[method-assign]
+        ok = ensure_loop_edit_before_record(
+            port, collector, press_ms=120, phase_wait_ms=100,
+            track_number=track_number, loop_slot=loop_slot, timeout_s=0.2,
+        )
+        return ok, port
+
+    def test_unknown_mode_is_entered_explicitly_and_proven(self) -> None:
+        ok, port = self._precondition(
+            ["boot: no edit session yet"], track_number=5, loop_slot=1,
+            confirm="Edit session: LOOP_EDIT (Program 0, Note 100 trigger)",
+        )
+        self.assertTrue(ok)
+        # Track row (60 + 5 - 1) then loop row (50 + 1 - 1); each press is note_on + note_off.
+        presses = [m.note for m in port.sent if m.type == "note_on"]
+        self.assertEqual(presses, [64, 50])
+        self.assertTrue(all(m.channel == 15 for m in port.sent))
+
+    def test_unknown_mode_without_a_target_is_refused(self) -> None:
+        ok, port = self._precondition(
+            ["boot: no edit session yet"], track_number=0, loop_slot=0,
+            confirm="Edit session: LOOP_EDIT",
+        )
+        self.assertFalse(ok)
+        self.assertEqual(port.sent, [])
+
+    def test_unproven_confirmation_is_refused(self) -> None:
+        ok, port = self._precondition(
+            ["boot: no edit session yet"], track_number=5, loop_slot=1, confirm="",
+        )
+        self.assertFalse(ok)
+        # It tried to establish LOOP_EDIT before refusing.
+        self.assertEqual([m.note for m in port.sent if m.type == "note_on"], [64, 50])
+
+    def test_already_in_loop_edit_needs_no_gesture(self) -> None:
+        ok, port = self._precondition(
+            ["Edit session: LOOP_EDIT (Program 0, Note 100 trigger)"],
+            track_number=5, loop_slot=1, confirm="",
+        )
+        self.assertTrue(ok)
+        self.assertEqual(port.sent, [])
 
 
 if __name__ == "__main__":

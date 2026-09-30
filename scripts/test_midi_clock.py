@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hitl.control_constants import MIDI_CLOCKS_PER_BAR  # noqa: E402
 from hitl.midi_clock import MidiClockMaster, MidiClockReader  # noqa: E402
+from hitl.transport_clock import stream_pattern_for_bars  # noqa: E402
 
 PERIOD_120_BPM = 60.0 / 120.0 / 24.0  # 20.8333 ms == 24 PPQN at 120 BPM
 
@@ -156,6 +157,44 @@ class ReaderTests(unittest.TestCase):
         self.assertGreaterEqual(reader.gap_count(), 1)
         self.assertAlmostEqual(reader.bpm() or 0, 120.0, delta=0.05)
 
+    def test_first_poll_after_a_long_wait_does_not_poison_the_tempo(self) -> None:
+        # Device failure this pins (`captures/host_midi_automation_baseline_20260930_121454`): the
+        # reader is first polled only after the transport-start settlement, so its first interval
+        # was that ~0.5 s gap. Taking it as the median reported "0.0 BPM" with 251 pulses seen and
+        # froze the phase, so the streamer's pulse waits all timed out.
+        virtual = VirtualClock()
+        port = PulsePort(virtual, period=PERIOD_120_BPM)
+        reader = MidiClockReader(port, clock=virtual)
+        reader.poll()                      # the pulse that sets the anchor
+        port.next_pulse_at += 0.5          # the settlement gap, with no pulses in it
+        virtual.t = port.next_pulse_at
+        reader.poll()                      # the pulse after the gap
+        run_for(reader, virtual, 6.0, port)
+        # The 0.5 s gap must not become the tempo: the stream after it is a clean 120 BPM.
+        self.assertAlmostEqual(reader.bpm() or 0, 120.0, delta=0.05)
+        # And the phase tracks the real grid, not the number of drained pulses.
+        self.assertAlmostEqual(reader.index_now(), 6.0 / PERIOD_120_BPM, delta=2.0)
+
+    def test_clock_evidence_is_recency_not_history(self) -> None:
+        # The guards ask this reader "is a clock flowing *now*?" to decide whether the transport
+        # needs starting. `pulse_seen()` is sticky, so using it kept answering True after the
+        # record-arm step stopped the transport: the record leg then ran with 0 notes captured
+        # and a 1-bar take. The answer must expire when the pulses stop.
+        virtual = VirtualClock()
+        port = PulsePort(virtual, period=PERIOD_120_BPM)
+        reader = MidiClockReader(port, clock=virtual)
+        run_for(reader, virtual, 2.0, port)
+        self.assertTrue(reader.pulse_seen())
+        self.assertTrue(reader.recent_pulse())
+        self.assertLess(reader.last_pulse_age_s() or 99.0, 0.05)
+        # The device stops emitting clock when its transport stops.
+        virtual.t += 1.0
+        self.assertFalse(reader.recent_pulse())
+        self.assertGreater(reader.last_pulse_age_s() or 0.0, 0.9)
+        # ...and it comes back as soon as the clock does.
+        run_for(reader, virtual, 0.2, port)
+        self.assertTrue(reader.recent_pulse())
+
     def test_poll_only_port_is_drained_bulk_style(self) -> None:
         # The existing clock fixtures expose only `poll()`; those ports must still be drained
         # to the end of their backlog and every pulse counted. A frozen virtual clock carries
@@ -254,6 +293,188 @@ class MasterTests(unittest.TestCase):
         report = master.bars(1, bpm=6000.0, echo_reader=echo_reader)
         self.assertEqual(int(report["device_clock_echo_pulses"]), 1)
         self.assertEqual(int(report["device_clock_echo_tail_pulses"]), 0)
+
+
+
+class TickingClock:
+    """Virtual clock that advances on every read, and a helper that lets it run pulse by pulse.
+
+    Clock pacing is asserted in *virtual* seconds and in received-pulse counts, never against wall
+    time. The reader's phase-locked index is rebuilt from pulse *arrival intervals*, so a virtual
+    clock may not hand a burst of pulses to one drain (that mis-measures the interval and the index
+    then races): `run_pulses` advances one tick at a time and polls the way a phase does.
+    """
+
+    def __init__(self, *, step: float) -> None:
+        self.t = 1000.0
+        self.step = step
+
+    def __call__(self) -> float:
+        self.t += self.step
+        return self.t
+
+
+# Ticks of `TickingClock` per MIDI pulse: fine enough that a pulse is drained on its own.
+TICKS_PER_PULSE = 40
+
+
+def run_pulses(reader: MidiClockReader, ticker: TickingClock, pulses: int) -> None:
+    """Let ``pulses`` pulses arrive on the virtual clock, one drain at a time."""
+    for _ in range(pulses * TICKS_PER_PULSE):
+        reader.poll()
+        ticker()
+
+
+class GridRecordingPort(PulsePort):
+    """PulsePort that logs, for every outgoing message, the reader's grid position at send time."""
+
+    def __init__(self, virtual: VirtualClock, *, period: float, reader: MidiClockReader) -> None:
+        super().__init__(virtual, period=period)
+        self.reader = reader
+        self.log: list[tuple[str, object, float, int]] = []
+
+    def send(self, message) -> None:
+        self.log.append(
+            (message.type, getattr(message, "note", None), self.virtual.t,
+             self.reader.observed_pulses())
+        )
+        super().send(message)
+
+
+def device_paced_ports(
+    *, warmup_pulses: int = 24, dropout_pulses: int = 0, dropout_at: int = 0
+) -> tuple[TickingClock, PulsePort, MidiClockReader, GridRecordingPort, int, float]:
+    """A reader on a device clock that has been running, plus a port that logs its grid.
+
+    Returns ``(ticker, in_port, reader, out_port, pulses_at_start, phase_start)``: the phase in the
+    tests below starts exactly where a real record/overdub phase starts -- on a live grid.
+    """
+    ticker = TickingClock(step=PERIOD_120_BPM / TICKS_PER_PULSE)
+    in_port = PulsePort(
+        ticker,
+        period=PERIOD_120_BPM,
+        dropout_pulses=dropout_pulses,
+        dropout_at=dropout_at,
+    )
+    reader = MidiClockReader(in_port, clock=ticker)
+    run_pulses(reader, ticker, warmup_pulses)
+    return (
+        ticker,
+        in_port,
+        reader,
+        GridRecordingPort(ticker, period=PERIOD_120_BPM, reader=reader),
+        reader.observed_pulses(),
+        ticker.t,
+    )
+
+
+class StreamerGridPacingTests(unittest.TestCase):
+    """`stream_pattern_for_bars` paced from a clock instead of the wall clock.
+
+    Two properties, both from the 2026-09-30 requirement (evidence
+    `captures/host_midi_automation_baseline_20260930_113640.json`: 15 clocks to the first note, a
+    2-bar request recorded as 3 bars):
+
+    1. the first grid step of a phase is emitted on the *next* pulse of that phase, so the first
+       note is one pulse after the phase start instead of ~320 ms (several clocks) later;
+    2. a phase ends at `target_bars * MIDI_CLOCKS_PER_BAR` grid positions -- counted in grid
+       positions, not in wall-clock seconds.
+    """
+
+    @staticmethod
+    def _kwargs(**overrides):
+        kwargs = dict(
+            midi_channel_1based=1,
+            low_note=60,
+            high_note=64,
+            step_clocks=6,
+            target_bars=2,
+            cc_number=1,
+            cc_step=1,
+            pitch_cycle_bars=2,
+            phase_start_delay_bars=0,
+            phase_start_delay_beats=0,
+            max_seconds_guard=60.0,
+            emit_immediate_first_step=True,
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_device_paced_phase_starts_on_the_next_pulse(self) -> None:
+        _ticker, in_port, reader, out_port, pulses_at_start, phase_start = device_paced_ports()
+        # A live grid: half a second of pulses in, so the phase origin is a mid-stream grid
+        # position rather than zero (the first pulse is drained before the first tick, hence 25).
+        self.assertGreaterEqual(pulses_at_start, 24)
+
+        _notes, _cc, clocks, timing = stream_pattern_for_bars(
+            out_port, in_port, clock=reader, **self._kwargs()
+        )
+
+        self.assertEqual(timing["clock_source"], "device_clock")
+        self.assertEqual(clocks, 2 * MIDI_CLOCKS_PER_BAR)
+        self.assertEqual(int(timing["clock_pulses_counted"]), 2 * MIDI_CLOCKS_PER_BAR)
+        note_ons = [row for row in out_port.log if row[0] == "note_on"]
+        # 2 bars of 16ths (step_clocks=6), the first one on the phase's first pulse.
+        self.assertEqual(len(note_ons), 32)
+        self.assertEqual(note_ons[0][3], pulses_at_start + 1, "first note is on the next pulse")
+        self.assertLess(
+            note_ons[0][2] - phase_start,
+            3 * PERIOD_120_BPM,
+            "the first note must not wait several clocks (the old ~320 ms phase delay)",
+        )
+        # Every later step is on the grid too. The grid is the reader's *phase-locked* index, not a
+        # raw message count: it is rebuilt from pulse arrival times, so a step may sit one pulse
+        # either side of the raw count (`observed_pulses` is evidence, not the grid -- the whole
+        # point of the phase-locked index is that a dropout must not stall it).
+        for index, row in enumerate(note_ons):
+            expected_pulse = pulses_at_start + 1 + index * 6
+            self.assertLessEqual(
+                abs(row[3] - expected_pulse), 1, f"step {index} belongs to pulse {expected_pulse}"
+            )
+
+    def test_device_paced_phase_survives_a_dropped_pulse_burst(self) -> None:
+        _ticker, in_port, reader, out_port, pulses_at_start, _phase_start = device_paced_ports(
+            dropout_pulses=24, dropout_at=96
+        )
+
+        _notes, _cc, clocks, timing = stream_pattern_for_bars(
+            out_port, in_port, clock=reader, **self._kwargs()
+        )
+
+        # The phase still spans its full grid: a raw pulse count would have run a quarter bar
+        # short here and the take with it.
+        self.assertEqual(clocks, 2 * MIDI_CLOCKS_PER_BAR)
+        self.assertEqual(int(timing["clock_pulses_counted"]), 2 * MIDI_CLOCKS_PER_BAR)
+        self.assertLess(
+            reader.observed_pulses() - pulses_at_start, 2 * MIDI_CLOCKS_PER_BAR,
+            "a quarter bar of pulses was lost, so the raw count runs short of the grid",
+        )
+        self.assertGreaterEqual(reader.gap_count(), 1)
+
+    def test_host_paced_phase_sends_exactly_the_requested_pulses(self) -> None:
+        virtual = VirtualClock()
+        in_port = PollOnlyPort(virtual, period=PERIOD_120_BPM)
+        out_port = PulsePort(virtual, period=PERIOD_120_BPM)
+        master = MidiClockMaster(out_port)
+
+        _notes, _cc, clocks, timing = stream_pattern_for_bars(
+            out_port, in_port, master=master, wall_clock_tempo_bpm=6000.0, **self._kwargs()
+        )
+
+        self.assertEqual(timing["clock_source"], "host_clock")
+        self.assertEqual(clocks, 2 * MIDI_CLOCKS_PER_BAR)
+        kinds = [message.type for message in out_port.sent]
+        self.assertEqual(kinds.count("clock"), 2 * MIDI_CLOCKS_PER_BAR)
+        # The caller owns Start/Stop: the streamer must not add a realtime transport message.
+        self.assertNotIn("start", kinds)
+        self.assertNotIn("stop", kinds)
+        first_note = kinds.index("note_on")
+        # The first pulse IS the downbeat: exactly one clock precedes the first note, and step k is
+        # emitted with pulse 1 + (k - 1) * 6.
+        self.assertEqual(kinds[:first_note].count("clock"), 1)
+        self.assertEqual(kinds[:first_note].count("clock"), 1)
+        second_note = kinds.index("note_on", first_note + 1)
+        self.assertEqual(kinds[:second_note].count("clock"), 1 + 6, "step k belongs to pulse k")
 
 
 if __name__ == "__main__":

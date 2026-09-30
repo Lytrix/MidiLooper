@@ -143,6 +143,51 @@ def _pair_record_sessions(
     return record_sessions, open_record_start
 
 
+def _armed_record_starts(lines: list[str], *, start_index: int) -> set[int]:
+    """Timestamps where a record window was entered from ``ARMED`` (the harness's arm gesture).
+
+    A `RECORDING` entered from another state (e.g. `EMPTY->RECORDING`) is not a window the run
+    armed, so it must not win over one that was. See :func:`extract_phase_sessions`.
+    """
+    return {
+        ts
+        for ts, (from_state, to_state) in track_transitions(lines[start_index:])
+        if to_state == "RECORDING" and from_state == "ARMED"
+    }
+
+
+def _record_take_note_counts(
+    lines: list[str], sessions: list[tuple[int, int]], *, start_index: int
+) -> list[int]:
+    """Host note-on rows (``#CAP,<ts>,MI,U,144,...``) inside each record take's window.
+
+    The count identifies the take the host actually streamed into: a transient take left behind by
+    the arm/start sequence carries few or no note-ons, while the intended take carries the whole
+    stream. See the selection in :func:`extract_phase_sessions`.
+    """
+    note_ts: list[int] = []
+    for line in lines[start_index:]:
+        if ",MI,U," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 8:
+            continue
+        try:
+            ts = int(parts[1])
+            msg_type = int(parts[4])
+        except ValueError:
+            continue
+        if msg_type == 144:
+            note_ts.append(ts)
+    counts: list[int] = []
+    for start_ts, stop_ts in sessions:
+        if stop_ts <= start_ts:
+            counts.append(0)
+            continue
+        counts.append(sum(1 for ts in note_ts if start_ts <= ts < stop_ts))
+    return counts
+
+
 def _pair_overdub_sessions(
     lines: list[str], *, start_index: int
 ) -> tuple[list[tuple[int, int]], list[int], list[int]]:
@@ -237,12 +282,42 @@ def extract_phase_sessions(
     diagnostics: list[str] = []
     record: Optional[MatchedPhaseSession] = None
     if record_sessions:
-        # The record leg is the **first** complete start->stop pair, matching the overdub
-        # convention below (`overdub_sessions[0]` / `[1]`). Taking the last pair scored a later
-        # stray take instead: `captures/s4f22-step8-e2` had the intended leg (2304 ticks) and a
-        # stray one-bar re-arm (768 ticks), and the run reported the stray leg's numbers against
-        # the correct take.
-        start_ts, stop_ts = record_sessions[0]
+        # The record leg is the take that **holds the streamed notes**, not the first or the last
+        # one. The harness's stop-transport / arm / start-transport sequence can leave a transient
+        # take beside the intended one, and both orders have been observed on device:
+        #   * `captures/s4f22-step8-e2`: intended take **first** (2304 ticks), stray **last** (768);
+        #   * `captures/session_20260930_132517.log`: intended take **last** (1536 ticks = exactly
+        #     the 2-bar stream), stray **first** (768) -- "first" scored a window with no notes in
+        #     it at all (`record on/off 0/0`, `record_first_note_missing`) while the device had
+        #     recorded the stream correctly.
+        # So order is not the discriminator. Two pieces of evidence are, in this order:
+        #   1. the take holding the host's note-on rows (the stream identifies its own take), and
+        #   2. the take entered from `ARMED` (a record window the harness armed) rather than from a
+        #      mode change such as `EMPTY->RECORDING` -- the distinction
+        #      `test_uses_last_complete_recording_window` asks for, and one a bare "first pair"
+        #      rule got wrong at HEAD.
+        note_counts = _record_take_note_counts(lines, record_sessions, start_index=start_index)
+        armed_starts = _armed_record_starts(lines, start_index=start_index)
+        best = max(
+            range(len(record_sessions)),
+            key=lambda index: (
+                note_counts[index] > 0,
+                record_sessions[index][0] in armed_starts,
+                -index,
+            ),
+        )
+        if note_counts[best] <= 0:
+            diagnostics.append(
+                "record take chosen without host note rows: "
+                f"take {best + 1} of {len(record_sessions)} (armed/tie-break), all takes "
+                f"{record_sessions}, armed starts {sorted(armed_starts)}"
+            )
+        elif len(record_sessions) > 1:
+            diagnostics.append(
+                f"record take {best + 1} of {len(record_sessions)} chosen: it holds "
+                f"{note_counts[best]} host note row(s), all takes {note_counts}"
+            )
+        start_ts, stop_ts = record_sessions[best]
         record_ambiguity = None
         if stop_ts <= start_ts:
             record_ambiguity = PhaseAmbiguity.OUT_OF_ORDER

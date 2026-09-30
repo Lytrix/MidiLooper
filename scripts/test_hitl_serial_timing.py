@@ -155,6 +155,58 @@ class ExtractPhaseBoundariesTests(unittest.TestCase):
         self.assertIsNone(report.overdub.stop_ts if report.overdub else 0)
         self.assertIn(PhaseAmbiguity.MISSING_STOP, report.ambiguities)
 
+    def test_record_take_holding_the_stream_wins_when_the_stray_is_first(self) -> None:
+        # Today's device shape (`captures/session_20260930_132517.log`): a transient one-bar take
+        # first (768 ticks, no host notes), the intended 2-bar take last (1536 = the stream). The
+        # old "first pair" rule scored the empty take and reported `record on/off 0/0`.
+        lines = [
+            "#CAP,1000,ST,Track,ARMED,RECORDING",
+            "#CAP,1600,ST,Track,RECORDING,STOPPED_RECORDING",  # stray take, no notes
+            "#CAP,9000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,9500,ST,Track,OVERDUBBING,PLAYING",
+            "#CAP,30000,ST,Track,ARMED,RECORDING",
+            "#CAP,34000,ST,Track,RECORDING,STOPPED_RECORDING",  # the intended take
+            "#CAP,30500,MI,U,144,5,60,100",
+            "#CAP,31500,MI,U,144,5,62,100",
+            "#CAP,32500,MI,U,144,5,64,100",
+        ]
+        report = extract_phase_sessions(lines)
+        self.assertEqual(report.record.start_ts, 30000)
+        self.assertEqual(report.record.stop_ts, 34000)
+        self.assertTrue(any("record take 2 of 2 chosen" in d for d in report.diagnostics))
+
+    def test_record_take_holding_the_stream_wins_when_the_stray_is_last(self) -> None:
+        # The 2026-09-29 shape (`captures/s4f22-step8-e2`): intended take first (2304 ticks), stray
+        # one-bar re-arm last. Selecting by note membership must keep the first take here, so the
+        # fix does not regress that lesson.
+        lines = [
+            "#CAP,1000,ST,Track,ARMED,RECORDING",
+            "#CAP,5000,ST,Track,RECORDING,STOPPED",  # intended take (ends in a transport stop)
+            "#CAP,1200,MI,U,144,5,60,100",
+            "#CAP,2200,MI,U,144,5,62,100",
+            "#CAP,9000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,9500,ST,Track,OVERDUBBING,PLAYING",
+            "#CAP,30000,ST,Track,ARMED,RECORDING",
+            "#CAP,30800,ST,Track,RECORDING,STOPPED_RECORDING",  # stray re-arm, no notes
+        ]
+        report = extract_phase_sessions(lines)
+        self.assertEqual(report.record.start_ts, 1000)
+        self.assertEqual(report.record.stop_ts, 5000)
+
+    def test_no_host_notes_keeps_the_first_take_and_says_so(self) -> None:
+        lines = [
+            "#CAP,1000,ST,Track,ARMED,RECORDING",
+            "#CAP,2000,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,3000,ST,Track,ARMED,RECORDING",
+            "#CAP,4000,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,5000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,6000,ST,Track,OVERDUBBING,PLAYING",
+        ]
+        report = extract_phase_sessions(lines)
+        # Both takes are armed and neither holds notes: the earliest armed take stays the record leg.
+        self.assertEqual(report.record.start_ts, 1000)
+        self.assertTrue(any("chosen without host note rows" in d for d in report.diagnostics))
+
 
 class ExtractFirstNoteOffsetTests(unittest.TestCase):
     def test_offset_from_us_delta_at_120_bpm(self) -> None:
