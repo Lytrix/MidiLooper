@@ -50,9 +50,11 @@ import mido
 from hitl.actions import slots
 from hitl.actions.cancellation import active_cancel_scope, cancellable_sleep
 from hitl.actions.correlation import (
+    STAGE_ORDER,
     CorrelatedGesture,
     PendingSwitchGate,
     Stage,
+    StageOutcome,
     StageRules,
     Wire,
 )
@@ -98,12 +100,22 @@ def leg_gestures(leg: str, *, track: int, a: int, b: int) -> list[Gesture]:
     must already have committed seed content. No empty-slot carrier is assumed.
     """
     if leg == "rec":
+        # Design decision 5, the record recipe: "start a real record Capture on A and observe its mode/interval
+        # before sending notes. A single B slot gesture while A captures must accept A's stop and carry the
+        # record start to B. Observe the committed switch and B's new record interval. Send B content, then
+        # issue one legal B stop gesture."
+        #
+        # So there is **no separate A stop**: the switch is A's stop (and B's start), exactly as on the overdub
+        # leg, and there is no transport gesture anywhere in the plan -- which is also what the measured-window
+        # predicate requires ("global transport does not stop"). The firmware's own carrier is
+        # `MidiButtonActions::handleToggleRecordForSlot`: while recording it selects the target slot, finalizes
+        # A's capture, and -- when the target has no committed passes -- queues (or, if the predecessor's stop is
+        # not yet admitted, retains) the target's record start in the same gesture.
         return [
             Gesture("select_track", "track", track),
-            Gesture("a_record_start", "record", 0),      # arm/start the take on A
-            Gesture("a_stop", "transport", 0),           # ONE press: stop A
-            Gesture("b_switch_start", "slot_record", b),  # switch to B; B starts recording
-            Gesture("b_stop", "record", 0),              # ONE press: stop B's session
+            Gesture("a_record_start", "record", 0),       # start A's record capture
+            Gesture("b_switch_start", "slot_record", b),  # ONE slot gesture: A's stop + B's start
+            Gesture("b_stop", "record", 0),               # ONE press: stop B's take
         ]
     if leg == "od":
         # The switch IS A's stop. A separate stop first leaves PLAYING and routes B's
@@ -484,19 +496,107 @@ def _leg_deferral_row(capture_log: Path, after: int) -> str:
     return next((line.strip() for line in _lines(capture_log)[max(after, 0):]
                  if "record admission deferred" in line or "Overdub start rejected" in line), "")
 
+#: The firmware's own rows showing that a press was read as a **record start** for that slot
+#: (`MidiButtonActions::handleToggleRecordForSlot`): an immediate start, a start quantized to the loop
+#: phase/bar (`Queued recording …`, which the device then dispatches on its own boundary), or an immediate
+#: punch-in of an already-queued request.
+RECORD_START_MARKERS = ("Start Recording", "Queued recording (loop phase or bar)", "Immediate punch-in")
+#: The rows that show the press took a *different* branch -- playback or overdub where a record start was
+#: intended. Design decision 5: "If the branch produces playback or overdub, stop the test as wrong
+#: setup/route, not a successful substitute." A record target that is not genuinely empty lands here: a filled
+#: slot with the transport running answers `Queued playback switch (filled slot)`, and a filled playing
+#: track with the record button answers `Live Overdub`. `Playback started` is deliberately **not** here: it is
+#: `PendingSwitchGate`'s own "the switch landed" marker, so a predecessor's loop resuming after a legitimate
+#: switch is not a wrong route.
+WRONG_MODE_ROUTE_MARKERS = ("Queued playback switch", "Reaffirmed playback switch",
+                            "Live Overdub", "Overdubbing started", "Toggle Play/Stop",
+                            "long-press start (not playing)")
+#: The firmware's own proof that a record switch carried the target's start in the same gesture (S4f.6,
+#: `Loop N: Record start carried on the switch`), or that it **retained** it because the predecessor's stop is
+#: accepted but not yet admitted (S4f.3 L3, `Track T loop N: switch and record start retained (stop not yet
+#: admitted)`). Both are legitimate: the retained request is dispatched on the target's eligible boundary, and
+#: waiting for the *start* is not waiting for the predecessor's retirement.
+RECORD_START_CARRIED_MARKERS = ("Record start carried on the switch",)
 
-def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int,
+
+def _await_record_route(capture_log: Path, after: int, *, slot0: int, slot_number: int,
+                        accept_markers: tuple[str, ...] = (), accept_states: tuple[str, ...] = (),
+                        recognize_markers: tuple[str, ...] = (),
+                        final: Stage = Stage.EXECUTE, timeout_s: float,
+                        drain=None) -> tuple[bool, str, str]:
+    """Wait for one record-leg route's confirmation, naming a *wrong route* instead of accepting it (task 4.2).
+
+    This is the action layer's four-stage correlation (`CorrelatedGesture`) with the record recipe's own
+    vocabulary: the device names the gesture it read (`recognize`), takes the request for this target
+    (`accept`), and the target's take actually runs (`execute`, this slot's `RECORDING` row). What makes it a
+    *route* check rather than a receipt wait is the conflict vocabulary: a playback or overdub row proves the
+    press was read as something else, which design decision 5 refuses to accept as a substitute for the
+    intended record start.
+
+    Returns `(met, evidence_row, wrong_route_row)`. `met` is False when the stage was contradicted, refused or
+    never arrived inside `timeout_s`; `wrong_route_row` is the device's own row when it was contradicted, so a
+    caller can name the route failure from evidence instead of reporting a bare timeout.
+
+    Nothing here presses anything, so a wrong route never costs a second gesture. The conflict rows are the ones
+    that prove the branch, not the ones a legitimate switch also emits: `Playback started @ tick` is
+    `PendingSwitchGate`'s own "the switch landed" marker and is deliberately absent from the vocabulary.
+    """
+    rules = StageRules(
+        recognize=tuple(Wire(marker) for marker in recognize_markers),
+        accept=_slot_receipt_wires(slot0, accept_states, accept_markers),
+        execute=(Wire(f"DISP,{slot0},RECORDING", ("#CAP,",)),),
+        conflict=tuple(Wire(marker) for marker in WRONG_MODE_ROUTE_MARKERS),
+    )
+    gesture = CorrelatedGesture(name=f"route_slot_{slot0}", rules=rules,
+                                now=time.monotonic, sleep=time.sleep)
+    gesture.mark_sent(note=LOOP_SELECT_NOTE_BASE + slot0, channel=CONTROL_CHANNEL_1BASED,
+                      kind="short", before_device_us=_gesture_clock_us(capture_log, after))
+    next_drain = time.monotonic() + DRAIN_EVERY_S
+
+    def rows() -> list[str]:
+        nonlocal next_drain
+        now = time.monotonic()
+        if now >= next_drain:
+            _drain_now(drain)
+            next_drain = now + DRAIN_EVERY_S
+        return _lines(capture_log)[max(after, 0):]
+
+    scope = active_cancel_scope()
+    met = gesture.wait_for(final, rows, timeout_s=timeout_s, poll_s=0.05,
+                           cancel=(None if scope is None else lambda: scope.cancelled))
+    if scope is not None:
+        scope.check()
+    contradicted = next((stage for stage in STAGE_ORDER
+                         if gesture.outcomes.get(stage) is StageOutcome.CONTRADICTED), None)
+    if contradicted is not None:
+        return False, "", gesture.evidence.get(contradicted, "")
+    if not met:
+        return False, gesture.evidence.get(Stage.ACCEPT, "") if not accept_states else "", ""
+    return True, gesture.evidence.get(final, ""), ""
+
+def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, slot_a: Optional[int] = None,
               press_ms: int, phase_timeout_s: float, events: list[dict],
               note_channel: int = 7, overdub_notes: int = 16, drain=None) -> str:
-    """Drive one bounded leg, stopping before the next press on a bad transition."""
+    """Drive one bounded leg, stopping before the next press on a bad transition.
+
+    The two legs share the driving loop and the overdub branch; the **record** leg's steps
+    (`a_record_start`, `b_switch_start`, `b_stop`) get their own route waits, which is task 4.2: real record
+    mode observed on A, the switch-carried start observed on B, and a named abort -- never a substitute -- when
+    the device answers with playback or overdub instead.
+    """
     leg_mark = len(_lines(capture_log))
+    record_leg = any(g.step == "b_switch_start" for g in plan)
     last_slot_press_at = 0.0
     for gesture in plan:
         if _switch_pending(capture_log, leg_mark, slot_b):
             events.append({"event": "leg_aborted_pending_switch", "gesture": gesture.step})
             return "UNEXPECTED_PLAYBACK_SWITCH"
-        if any("switch and record start retained" in line
-               for line in _lines(capture_log)[leg_mark:]):
+        # The **overdub** leg's guard: its plan carries no successor-switch, so a retained record start in the
+        # leg's own window means the shape is wrong. On the record leg the same row is the *legitimate* retained
+        # accept (`Track T loop N: switch and record start retained (stop not yet admitted)`): the start is
+        # queued, dispatched on the target's eligible boundary, and its own wait below is what confirms it.
+        if not record_leg and any("switch and record start retained" in line
+                                  for line in _lines(capture_log)[leg_mark:]):
             events.append({"event": "leg_aborted_retained_switch", "gesture": gesture.step})
             return "UNEXPECTED_RETAINED_SWITCH"
         if gesture.step in ("a_record_start", "b_switch_start"):
@@ -542,6 +642,82 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int,
                                    f"Loop {slot_b}: Reaffirmed playback switch"),
                                   phase_timeout_s, drain=drain):
                 return "SWITCH_UNCONFIRMED"
+        elif gesture.step == "a_record_start":
+            if slot_a is None:
+                raise ValueError("the record leg's steps need `slot_a` (the A target) on `_run_plan`")
+            # Task 4.2 / design decision 5: "start a real record Capture on A and observe its mode/interval
+            # before sending notes". The accept vocabulary is the firmware's own record-start row for A
+            # (immediate, quantized to the loop phase/bar, or a punch-in), the execution is A's slot-scoped
+            # `RECORDING` row, and a playback/overdub row is a **wrong route**: a filled A answers
+            # `Queued playback switch (filled slot)`, a filled playing track answers `Live Overdub`.
+            a1 = slot_a
+            ok, row, wrong = _await_record_route(
+                capture_log, mark, slot0=to_firmware_slot(a1), slot_number=a1,
+                accept_markers=tuple(f"Loop {a1}: {marker}" for marker in RECORD_START_MARKERS),
+                final=Stage.EXECUTE, timeout_s=phase_timeout_s, drain=drain)
+            events.append({"event": "a_record_start", "confirmed": ok, "row": row[:180],
+                           "wrong_route_row": wrong[:180]})
+            if wrong:
+                return "WRONG_MODE_ROUTE"
+            if not ok:
+                return "A_RECORD_START_UNCONFIRMED"
+            # A's take is real work before the switch stops it: the design's own reason for A content is that
+            # the predecessor must still be finalizing when B's stop is requested (same convention as the
+            # overdub leg's A).
+            count = max(1, overdub_notes)
+            for i in range(count):
+                pitch = 60 + i % 12
+                out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=note_channel))
+                time.sleep(0.02)
+                out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=note_channel))
+            events.append({"event": "a_record_content", "count": count, "channel": note_channel,
+                           "note_base": 60})
+        elif gesture.step == "b_switch_start":
+            # The switch carries **both** edges in one gesture (S4f.6): A's stop is accepted by
+            # `finalizeCaptureAndSelectSlot`, and because B has no committed passes the same press queues (or
+            # retains, when the predecessor's stop is not yet admitted) B's record start. So the accept stage is
+            # the firmware's carrier row -- either form -- the execution is B's own `RECORDING` row, and the
+            # design's wrong-route rule applies unchanged.
+            ok, row, wrong = _await_record_route(
+                capture_log, mark, slot0=to_firmware_slot(slot_b), slot_number=slot_b,
+                recognize_markers=(f"Loop {slot_b}: Switch gesture from slot ",),
+                accept_markers=tuple(f"Loop {slot_b}: {marker}" for marker in RECORD_START_CARRIED_MARKERS)
+                               + (f"loop {slot_b}: switch and record start retained",),
+                final=Stage.EXECUTE, timeout_s=phase_timeout_s, drain=drain)
+            events.append({"event": "b_switch_start", "confirmed": ok, "row": row[:180],
+                           "wrong_route_row": wrong[:180]})
+            if wrong:
+                return "WRONG_MODE_ROUTE"
+            if not ok:
+                # Named apart: the device may have read the switch and simply not carried the start (a filled
+                # B, or a carrier that never dispatched) -- which is a different failure from a swallowed press.
+                carried = any(marker in line for line in _lines(capture_log)[max(mark, 0):]
+                              for marker in ("Record start carried on the switch",
+                                             "switch and record start retained"))
+                return "B_RECORD_START_UNCONFIRMED" if carried else "SWITCH_NOT_CARRIED"
+            # "Send B content" (design decision 5): B's take must contain something for the content check and
+            # for B's own stop to be a stop of a real interval.
+            out_port.send(mido.Message("note_on", note=79, velocity=100, channel=note_channel))
+            time.sleep(0.02)
+            out_port.send(mido.Message("note_off", note=79, velocity=0, channel=note_channel))
+            events.append({"event": "b_record_content", "count": 1, "channel": note_channel,
+                           "note_base": 79})
+        elif gesture.step == "b_stop":
+            # ONE press for B's interval. The accept is the device naming that it read a **stop**: the record
+            # button's own row (`MIDI Button A: Stop Recording`, which names no slot -- so it is accepted as the
+            # read *request*, and the oracle's L6 grades B's execution from the slot-scoped `RECS` rows) or the
+            # slot button's `Loop N: Stop Recording`. A stop that is denied or retained still logs its request,
+            # which is the point of the leg; this wait only refuses to leave a swallowed press behind.
+            ok, row, wrong = _await_record_route(
+                capture_log, mark, slot0=to_firmware_slot(slot_b), slot_number=slot_b,
+                accept_markers=("MIDI Button A: Stop Recording", f"Loop {slot_b}: Stop Recording"),
+                final=Stage.ACCEPT, timeout_s=phase_timeout_s, drain=drain)
+            events.append({"event": "b_stop", "confirmed": ok, "row": row[:180],
+                           "wrong_route_row": wrong[:180]})
+            if wrong:
+                return "WRONG_MODE_ROUTE"
+            if not ok:
+                return "B_STOP_UNCONFIRMED"
         time.sleep(DEFAULT_TAP_WINDOW_S)
     return "DROVE_LEG"
 
@@ -746,12 +922,14 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
         spacing.before(LOOP_SELECT_NOTE_BASE + slot_number - 1)
         slots.press_slot_record(ctx, slot_number, press_ms=request.press_ms)
 
-    def seed(slot_number: int, label: str, note_base: int) -> None:
-        """Record a short take into `slot_number`, committed, so it is a *filled* slot afterwards.
+    def prepare_empty(slot_number: int, label: str) -> int:
+        """Prepare one target through the device's own scoped clear; returns the mark this target's wait starts at.
 
-        The overdub leg seeds B first and A last, as in the retention
-        driver. A short press while A is capturing then stops A and
-        switches to populated B, which can actually overdub.
+        Task 4.2 splits preparation from seeding because the two legs need different *states*: the overdub leg
+        needs B and A **filled** (it overdubs into committed content), while the record leg needs both
+        **genuinely empty and idle** -- the firmware's switch carrier only carries a start into a target with
+        no committed passes (`!track.hasCommittedPassesInSlot(slot)`), so a seeded target would make the recipe
+        take a different route altogether.
 
         Every step is confirmed from the device's own slot-scoped evidence, and every abort is a
         named `PreparationFailure` -- which the caller catches, so the run still writes its report
@@ -765,11 +943,8 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
           (`captures/s4f22-dec096-od-02`);
         * a filled target is selected first and the selection must be named by its own `DISP`
           row, because a long press on a filled, non-selected slot starts playback;
-        * the seed press must produce a slot-scoped `DISP … ARMED` row for **this** slot: a
-          predecessor's in-flight stop can hold the selection, and the firmware then swallows the
-          gesture silently (`captures/s4f22-dec096-mixed-01`: `Loop 3 (short)` at 39.520 s and
-          42.647 s left no slot-3 row at all). Silence is therefore a named failure here, never a
-          blind re-press plus a transport start.
+        * the clear is retried a bounded number of times when the firmware refuses or aborts it
+          (a deferred save in flight), and a clear that never completes is a named failure.
         """
         slot0 = to_firmware_slot(slot_number)
         spacing.before(TRACK_SELECT_NOTE_BASE + request.track - 1)
@@ -866,11 +1041,26 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
                     raise PreparationFailure(
                         f"slot {slot_number} scoped clear {outcome_of_clear.status.value}: "
                         f"{outcome_of_clear.detail}")
-        # Seed the take. The device's own transition rows name the gesture: `Loop N: Start Recording`
-        # announces the arm and `Recording started @ tick` the take, both written **straight to Serial**
-        # (live by construction, not held in the capture ring), with the slot's `DISP … ARMED/RECORDING`
-        # rows as the slot-scoped companion.
-        #
+        return seed_mark
+
+    def seed_take(slot_number: int, label: str, note_base: int, seed_mark: int) -> None:
+        """Record a short take into `slot_number` and commit it, so it is a *filled* slot afterwards.
+
+        The overdub leg seeds B first and A last, as in the retention driver: a short press while A is
+        capturing then stops A and switches to populated B, which can actually overdub. The record leg never
+        calls this -- its targets stay empty (see `prepare_empty`).
+
+        The device's own transition rows name the gesture: `Loop N: Start Recording` announces the arm and
+        `Recording started @ tick` the take, both written **straight to Serial** (live by construction, not
+        held in the capture ring), with the slot's `DISP … ARMED/RECORDING` rows as the slot-scoped companion.
+
+        * the seed press must produce a slot-scoped `DISP … ARMED` row for **this** slot: a
+          predecessor's in-flight stop can hold the selection, and the firmware then swallows the
+          gesture silently (`captures/s4f22-dec096-mixed-01`: `Loop 3 (short)` at 39.520 s and
+          42.647 s left no slot-3 row at all). Silence is therefore a named failure here, never a
+          blind re-press plus a transport start.
+        """
+        slot0 = to_firmware_slot(slot_number)
         # Measure the state *before* pressing. The clear's own selection press arms an **empty** target
         # (`handleToggleRecordForSlot` on an empty slot), so a seed press on top of that is a toggle:
         # measured (`captures/s4f22-dec096-od-10`) the driver pressed again, the firmware logged
@@ -943,14 +1133,39 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
         events.append({"event": f"seed_{label}_finalization_settled", "slot": slot_number,
                        "confirmed": settled})
 
-    # B must contain a loop for the overdub successor. A is seeded last
-    # so its record-button gesture addresses A without a playback queue.
+    def require_idle(slot_number: int, label: str, mark: int) -> None:
+        """Refuse to drive the record leg into a target that is left armed or recording (task 4.2).
+
+        The record leg's first gesture is the **record button**, and the firmware's own arm semantics make an
+        armed target a different gesture entirely: `handleArmedRecordPress` answers "armed + transport running"
+        by *cancelling* the arm ("Cancel record arm") and "armed + transport stopped" by starting the
+        transport -- so a left-over arm from a clear's own selection press would silently consume the recipe's
+        start press and the leg would run against a target that never armed. A record target has to be empty
+        **and idle**; when it is not, this names the state instead of pressing into it.
+        """
+        state = _slot_ready_state(capture_log, mark, to_firmware_slot(slot_number), slot_number)
+        events.append({"event": f"prepare_slot_{label}_idle", "slot": slot_number, "state": state})
+        if state is not None:
+            raise PreparationFailure(
+                f"slot {slot_number} is {state} after its scoped clear: the record leg needs an empty, idle "
+                "target, and a record press on an armed slot cancels the arm instead of starting the take "
+                "(`handleArmedRecordPress`)")
+
+    # The two legs need different fixture *states*: the overdub successor must overdub into committed content,
+    # so B is seeded first and A last (the record button then addresses A without a playback queue); the record
+    # leg needs both targets genuinely empty and idle, because the firmware's switch carrier only carries a
+    # start into a target with no committed passes (`!track.hasCommittedPassesInSlot`).
     leg_mark = len(_lines(capture_log))
     prepared = True
     try:
         if request.leg == "od":
-            seed(request.slot_b, "b", 64)
-        seed(request.slot_a, "a", 60)
+            seed_take(request.slot_b, "b", 64, prepare_empty(request.slot_b, "b"))
+            seed_take(request.slot_a, "a", 60, prepare_empty(request.slot_a, "a"))
+        else:
+            mark_b = prepare_empty(request.slot_b, "b")
+            require_idle(request.slot_b, "b", mark_b)
+            mark_a = prepare_empty(request.slot_a, "a")
+            require_idle(request.slot_a, "a", mark_a)
     except PreparationFailure as exc:
         prepared = False
         outcome.result = "PREPARATION_FAILED"
@@ -977,7 +1192,8 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
             events.append({"event": "leg_predecessor_publication", "settled": published})
             outcome.leg_start_row = len(_lines(capture_log))
             outcome.result = _run_plan(
-                out_port, capture_log, plan, slot_b=request.slot_b, press_ms=request.press_ms,
+                out_port, capture_log, plan, slot_b=request.slot_b, slot_a=request.slot_a,
+                press_ms=request.press_ms,
                 phase_timeout_s=request.phase_timeout_s, events=events,
                 note_channel=t0, overdub_notes=request.notes, drain=drain)
             # The window ends where the plan did, not where the run does: the settle and the final stop below

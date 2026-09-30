@@ -142,7 +142,23 @@ declaration (`spec.py`), the per-profile scope (`registry.py`), the resolution a
   of record) must stop the leg as SETUP/route failure; continuous transport is a window invariant.
 - **Verification recipe**: `test_accepted_sequence` + `test_accepted_sequence_corpus`, then the registered
   scenario through the layered runner once 4.4 lands.
-- **Completion record**: to be filled.
+- **Completion record (4.2, 2026-09-30 — the recipe and its route check)**: the recipe is switch-carried and
+  nothing in it touches the transport. `leg_gestures("rec")` is `select_track → a_record_start → b_switch_start →
+  b_stop`; preparation is split so that `prepare_empty` (4.1's census + scoped clear) prepares **both** targets
+  and `require_idle` refuses one the clear left armed or recording (`handleArmedRecordPress` *cancels* an arm
+  under a running transport); the recipe's waits observe the device's own rows through
+  `_await_record_route` (A's record start incl. its `RECORDING` execution, the switch's carrier or retained
+  twin, B's single stop) and name a wrong route (`WRONG_MODE_ROUTE`, `SWITCH_NOT_CARRIED`,
+  `B_RECORD_START_UNCONFIRMED`, `A_RECORD_START_UNCONFIRMED`, `B_STOP_UNCONFIRMED`) instead of substituting; the
+  oracle's `L5b_b_start_route` reads the same vocabulary over the route decision span. **Checks run**:
+  `test_accepted_sequence` **126/126** (15 new), corpus **3/3**, neighbours green together, host sweep **1,053
+  tests / 75 suites** (only the seven pre-existing unrelated failures plus the zero-test fader script),
+  **8 mutations** red-proved with byte-identical restores. **NOT RUN / NOT APPLICABLE**: `pio test -e native`,
+  build, RAM1 and device — host tooling only, no firmware file touched. **Fixture implemented**: yes — the route
+  waits are pinned over synthetic device-row logs, and the oracle's route check over
+  `chain_log()`-derived record chains. **Task IDs eligible for checkoff**: none on its own — **4.2** stays `[~]`
+  for its device leg (6.3), where the accept vocabulary read from the firmware's emitters is confirmed on real
+  rows.
 
 ## Slice 4.3 — overdub recipe
 
