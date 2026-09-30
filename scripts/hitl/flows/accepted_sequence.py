@@ -126,6 +126,34 @@ def leg_gestures(leg: str, *, track: int, a: int, b: int) -> list[Gesture]:
         return [Gesture(g.step, g.kind, g.value) for g in
                 critical_window_gestures(track=track, a=a, b=b, c=8)
                 if g.step != "c_switch_request"]
+    if leg == "mixed":
+        # The spec's *Mixed record predecessor and overdub successor* scenario: "a record interval A stops and
+        # seeded B begins overdubbing while A finalizes". So A is a **record** capture (the same start as the
+        # record leg) while B is a **seeded** target whose successor is an *overdub* (the same successor as the
+        # overdub leg):
+        #
+        #   * A's press is the record button after its own empty, idle target -- observed as a record capture,
+        #     not just "a press";
+        #   * B's slot gesture is the capture-switch, and because B **has** committed passes the S4f.6 carrier
+        #     does not apply (`!track.hasCommittedPassesInSlot(slot)`): the switch moves the selection to B and
+        #     stops A, and B's start then takes its own record-control press;
+        #   * B's stop is the loop button once (the overdub route), and there is no transport gesture anywhere.
+        return [
+            Gesture("select_track", "track", track),
+            Gesture("a_record_start", "record", 0),       # start A's record capture
+            Gesture("b_switch", "slot_record", b),        # ONE slot gesture: A's stop + B selected
+            Gesture("b_overdub_start", "record", 0),      # start B's overdub on the seeded target
+            Gesture("b_stop_request", "slot_record", b),  # ONE press: B's stop, denied inside A's window
+        ]
+    if leg == "od":
+        # The switch IS A's stop. A separate stop first leaves PLAYING and routes B's
+        # button through the SD-aware playback queue instead of the capture-switch.
+        # Reuse the device-proven retention prefix; C is a separate record successor
+        # and is deliberately not substituted for the populated overdub target B.
+        from hitl_retention_handoff import critical_window_gestures
+        return [Gesture(g.step, g.kind, g.value) for g in
+                critical_window_gestures(track=track, a=a, b=b, c=8)
+                if g.step != "c_switch_request"]
     raise ValueError(f"unknown leg {leg!r}")
 
 
@@ -1165,16 +1193,24 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
                 "target, and a record press on an armed slot cancels the arm instead of starting the take "
                 "(`handleArmedRecordPress`)")
 
-    # The two legs need different fixture *states*: the overdub successor must overdub into committed content,
-    # so B is seeded first and A last (the record button then addresses A without a playback queue); the record
-    # leg needs both targets genuinely empty and idle, because the firmware's switch carrier only carries a
-    # start into a target with no committed passes (`!track.hasCommittedPassesInSlot`).
+    # The legs need different fixture *states*, and that difference is the requirement:
+    #   * the **overdub** successor must overdub into committed content, so B is seeded first and A last (the
+    #     record button then addresses A without a playback queue);
+    #   * the **record** leg needs both targets genuinely empty and idle, because the firmware's switch carrier
+    #     only carries a start into a target with no committed passes (`!track.hasCommittedPassesInSlot`);
+    #   * the **mixed** leg needs both at once: A empty and idle, because A is a *record* capture, and B seeded,
+    #     because B's successor is an *overdub*. A is prepared last so it is the selected target when the leg
+    #     starts (the record button acts on the selected slot).
     leg_mark = len(_lines(capture_log))
     prepared = True
     try:
         if request.leg == "od":
             seed_take(request.slot_b, "b", 64, prepare_empty(request.slot_b, "b"))
             seed_take(request.slot_a, "a", 60, prepare_empty(request.slot_a, "a"))
+        elif request.leg == "mixed":
+            seed_take(request.slot_b, "b", 64, prepare_empty(request.slot_b, "b"))
+            mark_a = prepare_empty(request.slot_a, "a")
+            require_idle(request.slot_a, "a", mark_a)
         else:
             mark_b = prepare_empty(request.slot_b, "b")
             require_idle(request.slot_b, "b", mark_b)

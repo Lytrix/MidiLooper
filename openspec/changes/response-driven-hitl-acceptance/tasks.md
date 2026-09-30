@@ -528,8 +528,12 @@ ring's PSRAM, and `RING,head_bad` names any advance off a record boundary.
       [WINDOW-INVARIANT-EXECUTION.md](WINDOW-INVARIANT-EXECUTION.md). **What 5.1 still owes:** the record leg
       fails the new stop predicate because its *plan* still stops the global transport itself
       (`leg_gestures`' `a_stop`) — the oracle records that as a limitation naming the plan, and the
-      switch-carried B start that turns it green is 4.2's change; the *mixed* record-predecessor/overdub-
-      successor leg of the same requirement is 4.3's.
+      switch-carried B start that turned it green is 4.2's change (landed). The *mixed* record-predecessor/overdub-
+      successor leg of the same requirement now has its **flow half** landed (2026-09-30: `leg_gestures("mixed")`,
+      its own preparation branch — B seeded, A empty and idle — the composed record + overdub steps, and an oracle
+      that refuses to grade it by name rather than misgrading it with either existing mode's vocabulary); its
+      **grading, registration, stimulus profile and device leg** remain.
+      [MIXED-LEG-EXECUTION.md](MIXED-LEG-EXECUTION.md).
 - [x] 5.2 Integrate existing content parity and timing verifiers plus independent shutdown result; verify a failing content, timing or teardown result vetoes otherwise complete acceptance. Replay the preserved failure corpus and synthetic complete chains with deterministic expected verdicts.
       **2026-09-30 — the conjunction's external halves are integrated, each with its own veto.** New
       `hitl/acceptance_evidence.py` is a *reader* layer, not a second implementation: content parity is
