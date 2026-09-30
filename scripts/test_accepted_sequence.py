@@ -2629,27 +2629,93 @@ class MixedLegTests(unittest.TestCase):
                 self.assertEqual("WRONG_MODE_ROUTE", result)
 
 
-class MixedLegOracleTests(unittest.TestCase):
-    """The mixed leg's grading is deliberately *not* implemented: the oracle refuses it by name."""
+def mixed_chain_log(*, a_stops=1, window=True, switch=True, playback=False, b_start=True, b_exec=True,
+                    b_release=True, a_release=True) -> str:
+    """A synthetic **mixed** chain: A is a *record* interval (slot 4), B a seeded *overdub* interval (slot 5).
 
-    def test_the_oracle_refuses_to_grade_the_mixed_leg_rather_than_misgrade_it(self):
-        result = analyse(chain_log(), leg="mixed", slot_a=4, slot_b=5,
-                         metadata=METADATA, base_report=BASE_REPORT)
-        self.assertEqual("SETUP_INCOMPLETE", result.verdict)
-        self.assertEqual(3, result.exit_code)
-        check = by_name(result)["mixed_leg_grading"]
-        self.assertEqual("fail", check.status)
-        self.assertIn("not implemented", check.detail)
-        self.assertIn("overdub families", check.detail)
+    Each keyword removes or duplicates exactly one link, and the vocabulary is deliberately split: A's side is the
+    record families (`RECS`, `reentry_window_open`, `canonical_release`) and B's the overdub ones
+    (`DIAG,reentry,admit`, `stop_state`, `canonical_release`). Firmware rows are 0-based: A = 4 = 3, B = 5 = 4.
+    """
+    lines = [BOOT]
+    for i in range(a_stops):
+        lines.append(f"#CAP,{2000000 + i},RECS,stopToStopped,3,1900,0,1900,2304,0")
+    if window:
+        lines.append("#CAP,2100000,DIAG,reentry_window_open,3,1117,2304")
+    if switch:
+        lines.append("[25.100] [INFO] Loop 5: Switch gesture from slot 4")
+    if playback:
+        lines.append("[25.100] [INFO] Loop 5: Reaffirmed playback switch")
+    if b_start:
+        lines.append("#CAP,3000000,DIAG,reentry,admit,300,4,4,1")
+    if b_exec:
+        lines.append("#CAP,7000000,DIAG,stop_state,7,4,7,5,900,7000000,1,0,0,0")
+    if b_release:
+        lines.append("#CAP,8000000,DIAG,canonical_release,4,0,1536,8")
+    if a_release:
+        lines.append("#CAP,9000000,DIAG,canonical_release,3,40,1536,8")
+    lines.append("[27.100] [INFO] Loop 5: Stop Overdub")
+    return "\n".join(lines) + "\n"
+
+
+class MixedLegOracleTests(unittest.TestCase):
+    """The mixed leg's own grading: A's record links beside B's overdub links, and the gates unchanged."""
+
+    def run_mixed(self, text):
+        return analyse(text, leg="mixed", slot_a=4, slot_b=5, metadata=METADATA,
+                       base_report=BASE_REPORT, inputs=SUPPLIED_EVIDENCE)
+
+    def test_a_complete_mixed_chain_passes_with_both_vocabularies(self):
+        result = self.run_mixed(mixed_chain_log())
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict,
+                         [(c.name, c.status, c.detail) for c in result.checks])
+        checks = by_name(result)
+        # A's side is read as a *record* interval: one `RECS` stop, its window and its release.
+        for name in ("L1_a_stop_accepted_once", "L3_a_finalization_window", "L4_a_capacity_released"):
+            self.assertEqual("ok", checks[name].status, name)
+        # B's side as an *overdub* interval: its admission, its execution, its retirement.
+        for name in ("L5_successor_started", "L6_b_stop_executes_once", "L7_one_press_per_stop"):
+            self.assertEqual("ok", checks[name].status, name)
+        # The route is the capture-switch (B has committed passes, so no S4f.6 carrier), and the identity link
+        # asks for B's chain only -- A's is the record chain.
+        self.assertEqual("ok", checks["L5b_b_start_route"].status)
+        self.assertEqual("ok", checks["overdub_interval_identity"].status)
+        self.assertIn("A is this leg's *record* interval", checks["overdub_interval_identity"].detail)
+
+    def test_a_second_a_stop_fails_the_one_stop_link_on_the_record_side(self):
+        result = self.run_mixed(mixed_chain_log(a_stops=2))
+        self.assertEqual("fail", by_name(result)["L1_a_stop_accepted_once"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+    def test_a_playback_route_instead_of_the_switch_is_named_by_the_route_link(self):
+        result = self.run_mixed(mixed_chain_log(switch=False, playback=True))
+        check = by_name(result)["L5b_b_start_route"]
+        self.assertEqual("fail", check.status, check.detail)
+        self.assertIn("capture-switch gesture", check.detail)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+    def test_a_missing_a_record_stop_is_a_failure_not_a_gap(self):
+        """A's stop is the link the DEC-078 shape bounds, so its absence is the link to close."""
+        result = self.run_mixed(mixed_chain_log(a_stops=0))
+        self.assertEqual("fail", by_name(result)["L1_a_stop_accepted_once"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+    def test_a_window_less_mixed_chain_is_not_a_pass(self):
+        """The spec's mixed scenario asks for "A's identified ownership window", so its absence is graded."""
+        result = self.run_mixed(mixed_chain_log(window=False))
+        self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+        self.assertEqual(3, result.exit_code, "a staging outcome, not a chain violation")
+
+    def test_the_original_record_chain_cannot_prove_a_mixed_leg(self):
+        """Load-bearing: the record leg's own chain (RECA/RECS for B) is not mixed evidence."""
+        result = self.run_mixed(chain_log())
         self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
 
     def test_the_mixed_leg_is_drivable_from_the_wrapper_cli(self):
-        """The standalone CLI accepts the leg (the flow drives it); grading is what is not implemented yet."""
         from hitl_accepted_sequence import build_parser
         args = build_parser().parse_args(["--leg", "mixed", "--track", "8", "--slot-a", "4", "--slot-b", "5",
                                           "--no-upload", "--out-dir", "/tmp/mixed-not-run"])
         self.assertEqual("mixed", args.leg)
-
 
 
 
