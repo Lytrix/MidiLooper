@@ -255,7 +255,9 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                 Track& track = getCurrentTrack();
 
                 if (track.hasPendingDeferredOverdubStop()) {
-                    logger.info("Loop %d: Overdub finalization pending", slot + 1);
+                    // The overdub stop already returned the track to PLAYING. A slot gesture now
+                    // means select/queue playback or arm an empty target, never session undo or clear.
+                    handleToggleRecordForSlot(slot);
                     return;
                 }
 
