@@ -72,15 +72,47 @@ the oracle's own evidence inputs (`--metadata`, `--base-report`) from the runner
 them a route would report a weaker verdict than the oracle on the same log and the two entry points would
 disagree for a reason that has nothing to do with the log.
 
-## Remainder (4.4b) — named, with its ownership question
+## 4.4b — the flow extraction (landed 2026-09-30)
 
-The design's stronger form is that the sequence lives in a **stateless flow** and the standalone driver
-becomes a wrapper around the registered runner. That is a mechanical extraction of the leg body from
-`scripts/hitl_accepted_sequence.py` (~700 lines: the plan, the correlated waits, the scoped preparation, the
-census, the family read-back, the report assembly) into `hitl/flows/`, with the scenario declaring intent and
-the driver reduced to argument translation — and it has one genuine design question that must be answered
-first, not during the move: **who owns the family-counter read-back under the flow import gate**, since the
-driver's `_read_family_counters` reaches the serial layer a flow may not import (`hitl.serial`) while a
-scenario may not either. Until that owner is chosen, moving the body would either break the gate or leave two
-owners of one observation. The legs' device behaviour is unchanged by this slice: the wrapper still drives
-the sequence exactly as before, which is why every one of the 98 acceptance tests is untouched.
+The design's stronger form is now the implementation: the leg sequence lives in a **stateless flow**
+(`hitl/flows/accepted_sequence.py`, entry `drive_leg`), the session/authorization/report live in a host
+run scope (`hitl/accepted_sequence_run.py`, `RunRequest` → `run_accepted_sequence`), and
+`scripts/hitl_accepted_sequence.py` is an **argument-compatible wrapper** (same flags, exit codes and
+artifact layout) that builds a `RunRequest` and delegates.
+
+**The ownership question is answered.** The stopped-only per-family counter read-back is the **session's**:
+`ManagedCaptureSession.identity_stat_lines` owns the request, its fence and the decode (which stays in
+`hitl.serial.protocol`, the serial owner), so the flow calls one accessor instead of importing `hitl.serial`
+— the layer that is closed to both a flow and a scenario, and the reason the move could not simply carry
+`_read_family_counters` along. `read_family_counters` in the flow is now a thin, non-fatal caller of that
+accessor.
+
+**Both entry points reach one implementation.** `host_midi_hitl.py run` → the registered scenario (intent +
+the runner→CLI translation) → the wrapper → the run scope → the flow; the standalone CLI → the run scope →
+the flow. The scenario is what owns the translation (`accepted_sequence_argv`), so neither path can drift.
+
+**Rejected alternative, recorded:** routing the wrapper literally through `hitl.runner.main` would re-parse
+an already-parsed, argument-compatible CLI and relocate the run's artifacts (the scenario writes
+`<out>/accepted-sequence-<leg>`), changing a verified contract for no functional gain.
+
+**How the move was verified as a move.** Every one of the 23 moved functions was diffed against
+`git show HEAD:scripts/hitl_accepted_sequence.py`: 22 are byte-identical, and the 23rd differs only in one
+docstring word (`driver` → `flow`). `_Ctx` deliberately gained a `press_ms` parameter so there is one
+context stand-in rather than two. The diff found two *real* drifts, both fixed and now pinned by tests:
+
+* the seed's arm gate must accept the printed `Loop N: Start Recording` row and a `RECORDING` state, not just
+  an `ARMED` `DISP` row (measured `od-10`: the ring can lag the Serial row by seconds);
+* the report's census keys are the census's own 0-based firmware `(track, slot)` pairs, not the run's
+  1-based CLI numbering.
+
+**Evidence.** `test_accepted_sequence` **100/100** (two new: the printed-row arm receipt, and a run that dies
+after the census still leaving its milestone report — `od-08`'s lesson), `test_accepted_sequence_scenario`
+**38/38** (six new flow-layer pins: the sequence lives in the flow and not in the CLI, the wrapper's argument
+surface is unchanged, the flow imports nothing the layer may not, importing the flow loads no
+verify/reporting layer, the counter read-back is the session's accessor, and the milestone hook is called
+twice), `test_hitl_stimulus_authorization` **24/24** (repointed to the run scope's owner; the refusals are the
+same), the full host sweep **1,025 tests** with only the seven pre-existing unrelated failures,
+`pio test -e native` **2,643 cases (7 skipped, 2,636 succeeded)**, and **7 mutations red-proved** with
+byte-identical restores. Two of those mutations *survived the first run* — the seed's arm wires and the
+milestone write — which is exactly why those two tests exist now; the gap they exposed was real, not
+hypothetical.

@@ -15,10 +15,10 @@ This module is the registration half:
 - **The verifier** (`verify_accepted_sequence`) is the offline oracle itself, so `--verify-only` through
   the runner reaches the same verdict as the standalone oracle over the same log.
 
-The leg sequence still lives in the standalone driver (`scripts/hitl_accepted_sequence.py`); what is
-routed here is intent, arguments, authorization and the verdict. Moving the sequence itself into a
-stateless flow (so the driver becomes only a wrapper) is the remainder of this task and is recorded in
-`tasks.md`.
+The leg **sequence** is the stateless flow (`hitl.flows.accepted_sequence.drive_leg`); the **session,
+authorization and report** are the host run scope (`hitl.accepted_sequence_run`); the standalone CLI
+(`scripts/hitl_accepted_sequence.py`) is the argument-compatible wrapper both entry points agree on. This
+module declares intent (which leg, which targets, which authorization, which bounds) and owns the verdict.
 """
 
 from __future__ import annotations

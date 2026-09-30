@@ -352,6 +352,24 @@ class ManagedCaptureSession:
         finally:
             self.complete_command(nonce)
 
+    def identity_stat_lines(self, *, timeout_s: float = 6.0) -> Optional[list[str]]:
+        """The stopped-only per-family counter read-back rows, or None when the session cannot answer.
+
+        The single owner of this conversation: the request, its fence and the decode stay with the serial
+        owner (`hitl.serial.protocol`), because neither a flow nor a scenario may import that layer and two
+        callers asking the same question must not each grow their own parser. Read-only and non-fatal -- a
+        session that cannot answer costs the accounting evidence, never the run.
+        """
+        nonce, end_nonce = uuid.uuid4().hex, uuid.uuid4().hex
+        try:
+            accepted, _detail = self.send_command("!CAP_IDENTITY_STATS",
+                                                  nonce=nonce, end_nonce=end_nonce)
+            if not accepted:
+                return None
+            return self.fenced_response(nonce, end_nonce, timeout_s=timeout_s)
+        except Exception:  # a read-back must never be the thing that fails a run
+            return None
+
     def drain_capture_ring(self) -> bool:
         """Ask the owner to flush the capture ring. Read-only and self-framed.
 
