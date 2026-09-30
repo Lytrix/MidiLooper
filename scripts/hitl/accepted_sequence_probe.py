@@ -11,12 +11,15 @@ The leg is therefore proven only as an **ordered chain**, each link on its own e
     L4  B started while A still finalized -- the acceptance, not a queue that never ran
     L5  B's stop executed exactly once, after A released
     L6  no second press was needed: exactly one stop request per interval
-    L7  the transport/display stayed healthy: `overflow_free`, no capture-ring loss, transport_ok
+L7  the transport/display stayed healthy: `overflow_free` (no capture-ring loss), transport_ok
 
 A missing or reordered link is never a pass. Verdicts and exit codes keep "not this shape" apart from "this run
 is not evidence":
 
-  * `SETUP_INCOMPLETE` (3): freshness/identity/staging -- fix the run
+  * `SETUP_INCOMPLETE` (3): freshness/identity/staging -- fix the run. Staging includes the *shape* links:
+    if A's finalization window or its release never appeared, the acceptance was not exercised
+    (`captures/s4f22-rec-rec-01` and `.../s4f13-od4-20260927_020114` are NOT_EXERCISED runs, not a
+    firmware verdict).
   * `INSUFFICIENT_EVIDENCE` (4): staged, but a link has no supporting telemetry -- fix the telemetry
   * `ACCEPTED_SEQUENCE_FAIL` (2): the chain is violated
   * `ACCEPTED_SEQUENCE_PASS` (0): every link on its own evidence
@@ -50,7 +53,18 @@ HUMAN_DENIAL_RE = re.compile(r"Overdub stop refused")
 HUMAN_WINDOW_RE = re.compile(r"Reentry window open slot=(\d+)")
 HUMAN_RETAINED_RE = re.compile(r"switch and record start retained")
 HUMAN_START_RE = re.compile(r"Recording started @ tick")
-RING_LOSS_RE = re.compile(r"RING,(?:tier_a_evicted|shed|overflow)")
+# Session-invalidating ring rows. `overflow` / `critical_rejected` are critical-record losses and `wiped`
+# is an unreadable-head reset, so the capture cannot support a sequence conclusion --
+# `scripts/hitl/serial_collector.py` marks the same three `CaptureIntegrity.INCOMPLETE`. `tier_a_evicted`
+# stays a setup failure because this oracle's gate is pinned to it (see `test_accepted_sequence.py`).
+# Deliberate timing **shedding is not a loss**: `DebugSessionCapture` drops only non-Tier-A diagnostics in
+# the playback flush instead of blocking the transport on USB I/O (its own comment: "reported as either
+# kind of loss" applies to `overflow`/`tier_a_evicted`, not to shed), and the guide says "Ordinary
+# `RING,shed` remains separate". Counting it as one made **every** fresh-boot run `SETUP_INCOMPLETE` --
+# recorded as an over-strict gate in the S4f.17 packet and `tasks.md` (2026-09-27) and again for
+# `captures/s4f22-dec096-od-01` (2026-09-30).
+RING_LOSS_RE = re.compile(r"RING,(?:tier_a_evicted|overflow|critical_rejected|wiped)")
+RING_SHED_RE = re.compile(r"RING,shed")
 IDENTITY_RE = re.compile(r"git_commit|firmware_hex_sha256")
 
 
@@ -134,12 +148,21 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
             f"base report capture_integrity={integrity}", "setup")
         add("observation_tail_complete", OK if complete else FAIL,
             f"base report capture_complete={complete}", "setup")
-
     ring_hits = [l.strip()[:120] for l in lines if RING_LOSS_RE.search(l)]
     add("overflow_free", OK if not ring_hits else FAIL,
-        "no capture-ring eviction or shed" if not ring_hits else
+        "no capture-ring eviction or critical loss" if not ring_hits else
         f"{len(ring_hits)} ring-loss row(s), first: {ring_hits[0]}", "setup")
     evidence["ring_loss"] = ring_hits
+
+    # Timing shedding is reported, never fatal: the policy discards non-Tier-A diagnostics so the playback
+    # turn never blocks on USB I/O, and it is distinguishable from "nothing was dropped at all" only by
+    # name. Reported as `ok` with the rows attached, so a reader still sees which windows shed.
+    shed_hits = [l.strip()[:120] for l in lines if RING_SHED_RE.search(l)]
+    add("ring_shed_diagnostics_only", OK,
+        "no timing shed" if not shed_hits else
+        f"{len(shed_hits)} timing-shed row(s) -- non-Tier-A diagnostics discarded by policy, not a ring "
+        f"loss; first: {shed_hits[0]}", "setup")
+    evidence["ring_shed"] = shed_hits
 
     # ---------------- L1/L6: the stop requests ----------------
     stops_a = [(e.us, e.body) for e in entries
@@ -195,9 +218,16 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
         add("L3_a_finalization_window", OK,
             f"timely human row only: {human_windows[0][1][:120]}", "retention", "L3")
     else:
+        # **Not staged, not violated.** The row's own reading ("this sequence did not exercise the
+        # acceptance") is a staging outcome, so it belongs to the "fix the run" class: a run whose
+        # stop never froze the predecessor has not put the acceptance on trial, and calling that a
+        # chain violation would invent a firmware verdict (`captures/s4f13-od4-20260927_020114` ended
+        # mid-sequence after a queued switch, and both the S4f.17 packet and `tasks.md` attribute it
+        # to the leg plan). The same applies to the record leg by design: its production stop publishes
+        # inline, so no window is the expected shape there and the packet classifies it NOT_EXERCISED.
         add("L3_a_finalization_window", FAIL,
             f"no `reentry_window_open` and no `Reentry window open slot={a0}` row: A never froze into a "
-            "deferred finalization, so this sequence did not exercise the acceptance", "retention", "L3")
+            "deferred finalization, so this sequence did not exercise the acceptance", "setup", "L3")
 
     releases = [(e.us, e.body) for e in entries
                 if (m := CANONICAL_RELEASE_RE.match(e.body)) and int(m.group(1)) == a0]
@@ -205,11 +235,13 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
         evidence["releases"].append(f"{us}: {body}")
     human_releases = [l for l in lines if re.search(rf"Reentry released slot={a0}(?:\s|$)", l)]
     l4_released = bool(releases) or bool(human_releases)
+    # A release missing next to a missing window is the same staging outcome, not a second violation
+    # (`test_window_open_is_not_release` still fails L4 when the window is present without a release).
     add("L4_a_capacity_released", OK if l4_released else FAIL,
         (releases[0][1] + f" at {releases[0][0]} us") if releases
         else ("A retired (human edge only)" if human_releases else
               "no release edge for A: it never retired, so B's stop could not be bounded by it"),
-        "retention", "L4")
+        "retention" if l4_released else "setup", "L4")
 
     # ---------------- L5: the successor started while A finalized ----------------
     # A *successor* start is one that follows A's stop; a start before it is the seed that set the leg up, and

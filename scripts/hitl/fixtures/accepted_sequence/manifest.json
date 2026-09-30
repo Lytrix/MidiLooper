@@ -73,7 +73,8 @@
     "slot_b": 5,
     "metadata": null,
     "base_report": null,
-    "expected": "SETUP_INCOMPLETE"
+    "expected": "INSUFFICIENT_EVIDENCE",
+    "note": "Re-graded 2026-09-30: the only setup failure was a `RING,shed,1` row, which is deliberate timing shedding of non-Tier-A diagnostics, not a ring loss. A's window and release were staged, so the honest grade is INSUFFICIENT_EVIDENCE (the od leg's L1/L5/L6/L7 have no overdub-interval telemetry). Still a non-pass."
   },
   {
     "file": "s4f13-od3-20260927_015939.log",
@@ -149,7 +150,8 @@
     "slot_b": 5,
     "metadata": null,
     "base_report": null,
-    "expected": "SETUP_INCOMPLETE"
+    "expected": "INSUFFICIENT_EVIDENCE",
+    "note": "Re-graded 2026-09-30: same as od-01 -- one `RING,shed,1` row only; staged but the od links lack telemetry. Still a non-pass."
   },
   {
     "file": "s4f13-od4-20260927_020114.log",
@@ -231,7 +233,8 @@
     "slot_b": 5,
     "metadata": null,
     "base_report": null,
-    "expected": "SETUP_INCOMPLETE"
+    "expected": "SETUP_INCOMPLETE",
+    "note": "Unchanged: A's finalization window and release never appeared, so the acceptance was never staged (recorded as a leg-plan defect, not a firmware verdict)."
   },
   {
     "file": "s4f13-carrier-20260927_020437.log",
@@ -305,6 +308,7 @@
     "slot_b": 5,
     "metadata": null,
     "base_report": null,
-    "expected": "SETUP_INCOMPLETE"
+    "expected": "INSUFFICIENT_EVIDENCE",
+    "note": "Re-graded 2026-09-30: same shape (one shed row); still a non-pass."
   }
 ]

@@ -18,12 +18,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hitl_accepted_sequence import (  # noqa: E402
+    DEFAULT_CENSUS_ATTEMPTS,
+    DEFAULT_SEED_PRESS_ATTEMPTS,
     DEFAULT_TAP_WINDOW_S,
     Gesture,
+    _await_slot_disp,
     _Ctx,
     _emit,
-    _switch_pending,
+    _PressSpacing,
+    _run_census,
     _run_plan,
+    _switch_pending,
     leg_gestures,
     to_firmware_slot,
 )
@@ -66,6 +71,29 @@ def emit_all(gestures, *, press_ms=120):
 
 def loop_note(slot_1based: int) -> int:
     return LOOP_SELECT_NOTE_BASE + slot_1based - 1
+
+DISP_STAMP_SEQ = {"t": 0}
+
+
+def disp_row(slot_1based: int, state: str, *, stamp_us: int | None = None) -> str:
+    """One device display row for `slot_1based`: the receipt the driver confirms a gesture against."""
+    if stamp_us is None:
+        DISP_STAMP_SEQ["t"] += 1000
+        stamp_us = DISP_STAMP_SEQ["t"]
+    return f"#CAP,{stamp_us},DISP,{slot_1based - 1},{state},0,0"
+
+
+def answering_presses(log: Path, *, states: tuple[str, ...] = ("ARMED", "RECORDING")) -> object:
+    """A `slots.press_slot_record` stand-in that answers the press the way the device does.
+
+    The driver confirms every gesture against a live `DISP` row for that slot, so a fixture that patches the
+    presses away has to model that row too -- otherwise it tests the wait instead of the flow.
+    """
+    def press(_ctx, slot_number, press_ms=None):
+        with log.open("a", encoding="utf-8") as handle:
+            for state in states:
+                handle.write(disp_row(slot_number, state) + "\n")
+    return press
 
 
 class GesturePlanTests(unittest.TestCase):
@@ -121,7 +149,7 @@ class GesturePlanTests(unittest.TestCase):
 
 def chain_log(*, window: bool = True, release: bool = True, denials: bool = False,
               start: bool = True, stops_a: int = 1, stops_b: int = 1, ring: bool = False,
-              boot: bool = True, human_window: bool = False) -> str:
+              boot: bool = True, human_window: bool = False, shed: int = 0) -> str:
     """A synthetic session log for one leg. Each keyword removes or duplicates exactly one link."""
     lines = [BOOT if boot else "Logger initialized with level: 3"]
     if human_window:
@@ -146,6 +174,8 @@ def chain_log(*, window: bool = True, release: bool = True, denials: bool = Fals
         lines.append(f"#CAP,{6000000 + i},RECS,stopToStopped,4,1900,0,1900,2304,0")
     if ring:
         lines.append("#CAP,7000000,RING,tier_a_evicted,9790,first=2380221900")
+    for i in range(shed):
+        lines.append(f"#CAP,{7000000 + i},RING,shed,1")
     return "\n".join(lines) + "\n"
 
 
@@ -418,10 +448,9 @@ class PreparationIntegrationTests(unittest.TestCase):
             log.write_text("")
             capture = SimpleNamespace(
                 session_log=log,
-                # The census channel refuses here so these cases exercise the
-                # gesture-only preparation fallback unchanged.
-                send_command=lambda *a, **k: (False, "no census in this fixture"),
-                library_observation=lambda *a, **k: None)
+                # A real census channel: the target is filled, so the flow reaches the clear.
+                send_command=lambda *a, **k: (True, "queued"),
+                library_observation=lambda *a, **k: SimpleNamespace(closed=True, rows=[]))
             shutdown = SimpleNamespace(result=SimpleNamespace(
                 ok=True, as_dict=lambda: {"status": "complete"}))
 
@@ -442,9 +471,12 @@ class PreparationIntegrationTests(unittest.TestCase):
                 mock("mido.open_output", return_value=FakePort())
                 mock("_find_midi_port", return_value="fake")
                 mock("slots.press_track")
-                record_press = mock("slots.press_slot_record")
+                record_press = mock("slots.press_slot_record",
+                                    side_effect=answering_presses(log))
                 mock("stopped_preparation.clear_slot", return_value=refused)
+                mock("observation_window", return_value=({(7, 3): True, (7, 4): True}, True))
                 mock("_ensure_transport", return_value=True)
+                mock("_wait_for", return_value=True)
                 mock("_run_plan", return_value="DROVE_LEG")
                 mock("time.sleep")
                 stack.enter_context(patch("builtins.print"))
@@ -453,8 +485,13 @@ class PreparationIntegrationTests(unittest.TestCase):
                            "--slot-b", "5", "--notes", "1", "--no-upload",
                            "--out-dir", str(out)])
 
-            # The refused clear is the target's own failure: no record press followed it.
-            self.assertEqual(0, record_press.call_count)
+            self.assertEqual(3, rc)
+            report = json.loads((out / "accepted-sequence.json").read_text())
+            # The refused clear is the target's own failure: the only press is the selection that
+            # precedes it, and no seed (arm) press follows.
+            self.assertEqual(1, record_press.call_count)
+            self.assertIn("prepare_slot_a_selected", [e.get("event") for e in report["events"]])
+            self.assertNotIn("seed_a_press", [e.get("event") for e in report["events"]])
             self.assertEqual(3, rc)
             report = json.loads((out / "accepted-sequence.json").read_text())
             self.assertEqual("PREPARATION_FAILED", report["result"])
@@ -477,10 +514,9 @@ class PreparationIntegrationTests(unittest.TestCase):
             log.write_text("")
             capture = SimpleNamespace(
                 session_log=log,
-                # The census channel refuses here so these cases exercise the
-                # gesture-only preparation fallback unchanged.
-                send_command=lambda *a, **k: (False, "no census in this fixture"),
-                library_observation=lambda *a, **k: None)
+                # A real census channel: both targets are filled, so each seed reaches its clear.
+                send_command=lambda *a, **k: (True, "queued"),
+                library_observation=lambda *a, **k: SimpleNamespace(closed=True, rows=[]))
             shutdown = SimpleNamespace(result=SimpleNamespace(
                 ok=True, as_dict=lambda: {"status": "complete"}))
 
@@ -501,8 +537,9 @@ class PreparationIntegrationTests(unittest.TestCase):
                 mock("mido.open_output", return_value=FakePort())
                 mock("_find_midi_port", return_value="fake")
                 mock("slots.press_track")
-                mock("slots.press_slot_record")
+                mock("slots.press_slot_record", side_effect=answering_presses(log))
                 clear = mock("stopped_preparation.clear_slot", return_value=cleared)
+                mock("observation_window", return_value=({(7, 3): True, (7, 4): True}, True))
                 mock("_ensure_transport", return_value=True)
                 mock("_wait_for", return_value=True)
                 mock("_run_plan", return_value="DROVE_LEG")
@@ -597,7 +634,8 @@ class CensusPreparationTests(unittest.TestCase):
                 mock("DeviceSession", side_effect=device)
                 mock("mido.open_output", return_value=FakePort())
                 mock("_find_midi_port", return_value="fake")
-                mock("slots.press_track"); mock("slots.press_slot_record")
+                mock("slots.press_track")
+                mock("slots.press_slot_record", side_effect=answering_presses(log))
                 clear = mock("stopped_preparation.clear_slot")
                 mock("observation_window", return_value=({(7, 3): False, (7, 4): False}, True))
                 mock("_ensure_transport", return_value=True); mock("_wait_for", return_value=True)
@@ -637,9 +675,10 @@ class CensusPreparationTests(unittest.TestCase):
                 mock("mido.open_output", return_value=FakePort())
                 mock("_find_midi_port", return_value="fake")
                 mock("slots.press_track")
-                select = mock("slots.press_slot_record")
+                select = mock("slots.press_slot_record", side_effect=answering_presses(log))
                 mock("stopped_preparation.clear_slot", return_value=cleared)
-                mock("observation_window", return_value=({(7, 3): True}, True))
+                # Both targets are filled: neither may be long-pressed before it is selected.
+                mock("observation_window", return_value=({(7, 3): True, (7, 4): True}, True))
                 mock("_ensure_transport", return_value=True); mock("_wait_for", return_value=True)
                 mock("_run_plan", return_value="DROVE_LEG"); mock("time.sleep")
                 stack.enter_context(patch("builtins.print"))
@@ -665,9 +704,8 @@ class ManagedRunTests(unittest.TestCase):
             log.write_text("")
             capture = SimpleNamespace(
                 session_log=log,
-                # The census channel refuses here so these cases exercise the
-                # gesture-only preparation fallback unchanged.
-                send_command=lambda *a, **k: (False, "no census in this fixture"),
+                # No clear is requested here (`--no-clear-targets`), so no census is read.
+                send_command=lambda *a, **k: (False, "no census requested in this fixture"),
                 library_observation=lambda *a, **k: None)
             shutdown = SimpleNamespace(result=SimpleNamespace(
                 ok=True, as_dict=lambda: {"status": "complete"}))
@@ -688,7 +726,7 @@ class ManagedRunTests(unittest.TestCase):
                 mock("mido.open_output", return_value=FakePort())
                 mock("_find_midi_port", return_value="fake")
                 mock("slots.press_track")
-                select = mock("slots.press_slot_record")
+                select = mock("slots.press_slot_record", side_effect=answering_presses(log))
                 mock("_ensure_transport", return_value=True)
                 mock("_wait_for", return_value=True)
                 mock("time.sleep")
@@ -704,6 +742,230 @@ class ManagedRunTests(unittest.TestCase):
             report = json.loads((out / "accepted-sequence.json").read_text())
             self.assertEqual("UNEXPECTED_PLAYBACK_SWITCH", report["result"])
             self.assertEqual("complete", report["shutdown"]["status"])
+
+
+class EvidenceGateTests(unittest.TestCase):
+    """Every gesture is gated on the device's own slot-scoped evidence.
+
+    Three measured device shapes drive this class (`captures/s4f22-dec096-{od-02,rec-01,mixed-01}`):
+    a lost census turned a long press on a filled, non-selected target into a *playback start*; two taps of
+    one button 0 ms apart merged into `Loop 3 (double)` = `OVERDUB_FOR_SLOT`; and two presses that a
+    predecessor's in-flight Record job swallowed produced a leg with no take at all -- and, because the abort
+    raised, no report either.
+    """
+
+    def _drive(self, argv, *, census=None, press=None, clear=None, log_lines=(),
+               census_readable=True, run_plan="DROVE_LEG", real_ensure_transport=False):
+        """Run `main` against a fake managed capture; returns the report plus what the wire saw.
+
+        `press(log, slot_number, attempt)` models the device's answer to a loop-button press: the driver's
+        gates read `DISP` rows out of `log`, so a press that writes none is a *swallowed* press. The clock is
+        faked (sleep advances it) so a bounded wait costs nothing and the press *spacing* stays observable.
+        """
+        import contextlib
+        import json
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from hitl_accepted_sequence import main
+
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        log = root / "session.log"
+        log.write_text("".join(line + "\n" for line in log_lines))
+        occupancy = {(7, 3): True, (7, 4): True} if census is None else dict(census)
+        capture = SimpleNamespace(
+            session_log=log,
+            send_command=(lambda *a, **k: (True, "queued")) if census_readable
+            else (lambda *a, **k: (False, "census channel refused in this fixture")),
+            library_observation=(lambda *a, **k: SimpleNamespace(closed=True, rows=[])) if census_readable
+            else (lambda *a, **k: None))
+        shutdown = SimpleNamespace(result=SimpleNamespace(
+            ok=True, as_dict=lambda: {"status": "complete"}))
+        port = FakePort()
+        clock = {"t": 0.0}
+        presses: list[tuple[int, float]] = []
+
+        def record_press(_ctx, slot_number, press_ms=None):
+            presses.append((slot_number, clock["t"]))
+            if press is not None:
+                press(log, slot_number, len(presses))
+
+        @contextlib.contextmanager
+        def managed(**kw):
+            yield capture
+
+        @contextlib.contextmanager
+        def device(**kw):
+            yield shutdown
+
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+
+        def mock(name, **kw):
+            return stack.enter_context(patch("hitl_accepted_sequence." + name, **kw))
+
+        mock("ManagedCaptureSession", side_effect=managed)
+        mock("DeviceSession", side_effect=device)
+        mock("mido.open_output", return_value=port)
+        mock("_find_midi_port", return_value="fake")
+        mock("slots.press_track")
+        mock("slots.press_slot_record", side_effect=record_press)
+        clear_mock = mock("stopped_preparation.clear_slot", return_value=(
+            clear if clear is not None else stopped_preparation.ClearOutcome(0, ClearStatus.CLEARED, "ok")))
+        mock("observation_window", return_value=(occupancy, True))
+        if not real_ensure_transport:
+            mock("_ensure_transport", return_value=True)
+        mock("_wait_for", return_value=True)
+        mock("_run_plan", return_value=run_plan)
+        stack.enter_context(patch("time.monotonic", lambda: clock["t"]))
+        stack.enter_context(
+            patch("time.sleep", lambda seconds: clock.__setitem__("t", clock["t"] + max(seconds, 0.0))))
+        stack.enter_context(patch("builtins.print"))
+        out = root / "run"
+        rc = main(list(argv) + ["--no-upload", "--out-dir", str(out)])
+        report = json.loads((out / "accepted-sequence.json").read_text())
+        return SimpleNamespace(rc=rc, report=report, presses=presses, clear=clear_mock, port=port,
+                               log=log, events=[e.get("event") for e in report["events"]])
+
+    def test_an_unavailable_census_refuses_before_any_gesture(self):
+        """`od-02`: a lost census used to leave the driver long-pressing an unknown target."""
+        fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1"],
+                              census_readable=False)
+        self.assertEqual([], fixture.presses, "no loop button may be pressed on an unknown target")
+        self.assertEqual(0, fixture.clear.call_count, "no clear may be pressed on an unknown target")
+        self.assertEqual(3, fixture.rc)
+        self.assertEqual("PREPARATION_FAILED", fixture.report["result"])
+        self.assertIsNone(fixture.report["census"])
+        self.assertEqual([], fixture.report["preparation"])
+        self.assertIn("census unavailable for slot 5", fixture.report["preparation_error"])
+        self.assertIn("refusing before any gesture", fixture.report["preparation_error"])
+        self.assertIn("prepare_slot_b_census_unavailable", fixture.events)
+        # One retry per remaining attempt, and the transport is never touched.
+        self.assertEqual(DEFAULT_CENSUS_ATTEMPTS - 1, fixture.events.count("census_retry"))
+        self.assertNotIn(GLOBAL_TRANSPORT_NOTE, fixture.port.note_sequence())
+
+    def test_a_swallowed_selection_press_is_named_and_never_pressed_again(self):
+        """`mixed-01`: a predecessor's in-flight stop holds the selection, so the press leaves no row."""
+        fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1",
+                               "--arm-timeout-s", "0.0"], press=None)
+        self.assertEqual(1, len(fixture.presses), "a silent selection is not a reason to press again")
+        self.assertEqual(0, fixture.clear.call_count,
+                         "a long press on a filled, non-selected slot starts playback, not a clear")
+        self.assertEqual(3, fixture.rc)
+        self.assertEqual("PREPARATION_FAILED", fixture.report["result"])
+        self.assertIn("prepare_slot_b_selected", fixture.events)
+        self.assertIn("was not selected by its own press", fixture.report["preparation_error"])
+        self.assertNotIn(GLOBAL_TRANSPORT_NOTE, fixture.port.note_sequence())
+
+    def test_a_swallowed_seed_press_never_starts_the_transport(self):
+        """The mixed leg's seed press was swallowed; the old fallback started the transport anyway."""
+        fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1",
+                               "--arm-timeout-s", "0.0"], census={(7, 4): False}, press=None,
+                              real_ensure_transport=True)
+        self.assertEqual(DEFAULT_SEED_PRESS_ATTEMPTS, len(fixture.presses),
+                         "a bounded number of gated presses, then a named failure")
+        self.assertEqual(3, fixture.rc)
+        self.assertEqual("PREPARATION_FAILED", fixture.report["result"])
+        self.assertIn("never armed", fixture.report["preparation_error"])
+        self.assertEqual([False] * DEFAULT_SEED_PRESS_ATTEMPTS,
+                         [e["armed"] for e in fixture.report["events"]
+                          if e.get("event") == "seed_b_press"])
+        self.assertNotIn(GLOBAL_TRANSPORT_NOTE, fixture.port.note_sequence(),
+                         "starting the transport records nothing and hides the absent take")
+        gap = fixture.presses[1][1] - fixture.presses[0][1]
+        self.assertGreaterEqual(gap, DEFAULT_TAP_WINDOW_S,
+                                "a retry inside the tap window merges into Loop N (double)")
+
+    def test_a_retry_after_a_swallowed_press_arms_on_its_own_slot_row(self):
+        """The working two-press pattern: the first press only moves focus, the second arms."""
+        def press(log: Path, slot_number: int, attempt: int) -> None:
+            if attempt == 1:
+                return
+            with log.open("a", encoding="utf-8") as handle:
+                handle.write(disp_row(slot_number, "ARMED") + "\n")
+                handle.write(disp_row(slot_number, "RECORDING") + "\n")
+
+        fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1"],
+                              census={(7, 3): False, (7, 4): False}, press=press)
+        self.assertEqual(0, fixture.rc)
+        self.assertEqual("DROVE_LEG", fixture.report["result"])
+        self.assertEqual([False, True],
+                         [e["armed"] for e in fixture.report["events"] if e.get("event") == "seed_b_press"])
+        self.assertTrue(any(",DISP,4,ARMED," in line for line in fixture.log.read_text().splitlines()))
+
+    def test_a_dim_slot_row_cannot_confirm_a_gesture(self):
+        """Slot and freshness both matter: another slot's row, or a drained one, is not this gesture's."""
+        with __import__("tempfile").TemporaryDirectory() as temp:
+            log = Path(temp) / "session.log"
+            log.write_text("\n".join([
+                "#CAP,5000,RING,stats,1",           # newest stamp first
+                disp_row(3, "ARMED", stamp_us=1000),  # drained history: older than the row above
+                disp_row(5, "ARMED", stamp_us=6000),  # live, but slot 5's, not the target's
+            ]) + "\n")
+            self.assertIsNone(_await_slot_disp(log, 0, 2, ("ARMED",), 0.0),
+                              "a drained slot-3 row must not confirm slot 3's gesture")
+            self.assertIsNotNone(_await_slot_disp(log, 0, 4, ("ARMED",), 0.0))
+            self.assertIsNone(_await_slot_disp(log, 0, 4, ("RECORDING",), 0.0))
+
+    def test_a_lost_census_window_is_retried_before_the_target_is_undecidable(self):
+        """One lost window is a delivery outcome: `od-02` answered on the retry."""
+        from types import SimpleNamespace
+
+        rows = ["#CAP,1,LIBOBS,B,a=1,e=0,s=64",
+                "#CAP,2,LIBOBS,S,t=7,s=3,st=2,c=n,o=2,q=5,w=0,m=1,g=0,e=0,p=1,"
+                "k=1,kp=1,kr=1,kc=1,a=0,h=0,l=0,v=0,n=0,i=0,x=0",
+                "#CAP,3,LIBOBS,E,a=1,b=1,t=1,r=0,s=1,P=1,R=1,x=1"]
+        with __import__("tempfile").TemporaryDirectory() as temp:
+            log = Path(temp) / "session.log"
+            log.write_text("")
+            answers = [None, SimpleNamespace(rows=rows)]
+            capture = SimpleNamespace(send_command=lambda *a, **k: (True, "queued"),
+                                      library_observation=lambda *a, **k: answers.pop(0))
+            events: list[dict] = []
+            occupied = _run_census(capture, log, events, attempts=3, retry_delay_s=0.0)
+            self.assertEqual({(7, 3): True}, occupied)
+            self.assertEqual(["census_lost", "census_retry", "census"], [e["event"] for e in events])
+            # Every attempt failing is still None -- never an empty library.
+            capture.library_observation = lambda *a, **k: None
+            events.clear()
+            self.assertIsNone(_run_census(capture, log, events, attempts=3, retry_delay_s=0.0))
+            self.assertIsNone(events[-1].get("census"))
+
+
+class PressSpacingTests(unittest.TestCase):
+    """The tap window is per button, and a repeat inside it is a *different* gesture."""
+
+    def _guard(self, clock):
+        from unittest.mock import patch
+        patcher = patch("time.sleep", lambda s: clock.__setitem__("t", clock["t"] + max(s, 0.0)))
+        now_patcher = patch("time.monotonic", lambda: clock["t"])
+        self.addCleanup(patcher.stop)
+        self.addCleanup(now_patcher.stop)
+        patcher.start()
+        now_patcher.start()
+        return _PressSpacing()
+
+    def test_a_second_press_waits_out_the_window(self):
+        clock = {"t": 0.0}
+        guard = self._guard(clock)
+        self.assertEqual(0.0, guard.before(52))
+        self.assertEqual(DEFAULT_TAP_WINDOW_S, round(guard.before(52), 6))
+        self.assertEqual(DEFAULT_TAP_WINDOW_S, round(clock["t"], 6))
+
+    def test_a_press_after_the_window_does_not_wait(self):
+        clock = {"t": 0.0}
+        guard = self._guard(clock)
+        guard.before(52)
+        clock["t"] = DEFAULT_TAP_WINDOW_S + 1.0
+        self.assertEqual(0.0, guard.before(52))
+
+    def test_the_window_is_per_button(self):
+        clock = {"t": 0.0}
+        guard = self._guard(clock)
+        guard.before(52)
+        self.assertEqual(0.0, guard.before(53), "another slot's button is a different tap sequence")
 
 
 class OracleTests(unittest.TestCase):
@@ -733,6 +995,35 @@ class OracleTests(unittest.TestCase):
         result = run(chain_log(ring=True))
         self.assertEqual("SETUP_INCOMPLETE", result.verdict)
         self.assertEqual("fail", by_name(result)["overflow_free"].status)
+
+    def test_every_session_invalidating_ring_row_is_a_setup_failure(self):
+        """`overflow`/`critical_rejected`/`wiped` are exactly the rows `serial_collector` marks INCOMPLETE."""
+        for row in ("#CAP,7000000,RING,overflow,512,3",
+                    "#CAP,7000000,RING,critical_rejected,2,100",
+                    "#CAP,7000000,RING,wiped,1,4096,1000"):
+            with self.subTest(row=row):
+                result = run(chain_log() + row + "\n")
+                self.assertEqual("SETUP_INCOMPLETE", result.verdict)
+                self.assertEqual("fail", by_name(result)["overflow_free"].status)
+
+    def test_a_timing_shed_is_reported_but_is_not_a_setup_failure(self):
+        """Regression (2026-09-27 and `captures/s4f22-dec096-od-01`): a deliberate timing shed is not a loss.
+
+        `DebugSessionCapture` sheds only non-Tier-A diagnostics in the playback flush instead of blocking the
+        transport on USB I/O, so counting it as ring loss made **every** fresh-boot leg `SETUP_INCOMPLETE` and
+        hid the links the run actually failed to close.
+        """
+        baseline = run(chain_log())
+        result = run(chain_log(shed=3))
+        self.assertEqual(baseline.verdict, result.verdict,
+                         "a shed must not change the verdict relative to a shed-free log: "
+                         f"{baseline.verdict} -> {result.verdict}")
+        self.assertEqual("ok", by_name(result)["overflow_free"].status)
+        shed_check = by_name(result)["ring_shed_diagnostics_only"]
+        self.assertEqual("ok", shed_check.status)
+        self.assertIn("3 timing-shed row(s)", shed_check.detail)
+        self.assertEqual(3, len(result.evidence["ring_shed"]))
+        self.assertEqual([], result.evidence["ring_loss"])
 
     def test_a_missing_boot_banner_is_a_setup_failure(self):
         result = run(chain_log(boot=False))
