@@ -154,3 +154,23 @@ Three capture attempts through the authoritative entry point (`scripts/host_midi
 content authorization in this session. Until such a run exists, the row content rests on the native transition
 fixture (which drives the real latch, park and consumption paths) and on the read-back showing the family at
 zero rather than being absent.
+
+### 6.1 Two further attempts, and the exact route that remains
+
+The owner granted a standing authorization in this session: **any slot may be cleared or used, without asking
+again** (`2026-09-30`). With that, the retention handoff driver — the DEC-078 shape whose `b_stop_request` is
+"denied on capacity inside A's window", and the recipe whose 2026-09-26 runs produced
+`accepted_stop_finalizer_wait` — was attempted twice on the documented scratch targets (track 8, A=4, B=5,
+C=8; `captures/s4f22-latch-01`, `-02`). **Both aborted in the driver, before any gesture of the leg mattered:**
+`RuntimeError: slot 4 never started recording` at `_seed_slot` — the older seed-press path that
+`hitl_accepted_sequence.py` was built to replace (its own notes: the arm press can be swallowed while a
+predecessor's Record job holds the selection). No latch row was emitted in either run (`latch_rows=0`), and the
+device was left clean (no shutdown latch, transport stopped).
+
+So the remaining route to the row content is **host-tooling, not firmware**: either give the modern driver the
+denied step it deliberately omits (its overdub plan is `critical_window_gestures(...)` minus
+`c_switch_request`, and its `b_stop_request` only denies when the predecessor's window is still open — the
+2-bar seed closes it first, which is why `od-13` admitted both stops), or repair the legacy driver's seed path.
+Either way the firmware side is done and needs no further change: the family is wired, counted and read back on
+hardware, and the row content is pinned by the native transition fixture that drives the real latch, park and
+consumption paths.
