@@ -297,38 +297,63 @@ def _drain_now(drain) -> None:
 
 
 def _slot_disp_rows(capture_log: Path, after: int, slot0: int,
-                    states: Optional[tuple[str, ...]] = None) -> list[str]:
-    """`DISP` rows naming `slot0` that were **emitted after** the gesture at `after`.
+                    states: Optional[tuple[str, ...]] = None,
+                    human: tuple[str, ...] = ()) -> list[str]:
+    """Rows that name the gesture at `after`: `slot0`'s `DISP` state, or one of the `human` markers.
 
-    Qualified by the device's own stamp, not by file position: the capture ring flushes in batches, so a
-    take's later rows can land *before* an earlier flood of them in the file. Measured on device
-    (`captures/s4f22-dec096-od-03`): the seed's `DISP,4,RECORDING` rows (stamps 56.81 s onward, ~30/s for
-    the whole take) were followed in file order by rows stamped 85.98 s, so an order-based freshness filter
-    read the RECORDING rows as drained history and reported that the take never started -- while the
-    device had started it, and `Recording started @ tick 0` with `RECA,4,0` was in the same log. A stamp
-    floor keeps the anti-stale property (a row emitted *before* the gesture is never its receipt) without
-    depending on the order the ring happened to flush.
+    Qualified by the device's own clock, not by file position. The capture ring flushes in batches and can put
+    a take's later rows *before* an earlier flood of them in the file, so an order-based filter misreads
+    current rows as drained history (`captures/s4f22-dec096-od-03`); the floor is the newest device clock the
+    host had seen before the gesture, and a row stamped at or below it is never the receipt.
+
+    The `human` markers are the firmware's own logger rows, which are written **straight to `Serial`** and are
+    therefore live by construction -- they are not held in the ring at all. That matters when the ring has not
+    been flushed: measured (`captures/s4f22-dec096-od-10`) the seed's take started at 30.160 s
+    (`[30.160] [TRACK] Recording started @ tick 0` with `Loop 5: Start Recording`) while its `DISP` rows only
+    became readable after the take stopped at 35.864 s, so a `DISP`-only gate pressed the same button again --
+    which the firmware reads as *Stop Recording* -- and refused the seed the device had actually made.
     """
     lines = _lines(capture_log)
     floor = _gesture_clock_us(capture_log, after)
     rows: list[str] = []
     for line in lines[max(after, 0):]:
         parsed = _slot_disp_state(line)
-        if parsed is None or parsed[0] != slot0:
+        if parsed is not None and parsed[0] == slot0 and (states is None or parsed[1] in states):
+            stamp = device_stamp_us(line)
+            if floor is not None and stamp is not None and stamp <= floor:
+                continue
+            rows.append(line)
             continue
-        if states is not None and parsed[1] not in states:
-            continue
-        stamp = device_stamp_us(line)
-        if floor is not None and stamp is not None and stamp <= floor:
-            continue
-        rows.append(line)
+        if human and any(marker in line for marker in human):
+            stamp = human_line_device_us(line)
+            if stamp is not None and (floor is None or stamp > floor):
+                rows.append(line)
     return rows
+
+
+def _slot_ready_state(capture_log: Path, after: int, slot0: int, slot_number: int) -> Optional[str]:
+    """The device's *current* readiness for `slot0` as of `after`: `"recording"`, `"armed"` or None.
+
+    Read from the rows the firmware writes **straight to `Serial`** (`Loop N: Start Recording`,
+    `Recording started @ tick`), so the answer does not wait on the capture ring: the ring can hold a take's
+    rows for the whole take (`captures/s4f22-dec096-od-10`). `Recording started` is only trusted when the
+    slot-scoped arm row for **this** slot came first, since that row names no slot.
+    """
+    rows = _slot_disp_rows(capture_log, after, slot0, None,
+                           (f"Loop {slot_number}: Start Recording", "Recording started @ tick"))
+    state: Optional[str] = None
+    for line in rows:
+        if f"Loop {slot_number}: Start Recording" in line:
+            state = "armed"
+        elif state == "armed" and "Recording started @ tick" in line:
+            state = "recording"
+    return state
 
 
 def _await_slot_disp(capture_log: Path, after: int, slot0: int,
                      states: Optional[tuple[str, ...]], timeout_s: float,
-                     *, drain=None) -> Optional[str]:
-    """Wait for a `DISP` row naming `slot0` emitted after the gesture; None when none arrives in time.
+                     *, human: tuple[str, ...] = (), drain=None) -> Optional[str]:
+    """Wait for a receipt naming `slot0`'s gesture; None when none arrives inside `timeout_s`.
 
     The wait flushes the capture ring on its own cadence: the ring holds rows until the owner is asked to
     flush it, and nothing else drains it during a seed phase, so evidence can otherwise be absent from the log
@@ -338,7 +363,7 @@ def _await_slot_disp(capture_log: Path, after: int, slot0: int,
     deadline = time.monotonic() + max(timeout_s, 0.0)
     next_drain = time.monotonic() + DRAIN_EVERY_S
     while True:
-        rows = _slot_disp_rows(capture_log, after, slot0, states)
+        rows = _slot_disp_rows(capture_log, after, slot0, states, human)
         if rows:
             return rows[-1]
         now = time.monotonic()
@@ -736,6 +761,9 @@ def main(argv: list[str] | None = None) -> int:
                 if not _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
                                          events=events, label=f"seed_{label}_stop"):
                     raise PreparationFailure("could not stop the transport before seeding")
+                # The window for this seed's own readiness starts here, before the clear: the clear's
+                # selection press is what arms an *empty* target, so its rows are part of this seed.
+                seed_mark = len(_lines(capture_log))
                 if args.clear_targets:
                     # Scoped stopped preparation (task 4.1): the read-only census decides
                     # whether a clear is needed at all, then the target's own loop-button
@@ -821,33 +849,46 @@ def main(argv: list[str] | None = None) -> int:
                             raise PreparationFailure(
                                 f"slot {slot_number} scoped clear {outcome.status.value}: "
                                 f"{outcome.detail}")
-                # Seed the take. The press must arm **this** slot, and the device names that with its own
-                # slot-scoped `DISP … ARMED` row. A predecessor's in-flight stop can hold the selection of a
-                # filled target and the firmware then swallows the gesture silently, so silence is a named
-                # failure here -- never a blind re-press plus a transport start, which is how the mixed leg
-                # produced a leg with no take at all.
+                # Seed the take. The device's own transition rows name the gesture: `Loop N: Start Recording`
+                # announces the arm and `Recording started @ tick` the take, both written **straight to Serial**
+                # (live by construction, not held in the capture ring), with the slot's `DISP … ARMED/RECORDING`
+                # rows as the slot-scoped companion.
+                #
+                # Measure the state *before* pressing. The clear's own selection press arms an **empty** target
+                # (`handleToggleRecordForSlot` on an empty slot), so a seed press on top of that is a toggle:
+                # measured (`captures/s4f22-dec096-od-10`) the driver pressed again, the firmware logged
+                # `Loop 5: Stop Recording`, and the take the device had already started was thrown away.
+                ready = _slot_ready_state(capture_log, seed_mark, slot0, slot_number)
                 armed_row = None
-                press_attempts = DEFAULT_SEED_PRESS_ATTEMPTS
-                press_mark = len(_lines(capture_log))
-                for attempt in range(press_attempts):
-                    press_mark = len(_lines(capture_log))
-                    _press_slot(slot_number)
-                    armed_row = _await_slot_disp(capture_log, press_mark, slot0,
-                                                 ("ARMED", "RECORDING"), args.arm_timeout_s, drain=drain)
-                    events.append({"event": f"seed_{label}_press", "attempt": attempt,
-                                   "slot": slot_number, "armed": armed_row is not None})
-                    if armed_row is not None:
-                        break
+                press_mark = seed_mark
+                if ready is not None:
+                    armed_row = ready
+                    events.append({"event": f"seed_{label}_already_ready", "slot": slot_number,
+                                   "state": ready})
+                else:
+                    for attempt in range(DEFAULT_SEED_PRESS_ATTEMPTS):
+                        press_mark = len(_lines(capture_log))
+                        _press_slot(slot_number)
+                        armed_row = _await_slot_disp(capture_log, press_mark, slot0,
+                                                     ("ARMED", "RECORDING"), args.arm_timeout_s,
+                                                     human=(f"Loop {slot_number}: Start Recording",),
+                                                     drain=drain)
+                        events.append({"event": f"seed_{label}_press", "attempt": attempt,
+                                       "slot": slot_number, "armed": armed_row is not None})
+                        if armed_row is not None:
+                            break
                 if armed_row is None:
                     raise PreparationFailure(
-                        f"slot {slot_number} never armed: {press_attempts} press(es) left no DISP row for "
-                        f"slot {slot0} within {args.arm_timeout_s:g}s (a predecessor's in-flight stop holds "
-                        "the selection of a filled target; pressing again and starting the transport would "
-                        "record nothing)")
+                        f"slot {slot_number} never armed: {DEFAULT_SEED_PRESS_ATTEMPTS} press(es) left no "
+                        f"receipt for slot {slot0} within {args.arm_timeout_s:g}s (a predecessor's in-flight "
+                        "stop holds the selection of a filled target; pressing again and starting the "
+                        "transport would record nothing)")
                 _ensure_transport(out_port, capture_log, running=True, press_ms=args.press_ms,
                                   events=events, label=f"seed_{label}_start")
                 recording = _await_slot_disp(capture_log, press_mark, slot0, ("RECORDING",),
-                                             args.phase_timeout_s, drain=drain) is not None
+                                             args.phase_timeout_s,
+                                             human=("Recording started @ tick",),
+                                             drain=drain) is not None
                 events.append({"event": f"seed_{label}_recording", "confirmed": recording})
                 if not recording:
                     raise PreparationFailure(
