@@ -290,6 +290,18 @@ class SwitchRepeatGuardTests(unittest.TestCase):
         # The firmware holds a second tap for ~300 ms before deciding short/double; pressing sooner merges.
         self.assertGreaterEqual(DEFAULT_TAP_WINDOW_S, 0.30)
 
+    def test_a_switch_that_later_landed_still_invalidated_this_leg(self):
+        """The runner's policy is stricter than the gate's own `blocked()`.
+
+        This scenario needs the capture-switch route, so a queue row for the target ends the leg even when the
+        switch later landed.
+        """
+        log = self._log("s.log", [
+            "[26.217] [INFO] Loop 5: Queued playback switch",
+            "[26.900] [INFO] Loop 5: Switch gesture from slot 4",
+        ])
+        self.assertTrue(_switch_pending(log, 0, 5))
+
 
     def test_playback_before_queue_cannot_discharge_it(self):
         log = self._log("s.log", ["Playback started @ tick 0",

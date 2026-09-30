@@ -42,7 +42,7 @@ from enum import Enum
 from typing import Callable, Optional, Sequence
 
 from hitl.control_constants import CONTROL_CHANNEL_1BASED
-from hitl.device_time import device_stamp_us
+from hitl.device_time import device_stamp_us, human_line_device_us
 
 #: Longest accepted evidence text kept for a report, so a row cannot bloat the record.
 _EVIDENCE_CHARS = 160
@@ -120,6 +120,19 @@ def _matches(wires: Sequence[Wire], line: str) -> Optional[Wire]:
     return next((w for w in wires if w.text in line and all(token in line for token in w.identity)), None)
 
 
+def _row_clock_us(line: str) -> Optional[int]:
+    """A row's own device clock, whichever of the two encodings it carries.
+
+    Both families carry the same clock: `#CAP,<us>,…` writes `micros()` directly, and a directly printed logger
+    line (`[<s>.<ms>] [LEVEL] …`) writes it as a formatted prefix. A row with neither carries none, and is live
+    by construction (the firmware writes those straight to `Serial`, not through the capture ring).
+    """
+    stamp = device_stamp_us(line)
+    return human_line_device_us(line) if stamp is None else stamp
+
+
+
+
 @dataclass
 class CorrelatedGesture:
     """One gesture's four stages, advanced only by evidence that is *this* gesture's and later than it."""
@@ -149,10 +162,25 @@ class CorrelatedGesture:
         self.outcomes[Stage.SEND] = StageOutcome.MET
         self.evidence[Stage.SEND] = f"{kind} note={note} channel={channel}"
 
+    def awaited(self, stage: Stage) -> bool:
+        """Whether this gesture waits for `stage` at all.
+
+        A stage the caller declared no rule for is **not awaited** (`StageRules`' own contract), and SEND is
+        awaited only by a gesture the host actually sent: a caller that never called `mark_sent` has a pure
+        *state* wait (the driver's already-armed path, where the press happened in an earlier gesture) and its
+        record says so -- `send` stays `pending` there rather than pretending otherwise.
+        """
+        if stage is Stage.SEND:
+            return self.sent_at is not None
+        return bool(self.rules.any_of(stage))
+
     def pending_stage(self) -> Optional[Stage]:
         for stage in STAGE_ORDER:
-            if self.outcomes.get(stage) is not StageOutcome.MET:
-                return stage
+            if self.outcomes.get(stage) is StageOutcome.MET:
+                continue
+            if not self.awaited(stage):
+                continue
+            return stage
         return None
 
     def met(self, stage: Stage) -> bool:
@@ -162,8 +190,8 @@ class CorrelatedGesture:
         """Advance the next pending stage when `line` is this gesture's evidence for it.
 
         Returns the stage it advanced (or refused / contradicted), or None when the row is not usable evidence.
-        Only the *next* stage can advance, so a row that only proves execution cannot skip recognition and
-        acceptance: the stages stay distinct in the record instead of collapsing into "something happened".
+        Only the *next* pending stage can advance, so a row that only proves execution cannot skip recognition
+        and acceptance: the stages stay distinct in the record instead of collapsing into "something happened".
         """
         stage = self.pending_stage()
         if stage is None or stage is Stage.SEND:
@@ -179,9 +207,10 @@ class CorrelatedGesture:
             return stage
         if _matches(self.rules.any_of(stage), line) is None:
             return None
-        stamp = device_stamp_us(line)
-        if stamp is not None and self.sent_clock_us is not None and stamp < self.sent_clock_us:
-            # Drained history: emitted before the press this gesture recorded. Not its answer.
+        stamp = _row_clock_us(line)
+        if stamp is not None and self.sent_clock_us is not None and stamp <= self.sent_clock_us:
+            # At or below the floor: the floor is itself a stamp the host had already read, so this row cannot
+            # be news. The ring flushes in batches and would otherwise read a drained record as the receipt.
             return None
         self.outcomes[stage] = StageOutcome.MET
         self.evidence[stage] = line.strip()[:_EVIDENCE_CHARS]

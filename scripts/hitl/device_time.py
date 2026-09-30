@@ -125,3 +125,24 @@ def human_line_device_us(line: str) -> Optional[int]:
     if match is None:
         return None
     return int(match.group(1)) * 1_000_000 + int(match.group(2)) * 1_000
+
+
+def newest_row_clock_us(lines: Sequence[str], *, upto_index: Optional[int] = None) -> Optional[int]:
+    """The newest device clock in ``lines[:upto_index]``, from **either** row family.
+
+    "How far had the device's clock reached?" is the maximum over both encodings: `#CAP,<us>,…` carries
+    `micros()` directly and a directly printed logger line (`[<s>.<ms>] [LEVEL] …`) carries the same clock as a
+    prefix. `newest_device_us` answers the same question for the ring family alone, which is what the ring
+    drain needs; a *gesture's* floor wants both, because the receipts it waits for may be printed either way.
+    """
+    newest: Optional[int] = None
+    window = lines if upto_index is None else lines[: max(upto_index, 0)]
+    for line in window:
+        stamp = device_stamp_us(line)
+        if stamp is None:
+            stamp = human_line_device_us(line)
+        if stamp is None:
+            continue
+        if newest is None or stamp > newest:
+            newest = stamp
+    return newest

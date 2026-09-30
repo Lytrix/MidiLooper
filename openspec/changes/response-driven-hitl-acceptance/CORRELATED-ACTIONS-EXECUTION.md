@@ -90,33 +90,75 @@ failures were re-confirmed identical with this slice's tracked edits stashed
 (`test_layered_verifiers`, `test_occupy_paint_serial_verify`: one each) and
 `test_edit_full_layered` still requires its bar-sync fixture record.
 
-Five mutations, each red-proved and restored byte-identically (sha256 checked before and after
-every file):
+Twelve mutations across the two halves, each red-proved and restored byte-identically (sha256 checked before
+and after every file):
 
 | Mutation | Tests that caught it |
 |---|---|
 | identity check dropped in `_matches` | foreign-slot refusal, foreign-slot `ARMED` |
 | the gate stops attributing rows to its target | unattributed `Playback started`, another slot's switch |
-| the staleness floor removed | drained history |
+| the staleness floor removed | drained history, the seed's pre-press row |
 | the contradiction clause removed | dissimilar classification, contradiction ends the wait |
 | the press helper stops recording SEND | press records SEND, press + rows complete the chain |
+| the floor exclusive again (`<` for `<=`) | a row stamped exactly at the floor |
+| a rule-less stage awaited again | every receipt-only wait |
+| the seed arm wires lose their slot identity | another slot's row, the wire vocabulary |
+| the seed wait stops requiring recognition | the swallowed press, the merged classification |
+| an unqualified row alone proves the take | the take after this gesture's own arm |
+| the runner's switch guard becomes `blocked()` | a switch that later landed still invalidated the leg |
 
 `test_hitl_import_gate` stays green: flows may not import `hitl.serial`, `hitl.verify`,
 `hitl.scenarios`, `hitl.reporting` or `hitl.legacy_*`, and this slice adds no such import —
 the gate is a denylist, so `hitl.device_time` and `hitl.control_constants` (both port-free)
 are usable from the action layer, which is what lets the staleness rule keep one owner.
 
+## The drivers consume it
+
+Both device drivers' gesture waits are now the primitive's, with the control flow, the report fields and
+the gate budgets they had before:
+
+* **`hitl_accepted_sequence.py`** — `_await_slot_disp` (the selection, arm and recording receipts) builds a
+  `CorrelatedGesture` whose ACCEPT wires are the caller's vocabulary (`states` on this slot's `DISP` rows
+  plus the named human rows) and whose floor is `_gesture_clock_us`; it returns the deciding row, and
+  `_slot_disp_rows` is now a pure row source with no freshness rule of its own. `_slot_ready_state` stays a
+  *state* read and applies the floor itself (`_is_news`). `_switch_pending` keeps the leg's window and policy
+  but takes its rule from `PendingSwitchGate` (`state(...) != "clear"`, i.e. a queue row for the target ends
+  the leg even if the switch later landed); the runner already aborted before pressing again, and a test now
+  pins that.
+* **`hitl_retention_handoff.py`** — the seed's arm and take waits became `_await_seed_receipt`, whose stages
+  are `recognize` (the device's own `Button press: Loop N (…)` row for **this** slot), `accept`
+  (`DISP,<slot0>,ARMED|RECORDING` or `Loop N: Start Recording`), `execute` (`DISP,<slot0>,RECORDING`,
+  `,RECA,<slot0>,` or `Recording started`) and whose `conflict`/`refusal` vocabulary names the two losses the
+  device has actually produced — a merged classification (`Loop N (double)`) and a press the firmware read as
+  the other action (`Loop N: Stop Recording`, `Loop N: Queued playback switch`). The arm gate is now
+  slot-scoped: the track-state family (`#,ST,Track,STOPPED,ARMED`) names no slot and is no longer accepted as
+  this seed's receipt. `_device_floor_us` (both row families, via the new
+  `hitl.device_time.newest_row_clock_us`) is the floor, and the seed's failure message is now
+  `slot N never started recording: blocked at accept (send=met, recognize=met, accept=pending, …)` instead of a
+  bare timeout, with the same record in the run's events.
+
+New evidence: `test_retention_handoff_plan` **30/30** (7 new: the arm receipt must name the slot, an
+unattributed transition is not it, an unrecognised press is named, a merged classification is a named
+contradiction, a pre-press row is never the receipt, the take needs this gesture's own arm first, and the
+per-family wire vocabulary), `test_accepted_sequence` **91/91** (1 new, above), `test_hitl_correlated_actions`
+**23/23** (4 new: the floor is inclusive, a rule-less stage is not awaited, a state wait awaits no SEND, and a
+stale *human* row cannot satisfy a stage), `test_hitl_device_time` **16/16** (1 new). Neighbouring suites green
+together: `test_accepted_sequence_corpus` 3/3 (the four pinned device fixtures keep their verdicts),
+`test_retention_probe` 43/43, `test_device_shutdown` 15/15, `test_capture_transitions` 61/61,
+`test_hitl_serial_timing` 33/33, `test_managed_record_drain` 21/21, `test_hitl_command_forwarding` 26/26,
+`test_hitl_actions` 2/2, `test_hitl_import_gate` 2/2 — **244 tests / 9 suites** for the migrated slice. The two
+unrelated pre-existing failures (`test_layered_verifiers`, `test_occupy_paint_serial_verify`) were re-confirmed
+identical with this slice's files stashed.
+
 ## Not done, and not implied
 
-* **No driver consumes the primitive yet.** The drivers still own inline waits —
-  `hitl_accepted_sequence.py`'s `_await_slot_disp`/`_slot_ready_state` and
-  `hitl_retention_handoff.py`'s `_wait_for_any` calls, the latter with markers that name no
-  slot (`",ST,Track,STOPPED,ARMED"`, `"Start recording"`). Folding them onto
-  `CorrelatedGesture` is what makes "pending switches block follow-ups" true of the *runner*
-  rather than only of the layer, and it is the item that also gives the retention seed's
-  `slot N never started recording` failure a named stage instead of a timeout.
-* **Task 3.1 stays `[~]`** for that reason. 3.2 (cancellation) and 3.3 (watchdog, versioned
-  report schema, verify-only replay, the narrow observation-wait facade) are untouched.
-* No firmware row, build or device action is part of this slice, and none is implied: the
-  device leg of task 2.2 and the reload/`LIBOBS` poll remain where
+* **3.2 (cancellation) and 3.3 (watchdog, versioned report schema, verify-only replay, the narrow
+  observation-wait facade) are untouched.** They remain the open tasks of this section.
+* **Not every wait is a gesture wait.** `_await_markers` (the commitment/persistence receipts) and
+  `_wait_for_any` (transport edges and the commit) stay as they are: their rows are not a press's answer to a
+  stage, and the transport edges (`Transport started`) are not slot-scoped at all. Converting them is 3.3's
+  observation-wait facade, not this task.
+* **No firmware row, build or device action is part of this slice, and none is implied.** The two drivers are
+  host tooling whose next verification is a device run; this slice's evidence is host-side, and the device leg
+  of task 2.2 and the reload/`LIBOBS` poll remain where
   [S22-LATCH-EVIDENCE-PACKET.md](S22-LATCH-EVIDENCE-PACKET.md) recorded them.
