@@ -1077,9 +1077,19 @@ sequence but cannot exercise the acceptance, which S4f.22 classifies as **NOT_EX
    `accepted-sequence.json` at all. `test_accepted_sequence` **63/63** (9 new), four mutations red-proved and
    restored byte-identically, 15 neighbouring host suites **369/369**, the gates replayed against the real
    logs, `git diff --check` clean. Fresh boot is still required and still unmet, and
-   `captures/.device-shutdown-incomplete.json` is still latched (context `accepted-sequence-od`), which blocks
-   the next upload/reset without approval; no leg has been driven on this fix, so this item stays open on its
-   device half.
+   `captures/.device-shutdown-incomplete.json` was latched (context `accepted-sequence-od`) at that point, which blocked
+   the next upload/reset without approval.
+   **Device half 2026-09-30 — a leg *has* now been driven on this driver:** `captures/s4f22-dec096-od-13`
+   (`DROVE_LEG`, commit `cf6c1853`, firmware `8d07faec…` = the DEC-096 image) drove both clears, both seeds
+   (armed/recorded/committed/settled) and the whole plan, shutdown `complete`, latch **clear**. Its oracle passes
+   every setup gate (fresh boot, identity pinned, overflow-free with the one `RING,shed` reported as the non-fatal
+   diagnostic row it is), `L2_no_capacity_denial`, `L3_a_finalization_window`
+   (`DIAG,reentry_window_open,3,1049,1536`) and `L4_a_capacity_released`
+   (`DIAG,canonical_release,3,32,1536,8`) — the retention links green in these reruns for the first time — while
+   `L1`/`L5`/`L6`/`L7` and `overdub_interval_identity` stay **unknown** in the oracle's own words: *"RECA/RECS do
+   not identify overdub intervals; correlated overdub start, accepted-stop and retirement evidence for A and B is
+   still required."* That is the sibling change's identity work, so this item stays open on its **evidence** half,
+   not on the driver.
 4. **Content parity** (`inventory_equal`) remains open from the 2026-09-29 run and was not re-reached, because
    the legs above did not produce the overlap that the pipeline is meant to verify.
 
