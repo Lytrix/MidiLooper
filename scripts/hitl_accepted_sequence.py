@@ -861,9 +861,14 @@ def main(argv: list[str] | None = None) -> int:
                     time.sleep(0.03)
                     out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=t0))
                     time.sleep(max(gap_s - 0.03, 0.01))
+                # The mark goes in *before* the commit press: the device emits this take's
+                # `RECS,stop,<slot>` at the stop edge, which can land in the log before the transport-stop row
+                # the press's own confirmation waits for -- measured (`captures/s4f22-dec096-od-09`): the RECS
+                # row is stamped 35.809 s while `Transport stopped` only arrived at 40.414 s, so a mark taken
+                # after the confirmation sat *behind* the receipt its own press had produced.
+                commit_mark = len(_lines(capture_log))
                 _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
                                   events=events, label=f"seed_{label}_commit")
-                commit_mark = len(_lines(capture_log))
                 committed = _await_markers(capture_log, commit_mark,
                                            (f",RECS,stop,{slot0},", f",RECS,stopToStopped,{slot0},"),
                                            args.phase_timeout_s, drain=drain)
