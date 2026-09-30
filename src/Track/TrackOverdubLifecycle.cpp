@@ -189,8 +189,16 @@ TRACK_COLD_MEM void Track::latchAcceptedStop(PendingStopDestination destination,
   PendingInteractionLatch* latch = interactionLatch();
   if (latch == nullptr || !loopsAllocated() || slot >= Config::MAX_LOOPS_PER_TRACK) return;
   const Loop& owner = getLoop(slot);
+  const uint8_t destinationCode = destination == PendingStopDestination::Playing ? 0u : 1u;
+  const char* destinationName = destination == PendingStopDestination::Playing ? "playing" : "stopped";
   if (latch->matches(PendingInteractionLatch::Kind::Stop, slot, 0, interval) &&
-      latch->loopId == owner.loopId && latch->mode == owner.capture.phase) return;
+      latch->loopId == owner.loopId && latch->mode == owner.capture.phase) {
+    // Task 2.2: a repeat of the same stop is the documented no-op (the user never presses twice), so the
+    // no-op is reported as its own edge instead of leaving the sequence looking like a single press.
+    SC_ACCEPTED_LATCH("repeat", resolveTrackIndexForPersistence(*this), slot, interval, destinationCode,
+                      "noop");
+    return;
+  }
   latch->clear();
   latch->kind = PendingInteractionLatch::Kind::Stop;
   latch->destination = destination;
@@ -199,14 +207,21 @@ TRACK_COLD_MEM void Track::latchAcceptedStop(PendingStopDestination destination,
   latch->mode = owner.capture.phase;
   latch->interval = interval;
   latch->phaseTick = capturePhaseTick(clockManager.getCurrentTick());
+  SC_ACCEPTED_LATCH("accept", resolveTrackIndexForPersistence(*this), slot, interval, destinationCode,
+                    destinationName);
 }
 
 /// The stop obligation is consumed exactly once: by the admission that binds it to the job, by
 /// the transport-stop path that retargets it to STOPPED, or by a synchronous stop that completes
 /// the interval. It never clears an unrelated pending switch or start carrier (handoff §5).
-TRACK_COLD_MEM void Track::consumeAcceptedStopObligation() {
+TRACK_COLD_MEM void Track::consumeAcceptedStopObligation(const char* reason) {
   PendingInteractionLatch* latch = interactionLatch();
   if (latch == nullptr || latch->kind != PendingInteractionLatch::Kind::Stop) return;
+  // Task 2.2: the obligation's own **consumption** edge, with the identity it was accepted under. Emitted
+  // before the clear, because the clear is precisely what erases that identity -- which is why an
+  // accept+consume pair inside one poll gap used to be invisible to any observer.
+  SC_ACCEPTED_LATCH("consume", resolveTrackIndexForPersistence(*this), latch->slot, latch->interval,
+                    latch->destination == PendingStopDestination::Playing ? 0u : 1u, reason);
   latch->clear();
 }
 
@@ -229,6 +244,10 @@ TRACK_COLD_MEM void Track::parkAcceptedStopForCanonicalOutput(uint8_t slot) {
     latch->waitReported = true;
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0,
                        "accepted_stop_finalizer_wait");
+    // Task 2.2: the same wait episode, but with the identity the existing `ODUB,stop` row cannot carry
+    // (that family has no slot field, and its `deny`-stage row is end-anchored for a live host consumer).
+    SC_ACCEPTED_LATCH("wait", resolveTrackIndexForPersistence(*this), latch->slot, latch->interval,
+                      latch->destination == PendingStopDestination::Playing ? 0u : 1u, "waiting");
   }
   ++latch->waitCount;
   // S2b.6's diagnostic terminal (invariant 31; spec.md "A park terminal never cancels an accepted
@@ -248,6 +267,8 @@ TRACK_COLD_MEM void Track::parkAcceptedStopForCanonicalOutput(uint8_t slot) {
       latch->waitCount == kAcceptedStopParkTerminalAfterWaits) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0,
                        "accepted_stop_park_terminal");
+    SC_ACCEPTED_LATCH("park_stall", resolveTrackIndexForPersistence(*this), latch->slot, latch->interval,
+                      latch->destination == PendingStopDestination::Playing ? 0u : 1u, "stalled");
   }
 }
 
@@ -278,7 +299,7 @@ TRACK_COLD_MEM bool Track::driveAcceptedInteraction() {
     logger.log(CAT_TRACK, LOG_INFO,
                "Accepted stop superseded: its interval is no longer live (slot=%u)",
                static_cast<unsigned>(request.slot));
-    consumeAcceptedStopObligation();
+    consumeAcceptedStopObligation("superseded");
     return true;
   }
   // DEC-078 item 3: re-derive the destination from live transport state rather than trusting a
@@ -295,7 +316,7 @@ TRACK_COLD_MEM bool Track::driveAcceptedInteraction() {
           : beginDeferredOverdubStopForSlot(destination, clockManager.getCurrentTick(),
                                             request.slot, request.interval);
   if (admitted) {
-    consumeAcceptedStopObligation();
+    consumeAcceptedStopObligation("admitted");
     return true;
   }
   parkAcceptedStopForCanonicalOutput(request.slot);
@@ -2655,7 +2676,7 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   if (handleNoteEditFold(true, currentTick, closeTick, stopStartUs)) {
     // The in-edit fold completed this interval's stop, so an accepted stop's obligation is
     // consumed here rather than being driven against an interval that no longer records.
-    consumeAcceptedStopObligation();
+    consumeAcceptedStopObligation("sync_stop");
     loop.closeOverdubSession();
     return;
   }
@@ -2663,7 +2684,7 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   // remains a fault fallback until the stop owner has its explicit recovery
   // state; ordinary admitted input never reaches it.
   if (beginDeferredOverdubStop(PendingStopDestination::Playing, currentTick)) {
-    consumeAcceptedStopObligation();
+    consumeAcceptedStopObligation("admitted");
     return;
   }
   // Capacity denial: a predecessor still owns the sole frozen/deferred admission
@@ -2862,7 +2883,7 @@ TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
   // admits (or synchronously completes) the stop itself. The accepted stop's obligation is
   // therefore consumed here, so the deferred drive can never execute a stale PLAYING stop
   // against an interval this path already stopped.
-  consumeAcceptedStopObligation();
+  consumeAcceptedStopObligation("transport_stop");
   suppressMidiOutputForTransportStop();
   if (hasPendingDeferredOverdubStop()) {
     // Transport Stop wins over a pending return to PLAYING. The frozen source
@@ -2887,7 +2908,7 @@ TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
     return;
   }
   if (beginDeferredOverdubStop(PendingStopDestination::Stopped, currentTick)) {
-    consumeAcceptedStopObligation();
+    consumeAcceptedStopObligation("admitted");
     return;
   }
   finalizePendingNotes(currentTick);

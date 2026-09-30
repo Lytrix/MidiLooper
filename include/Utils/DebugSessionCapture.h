@@ -179,6 +179,23 @@ SC_MEM_ATTR void postRestoreCensus(uint16_t freeChunks, uint32_t heapFree);
 SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                                   uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
                                   size_t chunkRefCount, const char* outcome);
+/** The accepted-interaction (DEC-078) latch's own sequenced evidence, one shot per latch transition from the
+ *  latch's owner. Wire form: `DIAG,latch,<transition>,<track>,<slot>,<interval>,<destination>,<outcome>`.
+ *
+ *  Why it exists (OpenSpec `response-driven-hitl-acceptance` task 2.2): the latch can be **accepted and
+ *  consumed inside one poll gap** -- the deferred lane runs many turns per second -- so a poller that sees the
+ *  latch empty before and after cannot tell that it was ever held. The wait rows that do exist
+ *  (`ODUB,stop,admission,…,accepted_stop_finalizer_wait`) name no slot, so on a multi-track run they cannot be
+ *  attributed to the interval that owes them. This row carries the identity the latch holds, on every edge.
+ *
+ *  `transition` is a stable literal: `accept`, `repeat` (the documented no-op for a repeat of the same stop),
+ *  `wait`, `park_stall`, `consume`. `interval` is the latch's `captureInterval_` printed as its low 32 bits, so
+ *  the device row and a native fixture read the same number. `destination` is 0/1 (Playing/Stopped) and
+ *  `outcome` names the state or the consumption reason (`admitted`, `superseded`, `sync_stop`, …). Tier-A: the
+ *  edges are one-shot per episode and their loss must be reported, not silent. */
+SC_MEM_ATTR void interactionLatchTransition(const char* transition, uint8_t track, uint8_t slot,
+                                            uint64_t interval, uint8_t destination,
+                                            const char* outcome);
 /** Wrap-tick children only: DIAG,wrap,total=<us>,seal=<us>,pass_apply=<us>,src_append=<us>,
  *  commit=<us>,seal_pend=<us>,begin=<us>. */
 SC_MEM_ATTR void overdubWrapTick(uint32_t totalUs, uint32_t sealUs, uint32_t passApplyUs,
@@ -447,6 +464,12 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
   DebugSessionCapture::droidFeedbackQueue(depth, oldestAgeUs, overflowCount)
 #define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) \
                                            DebugSessionCapture::overdubStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
+// `#ifndef`-guarded so a native suite can substitute its own recorder for the latch rows without a capture
+// build (the pattern `SC_LIBRARY_OBSERVATION_*` established).
+#ifndef SC_ACCEPTED_LATCH
+#define SC_ACCEPTED_LATCH(transition, track, slot, interval, destination, outcome) \
+  DebugSessionCapture::interactionLatchTransition(transition, track, slot, interval, destination, outcome)
+#endif
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) \
@@ -591,6 +614,9 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #define SC_PLAYBACK_ORDER(durationUs, eventCount) ((void)0)
 #define SC_DROID_FEEDBACK_QUEUE(depth, oldestAgeUs, overflowCount) ((void)0)
 #define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
+#ifndef SC_ACCEPTED_LATCH
+#define SC_ACCEPTED_LATCH(transition, track, slot, interval, destination, outcome) ((void)0)
+#endif
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) ((void)0)
 // `restored-library-stability` 1.3: no records without a capture build (the request trigger is

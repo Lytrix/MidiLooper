@@ -154,6 +154,9 @@ struct CaptureRing {
   bool wipedPending = false;
   RecordFamilyStats recordStart;
   RecordFamilyStats recordStop;
+  /// Task 2.2: the accepted-interaction latch's own family. Its edges are one-shot per episode, so its loss
+  /// must be countable rather than silent -- the defect class `DIAG,reentry*` was made Tier-A to fix.
+  RecordFamilyStats interactionLatch;
 
   // S1.3 save/restore-survival: bounded identity-path counters. They separate "the branch was never
   // reached" from "capture disabled", "enqueue rejected", "evicted" and "delivered but not parsed",
@@ -191,6 +194,7 @@ SC_MEM_ATTR void incrementSaturated(uint32_t& value) {
 SC_MEM_ATTR RecordFamilyStats* recordFamilyStats(const char* line) {
   if (CaptureLineTier::tagStartsWith(line, "RECA,")) return &sCaptureRing.recordStart;
   if (CaptureLineTier::tagStartsWith(line, "RECS,")) return &sCaptureRing.recordStop;
+  if (CaptureLineTier::tagStartsWith(line, "DIAG,latch,")) return &sCaptureRing.interactionLatch;
   return nullptr;
 }
 
@@ -984,6 +988,7 @@ SC_MEM_ATTR void emitIdentityPathStats() {
       sCaptureRing.identityLastEvent);
   emitRecordFamilyStats("RECA", sCaptureRing.recordStart);
   emitRecordFamilyStats("RECS", sCaptureRing.recordStop);
+  emitRecordFamilyStats("DIAG,latch", sCaptureRing.interactionLatch);
   // Ring-level accounting: attempts/appends separate "the emitters never ran" from "the appends
   // were refused", and wipes name the one content-discarding path that has no eviction outcome.
   Serial.printf(SC_FMT("#CAP,%lu,RING,stats,attempts=%lu,ok=%lu,flush=%lu,tx=%lu,shed=%lu,"
@@ -1294,6 +1299,21 @@ SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_
                 stage, (unsigned long)elapsedUs, (unsigned long)durationUs,
                 (unsigned long)heapBefore, (unsigned long)heapAfter, (unsigned long)eventCount,
                 (unsigned long)chunkRefCount, outcome);
+}
+
+SC_MEM_ATTR void interactionLatchTransition(const char* transition, uint8_t track, uint8_t slot,
+                                            uint64_t interval, uint8_t destination,
+                                            const char* outcome) {
+  // Counted at the branch, exactly like `recStart`/`recStop`: "the branch was never reached" must stay
+  // distinguishable from "the row was enqueued and then lost", which is the whole point of the family.
+  incrementSaturated(sCaptureRing.interactionLatch.entered);
+  // Low 32 bits, deliberately: `reentryDecision` prints the same quantity the same way, and the device is a
+  // 32-bit target where `unsigned long` is 32 bits -- printing the full 64 would read differently there than
+  // in a native fixture, which is exactly the divergence a fixture must not have.
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,latch,%s,%u,%u,%lu,%u,%s\r\n"), (unsigned long)micros(),
+                transition != nullptr ? transition : "?", static_cast<unsigned>(track),
+                static_cast<unsigned>(slot), (unsigned long)static_cast<uint32_t>(interval),
+                static_cast<unsigned>(destination), outcome != nullptr ? outcome : "?");
 }
 
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,

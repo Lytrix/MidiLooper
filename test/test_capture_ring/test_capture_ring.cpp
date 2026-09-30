@@ -207,10 +207,43 @@ void test_a_non_boundary_head_is_reported_with_its_operation() {
   TEST_ASSERT_TRUE(captureSerial.output.find(",op=4,") != std::string::npos);
 }
 
+/// Task 2.2: the latch family is Tier-A *and* counted, so a lost edge is attributable rather than silent.
+///
+/// The emitter here is the real one (`src/Utils/DebugSessionCapture.cpp` is linked in this suite): one call
+/// must show up as `entered`, reach the ring (`enq`) with its identity in the row text, and be reported by the
+/// stopped-only read-back.
+void test_task22_the_latch_family_is_accounted_and_read_back() {
+  interactionLatchTransition("accept", 3, 4, 0x1234u, 0, "playing");
+  interactionLatchTransition("consume", 3, 4, 0x1234u, 0, "admitted");
+  TEST_ASSERT_EQUAL_UINT32(2, sCaptureRing.interactionLatch.entered);
+  TEST_ASSERT_EQUAL_UINT32(2, sCaptureRing.interactionLatch.enqueued);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.interactionLatch.rejected);
+  flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_UINT32(2, sCaptureRing.interactionLatch.transmitted);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,latch,accept,3,4,4660,0,playing") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,latch,consume,3,4,4660,0,admitted") != std::string::npos);
+  emitIdentityPathStats();
+  TEST_ASSERT_TRUE(captureSerial.output.find(
+      "RING,record_stats,DIAG,latch,entered=2,enq=2,rej=0,tx=2,evict=0") != std::string::npos);
+}
+
+/// A refused latch append is counted, not silent: the family's `rejected` is the evidence that separates "the
+/// branch never ran" from "the row was refused".
+void test_task22_a_refused_latch_append_is_counted() {
+  sCaptureRing.capacity = 1;  // no room for any record
+  interactionLatchTransition("accept", 0, 1, 7u, 1, "stopped");
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.interactionLatch.entered);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.interactionLatch.enqueued);
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.interactionLatch.rejected);
+  TEST_ASSERT_TRUE_MESSAGE(CaptureLineTier::isTierALine("#CAP,1,DIAG,latch,accept,0,1,7,1,stopped"),
+                           "a latch edge is one-shot per episode: it must not be shed as ordinary timing");
+}
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_real_emitters_are_accounted_and_drained);
   RUN_TEST(test_tier_a_flood_cannot_evict_record_evidence);
+  RUN_TEST(test_task22_the_latch_family_is_accounted_and_read_back);
+  RUN_TEST(test_task22_a_refused_latch_append_is_counted);
   RUN_TEST(test_record_rows_have_a_reserved_ring_slice);
   RUN_TEST(test_critical_flood_counts_actual_family_eviction);
   RUN_TEST(test_allocation_failure_is_reported_after_safe_usb_retry);

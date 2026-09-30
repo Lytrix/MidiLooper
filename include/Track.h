@@ -843,7 +843,11 @@ private:
   /// Latch an accepted stop for `slot`/`interval`; a same-identity repeat is a no-op.
   void latchAcceptedStop(PendingStopDestination destination, uint8_t slot, uint64_t interval);
   /// Consume the stop obligation of a successfully admitted (or synchronously completed) stop.
-  void consumeAcceptedStopObligation();
+  /// `reason` is the consumption edge's own outcome literal (`admitted`, `superseded`, `sync_stop`,
+  /// `transport_stop`, …), reported by the latch's sequenced evidence (task 2.2 of
+  /// `response-driven-hitl-acceptance`): an obligation consumed between two polls must stay provable, and
+  /// the clear itself erases the identity that would prove it.
+  void consumeAcceptedStopObligation(const char* reason);
   /// S4f.2: one deferred turn of the accepted interaction. Returns true when it ran a grain.
   bool driveAcceptedInteraction();
   /// S4f.2: the dispatch decision at the top of `processDeferredIdleMaintenance` -- the latch is

@@ -193,7 +193,11 @@ struct TrackCaptureStopTestAccess {
   static void latchAcceptedStopForSlot(Track& track, uint8_t slot) {
     track.latchAcceptedStop(PendingStopDestination::Playing, slot, 0);
   }
-  static void consumeAcceptedStop(Track& track) { track.consumeAcceptedStopObligation(); }
+  /// The production consumption entry for the accepted interaction (S4f.1/S4f.2). The reason is the edge's own
+  /// outcome literal (task 2.2's latch evidence); this fixture passes its own.
+  static void consumeAcceptedStop(Track& track, const char* reason = "fixture") {
+    track.consumeAcceptedStopObligation(reason);
+  }
   /// S4.1: the slot's open-note ledger. Marking an entry is the observable that a stop must not
   /// sweep off a sibling slot.
   static void markLedgerEntry(Track& track, uint8_t slot, uint8_t note) {

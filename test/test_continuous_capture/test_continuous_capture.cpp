@@ -5,6 +5,43 @@
 #include <cstdio>
 #include <random>
 #include <vector>
+#include <cstring>
+
+// ---- Task 2.2: the accepted-interaction latch's own sequenced evidence ------------------------------------
+// The production emitter is substituted here before the harness include reaches `Utils/DebugSessionCapture.h`,
+// the pattern `SC_LIBRARY_OBSERVATION_*` established. Records are fixed-size and allocation-free: the latch is
+// a human-rate, one-shot-per-episode path.
+namespace LatchRows {
+struct Row {
+  const char* transition = nullptr;
+  uint8_t track = 0xFF;
+  uint8_t slot = 0xFF;
+  uint64_t interval = 0;
+  uint8_t destination = 0xFF;
+  const char* outcome = nullptr;
+};
+constexpr size_t kCapacity = 32;
+inline Row rows[kCapacity];
+inline size_t count = 0;
+inline void reset() { count = 0; }
+inline void record(const char* transition, uint8_t track, uint8_t slot, uint64_t interval,
+                   uint8_t destination, const char* outcome) {
+  if (count < kCapacity) {
+    rows[count] = Row{transition, track, slot, interval, destination, outcome};
+  }
+  ++count;
+}
+/// Every recorded row whose transition equals `transition`, in emission order.
+inline std::vector<Row> of(const char* transition) {
+  std::vector<Row> out;
+  for (size_t i = 0; i < count && i < kCapacity; ++i) {
+    if (strcmp(rows[i].transition, transition) == 0) out.push_back(rows[i]);
+  }
+  return out;
+}
+}  // namespace LatchRows
+#define SC_ACCEPTED_LATCH(transition, track, slot, interval, destination, outcome) \
+  LatchRows::record(transition, track, slot, interval, destination, outcome)
 
 // Production harness objects: see test/test_support/track_harness.inc
 #include "../test_support/track_harness.inc"
@@ -47,9 +84,9 @@ void setUp() {
   trackManager.~TrackManager();
   LoopEventStore::resetPoolForTests();
   new (&trackManager) TrackManager();
+  LatchRows::reset();
 }
 void tearDown() {}
-
 Track& preparePlayingTrack() {
   LoopEventStore::initPool();
   Track& track = trackManager.getSelectedTrack();
@@ -226,7 +263,12 @@ struct TrackCaptureStopTestAccess {
     if (rt != nullptr) rt->preparedPairRequestPending = pending;
   }
   /// The production consumption entry for the accepted interaction (S4f.1/S4f.2).
-  static void consumeAcceptedStop(Track& track) { track.consumeAcceptedStopObligation(); }
+  /// The production consumption entry for the accepted interaction (S4f.1/S4f.2). `reason` is the edge's own
+  /// outcome literal, reported by the latch's sequenced evidence (task 2.2); fixtures that assert the
+  /// sequenced rows name their leg explicitly instead of taking this default.
+  static void consumeAcceptedStop(Track& track, const char* reason = "fixture") {
+    track.consumeAcceptedStopObligation(reason);
+  }
   /// S3.3: the selection mechanism the UI gesture ends in, reached through TrackManager's own member.
   static void selectSlotIndex(uint8_t trackIndex, uint8_t slot) {
     trackManager.slotStateMachine.setSelectedSlotIndex(trackIndex, slot);
@@ -4907,6 +4949,19 @@ void test_s4f10e_an_undo_replacing_the_interval_supersedes_the_accepted_stop() {
   // A second drive has nothing left to do: exactly one supersession.
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::serviceAcceptedInteraction(track),
                             "the supersession must be consumed exactly once");
+  // Task 2.2: the supersession is the *consumption* edge of the latch, and it reports the reason the owner
+  // took, on the interval the obligation was accepted under (the replacement's identity must not appear).
+  const std::vector<LatchRows::Row> consumes = LatchRows::of("consume");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(consumes.size()),
+                                   "no second consumption may be reported for a retired obligation");
+  TEST_ASSERT_EQUAL_STRING("superseded", consumes[0].outcome);
+  TEST_ASSERT_EQUAL_UINT64(latchedInterval, consumes[0].interval);
+  // The consumption names the *same* identity the acceptance did, so the replacement interval's identity
+  // cannot stand in for it.
+  const std::vector<LatchRows::Row> accepts = LatchRows::of("accept");
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(accepts.size()));
+  TEST_ASSERT_EQUAL_UINT8(accepts[0].slot, consumes[0].slot);
+  TEST_ASSERT_EQUAL_UINT8(accepts[0].track, consumes[0].track);
 }
 
 /// S4f.10(d) — a request queued **at tick t** must not be dispatched by the same tick's own pass.
@@ -5417,6 +5472,91 @@ void test_s3_3_selection_and_browsing_acquire_no_working_set() {
   TEST_ASSERT_EQUAL_UINT16(0, TrackCaptureStopTestAccess::workingSetGeneration(track, 2));
 }
 
+/// Task 2.2 of `response-driven-hitl-acceptance` — the accepted-stop latch's own sequenced evidence.
+///
+/// The measured gap (see the change's `S22-LATCH-EVIDENCE-PACKET.md`): the latch can be accepted *and*
+/// consumed inside one poll gap, and neither edge was recorded at all -- the wait rows that existed named no
+/// slot, so a multi-track run could not attribute them. This is the transition oracle: one retained stop must
+/// report exactly one `accept`, the repeat's `repeat` no-op (DEC-078's "the user never presses twice"), the
+/// park's `wait`, and exactly one `consume(admitted)` -- every row on the interval's own identity, so another
+/// slot or track cannot substitute.
+void test_task22_a_retained_stop_reports_its_own_sequenced_identity_evidence() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  const uint64_t interval = TrackCaptureStopTestAccess::interval(track);
+
+  // Deny admission through the real control (the reservation is drained, as B02 does), so the stop is
+  // *accepted* rather than admitted, and the drive re-acquires the target by itself.
+  TrackCaptureStopTestAccess::drainCanonicalChunks(track);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::canonicalOutputAdmitted(track));
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+
+  // The second press is the documented no-op: reported as its own edge, never a second acceptance.
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+
+  for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  }
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+
+  const std::vector<LatchRows::Row> accepts = LatchRows::of("accept");
+  const std::vector<LatchRows::Row> repeats = LatchRows::of("repeat");
+  const std::vector<LatchRows::Row> waits = LatchRows::of("wait");
+  const std::vector<LatchRows::Row> consumes = LatchRows::of("consume");
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(accepts.size()));
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(repeats.size()));
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(consumes.size()));
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(1, static_cast<uint32_t>(waits.size()));
+  TEST_ASSERT_EQUAL_STRING("playing", accepts[0].outcome);
+  TEST_ASSERT_EQUAL_STRING("noop", repeats[0].outcome);
+  TEST_ASSERT_EQUAL_STRING("admitted", consumes[0].outcome);
+  // Identity: every edge names the latch's own slot, interval and track -- the property that lets a reader
+  // attribute a row on a multi-track, multi-slot run instead of inferring it from position.
+  TEST_ASSERT_EQUAL_UINT8(0, accepts[0].slot);
+  TEST_ASSERT_EQUAL_UINT64(interval, accepts[0].interval);
+  TEST_ASSERT_EQUAL_UINT64(interval, repeats[0].interval);
+  TEST_ASSERT_EQUAL_UINT64(interval, consumes[0].interval);
+  TEST_ASSERT_EQUAL_UINT8(accepts[0].slot, consumes[0].slot);
+  TEST_ASSERT_EQUAL_UINT8(accepts[0].track, consumes[0].track);
+  TEST_ASSERT_EQUAL_UINT8(0, consumes[0].destination);
+  for (const LatchRows::Row& row : waits) {
+    TEST_ASSERT_EQUAL_UINT64(interval, row.interval);
+    TEST_ASSERT_EQUAL_UINT8(0, row.slot);
+  }
+}
+
+/// The consumption reason is the edge's own outcome, and a second drive turn has nothing left to consume --
+/// so no interval ever reports two consumptions.
+void test_task22_the_consumption_reason_names_the_edge_that_took_it() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  // Deny admission through the real control (the reservation is drained, as B02 does), so the stop is
+  // *accepted* rather than admitted, and the drive re-acquires the target by itself.
+  TrackCaptureStopTestAccess::drainCanonicalChunks(track);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::canonicalOutputAdmitted(track));
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+  for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  }
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  const std::vector<LatchRows::Row> consumes = LatchRows::of("consume");
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(consumes.size()));
+  TEST_ASSERT_EQUAL_STRING("admitted", consumes[0].outcome);
+  (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(LatchRows::of("consume").size()),
+                                   "the obligation is consumed exactly once, so it is reported once");
+}
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -5512,6 +5652,10 @@ int main() {
   // P1/B02 accepted-stop acceptance: green once the latch + park are in place, so it runs
   // in the default gate (unlike the residence characterizations).
   RUN_TEST(test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once);
+  // Task 2.2: the accepted-stop latch's own sequenced evidence (accept / repeat / wait / consume) with the
+  // interval's identity on every edge.
+  RUN_TEST(test_task22_a_retained_stop_reports_its_own_sequenced_identity_evidence);
+  RUN_TEST(test_task22_the_consumption_reason_names_the_edge_that_took_it);
   RUN_TEST(test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target);
   RUN_TEST(test_s4_0_release_respects_the_live_ring_window_and_is_idempotent);
   RUN_TEST(test_s2b4_midcopy_populated_store_refuses_release);
