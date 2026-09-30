@@ -879,6 +879,31 @@ class EvidenceGateTests(unittest.TestCase):
         self.assertGreaterEqual(gap, DEFAULT_TAP_WINDOW_S - 1e-6,
                                 "a retry inside the tap window merges into Loop N (double)")
 
+    def test_a_target_the_clear_already_armed_is_not_pressed_again(self):
+        """`od-10`: the clear's selection press arms an empty target, so a seed press toggles it off.
+
+        The device then answers that press with `Loop 5: Stop Recording` and the take it had already started
+        is thrown away, which is what the run reported as `slot 5 never armed`.
+        """
+        clock = {"t": 1.0}
+
+        def press(log: Path, slot_number: int, attempt: int) -> None:
+            # The selection press that precedes the clear: it selects, arms this empty target and starts it.
+            # The clock advances per press, as the device's own does.
+            clock["t"] += 1.0
+            with log.open("a", encoding="utf-8") as handle:
+                handle.write(disp_row(slot_number, "ARMED", stamp_us=int(clock["t"] * 1e6)) + "\n")
+                handle.write(f"[{clock['t']:.3f}] [INFO] Loop {slot_number}: Start Recording\n")
+                handle.write(f"[{clock['t'] + 0.1:.3f}] [DEBUG] [TRACK] Recording started @ tick 0 "
+                             "(startLoopTick=0 loopStart=0)\n")
+
+        fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1",
+                               "--arm-timeout-s", "0.0"], census={(7, 3): False, (7, 4): True}, press=press)
+        self.assertIn("seed_b_already_ready", fixture.events)
+        self.assertNotIn("seed_b_press", fixture.events)
+        self.assertEqual(0, fixture.rc, fixture.report.get("preparation_error"))
+        self.assertEqual("DROVE_LEG", fixture.report["result"])
+
     def test_a_retry_after_a_swallowed_press_arms_on_its_own_slot_row(self):
         """The working two-press pattern: the first press only moves focus, the second arms."""
         def press(log: Path, slot_number: int, attempt: int) -> None:
