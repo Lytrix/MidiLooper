@@ -49,6 +49,7 @@ per-pulse error, 2.6 ms cumulative drift over 384 pulses. Three behaviours matte
 from __future__ import annotations
 
 import statistics
+import threading
 import time
 from typing import Any, Optional
 
@@ -294,18 +295,117 @@ class MidiClockReader:
 
 
 class MidiClockMaster:
-    """Host-authoritative 24 PPQN clock with absolute-deadline pacing."""
+    """Host-authoritative 24 PPQN clock with absolute-deadline pacing.
+
+    Two shapes, both on one absolute schedule:
+
+    * :meth:`send_pulses` -- the caller owns the cadence and asks for *n* pulses at once (a whole
+      phase, or one pulse per grid position from a loop that passes
+      ``deadline_origin``/``deadline_index``);
+    * :meth:`start_pump` -- the *master* owns the cadence: a background thread sends one pulse per
+      interval for as long as the transport runs, and callers wait on the pulses it owes through
+      :meth:`wait_pulse`.
+
+    The pump exists because the device's slaving is a **timeout, not a latch**:
+    ``ClockManager::checkClockSource`` leaves ``CLOCK_EXTERNAL`` when no pulse arrived for
+    ``midiClockTimeout`` (500 ms) and the device then advances its own tick from the internal clock
+    again. A host that only sends pulses *inside* a phase therefore does not own the device's grid
+    for the gaps between the realtime ``Start`` and that phase: the device runs on its own clock
+    there, and the recorded grid inherits that drift. With the pump running, a single pulse grid
+    covers the whole run and every phase's first step lands on a grid position of it.
+    """
 
     def __init__(self, out_port: mido.ports.BaseOutput, *, spin_s: float = 2.0e-4) -> None:
         self._out = out_port
         self._spin = spin_s
         self._sent = 0
+        self._pump: Optional[threading.Thread] = None
+        self._pump_stop = threading.Event()
+        self._pump_error: Optional[BaseException] = None
 
-    def start(self) -> None:
+    # ---- transport ------------------------------------------------------------
+    def start(self, *, bpm: Optional[float] = None, abort: Any = None) -> None:
+        """Send realtime ``Start``; a ``bpm`` also starts the continuous pump with it.
+
+        ``Start`` is the downbeat: the device resets its tick to 0, holds that 0 through the first
+        pulse after ``Start`` (``ClockManager::onMidiClockPulse``, ``firstPulseAfterStart``), and
+        slaves from the pulses that follow.
+        """
         self._out.send(mido.Message("start"))
+        if bpm is not None:
+            self.start_pump(bpm=bpm, abort=abort)
 
     def stop(self) -> None:
+        self.stop_pump()
         self._out.send(mido.Message("stop"))
+
+    # ---- continuous pump ------------------------------------------------------
+    def start_pump(self, *, bpm: float, abort: Any = None) -> None:
+        """Drive 24 PPQN continuously (until :meth:`stop_pump`) on one absolute schedule."""
+        if bpm <= 0:
+            raise ValueError("bpm must be > 0")
+        self.stop_pump()
+        period = 60.0 / bpm / MIDI_CLOCKS_PER_BEAT
+        self._pump_stop.clear()
+        self._pump_error = None
+        origin = time.perf_counter()
+        index = 0
+
+        def _run() -> None:
+            nonlocal index
+            try:
+                while not self._pump_stop.is_set():
+                    if abort is not None and abort.check() is not None:
+                        return
+                    index += 1
+                    next_at = origin + index * period
+                    while True:
+                        remaining = next_at - time.perf_counter()
+                        if remaining > self._spin:
+                            time.sleep(remaining - self._spin)
+                        elif remaining > 0:
+                            pass  # spin the last stretch
+                        else:
+                            break
+                    if self._pump_stop.is_set():
+                        return
+                    self._out.send(mido.Message("clock"))
+                    self._sent += 1
+            except BaseException as exc:  # pragma: no cover - a port closed under the pump
+                self._pump_error = exc
+
+        self._pump = threading.Thread(target=_run, name="hitl-clock-pump", daemon=True)
+        self._pump.start()
+
+    def stop_pump(self) -> None:
+        thread = self._pump
+        self._pump = None
+        self._pump_stop.set()
+        if thread is not None:
+            thread.join(timeout=1.0)
+
+    def pump_running(self) -> bool:
+        return self._pump is not None
+
+    def pump_error(self) -> Optional[BaseException]:
+        return self._pump_error
+
+    def pulses_sent(self) -> int:
+        """Total pulses sent by this master, monotonic across pump and inline sends."""
+        return self._sent
+
+    def wait_pulse(self, index: int, *, timeout_s: float = 1.0, abort: Any = None) -> bool:
+        """Wait until pulse ``index`` of :meth:`pulses_sent` has been sent."""
+        deadline = time.monotonic() + max(timeout_s, 0.0)
+        while self._sent < index:
+            if self._pump_error is not None:
+                return False
+            if abort is not None and abort.check() is not None:
+                return False
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(min(self._spin, 0.001))
+        return True
 
     def send_pulses(self, count: int, *, bpm: float, abort: Any = None,
                     echo_reader: Optional[MidiClockReader] = None,
@@ -330,6 +430,9 @@ class MidiClockMaster:
         there (``ClockManager::checkClockSource`` runs in the main loop), so the report
         separates the pulses seen in the first quarter of the drive from the rest: only
         pulses in the tail mean the device is *still* clocking itself.
+
+        Do not mix this with a running pump: the pump is the sender then, and callers wait on it
+        with :meth:`wait_pulse`.
         """
         period = 60.0 / bpm / MIDI_CLOCKS_PER_BEAT
         call_origin = time.perf_counter()

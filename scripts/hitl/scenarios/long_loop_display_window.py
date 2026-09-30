@@ -222,10 +222,9 @@ def run_long_loop_display_window(args: object) -> int:
             if not ensure_loop_edit_before_record(
                 out_port,
                 serial_collector,
-                press_ms=ns.press_ms,
                 phase_wait_ms=ns.phase_wait_ms,
             ):
-                print("[long-loop] NOTE_EDIT exit not confirmed; aborting")
+                print("[long-loop] LOOP_EDIT not proven by the long edit press; aborting")
                 return 2
 
         if ns.clear_before_record:

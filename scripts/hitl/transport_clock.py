@@ -377,12 +377,14 @@ def stream_pattern_for_bars(
       The reader's index is phase-locked, so a dropped pulse does not stall the phase the way
       the raw ``in_port`` count below does.
     * ``master`` -- the host is the clock master. Pulse ``i`` of the phase is grid position
-      ``origin + i`` and is sent by ``master``: the first pulse *is* the downbeat and the first
-      step is emitted with it, so step ``k`` is emitted with pulse
-      ``1 + (k - 1) * step_clocks``. The phase ends after
-      ``phase_delay_clocks + target_bars * MIDI_CLOCKS_PER_BAR`` pulses have been sent. The
-      tempo is ``wall_clock_tempo_bpm`` (``DEFAULT_MASTER_BPM`` when unset). No realtime
-      Start/Stop is sent here: the caller owns the transport.
+      ``origin + i``: the first pulse *is* the downbeat and the first step is emitted with it, so
+      step ``k`` is emitted with pulse ``1 + (k - 1) * step_clocks``. The phase ends after
+      ``phase_delay_clocks + target_bars * MIDI_CLOCKS_PER_BAR`` pulses have been sent. The tempo is
+      ``wall_clock_tempo_bpm`` (``DEFAULT_MASTER_BPM`` when unset). No realtime Start/Stop is sent
+      here: the caller owns the transport. Two host shapes share that contract -- when the master's
+      continuous pump is running, this phase **waits** on the pulses the pump owes (the one grid
+      covers the whole run, so it also survives the gaps between phases); otherwise the phase sends
+      its own pulses on one absolute schedule anchored at its first iteration.
     * ``wall_clock_tempo_bpm`` set -- unchanged: pace to absolute wall-clock deadlines.
     * none of them -- unchanged: count raw ``in_port`` clock messages.
 
@@ -453,6 +455,10 @@ def stream_pattern_for_bars(
     clock_origin: Optional[float] = None
     clock_pulse_timeout_s = 0.5
     master_origin: Optional[float] = None
+    # Host mode with the continuous pump running: the pump is the sender, so this phase counts the
+    # pulses it owes from the phase start instead of sending them itself (see `MidiClockMaster`).
+    master_pump_origin: Optional[int] = None
+    master_pulse_timeout_s = 1.0
     master_pulses_sent = 0
     master_bpm = wall_clock_tempo_bpm if (wall_clock_tempo_bpm or 0.0) > 0 else DEFAULT_MASTER_BPM
     if clock is not None:
@@ -475,6 +481,15 @@ def stream_pattern_for_bars(
         clock_pulse_timeout_s = max(0.5, 4.0 * (clock.period() or 0.0))
     elif master is not None:
         clock_source = "host_clock"
+        if master.pump_running():
+            # Phase pulse `k` is the k-th pulse the pump sends *after this phase started*, which
+            # is the same grid contract the inline branch below gives: pulse k of the phase is
+            # one grid position, and the streamer emits step k with it. The pump makes the grid
+            # continuous across the whole run instead of only inside the phases.
+            master_pump_origin = master.pulses_sent()
+            master_pulse_timeout_s = max(
+                0.5, 4.0 * (60.0 / master_bpm / 24.0) if master_bpm > 0 else 0.5
+            )
     # The baseline must be the device bar index at the *phase* start (the record or overdub
     # boundary), not at the note stream's first clock: the device begins counting before the
     # host streams, so a stream-relative baseline makes an 8-bar request record 10 bars.
@@ -519,15 +534,25 @@ def stream_pattern_for_bars(
             # `clock_origin + clock_count_total + 1`. One pulse per grid position, all of them on
             # one absolute schedule anchored at the phase origin (`deadline_origin` +
             # `deadline_index`), so the per-call send overhead cannot accumulate into drift.
-            if master_origin is None:
-                master_origin = time.perf_counter()
-            master.send_pulses(
-                1,
-                bpm=master_bpm,
-                abort=abort,
-                deadline_origin=master_origin,
-                deadline_index=master_pulses_sent,
-            )
+            if master_pump_origin is not None:
+                # The pump owns the cadence and the device's grid with it; this phase only waits
+                # for its own grid positions on that one schedule.
+                if not master.wait_pulse(
+                    master_pump_origin + master_pulses_sent + 1,
+                    timeout_s=master_pulse_timeout_s,
+                    abort=abort,
+                ):
+                    break
+            else:
+                if master_origin is None:
+                    master_origin = time.perf_counter()
+                master.send_pulses(
+                    1,
+                    bpm=master_bpm,
+                    abort=abort,
+                    deadline_origin=master_origin,
+                    deadline_index=master_pulses_sent,
+                )
             master_pulses_sent += 1
         elif seconds_per_clock is not None:
             # Pace to an absolute deadline. `sleep(seconds_per_clock)` per step adds the

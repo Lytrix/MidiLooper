@@ -1623,9 +1623,28 @@ def _ensure_transport_stopped_before_record_arm(
     press_ms: int,
     phase_wait_ms: int,
     after_index: int = 0,
+    master: Optional[Any] = None,
 ) -> bool:
-    """Stop transport when evidence shows it running (ARMED→play→RECORDING)."""
+    """Stop transport when evidence shows it running (ARMED→play→RECORDING).
+
+    The stop is the **host's** realtime ``Stop`` when a clock master is driving
+    (``--clock-source host``), unconditionally: the host owns that transport, so there is no serial
+    evidence to consult -- the device emits none of the master-side ``BPM``/``BAR`` activity rows
+    while it is slaved, and the arm must land with the transport **stopped**. Skipping the stop
+    because no evidence showed a running transport is what made the arm press land on a running
+    sequencer: the device then jumps ``STOPPED -> RECORDING`` (skipping ARMED), the phase streams
+    into a take whose bounds are already set, and a second take follows
+    (`captures/session_20260930_141936.log`: two ``RECA`` rows 7.4 s apart, the first stopping as
+    ``stopToStopped`` at 2304 raw ticks against the requested 1536). A control-surface transport
+    press is not the alternative: it would only toggle the device's own sequencer flag while the
+    host kept driving.
+    """
     del in_port, args  # kept for call-site compatibility; clock/proxy must not toggle play
+    if master is not None:
+        print("[info] host clock source: realtime Stop before record arm")
+        master.stop()
+        time.sleep(max(phase_wait_ms, 1) / 1000.0)
+        return True
     lines = serial_collector.snapshot() if serial_collector is not None else []
     sequencer_live = bool(
         serial_collector is not None
@@ -1639,13 +1658,13 @@ def _ensure_transport_stopped_before_record_arm(
     ):
         return False
     print("[info] transport stop before record arm (control-surface flow)")
+    settle_s = max(phase_wait_ms, TRANSPORT_SHORT_DEBOUNCE_MS) / 1000.0
     _send_short_press(
         out_port,
         note=GLOBAL_TRANSPORT_NOTE,
         channel_1based=CONTROL_CHANNEL_1BASED,
         press_ms=press_ms,
     )
-    settle_s = max(phase_wait_ms, TRANSPORT_SHORT_DEBOUNCE_MS) / 1000.0
     time.sleep(settle_s)
     if serial_collector is not None:
         post_stop_baseline = len(serial_collector.snapshot())
@@ -1782,8 +1801,14 @@ def _run_record_arm_until_capturing(
     abort: RunAbort,
     wait_for_recording_confirm: bool = True,
     select_loop_slot: Optional[bool] = None,
+    master: Optional[Any] = None,
+    tempo_bpm: Optional[float] = None,
 ) -> tuple[bool, Optional[float]]:
     """Stop transport, arm, start transport; optionally confirm RECORDING before note stream.
+
+    ``master`` (a :class:`hitl.midi_clock.MidiClockMaster`) is the host clock source: the transport
+    is then the host's realtime ``Stop``/``Start`` around the arm instead of a control-surface
+    transport press (see the stop helper).
 
     Returns ``(reached_recording, record_schedule_start_mono)``. When transport was started,
     ``record_schedule_start_mono`` is the wall-time anchor for fixture grid scheduling
@@ -1829,6 +1854,7 @@ def _run_record_arm_until_capturing(
         press_ms=args.press_ms,
         phase_wait_ms=args.phase_wait_ms,
         after_index=track_baseline_len,
+        master=master,
     )
 
     if serial_collector is None:
@@ -1840,6 +1866,8 @@ def _run_record_arm_until_capturing(
             serial_collector,
             args,
             press_ms=args.press_ms,
+            master=master,
+            tempo_bpm=tempo_bpm,
             phase_wait_ms=args.phase_wait_ms,
             abort=abort,
         )
@@ -1917,6 +1945,8 @@ def _run_record_arm_until_capturing(
         # Always minimal settle: phase_wait after transport lets RECORDING run
         # before the host note stream and fails first-note latency (max 12 clocks).
         minimal_settle=True,
+        master=master,
+        tempo_bpm=tempo_bpm,
     )
     if not ok or press_sent is None:
         return False, None
@@ -1944,8 +1974,22 @@ def _restart_transport_after_clear(
     phase_wait_ms: int,
     abort: Optional[RunAbort],
     minimal_settle: bool = False,
+    master: Optional[Any] = None,
+    tempo_bpm: Optional[float] = None,
 ) -> tuple[bool, Optional[float]]:
-    """Start global transport after record arm so the armed slot begins capturing."""
+    """Start global transport after record arm so the armed slot begins capturing.
+
+    With a clock master driving (``--clock-source host``) the start is the host's realtime ``Start``
+    plus the continuous pump, and the anchor is that ``Start``: the device resets its tick to 0
+    there and holds it through the first pulse, so the take begins on the host grid instead of on
+    whatever tick the device's own sequencer flag happened to reach. There is no inbound clock to
+    wait for (a slaved device emits none) and no transport press (the host owns the transport).
+    """
+    if master is not None:
+        print("[info] host clock source: realtime Start after record arm (pump drives 24 PPQN)")
+        started_mono = time.monotonic()
+        master.start(bpm=tempo_bpm or getattr(args, "tempo_bpm", 120.0), abort=abort)
+        return True, started_mono
     print("[info] transport start after record arm")
     # Serial length before the press: `ensure_transport_clock` may only suppress its own toggle on
     # the acknowledgement of **this** press (see its `started_since_index` note).
@@ -2610,21 +2654,16 @@ def _clear_tracks_before_transport(
         track_baseline_len = len(serial_collector.snapshot()) if serial_collector else 0
         # The clear path needs a track that is in LOOP_EDIT (the same precondition the per-track
         # path runs before its clear): outside it the row selects mean geometry editing, and the
-        # long-press clear is not the gesture that runs. The device boots into LOOP_EDIT, but pass
-        # the target rows so the precondition can *establish* it rather than assume the boot state
-        # (this call site is what the "no track/loop target" refusal used to fire on).
+        # long-press clear is not the gesture that runs. The precondition proves the mode from the
+        # device's own acks and, when the capture holds none, holds the edit button long to land in
+        # LOOP_EDIT and reads the ack that press leaves.
         # Tolerant on purpose: the clear is the gesture path that *sets up* the mode for the legs
-        # that follow, and the device reports `Edit session: LOOP_EDIT` on its note-100 trigger
-        # rather than on a plain row select, so a missing proof here must not fail the run. The
-        # record/overdub legs still require the proof (they are where a wrong mode changes the
-        # gesture's meaning).
+        # that follow, so a missing proof here must not fail the run. The record/overdub legs still
+        # require the proof (they are where a wrong mode changes the gesture's meaning).
         if not ensure_loop_edit_before_record(
             out_port,
             serial_collector,
-            press_ms=args.press_ms,
             phase_wait_ms=args.phase_wait_ms,
-            track_number=_user_track_number(idx),
-            loop_slot=int(getattr(args, "loop_slot", 0) or 0),
             skip=args.no_loop_edit_precondition,
         ):
             print(
@@ -6004,9 +6043,17 @@ def run() -> int:
                 if clock_master is not None:
                     # Host clock source: the master owns the transport. A press here would toggle
                     # *off* the run the realtime Start begins, and an inbound-clock wait can only
-                    # fail (a device slaving to the host emits no clock of its own).
-                    clock_master.start()
-                    print("[info] host clock source: realtime Start sent (no transport press).")
+                    # fail (a device slaving to the host emits no clock of its own). The pump
+                    # starts with it: the device leaves `CLOCK_EXTERNAL` 500 ms after the last
+                    # pulse (`ClockManager::midiClockTimeout`), so a host that only sends pulses
+                    # inside a phase does not own the grid the arm and the take are timed on.
+                    clock_master.start(
+                        bpm=float(getattr(args, "tempo_bpm", 0.0) or 120.0), abort=abort
+                    )
+                    print(
+                        "[info] host clock source: realtime Start sent, continuous pump driving "
+                        "24 PPQN (no transport press)."
+                    )
                 elif _use_serial_transport_proxy(
                     args, serial_collector, after_index=session_after_index
                 ):
@@ -6083,24 +6130,19 @@ def run() -> int:
                 left_note_edit = ensure_loop_edit_before_record(
                     out_port,
                     serial_collector,
-                    press_ms=args.press_ms,
                     phase_wait_ms=args.phase_wait_ms,
-                    # The device enters LOOP_EDIT at boot (and on its note-100 trigger), not by
-                    # selecting a loop row, and its `Edit session: LOOP_EDIT` row is emitted on
-                    # *entry* -- a capture that attaches later never sees it, so that row cannot
-                    # prove the current mode here. Pass the target rows so the precondition can try
-                    # to establish it, and report the outcome instead of failing the leg on it
-                    # (see `docs/Guides/HITL_CONTENT_VERIFICATION.md`).
-                    track_number=_user_track_number(idx),
-                    loop_slot=int(getattr(args, "loop_slot", 0) or 0),
+                    # The mode is proved from the device's acks, and the capture attaches after the
+                    # boot's `Edit session: LOOP_EDIT` row, so the precondition holds the edit
+                    # button long (its exit action) and reads the ack that press leaves. The outcome
+                    # is reported rather than made fatal for the leg (see
+                    # `docs/Guides/HITL_CONTENT_VERIFICATION.md`).
                     skip=args.no_loop_edit_precondition,
                 )
                 if not left_note_edit:
                     print(
-                        "[warn] LOOP_EDIT not proven before the record leg; continuing, because the "
-                        "device's entry row cannot be observed by a late-attaching capture and no "
-                        "verified entry gesture exists yet (the clear issues the slot selects that "
-                        "the loop-edit flow needs). Investigate before trusting a wrong-mode result."
+                        "[warn] LOOP_EDIT not proven before the record leg; continuing, because a "
+                        "failing proof here would abort a run whose gestures are otherwise already "
+                        "committed. Investigate before trusting a wrong-mode result."
                     )
 
                 # Recover from a prior aborted run: stop then restart transport so
@@ -6271,6 +6313,10 @@ def run() -> int:
                     record_loop_slot=record_loop_slot,
                     abort=abort,
                     wait_for_recording_confirm=not edit_fixture,
+                    # Host clock source: the transport around the arm is the host's realtime
+                    # Stop/Start and the pump carries the grid across it (`--clock-source host`).
+                    master=clock_master,
+                    tempo_bpm=float(getattr(args, "tempo_bpm", 0.0) or 120.0),
                 )
                 if serial_collector is not None and reached_recording and not edit_fixture:
                     recording_confirmed_at = time.monotonic()
@@ -6353,10 +6399,18 @@ def run() -> int:
                                 break
                             time.sleep(0.01)
                         if clock_available:
+                            # `bpm()` is None until a full tempo window has been observed, which is
+                            # normal at a phase start (the queued backlog drains in one poll). Say
+                            # that rather than printing "0.0 BPM", which read like a clock fault.
+                            learned_bpm = clock_reader.bpm()
+                            tempo_note = (
+                                f"{learned_bpm:.1f} BPM"
+                                if learned_bpm
+                                else "tempo not yet learned"
+                            )
                             print(
                                 "[info] Bar sync via device USB MIDI clock "
-                                f"({clock_reader.bpm() or 0:.1f} BPM, "
-                                f"{int(clock_reader.observed_pulses())} pulses seen)"
+                                f"({tempo_note}, {int(clock_reader.observed_pulses())} pulses seen)"
                             )
                         else:
                             print(
@@ -6802,6 +6856,12 @@ def run() -> int:
 
             # Allow delayed short-press expiration + state transition logs to flush.
             time.sleep(max(args.final_wait_ms, 1) / 1000.0)
+
+            if clock_master is not None:
+                # Stop the host drive before the ports close: the device is left stopped on the
+                # next realtime Stop (or on the 500 ms timeout) instead of mid-grid, and the pump
+                # thread does not race the port teardown.
+                clock_master.stop_pump()
 
     finally:
         serial_lines: list[str] = []

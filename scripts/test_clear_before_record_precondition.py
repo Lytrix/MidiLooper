@@ -587,11 +587,15 @@ class ClearBeforeTransportTests(unittest.TestCase):
 class LoopEditPreconditionTests(unittest.TestCase):
     """The device boots into LOOP_EDIT, but a run must *establish* it, not assume it.
 
-    Requirement (2026-09-30): the record/overdub gestures mean something else outside LOOP_EDIT,
-    and this run's own pre-transport clear (row selects plus a long press) can leave the mode, so
-    an unproven edit mode must not be accepted silently -- it is either entered explicitly by
-    selecting the track's loop row (proven from serial) or refused by name.
+    The record/overdub gestures mean something else outside LOOP_EDIT, and this run's own
+    pre-transport clear (row selects plus a long press) can leave the mode, so an unproven edit mode
+    must not be accepted silently: it is either already proven by the capture's own ack, or proved
+    by holding the edit button long (its exit action) and reading the ack that press leaves.
     """
+
+    _LOOP_ACK = "Edit session: LOOP_EDIT (Program 0, Note 100 trigger)"
+    _NOTE_ACK = "Edit session: NOTE_EDIT (Program 1, Note 0 trigger)"
+    _EXIT_ACK = "[INFO] MIDI Encoder: Long press - exited edit mode"
 
     class _Collector:
         def __init__(self, lines: list[str]) -> None:
@@ -607,12 +611,11 @@ class LoopEditPreconditionTests(unittest.TestCase):
         def send(self, message) -> None:
             self.sent.append(message)
 
-    def _precondition(self, lines: list[str], *, track_number: int, loop_slot: int, confirm: str):
+    def _precondition(self, lines: list[str], *, confirm: str):
         from hitl.edit_mode_precondition import ensure_loop_edit_before_record
 
         collector = self._Collector(lines)
         port = self._Port()
-        # The serial evidence that the loop-row select produced, i.e. what confirmation looks like.
         original_snapshot = collector.snapshot
         state = {"sent": False}
 
@@ -627,46 +630,38 @@ class LoopEditPreconditionTests(unittest.TestCase):
 
         collector.snapshot = snapshot  # type: ignore[method-assign]
         port.send = _send  # type: ignore[method-assign]
-        ok = ensure_loop_edit_before_record(
-            port, collector, press_ms=120, phase_wait_ms=100,
-            track_number=track_number, loop_slot=loop_slot, timeout_s=0.2,
-        )
+        with patch("hitl.edit_mode_precondition.time.sleep"):
+            ok = ensure_loop_edit_before_record(
+                port, collector, phase_wait_ms=100, timeout_s=0.2,
+            )
         return ok, port
 
-    def test_unknown_mode_is_entered_explicitly_and_proven(self) -> None:
+    def test_unproven_mode_is_entered_explicitly_and_proven(self) -> None:
         ok, port = self._precondition(
-            ["boot: no edit session yet"], track_number=5, loop_slot=1,
-            confirm="Edit session: LOOP_EDIT (Program 0, Note 100 trigger)",
+            ["boot: no edit session yet"], confirm=self._LOOP_ACK,
         )
         self.assertTrue(ok)
-        # Track row (60 + 5 - 1) then loop row (50 + 1 - 1); each press is note_on + note_off.
+        # One long press of the edit button (note 38) is what lands the device in LOOP_EDIT.
         presses = [m.note for m in port.sent if m.type == "note_on"]
-        self.assertEqual(presses, [64, 50])
+        self.assertEqual(presses, [38])
         self.assertTrue(all(m.channel == 15 for m in port.sent))
 
-    def test_unknown_mode_without_a_target_is_refused(self) -> None:
-        ok, port = self._precondition(
-            ["boot: no edit session yet"], track_number=0, loop_slot=0,
-            confirm="Edit session: LOOP_EDIT",
-        )
-        self.assertFalse(ok)
-        self.assertEqual(port.sent, [])
-
-    def test_unproven_confirmation_is_refused(self) -> None:
-        ok, port = self._precondition(
-            ["boot: no edit session yet"], track_number=5, loop_slot=1, confirm="",
-        )
+    def test_unproven_mode_without_an_ack_is_refused(self) -> None:
+        ok, port = self._precondition(["boot: no edit session yet"], confirm="")
         self.assertFalse(ok)
         # It tried to establish LOOP_EDIT before refusing.
-        self.assertEqual([m.note for m in port.sent if m.type == "note_on"], [64, 50])
+        self.assertEqual([m.note for m in port.sent if m.type == "note_on"], [38])
 
     def test_already_in_loop_edit_needs_no_gesture(self) -> None:
-        ok, port = self._precondition(
-            ["Edit session: LOOP_EDIT (Program 0, Note 100 trigger)"],
-            track_number=5, loop_slot=1, confirm="",
-        )
+        ok, port = self._precondition([self._LOOP_ACK], confirm="")
         self.assertTrue(ok)
         self.assertEqual(port.sent, [])
+
+    def test_note_edit_is_left_by_the_long_press(self) -> None:
+        ok, port = self._precondition([self._NOTE_ACK], confirm=self._EXIT_ACK)
+        self.assertTrue(ok)
+        # The exit is a *long* press, not a short one: a short press would cycle the mode again.
+        self.assertEqual([m.note for m in port.sent if m.type == "note_on"], [38])
 
 
 if __name__ == "__main__":
