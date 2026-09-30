@@ -17,9 +17,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hitl.control_constants import LOOP_SELECT_NOTE_BASE, TRACK_SELECT_NOTE_BASE  # noqa: E402
+
+from hitl.actions.correlation import Wire  # noqa: E402
 from hitl_retention_handoff import (  # noqa: E402
     Gesture,
+    _await_seed_receipt,
+    _device_floor_us,
     _emit,
+    _seed_arm_wires,
+    _seed_recording_wires,
+    _stage_report,
     cleared_slot_from_lines,
     critical_window_gestures,
     target_precondition,
@@ -248,6 +255,110 @@ class ClearVerificationTests(unittest.TestCase):
     def test_the_whole_track_empty_form_names_the_slot_too(self):
         self.assertTrue(cleared_slot_from_lines(
             ["[1.0] [DEBUG] Clear ignored \u2014 track is empty (track 7 slot 5)"], slot_number=6))
+
+
+class SeedReceiptTests(unittest.TestCase):
+    """The seed press's receipt is attributed to its own slot, and its stages are named.
+
+    Measured on device: the two `Loop 3 (short)` presses a predecessor's in-flight Record job held left **no**
+    `DISP` row for that slot, and the driver could only report `slot 4 never started recording`. Each case here
+    pins one part of the fix -- the receipt must be the slot's own row, the press must have been recognised as
+    *this* gesture, and a stage that never arrived is named instead of timed out.
+    """
+
+    def _log(self, lines: list[str]) -> Path:
+        import tempfile
+        path = Path(tempfile.mkdtemp()) / "session.log"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
+
+    def test_the_arm_receipt_must_name_the_slot(self):
+        log = self._log([
+            "[10.000] [INFO] Transport stopped",
+            "[10.050] [INFO] MIDI: Clear selected slot 5",         # the floor: newest row before the mark
+            "[10.100] [INFO] Button press: Loop 5 (short)",        # the press itself, after the mark
+            "#CAP,10150000,DISP,4,ARMED,0,0",                      # slot 5's own, 0-based, arm row
+        ])
+        row, gesture = _await_seed_receipt(log, 2, slot_number=5, stage="arm", timeout_s=0.0)
+        self.assertIsNotNone(row)
+        self.assertIn("DISP,4,ARMED", row)
+        self.assertEqual({"send": "met", "recognize": "met", "accept": "met", "execute": "pending"},
+                         gesture.snapshot()["stages"])
+
+    def test_another_slot_or_an_unattributed_transition_is_not_the_receipt(self):
+        """The track-state family names no slot, so it cannot stand in for this slot's own row."""
+        lines = [
+            "[10.000] [INFO] Transport stopped",
+            "[10.050] [INFO] MIDI: Clear selected slot 5",
+            "[10.100] [INFO] Button press: Loop 5 (short)",
+        ]
+        foreign = self._log([*lines, "#CAP,10150000,DISP,2,ARMED,0,0"])
+        unattributed = self._log([*lines, "#CAP,10150000,ST,Track,STOPPED,ARMED"])
+        for log in (foreign, unattributed):
+            row, gesture = _await_seed_receipt(log, 2, slot_number=5, stage="arm", timeout_s=0.0)
+            self.assertIsNone(row)
+            self.assertEqual("blocked at accept", _stage_report(gesture).split(" (")[0])
+
+    def test_a_press_that_was_never_recognized_is_named(self):
+        """A swallowed press is the `recognize` stage, not a bare timeout: the device never named this press."""
+        log = self._log([
+            "[10.000] [INFO] Transport stopped",
+            "[10.050] [INFO] MIDI: Clear selected slot 5",
+            "#CAP,10150000,DISP,4,ARMED,0,0",                      # an arm row, but for an older gesture
+        ])
+        row, gesture = _await_seed_receipt(log, 2, slot_number=5, stage="arm", timeout_s=0.0)
+        self.assertIsNone(row)
+        self.assertEqual("blocked at recognize", _stage_report(gesture).split(" (")[0])
+
+    def test_a_merged_classification_is_a_named_contradiction(self):
+        """Measured: two taps inside the tap window arrive as `Loop N (double)` -- not this gesture at all."""
+        log = self._log([
+            "[10.000] [INFO] Transport stopped",
+            "[10.050] [INFO] MIDI: Clear selected slot 5",
+            "[10.100] [INFO] Button press: Loop 5 (double)",
+            "#CAP,10150000,DISP,4,ARMED,0,0",
+        ])
+        row, gesture = _await_seed_receipt(log, 2, slot_number=5, stage="arm", timeout_s=0.0)
+        self.assertIsNone(row)
+        self.assertEqual("recognize", gesture.contradicted())
+        self.assertIn("answered as a different gesture", _stage_report(gesture))
+
+    def test_a_row_from_before_the_press_is_never_the_receipt(self):
+        """The floor is the device clock observed before the press (`_device_floor_us`), from either family."""
+        log = self._log([
+            "[10.000] [INFO] Transport stopped",
+            "[10.050] [INFO] MIDI: Clear selected slot 5",
+            "[10.100] [INFO] Button press: Loop 5 (short)",
+            "#CAP,10040000,DISP,4,ARMED,0,0",                      # stamped before the floor
+        ])
+        self.assertEqual(10_050_000, _device_floor_us(log, 2))
+        row, _gesture = _await_seed_receipt(log, 2, slot_number=5, stage="arm", timeout_s=0.0)
+        self.assertIsNone(row)
+
+    def test_the_take_is_only_proved_after_this_gesture_s_own_arm(self):
+        """`Recording started @ tick` names no slot, so ordering is what attributes it to this seed."""
+        lines = [
+            "[10.000] [INFO] Transport stopped",
+            "[10.050] [INFO] MIDI: Clear selected slot 5",
+            "[10.100] [INFO] Button press: Loop 5 (short)",
+        ]
+        unarmed = self._log([*lines, "[10.200] [TRACK] Recording started @ tick 0"])
+        armed = self._log([*lines, "#CAP,10150000,DISP,4,ARMED,0,0",
+                           "[10.200] [TRACK] Recording started @ tick 0"])
+        row, gesture = _await_seed_receipt(unarmed, 2, slot_number=5, stage="recording", timeout_s=0.0)
+        self.assertIsNone(row)
+        self.assertEqual("blocked at accept", _stage_report(gesture).split(" (")[0])
+        row, gesture = _await_seed_receipt(armed, 2, slot_number=5, stage="recording", timeout_s=0.0)
+        self.assertIn("Recording started", row)
+        self.assertEqual("met", gesture.snapshot()["stages"]["execute"])
+
+    def test_the_wire_vocabulary_is_slot_scoped_in_each_family(self):
+        arm = _seed_arm_wires(5, 4)
+        take = _seed_recording_wires(5, 4)
+        self.assertIn(Wire("DISP,4,ARMED", ("#CAP,",)), arm)
+        self.assertIn(Wire("Loop 5: Start Recording"), arm)
+        self.assertIn(Wire(",RECA,4,", ()), take)
+        self.assertIn(Wire("Recording started"), take)
 
 
 if __name__ == "__main__":

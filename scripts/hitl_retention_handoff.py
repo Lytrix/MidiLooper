@@ -60,6 +60,8 @@ from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT  # noqa: E402
 from hitl.device_shutdown import DeviceSession, clear_latch, refuse_reset_if_latched  # noqa: E402
 from hitl.managed_capture import ManagedCaptureSession  # noqa: E402
 from hitl.midi_io import _find_midi_port, _send_long_press, _send_short_press  # noqa: E402
+from hitl.actions.correlation import CorrelatedGesture, Stage, StageRules, Wire  # noqa: E402
+from hitl.device_time import newest_row_clock_us  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -203,6 +205,94 @@ def _confirm(capture_log: Path, *, label: str, markers: tuple[str, ...], timeout
     ok = _wait_for_any(capture_log, after=before, markers=markers, timeout_s=timeout_s)
     events.append({"event": label, "confirmed": ok})
     return ok
+
+
+#: The firmware's per-slot display row: `#CAP,<us>,DISP,<slot0>,<STATE>,…` (0-based slot). A focus change and an
+#: arm/record transition emit one for the slot it belongs to, so it is the *slot-scoped* receipt a press can be
+#: attributed to -- and its absence is the evidence that the gesture was swallowed: measured, two
+#: `Loop 3 (short)` presses a predecessor's in-flight Record job held left **no** `DISP` row for that slot at all.
+def _device_floor_us(capture_log: Path, after: int) -> Optional[int]:
+    """The newest device clock observed **before** the gesture at `after`, from either row family."""
+    return newest_row_clock_us(_lines(capture_log), upto_index=after)
+
+
+def _seed_arm_wires(slot_number: int, slot0: int) -> tuple[Wire, ...]:
+    """The rows that prove the seed press **armed this slot**.
+
+    Slot-scoped on purpose. The track-state family (`#CAP,<us>,ST,Track,STOPPED,ARMED`) names no slot at all, so
+    a wait built on it could be discharged by another slot's or another track's transition; what this gate reads
+    instead is the slot's own `DISP` row and the human `Loop N: Start Recording` (1-based in the label, 0-based
+    in `DISP`/`RECA` -- each wire carries the identity **its own family** uses).
+    """
+    return (Wire(f"DISP,{slot0},ARMED", ("#CAP,",)),
+            Wire(f"DISP,{slot0},RECORDING", ("#CAP,",)),
+            Wire(f"Loop {slot_number}: Start Recording"))
+
+
+def _seed_recording_wires(slot_number: int, slot0: int) -> tuple[Wire, ...]:
+    """The rows that prove the take **started**.
+
+    `Recording started @ tick` (and the `ST,Track,ARMED,RECORDING` transition) name no slot, so they only count
+    after this gesture's own slot-scoped arm row was met -- the ordering the stage model enforces, and the rule
+    the accepted-sequence driver reaches the same way.
+    """
+    return (Wire(f"DISP,{slot0},RECORDING", ("#CAP,",)),
+            Wire(f",RECA,{slot0},", ()),
+            Wire("Recording started"))
+
+
+def _stage_report(gesture) -> str:
+    """A gesture's own record as one line, for a failure message: how far it got, and how."""
+    snapshot = gesture.snapshot()
+    stages = ", ".join(f"{stage}={outcome}" for stage, outcome in snapshot["stages"].items())
+    blocked = gesture.blocking_stage()
+    detail = f"blocked at {blocked}" if blocked is not None else "every awaited stage met"
+    contradicted = gesture.contradicted()
+    if contradicted is not None:
+        detail += f"; {contradicted} was answered as a different gesture"
+    return f"{detail} ({stages})"
+
+
+def _await_seed_receipt(capture_log: Path, after: int, *, slot_number: int, stage: str,
+                        timeout_s: float, events: Optional[list[dict]] = None,
+                        label: str = "") -> tuple[Optional[str], object]:
+    """Wait for one stage of the seed press, attributed to `slot_number`; returns (deciding row, gesture).
+
+    The wait is the action layer's (`CorrelatedGesture`): its floor is the device clock observed *before* the
+    press, recognition is the device's own `Button press: Loop N (…)` row for **this** slot, and no other slot's
+    row can substitute. The stages stay distinct, so "the press was never recognized", "recognized but never
+    armed" and "armed but never recording" are three named outcomes instead of one timeout -- which is what the
+    seed's bare `slot N never started recording` could not tell apart. The same gesture also carries the two
+    signatures the device has actually produced for a lost seed press: a merged classification
+    (`Button press: Loop N (double)`, measured when two taps landed inside the tap window) and a press the
+    firmware read as the *other* action (`Loop N: Stop Recording`, `Loop N: Queued playback switch`).
+    """
+    slot0 = slot_number - 1
+    gesture = CorrelatedGesture(
+        name=f"seed_{slot_number}_{stage}",
+        rules=StageRules(
+            recognize=(Wire(f"Button press: Loop {slot_number} ("),),
+            accept=_seed_arm_wires(slot_number, slot0),
+            execute=_seed_recording_wires(slot_number, slot0),
+            refusal=(f"Loop {slot_number}: Stop Recording",
+                     f"Loop {slot_number}: Queued playback switch"),
+            conflict=(Wire(f"Button press: Loop {slot_number} (double)"),
+                      Wire(f"Button press: Loop {slot_number} (triple)"),
+                      Wire(f"Button press: Loop {slot_number} (long)")),
+        ),
+        now=time.monotonic,
+        sleep=time.sleep,
+    )
+    gesture.mark_sent(note=LOOP_SELECT_NOTE_BASE + slot0, channel=CONTROL_CHANNEL_1BASED,
+                      kind="short", before_device_us=_device_floor_us(capture_log, after))
+    target = Stage.ACCEPT if stage == "arm" else Stage.EXECUTE
+    met = gesture.wait_for(target, lambda: _lines(capture_log)[max(after, 0):], timeout_s=timeout_s,
+                           poll_s=0.05)
+    if events is not None:
+        events.append({"event": label or f"seed_{slot_number}_{stage}", "confirmed": met,
+                       "row": gesture.evidence.get(target, ""), "record": _stage_report(gesture)})
+    return (gesture.evidence.get(target) if met else None), gesture
+
 
 
 def _transport_running(capture_log: Path) -> bool:
@@ -404,28 +494,27 @@ def _seed_slot(out_port, capture_log: Path, *, track: int, slot_number: int, cha
     before = len(_lines(capture_log))
     slots.press_slot_record(_Ctx(out_port), slot_number, press_ms=press_ms)
     events.append({"event": f"seed_{slot_number}_selected"})
-    saw = _wait_for_any(capture_log, after=before,
-                        markers=(",ST,Track,STOPPED,ARMED", ",ST,Track,STOPPED,RECORDING",
-                                 "Start Recording"),
-                        timeout_s=3.0)
-    if not saw:
+    armed_row, _ = _await_seed_receipt(capture_log, before, slot_number=slot_number, stage="arm",
+                                      timeout_s=3.0, events=events,
+                                      label=f"seed_{slot_number}_arm")
+    if armed_row is None:
         # A cleared slot can take the arm-and-wait path (`handleArmedRecordPress` returns handled), so the
-        # first press only arms. Press again: the second press is the record start for an armed slot.
+        # first press only arms. Press again: the second press is the record start for an armed slot. The
+        # first attempt's own record (`seed_N_arm` in the events) names which stage it stopped at.
+        before = len(_lines(capture_log))
         slots.press_slot_record(_Ctx(out_port), slot_number, press_ms=press_ms)
         events.append({"event": f"seed_{slot_number}_second_press"})
-        _wait_for_any(capture_log, after=before,
-                      markers=(",ST,Track,STOPPED,ARMED", ",ST,Track,STOPPED,RECORDING",
-                               "Start Recording"),
-                      timeout_s=3.0)
+        armed_row, _ = _await_seed_receipt(capture_log, before, slot_number=slot_number, stage="arm",
+                                           timeout_s=3.0, events=events,
+                                           label=f"seed_{slot_number}_arm_retry")
     # The arm needs a running transport to begin the capture.
     _ensure_transport(out_port, capture_log, running=True, press_ms=press_ms, events=events,
                       label=f"seed_{slot_number}_start")
-    recording = _wait_for_any(capture_log, after=before,
-                              markers=("Recording started", ",RECA,", ",ST,Track,ARMED,RECORDING"),
-                              timeout_s=phase_timeout_s)
-    if not recording:
-        raise RuntimeError(f"slot {slot_number} never started recording")
-    events.append({"event": f"seed_{slot_number}_recording", "confirmed": True})
+    recording_row, recording_gesture = _await_seed_receipt(
+        capture_log, before, slot_number=slot_number, stage="recording",
+        timeout_s=phase_timeout_s, events=events, label=f"seed_{slot_number}_recording")
+    if recording_row is None:
+        raise RuntimeError(f"slot {slot_number} never started recording: {_stage_report(recording_gesture)}")
 
     # Inject the take's content on the track's input channel (mido channels are 0-based).
     #

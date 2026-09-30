@@ -233,6 +233,66 @@ class PendingSwitchGateTests(unittest.TestCase):
 
 
 
+    def test_a_row_stamped_exactly_at_the_floor_is_history(self):
+        """The floor is a stamp the host had already read, so a row carrying it cannot be the receipt."""
+        clock = FakeClock()
+        gesture = record_gesture(clock, before_device_us=8_000_000)
+        gesture.consider("Button press: Loop 4 (short)")
+        self.assertIsNone(gesture.consider("#CAP,8000000,DISP,3,ARMED,0,0"))
+        self.assertEqual(Stage.ACCEPT, gesture.pending_stage())
+        self.assertEqual(Stage.ACCEPT, gesture.consider("#CAP,8000001,DISP,3,ARMED,0,0"))
+
+
+class StageCoverageTests(unittest.TestCase):
+    """Which stages a gesture waits for at all -- `StageRules`' own contract, made explicit."""
+
+    def test_a_stage_with_no_rules_is_not_awaited_and_the_next_one_is(self):
+        """A receipt-only wait declares `accept`; recognition is simply not part of that gesture's record."""
+        clock = FakeClock()
+        gesture = CorrelatedGesture(
+            name="receipt_only",
+            rules=StageRules(accept=(Wire("ARMED", ("DISP,3,",)),)),
+            now=clock.now,
+            sleep=clock.sleep,
+        )
+        gesture.mark_sent(note=53, channel=16, kind="short", before_device_us=5_000_000)
+        self.assertEqual(Stage.ACCEPT, gesture.pending_stage())
+        self.assertEqual(Stage.ACCEPT, gesture.consider("#CAP,5200000,DISP,3,ARMED,0,0"))
+        self.assertIsNone(gesture.pending_stage())
+        self.assertEqual({"send": "met", "recognize": "pending", "accept": "met", "execute": "pending"},
+                         gesture.snapshot()["stages"])
+
+    def test_a_state_wait_that_never_sent_does_not_await_a_send(self):
+        """The already-armed path: the press was an earlier gesture, so nothing here claims to have sent."""
+        clock = FakeClock()
+        gesture = CorrelatedGesture(
+            name="already_armed",
+            rules=StageRules(execute=(Wire("Recording started"),)),
+            now=clock.now,
+            sleep=clock.sleep,
+        )
+        self.assertEqual(Stage.EXECUTE, gesture.pending_stage())
+        self.assertEqual({}, gesture.send)
+        self.assertEqual("pending", gesture.snapshot()["stages"]["send"],
+                         "nothing was sent, and the record says so")
+
+
+    def test_a_stale_human_row_cannot_satisfy_a_stage(self):
+        """Both families carry the same device clock, so the floor applies to a directly printed row too."""
+        clock = FakeClock()
+        gesture = CorrelatedGesture(
+            name="seed_arm",
+            rules=StageRules(accept=(Wire("Loop 4: Start Recording"),)),
+            now=clock.now,
+            sleep=clock.sleep,
+        )
+        gesture.mark_sent(note=53, channel=16, kind="short", before_device_us=11_000_000)
+        self.assertIsNone(gesture.consider("[11.000] [TRACK] Loop 4: Start Recording"),
+                          "a row stamped at the floor is history, whichever family it belongs to")
+        self.assertIsNone(gesture.consider("[10.500] [TRACK] Loop 4: Start Recording"))
+        self.assertEqual(Stage.ACCEPT, gesture.consider("[11.020] [TRACK] Loop 4: Start Recording"))
+
+
 class StageContradictionTests(unittest.TestCase):
     """A row that answers *differently* is a contradiction, and the absence/contradiction split is the point."""
 
@@ -291,7 +351,9 @@ class PressRecordsSendTests(unittest.TestCase):
         with patch("hitl.actions.slots._send_short_press") as send:
             slots.press_slot_record(self.ctx, 4, correlate=gesture, before_device_us=5_000_000)
         send.assert_called_once()
-        self.assertEqual(Stage.RECOGNIZE, gesture.pending_stage(), "SEND is met by the press, the rest is not")
+        self.assertTrue(gesture.met(Stage.SEND), "the press helper met SEND")
+        self.assertFalse(gesture.awaited(Stage.RECOGNIZE), "no rules declared: nothing later is awaited")
+        self.assertIsNone(gesture.pending_stage())
         self.assertEqual({"note": 53, "channel": 16, "kind": "short", "before_device_us": 5_000_000},
                          gesture.send)
 

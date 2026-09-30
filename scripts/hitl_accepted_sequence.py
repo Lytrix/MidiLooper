@@ -72,6 +72,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from hitl.actions import slots  # noqa: E402
 from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT  # noqa: E402
+from hitl.actions.correlation import (  # noqa: E402
+    CorrelatedGesture,
+    PendingSwitchGate,
+    Stage,
+    StageRules,
+    Wire,
+)
 from hitl.control_constants import (  # noqa: E402
     CONTROL_CHANNEL_1BASED,
     GLOBAL_TRANSPORT_NOTE,
@@ -205,13 +212,15 @@ DEFAULT_TAP_WINDOW_S = 0.35
 def _switch_pending(capture_log: Path, since: int, slot: int) -> bool:
     """An unexpected playback queue invalidates this capture-switch leg.
 
-    `Playback started` has no track/slot identity and may belong to another
-    track or an earlier transport start. It cannot discharge this guard. This
-    scenario requires the capture-switch route, so even a later playback switch
-    would not repair its premise: abort rather than press again.
+    The *rule* is the action layer's `PendingSwitchGate`, so which rows mean "a playback switch for this target
+    is queued" has one owner, together with the fact that an unattributed `Playback started` (`[TRACK] …`, no
+    slot) discharges nothing. What stays here is this leg's policy: the rows are read from the leg's own start
+    mark, and **any** queue row for the target invalidates the premise -- even one a later
+    `Loop N: Switch gesture from slot M` landed -- because this scenario requires the capture-switch route
+    rather than a playback switch. Abort rather than press again.
     """
-    return any(("Queued playback switch" in line or "Reaffirmed playback switch" in line)
-               and f"Loop {slot}:" in line for line in _lines(capture_log)[since:])
+    gate = PendingSwitchGate(target=f"Loop {slot}:")
+    return gate.state(_lines(capture_log)[max(since, 0):]) != "clear"
 
 
 class _PressSpacing:
@@ -320,12 +329,13 @@ def _drain_now(drain) -> None:
 def _slot_disp_rows(capture_log: Path, after: int, slot0: int,
                     states: Optional[tuple[str, ...]] = None,
                     human: tuple[str, ...] = ()) -> list[str]:
-    """Rows that name the gesture at `after`: `slot0`'s `DISP` state, or one of the `human` markers.
+    """The rows after `after` that name the gesture: `slot0`'s `DISP` states, or one of the `human` markers.
 
-    Qualified by the device's own clock, not by file position. The capture ring flushes in batches and can put
-    a take's later rows *before* an earlier flood of them in the file, so an order-based filter misreads
-    current rows as drained history (`captures/s4f22-dec096-od-03`); the floor is the newest device clock the
-    host had seen before the gesture, and a row stamped at or below it is never the receipt.
+    This is the row *source*, deliberately with no freshness rule of its own: whether a row is news belongs to
+    the wait (`CorrelatedGesture` refuses anything at or below the device clock observed before the gesture) so
+    the rule has one owner instead of a copy here. File order is not meaningful -- the capture ring flushes in
+    batches and can put a take's later rows *before* an earlier flood of them (`captures/s4f22-dec096-od-03`),
+    which is why nothing here filters by position.
 
     The `human` markers are the firmware's own logger rows, which are written **straight to `Serial`** and are
     therefore live by construction -- they are not held in the ring at all. That matters when the ring has not
@@ -334,22 +344,42 @@ def _slot_disp_rows(capture_log: Path, after: int, slot0: int,
     became readable after the take stopped at 35.864 s, so a `DISP`-only gate pressed the same button again --
     which the firmware reads as *Stop Recording* -- and refused the seed the device had actually made.
     """
-    lines = _lines(capture_log)
-    floor = _gesture_clock_us(capture_log, after)
     rows: list[str] = []
-    for line in lines[max(after, 0):]:
+    for line in _lines(capture_log)[max(after, 0):]:
         parsed = _slot_disp_state(line)
         if parsed is not None and parsed[0] == slot0 and (states is None or parsed[1] in states):
-            stamp = device_stamp_us(line)
-            if floor is not None and stamp is not None and stamp <= floor:
-                continue
             rows.append(line)
-            continue
-        if human and any(marker in line for marker in human):
-            stamp = human_line_device_us(line)
-            if stamp is not None and (floor is None or stamp > floor):
-                rows.append(line)
+        elif human and any(marker in line for marker in human):
+            rows.append(line)
     return rows
+
+
+def _is_news(line: str, floor_us: Optional[int]) -> bool:
+    """Whether `line` is news relative to the device clock `floor_us` (None: no floor was observed).
+
+    Both families carry the same clock in different encodings (`#CAP,<us>,…` directly, a directly printed logger
+    line as `[<s>.<ms>] …`); a row carrying neither has none and is live by construction.
+    """
+    if floor_us is None:
+        return True
+    stamp = device_stamp_us(line)
+    if stamp is None:
+        stamp = human_line_device_us(line)
+    return stamp is None or stamp > floor_us
+
+
+def _slot_receipt_wires(slot0: int, states: Optional[tuple[str, ...]],
+                        human: tuple[str, ...]) -> tuple[Wire, ...]:
+    """The rows that can be a receipt for `slot0`: its own `DISP` states, plus the named printed rows.
+
+    Each wire carries the identity **its own family** uses -- a `DISP` row is the slot's 0-based index inside a
+    `#CAP` row, a human row names the 1-based slot in the caller's own marker -- so the two families can answer
+    the same stage without either one's identity substituting for the other's.
+    """
+    wires = [Wire(f"DISP,{slot0},{state}", ("#CAP,",)) for state in states] if states is not None \
+        else [Wire(f"DISP,{slot0},", ("#CAP,",))]
+    wires.extend(Wire(marker) for marker in human)
+    return tuple(wires)
 
 
 def _slot_ready_state(capture_log: Path, after: int, slot0: int, slot_number: int) -> Optional[str]:
@@ -358,10 +388,14 @@ def _slot_ready_state(capture_log: Path, after: int, slot0: int, slot_number: in
     Read from the rows the firmware writes **straight to `Serial`** (`Loop N: Start Recording`,
     `Recording started @ tick`), so the answer does not wait on the capture ring: the ring can hold a take's
     rows for the whole take (`captures/s4f22-dec096-od-10`). `Recording started` is only trusted when the
-    slot-scoped arm row for **this** slot came first, since that row names no slot.
+    slot-scoped arm row for **this** slot came first, since that row names no slot. This is a *state read*, not
+    a gesture wait, so it applies the freshness floor itself (`_is_news`) rather than a gesture's.
     """
-    rows = _slot_disp_rows(capture_log, after, slot0, None,
-                           (f"Loop {slot_number}: Start Recording", "Recording started @ tick"))
+    floor = _gesture_clock_us(capture_log, after)
+    rows = [line for line in _slot_disp_rows(capture_log, after, slot0, None,
+                                             (f"Loop {slot_number}: Start Recording",
+                                              "Recording started @ tick"))
+            if _is_news(line, floor)]
     state: Optional[str] = None
     for line in rows:
         if f"Loop {slot_number}: Start Recording" in line:
@@ -376,24 +410,38 @@ def _await_slot_disp(capture_log: Path, after: int, slot0: int,
                      *, human: tuple[str, ...] = (), drain=None) -> Optional[str]:
     """Wait for a receipt naming `slot0`'s gesture; None when none arrives inside `timeout_s`.
 
-    The wait flushes the capture ring on its own cadence: the ring holds rows until the owner is asked to
-    flush it, and nothing else drains it during a seed phase, so evidence can otherwise be absent from the log
-    for tens of seconds while the device has already done the thing (measured: `od-05`'s take committed, and
-    the `RECS,stop,4,2118` row that proves it reached the log only on a later drain).
+    The wait is the action layer's (`CorrelatedGesture`): its staleness floor is the device clock observed
+    **before** the gesture (`_gesture_clock_us`), so a row at or below it is never this gesture's receipt
+    however late the ring flushed it, and the row must carry this slot's own identity. What stays here is the
+    vocabulary (`states` on this slot's `DISP` rows, plus the `human` rows the firmware prints straight to
+    `Serial`) and the ring flush, which this wait owns on its own cadence: the ring holds rows until the owner
+    is asked to flush it and nothing else drains it during a seed phase, so evidence can otherwise be absent
+    from the log for tens of seconds while the device has already done the thing (measured: `od-05`'s take
+    committed, and the `RECS,stop,4,2118` row that proves it reached the log only on a later drain).
+
+    Returns the row that decided it, for the report.
     """
-    deadline = time.monotonic() + max(timeout_s, 0.0)
+    gesture = CorrelatedGesture(
+        name=f"slot_{slot0}_receipt",
+        rules=StageRules(accept=_slot_receipt_wires(slot0, states, human)),
+        now=time.monotonic,
+        sleep=time.sleep,
+    )
+    gesture.mark_sent(note=LOOP_SELECT_NOTE_BASE + slot0, channel=CONTROL_CHANNEL_1BASED,
+                      kind="short", before_device_us=_gesture_clock_us(capture_log, after))
     next_drain = time.monotonic() + DRAIN_EVERY_S
-    while True:
-        rows = _slot_disp_rows(capture_log, after, slot0, states, human)
-        if rows:
-            return rows[-1]
+
+    def rows() -> list[str]:
+        nonlocal next_drain
         now = time.monotonic()
-        if now >= deadline:
-            return None
         if now >= next_drain:
             _drain_now(drain)
             next_drain = now + DRAIN_EVERY_S
-        time.sleep(0.05)
+        return _slot_disp_rows(capture_log, after, slot0, states, human)
+
+    if not gesture.wait_for(Stage.ACCEPT, rows, timeout_s=timeout_s, poll_s=0.05):
+        return None
+    return gesture.evidence[Stage.ACCEPT]
 
 
 def _await_markers(capture_log: Path, after: int, markers: tuple[str, ...], timeout_s: float,

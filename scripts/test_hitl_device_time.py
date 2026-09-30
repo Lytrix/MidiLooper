@@ -28,6 +28,7 @@ from hitl.device_time import (  # noqa: E402
     filter_live_lines,
     is_drained_history,
     newest_device_us,
+    newest_row_clock_us,
 )
 
 
@@ -69,6 +70,14 @@ class DrainedHistoryTests(unittest.TestCase):
         lines = ["#CAP,10,X,", "#CAP,30,X,", "#CAP,20,X,"]
         self.assertEqual(30, newest_device_us(lines))
         self.assertEqual(10, newest_device_us(lines, upto_index=1))
+
+
+    def test_the_newest_row_clock_takes_both_families(self) -> None:
+        """A gesture's floor must count a directly printed logger row too: it is the same device clock."""
+        lines = ["#CAP,900000,DISP,2,ARMED,0,0", "[11.020] [INFO] Loop 4: Start Recording"]
+        self.assertEqual(11_020_000, newest_row_clock_us(lines))
+        self.assertEqual(900_000, newest_row_clock_us(lines, upto_index=1))
+        self.assertIsNone(newest_row_clock_us([], upto_index=0))
 
     def test_filter_keeps_live_rows_and_order(self) -> None:
         lines = [
