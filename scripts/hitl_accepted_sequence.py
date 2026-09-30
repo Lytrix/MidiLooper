@@ -264,22 +264,22 @@ def _slot_disp_state(line: str) -> Optional[tuple[int, str]]:
     return int(match.group(2)), match.group(3)
 
 
-def _gesture_clock_us(capture_log: Path, after: int, slot_number: int) -> Optional[int]:
-    """The device clock of the loop-button gesture at `after` (1-based `slot_number`).
+def _gesture_clock_us(capture_log: Path, after: int) -> Optional[int]:
+    """The newest device clock the host had observed **before** the gesture at `after`.
 
-    The gesture's own human row (`[<s>.<ms>] [INFO] Button press: Loop N (short)`) carries the device clock,
-    so it is the exact floor for "did the device name this gesture's effect?". When the row is not there yet
-    (not recognized, or not flushed), the newest human stamp *before* the gesture is used instead.
+    This is the floor for "did the device name this gesture's effect?": every human row
+    (`[<s>.<ms>] [LEVEL] …`) carries the device clock, so the newest one before the gesture says how far the
+    device's clock had advanced when the press was sent. A row stamped at or below it was emitted before the
+    gesture and is never its receipt, however late the ring flushed it.
+
+    Deliberately **not** the gesture's own press row: that row is only written once the tap window expires, and
+    matching it by text picks the wrong press when several of the same button are already in the file --
+    measured on device (`captures/s4f22-dec096-od-04`): the floor came out *later* than the gesture
+    (70.557 s for a press at 58.199 s), so every current `RECORDING` row was rejected and a working seed was
+    reported as never armed.
     """
-    lines = _lines(capture_log)
-    marker = f"Button press: Loop {slot_number} (short)"
-    for line in reversed(lines[max(after, 0):]):
-        if marker in line:
-            stamp = human_line_device_us(line)
-            if stamp is not None:
-                return stamp
     best: Optional[int] = None
-    for line in lines[:max(after, 0)]:
+    for line in _lines(capture_log)[:max(after, 0)]:
         stamp = human_line_device_us(line)
         if stamp is not None and (best is None or stamp > best):
             best = stamp
@@ -300,7 +300,7 @@ def _slot_disp_rows(capture_log: Path, after: int, slot0: int,
     depending on the order the ring happened to flush.
     """
     lines = _lines(capture_log)
-    floor = _gesture_clock_us(capture_log, after, slot0 + 1)
+    floor = _gesture_clock_us(capture_log, after)
     rows: list[str] = []
     for line in lines[max(after, 0):]:
         parsed = _slot_disp_state(line)
