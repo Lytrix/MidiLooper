@@ -20,7 +20,18 @@ Stage owner: HITL session/protocol and existing MIDI button processor. Precondit
 
 Stage owner: existing serial command/capture service and operation owners. Preconditions: packet, decision review and production fixtures complete. Postcondition: read-only live responses plus loss-detectable transition evidence. Invariants: no SD/content scan, blocking flush, new Manager or active-slot authority. Non-goal: runtime acceptance behavior changes. Commit boundary: instrumented firmware plus parser/tests.
 
-- [ ] 2.1 Implement the capture-gated bounded observation request/reply and coherent identity snapshot in existing serial/capture owners; verify malformed/busy requests, disabled capture, partial writes, stalled reader and per-turn work/storage bounds in native tests.
+- [~] 2.1 Implement the capture-gated bounded observation request/reply and coherent identity snapshot in existing serial/capture owners; verify malformed/busy requests, disabled capture, partial writes, stalled reader and per-turn work/storage bounds in native tests.
+      **2026-09-30 — the correlation this task deferred to 2.2 is now in place.** The bounded observation still
+      serves on demand (device-confirmed 2026-09-28) and `test_library_observation_session` covers the
+      incremental/bounded lifecycle with its per-slot bounds (O01–O10: a permanently waiting request still
+      yields a diagnostic, generation/epoch changes invalidate or restart, denied SD admission degrades fields
+      not the report, union of both content representations) plus the `busy` slot-payload refusal. What is
+      **not** yet mapped clause-by-clause to this task's own list is malformed-request handling *inside the
+      firmware handler*, the disabled-capture path and the stalled-**reader** case (the malformed/busy request
+      refusals that do exist are host-side, in `capture_session.py`, pinned by task 2.3's suite). The
+      identity-snapshot **correlation** the task hands to 2.2 is landed on both sides: the oracle reads the
+      intervals' own rows (2026-09-30 host note under 2.2) and the latch's own sequenced rows exist with
+      counters (2026-09-30 firmware note under 2.2).
       **2026-09-28 device-confirmed:** the bounded observation serves on demand. A new
       stopped-only `!LIB_OBSERVE_STATUS` diagnostic (emitted directly, bypassing the capture
       ring) reads `phase=3,ready=1,collected=64,emitted=64` after the request, and the managed
@@ -43,7 +54,22 @@ Stage owner: existing serial command/capture service and operation owners. Preco
       `test_hitl_command_forwarding` **26/26**, `test_accepted_sequence` **52/52**,
       `test_library_observation_classifier` **18/18**.
       [Closure-boundaries review follow-ups](../runtime-working-set-ownership/S4F18-CLOSURE-BOUNDARIES-EXECUTION.md).
-- [ ] 2.2 Add compact sequenced gesture/accepted-stop/start/switch/publication/retirement evidence at actual owners, including record and overdub interval identity; verify accepted-latch consumption between polls remains provable, required event loss is detectable, and unrelated slot/track events cannot substitute.
+- [~] 2.2 Add compact sequenced gesture/accepted-stop/start/switch/publication/retirement evidence at actual owners, including record and overdub interval identity; verify accepted-latch consumption between polls remains provable, required event loss is detectable, and unrelated slot/track events cannot substitute.
+      **PARTIAL — both halves landed, three clauses still owe device evidence (2026-09-30).** *Read half:* the
+      accepted-sequence oracle decides the overdub leg's L1/L5/L6/L7 and a new `overdub_interval_identity` link
+      from the intervals' own rows (start admission `DIAG,reentry,admit`, accepted-stop binding
+      `DIAG,reentry,bound`, execution `DIAG,stop_state`, retirement `DIAG,canonical_release`, plus the button
+      action's per-interval `Loop N:` request rows), and it re-graded `captures/s4f22-dec096-od-13` to
+      `ACCEPTED_SEQUENCE_PASS` with no device action. *Write half (firmware, instrumentation only):* one
+      compact Tier-A one-shot row per accepted-latch transition
+      (`DIAG,latch,<accept|repeat|wait|park_stall|consume>,<track>,<slot>,<interval>,<destination>,<outcome>`)
+      with the latch's own identity, `RecordFamilyStats` counters, a Tier-A classification, and a read-back by
+      the existing stopped-only `!CAP_IDENTITY_STATS`. **Owed:** (a) the `accept` → `consume` rows are not yet
+      exercised on hardware — the family reads back at `entered=0` and every attempted recipe either admitted
+      both stops or aborted in host tooling (packet §6/§6.1), so the remaining route is host tooling, not
+      firmware; (b) sequenced *gesture/switch* rows (a slot press still leaves only its in-ring `DISP` row and
+      a human `Loop N:` line); (c) a poll-shaped readout of the counters, so consumption between polls is
+      provable from one poll rather than from the ring rows plus the read-back.
       **2026-09-30 (host; the read half of this task's "including record and overdub interval identity").** The
       overdub leg already *has* identity-bearing rows at its owners -- start admission `DIAG,reentry,admit`, the
       accepted-stop binding edge `DIAG,reentry,bound` (S4f.3), the execution `DIAG,stop_state` 6→7 / 7→5|1, the
@@ -101,7 +127,20 @@ Stage owner: existing serial command/capture service and operation owners. Preco
       (`!TRACE_DRAIN`), because the bare command the drain previously wrote was refused as
       malformed and never reached the device. `test_hitl_command_forwarding` **26/26** pins the
       framed drain and the allowlist.
-- [ ] 2.4 Run native tests and build `teensy41-capture-serial`; record image/config hashes and code/RAM1 deltas against the packet's floor and fixed buffer ceiling. Do not check off on a skipped fixture or failed resource gate; instrumentation latency measurement remains task 6.2.
+- [x] 2.4 Run native tests and build `teensy41-capture-serial`; record image/config hashes and code/RAM1 deltas against the packet's floor and fixed buffer ceiling. Do not check off on a skipped fixture or failed resource gate; instrumentation latency measurement remains task 6.2.
+      **DONE 2026-09-30 (final tree, after section 2's instrumented firmware landed).** `pio test -e native`
+      **2,643 cases / 2,636 succeeded / 7 skipped / 0 failed** (the 7 skips are all environment/opt-in gated and
+      none is in this section's scope: the `test_serial_midi_input_read` suite needs a device, the three
+      offline-recovery suites skip their two `Isolated recovery ABI build required` cases each, and
+      `test_copied_slots_decode` / the parked `175026` diagnostic need their own env/opt-in). Section 2's own
+      suites are green — `test_capture_ring` 12/12, `test_continuous_capture` 106/106,
+      `test_library_observation_session` green. `pio run -e teensy41-capture-serial` **SUCCESS**, RAM1 budget
+      post-action on an **unchanged** line: `variables 96,192 / ITCM 393,216 (code 391,288 + padding 1,928) /
+      locals 34,880`, approved floor 840 — delta zero, so no re-base; FLASH `code 1,064,912 / data 96,376`.
+      Image identity for the record: `firmware.hex` sha256 `577841d6…`, with the new emitter confirmed present
+      in the ELF (`arm-none-eabi-nm`: `DebugSessionCapture::interactionLatchTransition`). `git diff --check`
+      clean; `openspec validate --strict` valid for this change and its three siblings. Latency measurement
+      stays task 6.2 as this task says.
 
 ## 3. Build response-driven actions and bounded lifecycle
 
