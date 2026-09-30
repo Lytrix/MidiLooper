@@ -216,8 +216,25 @@ def chain_log(*, window: bool = True, release: bool = True, denials: bool = Fals
     return "\n".join(lines) + "\n"
 
 
+#: The other halves of the acceptance conjunction, as their owners report them (task 5.2). A test that asserts a
+#: PASS is declaring *these* inputs: a passing manifest comparison (`hitl.library_manifest`), a timing summary with
+#: no issue (`hitl.verify.midi_boundary_timing`) and a completed drain (`hitl.device_shutdown`). A test that wants
+#: a *veto* overrides the one it is about, and `VetoTests` below does exactly that.
+SUPPLIED_EVIDENCE = {
+    "content_parity": {"manifest_differences": [], "unexplained_manifest_differences": [],
+                       "unexplained_lifecycle_differences": [], "count_differences": {},
+                       "pass": True, "verdict": "pass"},
+    "timing": {"overflow_free": True, "overflow_intervals": [], "call_site_gate_ok": True,
+               "stop_timeline": {"drops": 0, "malformed": 0, "uncorrelated_emissions": 0}},
+    "shutdown": {"status": "complete", "drains": 2, "detail": "quiet after 2 drain(s)", "ok": True},
+}
+
+
 def run(text, *, leg="rec", slot_a=4, slot_b=5, **kw):
-    return analyse(text, leg=leg, slot_a=slot_a, slot_b=slot_b, metadata=METADATA, base_report=BASE_REPORT)
+    kw.setdefault("inputs", SUPPLIED_EVIDENCE)
+    return analyse(text, leg=leg, slot_a=slot_a, slot_b=slot_b, metadata=METADATA, base_report=BASE_REPORT, **kw)
+
+    return analyse(text, leg=leg, slot_a=slot_a, slot_b=slot_b, metadata=METADATA, base_report=BASE_REPORT, **kw)
 
 
 def by_name(result):
@@ -276,7 +293,10 @@ def od_chain_log(*, a_start: bool = True, a_bindings: int = 1, a_binding_interva
 
 
 def run_od(text, **kw):
+    kw.setdefault("inputs", SUPPLIED_EVIDENCE)
     return analyse(text, leg="od", slot_a=4, slot_b=5, metadata=METADATA, base_report=BASE_REPORT, **kw)
+
+
 class SwitchRepeatGuardTests(unittest.TestCase):
     """Regression for the double-countdown defect found on device 2026-09-27.
 
@@ -1749,13 +1769,29 @@ class OverdubIdentityDeviceExcerpt(unittest.TestCase):
                          hashlib.sha256(self.text.encode()).hexdigest())
 
     def test_the_excerpt_is_an_accepted_overdub_leg_on_its_own_rows(self):
+        """The chain on the excerpt's own rows -- and the two evidence classes a cut row set cannot carry.
+
+        Task 5.2 makes the conjunction explicit: content parity, the timing gates and the run's own teardown are
+        required evidence, so a 12-row excerpt of a device run proves the *chain* and nothing more. Its verdict is
+        therefore `INSUFFICIENT_EVIDENCE` naming those two gaps, and the same rows pass once those inputs are
+        supplied (the conditional below, which is the anchor this fixture has always been).
+        """
         result = self.run_excerpt()
-        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict,
-                         [(c.name, c.status, c.detail) for c in result.checks])
-        self.assertEqual(0, result.exit_code)
         for name in ("L1_a_stop_accepted_once", "L5_successor_started", "L6_b_stop_executes_once",
                      "L7_one_press_per_stop", "overdub_interval_identity"):
             self.assertEqual("ok", by_name(result)[name].status, name)
+        self.assertEqual("INSUFFICIENT_EVIDENCE", result.verdict,
+                         [(c.name, c.status) for c in result.checks])
+        for name in ("content_parity", "timing_gates"):
+            self.assertEqual("unknown", by_name(result)[name].status, name)
+        self.assertEqual(4, result.exit_code)
+        # The same rows, with the conjunction's other halves supplied by their owners: a complete pass.
+        complete = analyse(self.text, leg=self.provenance["leg"], slot_a=self.provenance["slot_a"],
+                           slot_b=self.provenance["slot_b"], metadata=self.metadata,
+                           base_report=BASE_REPORT, inputs=SUPPLIED_EVIDENCE)
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", complete.verdict,
+                         [(c.name, c.status, c.detail) for c in complete.checks])
+        self.assertEqual(0, complete.exit_code)
 
     def test_every_excerpt_row_is_verbatim_at_its_recorded_source_line(self):
         source = Path(__file__).resolve().parents[1] / self.provenance["source"]
@@ -1781,7 +1817,10 @@ class OverdubIdentityDeviceExcerpt(unittest.TestCase):
     def test_the_runs_dec070_fallback_row_is_reported_and_not_fatal(self):
         result = self.run_excerpt()
         self.assertEqual(1, len(result.evidence["dec070_retarget_fallback"]))
-        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+        # Reported, never fatal: the row is evidence for task 5.11's closure, not a verdict input -- so the excerpt
+        # is not failed by it (it is `INSUFFICIENT_EVIDENCE` for the missing content/timing evidence alone).
+        self.assertNotEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+        self.assertNotIn("dec070", [c.name for c in result.checks if c.status == "fail"])
         self.assertTrue(any("task 5.11" in lim for lim in result.limitations))
 
 
@@ -1806,10 +1845,10 @@ class WindowInvariantTests(unittest.TestCase):
                          "firmware_hex_sha256": self.provenance["firmware_hex_sha256"]}
         self.stop_row = "[30.000] [INFO] Transport stopped"
 
-    def run_window(self, text=None, window=None, leg=None):
+    def run_window(self, text=None, window=None, leg=None, inputs=SUPPLIED_EVIDENCE):
         return analyse(text if text is not None else self.text, leg=leg or self.provenance["leg"],
                        slot_a=self.provenance["slot_a"], slot_b=self.provenance["slot_b"],
-                       metadata=self.metadata, base_report=BASE_REPORT, window=window)
+                       metadata=self.metadata, base_report=BASE_REPORT, window=window, inputs=inputs)
 
     def with_row(self, row, at):
         lines = self.text.splitlines()
@@ -2235,8 +2274,8 @@ class RecordStartRouteOracleTests(unittest.TestCase):
     """The record leg's B start route as a capture predicate (task 4.2's "production route" clause)."""
 
     def route(self, text):
-        return by_name(analyse(text, leg="rec", slot_a=4, slot_b=5,
-                               metadata=METADATA, base_report=BASE_REPORT))["L5b_b_start_route"]
+        return by_name(analyse(text, leg="rec", slot_a=4, slot_b=5, metadata=METADATA,
+                               base_report=BASE_REPORT, inputs=SUPPLIED_EVIDENCE))["L5b_b_start_route"]
 
     def test_the_carrier_row_is_the_production_route(self):
         check = self.route(rec_route_log())
@@ -2384,6 +2423,106 @@ class OverdubRecipeOracleTests(unittest.TestCase):
         self.assertEqual("fail", check.status, check.detail)
         self.assertIn("2 stop request(s) for A", check.detail)
         self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+
+class VetoTests(unittest.TestCase):
+    """Task 5.2: a failing content, timing or teardown result **vetoes** an otherwise complete acceptance.
+
+    Each test starts from a chain that passes with the conjunction supplied (`SUPPLIED_EVIDENCE`) and changes one
+    of the three external inputs. The chain is the `od_chain_log()` one, so the only difference from
+    `test_a_complete_overdub_chain_is_ok_on_every_link` is the input under test.
+    """
+
+    def analyse_with(self, **inputs):
+        merged = {**SUPPLIED_EVIDENCE, **inputs}
+        return run_od(od_chain_log(), inputs=merged)
+
+    def test_a_failing_content_comparison_vetoes_a_complete_chain(self):
+        result = self.analyse_with(content_parity={
+            "pass": False, "verdict": "fail",
+            "unexplained_manifest_differences": [{"track": 7, "slot": 4, "field": "hasData",
+                                                   "expected": False, "observed": True}],
+            "count_differences": {"committed_passes": {"expected": 1, "observed": 2}}})
+        check = by_name(result)["content_parity"]
+        self.assertEqual("fail", check.status, check.detail)
+        self.assertIn("slot", check.detail)          # the owner's own difference travels into the verdict
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+    def test_a_content_report_with_no_pass_key_is_an_evidence_gap(self):
+        result = self.analyse_with(content_parity={"observed_capture": "x"})
+        self.assertEqual("unknown", by_name(result)["content_parity"].status)
+        self.assertEqual("INSUFFICIENT_EVIDENCE", result.verdict)
+
+    def test_a_timing_issue_vetoes_a_complete_chain(self):
+        result = self.analyse_with(timing={"overflow_free": False, "overflow_intervals": [12],
+                                            "call_site_gate_ok": True,
+                                            "stop_timeline": {"drops": 0, "malformed": 0,
+                                                              "uncorrelated_emissions": 0}})
+        check = by_name(result)["timing_gates"]
+        self.assertEqual("fail", check.status, check.detail)
+        # The issue *names* come from the timing owner's own list, not from a copy of its rules.
+        self.assertIn("capture_ring_overflow", check.detail)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+    def test_a_timing_summary_that_never_gates_the_call_site_vetoes_too(self):
+        result = self.analyse_with(timing={**SUPPLIED_EVIDENCE["timing"], "call_site_gate_ok": False})
+        self.assertIn("unexpected_midi_input_call_site", by_name(result)["timing_gates"].detail)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+    def test_an_incomplete_drain_is_a_setup_failure_not_a_pass(self):
+        """Design decision 6: the shutdown result is independent and can veto overall success."""
+        result = self.analyse_with(shutdown={"status": "incomplete", "drains": 1,
+                                              "detail": "tail still moving", "ok": False})
+        check = by_name(result)["teardown"]
+        self.assertEqual("fail", check.status, check.detail)
+        self.assertEqual("setup", check.kind, "an undrained run is not verdict-grade")
+        self.assertEqual("SETUP_INCOMPLETE", result.verdict)
+
+    def test_absent_external_evidence_can_never_be_a_pass(self):
+        result = run_od(od_chain_log(), inputs={})
+        for name in ("content_parity", "timing_gates", "teardown"):
+            self.assertEqual("unknown", by_name(result)[name].status, name)
+        self.assertEqual("INSUFFICIENT_EVIDENCE", result.verdict)
+        self.assertNotEqual(0, result.exit_code)
+
+    def test_a_teardown_record_without_ok_cannot_be_read_and_says_so(self):
+        """The record a *real* run writes must carry the owner's verdict, or the rule cannot be satisfied.
+
+        This is the defect task 5.2 found: `ShutdownResult.as_dict()` used to omit `ok`, so
+        `hitl.reporting.derive_verdict` -- which asks for exactly that key -- could never pass a real run.
+        """
+        from hitl.device_shutdown import COMPLETE, ShutdownResult
+        record = ShutdownResult(status=COMPLETE, drains=2, detail="quiet after 2 drain(s)").as_dict()
+        self.assertIs(True, record["ok"], "the owner's verdict travels with its record")
+        result = self.analyse_with(shutdown=record)
+        self.assertEqual("ok", by_name(result)["teardown"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+        # And the sealed bundle's own rule reads the same record as a pass condition.
+        bundle = verdict_bundle(result, leg="od", identity=METADATA,
+                                run_id="run-1", run_report={"shutdown": record, "result": "DROVE_LEG"})
+        from hitl.reporting import derive_verdict
+        passed, failures = derive_verdict(bundle)
+        self.assertTrue(passed, failures)
+        legacy = {"status": COMPLETE, "drains": 2, "detail": "quiet after 2 drain(s)"}
+        self.assertFalse(derive_verdict({**bundle, "teardown": legacy})[0],
+                         "the pre-fix record shape is what the rule used to refuse")
+
+    def test_the_adapters_read_each_owners_own_report(self):
+        """The three adapters are readers, not re-implementations: each names what its owner decided."""
+        from hitl import acceptance_evidence
+        ok, detail = acceptance_evidence.content_parity(SUPPLIED_EVIDENCE["content_parity"])
+        self.assertTrue(ok)
+        self.assertIn("no unexplained difference", detail)
+        ok, detail = acceptance_evidence.timing_gates(SUPPLIED_EVIDENCE["timing"])
+        self.assertTrue(ok)
+        ok, detail = acceptance_evidence.teardown(SUPPLIED_EVIDENCE["shutdown"])
+        self.assertTrue(ok)
+        self.assertIn("complete", detail)
+        # Not supplied is None at every adapter -- never False (which would read as a failed verifier).
+        for adapter in (acceptance_evidence.content_parity, acceptance_evidence.timing_gates,
+                        acceptance_evidence.teardown):
+            self.assertIsNone(adapter(None)[0])
+
 
 
 

@@ -530,7 +530,30 @@ ring's PSRAM, and `RING,head_bad` names any advance off a record boundary.
       (`leg_gestures`' `a_stop`) — the oracle records that as a limitation naming the plan, and the
       switch-carried B start that turns it green is 4.2's change; the *mixed* record-predecessor/overdub-
       successor leg of the same requirement is 4.3's.
-- [ ] 5.2 Integrate existing content parity and timing verifiers plus independent shutdown result; verify a failing content, timing or teardown result vetoes otherwise complete acceptance. Replay the preserved failure corpus and synthetic complete chains with deterministic expected verdicts.
+- [x] 5.2 Integrate existing content parity and timing verifiers plus independent shutdown result; verify a failing content, timing or teardown result vetoes otherwise complete acceptance. Replay the preserved failure corpus and synthetic complete chains with deterministic expected verdicts.
+      **2026-09-30 — the conjunction's external halves are integrated, each with its own veto.** New
+      `hitl/acceptance_evidence.py` is a *reader* layer, not a second implementation: content parity is
+      `hitl.library_manifest.compare_manifests`' own report (its `pass`/`verdict` plus the unexplained
+      manifest/lifecycle and count differences), the timing half routes through the timing owner's own
+      `midi_boundary_timing_issues(summary)` so a newly-named issue vetoes without a second edit, and the
+      teardown is the run's `hitl.device_shutdown` record — the independent field design decision 6 keeps able to
+      veto. `analyse(..., inputs=…)` grades them as `content_parity`, `timing_gates` and `teardown`: a failing
+      verifier is `ACCEPTED_SEQUENCE_FAIL`, an incomplete drain is a **setup** failure ("not verdict-grade"), and
+      **not supplied** is `UNKNOWN`, so a capture can be graded but not passed ("PASS only for the complete
+      conjunction"). The oracle CLI gains `--content-report`/`--timing-report` (the teardown rides
+      `--run-report`) and the scenario carries all four in `_EVIDENCE_VALUE_FLAGS`, so both entry points read the
+      same evidence. **Two real defects found and fixed:** `ShutdownResult.as_dict()` omitted `ok` while
+      `hitl.reporting.derive_verdict` requires it, so a *real* run's sealed bundle could never pass on teardown;
+      and running the oracle as a script put `scripts/hitl` on `sys.path[0]`, where `scripts/hitl/serial/`
+      answers `import serial` and broke any verifier needing the serial stack (the tests never saw it, because
+      they import the module). Evidence: `test_accepted_sequence` **140/140** (8 new `VetoTests`), corpus **3/3**
+      with every retained fixture keeping its verdict, scenario **38/38** (the excerpt now pinned *three* ways
+      through both routes: supplied ⇒ PASS, not supplied ⇒ INSUFFICIENT_EVIDENCE, never-staged ⇒ non-pass), the
+      neighbours green, host sweep **1,067 tests / 75 suites** with only the seven pre-existing failures, and a
+      CLI check on the retained excerpt (supplied ⇒ PASS; a failing content report ⇒ FAIL quoting the owner's own
+      difference). [ACCEPTANCE-VETO-EXECUTION.md](ACCEPTANCE-VETO-EXECUTION.md). **Owed to 6.3:** a live run whose
+      bundle actually carries the three reports -- and, for the content half, the per-interval inventory the
+      content pipeline records rather than the library-level manifest comparison used here.
 - [ ] 5.3 Run focused Python suites, architecture/import gates and full `pio test -e native`; record mutation results for former queue, timing and attribution bugs. Keep host success distinct from hardware qualification.
 
 ## 6. Qualify on hardware and close evidence

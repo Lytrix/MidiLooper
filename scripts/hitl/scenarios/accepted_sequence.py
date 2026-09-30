@@ -86,7 +86,7 @@ _RUNNER_VALUE_FLAGS: tuple[str, ...] = (
 #: takes them. Without them a route would silently report a *weaker* verdict than the oracle on the same log
 #: (the identity and capture-integrity predicates would be unknown), which would break the one thing 4.4
 #: asks of the two entry points -- that they agree.
-_EVIDENCE_VALUE_FLAGS: tuple[str, ...] = ("--metadata", "--base-report")
+_EVIDENCE_VALUE_FLAGS: tuple[str, ...] = ("--metadata", "--base-report", "--content-report", "--timing-report")
 
 
 class UnsupportedCombination(ValueError):
@@ -292,9 +292,9 @@ def verify_accepted_sequence(lines: list[str], args: object) -> dict[str, object
     except UnsupportedCombination as exc:
         return {"ok": False, "verdict": "UNSUPPORTED_COMBINATION", "issues": [str(exc)],
                 "scenario_id": scenario_id}
-    metadata, base_report = _oracle_evidence(args)
+    metadata, base_report, inputs = _oracle_evidence(args)
     analysis = analyse("\n".join(lines), leg=leg, slot_a=slot_a, slot_b=slot_b,
-                       metadata=metadata, base_report=base_report)
+                       metadata=metadata, base_report=base_report, inputs=inputs)
     failures = [f"{check.name}: {check.detail}" for check in analysis.checks if check.status != OK]
     return {
         "ok": analysis.verdict == "ACCEPTED_SEQUENCE_PASS",
@@ -308,11 +308,13 @@ def verify_accepted_sequence(lines: list[str], args: object) -> dict[str, object
     }
 
 
-def _oracle_evidence(args: object) -> tuple[Optional[dict], Optional[dict]]:
-    """`(metadata, base_report)` from the runner's arguments, as the standalone oracle reads them.
+def _oracle_evidence(args: object) -> tuple[Optional[dict], Optional[dict], dict]:
+    """`(metadata, base_report, inputs)` from the runner's arguments, as the standalone oracle reads them.
 
     A path that is absent or unreadable yields None, which the oracle already treats as "this evidence was
-    not supplied" -- it does not invent a verdict from it.
+    not supplied" -- it does not invent a verdict from it. `inputs` is the conjunction's external halves: the
+    content-parity and timing reports, plus the teardown record the run itself wrote (`--run-report`), so the
+    runner route vetoes on exactly what the CLI route vetoes on.
     """
     import json
     from pathlib import Path as _Path
@@ -328,4 +330,9 @@ def _oracle_evidence(args: object) -> tuple[Optional[dict], Optional[dict]]:
             return None
         return json.loads(path.read_text(encoding="utf-8"))
 
-    return load("--metadata"), load("--base-report")
+    inputs = {
+        "content_parity": load("--content-report"),
+        "timing": load("--timing-report"),
+        "shutdown": (load("--run-report") or {}).get("shutdown"),
+    }
+    return load("--metadata"), load("--base-report"), inputs

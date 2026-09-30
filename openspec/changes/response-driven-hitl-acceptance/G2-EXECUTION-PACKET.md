@@ -239,6 +239,23 @@ declaration (`spec.py`), the per-profile scope (`registry.py`), the resolution a
   its own — **5.1** stays `[~]` until 4.2 makes the record leg switch-carried (its plan's `a_stop` is now a
   named `continuous_transport` failure) and 4.3 lands the mixed leg.
 
+- **Completion record (5.2, 2026-09-30 — the conjunction's external halves)**: content parity, the timing gates
+  and the run's own teardown are now requirements of the verdict, each able to veto an otherwise complete
+  acceptance, and the *evidence* for each comes from its existing owner through the new reader layer
+  (`hitl/acceptance_evidence.py`): `compare_manifests`' report, `midi_boundary_timing_issues(summary)`, and the
+  shutdown record. `analyse(..., inputs=…)` grades them as `content_parity` / `timing_gates` / `teardown`
+  (failing verifier ⇒ `ACCEPTED_SEQUENCE_FAIL`; incomplete drain ⇒ setup failure; not supplied ⇒ `UNKNOWN`, never
+  a pass). **Checks run**: `test_accepted_sequence` **140/140** (8 new `VetoTests`), corpus **3/3** with every
+  retained fixture keeping its verdict, scenario **38/38** (the retained excerpt pinned three ways through both
+  entry points), the full host sweep **1,067 tests / 75 suites** (only the seven pre-existing failures), and a
+  CLI check on the excerpt (supplied ⇒ PASS; a failing content report ⇒ FAIL quoting the owner's difference).
+  **Two real defects found and fixed**: the shutdown record omitted `ok` (so a real run's bundle could never
+  pass on teardown) and a directly-run oracle shadowed pyserial with its own directory. **NOT RUN / NOT
+  APPLICABLE**: `pio test -e native`, build, RAM1, device — host tooling only, no firmware file touched.
+  **Fixture implemented**: yes (`VetoTests` per veto, plus the adapters' own reading of each owner's report).
+  **Task IDs eligible for checkoff**: **5.2**. **Owed to 6.3**: a live run whose bundle carries all three
+  reports (and, for content, the per-interval inventory rather than the library-level manifest comparison).
+
 ## Slice 6.1–6.4 — hardware qualification
 
 - **Scope**: 6.1 stimulus selection (registered first; temporary variants only with a declared reason);
