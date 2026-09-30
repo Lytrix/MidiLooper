@@ -86,6 +86,11 @@ PASS SHALL require the complete correlated input-to-execution chain, the intende
 - **THEN** the oracle returns INSUFFICIENT_EVIDENCE or ACCEPTED_SEQUENCE_FAIL as appropriate
 - **AND** the process exits nonzero
 
+#### Scenario: Evidence that cannot be attributed, or is lost
+- **WHEN** the only row that could carry a required edge names no interval or slot, or a required edge's family cannot report whether it was lost
+- **THEN** that link is reported as insufficient evidence rather than passed
+- **AND** on hardware the emitting family accounts for its own rows, so an absent edge is attributable instead of silent
+
 ### Requirement: Deterministic gesture and failure regression coverage
 
 Acceptance automation SHALL have offline regression coverage for production gesture classification and response ordering, delay, loss, identity mismatch and cancellation. Classification coverage MUST exercise the actual production button processor and mapping with controllable time. Preserved device failures SHALL be replayable without ports.
