@@ -85,5 +85,43 @@ class ImportGateTests(unittest.TestCase):
         self.assertEqual(violations, [], f"layered_stubs forbidden imports: {violations}")
 
 
+class ObservationFacadeGateTests(unittest.TestCase):
+    """The one thing a flow may use for an observation wait, and how the gate was resolved for it (task 3.3).
+
+    The task allows resolving the import gate "only for the narrow architecture-approved observation-wait
+    facade". It did not have to be widened at all: the wait lives under `hitl.actions`, a prefix the flow layer
+    may already import, so the forbidden list is unchanged and no scenario needed a new permission to wait for
+    rows the device emits on its own. These tests pin exactly that.
+    """
+
+    def test_the_facade_lives_under_a_prefix_flows_may_import(self) -> None:
+        facade = _FLOWS_DIR.parent / "actions" / "observation.py"
+        self.assertTrue(facade.is_file(), "the observation-wait facade is the action-layer module")
+        name = "hitl.actions.observation"
+        self.assertTrue(
+            any(name == prefix or name.startswith(prefix + ".") for prefix in _FLOW_ALLOWED_PREFIXES),
+            f"{name} is not under a flow-allowed prefix",
+        )
+        self.assertEqual([], _violations({name}, _FLOW_FORBIDDEN_PREFIXES))
+
+    def test_a_flow_that_imports_the_facade_passes_the_gate(self) -> None:
+        source = ("from hitl.actions.observation import await_markers\n"
+                  "from hitl.actions import cancellation, correlation, slots\n")
+        tree = ast.parse(source)
+        imports: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imports.add(node.module)
+            elif isinstance(node, ast.Import):
+                imports.update(alias.name for alias in node.names)
+        self.assertEqual([], _violations(imports, _FLOW_FORBIDDEN_PREFIXES))
+
+    def test_nothing_was_widened_for_the_facade(self) -> None:
+        self.assertEqual(
+            ("hitl.verify", "hitl.serial", "hitl.scenarios", "hitl.reporting", "hitl.legacy_"),
+            _FLOW_FORBIDDEN_PREFIXES,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -84,8 +84,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def write_run_metadata(
-    out_dir: Path,
+def run_identity(
     *,
     preset: Optional[str] = None,
     scenario_ids: Iterable[str] = (),
@@ -99,11 +98,15 @@ def write_run_metadata(
     session_log: Optional[Path] = None,
     extra: Optional[dict] = None,
     repo_root: Optional[Path] = None,
-) -> Path:
-    """Write ``out_dir/metadata.json`` describing this HITL run."""
+    out_dir: Optional[Path] = None,
+) -> dict:
+    """This run's identity: the host, the firmware image, the configuration and the target.
+
+    One builder for both places the identity is recorded -- `metadata.json` next to the run and the
+    `identity` section of a report bundle -- so the two can never disagree about which commit or which
+    firmware image produced the evidence (HITL_ARCHITECTURE.md §11.1).
+    """
     root = Path(repo_root) if repo_root is not None else _REPO_ROOT
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
     commit, dirty = git_identity(root)
     hex_path = firmware_hex_path(root, build_env)
     metadata = {
@@ -123,10 +126,21 @@ def write_run_metadata(
         "overdub_bars": overdub_bars,
         "capture_serial_port": capture_serial_port,
         "session_log": str(session_log) if session_log is not None else None,
-        "out_dir": str(out.resolve()),
+        "out_dir": str(Path(out_dir).resolve()) if out_dir is not None else str(root),
     }
     if extra:
         metadata.update(extra)
+    return metadata
+
+
+def write_run_metadata(
+    out_dir: Path,
+    **identity: object,
+) -> Path:
+    """Write ``out_dir/metadata.json`` describing this HITL run (see `run_identity`)."""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    metadata = run_identity(out_dir=out, **identity)  # type: ignore[arg-type]
     path = out / "metadata.json"
     path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     return path

@@ -34,7 +34,7 @@ from hitl_accepted_sequence import (  # noqa: E402
     leg_gestures,
     to_firmware_slot,
 )
-from hitl.accepted_sequence_probe import analyse  # noqa: E402
+from hitl.accepted_sequence_probe import Analysis, Check, analyse, verdict_bundle  # noqa: E402
 from hitl.control_constants import (  # noqa: E402
     GLOBAL_TRANSPORT_NOTE,
     LOOP_SELECT_NOTE_BASE,
@@ -1584,6 +1584,88 @@ class OverdubIdentityDeviceExcerpt(unittest.TestCase):
         self.assertEqual(1, len(result.evidence["dec070_retarget_fallback"]))
         self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
         self.assertTrue(any("task 5.11" in lim for lim in result.limitations))
+
+
+class SealedVerdictTests(unittest.TestCase):
+    """The oracle's verdict, sealed into a bundle that can be re-verified without a device (task 3.3).
+
+    The point is not another report: it is that the verdict *and the checks it rests on* are recorded together,
+    so `scripts/hitl_report_replay.py` can re-run the same rule later and reach the same answer -- and can
+    refuse a bundle whose recorded verdict its own checks no longer support.
+    """
+
+    def _analysis(self, *checks, verdict="ACCEPTED_SEQUENCE_PASS", limitations=()):
+        return Analysis(verdict, list(checks), {"L2_no_capacity_denial": "no denial"}, list(limitations))
+
+    def _seal(self, tmp, analysis, *, run_report=None):
+        from hitl.reporting import write_report_bundle
+        return write_report_bundle(
+            Path(tmp) / "run",
+            verdict_bundle(analysis, leg="od", identity={"git_commit": "abc"},
+                           run_id="accepted-sequence-od-fixture", run_report=run_report))
+
+    def test_a_pass_is_sealed_and_replays_as_a_pass(self):
+        import tempfile
+
+        from hitl.reporting import verify_report_bundle
+
+        analysis = self._analysis(Check("L2_no_capacity_denial", "ok", "no denial", "evidence"),
+                                  Check("L3_a_finalization_window", "ok", "window opened", "evidence"))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._seal(tmp, analysis, run_report={"shutdown": {"ok": True, "status": "complete"}})
+            verdict = verify_report_bundle(path)
+        self.assertTrue(verdict.ok, verdict.failures)
+        self.assertTrue(verdict.passed)
+
+    def test_an_unknown_check_is_not_a_pass_even_when_the_oracle_says_pass(self):
+        import json
+        import tempfile
+
+        from hitl.reporting import verify_report_bundle
+
+        analysis = self._analysis(Check("L5_a_stop_accepted", "unknown",
+                                        "RECA/RECS do not identify overdub intervals", "evidence"),
+                                  verdict="INSUFFICIENT_EVIDENCE")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._seal(tmp, analysis, run_report={"shutdown": {"ok": True, "status": "complete"}})
+            record = json.loads(path.read_text())
+            verdict = verify_report_bundle(path)
+        self.assertFalse(record["claims_success"], "an unknown edge is not a success claim")
+        self.assertFalse(record["passed"])
+        self.assertEqual(["L5_a_stop_accepted"], [f["check"] for f in verdict.failures])
+        self.assertFalse(verdict.passed)
+
+    def test_a_pass_without_a_proven_drain_is_not_sealed_as_a_pass(self):
+        """The spec's rule at the bundle level: `shutdown failure SHALL prevent overall success`."""
+        import tempfile
+
+        from hitl.reporting import verify_report_bundle
+
+        analysis = self._analysis(Check("L2_no_capacity_denial", "ok", "no denial", "evidence"))
+        with tempfile.TemporaryDirectory() as tmp:
+            no_report = self._seal(tmp, analysis)                       # no driver report at all
+            failed = self._seal(Path(tmp) / "second", analysis, run_report={
+                "shutdown": {"ok": False, "status": "incomplete_timeout"}})
+            first, second = verify_report_bundle(no_report), verify_report_bundle(failed)
+        self.assertFalse(first.passed)
+        self.assertEqual("none recorded", first.failures[0]["observed"])
+        self.assertFalse(second.passed)
+        self.assertEqual("incomplete_timeout", second.failures[0]["observed"])
+
+    def test_a_setup_failure_keeps_its_own_verdict_and_names_the_check(self):
+        import json
+        import tempfile
+
+        analysis = self._analysis(Check("fresh_boot", "fail", "no boot banner inside the window", "setup"),
+                                  verdict="SETUP_INCOMPLETE")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._seal(tmp, analysis, run_report={"shutdown": {"ok": True, "status": "complete"}})
+            record = json.loads(path.read_text())
+        self.assertEqual("SETUP_INCOMPLETE", record["status"])
+        self.assertFalse(record["passed"], "a setup failure is not a pass")
+        self.assertEqual(["fresh_boot"], [f["check"] for f in record["failures"]])
+        self.assertEqual("the verdict is the accepted-sequence oracle's; every check it made is a predicate here",
+                         record["notes"][0])
 
 
 if __name__ == "__main__":

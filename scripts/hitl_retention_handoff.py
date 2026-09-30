@@ -67,6 +67,7 @@ from hitl.actions.cancellation import (  # noqa: E402
     cancellable_sleep,
 )
 from hitl.actions.correlation import CorrelatedGesture, Stage, StageRules, Wire  # noqa: E402
+from hitl.actions.observation import await_markers  # noqa: E402
 from hitl.device_time import newest_row_clock_us  # noqa: E402
 
 
@@ -198,19 +199,19 @@ def _wait_for_any(capture_log: Path, *, after: int, markers: tuple[str, ...],
                   timeout_s: float) -> bool:
     """Wait for any of `markers` in the rows after `after`.
 
-    Cancel-aware: a cancelled run leaves here with its own reason (`RunCancelled`) instead of sitting out a
-    marker bound while the capture is being released.
+    The wait itself is the action layer's observation facade (`hitl.actions.observation`): one owner for the
+    bound, the poll cadence and cancellation, with this driver supplying only its own row window. Cancel-aware:
+    a cancelled run leaves here with its own reason (`RunCancelled`) instead of sitting out a marker bound while
+    the capture is being released.
     """
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        scope = active_cancel_scope()
-        if scope is not None:
-            scope.check()
-        tail = _lines(capture_log)[after:]
-        if any(m in line for line in tail for m in markers):
-            return True
-        time.sleep(0.05)
-    return False
+    scope = active_cancel_scope()
+    found = await_markers(
+        lambda: _lines(capture_log)[max(after, 0):], markers, timeout_s=timeout_s, poll_s=0.05,
+        cancel=(None if scope is None else lambda: scope.cancelled),
+    )
+    if scope is not None:
+        scope.check()
+    return found
 
 
 def _confirm(capture_log: Path, *, label: str, markers: tuple[str, ...], timeout_s: float,
