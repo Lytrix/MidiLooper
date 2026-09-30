@@ -256,7 +256,7 @@ Stage owner: actions, narrow verify wait facade, session/managed capture and rep
 
 Stage owner: stateless flows, registered scenarios and compatibility wrapper. Preconditions: target authorization manifest and fresh device identity are required run inputs. Postcondition: correct record/overdub fixtures and continuous-play measured windows. Invariants: no reboot, unrelated clear, global Stop in window, or pause hook. Commit boundary: scenario integration slice.
 
-- [ ] 4.1 Implement scoped stopped preparation through production clear gestures, correlated clear completion, RAM/SD census and successful persistence; verify SD residue, wrong target, failed save and unauthorized targets stop before further mutation, and repeats do not reset the board.
+- [~] 4.1 Implement scoped stopped preparation through production clear gestures, correlated clear completion, RAM/SD census and successful persistence; verify SD residue, wrong target, failed save and unauthorized targets stop before further mutation, and repeats do not reset the board.
       **2026-09-28 partial:** `scripts/hitl/flows/stopped_preparation.py` clears one
       authorized target through its own loop-button long press and classifies only the
       firmware's evidence (`CLEARED`, `ALREADY_EMPTY`, `REFUSED`, `ABORTED`,
@@ -291,6 +291,31 @@ Stage owner: stateless flows, registered scenarios and compatibility wrapper. Pr
       census itself is also SD-aware now (an SD-only slot is populated; unknown evidence stays
       unknown), so preparation clears it instead of skipping. `test_accepted_sequence` **52/52**
       including the confirmed/populated/unavailable cases.
+      **2026-09-30 — the host half of the target authorization manifest landed; the device legs still owe
+      evidence.** Task 4's precondition names a *target authorization manifest* as a required run input, and
+      the packet routed it to the stimulus registry (it already declares each profile's recipe, and
+      `stimulus list` is the mandated discovery path). It is now declared and enforced:
+      `Authorization` (`scripts/hitl/stimuli/spec.py`) carries the 1-based track, the slots a run may mutate
+      and the **provenance** of the grant (an empty scope is a read-only profile; a violation names the
+      target *and* the declared scope); the registry declares the scope once for the two profiles these legs
+      drive (track 8, slots 4/5 — the bench target the recorded `s4f13-*`/`s4f22-dec096-*` runs used,
+      narrowed from the user's standing authorization of 2026-09-30) and `stimulus list` shows
+      `targets=…`/`targets=undeclared` per profile; `hitl/stimuli/authorization.py` resolves
+      `--authorization <stimulus-id>|cli` into the record a run is driven under and refuses a target the
+      manifest does not cover. Both drivers resolve it **before the board is reset, before the census and
+      before any gesture** and publish the refusal as `UNAUTHORIZED_TARGET` naming the target and the
+      authorized scope; the explicit CLI targets stay the compatibility path (`cli`) and are recorded as
+      such rather than silently unchecked. The record also reaches the sealed bundle: the oracle copies the
+      run's `authorization` record into `reporting.build_report_bundle`'s section (spec scenario "Target
+      outside the run's authorization"). Evidence: `test_hitl_stimulus_authorization` **24/24** (shape,
+      declarations, the three checker inputs, and the drivers' pre-gesture refusal with an ordering sentinel
+      that fails loudly instead of flashing the board), `test_accepted_sequence` **98/98** (the bundle
+      carries the authorization), the 19-suite neighbouring sweep green, `pio test -e native` 2,643 cases
+      (7 skipped, 2,636 succeeded), 6 mutations red-proved with byte-identical restores. Firmware untouched,
+      so the build/RAM1 gates are not implicated by this slice. **Remaining for 4.1:** the device legs —
+      target selection, the RAM/SD census and persistence-completion proof on a repeat run without a reset,
+      which need an explicit per-session upload/target authorization. See
+      [AUTHORIZATION-MANIFEST-EXECUTION.md](AUTHORIZATION-MANIFEST-EXECUTION.md).
 - [ ] 4.2 Implement record recipe with genuinely empty SD-aware A/B, real record mode, switch-carried B start and one stop per interval; verify production dispatch and host scheduling with delayed observations, premature retirement and wrong-mode routes. A populated-A mutation must fail.
 - [ ] 4.3 Implement overdub recipe using confirmed seeds and the proven single capture-switch gesture, followed by B's recognized overdub start and stop; verify no separate A stop, no playback re-affirmation and no wait for predecessor retirement in the critical window.
 - [ ] 4.4 Register both scenarios and route the standalone CLI through the same runner; verify legacy argument translation, explicit unsupported combinations, scenario listing, identical verdicts via both entry points and unchanged base/edit_full behavior.

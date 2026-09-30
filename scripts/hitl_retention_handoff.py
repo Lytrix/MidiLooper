@@ -69,6 +69,11 @@ from hitl.actions.cancellation import (  # noqa: E402
 from hitl.actions.correlation import CorrelatedGesture, Stage, StageRules, Wire  # noqa: E402
 from hitl.actions.observation import await_markers  # noqa: E402
 from hitl.device_time import newest_row_clock_us  # noqa: E402
+from hitl.stimuli.authorization import (  # noqa: E402
+    CLI_SOURCE,
+    AuthorizationRefused,
+    authorize_targets,
+)
 
 
 @dataclass(frozen=True)
@@ -620,6 +625,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--build-env", default="teensy41-capture-serial")
     p.add_argument("--capture-port", default=DEFAULT_CAPTURE_SERIAL_PORT)
     p.add_argument("--boot-wait-s", type=float, default=10.0)
+    p.add_argument("--authorization", default=CLI_SOURCE,
+                   help="Target authorization manifest (task 4.1): a stimulus id whose declared scope must "
+                        "cover --track/--slot-a/--slot-b/--slot-c, or 'cli' (the default) for the explicit "
+                        "CLI targets as the declared authority. An unauthorized target is refused before the "
+                        "board is reset and before any gesture, and the report records the authorization.")
     args = p.parse_args(argv)
 
     out_dir: Path = args.out_dir.resolve()
@@ -635,6 +645,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     events: list[dict] = []
     report = {"track": args.track, "slot_a": args.slot_a, "slot_b": args.slot_b,
               "slot_c": args.slot_c, "events": events, "result": "INCOMPLETE"}
+
+    # Task 4.1: resolve and enforce the run's target authorization before the board is reset or re-uploaded
+    # and before any gesture -- the precondition census and every seed press are downstream of it, so an
+    # unauthorized target stops the run while there is still nothing to undo. A refused run still writes its
+    # report: the refusal names what was asked for and what was authorized.
+    try:
+        report["authorization"] = authorize_targets(
+            args.authorization, track=args.track, slots=(args.slot_a, args.slot_b, args.slot_c))
+    except AuthorizationRefused as exc:
+        report["authorization"] = exc.record
+        report["result"] = "UNAUTHORIZED_TARGET"
+        events.append({"event": "unauthorized_target", "violations": list(exc.violations)})
+        (out_dir / "retention-handoff.json").write_text(json.dumps(report, indent=2) + "\n")
+        print(f"[retention] refusing before any gesture: {'; '.join(exc.violations)}")
+        return 3
     a0, b0, c0 = args.slot_a - 1, args.slot_b - 1, args.slot_c - 1
     t0 = args.track - 1
 

@@ -100,6 +100,11 @@ from hitl.flows import stopped_preparation  # noqa: E402
 from hitl.library_observation import observation_window  # noqa: E402
 from hitl.managed_capture import ManagedCaptureSession  # noqa: E402
 from hitl.midi_io import _find_midi_port, _send_short_press  # noqa: E402
+from hitl.stimuli.authorization import (  # noqa: E402
+    CLI_SOURCE,
+    AuthorizationRefused,
+    authorize_targets,
+)
 
 TRANSPORT_STARTED = "Transport started"
 TRANSPORT_STOPPED = "Transport stopped"
@@ -730,6 +735,11 @@ def main(argv: list[str] | None = None) -> int:
                         "stop on device")
     p.add_argument("--no-clear-targets", dest="clear_targets", action="store_false", default=True,
                    help="Do not clear the target slots first; requires them to be empty already")
+    p.add_argument("--authorization", default=CLI_SOURCE,
+                   help="Target authorization manifest (task 4.1): a stimulus id whose declared scope must "
+                        "cover --track/--slot-a/--slot-b, or 'cli' (the default) for the explicit CLI targets "
+                        "as the declared authority. A target outside the manifest is refused before any "
+                        "gesture or board reset, and the report records the authorization the run was under.")
     args = p.parse_args(argv)
 
     if args.slot_a == args.slot_b:
@@ -750,6 +760,21 @@ def main(argv: list[str] | None = None) -> int:
                     "clear_targets": bool(args.clear_targets), "preparation": preparation,
                     "census": None, "identity": identity,
                     "events": events, "result": "INCOMPLETE", "upload": bool(args.upload)}
+
+    # Task 4.1: the run's target authorization is resolved and enforced **here** -- before the board is
+    # reset or re-uploaded, before the read-only census, and before any MIDI gesture -- so an unauthorized
+    # target stops the run while there is still nothing to undo. A refused run still publishes a report: the
+    # refusal names what was asked for and what was authorized.
+    try:
+        report["authorization"] = authorize_targets(
+            args.authorization, track=args.track, slots=(args.slot_a, args.slot_b))
+    except AuthorizationRefused as exc:
+        report["authorization"] = exc.record
+        report["result"] = "UNAUTHORIZED_TARGET"
+        events.append({"event": "unauthorized_target", "violations": list(exc.violations)})
+        (out_dir / "accepted-sequence.json").write_text(json.dumps(report, indent=2) + "\n")
+        print(f"[s4f13] refusing before any gesture: {'; '.join(exc.violations)}")
+        return 3
 
     if args.upload:
         refusal = refuse_reset_if_latched(tool="hitl_accepted_sequence")

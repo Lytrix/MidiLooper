@@ -88,7 +88,7 @@ in its own section rather than inventing a field.
 | Transition oracles | per slice: oracle links (5.x), recipe transitions (design decision 5), latch transitions (S22 §3), bundle rule (3.3) | **owned** |
 | Baseline linker/timing gates | DELIVERY_RULES.md + the RAM1 floor + the mandated HITL entry points | **owned** |
 | Stimulus selection and promotion | `scripts/hitl/stimuli/` registry, `host_midi_hitl.py stimulus list`, AGENTS.md promotion rule | **owned** |
-| **Run-scoped authorization manifest** | none today: the stimulus `spec.py` carries no authorization fields, and the drivers take explicit `--track/--slot-a/--slot-b` | **DECISION RECORDED** (see below) |
+| **Run-scoped authorization manifest** | `hitl/stimuli/spec.py` (`Authorization`), declared per profile in `registry.py`, surfaced by `stimulus list`, enforced by `hitl/stimuli/authorization.py`; CLI targets remain the compatibility path | **owned** (host half landed 2026-09-30; 4.1's device legs open) |
 | Target identity for acceptance | driver CLI + `--prepare-only`; the report records the targets it was given | **owned** |
 | Report/bundle schema | `hitl/reporting.py` (`BUNDLE_SCHEMA_VERSION`, `derive_verdict`) | **owned** |
 
@@ -101,7 +101,9 @@ given, and the report keeps them. Primary evidence: task 4's own precondition li
 required run input, design decision 4 names it run-scoped, and the registry is the only owner that already
 carries per-run declarations. This is a *shape* decision inside the approved contract, not a new contract; 4.1
 implements it, and the alternative (CLI-only authorization) remains acceptable if the registry grows an
-authorization block without breaking `stimulus list`.
+authorization block without breaking `stimulus list`. **Landed 2026-09-30** as 4.1's host half: the
+declaration (`spec.py`), the per-profile scope (`registry.py`), the resolution and refusal
+(`hitl/stimuli/authorization.py`), the drivers' pre-reset guard and the bundle's `authorization` section.
 
 ## Slice 4.1 — scoped stopped preparation
 
@@ -119,7 +121,15 @@ authorization block without breaking `stimulus list`.
 - **Verification recipe**: `PYTHONPATH=scripts .venv/bin/python -m unittest scripts.test_accepted_sequence
   scripts.test_hitl_capture_integrity scripts.test_device_shutdown scripts.test_library_observation_classifier`
   (counts recorded per run); device leg only after the user authorizes targets in the session.
-- **Completion record**: to be filled by the slice; today `[ ]` with the 2026-09-28 notes in `tasks.md`.
+- **Completion record**: the **host half landed 2026-09-30** — the run-scoped authorization manifest is
+  declared (`Authorization` in `hitl/stimuli/spec.py`, declared per profile in `registry.py`, shown by
+  `stimulus list`), resolved into the run's record (`hitl/stimuli/authorization.py`) and enforced by both
+  drivers *before* the reset, the census and any gesture (`result=UNAUTHORIZED_TARGET`, naming target and
+  scope), and the record reaches the sealed bundle. Evidence: `test_hitl_stimulus_authorization` 24/24,
+  `test_accepted_sequence` 98/98, 6 mutations red-proved, `pio test -e native` 2,643 (7 skipped). Firmware
+  untouched. The **device legs remain open** (`[~]` in `tasks.md`): target selection, the RAM/SD census and
+  persistence-completion proof on a repeat run without a reset, each needing per-session authorization.
+  Record: [AUTHORIZATION-MANIFEST-EXECUTION.md](AUTHORIZATION-MANIFEST-EXECUTION.md).
 
 ## Slice 4.2 — record recipe
 

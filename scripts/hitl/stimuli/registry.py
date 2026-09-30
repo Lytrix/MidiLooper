@@ -5,11 +5,33 @@ from __future__ import annotations
 from dataclasses import replace
 
 from hitl.stimuli.spec import (
+    Authorization,
     KIND_CANONICAL,
     KIND_TEMPORARY,
     OverdubRecipe,
     StimulusSpec,
 )
+
+
+# Task 4.1's run-scoped target authorization. The scope is declared once here for the profiles the
+# response-driven recipes drive, so a run that is pointed anywhere else is refused before it mutates
+# anything (`hitl/stimuli/authorization.py` enforces it; the drivers record it in their report).
+# Provenance: the user's standing authorization (2026-09-30: any slot may be cleared or used, without
+# asking again) as narrowed to the bench target these legs were actually driven on -- track 8 with the
+# scratch slots 4 and 5 (recorded device runs `s4f13-*`/`s4f22-dec096-*`). A session that needs a
+# different bench scope forks the profile (`temporary_variant(..., authorization=...)`) rather than
+# widening the canonical declaration.
+BENCH_TRACK = 8
+BENCH_SLOTS = (4, 5)
+BENCH_SCOPE_SOURCE = (
+    "user standing authorization 2026-09-30 (any slot may be cleared or used, no further asking) "
+    "narrowed to this profile's bench target: track 8, slots 4 and 5"
+)
+
+
+def _bench_authorization() -> Authorization:
+    return Authorization(track=BENCH_TRACK, slots=BENCH_SLOTS, source=BENCH_SCOPE_SOURCE,
+                         notes="declared scope for the S4f.13/S4f.22 response-driven legs")
 
 STIM_BASE_2_ONE_OD_01 = StimulusSpec(
     stimulus_id="STIM-BASE-2-ONE-OD-01",
@@ -27,6 +49,7 @@ STIM_BASE_2_ONE_OD_01 = StimulusSpec(
     interactions=(),
     must_prove=("base_recorded", "committed_od1"),
     human_checks=("seed loop plays",),
+    authorization=_bench_authorization(),
 )
 
 STIM_NE_OD_COMPOSE_01 = StimulusSpec(
@@ -221,6 +244,7 @@ STIM_BASE_2_2_01 = StimulusSpec(
     interactions=("undo_redo_after_last_overdub",),
     must_prove=("base_recorded", "committed_od1", "committed_od2"),
     human_checks=("record and both overdub layers audible",),
+    authorization=_bench_authorization(),
 )
 
 STIM_BASE_2_FIXTURE_01 = StimulusSpec(
@@ -376,9 +400,25 @@ def list_stimuli() -> list[StimulusSpec]:
     return [get_stimulus(stimulus_id) for stimulus_id in sorted(_STIMULI)]
 
 
+
+def authorization_for(stimulus_id: str) -> Authorization | None:
+    """This profile's declared target scope, or None when it declares none.
+
+    The registry is the manifest's authority (task 4.1): a profile that has not declared a
+    scope cannot authorize a run, and `hitl.stimuli.authorization` refuses rather than
+    falling back to an unchecked CLI scope when a manifest is named.
+    """
+    return get_stimulus(stimulus_id).authorization
+
+
+def _authorization_text(spec: StimulusSpec) -> str:
+    declared = spec.authorization
+    return "undeclared" if declared is None else declared.targets_text()
+
 def format_stimulus_list_lines() -> list[str]:
     return [
-        f"{spec.fingerprint_key()}  {spec.scenario_id}  {spec.generator}  {spec.description}"
+        f"{spec.fingerprint_key()}  {spec.scenario_id}  {spec.generator}  "
+        f"targets={_authorization_text(spec)}  {spec.description}"
         for spec in list_stimuli()
     ]
 
