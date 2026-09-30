@@ -129,6 +129,11 @@ def build_identity() -> dict:
 
 
 def _report_stimulus_id(leg: str) -> str:
+    #  The record and overdub legs have registered profiles; the **mixed** leg's profile (A empty *and* B seeded)
+    #  is not registered yet -- it is a different preparation from either -- so its run records the temporary
+    #  variant it was driven as, under the name its profile will take.
+    if leg == "mixed":
+        return "STIM-BASE-2-MIXED-01-TEMP-ACCEPTED-SEQ-MIXED"
     return f"STIM-BASE-2-ONE-OD-01-TEMP-ACCEPTED-SEQ-{'REC' if leg == 'rec' else 'OD'}"
 
 

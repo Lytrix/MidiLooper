@@ -1430,6 +1430,28 @@ class EvidenceGateTests(unittest.TestCase):
         self.assertIn("slot 4 scoped clear REFUSED", fixture.report["preparation_error"])
         self.assertFalse([e for e in fixture.events if e.startswith("gesture:")])
 
+    def test_the_mixed_leg_seeds_b_then_prepares_a_empty_and_idle(self):
+        """The mixed leg's fixture states *are* the requirement: B seeded (it is the overdub target), A empty.
+
+        A seeded A would make A's press an overdub and B an uncommitted carrier target -- a different scenario
+        entirely -- so the preparation branch is the mixed leg's own, and A is prepared last so it is the
+        selected target when the leg starts.
+        """
+        def press(log: Path, slot_number: int, attempt: int) -> None:
+            with log.open("a", encoding="utf-8") as handle:
+                for state in ("ARMED", "RECORDING"):
+                    handle.write(disp_row(slot_number, state) + "\n")
+
+        fixture = self._drive(["--leg", "mixed", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1"],
+                              census={(7, 3): False, (7, 4): True}, press=press)
+        self.assertEqual(0, fixture.rc, fixture.report.get("preparation_error"))
+        self.assertEqual("DROVE_LEG", fixture.report["result"])
+        self.assertTrue([e for e in fixture.events if e.startswith("seed_b_")],
+                        "B is seeded: it is the overdub successor")
+        self.assertIn("prepare_slot_a_idle", fixture.events)
+        self.assertFalse([e for e in fixture.events if e.startswith("seed_a_")],
+                         "A is a record target and must not be seeded")
+
 
 
 class PressSpacingTests(unittest.TestCase):
@@ -2522,6 +2544,111 @@ class VetoTests(unittest.TestCase):
         for adapter in (acceptance_evidence.content_parity, acceptance_evidence.timing_gates,
                         acceptance_evidence.teardown):
             self.assertIsNone(adapter(None)[0])
+
+
+class MixedLegTests(unittest.TestCase):
+    """The spec's *Mixed record predecessor and overdub successor* scenario: a record A, a seeded overdub B.
+
+    The leg composes the two recipes rather than inventing a third: A's start is the **record** capture of task
+    4.2 (with its own empty, idle target) and B's successor is the **overdub** of task 4.3 (a seeded target, its
+    own record-control start, one loop-button stop). Its grading is *not* implemented yet and the oracle refuses
+    it by name -- grading it with either existing mode would fail a conforming run -- so these tests pin the
+    flow: the plan as data, and the driven sequence against the device's own rows.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.log = Path(self.tmp.name) / "session.log"
+        self.log.write_text("")
+
+    def write(self, *rows):
+        with self.log.open("a", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(row + "\n")
+
+    def drive(self, answer, *, timeout_s=0.01):
+        from unittest.mock import patch
+        events: list[dict] = []
+        port = FakePort()
+
+        def emit(_port, gesture, **kw):
+            answer(self.log, gesture)
+
+        with patch(_patch_target("_emit"), side_effect=emit), \
+             patch(_patch_target("_ensure_transport"), return_value=True), \
+             patch(_patch_target("time.sleep")):
+            result = _run_plan(port, self.log, leg_gestures("mixed", track=8, a=4, b=5),
+                               slot_b=5, slot_a=4, press_ms=120, phase_timeout_s=timeout_s,
+                               events=events, note_channel=7, overdub_notes=2)
+        return result, events, port
+
+    def test_the_mixed_plan_is_the_specs_sequence(self):
+        """A records, ONE slot gesture stops A and selects B, then B's own start and ONE stop."""
+        plan = leg_gestures("mixed", track=8, a=4, b=5)
+        self.assertEqual(["select_track", "a_record_start", "b_switch", "b_overdub_start", "b_stop_request"],
+                         [g.step for g in plan])
+        self.assertNotIn("a_stop", [g.step for g in plan])
+        self.assertEqual([("track", 8), ("record", 0), ("slot_record", 5), ("record", 0), ("slot_record", 5)],
+                         [(g.kind, g.value) for g in plan])
+        notes = emit_all(plan).note_sequence()
+        self.assertNotIn(GLOBAL_TRANSPORT_NOTE, notes, "the mixed leg must not stop the transport")
+        self.assertNotIn(loop_note(4), notes, "A is stopped by the switch, never by its own slot press")
+        self.assertEqual(2, notes.count(loop_note(5)), "B: the switch AND its single stop press")
+        self.assertEqual(2, notes.count(RECORD_BUTTON_NOTE), "A's record start, then B's overdub start")
+
+    def test_the_mixed_plan_is_driven_against_the_devices_own_rows(self):
+        """A's record start, the capture-switch, B's overdub start and B's stop, each on its own receipt."""
+        def answer(log, gesture):
+            if gesture.step == "a_record_start":
+                self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
+            elif gesture.step == "b_switch":
+                self.write("Loop 5: Switch gesture from slot 4")
+            elif gesture.step == "b_overdub_start":
+                self.write("Overdubbing started @ tick 10")
+            elif gesture.step == "b_stop_request":
+                self.write("Loop 5: Stop Overdub")
+
+        result, events, port = self.drive(answer)
+        self.assertEqual("DROVE_LEG", result, events)
+        self.assertEqual([True], [e["confirmed"] for e in events if e.get("event") == "a_record_start"])
+        self.assertEqual([True], [e["confirmed"] for e in events if e.get("event") == "b_switch"])
+        self.assertIn("b_overdub_start_notes", [e.get("event") for e in events])
+        self.assertIn(79, port.note_sequence(), "B's content goes into its overdub")
+
+    def test_a_mixed_record_start_on_a_populated_a_is_a_named_wrong_route(self):
+        """A's side is a *record* capture: a populated A answers playback or overdub, not a substitute."""
+        for wrong_row in ("Loop 4: Queued playback switch (filled slot)", "MIDI Button A: Live Overdub"):
+            with self.subTest(row=wrong_row):
+                def answer(log, gesture, row=wrong_row):
+                    if gesture.step == "a_record_start":
+                        self.write(row)
+
+                result, _events, _port = self.drive(answer)
+                self.assertEqual("WRONG_MODE_ROUTE", result)
+
+
+class MixedLegOracleTests(unittest.TestCase):
+    """The mixed leg's grading is deliberately *not* implemented: the oracle refuses it by name."""
+
+    def test_the_oracle_refuses_to_grade_the_mixed_leg_rather_than_misgrade_it(self):
+        result = analyse(chain_log(), leg="mixed", slot_a=4, slot_b=5,
+                         metadata=METADATA, base_report=BASE_REPORT)
+        self.assertEqual("SETUP_INCOMPLETE", result.verdict)
+        self.assertEqual(3, result.exit_code)
+        check = by_name(result)["mixed_leg_grading"]
+        self.assertEqual("fail", check.status)
+        self.assertIn("not implemented", check.detail)
+        self.assertIn("overdub families", check.detail)
+        self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+    def test_the_mixed_leg_is_drivable_from_the_wrapper_cli(self):
+        """The standalone CLI accepts the leg (the flow drives it); grading is what is not implemented yet."""
+        from hitl_accepted_sequence import build_parser
+        args = build_parser().parse_args(["--leg", "mixed", "--track", "8", "--slot-a", "4", "--slot-b", "5",
+                                          "--no-upload", "--out-dir", "/tmp/mixed-not-run"])
+        self.assertEqual("mixed", args.leg)
 
 
 

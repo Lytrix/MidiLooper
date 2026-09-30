@@ -60,8 +60,9 @@ from hitl.stimuli.authorization import CLI_SOURCE  # noqa: E402
 def build_parser() -> argparse.ArgumentParser:
     """The wrapper's own argument surface: unchanged from the pre-split driver, plus --authorization."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--leg", choices=("rec", "od"), required=True,
-                   help="rec = S4f.13(a) record leg; od = S4f.13(b) overdub leg")
+    p.add_argument("--leg", choices=("rec", "od", "mixed"), required=True,
+                   help="rec = S4f.13(a) record leg; od = S4f.13(b) overdub leg; "
+                        "mixed = a record predecessor with a seeded overdub successor")
     p.add_argument("--track", type=int, required=True, choices=range(1, 9))
     p.add_argument("--slot-a", type=int, required=True, choices=range(1, 9))
     p.add_argument("--slot-b", type=int, required=True, choices=range(1, 9))

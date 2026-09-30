@@ -221,6 +221,19 @@ def _overdub_stop_requests(lines: list[str], slots_1based: tuple[int, ...]) -> d
 def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
             metadata: Optional[dict] = None, base_report: Optional[dict] = None,
             window: Optional[tuple[int, int]] = None, inputs: Optional[dict] = None) -> Analysis:
+    # The **mixed** leg can be *driven* (its plan and preparation are in `hitl.flows.accepted_sequence`), but its
+    # *grading* is not implemented yet: A is a record interval and B an overdub interval, so its links need A's
+    # record vocabulary (`RECS`, the finalization window) for one side and the overdub families
+    # (`DIAG,reentry,admit|bound`, `stop_state`, `canonical_release`) for the other. Grading it with either
+    # existing mode would fail a conforming run, so this refuses by name instead -- the same "refuse rather than
+    # invent a verdict" rule the rest of the oracle follows.
+    if leg == "mixed":
+        return Analysis("SETUP_INCOMPLETE", [Check(
+            "mixed_leg_grading", FAIL,
+            "the mixed leg's grading is not implemented: A is a record interval and B an overdub interval, so its "
+            "links mix the record vocabulary (A's `RECS` stop and finalization window) with the overdub families "
+            "(B's `DIAG,reentry,admit|bound`, `stop_state`, `canonical_release`). The flow drives the leg; this "
+            "verdict says so rather than grading it with the wrong mode's vocabulary.", "setup")], {}, [])
     checks: list[Check] = []
     evidence: dict[str, list[str]] = {"stop_requests": [], "window_open": [], "releases": [],
                                       "successor_start": [], "denials": []}
