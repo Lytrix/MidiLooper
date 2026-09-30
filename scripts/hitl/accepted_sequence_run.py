@@ -269,6 +269,12 @@ def run_accepted_sequence(request: RunRequest) -> int:
             if outcome.leg_start_row is not None:
                 report["leg_start_row"] = outcome.leg_start_row
             report["leg_rows"] = outcome.leg_rows
+            # The window's own end is the **flow's** mark, taken when the plan returned (it is the last thing
+            # `drive_leg` knows before the settle): this point is already past the settle and the final
+            # stopped-only stop, so using it would put the run's own teardown inside the measured window --
+            # measured in `captures/s4f22-dec096-od-13`, where the final stop lands 8 s after the last press.
+            # `None` is kept as a key so the report's shape is stable; the oracle reads it as "not bounded".
+            report["leg_window_end_row"] = outcome.leg_window_end_row
             report["leg_end_row"] = len(_lines(capture_log))
             report["result"] = outcome.result
             if outcome.preparation_error:

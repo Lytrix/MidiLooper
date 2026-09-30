@@ -462,7 +462,28 @@ Open separately: the capture ring lost 384 571 bytes to zeros with self-consiste
 `RING,overlap` in `poolAlloc` is armed to identify whether an event-pool block is handed the
 ring's PSRAM, and `RING,head_bad` names any advance off a record boundary.
 -->
-- [ ] 5.1 Replace global counters/human-log inference with phase-scoped correlated input, accepted obligation, execution and retirement predicates for both modes; verify every missing/reordered/duplicate/wrong-identity edge, legacy deny-plus-latch versus true refusal, overlap miss, transport stop and clock change yields the specified non-PASS result.
+- [~] 5.1 Replace global counters/human-log inference with phase-scoped correlated input, accepted obligation, execution and retirement predicates for both modes; verify every missing/reordered/duplicate/wrong-identity edge, legacy deny-plus-latch versus true refusal, overlap miss, transport stop and clock change yields the specified non-PASS result.
+      **2026-09-30 — the last two named cases (transport stop, clock change) are now predicates; the earlier
+      ones already were.** The spec requirement's own sentence — *"Preparation, clearing, seeding and final
+      stopped-only verification SHALL have explicit boundaries outside that window"* — is what the window mark
+      implements: `drive_leg` records `leg_window_end_row` **when the plan returned**, so the settle and the
+      run's final stopped-only stop stay outside the measured span (measured in
+      `captures/s4f22-dec096-od-13`: the leg's last press at 59.141 s, the driver's final `Transport stopped`
+      at 67.747 s; grading that capture with the flow's mark is `ACCEPTED_SEQUENCE_PASS`, with a mark taken
+      after the run's own end it is `ACCEPTED_SEQUENCE_FAIL` on the run's own teardown). Two predicates read
+      the span from the device's own vocabulary — `continuous_transport` over `ClockManager`'s
+      `Transport stopped` row, `clock_source_stable` over `DebugSessionCapture::clockSource`'s
+      `#CAP,<us>,CS,<from>,<to>` one-shot — with `UNKNOWN` (never `OK`) when the capture cannot bound the
+      window, the leg's own `Loop N:` stop-request rows as the *named* fallback boundary when no run marks
+      travel, and the shed rule scoped **to the window** so a row dropped outside it cannot make the span
+      unmeasurable. Evidence: `test_accepted_sequence` **112/112**, corpus **3/3** (every retained fixture
+      keeps its verdict), neighbours green, host sweep **1,039 / 75 suites** with only the seven pre-existing
+      failures, **7 mutations** red-proved byte-identically.
+      [WINDOW-INVARIANT-EXECUTION.md](WINDOW-INVARIANT-EXECUTION.md). **What 5.1 still owes:** the record leg
+      fails the new stop predicate because its *plan* still stops the global transport itself
+      (`leg_gestures`' `a_stop`) — the oracle records that as a limitation naming the plan, and the
+      switch-carried B start that turns it green is 4.2's change; the *mixed* record-predecessor/overdub-
+      successor leg of the same requirement is 4.3's.
 - [ ] 5.2 Integrate existing content parity and timing verifiers plus independent shutdown result; verify a failing content, timing or teardown result vetoes otherwise complete acceptance. Replay the preserved failure corpus and synthetic complete chains with deterministic expected verdicts.
 - [ ] 5.3 Run focused Python suites, architecture/import gates and full `pio test -e native`; record mutation results for former queue, timing and attribution bugs. Keep host success distinct from hardware qualification.
 

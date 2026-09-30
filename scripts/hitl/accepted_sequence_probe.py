@@ -89,6 +89,14 @@ ODUB_BOUND_RE = re.compile(r"^DIAG,reentry,bound,(\d+),(\d+),(\d+),(\d+)$")
 STOP_STATE_RE = re.compile(r"^DIAG,stop_state,(\d+),(\d+),(\d+),(\d+),")
 HUMAN_STOP_OVERDUB_RE = re.compile(r"Loop (\d+): Stop Overdub")
 HUMAN_SWITCH_SOURCE_RE = re.compile(r"Loop \d+: Switch gesture from slot (\d+)")
+#  A clock-source transition, as the sole clock owner emits it (`DebugSessionCapture::clockSource`): one
+#  `#CAP` one-shot naming the source it moved from and to (`INT` when the device runs its own clock, `EXT`
+#  when it is slaved to the host's). It is ordinary (non-Tier-A) ring text, which is why the predicate below
+#  treats a shed capture as UNKNOWN rather than reading absence as stability.
+CAP_CS_RE = re.compile(r"^#CAP,\d+,CS,[A-Z]+,[A-Z]+\s*$")
+#  The leg's own *stop* requests, for the fallback window when no run marks are supplied. Deliberately no
+#  `Start Recording` row: the seeds arm and record too, so that row cannot separate the leg from preparation.
+HUMAN_STOP_RECORDING_RE = re.compile(r"Loop \d+: Stop Recording")
 # The per-family counters, as the stopped-only read-back reports them: `RING,record_stats,<family>,entered=…,
 # enq=…,rej=…,tx=…,evict=…`. A family tag may itself carry a comma (`DIAG,latch`), so the name is matched as
 # one or two identifier parts, never as "everything up to the next comma". `enq` counts appends that reached
@@ -195,7 +203,8 @@ def _overdub_stop_requests(lines: list[str], slots_1based: tuple[int, ...]) -> d
 
 
 def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
-            metadata: Optional[dict] = None, base_report: Optional[dict] = None) -> Analysis:
+            metadata: Optional[dict] = None, base_report: Optional[dict] = None,
+            window: Optional[tuple[int, int]] = None) -> Analysis:
     checks: list[Check] = []
     evidence: dict[str, list[str]] = {"stop_requests": [], "window_open": [], "releases": [],
                                       "successor_start": [], "denials": []}
@@ -558,6 +567,87 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
                 f"{(od_b['stop_terminals'] or od_b['releases'])[0][0]} us, retired {od_b['releases'][0][0]} us)",
                 "retention")
 
+    # ---------------- the measured window's own invariants ----------------
+    # Spec requirement *Continuously playing acceptance window*: the transport must keep playing through each
+    # measured window, and a clock transition invalidates the evidence it spans. Two device-owned rows carry
+    # it: `Transport stopped` (printed by `ClockManager::stopTransport` -- a human row carrying the device
+    # clock, written straight to `Serial`, so it is not a ring row and its absence is live evidence) and the
+    # one-shot `#CAP,<us>,CS,<from>,<to>` from `DebugSessionCapture::clockSource`, the sole clock owner.
+    #
+    # The window is the *runner's* boundary, not a guess: the driver records `leg_start_row` (immediately
+    # before the leg's first gesture) and `leg_window_end_row` (when the plan returned, before the settle and
+    # the final stopped-only stop), and the CLI passes those marks here. Without them the oracle falls back to
+    # the leg's own press span -- the `Loop N:` request rows it already reads for L7 -- which is a *weaker*
+    # boundary and is reported as such; with no boundary at all the invariants are UNKNOWN, never OK.
+    bounds = window if (window is not None and 0 <= window[0] < window[1] <= len(lines)) else None
+    boundary_source = "the run's own leg marks" if bounds is not None else ""
+    if bounds is None:
+        request_indices = [i for i, l in enumerate(lines)
+                           if HUMAN_STOP_OVERDUB_RE.search(l) or HUMAN_SWITCH_SOURCE_RE.search(l)
+                           or HUMAN_STOP_RECORDING_RE.search(l)]
+        if len(request_indices) >= 2:
+            bounds = (request_indices[0], request_indices[-1] + 1)
+            boundary_source = ("the leg's own press span (no run marks were supplied, so this boundary "
+                               "excludes anything before the first press and after the last one)")
+    if bounds is None:
+        add("continuous_transport", UNKNOWN,
+            "the measured window is not bounded by this capture: no run marks and fewer than two leg press "
+            "rows, so \"the transport never stopped inside it\" is not established", "window")
+        add("clock_source_stable", UNKNOWN,
+            "the measured window is not bounded by this capture, so a clock transition inside it cannot be "
+            "ruled out", "window")
+    else:
+        start, end = bounds
+        inside = lines[start:end]
+        stops_in = [l.strip()[:120] for l in inside if "Transport stopped" in l]
+        clock_in = [l.strip()[:120] for l in inside if (m := CAP_CS_RE.match(l.strip()))]
+        # The shed rule is scoped to the window, not to the capture: a row dropped *outside* the span says
+        # nothing about whether the span kept every row the device emitted in it (measured: the device run in
+        # `captures/s4f22-dec096-od-13` shed one ordinary row at device 51.4 s, well before its leg began, and a
+        # capture-wide rule would have called that window's clock source unmeasurable).
+        shed_in_window = [l.strip()[:120] for l in inside if RING_SHED_RE.search(l)]
+        # The rows themselves are evidence: a FAIL is only useful if a reader can see which row said so.
+        evidence["window_transports_stopped"] = stops_in
+        evidence["window_clock_transitions"] = clock_in
+        evidence["window_shed_rows"] = shed_in_window
+        if stops_in:
+            add("continuous_transport", FAIL,
+                f"{len(stops_in)} `Transport stopped` row(s) inside the measured window "
+                f"({boundary_source}): " + "; ".join(stops_in) + " -- the acceptance window must stay "
+                "playing; a stop inside it is a contract failure, not a pause", "window")
+            if leg == "rec":
+                # The one place where the failure is ours rather than the device's, said out loud instead of
+                # left for a reader to infer: the record leg's plan (`leg_gestures`' `a_stop`) stops the global
+                # transport itself, while the spec's record-successor scenario has the switch to B carry B's
+                # start. Task 4.2 is that change; until it lands, a rec run's window contains its own stop.
+                limitations.append(
+                    "On the record leg this failure names the *plan* (`leg_gestures`' `a_stop`) rather than the "
+                    "device: the spec's record-successor scenario has the switch to B carry B's record start, "
+                    "which is task 4.2's change.")
+        else:
+            add("continuous_transport", OK,
+                f"no `Transport stopped` row inside the measured window ({boundary_source})", "window")
+        if clock_in:
+            add("clock_source_stable", FAIL,
+                f"{len(clock_in)} clock-source transition row(s) inside the measured window: "
+                + "; ".join(clock_in) + " -- the evidence either side of a clock change is not one timeline",
+                "window")
+        elif shed_in_window:
+            # A `CS` row is ordinary (non-Tier-A) ring text, so a row dropped *inside* the span means absence
+            # is not evidence for this one -- the honest answer is UNKNOWN rather than OK.
+            add("clock_source_stable", UNKNOWN,
+                f"no clock-source row inside the measured window, but {len(shed_in_window)} diagnostic row(s) "
+                "were shed by policy inside that span, so absence of the row is not proof of a stable clock "
+                f"source: {shed_in_window[0]}", "window")
+        else:
+            add("clock_source_stable", OK,
+                "no clock-source transition inside the measured window, and no row was shed inside that span "
+                "(so a transition there would have been kept)", "window")
+    evidence["window"] = (
+        [f"rows [{bounds[0]}:{bounds[1]}) from {boundary_source}"] if bounds is not None
+        else ["unbounded: the two window invariants above are UNKNOWN, not measured"]
+    )
+
     # ---------------- verdict ----------------
     if any(c.status == FAIL and c.kind == "setup" for c in checks):
         verdict = "SETUP_INCOMPLETE"
@@ -655,6 +745,27 @@ def _authorization_section(run_report: Optional[dict]) -> Optional[dict]:
     return dict(record) if isinstance(record, dict) else None
 
 
+def _run_window(run_report: Optional[dict]) -> Optional[tuple[int, int]]:
+    """The measured window as the *driver* recorded it: `(leg_start_row, leg_window_end_row)`.
+
+    Both marks are line counts the driver took at the two boundaries the spec draws -- immediately before the
+    leg's first gesture, and when the leg's last planned step returned, i.e. **before** the settle and the
+    final stopped-only stop, which are the run's teardown rather than part of the window. They are accepted
+    only as an ordered, non-empty `[start, end)` pair of line offsets into the capture being analysed;
+    anything else (a run that never reached its first gesture, or a report from a driver that predates the
+    window mark) yields `None`, and `analyse` then either falls back to the leg's own press span or reports
+    the invariants as UNKNOWN -- never as OK.
+    """
+    if not isinstance(run_report, dict):
+        return None
+    start, end = run_report.get("leg_start_row"), run_report.get("leg_window_end_row")
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in (start, end)):
+        return None
+    if start < 0 or end <= start:
+        return None
+    return (start, end)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="S4f.13 accepted-sequence oracle over a managed HITL capture log")
     p.add_argument("--session-log", type=Path, required=True)
@@ -677,7 +788,7 @@ def main(argv: list[str] | None = None) -> int:
     run_report = (json.loads(args.run_report.read_text())
                   if args.run_report and args.run_report.exists() else None)
     analysis = analyse(text, leg=args.leg, slot_a=args.slot_a, slot_b=args.slot_b,
-                       metadata=meta, base_report=base)
+                       metadata=meta, base_report=base, window=_run_window(run_report))
     identity = {k: (meta or {}).get(k) for k in ("git_commit", "firmware_hex_sha256")} if meta else {}
     payload = report_dict(analysis, identity)
     out = args.out or (args.session_log.parent / "accepted-sequence-review.json")
