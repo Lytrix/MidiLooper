@@ -895,19 +895,32 @@ class EvidenceGateTests(unittest.TestCase):
                          [e["armed"] for e in fixture.report["events"] if e.get("event") == "seed_b_press"])
         self.assertTrue(any(",DISP,4,ARMED," in line for line in fixture.log.read_text().splitlines()))
 
-    def test_a_dim_slot_row_cannot_confirm_a_gesture(self):
-        """Slot and freshness both matter: another slot's row, or a drained one, is not this gesture's."""
+    def test_a_row_from_before_the_gesture_cannot_confirm_it(self):
+        """The floor is the gesture's own device clock: an older row is never its receipt."""
         with __import__("tempfile").TemporaryDirectory() as temp:
             log = Path(temp) / "session.log"
             log.write_text("\n".join([
-                "#CAP,5000,RING,stats,1",           # newest stamp first
-                disp_row(3, "ARMED", stamp_us=1000),  # drained history: older than the row above
-                disp_row(5, "ARMED", stamp_us=6000),  # live, but slot 5's, not the target's
+                "[1.000] [INFO] Button press: Loop 3 (short)",       # the gesture, 1.000 s device time
+                disp_row(3, "ARMED", stamp_us=900_000),              # emitted *before* it -> not a receipt
+                disp_row(5, "ARMED", stamp_us=1_500_000),            # after it, but slot 5's, not the target's
             ]) + "\n")
             self.assertIsNone(_await_slot_disp(log, 0, 2, ("ARMED",), 0.0),
-                              "a drained slot-3 row must not confirm slot 3's gesture")
+                              "a row emitted before the gesture must not confirm it")
             self.assertIsNotNone(_await_slot_disp(log, 0, 4, ("ARMED",), 0.0))
             self.assertIsNone(_await_slot_disp(log, 0, 4, ("RECORDING",), 0.0))
+
+    def test_a_flooded_row_is_current_whatever_order_the_ring_flushed_it_in(self):
+        """`od-03`: the take's RECORDING flood landed in the file *after* rows stamped 30 s later."""
+        with __import__("tempfile").TemporaryDirectory() as temp:
+            log = Path(temp) / "session.log"
+            log.write_text("\n".join([
+                "[55.543] [INFO] Button press: Loop 5 (short)",      # the gesture, 55.543 s device time
+                disp_row(5, "ARMED", stamp_us=55_606_018),
+                "#CAP,85981327,DISP,4,STOPPED,9984,0,0",             # a later row, flushed first
+                disp_row(5, "RECORDING", stamp_us=56_813_399),       # the receipt, in file order *after* it
+            ]) + "\n")
+            self.assertIsNotNone(_await_slot_disp(log, 0, 4, ("RECORDING",), 0.0),
+                                 "an order-based freshness filter drops this row; its stamp is what counts")
 
     def test_a_lost_census_window_is_retried_before_the_target_is_undecidable(self):
         """One lost window is a delivery outcome: `od-02` answered on the retry."""
