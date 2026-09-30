@@ -59,6 +59,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from hitl.reporting import build_report_bundle, write_report_bundle  # noqa: E402
+
 OK, FAIL, UNKNOWN = "ok", "fail", "unknown"
 
 CAP_RE = re.compile(r"^#CAP,(\d+),(.*)$")
@@ -591,6 +596,56 @@ def report_dict(analysis: Analysis, identity: Optional[dict] = None) -> dict[str
     }
 
 
+def verdict_bundle(
+    analysis: Analysis,
+    *,
+    leg: str,
+    identity: dict,
+    run_id: str,
+    run_report: Optional[dict] = None,
+) -> dict:
+    """The oracle's verdict as a sealed bundle: one predicate per check, so a replay re-derives the verdict.
+
+    The bundle is what makes this verdict checkable later without a device: the checks, their evidence and the
+    run's teardown result are recorded verbatim, and `verify_report_bundle` re-runs the same rule over them.
+    `UNKNOWN` counts as not-ok on purpose -- "the required edge is absent" is not a pass -- and a pass needs the
+    run's own teardown to have succeeded ("shutdown failure SHALL prevent overall success"), which is why the
+    driver's report is passed in: without it the bundle says so instead of claiming a pass.
+    """
+    teardown = (run_report or {}).get("shutdown") if run_report else None
+    predicates = [
+        {
+            "check": check.name + (f" [{check.link}]" if check.link else ""),
+            "kind": check.kind,
+            "ok": check.status == OK,
+            "expected": "ok",
+            "observed": check.detail,
+        }
+        for check in analysis.checks
+    ]
+    return build_report_bundle(
+        run_id=run_id,
+        kind=f"accepted-sequence:{leg}",
+        identity=dict(identity),
+        status=analysis.verdict,
+        claims_success=(analysis.verdict == "ACCEPTED_SEQUENCE_PASS"),
+        predicates=predicates,
+        teardown=dict(teardown) if isinstance(teardown, dict) else None,
+        evidence={
+            "leg": leg,
+            "checks_total": len(analysis.checks),
+            "unknown_checks": [c.name for c in analysis.checks if c.status == UNKNOWN],
+            "limitations": list(analysis.limitations),
+            "driver_result": (run_report or {}).get("result") if run_report else None,
+            **dict(analysis.evidence),
+        },
+        notes=([
+            "the verdict is the accepted-sequence oracle's; every check it made is a predicate here",
+            "the run's own teardown result is part of the verdict: a pass needs a successful drain",
+        ] + list(analysis.limitations)),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="S4f.13 accepted-sequence oracle over a managed HITL capture log")
     p.add_argument("--session-log", type=Path, required=True)
@@ -601,16 +656,29 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--metadata", type=Path, default=None)
     p.add_argument("--base-report", type=Path, default=None)
     p.add_argument("--out", type=Path, default=None)
+    p.add_argument("--run-report", type=Path, default=None,
+                   help="the driver's accepted-sequence.json: its teardown result joins the sealed verdict")
+    p.add_argument("--emit-bundle", type=Path, default=None,
+                   help="seal this verdict as a run bundle (default: none; needs --run-report for a pass)")
     args = p.parse_args(argv)
 
     text = args.session_log.read_text(encoding="utf-8", errors="replace")
     meta = json.loads(args.metadata.read_text()) if args.metadata and args.metadata.exists() else None
     base = json.loads(args.base_report.read_text()) if args.base_report and args.base_report.exists() else None
+    run_report = (json.loads(args.run_report.read_text())
+                  if args.run_report and args.run_report.exists() else None)
     analysis = analyse(text, leg=args.leg, slot_a=args.slot_a, slot_b=args.slot_b,
                        metadata=meta, base_report=base)
     identity = {k: (meta or {}).get(k) for k in ("git_commit", "firmware_hex_sha256")} if meta else {}
     payload = report_dict(analysis, identity)
     out = args.out or (args.session_log.parent / "accepted-sequence-review.json")
+
+    if args.emit_bundle is not None:
+        bundle = verdict_bundle(analysis, leg=args.leg, identity=identity,
+                                run_id=f"accepted-sequence-{args.leg}-{args.session_log.parent.name}",
+                                run_report=run_report)
+        payload["bundle"] = str(write_report_bundle(args.emit_bundle.parent, bundle,
+                                                   name=args.emit_bundle.name))
     out.write_text(json.dumps(payload, indent=2) + "\n")
 
     print(f"accepted-sequence verdict ({args.leg} leg): {analysis.verdict}")
@@ -620,6 +688,8 @@ def main(argv: list[str] | None = None) -> int:
     for lim in analysis.limitations:
         print(f"  limitation: {lim}")
     print(f"  review: {out}")
+    if "bundle" in payload:
+        print(f"  bundle: {payload['bundle']} (replay: scripts/hitl_report_replay.py --bundle <path>)")
     return analysis.exit_code
 
 

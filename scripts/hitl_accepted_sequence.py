@@ -77,6 +77,7 @@ from hitl.actions.cancellation import (  # noqa: E402
     begin_run,
     cancellable_sleep,
 )
+from hitl.actions.observation import await_markers  # noqa: E402
 from hitl.actions.correlation import (  # noqa: E402
     CorrelatedGesture,
     PendingSwitchGate,
@@ -460,25 +461,21 @@ def _await_markers(capture_log: Path, after: int, markers: tuple[str, ...], time
                    *, drain=None) -> bool:
     """Wait for any of `markers` in the rows after `after`, flushing the capture ring as it waits.
 
-    Cancel-aware like the receipt waits: a cancelled run stops here with its own reason instead of sitting out
-    a commitment/persistence bound while the capture is being released.
+    The wait itself is the action layer's observation facade (`hitl.actions.observation`): one owner for the
+    bound, the poll cadence, the ring-flush cadence and cancellation, with this driver supplying only its own
+    row window. Cancel-aware like the receipt waits: a cancelled run stops here with its own reason instead of
+    sitting out a commitment/persistence bound while the capture is being released.
     """
-    deadline = time.monotonic() + max(timeout_s, 0.0)
-    next_drain = time.monotonic() + DRAIN_EVERY_S
-    while True:
-        scope = active_cancel_scope()
-        if scope is not None:
-            scope.check()
-        tail = _lines(capture_log)[after:]
-        if any(marker in line for line in tail for marker in markers):
-            return True
-        now = time.monotonic()
-        if now >= deadline:
-            return False
-        if now >= next_drain:
-            _drain_now(drain)
-            next_drain = now + DRAIN_EVERY_S
-        time.sleep(0.05)
+    scope = active_cancel_scope()
+    found = await_markers(
+        lambda: _lines(capture_log)[max(after, 0):], markers, timeout_s=timeout_s,
+        poll_s=0.05,
+        on_poll=(None if drain is None else lambda: _drain_now(drain)),
+        cancel=(None if scope is None else lambda: scope.cancelled),
+    )
+    if scope is not None:
+        scope.check()
+    return found
 
 
 

@@ -209,7 +209,31 @@ Stage owner: actions, narrow verify wait facade, session/managed capture and rep
       shutdown); `test_retention_handoff_plan` **33/33**; neighbouring suites together — **405 tests / 15 suites**; seven
       mutations red-proved and every file restored byte-identically. Host tooling only: no firmware, build or device
       action. [Cancellation evidence](CANCELLATION-EXECUTION.md).
-- [ ] 3.3 Use the managed watchdog/metadata path and immutable versioned report schema; verify setup failures, protocol absence, teardown failure and verify-only replay without ports. Resolve the import gate only for the narrow architecture-approved observation-wait facade and run the import-gate suite.
+- [x] 3.3 Use the managed watchdog/metadata path and immutable versioned report schema; verify setup failures, protocol absence, teardown failure and verify-only replay without ports. Resolve the import gate only for the narrow architecture-approved observation-wait facade and run the import-gate suite.
+      **2026-09-30 — done.** `hitl/reporting.py` owns the **sealed bundle**: `BUNDLE_SCHEMA_VERSION = 2` with a fixed
+      section list, a sha256 `digest` over everything else, and a **verdict derived from the bundle's own evidence** by
+      one rule (`derive_verdict`) that the reader re-runs — every recorded predicate ok **and** a teardown result present
+      and ok, with a caller's success claim required to be backed by both (`shutdown failure SHALL prevent overall
+      success`, enforced rather than restated). `write_report_bundle` seals **once** (atomic rename, refuses to
+      overwrite, and checks version/digest/sections before writing), so a rerun cannot quietly replace a run's evidence.
+      **Identity comes from the managed metadata path**: `hitl/run_metadata.run_identity` is now the one builder behind
+      both `metadata.json` and a bundle's `identity` section. **Verify-only replay without ports** is
+      `scripts/hitl_report_replay.py --bundle <path>`: it reads the bundle and re-derives the verdict with no MIDI or
+      serial port (pinned by patching `mido.open_output`/`serial.Serial` to raise), exits 0/2/3 (pass / intact non-pass /
+      not trustworthy), and states its own limit honestly — the digest is integrity, not a signature, so what it cannot
+      be fooled by is a verdict that no longer matches its evidence. The oracle seals the acceptance verdict itself:
+      `hitl/accepted_sequence_probe.py --emit-bundle … [--run-report …]` turns its checks into predicates (`UNKNOWN`
+      counted as not-ok) and carries the run's shutdown result, so a pass needs a proven drain; setup failure, protocol
+      absence, teardown failure and a legitimate non-pass are each their own recorded shape. **The import gate was
+      resolved without widening it**: the observation wait is now one owner, `hitl/actions/observation.py::await_markers`
+      (bounded, cancel-aware, ring-flush on the caller's cadence, injectable clock), which both drivers wrap — and it
+      lives under `hitl.actions`, a prefix flows may already import, so the forbidden prefixes are unchanged and the
+      gate suite pins that (facade under an allowed prefix, a flow importing it passes, nothing relaxed).
+      **Evidence:** new `test_hitl_report_bundle` **14/14**, new `test_hitl_observation_wait` **7/7**,
+      `test_hitl_import_gate` **5/5** (3 new), `test_accepted_sequence` **97/97** (4 new), `test_run_metadata` **6/6**
+      (unchanged contract after the extraction), neighbouring suites green together, **six mutations** red-proved with
+      every file restored byte-identically. Host tooling only: no firmware, build or device action.
+      [Bundle/replay evidence](REPORT-BUNDLE-EXECUTION.md).
 
 ## 4. Prepare and drive both continuous-play recipes
 
