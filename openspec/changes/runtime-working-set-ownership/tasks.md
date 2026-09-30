@@ -2894,7 +2894,7 @@ self-consistent bookkeeping (`s4f22-step8-e3`) -- pool-over-ring overlap is arme
 campaign; and the same-boot qualification campaign (six bundles, three consecutive passes per leg)
 has not run to completion.
 [Cutover packet](S4F17-CUTOVER-PACKET.md). -->
-- [ ] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
+- [~] S4f.22 **Shared finalization integration gates.** Execute the contract matrix and mutation proofs,
       full native, capture-serial build and exact role/RAM accounting (RAM1 padding >=840 bytes); record
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with
       natural overlap, continuous transport, one press, content/undo/persistence parity and existing timing
