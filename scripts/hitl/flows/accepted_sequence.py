@@ -511,6 +511,9 @@ RECORD_START_MARKERS = ("Start Recording", "Queued recording (loop phase or bar)
 WRONG_MODE_ROUTE_MARKERS = ("Queued playback switch", "Reaffirmed playback switch",
                             "Live Overdub", "Overdubbing started", "Toggle Play/Stop",
                             "long-press start (not playing)")
+#: The same vocabulary serves both legs: on the record leg a playback/overdub answer means the press took the
+#: wrong branch where a record start was intended, and on the overdub leg a playback-switch answer means the
+#: capture-switch was not the route at all (task 4.3's "no playback re-affirmation").
 #: The firmware's own proof that a record switch carried the target's start in the same gesture (S4f.6,
 #: `Loop N: Record start carried on the switch`), or that it **retained** it because the predecessor's stop is
 #: accepted but not yet admitted (S4f.3 L3, `Track T loop N: switch and record start retained (stop not yet
@@ -519,19 +522,19 @@ WRONG_MODE_ROUTE_MARKERS = ("Queued playback switch", "Reaffirmed playback switc
 RECORD_START_CARRIED_MARKERS = ("Record start carried on the switch",)
 
 
-def _await_record_route(capture_log: Path, after: int, *, slot0: int, slot_number: int,
+def _await_route(capture_log: Path, after: int, *, slot0: int, slot_number: int,
                         accept_markers: tuple[str, ...] = (), accept_states: tuple[str, ...] = (),
                         recognize_markers: tuple[str, ...] = (),
                         final: Stage = Stage.EXECUTE, timeout_s: float,
                         drain=None) -> tuple[bool, str, str]:
-    """Wait for one record-leg route's confirmation, naming a *wrong route* instead of accepting it (task 4.2).
+    """Wait for one leg's route step, naming a *wrong route* instead of accepting it (tasks 4.2 and 4.3).
 
-    This is the action layer's four-stage correlation (`CorrelatedGesture`) with the record recipe's own
-    vocabulary: the device names the gesture it read (`recognize`), takes the request for this target
-    (`accept`), and the target's take actually runs (`execute`, this slot's `RECORDING` row). What makes it a
-    *route* check rather than a receipt wait is the conflict vocabulary: a playback or overdub row proves the
-    press was read as something else, which design decision 5 refuses to accept as a substitute for the
-    intended record start.
+    This is the action layer's four-stage correlation (`CorrelatedGesture`) with the recipe's own vocabulary: the
+    device names the gesture it read (`recognize`), takes the request for this target (`accept`) and the target's
+    take actually runs (`execute`, this slot's `RECORDING` row) -- the two legs differ only in which rows count as
+    the production route. What makes it a *route* check rather than a receipt wait is the conflict vocabulary: a
+    playback or overdub row proves the press was read as something else, which design decision 5 refuses to accept
+    as a substitute for the intended start or switch.
 
     Returns `(met, evidence_row, wrong_route_row)`. `met` is False when the stage was contradicted, refused or
     never arrived inside `timeout_s`; `wrong_route_row` is the device's own row when it was contradicted, so a
@@ -636,11 +639,22 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, 
             events.append({"event": f"{gesture.step}_notes", "count": count,
                            "channel": note_channel, "note_base": base})
         elif gesture.step == "b_switch":
-            if not _await_markers(capture_log, mark,
-                                  (f"Loop {slot_b}: Switch gesture from slot ",
-                                   f"Loop {slot_b}: Queued playback switch",
-                                   f"Loop {slot_b}: Reaffirmed playback switch"),
-                                  phase_timeout_s, drain=drain):
+            # Task 4.3: the *proven* single capture-switch gesture, and nothing else. The production route is the
+            # capture-switch, which names itself (`Loop B: Switch gesture from slot A`); a press that lands on the
+            # playback queue instead (`Queued playback switch` / `Reaffirmed playback switch`) is a **wrong route**,
+            # and it is exactly what a separate A stop before this press produces: an admitted stop leaves the
+            # track in PLAYING, so the next slot press takes the playing/filled branch and the finalization window
+            # never opens (the retention prefix's own note). The wait never presses, so the leg stops here instead
+            # of re-affirming playback as though it had switched.
+            ok, row, wrong = _await_route(
+                capture_log, mark, slot0=to_firmware_slot(slot_b), slot_number=slot_b,
+                accept_markers=(f"Loop {slot_b}: Switch gesture from slot ",),
+                final=Stage.ACCEPT, timeout_s=phase_timeout_s, drain=drain)
+            events.append({"event": "b_switch", "confirmed": ok, "row": row[:180],
+                           "wrong_route_row": wrong[:180]})
+            if wrong:
+                return "PLAYBACK_REAFFIRMED_INSTEAD_OF_SWITCH"
+            if not ok:
                 return "SWITCH_UNCONFIRMED"
         elif gesture.step == "a_record_start":
             if slot_a is None:
@@ -651,7 +665,7 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, 
             # `RECORDING` row, and a playback/overdub row is a **wrong route**: a filled A answers
             # `Queued playback switch (filled slot)`, a filled playing track answers `Live Overdub`.
             a1 = slot_a
-            ok, row, wrong = _await_record_route(
+            ok, row, wrong = _await_route(
                 capture_log, mark, slot0=to_firmware_slot(a1), slot_number=a1,
                 accept_markers=tuple(f"Loop {a1}: {marker}" for marker in RECORD_START_MARKERS),
                 final=Stage.EXECUTE, timeout_s=phase_timeout_s, drain=drain)
@@ -678,7 +692,7 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, 
             # retains, when the predecessor's stop is not yet admitted) B's record start. So the accept stage is
             # the firmware's carrier row -- either form -- the execution is B's own `RECORDING` row, and the
             # design's wrong-route rule applies unchanged.
-            ok, row, wrong = _await_record_route(
+            ok, row, wrong = _await_route(
                 capture_log, mark, slot0=to_firmware_slot(slot_b), slot_number=slot_b,
                 recognize_markers=(f"Loop {slot_b}: Switch gesture from slot ",),
                 accept_markers=tuple(f"Loop {slot_b}: {marker}" for marker in RECORD_START_CARRIED_MARKERS)
@@ -708,7 +722,7 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, 
             # read *request*, and the oracle's L6 grades B's execution from the slot-scoped `RECS` rows) or the
             # slot button's `Loop N: Stop Recording`. A stop that is denied or retained still logs its request,
             # which is the point of the leg; this wait only refuses to leave a swallowed press behind.
-            ok, row, wrong = _await_record_route(
+            ok, row, wrong = _await_route(
                 capture_log, mark, slot0=to_firmware_slot(slot_b), slot_number=slot_b,
                 accept_markers=("MIDI Button A: Stop Recording", f"Loop {slot_b}: Stop Recording"),
                 final=Stage.ACCEPT, timeout_s=phase_timeout_s, drain=drain)

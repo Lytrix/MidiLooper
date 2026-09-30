@@ -343,7 +343,13 @@ class SwitchRepeatGuardTests(unittest.TestCase):
                                   "Loop 5: Queued playback switch"])
         self.assertTrue(_switch_pending(log, 0, 5))
 
-    def test_driver_aborts_before_next_press_despite_unrelated_playback(self):
+    def test_driver_refuses_a_playback_route_at_the_switch_press(self):
+        """Task 4.3: a press answered by the playback queue is a wrong route, refused at the press itself.
+
+        The device's `Playback started` names no slot (`PendingSwitchGate` refuses it as a discharge), and the old
+        reading here *accepted* the queued row and then aborted before the next gesture. The route wait refuses it
+        where it happens instead: the same single press, no re-affirmation, and nothing sent afterwards.
+        """
         from unittest.mock import patch
         log = self._log("s.log", [])
         emitted = []
@@ -356,7 +362,7 @@ class SwitchRepeatGuardTests(unittest.TestCase):
              patch(_patch_target("time.sleep")):
             result = _run_plan(FakePort(), log, plan, slot_b=5, press_ms=120,
                                phase_timeout_s=0.01, events=[])
-        self.assertEqual("UNEXPECTED_PLAYBACK_SWITCH", result)
+        self.assertEqual("PLAYBACK_REAFFIRMED_INSTEAD_OF_SWITCH", result)
         self.assertEqual(["b_switch"], emitted)
 
     def test_driver_does_not_stop_b_when_overdub_never_started(self):
@@ -2268,6 +2274,117 @@ class RecordStartRouteOracleTests(unittest.TestCase):
         result = analyse(rec_route_log(carrier=None), leg="rec", slot_a=4, slot_b=5,
                          metadata=METADATA, base_report=BASE_REPORT)
         self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+class OverdubRecipeRouteTests(unittest.TestCase):
+    """Task 4.3: the overdub leg's three invariants, driven against the device's own rows.
+
+    The recipe itself (confirmed seeds, the proven single capture-switch, B's recognized overdub start and one
+    B stop) is already the retention prefix; what this slice adds is the *checking* of the three clauses the task
+    names -- no separate A stop, no playback re-affirmation, and no wait for the predecessor's retirement inside
+    the critical window -- plus the oracle's reading of the switch route.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.log = Path(self.tmp.name) / "session.log"
+        self.log.write_text("")
+
+    def write(self, *rows):
+        with self.log.open("a", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(row + "\n")
+
+    def drive(self, answer, *, plan=None, timeout_s=0.01):
+        from unittest.mock import patch
+        events: list[dict] = []
+        port = FakePort()
+
+        def emit(_port, gesture, **kw):
+            answer(self.log, gesture)
+
+        with patch(_patch_target("_emit"), side_effect=emit), \
+             patch(_patch_target("_ensure_transport"), return_value=True), \
+             patch(_patch_target("time.sleep")):
+            result = _run_plan(port, self.log, plan or leg_gestures("od", track=8, a=4, b=5),
+                               slot_b=5, slot_a=4, press_ms=120, phase_timeout_s=timeout_s,
+                               events=events, note_channel=7, overdub_notes=2)
+        return result, events, port
+
+    def answering(self, *, switch="Loop 5: Switch gesture from slot 4"):
+        def answer(log, gesture):
+            if gesture.step in ("a_overdub_start", "b_overdub_start"):
+                self.write("Overdubbing started @ tick 10")
+            elif gesture.step == "b_switch":
+                self.write(switch)
+        return answer
+
+    def test_the_overdub_recipe_drives_without_a_predecessor_retirement(self):
+        """Design decision 5: critical-window waits must not wait for the predecessor's retirement.
+
+        Nothing in this capture retires A: there is no `canonical_release`, no `Reentry released slot=3` and no
+        pending-switch row. If any critical-window wait depended on the release edge, the leg would stop with a
+        named failure inside this bound instead of driving -- so `DROVE_LEG` here *is* the "no retirement wait"
+        evidence.
+        """
+        result, events, _port = self.drive(self.answering())
+        self.assertEqual("DROVE_LEG", result, events)
+        names = [e.get("event") for e in events]
+        self.assertIn("b_switch", names)
+        self.assertEqual([True], [e["confirmed"] for e in events if e.get("event") == "b_switch"])
+        self.assertNotIn("leg_aborted_pending_switch", names)
+
+    def test_a_playback_reaffirmation_at_the_switch_is_a_named_wrong_route(self):
+        """Task 4.3's "no playback re-affirmation": the press must reach the capture-switch, not the queue."""
+        result, events, _port = self.drive(self.answering(switch="Loop 5: Reaffirmed playback switch"))
+        self.assertEqual("PLAYBACK_REAFFIRMED_INSTEAD_OF_SWITCH", result, events)
+        pressed = [e["event"].split(":", 1)[1] for e in events
+                   if str(e.get("event", "")).startswith("gesture:")]
+        self.assertEqual(["select_track", "a_overdub_start", "b_switch"], pressed,
+                         "the leg stops at the wrong route instead of pressing on")
+
+
+class OverdubRecipeOracleTests(unittest.TestCase):
+    """The oracle's half of 4.3: the switch route, and "no separate A stop"."""
+
+    def test_the_capture_switch_is_the_production_route(self):
+        check = by_name(run_od(od_chain_log()))["L5b_b_start_route"]
+        self.assertEqual("ok", check.status, check.detail)
+
+    def test_a_playback_route_that_carried_b_fails(self):
+        text = od_chain_log().replace("Loop 5: Switch gesture from slot 4",
+                                      "Loop 5: Reaffirmed playback switch")
+        result = run_od(text)
+        self.assertEqual("fail", by_name(result)["L5b_b_start_route"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+    def test_a_playback_row_without_a_successor_start_is_a_gap_not_a_route_verdict(self):
+        """A wrong-route row *fails* only when the successor actually started through it (the same rule as the
+        record leg's): a capture that never got that far is the existing L5 gap, not a second finding."""
+        text = od_chain_log(b_start=False).replace("Loop 5: Switch gesture from slot 4",
+                                                   "Loop 5: Reaffirmed playback switch")
+        result = run_od(text)
+        self.assertNotEqual("fail", by_name(result)["L5b_b_start_route"].status)
+        self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+        text = od_chain_log().replace("Loop 5: Switch gesture from slot 4",
+                                      "Loop 5: Reaffirmed playback switch")
+        result = run_od(text)
+        self.assertEqual("fail", by_name(result)["L5b_b_start_route"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
+    def test_a_separate_a_stop_before_the_switch_is_a_second_request(self):
+        """Task 4.3: "no separate A stop" -- A's own stop press would be a second request for A (L7)."""
+        text = od_chain_log().replace(
+            "[25.100] [INFO] Loop 5: Switch gesture from slot 4",
+            "[24.500] [INFO] Loop 4: Stop Overdub\n[25.100] [INFO] Loop 5: Switch gesture from slot 4")
+        self.assertNotEqual(od_chain_log(), text)
+        result = run_od(text)
+        check = by_name(result)["L7_one_press_per_stop"]
+        self.assertEqual("fail", check.status, check.detail)
+        self.assertIn("2 stop request(s) for A", check.detail)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+
 
 
 
