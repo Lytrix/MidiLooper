@@ -1,5 +1,5 @@
 ---
-description: Small hygiene → direct commit on dev; no auto-PR; large work needs explicit PR ask
+description: Doc-only hygiene → direct commit on dev; firmware, refactor and host-tooling stages commit on the working branch
 alwaysApply: true
 ---
 
@@ -13,7 +13,8 @@ an explicit request.
 The user has explicitly requested a commit after every completed implementation stage or
 root-cause slice so rollback remains easy.
 
-1. Commit each cohesive, verified plan stage / RC before starting the next one.
+1. Commit each cohesive, verified plan stage / RC before starting the next one, on the branch its
+   lane below specifies (doc-only: `dev`; firmware/refactor/host tooling: the working branch).
 2. A stage is a reviewable invariant or deliverable — **not** each file edit, test run, or
    mechanical sub-step.
 3. Keep unrelated work out of the commit. Preserve one-root-cause commits for multi-stage
@@ -38,7 +39,7 @@ merge, amend, force operations, or committing unrelated user changes.
 
 ## Small / hygiene / doc-only work
 
-Examples: P3 naming (`Ingress`→`Input`, `Playing`/`Playback` doc vocabulary), plan closeout, backlog index, comment-only fixes, Cursor rules.
+Examples: P3 naming (`Ingress`→`Input`, `Playing`/`Playback` doc vocabulary), plan closeout, backlog index, comment-only fixes, Cursor rules. **Code is not in this lane** — host tooling (scripts, probes, tests) follows the working-branch lane below, because a new module or probe is as reviewable as firmware.
 
 When the user asks to **do** or **ship** such work (or confirms at end of session):
 
@@ -53,13 +54,23 @@ When the user asks to **do** or **ship** such work (or confirms at end of sessio
 | Summarize commit message + files | Auto-push without asking |
 | Run `pio test -e native` only if firmware changed | PR for doc-only hygiene |
 
-## Firmware / refactor slices
+## Firmware / refactor / host-tooling slices
 
-Reviewable extraction, behavior changes, multi-file refactors:
+Reviewable firmware extraction and behavior changes, multi-file refactors, and code changes on the
+host side of HITL (new scripts, probes, host modules, their tests):
 
-- **Default:** commit each verified stage locally under the standing instruction above.
-- **PR path** only when user explicitly asks (e.g. “open a PR”, “merge like TrackManager”).
-- Direct `dev` commit without PR is **not** the default for firmware — user must opt in.
+- **Branch first:** every verified stage commit goes on a **working branch**, never directly on
+  `dev`. "Commit the stage" means *update that branch*.
+- **Which working branch:** `dev` holds the **last stable version**. Day-to-day integration happens
+  on the active long-lived branch — currently `feature/runtime-working-set-ownership` — so an
+  in-flight slice commits there. Create a short-lived `feature/`/`refactor/` branch off `dev` only
+  when starting a new slice from stable.
+- **Update that branch:** follow-up slices, review fixes and closeout edits are extra commits on the
+  same branch. Bring it current with `dev` (rebase/merge) only when the user asks.
+- **PR** only when the user explicitly asks (e.g. “open a PR”, “merge like TrackManager”); when they
+  do, open it from the working branch into `dev` — never `dev` → `dev`.
+- A direct `dev` commit for any of this is **not** the default — the user must opt in for a specific
+  change.
 
 ## After user asks to commit
 
@@ -70,4 +81,4 @@ Reviewable extraction, behavior changes, multi-file refactors:
 
 ## Authority
 
-Humans may still use branch → PR → `dev` for review ([GITHUB_WORK_TRACKING.md](../../docs/Authority/GITHUB_WORK_TRACKING.md)). Agents use **direct `dev` commits, no PR** for small hygiene/doc work when the user wants it shipped.
+Humans may still use branch → PR → `dev` for review ([GITHUB_WORK_TRACKING.md](../../docs/Authority/GITHUB_WORK_TRACKING.md)). Agents use **direct `dev` commits, no PR** for small doc-only hygiene when the user wants it shipped, and keep firmware, refactor and host-tooling stages on the **working branch** (`dev` is the last stable version) until a PR is asked for.
