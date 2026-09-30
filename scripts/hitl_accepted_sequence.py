@@ -505,8 +505,18 @@ def _run_census_once(capture, capture_log: Path, events: list[dict]) -> Optional
         return None
     # Decode ONLY this request's fenced family. Re-parsing the whole log can pick an
     # earlier family (a boot-time census or a superseded request) and report the wrong
-    # library, which then mis-drives target preparation.
-    occupied, device_complete = observation_window(family.rows)
+    # library, which then mis-drives target preparation. A family the decoder cannot read is a
+    # *named* unreadable observation, never a traceback: measured on device
+    # (`captures/s4f22-dec096-od-08`) the `LIBOBS,E` row carried an empty `p=` field and the
+    # decode raised inside `library_observation.observation_window`, which killed the run before it
+    # could write a report -- the same defect class this slice exists to remove.
+    try:
+        occupied, device_complete = observation_window(family.rows)
+    except Exception as exc:  # noqa: BLE001 - any decode failure is an untrustworthy observation
+        events.append({"event": "census_unreadable", "detail": f"{type(exc).__name__}: {exc}",
+                       "rows": len(getattr(family, "rows", []) or []),
+                       "tail": [line.strip() for line in (getattr(family, "rows", []) or [])[-2:]]})
+        return None
     events.append({"event": "census",
                    "slots": 0 if occupied is None else len(occupied),
                    "occupied": 0 if occupied is None else sum(1 for v in occupied.values() if v is True),
@@ -652,6 +662,15 @@ def main(argv: list[str] | None = None) -> int:
         # The capture ring holds rows until its owner is asked to flush them, so a receipt wait drains too.
         drain = getattr(capture, "drain_capture_ring", None)
 
+        def write_report() -> None:
+            """Persist the report as the run progresses.
+
+            Written at every milestone, not only at the end: `captures/s4f22-dec096-od-08` died inside the
+            census decode and left **no** report at all, so its cause had to be reconstructed from the log --
+            the same evidence gap `rec-01`/`mixed-01` had. A later write always supersedes an earlier one.
+            """
+            (out_dir / "accepted-sequence.json").write_text(json.dumps(report, indent=2) + "\n")
+
         with DeviceSession(
                 capture_log_getter=lambda: capture_log,
                 send_transport_stop=lambda: _ensure_transport(
@@ -661,10 +680,13 @@ def main(argv: list[str] | None = None) -> int:
                 context=f"accepted-sequence-{args.leg}",
                 events=events) as shutdown_session:
 
+            write_report()
             census = (_run_census(capture, capture_log, events, attempts=args.census_attempts,
                                   retry_delay_s=args.census_retry_delay_s,
                                   require=((t0, a0), (t0, b0)))
                       if args.clear_targets else None)
+            write_report()
+
             report["census"] = (
                 None if census is None else
                 {f"{track}:{slot}": (None if value is None else bool(value))
@@ -872,7 +894,7 @@ def main(argv: list[str] | None = None) -> int:
                 report["preparation_error"] = str(exc)
                 events.append({"event": "preparation_failed", "detail": str(exc)})
                 print(f"[s4f13] {exc}")
-
+            write_report()
             # --- the leg's own plan ---------------------------------------------------------------
             if prepared:
                 plan = leg_gestures(args.leg, track=args.track, a=args.slot_a, b=args.slot_b)
@@ -892,12 +914,13 @@ def main(argv: list[str] | None = None) -> int:
             _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
                               events=events, label="final")
             report["leg_end_row"] = len(_lines(capture_log))
+            write_report()
 
     report["shutdown"] = shutdown_session.result.as_dict()
     if not shutdown_session.result.ok:
         report["result"] = f"SHUTDOWN_{shutdown_session.result.status.upper()}"
     report["session_log"] = str(capture_log)
-    (out_dir / "accepted-sequence.json").write_text(json.dumps(report, indent=2) + "\n")
+    write_report()
 
     print(json.dumps({k: v for k, v in report.items() if k not in ("events", "plan")}, indent=2))
     for e in events:

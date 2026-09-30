@@ -949,6 +949,26 @@ class EvidenceGateTests(unittest.TestCase):
             self.assertIsNone(_run_census(capture, log, events, attempts=3, retry_delay_s=0.0))
             self.assertIsNone(events[-1].get("census"))
 
+    def test_an_unreadable_census_family_is_named_and_retried_never_a_crash(self):
+        """`od-08`: the capture log is read while it is written, so a partial `LIBOBS,E` row can be parsed."""
+        from types import SimpleNamespace
+        # The row as it appeared mid-write on device: the `p=` value had not arrived yet when the poll read it.
+        truncated = ["#CAP,1,LIBOBS,B,a=1,e=0,s=64",
+                     "#CAP,10545846,LIBOBS,E,a=10362645,b=10545829,t=64,r=0,s=64,p=,i=8,c=0,m=0,"
+                     "P=0,R=0,n=0,e=1,v=0,x=0"]
+        with __import__("tempfile").TemporaryDirectory() as temp:
+            log = Path(temp) / "session.log"
+            log.write_text("")
+            capture = SimpleNamespace(send_command=lambda *a, **k: (True, "queued"),
+                                      library_observation=lambda *a, **k: SimpleNamespace(rows=truncated))
+            events: list[dict] = []
+            self.assertIsNone(_run_census(capture, log, events, attempts=2, retry_delay_s=0.0))
+            self.assertEqual(["census_unreadable", "census_retry", "census_unreadable"],
+                             [e["event"] for e in events])
+            self.assertIn("p=", events[-1]["tail"][-1])
+            # And a target that stays undecidable is still refused, never read as empty.
+            self.assertIsNone(events[-1].get("census"))
+
 
 class PressSpacingTests(unittest.TestCase):
     """The tap window is per button, and a repeat inside it is a *different* gesture."""
