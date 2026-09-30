@@ -99,6 +99,31 @@ class ClockObservationTests(unittest.TestCase):
         self.assertFalse(using_proxy)
         self.assertEqual(0, len(out_port.sent), "a missing receipt must never re-press transport")
 
+    def test_a_late_ack_for_the_callers_own_start_is_never_re_pressed(self) -> None:
+        """`captures/s4f22-base-device-03`: start 25.086 s, toggle 25.603 s -- the toggle stopped the start.
+
+        Confirming *the caller's own* Start is observation-only even when transport presses are allowed for this
+        call: `ensure_midi_clock`'s press is a toggle, so a late acknowledgement must be reported as
+        unconfirmed, never resolved with a press. (Without this case the rule was only reachable through the
+        `allow_transport_press` gate, so removing the observation-only branch changed nothing an existing test
+        could see.)
+        """
+        out_port = FakePort()
+        ok, using_proxy = ensure_transport_clock(
+            FakePort(),
+            out_port,
+            FakeCollector(ack_after_s=None),
+            _args(),
+            min_clocks=24,
+            timeout_s=0.2,
+            started_since_index=0,
+            allow_transport_press=True,
+        )
+        self.assertFalse(ok)
+        self.assertFalse(using_proxy)
+        self.assertEqual(0, len(out_port.sent),
+                         "a late ack for the caller's own start must never re-press transport")
+
     def test_press_is_refused_unless_explicitly_allowed(self) -> None:
         out_port = FakePort()
         ok, using_proxy = ensure_transport_clock(
