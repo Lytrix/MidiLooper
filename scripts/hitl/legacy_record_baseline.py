@@ -145,7 +145,12 @@ from hitl.transport_clock import (
     ensure_midi_clock as _ensure_midi_clock,
     ensure_transport_clock as _ensure_midi_clock_or_serial_proxy,
     stream_pattern_for_bars as _stream_pattern_for_bars,
+    set_active_clock_reader as _set_active_clock_reader,
     wait_for_clock_pulses as _wait_for_clock_pulses,
+)
+from hitl.midi_clock import (
+    MidiClockMaster as _MidiClockMaster,
+    MidiClockReader as _MidiClockReader,
 )
 
 
@@ -1388,14 +1393,34 @@ def _stream_fixture_record_bars(
     recording_confirmed_at: Optional[float] = None,
     record_schedule_start_mono: Optional[float] = None,
     skip_clock_preamble: bool = False,
+    clock: Optional[Any] = None,
+    master: Optional[Any] = None,
 ) -> tuple[int, int, bool, bool]:
+    """Bar-synced edit fixture record (shared by base+edit_record_fixture and edit_full).
+
+    Returns ``(note_on_count, clocks, stream_ok, record_stop_sent)``.
+
+    ``clock``/``master`` are the run's clock source (device grid / host drive). When one is given
+    it *is* the readiness proof and the pacing source: the inbound-clock probe below can only race
+    a transport that has just started (that race is the whole reason the preamble exists), and the
+    wall-clock-scheduled path is skipped because it is exactly the ~300 ms late first note the
+    clock-paced phase replaces.
+    """
     """Bar-synced edit fixture record (shared by base+edit_record_fixture and edit_full).
 
     Returns ``(note_on_count, clocks, stream_ok, record_stop_sent)``.
     """
     using_serial_proxy = False
     wall_clock_tempo: Optional[float] = None
-    if skip_clock_preamble and serial_collector is not None:
+    if clock is not None or master is not None:
+        # A clock source was handed in and already validated by the caller (it is built from the
+        # run's own ports): do not probe the inbound clock again, and do not latch the serial proxy.
+        using_serial_proxy = False
+        wall_clock_tempo = (
+            float(getattr(args, "tempo_bpm", 120.0) or 120.0) if master is not None else None
+        )
+        clock_ok = True
+    elif skip_clock_preamble and serial_collector is not None:
         using_serial_proxy = _use_serial_transport_proxy(
             args,
             serial_collector,
@@ -1449,7 +1474,8 @@ def _stream_fixture_record_bars(
     # device's own bar grid, so a requested bar count is not an authoritative length
     # expectation in that mode.
     setattr(args, "transport_timing_source",
-            "wall_clock_proxy" if using_serial_proxy else "device_clock")
+            "wall_clock_proxy" if using_serial_proxy
+            else ("host_clock" if master is not None else "device_clock"))
     if using_serial_proxy:
         print(
             "[info] Bar sync via wall-clock tempo proxy "
@@ -1491,7 +1517,12 @@ def _stream_fixture_record_bars(
             )
             return rec_notes, rec_clocks, True, True
 
-    if record_schedule_start_mono is not None and not require_midi_clock:
+    if (
+        clock is None
+        and master is None
+        and record_schedule_start_mono is not None
+        and not require_midi_clock
+    ):
         rec_notes, rec_clocks, stop_sent = _stream_fixture_record_wall_scheduled(
             out_port,
             fixture=fixture,
@@ -1521,6 +1552,8 @@ def _stream_fixture_record_bars(
         wall_clock_tempo_bpm=None if require_midi_clock else wall_clock_tempo,
         emit_immediate_first_step=True,
         stream_start_monotonic=recording_confirmed_at,
+        clock=clock,
+        master=master,
     )
     return rec_notes, rec_clocks, True, require_midi_clock
 
@@ -2535,6 +2568,97 @@ def _run_clear_before_record(
         clear_press_ms=args.clear_press_ms,
     )
     return True, "no_serial_capture"
+
+
+def _clear_tracks_before_transport(
+    out_port: mido.ports.BaseOutput,
+    in_port: mido.ports.BaseInput,
+    serial_collector: Optional[Any],
+    args: Any,
+    *,
+    abort: RunAbort,
+    clear_results: list[dict[str, object]],
+    precondition_failures: list[dict[str, object]],
+) -> tuple[bool, dict[int, str]]:
+    """Clear every (track, slot) this run will touch **before** the transport starts.
+
+    Returns ``(ok, cleared)``. ``ok=False`` means the run must not start the transport: the
+    reason is already recorded in ``precondition_failures`` (the same rows the per-track path
+    appends). ``cleared`` maps a track index to the clear result code, so the per-track path can
+    skip a clear it already did instead of long-pressing a slot that is already empty.
+
+    Clearing under a running transport is what pushed the record phase's first note off the
+    device's grid: the record press landed while the clear was still settling, so the phase
+    anchor drifted by the clear's remaining work and the take ran long
+    (`captures/host_midi_automation_baseline_20260930_113640.json`: 15 clocks to the first note,
+    a 2-bar request recorded as 3 bars).
+    """
+    from hitl.edit_mode_precondition import ensure_loop_edit_before_record
+
+    cleared: dict[int, str] = {}
+    for idx in range(args.first_track_index, args.first_track_index + args.track_count):
+        if abort.check() is not None:
+            return False, cleared
+        print(f"[track {_user_track_number(idx)}] select for pre-transport clear")
+        _send_short_press(
+            out_port,
+            note=TRACK_SELECT_NOTE_BASE + idx,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=args.press_ms,
+        )
+        time.sleep(args.phase_wait_ms / 1000.0)
+        track_baseline_len = len(serial_collector.snapshot()) if serial_collector else 0
+        # The clear path needs a track that is in LOOP_EDIT (the same precondition the per-track
+        # path runs before its clear): outside it the row selects mean geometry editing, and the
+        # long-press clear is not the gesture that runs. The device boots into LOOP_EDIT, but pass
+        # the target rows so the precondition can *establish* it rather than assume the boot state
+        # (this call site is what the "no track/loop target" refusal used to fire on).
+        # Tolerant on purpose: the clear is the gesture path that *sets up* the mode for the legs
+        # that follow, and the device reports `Edit session: LOOP_EDIT` on its note-100 trigger
+        # rather than on a plain row select, so a missing proof here must not fail the run. The
+        # record/overdub legs still require the proof (they are where a wrong mode changes the
+        # gesture's meaning).
+        if not ensure_loop_edit_before_record(
+            out_port,
+            serial_collector,
+            press_ms=args.press_ms,
+            phase_wait_ms=args.phase_wait_ms,
+            track_number=_user_track_number(idx),
+            loop_slot=int(getattr(args, "loop_slot", 0) or 0),
+            skip=args.no_loop_edit_precondition,
+        ):
+            print(
+                "[warn] LOOP_EDIT not proven before the pre-transport clear; continuing with the "
+                "clear gestures unchanged (the record/overdub legs still require the proof)"
+            )
+        reached_empty, clear_result = _run_clear_before_record(
+            out_port,
+            in_port,
+            serial_collector,
+            args,
+            track_index=idx,
+            track_baseline_len=track_baseline_len,
+            abort=abort,
+        )
+        if reached_empty and clear_result:
+            clear_results.append({"track_index": idx, "result": clear_result})
+        if not reached_empty:
+            print("[warn] Clear precondition did not confirm EMPTY / clear completed.")
+            precondition_failures.append(
+                {
+                    "track_index": idx,
+                    "step": "clear_to_empty",
+                    "reason": clear_result or "clear_not_confirmed",
+                }
+            )
+            print(
+                f"[error] Preconditions failed on track {_user_track_number(idx)}: "
+                "clear step did not confirm EMPTY state. Aborting run."
+            )
+            return False, cleared
+        cleared[idx] = clear_result or "cleared_before_transport"
+        time.sleep(args.phase_wait_ms / 1000.0)
+    return True, cleared
 
 
 def _verify_phase_note_pairs(
@@ -4627,8 +4751,14 @@ def _run_overdub_pass(
     phase_start_delay_beats: int,
     pass_label: str,
     seconds_per_bar: float,
+    clock: Optional[Any] = None,
+    master: Optional[Any] = None,
 ) -> tuple[Optional[str], int, int, int, dict[str, float], bool]:
-    """Start overdub, stream pattern, stop overdub."""
+    """Start overdub, stream pattern, stop overdub.
+
+    ``clock``/``master`` are the run's single clock source, handed to the note streamer so this
+    phase is timed from a clock (device grid or host drive) instead of the wall-clock proxy.
+    """
 
     print(f"[track {_user_track_number(idx)}] {pass_label} start")
     reached_overdub = serial_collector is None
@@ -4720,20 +4850,34 @@ def _run_overdub_pass(
         )
 
     if overdub_bars and args.bar_sync_from_midi_clock:
-        clock_ok, using_serial_proxy = _ensure_midi_clock_or_serial_proxy(
-            in_port,
-            out_port,
-            serial_collector,
-            args,
-            min_clocks=24,
-            timeout_s=2.0,
-            abort=abort,
-        )
-        if not clock_ok:
-            return "midi clock missing before overdub phase", od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
+        if master is not None:
+            # Host clock source: the device slaves to the host drive, so it emits no clock of its
+            # own and an inbound-clock guard can only fail. The stream below is the clock.
+            clock_ok, using_serial_proxy = True, False
+        else:
+            clock_ok, using_serial_proxy = _ensure_midi_clock_or_serial_proxy(
+                in_port,
+                out_port,
+                serial_collector,
+                args,
+                min_clocks=24,
+                timeout_s=2.0,
+                abort=abort,
+            )
+            if not clock_ok:
+                return "midi clock missing before overdub phase", od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
         wall_clock_tempo = _resolve_wall_tempo_for_proxy(
             serial_collector, args, using_serial_proxy=using_serial_proxy
         )
+        # The phase is timed by a clock whenever one is available: the caller decided that once
+        # (it probes the port for the device clock and hands the reader in only when pulses were
+        # actually seen). The wall-clock proxy stays the fallback for a run with no USB clock.
+        phase_clock = clock
+        phase_master = master
+        if phase_master is not None:
+            # In host mode this field carries the pinned tempo the host drives (see the record
+            # phase); the streamer does not sleep on it in master mode.
+            wall_clock_tempo = float(getattr(args, "tempo_bpm", 120.0) or 120.0)
         guard = max(10.0, overdub_bars * seconds_per_bar * 3.0)
         overdub_stop_advance_clocks = args.stop_press_advance_clocks
         if overdub_stop_advance_clocks <= 0:
@@ -4819,6 +4963,8 @@ def _run_overdub_pass(
                     if (getattr(args, "require_midi_clock", False) or os.environ.get("HITL_REQUIRE_MIDI_CLOCK", "") == "1")
                     else wall_clock_tempo
                 ),
+                clock=phase_clock,
+                master=phase_master,
                 device_bar_probe=(
                     _device_bar_probe(serial_collector, getattr(args, "follow_serial_log", None)) if serial_collector is not None else None
                 ),
@@ -4965,6 +5111,8 @@ def _run_overdub_pass(
                     abort=abort,
                     emit_immediate_first_step=True,
                     wall_clock_tempo_bpm=wall_clock_tempo,
+                    clock=phase_clock,
+                    master=phase_master,
                 )
             if denial_delay_ms > 0:
                 # Anchor the denial press on B going live rather than on a fixed delay: the
@@ -5310,6 +5458,16 @@ def run() -> int:
         help=(
             "Refuse serial/wall-clock pacing and require incoming MIDI Clock pulses "
             "for bar-synchronised record/overdub fixtures"
+        ),
+    )
+    parser.add_argument(
+        "--clock-source",
+        choices=("device", "host"),
+        default="device",
+        help=(
+            "device: pace the note streams off the USB MIDI clock the device emits while its own "
+            "transport runs (default). host: the host drives its own 24 PPQN clock plus a realtime "
+            "Start and the device slaves to it (it emits no clock while slaved)"
         ),
     )
     parser.add_argument(
@@ -5801,9 +5959,55 @@ def run() -> int:
         print(f"[info] opening MIDI ports out={midi_out_name!r} in={midi_in_name!r}", flush=True)
         with mido.open_output(midi_out_name) as out_port, mido.open_input(midi_in_name) as in_port, \
                 _managed_record_evidence_cleanup(out_port, capture_drain_result):
-            if args.start_transport:
+            # One clock object per run, shared by every phase: the reader is the device's own grid
+            # (`--clock-source device`, default) and the master is the single host drive the device
+            # slaves to (`--clock-source host`).
+            clock_source_mode = str(getattr(args, "clock_source", "device") or "device")
+            clock_reader = _MidiClockReader(in_port) if clock_source_mode != "host" else None
+            # Start each run with no declared port owner: a reader from a previous run (the
+            # harness runs scenarios in-process) must not answer the clock guards for this one.
+            _set_active_clock_reader(None)
+            clock_master = _MidiClockMaster(out_port) if clock_source_mode == "host" else None
+            if clock_master is not None:
+                print(
+                    "[info] clock source host: the host drives 24 PPQN and owns the transport; "
+                    "the device emits no clock while it is slaved."
+                )
+
+            # Every slot the run will touch is cleared *before* the transport starts: a clear that
+            # is still settling under a running transport is what pushed the record phase's first
+            # note off the device grid (15 clocks late, a 2-bar request recorded as 3 bars --
+            # `captures/host_midi_automation_baseline_20260930_113640.json`).
+            cleared_before_transport: dict[int, str] = {}
+            clear_before_transport_ok = True
+            if args.clear_before_record:
+                (
+                    clear_before_transport_ok,
+                    cleared_before_transport,
+                ) = _clear_tracks_before_transport(
+                    out_port,
+                    in_port,
+                    serial_collector,
+                    args,
+                    abort=abort,
+                    clear_results=clear_precondition_results,
+                    precondition_failures=precondition_failures,
+                )
+                if not clear_before_transport_ok and abort_reason is None:
+                    # Prefer the abort's own reason: the pass stops early on an abort, and then it
+                    # is the abort that explains the run, not the clear.
+                    abort_reason = (
+                        abort.check() or "clear before transport start failed"
+                    )
+            if clear_before_transport_ok and args.start_transport:
                 # Ensure transport is running without blindly toggling it off.
-                if _use_serial_transport_proxy(
+                if clock_master is not None:
+                    # Host clock source: the master owns the transport. A press here would toggle
+                    # *off* the run the realtime Start begins, and an inbound-clock wait can only
+                    # fail (a device slaving to the host emits no clock of its own).
+                    clock_master.start()
+                    print("[info] host clock source: realtime Start sent (no transport press).")
+                elif _use_serial_transport_proxy(
                     args, serial_collector, after_index=session_after_index
                 ):
                     print(
@@ -5854,6 +6058,11 @@ def run() -> int:
                         print("[warn] MIDI clock still missing after transport retries.")
 
             for idx in range(args.first_track_index, args.first_track_index + args.track_count):
+                if not clear_before_transport_ok:
+                    # The pre-transport clear failed: its reason is already in
+                    # `precondition_failures`, and the transport was never started, so no track
+                    # may be touched at all.
+                    break
                 if (reason := abort.check()) is not None:
                     abort_reason = reason
                     break
@@ -5876,18 +6085,40 @@ def run() -> int:
                     serial_collector,
                     press_ms=args.press_ms,
                     phase_wait_ms=args.phase_wait_ms,
+                    # The device enters LOOP_EDIT at boot (and on its note-100 trigger), not by
+                    # selecting a loop row, and its `Edit session: LOOP_EDIT` row is emitted on
+                    # *entry* -- a capture that attaches later never sees it, so that row cannot
+                    # prove the current mode here. Pass the target rows so the precondition can try
+                    # to establish it, and report the outcome instead of failing the leg on it
+                    # (see `docs/Guides/HITL_CONTENT_VERIFICATION.md`).
+                    track_number=_user_track_number(idx),
+                    loop_slot=int(getattr(args, "loop_slot", 0) or 0),
                     skip=args.no_loop_edit_precondition,
                 )
                 if not left_note_edit:
-                    abort_reason = "NOTE_EDIT exit not confirmed"
-                    break
+                    print(
+                        "[warn] LOOP_EDIT not proven before the record leg; continuing, because the "
+                        "device's entry row cannot be observed by a late-attaching capture and no "
+                        "verified entry gesture exists yet (the clear issues the slot selects that "
+                        "the loop-edit flow needs). Investigate before trusting a wrong-mode result."
+                    )
 
                 # Recover from a prior aborted run: stop then restart transport so
                 # USB MIDI clock reaches the host again (stuck RECORDING can mute it).
                 # With managed serial capture, accept wall-clock serial proxy (Mode B).
                 if args.start_transport:
                     serial_snap = serial_collector.snapshot() if serial_collector is not None else None
-                    clock_present = _clock_seen_within(in_port, 0.5)
+                    # The reader is the clock evidence when it is in use: it owns the port, so an
+                    # `in_port` probe cannot see the pulses it already drained.
+                    if clock_reader is not None:
+                        clock_reader.poll()
+                    clock_present = (
+                        # Host clock source: the master owns the transport, so there is nothing to
+                        # recover, and an inbound-clock probe can only fail while the device slaves.
+                        clock_master is not None
+                        or (clock_reader is not None and clock_reader.pulse_seen())
+                        or _clock_seen_within(in_port, 0.5)
+                    )
                     serial_proxy = _use_serial_transport_proxy(
                         args, serial_collector, after_index=track_baseline_len
                     )
@@ -5977,7 +6208,16 @@ def run() -> int:
                             "skipping transport reset recovery (a press would toggle it off)."
                         )
 
-                if args.clear_before_record:
+                if args.clear_before_record and idx in cleared_before_transport:
+                    # This track's slot was already cleared before the transport start (see
+                    # `_clear_tracks_before_transport`) and its evidence row is recorded. A second
+                    # clear would long-press a slot the pre-pass already emptied, which the device
+                    # refuses as an already-empty slot.
+                    print(
+                        f"[info] Track {_user_track_number(idx)} cleared before transport start "
+                        f"(result={cleared_before_transport[idx]}); skipping the in-loop clear."
+                    )
+                elif args.clear_before_record:
                     if (reason := abort.check()) is not None:
                         abort_reason = reason
                         break
@@ -6064,23 +6304,29 @@ def run() -> int:
                     "mean_abs_grid_jitter_clocks": 0.0,
                 }
                 if args.record_bars and args.bar_sync_from_midi_clock:
-                    clock_ok, using_serial_proxy = _ensure_midi_clock_or_serial_proxy(
-                        in_port,
-                        out_port,
-                        serial_collector,
-                        args,
-                        min_clocks=24,
-                        timeout_s=2.0,
-                        abort=abort,
-                    )
-                    if not clock_ok:
-                        print(
-                            "[error] no MIDI clock and no serial transport receipt before the "
-                            "record phase; refusing to toggle transport again (a toggle would "
-                            "stop the capture this phase is about to stream)."
+                    if clock_master is not None:
+                        # Host clock source: the device slaves to the host drive, so it emits no
+                        # clock of its own and an inbound-clock guard can only fail. The master's
+                        # realtime Start is the transport and the note stream below is the clock.
+                        clock_ok, using_serial_proxy = True, False
+                    else:
+                        clock_ok, using_serial_proxy = _ensure_midi_clock_or_serial_proxy(
+                            in_port,
+                            out_port,
+                            serial_collector,
+                            args,
+                            min_clocks=24,
+                            timeout_s=2.0,
+                            abort=abort,
                         )
-                        abort_reason = "midi clock missing before record phase"
-                        break
+                        if not clock_ok:
+                            print(
+                                "[error] no MIDI clock and no serial transport receipt before the "
+                                "record phase; refusing to toggle transport again (a toggle would "
+                                "stop the capture this phase is about to stream)."
+                            )
+                            abort_reason = "midi clock missing before record phase"
+                            break
                     wall_clock_tempo = _resolve_wall_tempo_for_proxy(
                         serial_collector, args, using_serial_proxy=using_serial_proxy
                     )
@@ -6090,6 +6336,42 @@ def run() -> int:
                             "[info] Bar sync via wall-clock tempo proxy "
                             f"({proxy_bpm:.1f} BPM) — Teensy clock not on USB MIDI in."
                         )
+                    # The phase is timed by a clock whenever one is available. In device mode
+                    # that means the device's own USB MIDI clock, and the wall-clock proxy is
+                    # only the fallback for a run where no clock actually flows -- the proxy's
+                    # own "transport is running" receipt is NOT evidence about the clock
+                    # (`use_serial_transport_proxy` is true for every managed run, so gating on
+                    # it made device mode silently pace by `--tempo-bpm`). Probe the port: the
+                    # device emits clock only while its own transport runs, and the transport
+                    # was started above.
+                    clock_available = False
+                    if clock_reader is not None:
+                        probe_deadline = time.monotonic() + 1.0
+                        while time.monotonic() < probe_deadline:
+                            if clock_reader.poll() or clock_reader.pulse_seen():
+                                clock_available = True
+                                break
+                            time.sleep(0.01)
+                        if clock_available:
+                            print(
+                                "[info] Bar sync via device USB MIDI clock "
+                                f"({clock_reader.bpm() or 0:.1f} BPM, "
+                                f"{int(clock_reader.observed_pulses())} pulses seen)"
+                            )
+                        else:
+                            print(
+                                "[warn] Device clock source requested but no clock pulse seen "
+                                "within 1.0 s; falling back to the wall-clock proxy."
+                            )
+                    phase_clock = clock_reader if clock_available else None
+                    # Declare the port owner *before* any guard runs: every "is a clock flowing?"
+                    # check now answers from the reader instead of probing a port it drained.
+                    _set_active_clock_reader(phase_clock)
+                    phase_master = clock_master
+                    if phase_master is not None:
+                        # In host mode this field carries the *pinned* tempo the host drives, not a
+                        # proxy fallback: the streamer never sleeps on it in master mode.
+                        wall_clock_tempo = float(getattr(args, "tempo_bpm", 120.0) or 120.0)
                     guard = max(10.0, args.record_bars * seconds_per_bar * 3.0)
                     if getattr(args, "edit_record_fixture", False):
                         from host_midi_automation_edit_baseline import EDIT_RECORD_FIXTURE
@@ -6105,6 +6387,8 @@ def run() -> int:
                             abort=abort,
                             record_schedule_start_mono=record_schedule_start,
                             skip_clock_preamble=True,
+                            clock=phase_clock,
+                            master=phase_master,
                         )
                         if not stream_ok:
                             abort_reason = "midi clock missing before record phase"
@@ -6153,11 +6437,13 @@ def run() -> int:
                             phase_start_delay_bars=0,
                             phase_start_delay_beats=0,
                             max_seconds_guard=guard,
+                            wall_clock_tempo_bpm=wall_clock_tempo,
+                            clock=phase_clock,
+                            master=phase_master,
                             fixed_note=args.record_fixed_note if args.fixed_grid_notes else None,
                             stop_press_advance_clocks=args.stop_press_advance_clocks,
                             abort=abort,
                             emit_immediate_first_step=True,
-                            wall_clock_tempo_bpm=wall_clock_tempo,
                             stream_start_monotonic=recording_confirmed_at,
                             device_bar_probe=(
                                 _device_bar_probe(serial_collector, getattr(args, "follow_serial_log", None))
@@ -6356,6 +6642,8 @@ def run() -> int:
                         phase_start_delay_beats=args.overdub_start_delay_beats,
                         pass_label="overdub",
                         seconds_per_bar=seconds_per_bar,
+                        clock=clock_reader,
+                        master=clock_master,
                     )
                     if od_pass_reason:
                         if od_pass_reason.startswith("midi clock"):
@@ -6381,6 +6669,8 @@ def run() -> int:
                                 phase_start_delay_beats=args.second_overdub_start_delay_beats,
                                 pass_label="second overdub",
                                 seconds_per_bar=seconds_per_bar,
+                                clock=clock_reader,
+                                master=clock_master,
                             )
                         )
                         if od2_pass_reason:

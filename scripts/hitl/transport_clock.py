@@ -27,6 +27,11 @@ from hitl.control_constants import (
     MIDI_CLOCKS_PER_BAR,
     MIDI_CLOCKS_PER_BEAT,
 )
+from hitl.midi_clock import MidiClockMaster, MidiClockReader
+
+
+# Tempo a host-driven phase runs at when the caller pins none.
+DEFAULT_MASTER_BPM = 120.0
 
 
 # Every outgoing control action, with the function that sent it. An unexpected transport
@@ -79,7 +84,42 @@ def _send_short_press(
     out_port.send(mido.Message("note_off", channel=ch, note=note, velocity=0))
 
 
+# The reader that currently owns the input port (device clock source). Every guard below asks
+# "is a clock flowing?" by probing `in_port`, and a drain-owning reader has already taken those
+# pulses, so the guards must ask the reader instead. Their failure mode is not a warning: the
+# confirmation path presses the global transport, which is a *toggle*, so a guard that wrongly
+# reports "no clock" stops the run's transport (DEC-097). Measured: with the reader pacing the
+# record phase and the guards still probing the port, the transport was pressed off ~11 s after
+# the record stop, the overdub was never entered (`ODUB: 0`) and the preset ended
+# `INCONCLUSIVE_CAPTURE` (`captures/session_20260930_122053.log`).
+_ACTIVE_CLOCK_READER: Optional[MidiClockReader] = None
+
+
+def set_active_clock_reader(reader: Optional[MidiClockReader]) -> None:
+    """Declare which reader (if any) owns the input port for the current run."""
+    global _ACTIVE_CLOCK_READER
+    _ACTIVE_CLOCK_READER = reader
+
+
+def _active_reader_sees_clock() -> bool:
+    """True when the port-owning reader is receiving the device clock *right now*.
+
+    Recency, not stickiness: the device stops emitting clock when its transport stops, and the
+    callers below use "is a clock flowing?" as their evidence about the transport. A sticky check
+    kept answering True after the record-arm step had stopped the transport, which suppressed the
+    transport restart the record leg needs (`record on/off 0/0`, a 1-bar take) while the churn it
+    was meant to stop stayed fixed -- so it has to be a window, not a history.
+    """
+    reader = _ACTIVE_CLOCK_READER
+    if reader is None:
+        return False
+    reader.poll()
+    return reader.recent_pulse()
+
+
 def clock_seen_within(in_port: mido.ports.BaseInput, timeout_s: float) -> bool:
+    if _active_reader_sees_clock():
+        return True
     deadline = time.monotonic() + max(timeout_s, 0.0)
     while time.monotonic() < deadline:
         msg = in_port.poll()
@@ -101,6 +141,25 @@ def wait_for_clock_pulses(
 ) -> int:
     if pulses <= 0:
         return 0
+    # The port-owning reader is the only observer of that port: count through it, or this guard
+    # reports "0 midi clock pulses" for a phase that is being paced by the device clock.
+    reader = _ACTIVE_CLOCK_READER
+    if reader is not None and (wall_clock_tempo_bpm is None or wall_clock_tempo_bpm <= 0):
+        reader.poll()
+        start = reader.observed_pulses()
+        deadline = time.monotonic() + max(timeout_s, 0.0)
+        seen = 0
+        while seen < pulses:
+            if abort is not None and abort.check() is not None:
+                break
+            if time.monotonic() >= deadline:
+                break
+            reader.poll()
+            seen = reader.observed_pulses() - start
+            if seen >= pulses:
+                break
+            time.sleep(0.0005)
+        return min(seen, pulses)
     if wall_clock_tempo_bpm is not None and wall_clock_tempo_bpm > 0:
         seconds_per_clock = (60.0 / wall_clock_tempo_bpm) / 24.0
         deadline = time.monotonic() + max(timeout_s, 0.0)
@@ -153,7 +212,11 @@ def ensure_midi_clock(
     """
     if min_clocks <= 0:
         return True
-
+    # The port-owning reader is proof the clock flows, so the wait cannot expire and the toggle
+    # press below must not fire: pressing the transport while it already runs *stops* it.
+    if _active_reader_sees_clock():
+        return True
+    # Without a reader, count through the port; the reader's pulses are not visible here.
     def count_clocks(deadline: float) -> int:
         seen = 0
         while time.monotonic() < deadline:
@@ -291,8 +354,10 @@ def stream_pattern_for_bars(
     stream_start_monotonic: Optional[float] = None,
     device_bar_probe: Optional[Callable[[], Optional[int]]] = None,
     device_bar_baseline: Optional[int] = None,
-) -> tuple[int, int, int, dict[str, float]]:
-    """Send note pattern until target bar count from MIDI clock or wall-clock proxy.
+    clock: Optional[MidiClockReader] = None,
+    master: Optional[MidiClockMaster] = None,
+) -> tuple[int, int, int, dict[str, Any]]:
+    """Send note pattern until target bar count, paced by one of four clock sources.
 
     ``device_bar_probe`` returns the device's own latest ``BAR,<tick>,<index>`` index, and
     is the authoritative end condition when it is available: pacing by host clock messages
@@ -300,6 +365,29 @@ def stream_pattern_for_bars(
     while the device's own bar counter is exactly what the loop length is quantized from.
     The stream ends once the device index has advanced by ``target_bars`` from its value at
     stream start.
+
+    Pacing is chosen by exactly one of ``clock``/``master``/``wall_clock_tempo_bpm``:
+
+    * ``clock`` -- the device is the clock master. The phase origin is the reader's current
+      grid position and the *first* grid step is emitted on the very next pulse
+      (``clock.wait_pulse(origin + 1)``); step ``k`` belongs to grid position
+      ``origin + 1 + (k - 1) * step_clocks``. The phase ends when the reader reaches
+      ``origin + 1 + phase_delay_clocks + target_bars * MIDI_CLOCKS_PER_BAR`` grid positions --
+      counted in grid positions, never in wall-clock seconds -- or at ``max_seconds_guard``.
+      The reader's index is phase-locked, so a dropped pulse does not stall the phase the way
+      the raw ``in_port`` count below does.
+    * ``master`` -- the host is the clock master. Pulse ``i`` of the phase is grid position
+      ``origin + i`` and is sent by ``master``: the first pulse *is* the downbeat and the first
+      step is emitted with it, so step ``k`` is emitted with pulse
+      ``1 + (k - 1) * step_clocks``. The phase ends after
+      ``phase_delay_clocks + target_bars * MIDI_CLOCKS_PER_BAR`` pulses have been sent. The
+      tempo is ``wall_clock_tempo_bpm`` (``DEFAULT_MASTER_BPM`` when unset). No realtime
+      Start/Stop is sent here: the caller owns the transport.
+    * ``wall_clock_tempo_bpm`` set -- unchanged: pace to absolute wall-clock deadlines.
+    * none of them -- unchanged: count raw ``in_port`` clock messages.
+
+    ``in_port`` is not polled for pacing in the ``clock``/``master`` modes (in ``clock`` mode
+    the reader owns the port).
     """
     if high_note < low_note:
         raise ValueError("high_note must be >= low_note")
@@ -328,6 +416,8 @@ def stream_pattern_for_bars(
         phase_start_delay_beats * MIDI_CLOCKS_PER_BEAT
     )
     pitch_cycle_clocks = pitch_cycle_bars * MIDI_CLOCKS_PER_BAR
+    if clock is not None and master is not None:
+        raise ValueError("clock and master are mutually exclusive pacing sources")
 
     def select_grid_note() -> Optional[int]:
         if fixed_note is not None:
@@ -356,6 +446,35 @@ def stream_pattern_for_bars(
     if wall_clock_tempo_bpm is not None and wall_clock_tempo_bpm > 0:
         seconds_per_clock = (60.0 / wall_clock_tempo_bpm) / 24.0
 
+    # ---- pacing mode ------------------------------------------------------------
+    # Exactly one source paces the phase. The two grid modes below are the ones that time the
+    # phase from a clock rather than from the host's own wall clock.
+    clock_source = "received_clock"
+    clock_origin: Optional[float] = None
+    clock_pulse_timeout_s = 0.5
+    master_origin: Optional[float] = None
+    master_pulses_sent = 0
+    master_bpm = wall_clock_tempo_bpm if (wall_clock_tempo_bpm or 0.0) > 0 else DEFAULT_MASTER_BPM
+    if clock is not None:
+        clock_source = "device_clock"
+        # The phase origin is the reader's **current grid position**, and the grid positions are
+        # integers (one per pulse), so `origin + 1` is the very next pulse. Anchoring on a
+        # fractional `index_now()` would land the first step one pulse late whenever the phase
+        # started mid-interval, and anchoring on the phase *start* (what this replaces) put the
+        # first note ~15 clocks after the device had already begun recording.
+        #
+        # Drain FIRST: nothing polls the reader between the transport start and this call, so a
+        # backlog (~250 pulses) is queued. Draining it inside the first `wait_pulse` made the
+        # phase-locked index jump far past every step target, so the streamer emitted a whole
+        # phase in milliseconds and the device captured nothing
+        # (`captures/...-121454`, `-121720`: `record_first_note_missing`, a 1-bar take).
+        clock.poll()
+        clock_origin = float(int(clock.index_now()))
+        # The reader's index keeps moving with time, so a dropped pulse needs no extra budget;
+        # this only bounds a clock that stopped for good.
+        clock_pulse_timeout_s = max(0.5, 4.0 * (clock.period() or 0.0))
+    elif master is not None:
+        clock_source = "host_clock"
     # The baseline must be the device bar index at the *phase* start (the record or overdub
     # boundary), not at the note stream's first clock: the device begins counting before the
     # host streams, so a stream-relative baseline makes an 8-bar request record 10 bars.
@@ -384,7 +503,33 @@ def stream_pattern_for_bars(
         if seconds_per_clock is None and clock_count_total == 0 and elapsed >= clock_start_timeout_seconds:
             break
 
-        if seconds_per_clock is not None:
+        if clock is not None:
+            # Device-paced: wait for the next grid position of the phase. `wait_pulse` is the
+            # phase-length primitive, and the reader's index is phase-locked, so a dropout does
+            # not stall the phase the way the raw `in_port` count below does (that count is the
+            # 2026-09-17 experiment whose dropped pulses let an 8-bar request run 20 bars).
+            if not clock.wait_pulse(
+                clock_origin + clock_count_total + 1,
+                timeout_s=clock_pulse_timeout_s,
+                abort=abort,
+            ):
+                break
+        elif master is not None:
+            # Host-paced: pulse `clock_count_total + 1` of the phase is grid position
+            # `clock_origin + clock_count_total + 1`. One pulse per grid position, all of them on
+            # one absolute schedule anchored at the phase origin (`deadline_origin` +
+            # `deadline_index`), so the per-call send overhead cannot accumulate into drift.
+            if master_origin is None:
+                master_origin = time.perf_counter()
+            master.send_pulses(
+                1,
+                bpm=master_bpm,
+                abort=abort,
+                deadline_origin=master_origin,
+                deadline_index=master_pulses_sent,
+            )
+            master_pulses_sent += 1
+        elif seconds_per_clock is not None:
             # Pace to an absolute deadline. `sleep(seconds_per_clock)` per step adds the
             # per-iteration MIDI send and loop overhead on top of the interval, so a
             # 16 s (8-bar) stream ran ~20 s and the device recorded 10 bars. Deadline
@@ -502,6 +647,16 @@ def stream_pattern_for_bars(
         "max_abs_grid_jitter_clocks": float(max_abs),
         "mean_abs_grid_jitter_clocks": float(mean_abs),
         "stop_press_sent_during_stream": 1.0 if stop_press_sent_during_stream else 0.0,
+        # Pacing evidence: which source timed this phase, and how many of its positions the
+        # phase actually consumed (grid positions for the two clock modes, deadlined steps for
+        # the wall-clock proxy, raw `in_port` messages for the legacy path). `pulses_observed`
+        # is the reader's raw count, so a dropout shows up as observed < counted.
+        "clock_source": clock_source,
+        "clock_pulses_counted": float(clock_count_total),
+        "clock_pulses_observed": (
+            float(clock.observed_pulses()) if clock is not None else -1.0
+        ),
+        "clock_gap_count": float(clock.gap_count()) if clock is not None else -1.0,
         # Device-authoritative end condition evidence (see device_bar_probe).
         "device_bar_start": -1.0 if device_bar_start is None else float(device_bar_start),
         "device_bar_latest": -1.0 if device_bar_latest is None else float(device_bar_latest),

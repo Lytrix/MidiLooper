@@ -29,6 +29,14 @@ omits the intervention and does not reproduce the fixture.
 - `.venv` provides `mido`, `pyserial`, `python-rtmidi`.
 - Device visible: `pio device list` shows `/dev/cu.usbmodem*`.
 - The slot under test is the authorized scratch slot (default track 5 / slot 1).
+- **`LOOP_EDIT` is asserted, never assumed.** The device always boots into `LOOP_EDIT`, but the
+  gestures a run performs (the pre-transport clear selects a track row and a loop row and
+  long-presses record) move it out, and the record/overdub gestures then mean something else (a
+  loop-row select becomes geometry editing; the arm lands on another slot, `RECA slot=0`). Every
+  record/overdub leg calls `hitl.edit_mode_precondition.ensure_loop_edit_before_record` with the
+  track/loop target: it leaves `NOTE_EDIT`, or enters `LOOP_EDIT` by selecting the loop row, and
+  **refuses by name** when `LOOP_EDIT` cannot be proven from serial. Do not work around a refusal
+  by re-booting "so it is in LOOP_EDIT again".
 
 ## 3. Prepare the device (the boot is a decision now)
 

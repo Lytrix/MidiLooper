@@ -1806,11 +1806,22 @@ def _stream_fixture_record(
     max_seconds_guard: Optional[float] = None,
     emit_immediate_first_step: bool = True,
     stream_start_monotonic: Optional[float] = None,
+    clock: Optional[Any] = None,
+    master: Optional[Any] = None,
 ) -> tuple[int, int]:
     """Emit fixture notes on MIDI clock for target_bars.
 
-    When ``wall_clock_tempo_bpm`` is set (serial transport proxy / no USB clock in),
-    pace steps from wall time instead of ``in_port`` clock messages.
+    Pacing is chosen by exactly one of ``clock``/``master``/``wall_clock_tempo_bpm``:
+
+    * ``clock`` (a :class:`hitl.midi_clock.MidiClockReader`) -- the device is the clock master.
+      The phase origin is the reader's *current* grid position and step 0 is emitted on the very
+      next pulse (``wait_pulse(origin + 1)``), which is the difference between a first note on the
+      downbeat and one ~15 clocks into the take. The phase ends after
+      ``target_bars * MIDI_CLOCKS_PER_BAR`` grid positions.
+    * ``master`` (a :class:`hitl.midi_clock.MidiClockMaster`) -- the host is the clock master;
+      one pulse per grid position on one absolute schedule, no realtime Start/Stop here.
+    * ``wall_clock_tempo_bpm`` set -- unchanged: pace from wall time.
+    * none of them -- unchanged: wait on ``in_port`` clock messages.
 
     ``emit_immediate_first_step`` places step 0 on the first stream tick (tick 0 grid).
     ``stream_start_monotonic`` anchors wall-clock pacing to RECORDING confirmation time.
@@ -1826,6 +1837,10 @@ def _stream_fixture_record(
         stop_trigger = target_clocks
     elif stop_press_advance_clocks > 0:
         stop_trigger = max(1, target_clocks - stop_press_advance_clocks)
+    # Imported here rather than at module scope, mirroring this file's other lazy
+    # `hitl.transport_clock` use.
+    from hitl.transport_clock import DEFAULT_MASTER_BPM
+
     stop_sent = False
     phase_clock = 0
     note_on_count = 0
@@ -1836,12 +1851,30 @@ def _stream_fixture_record(
     seconds_per_clock: Optional[float] = None
     if wall_clock_tempo_bpm is not None and wall_clock_tempo_bpm > 0:
         seconds_per_clock = (60.0 / wall_clock_tempo_bpm) / 24.0
+    # ---- pacing mode ------------------------------------------------------------
+    clock_origin: Optional[float] = None
+    clock_pulse_timeout_s = 0.5
+    master_origin: Optional[float] = None
+    master_pulses_sent = 0
+    master_bpm = wall_clock_tempo_bpm if (wall_clock_tempo_bpm or 0.0) > 0 else DEFAULT_MASTER_BPM
+    if clock is not None:
+        # Integer grid position: `origin + 1` is then the very next pulse. A fractional
+        # `index_now()` (the phase started mid-interval) would set the first step one pulse late.
+        clock_origin = float(int(clock.index_now()))
+        # The reader's index keeps moving with time, so a dropout needs no extra budget; this only
+        # bounds a clock that stopped for good.
+        clock_pulse_timeout_s = max(0.5, 4.0 * (clock.period() or 0.0))
     stream_start = (
         stream_start_monotonic if stream_start_monotonic is not None else time.monotonic()
     )
     if max_seconds_guard is None:
+        clock_tempo = clock.bpm() if clock is not None else None
         if seconds_per_clock is not None:
             max_seconds_guard = target_clocks * seconds_per_clock * 1.5 + 2.0
+        elif clock_tempo:
+            # Clock-paced: bound by the device's *learned* tempo, not by an assumed 120 BPM
+            # (the fixed 8 s guard for 2 bars would cut a slower device's phase short).
+            max_seconds_guard = target_bars * (60.0 / clock_tempo) * 4.0 * 1.5 + 2.0
         else:
             max_seconds_guard = max(target_bars * 4.0, 8.0)
 
@@ -1860,34 +1893,30 @@ def _stream_fixture_record(
         if time.monotonic() - stream_start > max_seconds_guard:
             break
 
-        if seconds_per_clock is not None:
+        if clock is not None:
+            # Device-paced: wait for the next grid position of the phase. `index_now()` is
+            # phase-locked, so a dropout does not stall the phase the way a raw pulse count does.
+            if not clock.wait_pulse(
+                clock_origin + phase_clock + 1,
+                timeout_s=clock_pulse_timeout_s,
+                abort=abort,
+            ):
+                break
+        elif master is not None:
+            # Host-paced: pulse `phase_clock + 1` is grid position `clock_origin + phase_clock + 1`,
+            # on one absolute schedule so the per-call send overhead cannot accumulate into drift.
+            if master_origin is None:
+                master_origin = time.perf_counter()
+            master.send_pulses(
+                1,
+                bpm=master_bpm,
+                abort=abort,
+                deadline_origin=master_origin,
+                deadline_index=master_pulses_sent,
+            )
+            master_pulses_sent += 1
+        elif seconds_per_clock is not None:
             time.sleep(seconds_per_clock)
-            phase_clock += 1
-            if emit_immediate_first_step and not immediate_emitted:
-                step_notes, next_emit_step, held = _emit_fixture_steps_for_clock(
-                    phase_clock=phase_clock,
-                    step_clocks=step_clocks,
-                    target_bars=target_bars,
-                    fixture_by_step=fixture_by_step,
-                    next_emit_step=0,
-                    out_port=out_port,
-                    ch=ch,
-                    held=held,
-                )
-                note_on_count += step_notes
-                immediate_emitted = True
-            else:
-                added, next_emit_step, held = _emit_fixture_steps_for_clock(
-                    phase_clock=phase_clock,
-                    step_clocks=step_clocks,
-                    target_bars=target_bars,
-                    fixture_by_step=fixture_by_step,
-                    next_emit_step=next_emit_step,
-                    out_port=out_port,
-                    ch=ch,
-                    held=held,
-                )
-                note_on_count += added
         else:
             if phase_clock == 0 and (time.monotonic() - stream_start) >= clock_start_timeout_s:
                 break
@@ -1897,21 +1926,24 @@ def _stream_fixture_record(
                 continue
             if msg.type != "clock":
                 continue
-            phase_clock += 1
-            if emit_immediate_first_step and not immediate_emitted:
-                step_notes, next_emit_step, held = _emit_fixture_steps_for_clock(
-                    phase_clock=phase_clock,
-                    step_clocks=step_clocks,
-                    target_bars=target_bars,
-                    fixture_by_step=fixture_by_step,
-                    next_emit_step=0,
-                    out_port=out_port,
-                    ch=ch,
-                    held=held,
-                )
-                note_on_count += step_notes
-                immediate_emitted = True
-                continue
+
+        phase_clock += 1
+        if emit_immediate_first_step and not immediate_emitted:
+            # Step 0 belongs to this first grid position: on the very next pulse in clock mode,
+            # which is the whole point of the grid-paced phase.
+            step_notes, next_emit_step, held = _emit_fixture_steps_for_clock(
+                phase_clock=phase_clock,
+                step_clocks=step_clocks,
+                target_bars=target_bars,
+                fixture_by_step=fixture_by_step,
+                next_emit_step=0,
+                out_port=out_port,
+                ch=ch,
+                held=held,
+            )
+            note_on_count += step_notes
+            immediate_emitted = True
+        else:
             added, next_emit_step, held = _emit_fixture_steps_for_clock(
                 phase_clock=phase_clock,
                 step_clocks=step_clocks,

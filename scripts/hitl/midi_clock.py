@@ -59,10 +59,16 @@ from hitl.control_constants import MIDI_CLOCKS_PER_BAR, MIDI_CLOCKS_PER_BEAT
 # A pulse that arrives more than this many grid positions late implies lost pulses.
 GAP_STEPS = 2
 # Tempo validity band, matching the band `ClockManager::onMidiClockPulse` accepts.
+# Tempo validity band, matching the band `ClockManager::onMidiClockPulse` accepts, expressed as
+# the pulse interval it implies (8.33 ms at 300 BPM .. 125 ms at 20 BPM).
 MIN_BPM = 20.0
 MAX_BPM = 300.0
+MIN_PERIOD_S = 60.0 / MAX_BPM / MIDI_CLOCKS_PER_BEAT
+MAX_PERIOD_S = 60.0 / MIN_BPM / MIDI_CLOCKS_PER_BEAT
 # Rolling window for the interval median (one quarter note at 24 PPQN).
 BPM_WINDOW = MIDI_CLOCKS_PER_BEAT
+# Pulses spanned before a drain-level tempo sample is trusted (half a beat at 24 PPQN).
+TEMPO_WINDOW_PULSES = MIDI_CLOCKS_PER_BEAT // 2
 # Intervals outside this factor of the running median are a stall or a burst, not a sample.
 INTERVAL_BAND = (0.5, 2.0)
 REALTIME_TRANSPORT_TYPES = ("start", "stop", "continue")
@@ -81,6 +87,8 @@ class MidiClockReader:
         self._gaps = 0
         self._started: Optional[float] = None
         self._transport: list[str] = []
+        self._tempo_anchor_first: Optional[float] = None
+        self._tempo_anchor_pulses = 0
 
     # ---- incremental drain -------------------------------------------------
     def _drain(self) -> Any:
@@ -101,15 +109,53 @@ class MidiClockReader:
             yield message
 
     def poll(self) -> int:
-        """Drain every pending message; return the number of clock pulses taken."""
+        """Drain every pending message; return the number of clock pulses taken.
+
+        A caller that polls in batches (every harness does: serial work sits between reads)
+        receives a whole burst at one instant, so the pulses inside a batch share a timestamp
+        and no per-pulse interval is measurable. The tempo is therefore sampled at the **drain**
+        level: the gap between consecutive batches, divided by the pulses the earlier batch
+        carried. Without that this reader reported "0.0 BPM" with 96 pulses seen in a managed
+        run and the streamer's pulse waits all expired.
+        """
         taken = 0
+        batch_first: Optional[float] = None
         for message in self._drain():
             if message.type == "clock":
-                self._on_pulse(self._clock())
+                now = self._clock()
+                if batch_first is None:
+                    batch_first = now
+                self._on_pulse(now)
                 taken += 1
             elif message.type in REALTIME_TRANSPORT_TYPES:
                 self._transport.append(message.type)
+        if taken and batch_first is not None:
+            self._sample_drain_tempo(batch_first, taken)
         return taken
+
+    def _sample_drain_tempo(self, batch_first: float, batch_count: int) -> None:
+        """Feed one tempo sample from the cadence between drains (see :meth:`poll`).
+
+        Cumulative over a fixed window rather than per drain: callers poll on their own cadence (a
+        guard may drain mid-gap, then the next gap carries the remaining pulses), so a per-batch
+        ``gap / previous_batch_count`` is biased -- it reported 41.5 BPM for a 120 BPM device,
+        which then paced a whole record phase at the wrong tempo. Accumulating pulses across
+        drains until half a beat is spanned makes the estimate independent of the cadence.
+        """
+        if self._tempo_anchor_first is None:
+            self._tempo_anchor_first = batch_first
+            self._tempo_anchor_pulses = 0
+        self._tempo_anchor_pulses += max(1, batch_count)
+        span = batch_first - self._tempo_anchor_first
+        if self._tempo_anchor_pulses < TEMPO_WINDOW_PULSES or span <= 0:
+            return
+        per_pulse = span / self._tempo_anchor_pulses
+        if MIN_PERIOD_S <= per_pulse <= MAX_PERIOD_S:
+            self._intervals.append(per_pulse)
+            if len(self._intervals) > BPM_WINDOW:
+                self._intervals.pop(0)
+        self._tempo_anchor_first = batch_first
+        self._tempo_anchor_pulses = 0
 
     def _on_pulse(self, now: float) -> None:
         """Count the pulse, re-anchor the phase, and sample the interval.
@@ -137,8 +183,13 @@ class MidiClockReader:
         elif not median:
             self._anchor_index += 1.0
         # Only plausible intervals feed the tempo estimate: a stall or a burst would drag it.
-        if interval > 0 and (not median
-                             or INTERVAL_BAND[0] * median <= interval <= INTERVAL_BAND[1] * median):
+        # The **first** sample must pass the absolute tempo band too, not just the band around a
+        # running median: the reader is often first polled after a long wait (the transport-start
+        # settlement), and that first gap then became the median -- 251 pulses, a "0.0 BPM"
+        # reading, and a phase locked to a 0.5 s "pulse" (`captures/...-121454` class).
+        plausible = MIN_PERIOD_S <= interval <= MAX_PERIOD_S
+        if plausible and (not median
+                          or INTERVAL_BAND[0] * median <= interval <= INTERVAL_BAND[1] * median):
             self._intervals.append(interval)
             if len(self._intervals) > BPM_WINDOW:
                 self._intervals.pop(0)
@@ -176,7 +227,28 @@ class MidiClockReader:
         return self._anchor_index + elapsed / median
 
     def pulse_seen(self) -> bool:
+        """True once a pulse has ever arrived (sticky)."""
         return self._started is not None
+
+    def last_pulse_age_s(self) -> Optional[float]:
+        """Seconds since the last pulse, or None if none ever arrived.
+
+        ``pulse_seen`` is sticky, so it cannot answer "is the clock flowing *now*" -- and the
+        device stops emitting clock when its transport stops. Callers that use the clock as
+        evidence about the transport must use this instead.
+        """
+        if self._anchor_time is None:
+            return None
+        return max(0.0, self._clock() - self._anchor_time)
+
+    def recent_pulse(self, window_s: Optional[float] = None) -> bool:
+        """True when a pulse arrived within ``window_s`` (default: 4 pulse periods)."""
+        age = self.last_pulse_age_s()
+        if age is None:
+            return False
+        if window_s is None:
+            window_s = max(0.25, 4.0 * (self.period() or 0.0))
+        return age <= window_s
 
     def observed_pulses(self) -> int:
         """Raw count of received pulses, for evidence rather than for pacing."""
@@ -236,12 +308,21 @@ class MidiClockMaster:
         self._out.send(mido.Message("stop"))
 
     def send_pulses(self, count: int, *, bpm: float, abort: Any = None,
-                    echo_reader: Optional[MidiClockReader] = None) -> dict[str, float]:
+                    echo_reader: Optional[MidiClockReader] = None,
+                    deadline_origin: Optional[float] = None,
+                    deadline_index: int = 0) -> dict[str, float]:
         """Send ``count`` clock pulses at ``bpm``; return pacing quality for the report.
 
         Absolute deadlines (``origin + (i + 1) * period``) rather than per-step sleeps: a
         per-step sleep adds the send and loop overhead on top of every interval, and the
         device derives its tempo from pulse arrival times.
+
+        ``deadline_origin``/``deadline_index`` let a caller that sends **one pulse at a time**
+        keep one absolute schedule across those calls: pulse ``deadline_index + i`` is due at
+        ``deadline_origin + (deadline_index + i) * period``. Without them the origin is this
+        call's own ``perf_counter()``, so every call pays its own sleep/send overhead again
+        (measured on this host: 3.7 ms per pulse, i.e. 101.8 BPM for a 120 BPM request, against
+        120.0 BPM when the whole phase is one call).
 
         ``echo_reader`` is how the *device's* reaction is measured while the drive is still
         running. It must be a reader over the same input port. A device that is slaving stops
@@ -251,13 +332,14 @@ class MidiClockMaster:
         pulses in the tail mean the device is *still* clocking itself.
         """
         period = 60.0 / bpm / MIDI_CLOCKS_PER_BEAT
-        origin = time.perf_counter()
+        call_origin = time.perf_counter()
+        origin = call_origin if deadline_origin is None else deadline_origin
         errors: list[float] = []
         settle_after = max(1, int(count * 0.25))
         echo_total = 0
         echo_tail = 0
         for index in range(max(count, 0)):
-            next_at = origin + (index + 1) * period
+            next_at = origin + (deadline_index + index + 1) * period
             while True:
                 remaining = next_at - time.perf_counter()
                 if remaining > self._spin:
@@ -281,7 +363,7 @@ class MidiClockMaster:
             "pulses_sent": float(self._sent),
             "max_err_ms": worst * 1e3,
             "mean_err_ms": (sum(abs(e) for e in errors) / len(errors) * 1e3) if errors else 0.0,
-            "drift_ms": (time.perf_counter() - origin - len(errors) * period) * 1e3,
+            "drift_ms": (time.perf_counter() - call_origin - len(errors) * period) * 1e3,
             "device_clock_echo_pulses": float(echo_total),
             "device_clock_echo_tail_pulses": float(echo_tail),
         }
