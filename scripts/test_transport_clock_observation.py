@@ -2,7 +2,8 @@
 """The clock helper must never press transport to confirm a start the caller already made.
 
 `ensure_midi_clock`'s press is a *toggle*: sent while the transport already runs, it stops it.
-This board emits no USB MIDI clock out, so the pulse wait always expires and the press always
+The device emits clock only while its own transport runs, so a pulse wait made before any start
+always expires and the press always fires. Measured twice on device:
 fires. Measured twice on device: `captures/s4f22-base-device-03` (start 25.086, toggle 25.603)
 and `captures/s4f22-step7-d2` (start 53.527, recording 53.974, unexplained transport press
 54.526, then the intended Record stop at 59.248 armed a new take).

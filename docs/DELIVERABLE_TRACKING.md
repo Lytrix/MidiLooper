@@ -1,5 +1,16 @@
 # Deliverable Tracking (Main vs Refinement)
 
+**2026-09-30 — HITL MIDI clock: read and drive, with the "no USB MIDI clock out" premise corrected (DEC-097).**
+The HITL host layer had recorded the board as emitting no USB MIDI clock, which is why bar pacing fell back to a
+serial wall-clock proxy whose tempo source the mandated build never emits (`#CAP,BPM`, `SESSION_CAPTURE_BPM`
+defaults to 0). Device measurement: **48.00 Hz = exactly 24 PPQN at 120.00 BPM**, 384/384 pulses per 8 s, jitter
+0.72–1.55 ms stdev, `Start` ~0.31 s after a transport press; the host can also drive the clock, and the device
+slaves (0 own pulses while driven, own clock resumed 0.53 s after release). The real constraints are narrower:
+clock exists only while the device's transport runs, and a bare realtime `Start`/`Continue` without clock parks it
+in `CLOCK_EXTERNAL` where it emits none. Shipped `scripts/hitl/midi_clock.py` (phase-locked reader with
+`bpm()`/`wait_pulse`/`wait_bars`, absolute-deadline master with a slaved-verdict `echo_reader`),
+`scripts/test_midi_clock.py` **10/10**, `scripts/hitl_midi_clock_probe.py` **device PASS**, and
+`docs/Guides/HITL_MIDI_CLOCK.md`. Residual: the legacy streamer is not yet pulse-paced.
 **2026-09-30 — S4f.17 sub-slice: a deferred overdub stop publishes its interval's undo level.** The sidebar `U:`
 (`TrackUndo::undoDepthForLoop`) counted only the record pass while a loop was live — `U:01` after recording plus
 overdubs against `U:03` after a reboot — and the base check `undo_redo_after_overdub_stop` logged `0 counts`

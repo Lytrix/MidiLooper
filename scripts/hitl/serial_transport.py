@@ -109,10 +109,11 @@ def use_serial_transport_proxy(
 ) -> bool:
     if serial_collector is None or not serial_capture_active(args):
         return False
-    # Managed capture often has no USB MIDI clock input.  An explicit current
-    # session transport edge is stronger evidence than a short tail that may
-    # be filled with note or display records; do not let the clock fallback
-    # toggle Play/Stop and interrupt an active overdub.
+    # A run whose transport is already known running does not need the clock fallback at all,
+    # and letting it fire would press Play/Stop (a toggle) and interrupt an active overdub.
+    # An explicit current-session transport edge is stronger evidence than a short tail that
+    # may be filled with note or display records. The device *does* emit USB MIDI clock
+    # (`hitl/midi_clock.py`); this guard is about not toggling, not about the clock's absence.
     lines = serial_collector.snapshot()
     if serial_global_transport_running(lines, after_index=after_index):
         return True

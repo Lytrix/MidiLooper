@@ -5808,7 +5808,7 @@ def run() -> int:
                 ):
                     print(
                         "[info] Serial #CAP,BPM/BAR shows transport running; "
-                        "skipping transport start presses (no USB MIDI clock on host)."
+                        "skipping transport start presses (a press would toggle it off)."
                     )
                 elif not _clock_seen_within(in_port, 0.5):
                     clock_started = False
@@ -5823,7 +5823,9 @@ def run() -> int:
                         if _clock_seen_within(in_port, 1.0):
                             clock_started = True
                             break
-                        # Managed capture: firmware often has no USB MIDI clock out.
+                        # A press is a toggle, so confirm the device's own transport edge
+                        # before pressing again: either a device clock pulse or a current
+                        # #CAP,BAR/BPM row ends the retry loop.
                         # Wait briefly for #CAP,BAR/BPM before the next press.
                         if serial_collector is not None and _use_serial_transport_proxy(
                             args, serial_collector, after_index=session_after_index
@@ -5955,7 +5957,7 @@ def run() -> int:
                         if using_serial_proxy:
                             print(
                                 "[info] Transport recovery via serial wall-clock proxy "
-                                "(no USB MIDI clock on host)."
+                                "(device clock not observed; the proxy carries the pacing)."
                             )
                     elif clock_present:
                         print("[info] MIDI clock active; skipping transport reset recovery.")
@@ -5972,7 +5974,7 @@ def run() -> int:
                     ):
                         print(
                             "[info] Serial #CAP,BAR/DFRAME shows live transport activity; "
-                            "skipping transport reset recovery (no USB MIDI clock on host)."
+                            "skipping transport reset recovery (a press would toggle it off)."
                         )
 
                 if args.clear_before_record:

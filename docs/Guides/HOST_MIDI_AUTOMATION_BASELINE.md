@@ -29,7 +29,11 @@ Use capture build when you want `#CAP` state assertions (`ST`, `RECA`, `RECS`):
 pio run -e teensy41-capture-serial -t upload
 ```
 
-Mode A (`--serial-port`) and Mode B (`--follow-current-session`) both enable serial transport proxy for bar pacing when USB MIDI clock is absent on the host input port.
+Mode A (`--serial-port`) and Mode B (`--follow-current-session`) both enable the serial transport
+proxy for bar pacing. The premise behind that proxy is corrected as of 2026-09-30: the board
+**does** emit USB MIDI clock while its own transport runs, and the host can read it and drive it
+([`HITL_MIDI_CLOCK.md`](HITL_MIDI_CLOCK.md), `scripts/hitl/midi_clock.py`). The proxy remains for
+runs whose phase pacing is not yet pulse-based; it is no longer justified by a missing clock.
 
 ## List ports first
 
@@ -100,7 +104,13 @@ python3 scripts/host_midi_automation_baseline.py \
 ```
 
 By default bar-based mode follows incoming MIDI clock (`24 PPQN`) so 8 bars means 8 real bars at the current running tempo.  
-When USB MIDI clock is not echoed to `--midi-in` but serial capture is enabled (`--serial-port` or `--follow-current-session`), the script uses a **wall-clock tempo proxy** when recent `#CAP,BPM` or `#CAP,BAR` lines show transport running. Proxy tempo prefers the latest serial BPM, then `--tempo-bpm` (default `120`).
+When serial capture is enabled (`--serial-port` or `--follow-current-session`), the script uses a
+**wall-clock tempo proxy** when recent `#CAP,BPM` or `#CAP,BAR` lines show transport running.
+Proxy tempo prefers the latest serial BPM, then `--tempo-bpm` (default `120`) — and in the
+mandated `teensy41-capture-serial` build the `#CAP,BPM` family is not emitted at all
+(`SESSION_CAPTURE_BPM` defaults to `0`), so the proxy tempo is effectively `--tempo-bpm`. The
+device's real tempo is measurable from its own USB MIDI clock instead; see
+[`HITL_MIDI_CLOCK.md`](HITL_MIDI_CLOCK.md) and `hitl.midi_clock.MidiClockReader.bpm()`.
 Disable bar sync with `--no-bar-sync-from-midi-clock` if you explicitly want tempo-derived seconds only.
 If no MIDI clock pulses are observed and serial proxy is inactive, bar-synced phases may record `0` clocks and fail (`phase_not_activated_or_no_clock`).
 Use `--max-run-seconds` to enforce a hard timeout for the full run. On timeout, the script exits with failure and still writes a report (`assertions.timed_out = true`).

@@ -142,10 +142,14 @@ def ensure_midi_clock(
 ) -> bool:
     """Wait for incoming MIDI clock; toggle transport once only if explicitly allowed.
 
-    The toggle is a **toggle**: sent while the transport already runs it stops it. This board
-    emits no USB MIDI clock out, so the pulse wait always expires and a press always fires -- so
-    any caller that is *confirming* transport it already started must not allow it. Those callers
-    get a named failure instead (`ensure_transport_clock`).
+    The toggle is a **toggle**: sent while the transport already runs it stops it. The device
+    emits clock only while its own transport runs (`ClockManager::updateInternalClock`), so a
+    wait made *before* any transport was started always expires and a press always fires -- so
+    any caller that is *confirming* transport it already started must not allow it. Those
+    callers get a named failure instead (`ensure_transport_clock`).
+
+    The device clock is real and usable (`hitl/midi_clock.py`); the failure mode above is about
+    *when* the probe waits, not about the clock being absent.
     """
     if min_clocks <= 0:
         return True
@@ -201,8 +205,9 @@ def ensure_transport_clock(
 
     ``started_since_index`` is for the callers that invoke this **to confirm a transport start
     press they have just made**: pass the serial length captured *before* that press. The press
-    inside ``ensure_midi_clock`` is a toggle, and this board emits no USB MIDI clock out, so its
-    pulse wait always expires and the press always fires -- pressing while the transport already
+    inside ``ensure_midi_clock`` is a toggle, and a wait made before any transport was started
+    sees no clock (`ClockManager::updateInternalClock` emits it only while running), so its
+    pulse wait expires and the press fires -- pressing while the transport already
     runs *stops* it. Measured on device (``captures/s4f22-base-device-03``): a start at 25.086 was
     followed by a toggle press at 25.603 that stopped the transport, which the device correctly
     resolved as a record stop to STOPPED ("record stop did not reach PLAYING", one-bar take).
