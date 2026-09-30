@@ -840,7 +840,8 @@ class EvidenceGateTests(unittest.TestCase):
         self.assertIsNone(fixture.report["census"])
         self.assertEqual([], fixture.report["preparation"])
         self.assertIn("census unavailable for slot 5", fixture.report["preparation_error"])
-        self.assertIn("refusing before any gesture", fixture.report["preparation_error"])
+        self.assertIn("Refusing before any gesture", fixture.report["preparation_error"])
+        self.assertIn("no observation completed", fixture.report["preparation_error"])
         self.assertIn("prepare_slot_b_census_unavailable", fixture.events)
         # One retry per remaining attempt, and the transport is never touched.
         self.assertEqual(DEFAULT_CENSUS_ATTEMPTS - 1, fixture.events.count("census_retry"))
