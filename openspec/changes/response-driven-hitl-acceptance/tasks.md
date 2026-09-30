@@ -63,6 +63,27 @@ Stage owner: existing serial command/capture service and operation owners. Preco
       -- the `ODUB,stage` / `ODUB,stop` families and the `#CAP,ST,Track,…` edges still carry no interval or track
       identity, and nothing yet ties a *consumed* accepted latch to the poll that could have missed it. That half
       needs firmware rows (upload + device verification) and is deliberately not done here.
+      **2026-09-30 (firmware, host-verified) — the latch's own sequenced identity evidence landed.** The
+      remaining half above is now built as instrumentation only, no behaviour change: `Track::latchAcceptedStop`
+      and `Track::consumeAcceptedStopObligation` (now taking the consumption *reason*) and the S2b.6 park emit
+      one compact Tier-A one-shot row per latch transition through `SC_ACCEPTED_LATCH` —
+      `DIAG,latch,<accept|repeat|wait|park_stall|consume>,<track>,<slot>,<interval>,<destination>,<outcome>` —
+      carrying the identity the latch holds, so a row can be attributed on a multi-track run instead of inferred
+      from position. `repeat` is the documented same-identity no-op, and `consume` names the reason
+      (`admitted`, `superseded`, `sync_stop`, `transport_stop`), which is exactly what makes an
+      accept-plus-consume pair inside one poll gap **provable after the fact**. Loss is detectable: the family
+      has `RecordFamilyStats` counters and is reported by the existing stopped-only `!CAP_IDENTITY_STATS` as
+      `RING,record_stats,DIAG,latch,…`. Evidence: `test_continuous_capture` **106/106** (two new fixtures: the
+      accept → repeat → wait → one `consume(admitted)` chain on one identity, and exactly-once consumption) and
+      `test_capture_ring` **12/12** (family counters, the read-back, the identity in the row text, a refused
+      append counted, and the Tier-A classification); full `pio test -e native` **2,643 cases / 2,636 succeeded /
+      7 skipped / 0 failed**; `teensy41-capture-serial` **SUCCESS** with the RAM1 budget gate passing on an
+      unchanged line (`variables 96,192 / ITCM 393,216 (code 391,288 + padding 1,928) / locals 34,880`, floor
+      840); five mutations red-proved and restored byte-identically. Packet and transition oracle:
+      [S22-LATCH-EVIDENCE-PACKET.md](S22-LATCH-EVIDENCE-PACKET.md). **Still owed:** the device leg (an upload,
+      then a retained stop showing `accept` → (wait) → `consume(admitted)` with one identity), the sequenced
+      *gesture/switch* rows (a slot press still leaves only its in-ring `DISP` row and a human `Loop N:` line),
+      and tying the counters to a *poll* the way the on-demand observation request does.
 - [x] 2.3 Forward allowlisted requests through `capture_session.py` and decode responses once in `serial/protocol.py`; verify one serial owner, one outstanding request, nonce mismatch, partial/coalesced lines, duplicates, delayed delivery and reset/epoch changes using transport fakes.
       **DONE 2026-09-28:** `capture_session.py` gained an opt-in `--command-stdin` channel that
       refuses anything outside the read-only allowlist (and any malformed request) by name, and
