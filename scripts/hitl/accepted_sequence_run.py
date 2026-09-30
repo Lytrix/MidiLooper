@@ -129,9 +129,10 @@ def build_identity() -> dict:
 
 
 def _report_stimulus_id(leg: str) -> str:
-    #  The record and overdub legs have registered profiles; the **mixed** leg's profile (A empty *and* B seeded)
-    #  is not registered yet -- it is a different preparation from either -- so its run records the temporary
-    #  variant it was driven as, under the name its profile will take.
+    #  Each leg is driven as a temporary variant forked from the profile registered for its scenario (the
+    #  sanctioned `stimulus temp` mechanism -- never an edit of a canonical stimulus): the record and overdub
+    #  legs fork `STIM-BASE-2-ONE-OD-01`, and the **mixed** leg forks its own `STIM-BASE-2-MIXED-01`, whose
+    #  declaration is what authorizes its two targets (A verified empty and idle, B seeded and verified).
     if leg == "mixed":
         return "STIM-BASE-2-MIXED-01-TEMP-ACCEPTED-SEQ-MIXED"
     return f"STIM-BASE-2-ONE-OD-01-TEMP-ACCEPTED-SEQ-{'REC' if leg == 'rec' else 'OD'}"

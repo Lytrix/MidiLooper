@@ -40,7 +40,11 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "note_edit_reselect_stacked": ("base", "note_edit_reselect_stacked"),
     # Task 4.4: the two response-driven acceptance legs. Both are capture-owning (see `ScenarioSpec`), so
     # the preset drives them in order through the wrapper's own sessions, one leg per boot anchor.
-    "accepted_sequence": ("accepted_sequence_rec", "accepted_sequence_od"),
+    # Task 4.4: the response-driven acceptance legs -- record, overdub, and the mixed leg (a record
+    # predecessor with a seeded overdub successor, task 5.1). All three are capture-owning (see
+    # `ScenarioSpec`), so the preset drives them in order through the wrapper's own sessions, one leg per
+    # boot anchor.
+    "accepted_sequence": ("accepted_sequence_rec", "accepted_sequence_od", "accepted_sequence_mixed"),
 }
 
 
@@ -163,6 +167,17 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             description=(
                 "S4f.13(b) overdub leg: confirmed seeds, the proven single capture-switch "
                 "gesture, the successor's recognized overdub start and stop"
+            ),
+            run=run_accepted_sequence,
+            verify=verify_accepted_sequence,
+            owns_capture=True,
+        ),
+        "accepted_sequence_mixed": ScenarioSpec(
+            scenario_id="accepted_sequence_mixed",
+            description=(
+                "S4f.13(c) mixed leg: a record predecessor (empty and idle) with a seeded "
+                "overdub successor -- the switch stops the predecessor and the successor's "
+                "start takes its own record-control press"
             ),
             run=run_accepted_sequence,
             verify=verify_accepted_sequence,

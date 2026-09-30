@@ -86,12 +86,16 @@ red-proved** (4 flow, 4 grading), every file restored byte-identically and sha25
 1. **the mixed edge for the *window*:** the leg is drivable and gradable, but a *driven* mixed run still needs the
    spec's own gates closed end to end on one capture — content parity for **both** intervals being the
    content-pipeline half 5.2 integrated;
-2. **registration** (`accepted_sequence_mixed` and preset membership) with the scenario's translation/refusals, so
-   the runner route reaches the leg the wrapper CLI already accepts;
-3. **the mixed stimulus profile** with its own declared authorization (A empty + B seeded), which is what the
-   spec's *Scoped same-boot fixture preparation* asks for ("record and overdub fixtures MUST have different
-   verified content preconditions");
-4. **the device leg**, with the rest of 6.x, under a per-session upload/target authorization.
+2. ~~registration (`accepted_sequence_mixed` and preset membership) with the scenario's translation/refusals~~,
+   and ~~the mixed stimulus profile with its own declared authorization~~ — **landed 2026-10-01**: the scenario
+   is registered (runner route, preset order `(rec, od, mixed)`, capture-owning) and its own
+   `STIM-BASE-2-MIXED-01` profile declares the bench scope. The profile is its own declaration because its two
+   targets carry *different* verified content preconditions — the record predecessor verified empty and idle,
+   the overdub successor's committed content verified — which is what the requirement `Scoped same-boot fixture
+   preparation` asks for. 6 registration mutations red-proved byte-identically;
+   [MIXED-LEG-REGISTRATION-EXECUTION.md](MIXED-LEG-REGISTRATION-EXECUTION.md).
+3. **the device leg**, with the rest of 6.x, under a per-session upload/target authorization.
 
-Until 2 and 3 land the leg runs on the wrapper's `cli` authorization path only, and its run report names the
-temporary stimulus variant it was driven as (`STIM-BASE-2-MIXED-01-TEMP-ACCEPTED-SEQ-MIXED`).
+The leg is now reachable and authorized through the runner (`--preset accepted_sequence` drives all three). Its
+run report still names the temp variant it was driven as (`STIM-BASE-2-MIXED-01-TEMP-ACCEPTED-SEQ-MIXED`), which
+is the sanctioned fork of the registered profile rather than a stand-in for a missing one.

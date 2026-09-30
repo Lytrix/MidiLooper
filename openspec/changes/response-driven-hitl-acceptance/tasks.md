@@ -533,8 +533,13 @@ ring's PSRAM, and `RING,head_bad` names any advance off a record boundary.
       seeded, A empty and idle — the composed record + overdub steps, and its own **grading mode**: A read with
       the record vocabulary (`RECS` stop, finalization window, release) beside B with the overdub families
       (`DIAG,reentry,admit`, `stop_state`, `canonical_release`), with the identity link asking for B's chain
-      only). Its **registration, stimulus profile and device leg** remain.
-      [MIXED-LEG-EXECUTION.md](MIXED-LEG-EXECUTION.md).
+      only). Its **registration and stimulus profile landed** 2026-10-01: the scenario
+      `accepted_sequence_mixed` is registered (runner route, preset membership, capture-owning) and its own
+      `STIM-BASE-2-MIXED-01` profile declares the bench scope — the profile is its own declaration because its
+      two targets carry *different* verified content preconditions (A empty and idle, B seeded and verified).
+      6 registration mutations red-proved byte-identically. Its **device leg** remains, with the rest of 6.x.
+      [MIXED-LEG-EXECUTION.md](MIXED-LEG-EXECUTION.md),
+      [MIXED-LEG-REGISTRATION-EXECUTION.md](MIXED-LEG-REGISTRATION-EXECUTION.md).
 - [x] 5.2 Integrate existing content parity and timing verifiers plus independent shutdown result; verify a failing content, timing or teardown result vetoes otherwise complete acceptance. Replay the preserved failure corpus and synthetic complete chains with deterministic expected verdicts.
       **2026-09-30 — the conjunction's external halves are integrated, each with its own veto.** New
       `hitl/acceptance_evidence.py` is a *reader* layer, not a second implementation: content parity is
