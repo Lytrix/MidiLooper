@@ -48,7 +48,13 @@ def _patch_target(name: str) -> str:
     if name in _FLOW_OWNED_NAMES or name.startswith(_FLOW_OWNED_PREFIXES):
         return "hitl.flows.accepted_sequence." + name
     return "hitl.accepted_sequence_run." + name
-from hitl.accepted_sequence_probe import Analysis, Check, analyse, verdict_bundle  # noqa: E402
+from hitl.accepted_sequence_probe import (  # noqa: E402
+    Analysis,
+    Check,
+    _run_window,
+    analyse,
+    verdict_bundle,
+)
 from hitl.control_constants import (  # noqa: E402
     GLOBAL_TRANSPORT_NOTE,
     LOOP_SELECT_NOTE_BASE,
@@ -988,7 +994,7 @@ class EvidenceGateTests(unittest.TestCase):
 
     def _drive(self, argv, *, census=None, press=None, clear=None, log_lines=(),
                census_readable=True, run_plan="DROVE_LEG", real_ensure_transport=False,
-               crash_expected=False):
+               crash_expected=False, leg_rows=None, final_stop_row=None):
         """Run `main` against a fake managed capture; returns the report plus what the wire saw.
 
         `press(log, slot_number, attempt)` models the device's answer to a loop-button press: the driver's
@@ -1048,10 +1054,27 @@ class EvidenceGateTests(unittest.TestCase):
         clear_mock = mock("stopped_preparation.clear_slot", return_value=(
             clear if clear is not None else stopped_preparation.ClearOutcome(0, ClearStatus.CLEARED, "ok")))
         mock("observation_window", return_value=(occupancy, True))
+
+        def write_row(row):
+            if row:
+                with log.open("a", encoding="utf-8") as handle:
+                    handle.write(row + "\n")
+
+        def ensure_transport(*a, **k):
+            # The run's own final stop: the device's `Transport stopped` row, which must land *outside* the
+            # measured window, because the window ends when the plan returned.
+            if k.get("label") == "final":
+                write_row(final_stop_row)
+            return True
+
         if not real_ensure_transport:
-            mock("_ensure_transport", return_value=True)
+            mock("_ensure_transport", side_effect=ensure_transport)
         mock("_wait_for", return_value=True); mock("_await_markers", return_value=True)
-        mock("_run_plan", return_value=run_plan)
+        if leg_rows is None:
+            mock("_run_plan", return_value=run_plan)
+        else:
+            # Rows the leg's own plan produced: what a measured window has to contain.
+            mock("_run_plan", side_effect=lambda *a, **k: (write_row(leg_rows), run_plan)[1])
         stack.enter_context(patch("time.monotonic", lambda: clock["t"]))
         stack.enter_context(
             patch("time.sleep", lambda seconds: clock.__setitem__("t", clock["t"] + max(seconds, 0.0))))
@@ -1281,6 +1304,39 @@ class EvidenceGateTests(unittest.TestCase):
             self.assertIn("p=", events[-1]["tail"][-1])
             # And a target that stays undecidable is still refused, never read as empty.
             self.assertIsNone(events[-1].get("census"))
+
+    def test_the_measured_window_ends_at_the_plan_not_at_the_runs_own_stop(self):
+        """The window's end is the *plan's* return, before the settle and the run's own final stop.
+
+        Load-bearing on the device: in `captures/s4f22-dec096-od-13` the driver's final stop lands ~8 s (and
+        thousands of device rows) after the leg's last press, so a mark taken once the leg had returned would
+        put the run's own teardown *inside* every window and fail `continuous_transport` on a conforming run.
+        """
+        def press(log, slot_number, attempt):
+            # The seed presses answer on their own slot's display row, as the device does.
+            with log.open("a", encoding="utf-8") as handle:
+                for state in ("ARMED", "RECORDING"):
+                    handle.write(disp_row(slot_number, state) + "\n")
+
+        fixture = self._drive(
+            ["--leg", "od", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1"],
+            census={(7, 3): False, (7, 4): False}, press=press,
+            log_lines=["Logger initialized with level: 3", "BOOT,usb_host,deferred"],
+            leg_rows="#CAP,58214195,DIAG,reentry,admit,1454,4,4,1",
+            final_stop_row="[67.747] [INFO] Transport stopped")
+        report = fixture.report
+        self.assertEqual("DROVE_LEG", report["result"])
+        self.assertLess(report["leg_window_end_row"], report["leg_end_row"],
+                        "the run's own final stop must not be inside the measured window")
+        text = fixture.log.read_text()
+        inside = analyse(text, leg="od", slot_a=4, slot_b=5,
+                         window=(report["leg_start_row"], report["leg_window_end_row"]))
+        self.assertEqual("ok", by_name(inside)["continuous_transport"].status)
+        # What the mark is *for*: the same log read out to the run's own end fails the invariant.
+        after = analyse(text, leg="od", slot_a=4, slot_b=5,
+                        window=(report["leg_start_row"], report["leg_end_row"]))
+        self.assertEqual("fail", by_name(after)["continuous_transport"].status)
+
 
 
 class PressSpacingTests(unittest.TestCase):
@@ -1654,6 +1710,152 @@ class OverdubIdentityDeviceExcerpt(unittest.TestCase):
         self.assertEqual(1, len(result.evidence["dec070_retarget_fallback"]))
         self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
         self.assertTrue(any("task 5.11" in lim for lim in result.limitations))
+
+
+class WindowInvariantTests(unittest.TestCase):
+    """Spec *Continuously playing acceptance window* as oracle predicates (task 5.1).
+
+    The requirement is that the global transport keeps playing through the measured window and that one clock
+    source is in force across it (its two scenarios are "global transport does not stop" and the clock-source
+    change). The window's boundaries are the **driver's own marks** -- `leg_start_row` (before the leg's first
+    gesture) and `leg_window_end_row` (when the leg's plan returned, before the settle and the run's own final
+    stop) -- and the invariants are read over exactly that span. Pinned here: a stop *inside* the window fails,
+    a stop *outside* it does not, a clock transition inside it fails, a shed capture makes clock-absence
+    non-evidence, and a capture that cannot bound its window says UNKNOWN rather than claiming stability from
+    absence. The rows the predicates read are the device's own: `Transport stopped` from `ClockManager` and
+    the `#CAP,<us>,CS,<from>,<to>` one-shot from `DebugSessionCapture::clockSource`.
+    """
+
+    def setUp(self):
+        self.provenance = json.loads(OD_EXCERPT_PROVENANCE.read_text())
+        self.text = OD_EXCERPT.read_text()
+        self.metadata = {"git_commit": self.provenance["git_commit"],
+                         "firmware_hex_sha256": self.provenance["firmware_hex_sha256"]}
+        self.stop_row = "[30.000] [INFO] Transport stopped"
+
+    def run_window(self, text=None, window=None, leg=None):
+        return analyse(text if text is not None else self.text, leg=leg or self.provenance["leg"],
+                       slot_a=self.provenance["slot_a"], slot_b=self.provenance["slot_b"],
+                       metadata=self.metadata, base_report=BASE_REPORT, window=window)
+
+    def with_row(self, row, at):
+        lines = self.text.splitlines()
+        return "\n".join(lines[:at] + [row] + lines[at:]) + "\n"
+
+    def test_the_excerpt_bounds_its_window_from_its_own_press_rows(self):
+        """No run marks in a hand-cut excerpt: the leg's own `Loop N:` press rows are the (weaker) boundary."""
+        result = self.run_window()
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict,
+                         [(c.name, c.status, c.detail) for c in result.checks])
+        self.assertEqual("ok", by_name(result)["continuous_transport"].status)
+        self.assertEqual("ok", by_name(result)["clock_source_stable"].status)
+        self.assertIn("press span", result.evidence["window"][0])
+
+    def test_a_transport_stop_inside_the_measured_window_fails(self):
+        """The requirement itself: the acceptance window must stay playing."""
+        text = self.with_row(self.stop_row, 3)
+        result = self.run_window(text)
+        self.assertEqual("fail", by_name(result)["continuous_transport"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+        self.assertEqual([self.stop_row], result.evidence["window_transports_stopped"])
+
+    def test_a_record_leg_stop_inside_the_window_names_the_plans_own_step(self):
+        """The record leg's plan still stops the global transport itself: the oracle must say whose it is.
+
+        The spec's record-successor scenario has the switch to B carry B's record start, so a stop inside a rec
+        run's window is the *plan's* (`leg_gestures`' `a_stop`), not a device defect. Task 4.2 is that change;
+        until it lands the oracle names it instead of leaving a reader to infer it from the row.
+        """
+        text = self.with_row(self.stop_row, 3)
+        result = self.run_window(text, leg="rec")
+        self.assertEqual("fail", by_name(result)["continuous_transport"].status)
+        self.assertTrue(any("names the *plan*" in lim and "task 4.2" in lim for lim in result.limitations),
+                        result.limitations)
+        # And on the overdub leg the same row is the device's own stop, with no such excuse recorded.
+        od = self.run_window(text)
+        self.assertEqual("fail", by_name(od)["continuous_transport"].status)
+        self.assertFalse(any("names the *plan*" in lim for lim in od.limitations))
+
+    def test_a_transport_stop_after_the_legs_last_press_is_not_a_window_failure(self):
+        """The run's final stop is *teardown*, not a contract failure -- the boundary has to be exact."""
+        text = self.with_row(self.stop_row, len(self.text.splitlines()))
+        result = self.run_window(text)
+        self.assertEqual("ok", by_name(result)["continuous_transport"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+    def test_the_runs_own_marks_bound_the_window_when_they_are_supplied(self):
+        """A live run states its own boundaries, and the oracle names which boundary it used."""
+        text = self.with_row(self.stop_row, len(self.text.splitlines()))
+        lines = text.splitlines()
+        result = self.run_window(text, window=(2, len(lines) - 1))
+        self.assertEqual("ok", by_name(result)["continuous_transport"].status)
+        self.assertIn("run's own leg marks", result.evidence["window"][0])
+        # The same capture, read one row further, contains the stop and fails: the mark is what decides it.
+        after = self.run_window(text, window=(2, len(lines)))
+        self.assertEqual("fail", by_name(after)["continuous_transport"].status)
+
+    def test_a_clock_source_transition_inside_the_window_fails(self):
+        """One timeline: the evidence either side of a clock change is not the same measurement."""
+        text = self.with_row("#CAP,60000000,CS,INT,EXT", 3)
+        result = self.run_window(text)
+        self.assertEqual("fail", by_name(result)["clock_source_stable"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_FAIL", result.verdict)
+        self.assertEqual(["#CAP,60000000,CS,INT,EXT"], result.evidence["window_clock_transitions"])
+
+    def test_a_shed_capture_makes_clock_absence_not_evidence(self):
+        """`CS` is ordinary (non-Tier-A) ring text, so a row shed *inside* the span cannot be read as a
+        stable clock: absence of the transition row is not evidence when rows went missing in the window."""
+        text = self.with_row("RING,shed,tier=ordinary,dropped=3", 3)
+        result = self.run_window(text)
+        self.assertEqual("ok", by_name(result)["continuous_transport"].status)
+        self.assertEqual("unknown", by_name(result)["clock_source_stable"].status)
+        self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+    def test_a_shed_row_outside_the_window_leaves_the_clock_check_measured(self):
+        """The shed rule is scoped to the span: a drop *outside* it does not make the window unmeasurable.
+
+        Measured: the device run in `captures/s4f22-dec096-od-13` shed one ordinary row at device 51.4 s, well
+        before its leg began. Reading the whole capture rather than the window would have reported that run's
+        clock source as unmeasurable for a drop that could not have touched it.
+        """
+        text = self.with_row("RING,shed,tier=ordinary,dropped=1", len(self.text.splitlines()))
+        result = self.run_window(text)
+        self.assertEqual("ok", by_name(result)["continuous_transport"].status)
+        self.assertEqual("ok", by_name(result)["clock_source_stable"].status)
+        self.assertEqual([], result.evidence["window_shed_rows"])
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+    def test_a_capture_with_no_boundary_reports_the_invariants_as_unknown(self):
+        """No run marks and no press rows: "the transport never stopped inside it" is not established."""
+        text = "\n".join(line for line in self.text.splitlines() if "Loop 5:" not in line) + "\n"
+        self.assertNotEqual(self.text, text)
+        result = self.run_window(text)
+        self.assertEqual("unknown", by_name(result)["continuous_transport"].status)
+        self.assertEqual("unknown", by_name(result)["clock_source_stable"].status)
+        self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+        self.assertIn("unbounded", result.evidence["window"][0])
+
+    def test_one_press_row_is_not_a_window(self):
+        """A single request row bounds nothing: the "window" would be that row alone, and claiming the
+        transport never stopped over it would be reading a boundary out of one line."""
+        text = "\n".join(line for line in self.text.splitlines() if "Switch gesture" not in line) + "\n"
+        self.assertNotEqual(self.text, text)
+        result = self.run_window(text)
+        self.assertEqual("unknown", by_name(result)["continuous_transport"].status)
+        self.assertEqual("unknown", by_name(result)["clock_source_stable"].status)
+
+    def test_only_an_ordered_pair_of_line_offsets_is_a_window(self):
+        """A driver report that predates the mark, or a malformed one, yields no window -- never a false OK."""
+        valid = {"leg_start_row": 10, "leg_window_end_row": 20}
+        self.assertEqual((10, 20), _run_window(valid))
+        for bad in (None, {}, {"leg_start_row": 10}, {"leg_window_end_row": 20},
+                    {"leg_start_row": None, "leg_window_end_row": 20},
+                    {"leg_start_row": 20, "leg_window_end_row": 20},
+                    {"leg_start_row": 21, "leg_window_end_row": 20},
+                    {"leg_start_row": -1, "leg_window_end_row": 20},
+                    {"leg_start_row": "10", "leg_window_end_row": 20},
+                    {"leg_start_row": True, "leg_window_end_row": 20}):
+            self.assertIsNone(_run_window(bad), bad)
 
 
 class SealedVerdictTests(unittest.TestCase):

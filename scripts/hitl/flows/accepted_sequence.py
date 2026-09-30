@@ -678,6 +678,11 @@ class LegOutcome:
     plan: list[dict] = field(default_factory=list)
     identity_stats_rows: Optional[list[str]] = None
     leg_start_row: Optional[int] = None
+    # The measured window's **own** end: the line count when the leg's plan returned, taken here rather than
+    # by the caller because the settle and the final stopped-only stop that follow are the *run's* teardown,
+    # not the window (measured: in `captures/s4f22-dec096-od-13` the driver's final stop lands 8 s after the
+    # leg's last press, so a mark taken after `drive_leg` would put it inside every window).
+    leg_window_end_row: Optional[int] = None
     leg_rows: int = 0
     preparation_error: str = ""
     census_state: Optional[dict] = None
@@ -975,6 +980,10 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
                 out_port, capture_log, plan, slot_b=request.slot_b, press_ms=request.press_ms,
                 phase_timeout_s=request.phase_timeout_s, events=events,
                 note_channel=t0, overdub_notes=request.notes, drain=drain)
+            # The window ends where the plan did, not where the run does: the settle and the final stop below
+            # are the run's own teardown, and the oracle reads the continuous-transport / clock-source
+            # invariants over exactly this span.
+            outcome.leg_window_end_row = len(_lines(capture_log))
     # The leg's settle is the run's longest stretch with nothing on the wire, so it is the one place a
     # cancel would otherwise wait out a whole phase before the capture could be released.
     cancellable_sleep(request.settle_s, scope=active_cancel_scope())

@@ -189,7 +189,22 @@ declaration (`spec.py`), the per-profile scope (`registry.py`), the resolution a
   module and its corpus; each new predicate is added with its own failing case first.
 - **Verification recipe**: `test_accepted_sequence` + corpus, the new bundle suite, `test_hitl_import_gate`,
   `pio test -e native`.
-- **Completion record**: to be filled.
+- **Completion record (5.1, 2026-09-30 — the window invariants)**: the last two named edges are predicates.
+  The window is the **driver's own mark pair** — `leg_start_row` (before the leg's first gesture) and
+  `leg_window_end_row` (when the plan returned, before the settle and the run's final stopped-only stop, which
+  is what the requirement puts outside the window) — and the oracle reads the invariants over exactly that
+  `[start, end)` span. Both predicates come from the device's own rows: `ClockManager`'s `Transport stopped`
+  human row and `DebugSessionCapture::clockSource`'s `#CAP,<us>,CS,<from>,<to>` one-shot. **Checks run**: the
+  oracle CLI over the real `captures/s4f22-dec096-od-13` capture with the run's marks
+  (`ACCEPTED_SEQUENCE_PASS`) and with the run's own end as the window end (`ACCEPTED_SEQUENCE_FAIL` on the
+  driver's final stop); `test_accepted_sequence` **112/112**, corpus **3/3**, neighbours green together, host
+  sweep **1,039 tests / 75 suites** (only the seven pre-existing unrelated failures), **7 mutations** red-proved
+  with byte-identical restores. **NOT RUN / NOT APPLICABLE**: `pio test -e native`, build, RAM1 and device —
+  host tooling only, no firmware file touched, no board action. **Fixture implemented**: yes — the window
+  predicates are pinned in `test_accepted_sequence.py`, over the retained `s4f22-dec096-od-13` excerpt and
+  synthetic variants of it, and the run report carries both marks. **Task IDs eligible for checkoff**: none on
+  its own — **5.1** stays `[~]` until 4.2 makes the record leg switch-carried (its plan's `a_stop` is now a
+  named `continuous_transport` failure) and 4.3 lands the mixed leg.
 
 ## Slice 6.1–6.4 — hardware qualification
 
