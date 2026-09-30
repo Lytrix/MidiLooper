@@ -420,6 +420,14 @@ DEFAULT_SEED_PRESS_ATTEMPTS = 3
 DEFAULT_SEED_SETTLE_TIMEOUT_S = 10.0
 
 
+#: Bound for the seeded take's *publication* before the leg's first gesture. A record stop's deferred stages
+#: (`finalize` / `visual_cache_request` / `revt_queue` / `save_request`) outlive the seed by tens of seconds on a
+#: fresh boot, and the device refuses a record admission until the obligation is gone: measured
+#: (`captures/s4f22-dec096-od-12`) slot 3's publication landed 40 s after its stop, which is what
+#: `record admission deferred while a stop obligation is live for slot 3` was waiting for.
+DEFAULT_PREDECESSOR_PUBLICATION_TIMEOUT_S = 75.0
+
+
 def _leg_deferral_row(capture_log: Path, after: int) -> str:
     """The device's own row explaining why it deferred a record admission after `after`, or ""."""
     return next((line.strip() for line in _lines(capture_log)[max(after, 0):]
@@ -630,6 +638,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seed-settle-timeout-s", type=float, default=DEFAULT_SEED_SETTLE_TIMEOUT_S,
                    help="Bound for a seeded take's finalization receipt after its commit stop (recorded, "
                         "not a gate)")
+    p.add_argument("--predecessor-publication-timeout-s", type=float,
+                   default=DEFAULT_PREDECESSOR_PUBLICATION_TIMEOUT_S,
+                   help="Bound for the seeded take's *publication* (the stop obligation the device makes a "
+                        "record admission wait on) before the leg's first gesture; measured ~40 s after the "
+                        "stop on device")
     p.add_argument("--no-clear-targets", dest="clear_targets", action="store_false", default=True,
                    help="Do not clear the target slots first; requires them to be empty already")
     args = p.parse_args(argv)
@@ -966,6 +979,16 @@ def main(argv: list[str] | None = None) -> int:
                                          events=events, label="leg_start"):
                     report["result"] = "TRANSPORT_START_UNCONFIRMED"
                 else:
+                    # Wait for the seeded takes' publication before the leg's first gesture: the device makes a
+                    # record admission wait on the predecessor's stop obligation, and that obligation is only
+                    # gone once the deferred stages have published (measured ~40 s after the stop). Recorded,
+                    # not fatal -- the leg still reports the device's own deferral row if it arrives anyway.
+                    published = _await_markers(
+                        capture_log, leg_mark,
+                        (f"Record pass undo reset for slot {a0}", f"Reentry released slot={a0}",
+                         f"Record pass undo reset for slot {b0}", f"Reentry released slot={b0}"),
+                        args.predecessor_publication_timeout_s, drain=drain)
+                    events.append({"event": "leg_predecessor_publication", "settled": published})
                     report["leg_start_row"] = len(_lines(capture_log))
                     report["result"] = _run_plan(
                         out_port, capture_log, plan, slot_b=args.slot_b, press_ms=args.press_ms,
