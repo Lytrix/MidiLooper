@@ -3511,6 +3511,32 @@ meant to verify. No task checkoff; the packet records the same evidence and the 
       transport-start fallback; repeated presses of one button stay outside the firmware's tap window
       (`captures/s4f22-dec096-rec-01`: two taps 0 ms apart became `Loop 3 (double)` = `OVERDUB_FOR_SLOT`); and
       every seed abort is a reported `PreparationFailure`, so the run writes its `accepted-sequence.json` at all
+
+      **2026-09-30 — device rerun on the corrected driver: the OD leg drives (`captures/s4f22-dec096-od-13`,
+      `DROVE_LEG`, commit `cf6c1853`, firmware `8d07faec…` = the DEC-096 image).** Ten attempts, one fix each, all
+      attributed from the device's own rows: the census retry sized for the boot restore and refusal before any
+      gesture (`od-02`, `od-06`, `od-07`); a decode failure and a crash both named and reported, with the report
+      written at every milestone (`od-08`, whose `LIBOBS,E` row read mid-write raised `int('')`); receipts
+      qualified by the gesture's own device clock instead of file position or a text match (`od-03`, `od-04`);
+      receipt waits flushing the capture ring (`od-05`); the commit mark before the commit press (`od-09`, the
+      `RECS,stop,<slot>` row lands at the stop edge); seed readiness from the live human rows with no press on an
+      already-armed target (`od-10`, where the extra press was read as `Stop Recording`); and the leg waiting for
+      the predecessor's publication while reporting the device's own
+      `record admission deferred while a stop obligation is live for slot N` (`od-12`, publication 40 s after the
+      stop; `--predecessor-publication-timeout-s`). **`od-13`:** both clears (B through the documented
+      `post_load_holdoff` refusal retries, A through an `ABORTED` retry), both seeds armed/recorded/committed/
+      settled, the full plan `select_track → a_overdub_start (16 notes) → b_switch → b_overdub_start (1 note) →
+      b_stop_request` driven, shutdown `complete`, no latch. Oracle: every setup gate **ok** (fresh boot, identity
+      pinned to this commit, overflow-free with the single `RING,shed` reported as the non-fatal diagnostic row it
+      is), `L2_no_capacity_denial` **ok**, `L3_a_finalization_window` **ok**
+      (`DIAG,reentry_window_open,3,1049,1536`), `L4_a_capacity_released` **ok**
+      (`DIAG,canonical_release,3,32,1536,8`), and `L1`/`L5`/`L6`/`L7` + `overdub_interval_identity` **unknown** in
+      the oracle's own words: *"RECA/RECS do not identify overdub intervals; correlated overdub start,
+      accepted-stop and retirement evidence for A and B is still required"* — the sibling change's identity work,
+      not this driver's gates. Evidence: `test_accepted_sequence` **66/66**, 15 neighbouring host suites
+      **372/372** together, four mutations red-proved and restored byte-identically, `git diff --check` clean.
+      **No checkoff:** S4f.22's acceptance still needs that overdub-identity evidence and a content-parity run;
+      further device iteration needs approval.
       (`rec-01` and `mixed-01` wrote none). The seed's post-commit finalization receipt is recorded, not gated.
       Evidence: `test_accepted_sequence` **63/63** (9 new), four mutations red-proved and restored
       byte-identically, 15 neighbouring host suites **369/369** together, the new gates replayed against the real
@@ -3519,3 +3545,7 @@ meant to verify. No task checkoff; the packet records the same evidence and the 
       (0/8 with these suites first). **No checkoff:** S4f.22 stays open on its device half, the leg has not been
       driven on this fix, and `captures/.device-shutdown-incomplete.json` is still latched (`context:
       accepted-sequence-od`), so an upload/`--boot-reset` needs approval.
+
+      **Superseded by the device-rerun entry above (2026-09-30):** a leg *has* since been driven on this fix
+      (`captures/s4f22-dec096-od-13`, `DROVE_LEG`) and `captures/.device-shutdown-incomplete.json` is **clear**;
+      S4f.22 stays unchecked for the overdub-identity evidence and a content-parity run, not for the driver.
