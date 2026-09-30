@@ -159,7 +159,32 @@ Stage owner: existing serial command/capture service and operation owners. Preco
 
 Stage owner: actions, narrow verify wait facade, session/managed capture and reporting. Preconditions: versioned observation protocol available. Postcondition: dependent actions require matching responses and aborts retain evidence. Invariants: flow modules stateless, no duplicate parser, no hidden retry. Commit boundary: reusable host action/lifecycle slice.
 
-- [ ] 3.1 Add correlated gesture and operation waits with deterministic monotonic time; verify send/recognize/accept/execute remain distinct, pending switches block follow-ups, and the old wrong-slot completion mutation fails regression tests.
+- [~] 3.1 Add correlated gesture and operation waits with deterministic monotonic time; verify send/recognize/accept/execute remain distinct, pending switches block follow-ups, and the old wrong-slot completion mutation fails regression tests.
+      **2026-09-30 — the layer half is in; the runner does not consume it yet.** `scripts/hitl/actions/correlation.py`
+      owns the four stages (`Stage`, `CorrelatedGesture`, `StageRules`, `Wire`, `PendingSwitchGate`): only the next
+      pending stage advances, so an execute-only row cannot satisfy recognition or acceptance; every acceptable row
+      must carry the identity **its own wire family** uses (`Loop 4:` vs `DISP,3,`), so a foreign slot's row cannot
+      substitute; a row stamped before the device clock observed at the press is drained history
+      (`hitl.device_time`, reused instead of re-derived); a row that answers *differently* is `contradicted` rather
+      than a timeout, while a missing row stays a gap — the acceptance oracle's own absence-versus-contradiction
+      split; and `now`/`sleep` are injected, so every bounded wait is testable without a device. "Pending switches
+      block follow-ups" is the `PendingSwitchGate`, whose pending/released vocabulary is the firmware's own rows
+      (`Queued playback switch` incl. the filled-slot form, `Reaffirmed playback switch`, `Switch gesture from slot`)
+      and whose attribution refuses an unattributed `Playback started` for naming no slot. The press helpers in
+      `hitl/actions/{buttons,slots}.py` now own SEND (`correlate=` / `before_device_us=`, classification names taken
+      from `MidiButtonManager`: `short`/`double`/`triple`, plus `long`), so the stage is written where the note goes on
+      the wire and no flow has to declare its own gesture; every existing caller stays fire-and-forget.
+      **Evidence:** new `scripts/test_hitl_correlated_actions.py` **19/19** (one case per clause), neighbouring host
+      suites **216/216** across 8 suites (`test_hitl_actions` 2/2, `test_hitl_import_gate` 2/2,
+      `test_accepted_sequence` 90/90, `test_managed_record_drain` 21/21, `test_hitl_serial_timing` 33/33,
+      `test_hitl_command_forwarding` 26/26, `test_retention_handoff_plan` 23/23), five mutations red-proved and
+      restored byte-identically (identity check, gate attribution, staleness floor, contradiction clause, press
+      helper's SEND), and two unrelated pre-existing suite failures re-confirmed identical with this slice stashed.
+      **Owed:** no *driver* consumes the primitive yet — `hitl_accepted_sequence.py`'s
+      `_await_slot_disp`/`_slot_ready_state` and `hitl_retention_handoff.py`'s `_wait_for_any` (markers that name no
+      slot) still re-derive their own waits, which is what makes the "no dependent gesture while a switch is pending"
+      clause true of the runner and not only of the layer.
+      [Correlated-actions evidence](CORRELATED-ACTIONS-EXECUTION.md).
 - [ ] 3.2 Make cancellation suppress every subsequent test MIDI edge, release held notes safely, complete worker cancellation before capture release and preserve persistence-aware teardown; inject timeout/exception at every action boundary and verify partial report, nonzero exit and no post-abort press.
 - [ ] 3.3 Use the managed watchdog/metadata path and immutable versioned report schema; verify setup failures, protocol absence, teardown failure and verify-only replay without ports. Resolve the import gate only for the narrow architecture-approved observation-wait facade and run the import-gate suite.
 
