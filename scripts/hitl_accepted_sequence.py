@@ -286,6 +286,16 @@ def _gesture_clock_us(capture_log: Path, after: int) -> Optional[int]:
     return best
 
 
+def _drain_now(drain) -> None:
+    """Ask the capture owner to flush the ring, tolerating a session that has already gone."""
+    if drain is None:
+        return
+    try:
+        drain()
+    except Exception:  # a drain request must never be the thing that fails a run
+        pass
+
+
 def _slot_disp_rows(capture_log: Path, after: int, slot0: int,
                     states: Optional[tuple[str, ...]] = None) -> list[str]:
     """`DISP` rows naming `slot0` that were **emitted after** the gesture at `after`.
@@ -316,18 +326,51 @@ def _slot_disp_rows(capture_log: Path, after: int, slot0: int,
 
 
 def _await_slot_disp(capture_log: Path, after: int, slot0: int,
-                     states: Optional[tuple[str, ...]], timeout_s: float) -> Optional[str]:
-    """Wait for a live `DISP` row naming `slot0`; None when none arrives inside `timeout_s`."""
+                     states: Optional[tuple[str, ...]], timeout_s: float,
+                     *, drain=None) -> Optional[str]:
+    """Wait for a `DISP` row naming `slot0` emitted after the gesture; None when none arrives in time.
+
+    The wait flushes the capture ring on its own cadence: the ring holds rows until the owner is asked to
+    flush it, and nothing else drains it during a seed phase, so evidence can otherwise be absent from the log
+    for tens of seconds while the device has already done the thing (measured: `od-05`'s take committed, and
+    the `RECS,stop,4,2118` row that proves it reached the log only on a later drain).
+    """
     deadline = time.monotonic() + max(timeout_s, 0.0)
+    next_drain = time.monotonic() + DRAIN_EVERY_S
     while True:
         rows = _slot_disp_rows(capture_log, after, slot0, states)
         if rows:
             return rows[-1]
-        if time.monotonic() >= deadline:
+        now = time.monotonic()
+        if now >= deadline:
             return None
+        if now >= next_drain:
+            _drain_now(drain)
+            next_drain = now + DRAIN_EVERY_S
         time.sleep(0.05)
 
 
+def _await_markers(capture_log: Path, after: int, markers: tuple[str, ...], timeout_s: float,
+                   *, drain=None) -> bool:
+    """Wait for any of `markers` in the rows after `after`, flushing the capture ring as it waits."""
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    next_drain = time.monotonic() + DRAIN_EVERY_S
+    while True:
+        tail = _lines(capture_log)[after:]
+        if any(marker in line for line in tail for marker in markers):
+            return True
+        now = time.monotonic()
+        if now >= deadline:
+            return False
+        if now >= next_drain:
+            _drain_now(drain)
+            next_drain = now + DRAIN_EVERY_S
+        time.sleep(0.05)
+
+
+
+#: How often a receipt wait may ask the owner to flush the capture ring.
+DRAIN_EVERY_S = 2.0
 #: The census is a read-only *request*: one lost window is a delivery outcome, so it is retried inside the
 #: run's bound before a target is declared undecidable (`captures/s4f22-dec096-od-02`: the first request was
 #: lost, the next answered 64 slots, settled).
@@ -598,6 +641,9 @@ def main(argv: list[str] | None = None) -> int:
         out_port = mido.open_output(_find_midi_port("Teensy", is_input=False))
         ctx = _Ctx(out_port)
 
+        # The capture ring holds rows until its owner is asked to flush them, so a receipt wait drains too.
+        drain = getattr(capture, "drain_capture_ring", None)
+
         with DeviceSession(
                 capture_log_getter=lambda: capture_log,
                 send_transport_stop=lambda: _ensure_transport(
@@ -687,7 +733,7 @@ def main(argv: list[str] | None = None) -> int:
                         select_mark = len(_lines(capture_log))
                         _press_slot(slot_number)
                         selected_row = _await_slot_disp(capture_log, select_mark, slot0, None,
-                                                        args.arm_timeout_s)
+                                                        args.arm_timeout_s, drain=drain)
                         events.append({"event": f"prepare_slot_{label}_selected", "slot": slot_number,
                                        "confirmed": selected_row is not None,
                                        "row": None if selected_row is None else selected_row.strip()})
@@ -748,7 +794,7 @@ def main(argv: list[str] | None = None) -> int:
                     press_mark = len(_lines(capture_log))
                     _press_slot(slot_number)
                     armed_row = _await_slot_disp(capture_log, press_mark, slot0,
-                                                 ("ARMED", "RECORDING"), args.arm_timeout_s)
+                                                 ("ARMED", "RECORDING"), args.arm_timeout_s, drain=drain)
                     events.append({"event": f"seed_{label}_press", "attempt": attempt,
                                    "slot": slot_number, "armed": armed_row is not None})
                     if armed_row is not None:
@@ -762,7 +808,7 @@ def main(argv: list[str] | None = None) -> int:
                 _ensure_transport(out_port, capture_log, running=True, press_ms=args.press_ms,
                                   events=events, label=f"seed_{label}_start")
                 recording = _await_slot_disp(capture_log, press_mark, slot0, ("RECORDING",),
-                                             args.phase_timeout_s) is not None
+                                             args.phase_timeout_s, drain=drain) is not None
                 events.append({"event": f"seed_{label}_recording", "confirmed": recording})
                 if not recording:
                     raise PreparationFailure(
@@ -779,19 +825,19 @@ def main(argv: list[str] | None = None) -> int:
                 _ensure_transport(out_port, capture_log, running=False, press_ms=args.press_ms,
                                   events=events, label=f"seed_{label}_commit")
                 commit_mark = len(_lines(capture_log))
-                committed = _wait_for(capture_log, commit_mark,
-                                      (f",RECS,stop,{slot0},", f",RECS,stopToStopped,{slot0},"),
-                                      timeout_s=args.phase_timeout_s)
+                committed = _await_markers(capture_log, commit_mark,
+                                           (f",RECS,stop,{slot0},", f",RECS,stopToStopped,{slot0},"),
+                                           args.phase_timeout_s, drain=drain)
                 events.append({"event": f"seed_{label}_committed", "confirmed": committed})
                 if not committed:
                     raise PreparationFailure(f"slot {slot_number} seed commit unconfirmed")
                 # Recorded, not gated: whether the seeded take's finalization release edge arrived inside the
                 # bound. The *next* seed's own selection/arm receipts are its gates, and they fail by name when
                 # a predecessor still holds the selection, so this only has to make the latency attributable.
-                settled = _wait_for(capture_log, commit_mark,
-                                    (f"Reentry released slot={slot0}",
-                                     f"Record pass undo reset for slot {slot0}",
-                                     "PERS,result,"), timeout_s=args.seed_settle_timeout_s)
+                settled = _await_markers(capture_log, commit_mark,
+                                         (f"Reentry released slot={slot0}",
+                                          f"Record pass undo reset for slot {slot0}",
+                                          "PERS,result,"), args.seed_settle_timeout_s, drain=drain)
                 events.append({"event": f"seed_{label}_finalization_settled", "slot": slot_number,
                                "confirmed": settled})
 

@@ -476,7 +476,7 @@ class PreparationIntegrationTests(unittest.TestCase):
                 mock("stopped_preparation.clear_slot", return_value=refused)
                 mock("observation_window", return_value=({(7, 3): True, (7, 4): True}, True))
                 mock("_ensure_transport", return_value=True)
-                mock("_wait_for", return_value=True)
+                mock("_wait_for", return_value=True); mock("_await_markers", return_value=True)
                 mock("_run_plan", return_value="DROVE_LEG")
                 mock("time.sleep")
                 stack.enter_context(patch("builtins.print"))
@@ -541,7 +541,7 @@ class PreparationIntegrationTests(unittest.TestCase):
                 clear = mock("stopped_preparation.clear_slot", return_value=cleared)
                 mock("observation_window", return_value=({(7, 3): True, (7, 4): True}, True))
                 mock("_ensure_transport", return_value=True)
-                mock("_wait_for", return_value=True)
+                mock("_wait_for", return_value=True); mock("_await_markers", return_value=True)
                 mock("_run_plan", return_value="DROVE_LEG")
                 mock("time.sleep")
                 stack.enter_context(patch("builtins.print"))
@@ -638,7 +638,7 @@ class CensusPreparationTests(unittest.TestCase):
                 mock("slots.press_slot_record", side_effect=answering_presses(log))
                 clear = mock("stopped_preparation.clear_slot")
                 mock("observation_window", return_value=({(7, 3): False, (7, 4): False}, True))
-                mock("_ensure_transport", return_value=True); mock("_wait_for", return_value=True)
+                mock("_ensure_transport", return_value=True); mock("_wait_for", return_value=True); mock("_await_markers", return_value=True)
                 mock("_run_plan", return_value="DROVE_LEG"); mock("time.sleep")
                 stack.enter_context(patch("builtins.print"))
                 out = root / "run"
@@ -679,7 +679,7 @@ class CensusPreparationTests(unittest.TestCase):
                 mock("stopped_preparation.clear_slot", return_value=cleared)
                 # Both targets are filled: neither may be long-pressed before it is selected.
                 mock("observation_window", return_value=({(7, 3): True, (7, 4): True}, True))
-                mock("_ensure_transport", return_value=True); mock("_wait_for", return_value=True)
+                mock("_ensure_transport", return_value=True); mock("_wait_for", return_value=True); mock("_await_markers", return_value=True)
                 mock("_run_plan", return_value="DROVE_LEG"); mock("time.sleep")
                 stack.enter_context(patch("builtins.print"))
                 out = root / "run"
@@ -728,7 +728,7 @@ class ManagedRunTests(unittest.TestCase):
                 mock("slots.press_track")
                 select = mock("slots.press_slot_record", side_effect=answering_presses(log))
                 mock("_ensure_transport", return_value=True)
-                mock("_wait_for", return_value=True)
+                mock("_wait_for", return_value=True); mock("_await_markers", return_value=True)
                 mock("time.sleep")
                 mock("_run_plan", return_value="UNEXPECTED_PLAYBACK_SWITCH")
                 stack.enter_context(patch("builtins.print"))
@@ -817,7 +817,7 @@ class EvidenceGateTests(unittest.TestCase):
         mock("observation_window", return_value=(occupancy, True))
         if not real_ensure_transport:
             mock("_ensure_transport", return_value=True)
-        mock("_wait_for", return_value=True)
+        mock("_wait_for", return_value=True); mock("_await_markers", return_value=True)
         mock("_run_plan", return_value=run_plan)
         stack.enter_context(patch("time.monotonic", lambda: clock["t"]))
         stack.enter_context(
