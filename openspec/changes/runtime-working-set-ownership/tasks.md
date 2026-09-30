@@ -2899,6 +2899,20 @@ has not run to completion.
       all findings. Run response-driven identified device R→R, OD→OD and mixed record-A → overdub-B with
       natural overlap, continuous transport, one press, content/undo/persistence parity and existing timing
       gates. Missing overlap is NOT_EXERCISED. Link evidence to S4f.13; do not close from host results.
+      **Status 2026-09-30 (host; no device action) — the OD leg's identity links are now decidable, and the host
+      half of this task's contract is green.** `scripts/hitl/accepted_sequence_probe.py` reads the overdub
+      intervals' own rows (start admission `DIAG,reentry,admit`, accepted-stop binding `DIAG,reentry,bound`,
+      execution `DIAG,stop_state` 6→7 / 7→5|1, retirement `DIAG,canonical_release`) plus the button action's
+      per-interval `Loop N:` request rows, and reports `overdub_interval_identity` as its own link. Re-graded with
+      no device action: `captures/s4f22-dec096-od-13` `INSUFFICIENT_EVIDENCE`(4) → **`ACCEPTED_SEQUENCE_PASS`(0)**
+      (A interval 3: start 55.763 s, accepted 57.035 s, retired 58.772 s; B interval 4: start 58.214 s, executed
+      59.142 s, retired 59.194 s; B began 0.56 s inside A's window), and `captures/s4f22-dec096-od-01` →
+      `SETUP_INCOMPLETE`(3) with the cause named (B's start 136 ms after A's release = missing overlap,
+      NOT_EXERCISED, per this task's own text). **Still open:** the content/undo/persistence parity run and a leg
+      actually arranged to overlap (a racy arrangement: A's window ran 1.05 s in `od-01` against the driver's
+      ~1.2 s switch→record cadence), plus the R→R and mixed legs. The run also still logs the DEC-070 retarget
+      fallback, which the oracle reports as a limitation rather than a link -- that remains
+      `successor-capture-reentry-unguarding` 5.11's own gate.
 
 - [~] S4f.13 **HITL — record/overdub stop → slot switch → record/overdub stop (the accepted-sequence reproducer).**
       **Resolved direction (2026-09-27):** the record-overlap requirement already exists and is retained.

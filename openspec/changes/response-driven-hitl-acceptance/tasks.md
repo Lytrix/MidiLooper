@@ -44,6 +44,25 @@ Stage owner: existing serial command/capture service and operation owners. Preco
       `test_library_observation_classifier` **18/18**.
       [Closure-boundaries review follow-ups](../runtime-working-set-ownership/S4F18-CLOSURE-BOUNDARIES-EXECUTION.md).
 - [ ] 2.2 Add compact sequenced gesture/accepted-stop/start/switch/publication/retirement evidence at actual owners, including record and overdub interval identity; verify accepted-latch consumption between polls remains provable, required event loss is detectable, and unrelated slot/track events cannot substitute.
+      **2026-09-30 (host; the read half of this task's "including record and overdub interval identity").** The
+      overdub leg already *has* identity-bearing rows at its owners -- start admission `DIAG,reentry,admit`, the
+      accepted-stop binding edge `DIAG,reentry,bound` (S4f.3), the execution `DIAG,stop_state` 6→7 / 7→5|1, the
+      retirement `DIAG,canonical_release`, and the button action's own per-interval `Loop N:` request rows -- so
+      `scripts/hitl/accepted_sequence_probe.py` no longer force-unknowns L1/L5/L6/L7 on that leg: each link is
+      decided on the interval's own rows, the binding must name the start's interval, two intervals may not share
+      one identity ("unrelated slot/track events cannot substitute"), and the new `overdub_interval_identity` link
+      is `ok` only with both intervals' start + accepted stop + retirement. Also verified in the same pass: the
+      families are Tier-A, so a *lost* one is already the `overflow_free` setup gate rather than a silent gap, and
+      absence of an overdub row reads `unknown` (a gap to fix) while a contradiction reads `FAIL`. Evidence:
+      `scripts/test_accepted_sequence.py` **83/83**, `scripts/test_accepted_sequence_corpus.py` **3/3** with
+      unchanged expectations, 18 neighbouring host suites **361/361**, four mutations red-proved and restored
+      byte-identically, a new line-by-line device excerpt fixture
+      (`scripts/hitl/fixtures/accepted_sequence/s4f22-dec096-od-13-excerpt.{log,json}`), and a device-free re-grade
+      of `captures/s4f22-dec096-od-13` to `ACCEPTED_SEQUENCE_PASS`. **Still open in this task:** the sequenced
+      gesture/switch/publication evidence and the "accepted-latch consumption between polls remains provable" half
+      -- the `ODUB,stage` / `ODUB,stop` families and the `#CAP,ST,Track,…` edges still carry no interval or track
+      identity, and nothing yet ties a *consumed* accepted latch to the poll that could have missed it. That half
+      needs firmware rows (upload + device verification) and is deliberately not done here.
 - [x] 2.3 Forward allowlisted requests through `capture_session.py` and decode responses once in `serial/protocol.py`; verify one serial owner, one outstanding request, nonce mismatch, partial/coalesced lines, duplicates, delayed delivery and reset/epoch changes using transport fakes.
       **DONE 2026-09-28:** `capture_session.py` gained an opt-in `--command-stdin` channel that
       refuses anything outside the read-only allowlist (and any malformed request) by name, and
