@@ -318,7 +318,7 @@ Stage owner: stateless flows, registered scenarios and compatibility wrapper. Pr
       [AUTHORIZATION-MANIFEST-EXECUTION.md](AUTHORIZATION-MANIFEST-EXECUTION.md).
 - [ ] 4.2 Implement record recipe with genuinely empty SD-aware A/B, real record mode, switch-carried B start and one stop per interval; verify production dispatch and host scheduling with delayed observations, premature retirement and wrong-mode routes. A populated-A mutation must fail.
 - [ ] 4.3 Implement overdub recipe using confirmed seeds and the proven single capture-switch gesture, followed by B's recognized overdub start and stop; verify no separate A stop, no playback re-affirmation and no wait for predecessor retirement in the critical window.
-- [~] 4.4 Register both scenarios and route the standalone CLI through the same runner; verify legacy argument translation, explicit unsupported combinations, scenario listing, identical verdicts via both entry points and unchanged base/edit_full behavior.
+- [x] 4.4 Register both scenarios and route the standalone CLI through the same runner; verify legacy argument translation, explicit unsupported combinations, scenario listing, identical verdicts via both entry points and unchanged base/edit_full behavior.
       **2026-09-30 — registration, translation, refusals, listing and verdict identity landed; the flow
       extraction is named as the remainder.** Both legs are registered in the existing registry
       (`accepted_sequence_rec`, `accepted_sequence_od`, plus the `accepted_sequence` preset) with the
@@ -345,6 +345,38 @@ Stage owner: stateless flows, registered scenarios and compatibility wrapper. Pr
       answer *who owns the family-counter read-back* (the driver reaches `hitl.serial`, which neither a flow nor
       a scenario may import) rather than answer it during the move. See
       [SCENARIO-REGISTRATION-EXECUTION.md](SCENARIO-REGISTRATION-EXECUTION.md).
+      **2026-09-30 — 4.4b landed; the task is closed.** The leg sequence moved into the stateless flow
+      `hitl/flows/accepted_sequence.py` (`drive_leg`: census → scoped stopped preparation → seeded takes →
+      the gesture plan → the final stop and the counted read-back), the session/authorization/report moved
+      into the host run scope `hitl/accepted_sequence_run.py` (`RunRequest` → `run_accepted_sequence`), and
+      `scripts/hitl_accepted_sequence.py` is now an **argument-compatible wrapper** (same flags, same exit
+      codes, same artifact layout) that builds a `RunRequest` and delegates. Both entry points therefore
+      reach one implementation: `host_midi_hitl.py run` → the registered scenario (intent + the runner→CLI
+      translation) → the same run scope → the same flow, and the standalone CLI → the run scope directly.
+      **The ownership question 4.4a named is answered:** the stopped-only per-family counter read-back is the
+      **session's** (`ManagedCaptureSession.identity_stat_lines`, which owns the request, its fence and the
+      decode in `hitl.serial.protocol`), so the flow calls one accessor instead of importing `hitl.serial`
+      itself — the layer that is closed to both a flow and a scenario. **How the move was verified as a
+      move:** every one of the 23 moved functions was diffed against `git show HEAD:` and 22 are
+      byte-identical (the 23rd differs only in one docstring word, `driver` → `flow`); `_Ctx` deliberately
+      gained a `press_ms` parameter so there is one context stand-in rather than two. The two real drifts
+      the diff caught were fixed and are now pinned: the seed's arm gate must accept the printed
+      `Loop N: Start Recording` row and a `RECORDING` state (measured `od-10`: the `DISP` row can lag the
+      Serial row by seconds), and the census report's keys are the census's own 0-based firmware
+      `(track, slot)` pairs, not this run's 1-based CLI numbering. **Evidence:** `test_accepted_sequence`
+      **100/100** (two new: the printed-row arm receipt, and a run that dies after the census still leaving
+      its milestone report — `od-08`'s lesson), `test_accepted_sequence_scenario` **38/38** (6 new: the
+      sequence lives in the flow and not in the CLI, the wrapper's argument surface is unchanged, the flow
+      imports nothing the layer may not, importing the flow loads no verify/reporting layer, the counter
+      read-back is the session's accessor, and the milestone hook is called twice), `test_hitl_stimulus_authorization`
+      **24/24** (repointed to the run scope's owner, same refusals), the full host sweep **1,025 tests** with
+      only the seven pre-existing unrelated failures, `pio test -e native` 2,643 cases (7 skipped, 2,636
+      succeeded), **7 mutations red-proved** with byte-identical restores (two of them *survived the first
+      run* — the seed's arm wires and the milestone write — which is why those two tests exist now).
+      **Rejected alternative, recorded:** routing the wrapper literally through `hitl.runner.main` would
+      re-parse an already-parsed, argument-compatible CLI and relocate the run's artifacts (the scenario
+      writes `<out>/accepted-sequence-<leg>`), changing a verified contract for no functional gain; the
+      chosen shape reaches the same implementation through the same translation instead.
 
 ## 5. Complete acceptance oracle and regression gates
 

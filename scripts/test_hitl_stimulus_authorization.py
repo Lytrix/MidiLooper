@@ -26,6 +26,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import hitl_accepted_sequence  # noqa: E402
+import hitl.accepted_sequence_run as accepted_sequence_run  # noqa: E402
 import hitl_retention_handoff  # noqa: E402
 from hitl.stimuli.authorization import (  # noqa: E402
     CLI_SOURCE,
@@ -245,7 +246,7 @@ class DriverAuthorizationTests(unittest.TestCase):
     def test_the_accepted_sequence_driver_refuses_an_unauthorized_slot(self):
         with TemporaryDirectory() as tmp:
             out_dir = Path(tmp) / "run"
-            with patch.object(hitl_accepted_sequence, "refuse_reset_if_latched",
+            with patch.object(accepted_sequence_run, "refuse_reset_if_latched",
                               side_effect=_SentinelResetStep):
                 rc = hitl_accepted_sequence.main([
                     "--leg", "rec", "--track", "8", "--slot-a", "4", "--slot-b", "7",
@@ -280,13 +281,13 @@ class DriverAuthorizationTests(unittest.TestCase):
         """The manifest is what decides, and the compatibility path is not silently narrowed by it."""
         with TemporaryDirectory() as tmp:
             cli_out = Path(tmp) / "cli"
-            with patch.object(hitl_accepted_sequence, "ManagedCaptureSession", _device_step_sentinel()):
+            with patch.object(accepted_sequence_run, "ManagedCaptureSession", _device_step_sentinel()):
                 with self.assertRaises(_ReachedDevice):
                     hitl_accepted_sequence.main([
                         "--no-upload", "--leg", "rec", "--track", "3", "--slot-a", "4", "--slot-b", "5",
                         "--out-dir", str(cli_out), "--authorization", "cli"])
             manifest_out = Path(tmp) / "manifest"
-            with patch.object(hitl_accepted_sequence, "refuse_reset_if_latched",
+            with patch.object(accepted_sequence_run, "refuse_reset_if_latched",
                               side_effect=_SentinelResetStep):
                 rc = hitl_accepted_sequence.main([
                     "--leg", "rec", "--track", "3", "--slot-a", "4", "--slot-b", "5",
@@ -299,7 +300,7 @@ class DriverAuthorizationTests(unittest.TestCase):
 
     def test_a_declared_scope_that_covers_the_run_reaches_the_device_step(self):
         with TemporaryDirectory() as tmp:
-            with patch.object(hitl_accepted_sequence, "ManagedCaptureSession", _device_step_sentinel()):
+            with patch.object(accepted_sequence_run, "ManagedCaptureSession", _device_step_sentinel()):
                 with self.assertRaises(_ReachedDevice):
                     hitl_accepted_sequence.main([
                         "--no-upload", "--leg", "od", "--track", "8", "--slot-a", "4", "--slot-b", "5",

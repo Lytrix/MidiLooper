@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from hitl_accepted_sequence import (  # noqa: E402
+from hitl.flows.accepted_sequence import (  # noqa: E402
     DEFAULT_CENSUS_ATTEMPTS,
     DEFAULT_SEED_PRESS_ATTEMPTS,
     DEFAULT_TAP_WINDOW_S,
@@ -34,6 +34,20 @@ from hitl_accepted_sequence import (  # noqa: E402
     leg_gestures,
     to_firmware_slot,
 )
+
+#: Task 4.4b split the driver: the **sequence** lives in `hitl.flows.accepted_sequence` (and the names this
+#: suite patches for it must live there), while the **session, authorization and report** live in
+#: `hitl.accepted_sequence_run`. `_patch_target` routes a patch name to its owner, so a test states *what* it
+#: fakes rather than *where the object happens to be filed today*.
+_FLOW_OWNED_PREFIXES = ("slots.", "stopped_preparation.", "observation_window", "time.sleep")
+_FLOW_OWNED_NAMES = ("_await_markers", "_await_slot_disp", "_emit", "_ensure_transport", "_run_census",
+                     "_run_plan", "_slot_disp_rows", "_slot_ready_state", "_gesture_clock_us", "_wait_for")
+
+
+def _patch_target(name: str) -> str:
+    if name in _FLOW_OWNED_NAMES or name.startswith(_FLOW_OWNED_PREFIXES):
+        return "hitl.flows.accepted_sequence." + name
+    return "hitl.accepted_sequence_run." + name
 from hitl.accepted_sequence_probe import Analysis, Check, analyse, verdict_bundle  # noqa: E402
 from hitl.control_constants import (  # noqa: E402
     GLOBAL_TRANSPORT_NOTE,
@@ -317,8 +331,8 @@ class SwitchRepeatGuardTests(unittest.TestCase):
             with log.open("a") as f:
                 f.write("Loop 5: Queued playback switch\nPlayback started @ tick 10\n")
         plan = leg_gestures("od", track=8, a=4, b=5)[2:]
-        with patch("hitl_accepted_sequence._emit", side_effect=emit), \
-             patch("hitl_accepted_sequence.time.sleep"):
+        with patch(_patch_target("_emit"), side_effect=emit), \
+             patch(_patch_target("time.sleep")):
             result = _run_plan(FakePort(), log, plan, slot_b=5, press_ms=120,
                                phase_timeout_s=0.01, events=[])
         self.assertEqual("UNEXPECTED_PLAYBACK_SWITCH", result)
@@ -327,8 +341,8 @@ class SwitchRepeatGuardTests(unittest.TestCase):
     def test_driver_does_not_stop_b_when_overdub_never_started(self):
         from unittest.mock import patch
         log = self._log("s.log", [])
-        with patch("hitl_accepted_sequence._emit") as emit, \
-             patch("hitl_accepted_sequence._wait_for", return_value=False):
+        with patch(_patch_target("_emit")) as emit, \
+             patch(_patch_target("_wait_for"), return_value=False):
             result = _run_plan(FakePort(), log, leg_gestures("od", track=8, a=4, b=5)[3:],
                                slot_b=5, press_ms=120, phase_timeout_s=0.01, events=[])
         self.assertEqual("OVERDUB_START_UNCONFIRMED", result)
@@ -348,8 +362,8 @@ class SwitchRepeatGuardTests(unittest.TestCase):
                     f.write("Loop 5: Switch gesture from slot 4\n")
         port = FakePort()
         events = []
-        with patch("hitl_accepted_sequence._emit", side_effect=emit), \
-             patch("hitl_accepted_sequence.time.sleep"):
+        with patch(_patch_target("_emit"), side_effect=emit), \
+             patch(_patch_target("time.sleep")):
             result = _run_plan(port, log, leg_gestures("od", track=8, a=4, b=5),
                                slot_b=5, press_ms=120, phase_timeout_s=0.01, events=events,
                                note_channel=7, overdub_notes=2)
@@ -532,7 +546,7 @@ class PreparationIntegrationTests(unittest.TestCase):
             refused = stopped_preparation.ClearOutcome(4, ClearStatus.REFUSED, "save still owed")
             with contextlib.ExitStack() as stack:
                 def mock(name, **kw):
-                    return stack.enter_context(patch("hitl_accepted_sequence." + name, **kw))
+                    return stack.enter_context(patch(_patch_target(name), **kw))
                 mock("ManagedCaptureSession", side_effect=managed)
                 mock("DeviceSession", side_effect=device)
                 mock("mido.open_output", return_value=FakePort())
@@ -598,7 +612,7 @@ class PreparationIntegrationTests(unittest.TestCase):
             cleared = stopped_preparation.ClearOutcome(0, ClearStatus.CLEARED, "ok")
             with contextlib.ExitStack() as stack:
                 def mock(name, **kw):
-                    return stack.enter_context(patch("hitl_accepted_sequence." + name, **kw))
+                    return stack.enter_context(patch(_patch_target(name), **kw))
                 mock("ManagedCaptureSession", side_effect=managed)
                 mock("DeviceSession", side_effect=device)
                 mock("mido.open_output", return_value=FakePort())
@@ -696,7 +710,7 @@ class CensusPreparationTests(unittest.TestCase):
             @contextlib.contextmanager
             def device(**kw): yield shutdown
             with contextlib.ExitStack() as stack:
-                def mock(name, **kw): return stack.enter_context(patch("hitl_accepted_sequence." + name, **kw))
+                def mock(name, **kw): return stack.enter_context(patch(_patch_target(name), **kw))
                 mock("ManagedCaptureSession", side_effect=managed)
                 mock("DeviceSession", side_effect=device)
                 mock("mido.open_output", return_value=FakePort())
@@ -736,7 +750,7 @@ class CensusPreparationTests(unittest.TestCase):
             def device(**kw): yield shutdown
             cleared = stopped_preparation.ClearOutcome(0, ClearStatus.CLEARED, "ok")
             with contextlib.ExitStack() as stack:
-                def mock(name, **kw): return stack.enter_context(patch("hitl_accepted_sequence." + name, **kw))
+                def mock(name, **kw): return stack.enter_context(patch(_patch_target(name), **kw))
                 mock("ManagedCaptureSession", side_effect=managed)
                 mock("DeviceSession", side_effect=device)
                 mock("mido.open_output", return_value=FakePort())
@@ -787,7 +801,7 @@ class ManagedRunTests(unittest.TestCase):
                 exits.append("shutdown")
             with contextlib.ExitStack() as stack:
                 def mock(name, **kw):
-                    return stack.enter_context(patch("hitl_accepted_sequence." + name, **kw))
+                    return stack.enter_context(patch(_patch_target(name), **kw))
                 mock("ManagedCaptureSession", side_effect=managed)
                 mock("DeviceSession", side_effect=device)
                 mock("mido.open_output", return_value=FakePort())
@@ -857,7 +871,7 @@ class ManagedRunTests(unittest.TestCase):
 
             with contextlib.ExitStack() as stack:
                 def mock(name, **kw):
-                    return stack.enter_context(patch("hitl_accepted_sequence." + name, **kw))
+                    return stack.enter_context(patch(_patch_target(name), **kw))
 
                 mock("ManagedCaptureSession", side_effect=managed)
                 mock("DeviceSession", side_effect=device)
@@ -939,7 +953,7 @@ class ManagedRunTests(unittest.TestCase):
 
             with contextlib.ExitStack() as stack:
                 def mock(name, **kw):
-                    return stack.enter_context(patch("hitl_accepted_sequence." + name, **kw))
+                    return stack.enter_context(patch(_patch_target(name), **kw))
 
                 mock("ManagedCaptureSession", side_effect=managed)
                 mock("DeviceSession", side_effect=device)
@@ -973,7 +987,8 @@ class EvidenceGateTests(unittest.TestCase):
     """
 
     def _drive(self, argv, *, census=None, press=None, clear=None, log_lines=(),
-               census_readable=True, run_plan="DROVE_LEG", real_ensure_transport=False):
+               census_readable=True, run_plan="DROVE_LEG", real_ensure_transport=False,
+               crash_expected=False):
         """Run `main` against a fake managed capture; returns the report plus what the wire saw.
 
         `press(log, slot_number, attempt)` models the device's answer to a loop-button press: the driver's
@@ -1022,7 +1037,7 @@ class EvidenceGateTests(unittest.TestCase):
         self.addCleanup(stack.close)
 
         def mock(name, **kw):
-            return stack.enter_context(patch("hitl_accepted_sequence." + name, **kw))
+            return stack.enter_context(patch(_patch_target(name), **kw))
 
         mock("ManagedCaptureSession", side_effect=managed)
         mock("DeviceSession", side_effect=device)
@@ -1042,10 +1057,19 @@ class EvidenceGateTests(unittest.TestCase):
             patch("time.sleep", lambda seconds: clock.__setitem__("t", clock["t"] + max(seconds, 0.0))))
         stack.enter_context(patch("builtins.print"))
         out = root / "run"
-        rc = main(list(argv) + ["--no-upload", "--out-dir", str(out)])
-        report = json.loads((out / "accepted-sequence.json").read_text())
-        return SimpleNamespace(rc=rc, report=report, presses=presses, clear=clear_mock, port=port,
-                               log=log, events=[e.get("event") for e in report["events"]])
+        raised = None
+        rc = None
+        try:
+            rc = main(list(argv) + ["--no-upload", "--out-dir", str(out)])
+        except Exception as exc:  # a run that dies mid-leg must still have written its report (od-08)
+            if not crash_expected:
+                raise
+            raised = exc
+        report_path = out / "accepted-sequence.json"
+        report = json.loads(report_path.read_text()) if report_path.exists() else None
+        return SimpleNamespace(rc=rc, report=report, raised=raised, presses=presses, clear=clear_mock,
+                               port=port, log=log, out=out,
+                               events=[] if report is None else [e.get("event") for e in report["events"]])
 
     def test_an_unavailable_census_refuses_before_any_gesture(self):
         """`od-02`: a lost census used to leave the driver long-pressing an unknown target."""
@@ -1138,6 +1162,52 @@ class EvidenceGateTests(unittest.TestCase):
         self.assertEqual([False, True],
                          [e["armed"] for e in fixture.report["events"] if e.get("event") == "seed_b_press"])
         self.assertTrue(any(",DISP,4,ARMED," in line for line in fixture.log.read_text().splitlines()))
+
+    def test_the_printed_arm_row_is_a_receipt_when_the_ring_has_not_flushed(self):
+        """`od-10`: the take started at 30.160 s while its `DISP` rows only became readable at 35.864 s.
+
+        The firmware's own logger rows go straight to `Serial`, so the arm is visible *before* the capture
+        ring is flushed. A `DISP`-only gate pressed the same button again -- which the firmware reads as
+        *Stop Recording* -- and refused the seed the device had actually made.
+        """
+        clock = {"t": 1.0}
+
+        def press(log: Path, slot_number: int, attempt: int) -> None:
+            clock["t"] += 1.0
+            with log.open("a", encoding="utf-8") as handle:
+                handle.write(f"[{clock['t']:.3f}] [INFO] Loop {slot_number}: Start Recording\n")
+                handle.write(f"[{clock['t'] + 0.1:.3f}] [DEBUG] [TRACK] Recording started @ tick 0 "
+                             "(startLoopTick=0 loopStart=0)\n")
+
+        fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1"],
+                              census={(7, 3): False, (7, 4): False}, press=press)
+        self.assertEqual(0, fixture.rc, fixture.report.get("preparation_error"))
+        self.assertEqual("DROVE_LEG", fixture.report["result"])
+        self.assertEqual([True],
+                         [e["armed"] for e in fixture.report["events"] if e.get("event") == "seed_b_press"])
+        self.assertFalse(any(",DISP,4,ARMED," in line for line in fixture.log.read_text().splitlines()),
+                         "the fixture writes no DISP row at all: the printed row is the receipt")
+
+    def test_a_run_that_dies_after_the_census_still_leaves_a_report(self):
+        """`od-08`: the run died inside the census decode and left **no** report at all.
+
+        The flow's milestone hook is what prevents that: the census state and the preparation outcome are
+        persisted while the leg is still running, so a crash after them is still explained by the report.
+        """
+        class _Boom(RuntimeError):
+            pass
+
+        def exploding_press(log: Path, slot_number: int, attempt: int) -> None:
+            raise _Boom("device session died mid-leg")
+
+        fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1"],
+                              census={(7, 3): True, (7, 4): False}, press=exploding_press,
+                              crash_expected=True)
+        self.assertIsInstance(fixture.raised, _Boom)
+        self.assertIsNotNone(fixture.report, "the milestone report must exist before the leg finishes")
+        self.assertEqual({"7:3": True, "7:4": False}, fixture.report["census"])
+        self.assertEqual("INCOMPLETE", fixture.report["result"],
+                         "the milestone records what is known, not a verdict")
 
     def test_a_row_from_before_the_gesture_cannot_confirm_it(self):
         """The floor is the device clock observed before the gesture: an older row is never its receipt."""

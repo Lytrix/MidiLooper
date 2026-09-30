@@ -165,12 +165,16 @@ declaration (`spec.py`), the per-profile scope (`registry.py`), the resolution a
 - **Controls/coverage**: legacy translation table, unknown/unsupported combination, scenario listing,
   verify-only (no ports) path.
 - **Verification recipe**: `test_hitl_import_gate`, the layered suites, and a `--list-scenarios` smoke.
-- **Completion record**: **partly landed 2026-09-30.** Registration, translation, refusals, listing, verdict
-  identity and unchanged classic behaviour are in (`test_accepted_sequence_scenario` 32/32, 10 mutations
-  red-proved, the excerpt and a non-pass fixture agreeing through both entry points). **Open (4.4b):** the
-  standalone driver *becomes* a wrapper to the runner, which first needs the leg body moved into a stateless
-  flow and an owner chosen for the family-counter read-back under the flow import gate (`hitl.serial` is
-  closed to both a flow and a scenario). Record:
+- **Completion record**: **closed 2026-09-30.** Registration, translation, refusals, listing, verdict identity
+  and unchanged classic behaviour landed first (4.4a), then the **flow extraction** (4.4b): the leg sequence
+  is `hitl/flows/accepted_sequence.drive_leg`, the session/authorization/report are
+  `hitl.accepted_sequence_run`, and `scripts/hitl_accepted_sequence.py` is an argument-compatible wrapper —
+  so both entry points (the runner's registered scenario and the standalone CLI) reach one implementation.
+  The named ownership question is answered: the counter read-back is the session's
+  (`ManagedCaptureSession.identity_stat_lines`). Evidence: `test_accepted_sequence` 100/100,
+  `test_accepted_sequence_scenario` 38/38, `test_hitl_stimulus_authorization` 24/24, 1,025 host tests with
+  only the seven pre-existing failures, native 2,643, 7 mutations red-proved (two survived the first run and
+  are now pinned by tests). Record:
   [SCENARIO-REGISTRATION-EXECUTION.md](SCENARIO-REGISTRATION-EXECUTION.md).
 
 ## Slice 5.1–5.3 — oracle and gates

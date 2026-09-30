@@ -323,6 +323,99 @@ class VerdictIdentityTests(unittest.TestCase):
         self.assertIn("requires --verify-serial-log", buffer.getvalue())
 
 
+class FlowLayerSplitTests(unittest.TestCase):
+    """4.4b: the sequence is a flow, the session/report is a host run scope, and the CLI is a wrapper."""
+
+    FLOW = Path(__file__).parent / "hitl" / "flows" / "accepted_sequence.py"
+    RUN = Path(__file__).parent / "hitl" / "accepted_sequence_run.py"
+    FORBIDDEN_FOR_FLOWS = ("hitl.verify", "hitl.serial", "hitl.scenarios", "hitl.reporting", "hitl.legacy_")
+
+    def test_the_leg_sequence_lives_in_the_flow_and_not_in_the_cli(self):
+        from hitl import accepted_sequence_run
+        from hitl.flows import accepted_sequence as flow
+
+        for name in ("leg_gestures", "_run_plan", "_await_slot_disp", "drive_leg", "LegRequest"):
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(flow, name), f"{name} belongs to the flow")
+                self.assertFalse(hasattr(hitl_accepted_sequence, name),
+                                 f"{name} must not still live in the CLI wrapper")
+        # The session, the authorization and the report belong to the run scope.
+        self.assertTrue(hasattr(accepted_sequence_run, "run_accepted_sequence"))
+        self.assertFalse(hasattr(hitl_accepted_sequence, "ManagedCaptureSession"))
+        self.assertFalse(hasattr(hitl_accepted_sequence, "authorize_targets"))
+
+    def test_the_cli_wrapper_keeps_the_arguments_it_always_had(self):
+        """Argument-compatible: every pre-split flag is still accepted, plus --authorization."""
+        parser = hitl_accepted_sequence.build_parser()
+        flags = {action.dest for action in parser._actions}
+        for dest in ("leg", "track", "slot_a", "slot_b", "out_dir", "press_ms", "bars", "notes",
+                     "phase_timeout_s", "settle_s", "capture_port", "boot_wait_s", "upload",
+                     "upload_attempts", "upload_retry_delay_s", "boot_reset", "clear_attempts",
+                     "clear_retry_delay_s", "clear_timeout_s", "census_attempts", "census_retry_delay_s",
+                     "arm_timeout_s", "seed_settle_timeout_s", "predecessor_publication_timeout_s",
+                     "clear_targets", "authorization"):
+            with self.subTest(dest=dest):
+                self.assertIn(dest, flags)
+
+    def test_the_flow_imports_nothing_the_flow_layer_may_not(self):
+        tree = ast.parse(self.FLOW.read_text(encoding="utf-8"))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+        violations = sorted(name for name in imported
+                            if any(name == p or name.startswith(p + ".") for p in self.FORBIDDEN_FOR_FLOWS))
+        self.assertEqual([], violations)
+
+    def test_importing_the_flow_loads_no_verify_or_reporting_layer(self):
+        code = (
+            "import sys; sys.path.insert(0, 'scripts');"
+            "import hitl.flows.accepted_sequence as m;"
+            "print('hitl.verify' in sys.modules, 'hitl.reporting' in sys.modules,"
+            " 'hitl.scenarios' in sys.modules)"
+        )
+        proc = subprocess.run([sys.executable, "-c", code], cwd=str(Path(__file__).parent.parent),
+                              capture_output=True, text=True, check=True)
+        self.assertEqual("False False False", proc.stdout.strip())
+
+    def test_the_counter_read_back_is_the_session_s_accessor_not_a_flow_side_parser(self):
+        """The ownership answer for 4.4b: one owner of the stopped-only counter conversation."""
+        from hitl.flows.accepted_sequence import read_family_counters
+        from hitl.managed_capture import ManagedCaptureSession
+
+        self.assertTrue(hasattr(ManagedCaptureSession, "identity_stat_lines"),
+                        "the session owns the request, its fence and the decode")
+        asked = {}
+
+        class _Session:
+            def identity_stat_lines(self, *, timeout_s: float = 6.0):
+                asked["timeout_s"] = timeout_s
+                return ["RING,record_stats,DIAG,latch,entered=1"]
+
+        self.assertEqual(["RING,record_stats,DIAG,latch,entered=1"],
+                         read_family_counters(_Session()))
+        self.assertEqual({"timeout_s": 6.0}, asked)
+        # A session that cannot answer is None, never an exception bubbling into the leg.
+        class _Broken:
+            def identity_stat_lines(self, *, timeout_s: float = 6.0):
+                raise RuntimeError("session gone")
+
+        self.assertIsNone(read_family_counters(_Broken()))
+        self.assertIsNone(read_family_counters(object()))
+
+    def test_the_run_scope_writes_the_report_at_the_flows_milestones(self):
+        """`drive_leg`'s progress hook is what keeps a report alive when a run dies mid-leg."""
+        import inspect
+
+        from hitl.flows.accepted_sequence import drive_leg
+
+        source = inspect.getsource(drive_leg)
+        self.assertGreaterEqual(source.count("_progress(outcome, on_progress)"), 2,
+                                "the census and the preparation outcome are both milestones")
+
+
 class ScenarioImportGateTests(unittest.TestCase):
     """The new scenario sits in the scenario layer: no forbidden import, and nothing device-side at import."""
 
