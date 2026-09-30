@@ -502,47 +502,72 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
                    "; A's release edge is human-positioned only, so the ordering is positional"),
                 "retention", "L5")
 
-    # ---------------- L5b: the record leg's B start route (task 4.2) ----------------
-    # The spec's record scenario: "one slot gesture accepts A's stop and **starts the intended record successor
-    # through the production route**". The production route has its own row -- the S4f.6 carrier
-    # (`Loop N: Record start carried on the switch`) or its retained twin (`Track T loop N: switch and record
-    # start retained (stop not yet admitted)`) -- and a *wrong* route has its own too (the playback/overdub
-    # branches `handleToggleRecordForSlot` takes when the target is not genuinely empty).
+    # ---------------- L5b: the successor's start route (tasks 4.2 and 4.3) ----------------
+    # The spec asks each leg's one gesture to reach the successor "through the **production route**". Each route
+    # names itself in the device's own rows, and each has a *wrong* twin that must not be read as success:
     #
-    # The span is the **route decision**: from A's accepted record stop to B's record start. Measuring it over
-    # the whole capture would read a later, legitimate `Playback started` -- the switched loop resuming -- as a
-    # wrong route, which is why the endpoint is the successor's own start row rather than the end of the log.
-    # Absence of either vocabulary is an evidence gap (an older capture, or a cut excerpt), never a pass.
-    if leg == "rec":
-        def _row_body(line: str) -> str:
-            """The `#CAP` body of a raw line, or the line itself for the directly printed rows."""
-            m = CAP_RE.match(line.strip())
-            return m.group(2) if m else line
+    #   record: the S4f.6 carrier (`Loop N: Record start carried on the switch`) or its retained twin vs. the
+    #           playback/overdub branches `handleToggleRecordForSlot` takes for a target that is not empty;
+    #   overdub: the capture-switch gesture (`Loop N: Switch gesture from slot S`) vs. the playback queue
+    #           (`Queued`/`Reaffirmed playback switch`), which is what a separate A stop before the press produces
+    #           -- task 4.3's "no playback re-affirmation".
+    #
+    # The span is the **route decision**: from the predecessor's accepted stop to the successor's start. Measuring
+    # it over the whole capture would read a later, legitimate `Playback started` -- the switched loop resuming --
+    # as a wrong route, which is why the endpoint is the successor's own start row rather than the end of the log.
+    # A wrong route only *fails* when the successor actually started through it (a capture that never got that far
+    # is the existing L5 gap); absence of both vocabularies is an evidence gap, never a pass.
+    def _row_body(line: str) -> str:
+        """The `#CAP` body of a raw line, or the line itself for the directly printed rows."""
+        m = CAP_RE.match(line.strip())
+        return m.group(2) if m else line
 
-        a_stop_at = [i for i, l in enumerate(lines)
-                     if (m := RECS_STOP_RE.match(_row_body(l))) and int(m.group(1)) == a0]
-        b_start_at = [i for i, l in enumerate(lines)
-                      if (m := RECA_RE.match(_row_body(l))) and int(m.group(1)) == b0]
-        if not a_stop_at:
-            add("L5b_b_start_route", UNKNOWN,
-                f"no accepted record stop for A (firmware slot {a0}) in this capture, so the switch that should "
-                "carry B's start is not located", "evidence", "L5b")
+    if leg == "rec":
+        # The record route is decided between A's accepted stop and B's record start, and its rows are emitted
+        # inside that span (the switch press carries the start, so the carrier lands at A's stop).
+        stop_edge = "record stop"
+        route_name = "a carried record start"
+        started = [i for i, l in enumerate(lines)
+                   if (m := RECA_RE.match(_row_body(l))) and int(m.group(1)) == b0]
+        span_start = [i for i, l in enumerate(lines)
+                      if (m := RECS_STOP_RE.match(_row_body(l))) and int(m.group(1)) == a0]
+        span = lines[span_start[0]:(started[0] + 1 if started else len(lines))] if span_start else []
+        production = [l.strip()[:120] for l in span if any(r in l for r in RECORD_START_CARRIED_ROWS)]
+        wrong = [l.strip()[:120] for l in span if any(r in l for r in WRONG_MODE_ROUTE_ROWS)]
+    else:
+        # The overdub leg's route rows are the **press** rows themselves and are mutually exclusive at the press:
+        # `Loop B: Switch gesture from slot A` is the capture-switch, `Queued`/`Reaffirmed playback switch` is the
+        # playback queue. So the route is the *first* such row for B -- a later playback row belongs to B's own
+        # stop press, which is legitimate -- and it is judged only when the successor actually started.
+        stop_edge = "accepted-stop binding"
+        route_name = "the capture-switch gesture"
+        started = od_b["starts"]
+        press_rows = [(i, l.strip()[:120]) for i, l in enumerate(lines)
+                      if any(token in l for token in (f"Loop {slot_b}: Switch gesture from slot ",
+                                                      f"Loop {slot_b}: Queued playback switch",
+                                                      f"Loop {slot_b}: Reaffirmed playback switch"))]
+        span_start = [i for i, l in enumerate(lines)
+                      if (m := ODUB_BOUND_RE.match(_row_body(l))) and int(m.group(3)) == a0] or press_rows
+        first = press_rows[0] if press_rows else None
+        production = [first[1]] if first and "Switch gesture from slot " in first[1] else []
+        wrong = [first[1]] if first and "Switch gesture from slot " not in first[1] else []
+    if not span_start:
+        add("L5b_b_start_route", UNKNOWN,
+            f"no {stop_edge} for A (firmware slot {a0}) in this capture, so the switch that should carry B's "
+            "start is not located", "evidence", "L5b")
+    else:
+        evidence["b_start_route"] = production + wrong
+        if production:
+            add("L5b_b_start_route", OK,
+                "the production route named itself on the switch: " + production[0], "retention", "L5b")
+        elif wrong and started:
+            add("L5b_b_start_route", FAIL,
+                "B started, but the switch was answered as playback/overdub rather than as " + route_name + ": "
+                + wrong[0] + " -- design decision 5 refuses a wrong route as a substitute", "retention", "L5b")
         else:
-            span = lines[a_stop_at[0]:(b_start_at[0] + 1 if b_start_at else len(lines))]
-            carried = [l.strip()[:120] for l in span if any(r in l for r in RECORD_START_CARRIED_ROWS)]
-            wrong = [l.strip()[:120] for l in span if any(r in l for r in WRONG_MODE_ROUTE_ROWS)]
-            evidence["b_start_route"] = carried + wrong
-            if carried:
-                add("L5b_b_start_route", OK,
-                    "the production route named itself on the switch: " + carried[0], "retention", "L5b")
-            elif wrong:
-                add("L5b_b_start_route", FAIL,
-                    "the switch was answered as playback/overdub instead of a carried record start: "
-                    + wrong[0] + " -- design decision 5 refuses a wrong route as a substitute", "retention", "L5b")
-            else:
-                add("L5b_b_start_route", UNKNOWN,
-                    "neither the carrier row nor a wrong-route row appears between A's stop and B's start, so "
-                    "which route started B is not established by this capture", "evidence", "L5b")
+            add("L5b_b_start_route", UNKNOWN,
+                f"neither {route_name} nor a wrong-route row appears between A's {stop_edge} and B's start, so "
+                "which route started B is not established by this capture", "evidence", "L5b")
 
     # ---------------- L7: no second press ----------------
     # A single execution cannot prove a single press (a retried press may collapse into one execution), so this

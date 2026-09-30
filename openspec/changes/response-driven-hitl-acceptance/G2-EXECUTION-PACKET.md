@@ -169,7 +169,24 @@ declaration (`spec.py`), the per-profile scope (`registry.py`), the resolution a
 - **Controls/coverage**: a late successor start reads NOT_EXERCISED, never a violation; a second acceptance or
   execution is a FAIL; seeds must not count as acceptance actions.
 - **Verification recipe**: as 4.2, plus `test_hitl_retention_handoff_plan` for the seed receipts.
-- **Completion record**: to be filled.
+- **Completion record (4.3, 2026-09-30 — the three clauses checked on both sides)**: the recipe was already the
+  retention prefix, so this slice is the *checking*. The switch step is a **route wait** (`_await_route`, shared
+  with 4.2): the production route is the capture-switch's own row (`Loop B: Switch gesture from slot A`), and a
+  playback-queue answer (`Queued`/`Reaffirmed playback switch`) is `CONTRADICTED` → the leg stops at the press
+  with `PLAYBACK_REAFFIRMED_INSTEAD_OF_SWITCH` and no second press (the old wait *accepted* the playback row and
+  left the refusal to the next gesture's `_switch_pending` guard). "No separate A stop" is read on both sides
+  (the plan carries no A stop or A slot note before B's; the oracle counts A's own stop as a second request and
+  fails `L7_one_press_per_stop`). "No wait for predecessor retirement" is pinned behaviourally: a capture that
+  retires A nowhere still drives to `DROVE_LEG`. `L5b_b_start_route` now covers both legs: for the overdub leg
+  the *first* route-family press row decides (capture-switch ⇒ `ok`; playback with B started ⇒ `fail`;
+  playback with no start ⇒ `unknown`, which is why the pinned `s4f13-od4-*` fixture keeps `SETUP_INCOMPLETE`),
+  and on `s4f22-dec096-od-13` it reads `ok`, naming the row. **Checks run**: `test_accepted_sequence` **132/132**
+  (6 new), corpus **3/3**, neighbours green together, host sweep **1,059 tests / 75 suites** (only the seven
+  pre-existing failures plus the zero-test fader script), **4 mutations** red-proved with byte-identical
+  restores — and one attempted mutation recorded as an *equivalence* (the accept set cannot override the conflict
+  stage). **NOT RUN / NOT APPLICABLE**: native, build, RAM1, device — host tooling only, no firmware file
+  touched. **Fixture implemented**: yes (synthetic device-row logs for the flow, od chains for the oracle).
+  **Task IDs eligible for checkoff**: none on its own — **4.3** stays `[~]` for its device leg (6.3), as 4.2.
 
 ## Slice 4.4 — registration and the standalone CLI
 

@@ -340,7 +340,30 @@ Stage owner: stateless flows, registered scenarios and compatibility wrapper. Pr
       [RECORD-RECIPE-EXECUTION.md](RECORD-RECIPE-EXECUTION.md). **What 4.2 still owes:** its device leg — the
       accept vocabulary is read from the firmware's own emitters and has never been confirmed on real rows
       (6.3), which is also where a firmware that does not carry the start would surface as `SWITCH_NOT_CARRIED`.
-- [ ] 4.3 Implement overdub recipe using confirmed seeds and the proven single capture-switch gesture, followed by B's recognized overdub start and stop; verify no separate A stop, no playback re-affirmation and no wait for predecessor retirement in the critical window.
+- [~] 4.3 Implement overdub recipe using confirmed seeds and the proven single capture-switch gesture, followed by B's recognized overdub start and stop; verify no separate A stop, no playback re-affirmation and no wait for predecessor retirement in the critical window.
+      **2026-09-30 — the three clauses are now checked on both sides (flow and oracle); the device leg is 6.3.**
+      The recipe was already the retention prefix, so this slice is the *checking*: the switch step is now a
+      **route wait** (`_await_route`, shared with 4.2) whose production route is the capture-switch's own row
+      (`Loop B: Switch gesture from slot A`) and whose conflict vocabulary makes a playback-queue answer
+      (`Queued`/`Reaffirmed playback switch`) a **named** stop at the press —
+      `PLAYBACK_REAFFIRMED_INSTEAD_OF_SWITCH`, no second press — instead of the old wait that *accepted* the
+      playback row and left the refusal to the next gesture's `_switch_pending` guard. "No separate A stop" is
+      read twice: the plan carries no A stop and no A slot note before B's, and the oracle counts A's own stop
+      press as a **second** request for A (`L7_one_press_per_stop` fails). "No wait for predecessor retirement"
+      is pinned behaviourally: a driven leg whose capture retires A nowhere (no `canonical_release`, no
+      `Reentry released slot=3`) still reaches `DROVE_LEG`, so no critical-window wait depends on the release
+      edge. The oracle's `L5b_b_start_route` (from 4.2) now covers both legs with each leg's own vocabulary: for
+      the overdub leg the route rows are the **press** rows and the *first* one decides — the capture-switch row
+      ⇒ `ok`; a playback row first **with** B's start admitted ⇒ `fail`; a playback row with **no** start ⇒
+      `unknown` (the existing L5 gap, which is why the pinned `s4f13-od4-*` fixture keeps `SETUP_INCOMPLETE`);
+      neither ⇒ `unknown`. On the retained device capture `s4f22-dec096-od-13` the check reads `ok` and names
+      the row it read (`[57.162] [INFO] Loop 5: Switch gesture from slot 4`). Evidence: `test_accepted_sequence`
+      **132/132** (6 new), corpus 3/3, neighbours green, host sweep **1,059 tests / 75 suites** with only the
+      seven pre-existing failures, **4 mutations** red-proved byte-identically — and one attempted mutation was
+      recorded as an *equivalence* rather than a gap (adding a playback row to the accept set changes nothing,
+      because `CorrelatedGesture.consider` checks conflicts before the stage's own wires).
+      [OVERDUB-RECIPE-EXECUTION.md](OVERDUB-RECIPE-EXECUTION.md). **What 4.3 still owes:** its device leg (6.3),
+      the same as 4.2's.
 - [x] 4.4 Register both scenarios and route the standalone CLI through the same runner; verify legacy argument translation, explicit unsupported combinations, scenario listing, identical verdicts via both entry points and unchanged base/edit_full behavior.
       **2026-09-30 — registration, translation, refusals, listing and verdict identity landed; the flow
       extraction is named as the remainder.** Both legs are registered in the existing registry
