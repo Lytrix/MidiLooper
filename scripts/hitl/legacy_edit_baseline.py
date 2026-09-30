@@ -5500,7 +5500,7 @@ def run_edit_baseline(
             if serial_collector is not None and _use_serial_transport_proxy(args, serial_collector):
                 print(
                     "[info] Serial #CAP,BPM/BAR shows transport running; "
-                    "skipping transport start presses (no USB MIDI clock on host)."
+                    "skipping transport start presses (a press would toggle it off)."
                 )
             elif not _clock_seen_within(in_port, 0.5):
                 clock_started = False

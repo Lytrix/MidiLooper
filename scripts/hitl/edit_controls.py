@@ -72,7 +72,11 @@ def _ensure_transport_running(
     serial_collector: Any | None = None,
     transport_args: Any | None = None,
 ) -> bool:
-    """Start transport when USB MIDI clock is absent and serial proxy is not active."""
+    """Start transport when no device clock is seen and the serial proxy is not active.
+
+    A device clock is only emitted while its own transport runs, so "no clock yet" is the
+    expected state before the first press (`hitl/midi_clock.py`).
+    """
     from hitl.serial_transport import use_serial_transport_proxy
 
     if transport_args is not None and use_serial_transport_proxy(transport_args, serial_collector):
