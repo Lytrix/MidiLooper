@@ -652,18 +652,67 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       the decision RC-MEM-2's own record called "the decision to take"); **`N`** itself (S2.3/S2.4, provisional
       per phase F); and C3(a)'s per-slot saturation claim (`committedEvents + intervalHorizon`) plus the
       `C`/`D`/`I` classes, which are **S2.2/S2.3**'s measurements.
-- [ ] S2.2 Measure each class separately: `P` playback window lease, `C` live-capture extension, `D`
+- [x] S2.2 Measure each class separately: `P` playback window lease, `C` live-capture extension, `D`
       deferred-finalization extension, `I` interactive extension. Do **not** size the specialized classes by
       the playback target.
-- [ ] S2.3 Prove the class budget in `IMPLEMENTATION_CONTRACT.md` §2:
+      **DONE 2026-10-01 as §2 of the class budget** ([`S2C23-CLASS-BUDGET.md`](S2C23-CLASS-BUDGET.md)): **P** is
+      the shared per-slot-runtime `RuntimePlaybackViewSet` (**831 KiB whole-take / 331 KiB windowed**, derived in
+      [`S2C1-PLAYBACK-WINDOW-LEASE.md`](S2C1-PLAYBACK-WINDOW-LEASE.md)); **C** is **383 KiB** of *its own*
+      lifetime class (b) — the six prewarms required during RECORDING (`canonicalPassInputs` 144,
+      `frozenCompanionPasses` 96, `frozenCompanionApply` 66, `reconstruction` 64, `pairLookup` 10, `spans` 2)
+      plus the transfer horizon — **not** a multiple of P and untouched by P's derived capacity; **D** is
+      **308 KiB** of lifetime class (c), capacity that must already exist at arm (`frozenCaptureCompanions` 80,
+      `bridgeMap` 68, the two 80 KiB history vectors); **O** is ≤ **1 windowed P** per in-flight switch against
+      S4b.2's *measured* **1 pool chunk** for the turn itself. **The shared backing is charged once**, per §2's
+      own rule: P, C and D all read the one view-set allocation (the views/bridges are P's, the two capture
+      stagings are C's at RECORDING and D's frozen role at punch-out). **`I` is deliberately not sized here** —
+      `Imax = 1` is §2's, and its byte figure belongs to the visual (S4e/S2.8) and undo owners. Each figure's
+      composition is cited to `ExecutionBounds.md`'s resident-store table and that document's own four lifetime
+      classes, so nothing is attributed by guesswork.
+- [x] S2.3 Prove the class budget in `IMPLEMENTATION_CONTRACT.md` §2:
       `fixed + N*P + Cmax*C + Dmax*D + Imax*I + Omax*O + canonical + roots + undo + visual + standby + reserve`.
       Pin source-derived holder maxima and charge overlapping owners until retirement; C/D are per-holder
       costs, not singleton device totals. Record the numbers and derive N only for an envelope that fits.
       Report N at today's capability (8 x 1 slot) and the
       headroom toward 16/32/48/64. **N is provisional:** the `N x P` claim is not the memory law until phase F
       (`windowed-playback-generation`) lands — record it as "provisional, bounded by phase F".
-- [ ] S2.4 Show what N the budget supports and record it as a capability, with the arithmetic; note the shapes
+      **DONE 2026-10-01 (report; `S2C23-CLASS-BUDGET.md` §1/§3–§6).** **The budget is 8 MiB**, and its ceiling is
+      *measured*, not assumed: the 24-bar heap runs refused `bytes=8192` at `live=8527KB` and an allocator `FATAL`
+      followed `external live 8144 KiB / 1176 blocks`. **The anchors:** boot `live` = **1,801 KB** (1,949 settled)
+      on a full library, with `canonical ≈ 0` at boot because committed slots are descriptors only (S2b); and
+      **6,505 KB** settled at N = 8 with one take's runtime resident (S4 gates census), margin 1,687 KB. **Holder
+      maxima are source-derived and their guards verified to exist:** `Cmax = Dmax = Omax = Config::NUM_TRACKS`
+      (8) via `Track::hasLiveCaptureInterval` (`include/Track.h:425`), `Track::hasPendingDeferredOverdubStop`
+      (`:419`, one admitted stop per track — the 32-descriptor ceiling is explicitly *not* evidence of 32
+      finalizers) and `SlotStateMachine::hasPendingSlotSwitch` (`include/SlotStateMachine.h:47`, one inbound
+      preparation per track, replacements retiring their predecessor); `Imax = 1`. **The conservative sum —
+      every class at its maximum at once — is 12,626 KiB against 8,192 KiB: it does NOT fit, over by 4,434 KiB
+      (with whole-take `P`, 20,626 KiB). Reported, not resolved**, exactly as §2 instructs ("do not shrink
+      cardinalities silently, claim a proved N, or pre-provision extra finalizers"), and for a structural reason
+      worth keeping: `Cmax*C + Dmax*D + Omax*O` = **8,177 KiB** is the whole pool on its own, so the conservative
+      sum cannot fit at **any** N — it is not the playback term that overflows it. **The representative cases fit
+      with margin:** N = 8 sounding 4,449 KiB; + 1 capture 4,832; + 1 finalizer 5,140; + 1 in-flight switch
+      5,471 (margins 3,743 → 2,721). **N reported as required:** today is **8**, the measured margin buys
+      **≈ 13** at today's windowed `P` (N = 16 alone would take 5,296 KiB, and 32/48/64 take 10,592/15,888/21,184
+      KiB — unreachable for the playback term at today's ceiling), while at the **derived** window `P` the same
+      targets cost **447/894/1,340/1,787 KiB**, so the playback term stops being binding and `N` is then bounded
+      by `canonical`/`roots`/`undo`/`visual`/`standby`/`reserve` — **which is why `N × P` stays "provisional,
+      bounded by phase F"**. **Owed, named rather than claimed:** §2's own validation (*simultaneous live
+      capture/finalization on **separate tracks**, switching on multiple tracks, target replacement during
+      preparation — a single-track trace cannot prove it; today's nearest evidence is the one-track S4b leg),
+      the terms owned by other stages (canonical/roots/undo/visual/standby, none hidden inside `reserve`), and the
+      two inputs this report cannot supply (the product limit; `I`'s byte figure).
+- [x] S2.4 Show what N the budget supports and record it as a capability, with the arithmetic; note the shapes
       that need a smaller P to reach 32 or 64 sounding slots.
+      **DONE 2026-10-01 as §6 of [`S2C23-CLASS-BUDGET.md`](S2C23-CLASS-BUDGET.md)**, which is the capability
+      record: today **N = 8** (8 × 1, the design's stated capability, not a derived bound); **≈ 13** sounding slots
+      are what the *measured* margin supports at today's windowed `P` (8,192 − 6,505 = 1,687 KB ÷ 331 KiB ≈ 5 more
+      holders), while **N = 16 alone would take 5,296 KiB** of `N*P` and 32/48/64 would take 10,592/15,888/21,184
+      KiB — so at today's ceiling those targets are unreachable **for the playback term**. **The shape that needs a
+      smaller `P` is exactly the window-derived one** (S2.1): at a 2-bar window at typical density (27.9 KiB) the
+      same targets cost **447/894/1,340/1,787 KiB**, after which the binding terms are
+      `canonical`/`roots`/`undo`/`visual`/`standby`/`reserve` — terms owned by other stages, which is why the
+      capability is recorded as **provisional, bounded by phase F** rather than asserted as a headline `N`.
 - [ ] S2.5 **Depends on phase F implementation.** Prove length-independence **at today's supported topology**: sounding slots of very different loop
       lengths (across tracks, since today is one sounding slot per track) have comparable resident working sets,
       and playback crosses window boundaries with no timing discontinuity. Multi-slot-per-track playback is a
@@ -1290,7 +1339,8 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `startOverdubbing`), and selection acquires nothing. 4 cases green; full native `2,440 passed /
       1 skipped` (98 suites); `test_playback_prewarm` unchanged; firmware RAM1 byte-identical (test-only).
       **Still open, and not native work:** the S2b device gates (S2b.3 post-restore half, S2b.5, the
-      transferred S2b.7 legs) and the S2.2/S2.3 current-root per-class budget. Record:
+      transferred S2b.7 legs) and the S2.2/S2.3 current-root per-class budget — **both of those landed 2026-10-01;
+      see the block below, which is the live list.** Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3 gate.
       **DEVICE ITEMS ADVANCED 2026-10-01 — the gate is NOT closed; what each remainder needs is named.**
       *Done today.* **S2b.3's post-restore half is measured** on the current image with a full library:
@@ -1304,13 +1354,18 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       *Still open, with what it needs.* (1) **S2b.7(a)'s third conjunct** — "another track playing" at that same
       drain edge: the blocking drain is not the path a mid-run deferred save takes (`drain_progress` did not fire in
       the leg where a track plays throughout), so a run holding all three conjuncts at one edge has to be arranged;
-      the row makes it observable when it happens. (2) **S2b gates' slope-to-failure sweep** (varying N across
-      boots): this **grows the library on other tracks**, so it needs the user's explicit device authorization —
-      it is not covered by this session's track-4/5 grant. (3) **S2.2/S2.3's current-root per-class budget:** the
+      the row makes it observable when it happens. (2) ~~**S2b gates' slope-to-failure sweep**~~ — **TAKEN
+      2026-10-01 under the user's explicit authorization** (`scripts/hitl_library_growth_sweep.py` on the scratch
+      range, track 6/slots 1–8, eight verified boots, reservation flat while N moved 35 → 44), which is how
+      **S2b gates itself became checked**; it is no longer an S3-gates remainder. (3) **S2.2/S2.3's current-root per-class budget:** the
       classes are per-holder and the `P` class *is* the playback window lease, which S2.1 creates only after the
       phase-F contract exists; that contract is now specified (**S4c.1 landed 2026-10-01** — the interval/window
       readiness and immutable-currency specification), and **S2.1 landed 2026-10-01** (the `P` term measured on
-      the target ABI: 331 KiB per holder windowed-only), so the remaining step is **S2.2/S2.3**.
+      the target ABI: 331 KiB per holder windowed-only) — and **S2.2/S2.3/S2.4 landed the same day** (the class
+      budget: `C` 383 KiB, `D` 308 KiB, `O` ≤ 1 windowed P, the conservative sum reported as **not fitting** with
+      the representative cases fitting with margin). **S3 gates therefore rests on ONE item: S2b.7(a)'s third
+      conjunct** — a track playing at the same blocking-drain edge, which needs an arrangement rather than a wait,
+      and which the `PERS,drain_progress` row makes observable.
       (4) The gate's own device clause
       (holders rising and falling with activation/deactivation) is already observed — see the S4 gates line.
 
@@ -1326,7 +1381,8 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       drain does not run mid-take, so it needs an arrangement; the row makes it observable). (2) **S2.2/S2.3's
       current-root per-class budget**, which ran through **S4c.1 → S2.1** because the `P` class is the playback
       window lease and S2.1 may not edit behaviour before the phase-F contract exists; **S4c.1 landed 2026-10-01**,
-      so S2.1 has its target interfaces and its term — **S2.1 landed 2026-10-01** — leaving **S2.2/S2.3**. (3) The gate's own device
+      so S2.1 has its target interfaces and its term — **S2.1 landed 2026-10-01**, with **S2.2/S2.3/S2.4** in the
+      class budget (`S2C23-CLASS-BUDGET.md`). (3) The gate's own device
       clause is satisfied by the S4 gates' holder census (holders rise with activation, fall with deactivation).
 - [x] S4.0 **Per-slot liveness predicate (B6, invariant 33).** (**PARTIAL 2026-09-23:** the live-window
       ring scan, the slot's `captureStopOwner`, an in-flight prepared handover (`preparedPairRequestPending`)
