@@ -566,6 +566,13 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `captures/s15-24bar-t8s4-01/refusal-analysis.json`, `captures/s15-preflight-01/`,
       `captures/s15-recovery-02/`; [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S1.5 — device
       refusal-point result. No firmware change; no `DEC-###` owed.
+      **DEVICE HALF OF THE FIRST CLAUSE MEASURED 2026-10-01:** with the library at N ≈ 35-44 committed slots the
+      per-committed-slot pool reservation **before any activation is zero** on device (`credits=0` on all 16
+      library-walk rows, eight verified boots, `captures/s13-sweep-06`), the free-chunk count is `512 → 480` (the
+      constant 32-chunk enabled set) and `post_restore_free = 397` — matching the native leg's corrected "exactly
+      zero". **The refusal clause stays open** (the smallest N at which a 24-bar overdub is refused; this sweep is
+      4-bar takes, and that clause's earlier misread is already withdrawn). Evidence:
+      [`evidence/2026-10-01-s2b-slope-sweep/EVIDENCE.md`](evidence/2026-10-01-s2b-slope-sweep/EVIDENCE.md).
 - [ ] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
       the slope and failure point in this file as numbers.
       **Recorded 2026-09-23 (native legs only): full native 2,263 cases / 1 skipped / 2,262 succeeded /
@@ -919,7 +926,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       reading that was rejected:** adding `store.clear()` to that branch (design.md's literal text) fails the
       fixture on *"the park terminal must never abandon the accepted stop"*. Recorded:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S2b.6.
-- [ ] S2b gates: the first-slice native/build/device checks in `IMPLEMENTATION_CONTRACT.md` §1,
+- [x] S2b gates: the first-slice native/build/device checks in `IMPLEMENTATION_CONTRACT.md` §1,
       using the S1 resident-library baseline plus a synthetic 60-descriptor fixture. Prove canonical
       reservation bytes flat in inactive-slot count; report canonical payload and derived bytes separately.
       The genuine 60-long-slot and total-residency gates stay in S6/S7, not this prerequisite slice.
@@ -994,6 +1001,20 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       the 36/8/8 disposition:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *Handoff from `restored-library-stability`*. **No
       gate is checked here.**
+      **SLOPE SWEEP TAKEN 2026-10-01 — this gate is checked.** `captures/s13-sweep-06` grows the library on the
+      authorized scratch range (track 6, slots 1..8, 4-bar takes) with a **verified reboot per step**: eight boots,
+      `reset_ok`/`banner` true every time, `reconcile_warnings=0` every time (the catalog-reconcile failure that
+      stopped the 2026-09-24 attempt did not recur), and **identical boot figures at every step — `512 → 480` with
+      the library walk `480 → 480` and `credits=0` on all 16 rows** — while the library's committed-slot count moved
+      between **35 and 44**. The post-restore census on the same grown library reads `free_chunks = 397` against the
+      required 16 (`met=True`). So the reservation is **flat in the committed-slot count across eight independent
+      reboots**, which is this gate's flat-reservation clause. **No failure point was reached, and that is the
+      gate's own expectation, not an omission:** its text keeps "the genuine 60-long-slot and total-residency gates"
+      in S6/S7 rather than this prerequisite slice, and no step exhausted residency.
+      `captures/s13-sweep-05-full` (older image: 8 steps, zero non-zero credits) corroborates the shape. Evidence:
+      [`evidence/2026-10-01-s2b-slope-sweep/EVIDENCE.md`](evidence/2026-10-01-s2b-slope-sweep/EVIDENCE.md).
+      **Not answered here (S1.5's own clause):** the smallest N at which a **24-bar** overdub is refused — this sweep
+      is 4-bar takes.
 
 - [x] S2b.7 **Drain-driven restore advancement — DELIVERED 2026-09-24 (native).** The blocking drain's
       *decisions* were already verified natively (A3.2 wait-reason classification, A3.3 budget/progress
