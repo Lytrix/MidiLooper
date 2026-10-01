@@ -119,10 +119,28 @@ and no new instrumentation or stimulus.** The campaign also found and fixed a ho
 run non-verdict-grade (`KeyError: 'DIAG,latch'` in the evidence drain; `test_managed_record_drain` **23/23**,
 mutation red-proved). Recorded as **DEC-099**. Record: [`evidence/2026-10-01-s41-lease-release/EVIDENCE.md`](evidence/2026-10-01-s41-lease-release/EVIDENCE.md).
 
+## S4.2 — the generation-mismatched release: DONE (2026-10-01)
+
+The task's **A-releases / C-reuses / late-A-cleanup** sequence is now fixture-covered on both identities, and the
+refusal is named as the device row names it. Two fixtures in `test_runtime_working_set_ownership`: A admits
+through the production record-arm admission, A retires through the track-level sweep, C **reuses** the same
+runtime object with its own identity, and A's late release answers `StaleGeneration` — **not** the silent
+`NotHeld` an identity-free check returns for a slot that looks empty or has been re-admitted — with C's lease,
+roles and generation untouched (the successor's own identity releases as the control); and the emitter's
+outcome→literal mapping (`released`, `refused_busy`, `stale_generation`, `not_held`) is pinned to the vocabulary
+the device reader decodes. Test-only: the rebuilt firmware hex is **byte-identical** (`577841d6…`), so RAM1 is
+untouched. **Red-proved twice,** each restored byte-identically. Focused suite **30/30**; full native **2,645
+cases / 2,638 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS. Record:
+[`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.2 — the generation-mismatched release, rejected and
+named".
+
 ## Recommended next slice
 
-The remaining candidates below, unchanged, plus this change's other device legs (S4.2/S4.3/S4.4 device byte
-deltas, S4b, phases B–E) and F4's SD-fault evidence — every one of them needs a per-session device
+S4.4 is the next unchecked native item in S4, but its remainder is a **decision**, not an implementation step:
+nothing is refused today, and settling refuse-vs-queue beyond the declared envelope needs either a cap the
+resource model also enforces or an architecture call on per-track cardinality (which is S4b's role-transfer
+work). Until that decision is taken, the candidates below are the eligible native work; every remaining device
+leg (S4.2/S4.3/S4.4 device byte deltas, S4b, phases B–E) and F4's SD-fault evidence needs a per-session device
 authorization.
 
 ## Other candidates and why not first

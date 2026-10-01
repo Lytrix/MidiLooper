@@ -8686,3 +8686,47 @@ non-repeatable-green baseline problems, not S4.1 findings. Evidence, excerpts an
 
 Recorded as **DEC-099** (the lease release is read from its own row by one owner, and the evidence drain
 reconciles only the families its log can count).
+
+## S4.2 — the generation-mismatched release, rejected and named (2026-10-01, G2 packet + record)
+
+**Scope.** S4.2 asks that a generation-mismatched release be *rejected and reported*, evidenced by a native
+fixture reproducing **A-releases / C-reuses / late-A-cleanup**. Two halves landed on 2026-09-25: a generation
+on `LoopPlaybackRuntime::captureStopOwner` (so a predecessor's late cleanup cannot null a successor's
+finalization marker — fixture `test_a_late_cleanup_cannot_clear_a_successor_finalization_marker`, red-proven)
+and the `(slot, generation)` lease entry (`releaseSlot` / `slotGeneration`, whose generation advances on
+release). What the task's parenthetical still owed was the *sequence* with a live successor in place, and the
+*naming* of the refusal.
+
+**Added (test-only; no `src/` change — the rebuilt firmware hex is byte-identical, `577841d6…`).**
+`test_s4_2_a_retired_owners_late_release_cannot_release_a_successors_working_set` drives the whole sequence on
+the lease path: A admits through the production record-arm admission (`prewarmPlaybackForSlot(slot, true)`),
+A retires through the track-level sweep (`releasePlaybackMergedMidiEventsMemory` → the entry S4.1 converted;
+lease dropped, generation advanced), C **reuses** the slot (same runtime address, same role set, its own
+identity — re-admission allocates nothing and bumps nothing), and then A's late release must answer
+`StaleGeneration`: **not** the silent `NotHeld` an identity-free check returns for a slot that looks empty or
+has been re-admitted. C's lease, roles and generation are asserted untouched, with the successor's own identity
+releasing as the control. `test_s4_2_the_release_outcomes_are_named_as_the_device_row_names_them` pins the
+emitter's outcome→literal mapping (`released`, `refused_busy`, `stale_generation`, `not_held`) — the vocabulary
+`scripts/hitl/lease_release.py` decodes and `test_capture_line_tier` classifies — so "reported" ties to the
+`DIAG,ws_release` row rather than to an enum ordinal.
+
+**Red-proofs, each restored byte-identically.** Removing `TrackPlaybackRuntime::releaseSlot`'s identity check
+(`rt->workingSetGeneration() != generation`) fails the new fixture (*"Expected 5 Was 1. the retired owner's
+identity must be rejected as stale, not answered as NotHeld"*) plus the release-entry fixture and two S4.1
+fixtures — the check is load-bearing for the whole family. Renaming the `stale_generation` literal fails the
+vocabulary fixture (*Expected 'stale_generation' Was 'stale'*).
+
+**Gates.** Focused suite **30/30**; full native **2,645 cases / 2,638 succeeded / 7 skipped / 0 failed**;
+`teensy41-capture-serial` **SUCCESS** with the RAM1 line unchanged (`variables 96,192 / ITCM 393,216
+(code 391,288 + padding 1,928) / locals 34,880`, floor 840).
+
+**Recorded, not claimed away.** (1) A device run in which a *stale* release actually fires has never been
+observed: the corpus carries only `released` rows, and the device refusal that has fired is `refused_busy`
+(S4.1's live-owner case). The stale literal is therefore native-pinned and reader-consumed, not
+device-observed — the rejection itself is native-verified, and the reader (`hitl.lease_release`) treats a
+non-`released` outcome as "named, not a success". (2) The two identities stay **unaliased by design**:
+`captureStopOwnerGeneration` is the interval's `frozenGeneration`, while the lease generation is the
+slot-runtime lifecycle counter. No current caller needs them unified, and unifying them would have to respect
+that a finalizing interval keeps its lease until its slot is actually released. (3) The `NotHeld` silence is a
+rule of the *sweep* (`if (outcome != WorkingSetOutcome::NotHeld)`), not of the label, so it is
+device-observable only — which is exactly why the reader treats an absent row as absence rather than failure.
