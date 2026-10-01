@@ -1153,6 +1153,31 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       track playing, with `deferredSaveBlockedByActiveSlotLoadSd()` true at the drain edge. **Verify:** the
       condition is observed, not assumed; the exact observables are recorded; no external advancement is
       performed inside the run. *Unchecked on transfer; the library change no longer carries it.*
+      **ARRANGED 2026-10-01 (five device legs, no firmware change, no flash): the mechanism is known, and one edge now
+      holds all three conditions.** The blocking drain has exactly **two** reachable call sites (the CLEAR long-press,
+      `MidiButtonActions.cpp`, and the save-new-set pre-flight, `SavedSetIo.cpp:365`) and both enter only when
+      `hasDeferredSaveWork()` is true; `deferredSaveBlockedByActiveSlotLoadSd()` is
+      `SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile()` (`LoadLoopJob.cpp:855`) — about a **session or an
+      open SD file**, *not* about queued `RRQ` requests, which is why a run can show hundreds of `RRQ` rows and still
+      read `flags=0` at the edge; and the work that makes a session active comes from the **boot** sweep, so each leg
+      needs a soft `!REBOOT` (`StorageManagerHitlSerial.cpp`; transport-gated, no flash, the port re-enumerates).
+      `captures/s2b7a-drain-shapeb-05` then holds all three at **one** edge (12.155–12.158 s): **a save owed**
+      (`Clear waiting for deferred save completion`), **a restore completing 3 ms before the drain**
+      (`RRQ,5,6,0,0,terminal,none,committed` at 12.1581 s — track 6 Loop 7) **named by the drain's own verdict**
+      (`PERS,drain_progress,24,24,0,post_load_holdoff`, with `Clear refused: deferred save temporarily blocked by
+      post_load_holdoff; slot left untouched, save still owed`, which is also the *(ii)* permitted outcome this item
+      had recorded as not occurring), and **notes sounding across the edge** (`MO,144,6,58` 12.022 s, `MO,144,6,48`
+      12.162, `MO,128,6,48` 12.277, `MO,144,6,49` 12.344). **Still not closed, and precisely so:** in `-05` the
+      `flags` **bit 1 is 0 at the drain entry** (the session had already reached its post-load holdoff), and the
+      sounding channel is the **clear target's own track**, so "another track playing" rests on the boot rows (tracks
+      4/5/7 resume playing) rather than on a note row; the literal clause — bit 1 true — is observed in
+      `captures/s2b7-drain-probe-01`, where no track played at that instant. The named next arrangement is a leg that
+      records a **dense scratch take first**, leaves it playing, and only then clears a second slot inside the sweep
+      window. Evidence:
+      [`evidence/2026-10-01-s2b7a-drain-edge-arrangement/EVIDENCE.md`](evidence/2026-10-01-s2b7a-drain-edge-arrangement/EVIDENCE.md).
+      **Device-state consequence (not reversible):** track 6 Loop 8 — the clear target authorized above — no longer
+      has its card payload: in `-02` the drain **completed** after that clear and persisted the cleared state
+      (`State saved successfully (v4)`). No other slot was cleared.
 - [x] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 3.1) — drain device leg: report
       which permitted outcome occurs.** **OBSERVED 2026-10-01 (`captures/s2b7-drain-probe-01`):** the row
       `PERS,drain_progress,<before>,<after>,<flags>,<verdict>` samples `restoreProgressCounter()` immediately before
@@ -1352,9 +1377,14 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       call, bit 1 = the save was blocked by the active slot load), observed once as `795,801,3,ok` with a live
       restore sweep ([`evidence/2026-10-01-s2b7-drain-edge/`](evidence/2026-10-01-s2b7-drain-edge/EVIDENCE.md)).
       *Still open, with what it needs.* (1) **S2b.7(a)'s third conjunct** — "another track playing" at that same
-      drain edge: the blocking drain is not the path a mid-run deferred save takes (`drain_progress` did not fire in
-      the leg where a track plays throughout), so a run holding all three conjuncts at one edge has to be arranged;
-      the row makes it observable when it happens. (2) ~~**S2b gates' slope-to-failure sweep**~~ — **TAKEN
+      drain edge. **Five device legs on 2026-10-01 arranged it and mapped it** (see the item's own text and
+      [`evidence/2026-10-01-s2b7a-drain-edge-arrangement/EVIDENCE.md`](evidence/2026-10-01-s2b7a-drain-edge-arrangement/EVIDENCE.md)):
+      the drain's two call sites, the `hasDeferredSaveWork()` precondition, the exact meaning of bit 1
+      (`SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile()`) and the fresh-boot requirement are all measured,
+      and `captures/s2b7a-drain-shapeb-05` holds **save owed + a restore completing 3 ms before the drain (named
+      `post_load_holdoff`, clear refused by name) + notes sounding across the edge** at one instant. What is left is
+      narrow and named: **bit 1 true** *and* a *different* track's notes at the same edge — the earlier run has the
+      bit without a playing track, this one has the playing track on the clear target's own channel. (2) ~~**S2b gates' slope-to-failure sweep**~~ — **TAKEN
       2026-10-01 under the user's explicit authorization** (`scripts/hitl_library_growth_sweep.py` on the scratch
       range, track 6/slots 1–8, eight verified boots, reservation flat while N moved 35 → 44), which is how
       **S2b gates itself became checked**; it is no longer an S3-gates remainder. (3) **S2.2/S2.3's current-root per-class budget:** the
@@ -1377,8 +1407,12 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `795 → 801`, verdict `ok`, no publication in the window) with (a) partially observed; and **S2b gates itself**
       — the eight-boot slope sweep with the reservation flat in the committed-slot count (N 35 → 44). S2b.5 was
       already checked.
-      *Still open.* (1) **S2b.7(a)'s third conjunct** — "another track playing" at the same drain edge (the blocking
-      drain does not run mid-take, so it needs an arrangement; the row makes it observable). (2) **S2.2/S2.3's
+      *Still open.* (1) **S2b.7(a)'s third conjunct** — "another track playing" at the same drain edge. **Arranged and
+      mapped on 2026-10-01 (five device legs):** `captures/s2b7a-drain-shapeb-05` holds a save owed, a restore
+      completing 3 ms before the drain with the drain naming `post_load_holdoff` and refusing the clear by name, and
+      notes sounding across the edge — what remains is **bit 1 true** together with a *different* track's notes
+      ([`evidence/2026-10-01-s2b7a-drain-edge-arrangement/`](evidence/2026-10-01-s2b7a-drain-edge-arrangement/EVIDENCE.md)).
+      (2) **S2.2/S2.3's
       current-root per-class budget**, which ran through **S4c.1 → S2.1** because the `P` class is the playback
       window lease and S2.1 may not edit behaviour before the phase-F contract exists; **S4c.1 landed 2026-10-01**,
       so S2.1 has its target interfaces and its term — **S2.1 landed 2026-10-01**, with **S2.2/S2.3/S2.4** in the
