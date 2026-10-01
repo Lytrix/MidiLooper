@@ -2620,8 +2620,15 @@ void test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_comm
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(kPredecessor, TrackCaptureStopTestAccess::activeLoopIndex(track),
                                   "the press must not move the active slot");
 
-  // Drive the production tick lane across several boundaries while the predecessor still finalizes.
+  // Drive the production tick lane across several boundaries while the predecessor still finalizes. The
+  // lane's own provisioning step is modelled too (`main.cpp`'s deferred frame is not linked here): a marked
+  // request is taken and provisioned off-clock, exactly as the firmware does.
   for (int round = 0; round < 3; ++round) {
+    uint8_t prewarmTrack = 0xFF;
+    uint8_t prewarmSlot = 0xFF;
+    if (trackManager.takeDeferredPlaybackPrewarm(prewarmTrack, prewarmSlot)) {
+      (void)trackManager.provisionSlotForSwitch(prewarmTrack, prewarmSlot);
+    }
     const uint32_t base = clockManager.getCurrentTick();
     for (uint32_t tick = base + 1; tick <= base + 768; ++tick) {
       clockManager.assignCurrentTickSilently(tick);
@@ -2661,6 +2668,148 @@ void test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_comm
                             "the committed switch must leave the predecessor slot out of the enabled set");
 }
 
+/// **S4b.6/S4b.7 — a switch to a target without occupancy never allocates on the clock path.**
+///
+/// The inbound occupancy (the target slot's playback runtime) is what the switch commit binds to. Two facts
+/// make it a stage of its own: the **commit** runs on the clock path (`updateAllTracks`) and the **request**
+/// runs on a MIDI-input edge, so neither may take the runtime; and `slotIfAllocated` alone would leave the
+/// switch silently dead instead of provisioning it. The contract therefore has two sides, and this helper
+/// drives both for one target shape:
+///
+///   1. the **production MIDI edge** (`toggleRecordForSlot` -> `queuePlayingSlotSwitch` ->
+///      `requestSlotSwitch`) queues the switch and marks it through the existing deferred owner
+///      (`hasPendingDeferredPlaybackPrewarm`), without taking the runtime inline;
+///      (`hasPendingDeferredPlaybackPrewarm`), so the pending switch makes its track eligible for a
+///      deferred turn;
+///   2. driving the clock lane leaves the switch **pending** and the target's occupancy **absent** -- the
+///      record of "no allocation on the clock path";
+///   3. the off-clock owner (`provisionSlotForSwitch`, the lane's call) takes the occupancy;
+///   4. driving again **commits** the switch, so it was never dead.
+///
+/// `lengthTicks` gives the target the shape under test. Both shapes used here stay **below** the demotion
+/// bound (`kMaxDetailedWindowBars` bars): at or above it the loop is demoted to the windowed policy and the
+/// commit's long-loop hold term (`isPlaybackMergedMidiEventsReadyForSlot`) can no longer be satisfied by the
+/// occupancy work -- measured here as a switch that stays pending after provisioning, because the windowed
+/// gather returns empty without a published root. That shape is **owed** (recorded in `tasks.md` under
+/// S4b.6/S4b.7), not asserted, so this helper never claims it.
+void assert_s4b_6_a_switch_provisions_off_clock(uint32_t lengthTicks) {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kPlaying = 0;
+  constexpr uint8_t kTarget = 2;
+  commitRecordPassIntoTrackSlot(track, kPlaying);
+  commitRecordPassIntoTrackSlotOfLength(track, kTarget, lengthTicks);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kPlaying, true));
+
+  // The target has committed content but **no occupancy**: nothing has taken its playback runtime.
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
+                            "fixture precondition: the target must start without occupancy");
+
+  // The predecessor reaches the production playing state the way the lane fixture above does: an overdub
+  // start on a populated slot is what enables it, plays it and publishes its playback pair, so the loop-end
+  // wrap the commit waits for is a real one rather than a forced-state artifact. A forced `TRACK_PLAYING`
+  // with no published pair leaves the playhead at tick zero and the switch can never be due.
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, kPlaying);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "fixture precondition: the predecessor must be capturing");
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                           "fixture precondition: the predecessor's stop must be admitted");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
+                            "fixture precondition: the target must still have no occupancy");
+
+  // Retire the predecessor's finalizer *before* the press, so the queued switch is genuinely due: while
+  // the finalizer is outstanding the playhead is frozen and no loop-end wrap is ever detected, which would
+  // hide the commit's occupancy binding rather than exercise it.
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, kPlaying);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kPlaying),
+                            "the fixture must retire the predecessor's finalizer");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
+                            "retiring the finalizer must not take the target's occupancy");
+
+  // (1) The production MIDI edge presses the populated target: it queues the playback switch and marks the
+  // deferred provisioning, and it must not take the runtime inline.
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(kTarget);
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
+                           "the request must queue a pending switch");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kTarget, trackManager.getPendingSlotIndex(0),
+                                  "the queued switch must name the target");
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.hasPendingDeferredPlaybackPrewarm(),
+                           "the request must mark the pending switch for off-clock provisioning");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
+                            "the MIDI edge must not provision inline");
+
+  // (2) The clock lane may not allocate: the switch stays pending, the occupancy stays absent. The lane's
+  // provisioning step is deliberately **not** modelled here -- that is the point of this window.
+  for (int round = 0; round < 3; ++round) {
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + 768; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      trackManager.updateAllTracks(tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kPlaying, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the switch may not commit before its occupancy exists");
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
+                           "the switch must be retained, not dropped");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
+                            "the clock path must not allocate the inbound occupancy");
+
+  // (3) The off-clock owner takes the occupancy: exactly `main.cpp`'s deferred frame -- the marked request
+  // is taken, `provisionSlotForSwitch` provides the runtime, and the merged window is prewarmed on top.
+
+  uint8_t prewarmTrack = 0xFF;
+  uint8_t prewarmSlot = 0xFF;
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.takeDeferredPlaybackPrewarm(prewarmTrack, prewarmSlot),
+                           "the marked request must still be awaiting its off-clock turn");
+  TEST_ASSERT_EQUAL_UINT8(0, prewarmTrack);
+  TEST_ASSERT_EQUAL_UINT8(kTarget, prewarmSlot);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
+                            "nothing may have provisioned the target behind this window's back");
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.provisionSlotForSwitch(prewarmTrack, prewarmSlot),
+                           "the off-clock owner must provision the inbound occupancy");
+  track.ensurePlaybackMergedEventsForSlot(kTarget);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
+                           "provisioning must have taken the target's occupancy");
+
+  // (4) Driving again commits it with no further request, so the switch was never dead.
+  for (int round = 0; round < 4 && TrackCaptureStopTestAccess::activeLoopIndex(track) != kTarget;
+       ++round) {
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + 768; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      trackManager.updateAllTracks(tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kTarget, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the provisioned switch must commit");
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
+                            "the committed switch must clear its pending state");
+}
+
+/// Short target: the commit would otherwise take the plain `hasDataInSlot` branch.
+void test_s4b_6_a_switch_to_a_slot_without_occupancy_provisions_off_clock() {
+  assert_s4b_6_a_switch_provisions_off_clock(768);
+}
+
+/// Multi-bar target (8 bars): the same contract over a different geometry, so the binding is not a
+/// property of the one-bar case. It stays **below** `kMaxDetailedWindowBars` (16 bars) on purpose -- at or
+/// above that bound the loop is *demoted* to the windowed policy, whose commit hold this harness cannot
+/// release, so the demoted shape is an explicitly owed measurement rather than a passing fixture here.
+void test_s4b_6_a_switch_to_a_multi_bar_target_without_occupancy_also_provisions_off_clock() {
+  assert_s4b_6_a_switch_provisions_off_clock(6144);
+}
+
 int main() {
   UNITY_BEGIN();
   // S4b.1 check 7 (repeated same-track switches): accepted, bounded, nothing stolen, executes on capacity.
@@ -2669,6 +2818,10 @@ int main() {
   RUN_TEST(test_s4b_1_a_denied_stop_on_an_uncommitted_switch_retains_the_targets_start);
   // S4b.1 check 7 (populated target): the queued playback switch waits, then commits in the tick lane.
   RUN_TEST(test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_commits);
+  // S4b.6/S4b.7: the inbound occupancy is provided off-clock; neither the MIDI edge nor the clock path
+  // may allocate it, and a switch without it must not dead-end.
+  RUN_TEST(test_s4b_6_a_switch_to_a_slot_without_occupancy_provisions_off_clock);
+  RUN_TEST(test_s4b_6_a_switch_to_a_multi_bar_target_without_occupancy_also_provisions_off_clock);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);

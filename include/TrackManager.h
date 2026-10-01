@@ -192,6 +192,12 @@ public:
                           uint8_t slotIndex,
                           SlotQuantization quantization,
                           uint32_t queuedAtTick);
+  /// S4b.6 (b) / S4b.7: the **off-clock** provisioning owner for a switch's inbound occupancy. A slot
+  /// switch may not take its runtime on the MIDI edge that requests it (`requestSlotSwitch`) nor on the
+  /// clock path that commits it (`updateAllTracks`), so `requestSlotSwitch` marks the request through the
+  /// existing deferred owner and the deferred lane calls this. Idempotent; a refusal is reported with its
+  /// own operation kind (`slot_switch`) and leaves the switch pending rather than silently dead.
+  bool provisionSlotForSwitch(uint8_t trackIndex, uint8_t slotIndex);
   /// Piano roll + loop LEDs when preview launch is queued or split focus is reaffirmed.
   void refreshPreviewSlotFocus(uint8_t trackIndex, uint8_t slotIndex);
   /// Bar/16th phase slot: playing slot while transport runs, preview slot when stopped.

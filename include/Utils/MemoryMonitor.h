@@ -136,6 +136,9 @@ enum class OperationKind : uint8_t {
   /// kind `Loop::prewarmPreparedCompanionHistory` uses, so an exhausted device returns
   /// the `false` its contract already allows instead of reaching `abort()`.
   CompanionHistoryReserve = 5,
+  /// S4b.7: provisioning a *switch's* inbound occupancy was refused. Its own kind, because the repair the
+  /// operator needs differs from a record start's -- the switch stays pending rather than being dropped.
+  SlotSwitch = 6,
 };
 
 /**

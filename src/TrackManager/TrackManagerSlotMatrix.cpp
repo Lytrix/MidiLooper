@@ -300,6 +300,31 @@ void TrackManager::requestSlotSwitch(uint8_t trackIndex, uint8_t slotIndex,
                                      SlotQuantization quantization, uint32_t queuedAtTick) {
   StorageManager::refreshLoopSlotPayloadOnSdInRam(trackIndex, slotIndex);
   slotStateMachine.requestPendingSlotSwitch(trackIndex, slotIndex, quantization, queuedAtTick);
+  // S4b.7: this is a MIDI-input/action edge, so the inbound occupancy may **not** be taken inline. The
+  // pending switch is marked as needing provisioning through the existing deferred-request owner, which
+  // makes the switch's track eligible for a deferred turn; the lane calls `provisionSlotForSwitch`
+  // off-clock. The commit path keeps the switch pending until the occupancy exists.
+  requestDeferredPlaybackPrewarm(trackIndex, slotIndex);
+}
+
+FLASHMEM bool TrackManager::provisionSlotForSwitch(uint8_t trackIndex, uint8_t slotIndex) {
+  // S4b.6 (b) / S4b.7: the **off-clock** allocation point for a switch's inbound occupancy. It is the only
+  // place a pending switch may take its runtime: the commit path (`updateAllTracks`) and the MIDI edges
+  // (`requestSlotSwitch`, `MidiButtonActions`) must stay allocation-free. Idempotent -- a slot that already
+  // has occupancy is not re-provisioned -- and a refusal is reported with its own operation kind instead of
+  // leaving the switch silently un-provisioned.
+  if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return false;
+  }
+  Track& track = tracks[trackIndex];
+  if (track.hasPlaybackOccupancyForSlot(slotIndex)) {
+    return true;
+  }
+  if (!track.prewarmPlaybackForSlot(slotIndex, /*prepareCapture=*/false)) {
+    MemoryMonitor::reportPrewarmAdmissionDenied(MemoryMonitor::OperationKind::SlotSwitch);
+    return false;
+  }
+  return true;
 }
 
 void TrackManager::refreshPreviewSlotFocus(uint8_t trackIndex, uint8_t slotIndex) {

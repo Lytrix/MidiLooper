@@ -223,6 +223,13 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
                      tracks[i].getLoop(targetSlot).loopLengthTicks)) {
         // Long loop just Committed: do not full-gather on the clock path (210001).
         // Main prewarms after LoadLoopJob Commit; keep pending until window is ready.
+      } else if (!tracks[i].hasPlaybackOccupancyForSlot(targetSlot)) {
+        // S4b.6 (a) / S4b.7: the inbound **occupancy** is absent, so the switch stays **pending** rather
+        // than committing into a slot whose runtime does not exist -- `ensurePlaybackMergedEventsForSlot`
+        // deliberately cannot take it here, and `slotIfAllocated` alone would leave a silent dead switch.
+        // `requestSlotSwitch` already marked the request for the deferred provisioning owner
+        // (`provisionSlotForSwitch`), so the next eligible lane turn takes the occupancy off-clock and the
+        // commit lands.
       } else if (tracks[i].hasDataInSlot(targetSlot)) {
         const uint8_t previousPlaying = getPlayingSlotIndex(i);
         slotStateMachine.clearPendingSlotSwitch(i);

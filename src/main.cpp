@@ -228,6 +228,10 @@ FLASHMEM __attribute__((noinline)) static void prewarmPlaybackMergedEventsForSlo
 #if defined(SESSION_CAPTURE)
   const uint32_t firstCommitStartUs = micros();
 #endif
+  // S4b.6/S4b.7: this lane is the off-clock owner of a slot's inbound occupancy, so it *provisions* before
+  // it prewarms. `ensurePlaybackMergedEventsForSlot` no longer allocates on any path, which is what keeps
+  // the switch commit and the MIDI edges allocation-free.
+  (void)trackManager.provisionSlotForSwitch(trackIndex, slotIndex);
   prewarmTrackRef.ensurePlaybackMergedEventsForSlot(slotIndex);
 #if defined(SESSION_CAPTURE)
   RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(2, firstCommitStartUs);

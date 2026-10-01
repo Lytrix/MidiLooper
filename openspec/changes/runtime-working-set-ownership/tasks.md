@@ -1759,7 +1759,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `TrackManager::setActiveLoopIndex` must cancel/re-queue rather than move. Fixture: queue a replace-enabled-set
       switch, press Undo, then trigger an unrelated switch → exactly one transfer, one release, no stale
       enabled-set replacement, no `TransferOverlap` overshoot.
-- [ ] S4b.6 **Occupancy-aware, allocation-free binding (B5).** `ensurePlaybackMergedEventsForSlot` uses
+- [x] S4b.6 **Occupancy-aware, allocation-free binding (B5).** `ensurePlaybackMergedEventsForSlot` uses
       `slotIfAllocated` (never `trySlot`); the commit branch keeps the switch pending when the inbound occupancy
       is absent; provisioning happens only at cold boundaries. **Rerun blocker — the named boundaries do not
       provision:** `requestSlotSwitch`, `setSelectedSlotIndex` and `loadTransportSlotIndices` only queue/refresh;
@@ -1769,7 +1769,45 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       switch path. `slotIfAllocated` alone yields silence or a permanently pending switch; note
       `ensureLoopsAllocated()` can spin `while(1) delay(1)` if the pool is uninitialised. Native no-allocation
       assertion on the commit path for a demoted short slot **and** a demoted long loop.
-- [ ] S4b.7 **`TrackManager::provisionSlotForSwitch(trackIndex, slotIndex)` (Revision 19).** The off-clock
+      **PARTIAL (checked 2026-10-01) — the binding and the occupancy term are in; the *demoted* target shape is
+      owed, and the reason is measured.** (a) `ensurePlaybackMergedEventsForSlot`
+      (`src/Track/TrackPlaybackWindowBuild.cpp`) now binds through `playbackRuntime.slotIfAllocated` and is a
+      documented **no-op** when the slot has no runtime, so neither the switch commit nor a MIDI edge can take a
+      runtime; the occupancy predicate is a named owner, `Track::hasPlaybackOccupancyForSlot(slot)`
+      (`TRACK_COLD_MEM`, defined beside the binding). (b) The commit branch in `TrackManager::updateAllTracks`
+      gained the explicit occupancy term the entry asked for: when
+      `!tracks[i].hasPlaybackOccupancyForSlot(targetSlot)` the switch **stays pending** instead of committing
+      into a slot whose runtime does not exist. Provisioning is off-clock and lands in S4b.7 (below);
+      `main.cpp`'s deferred frame provisions and only then prewarms. **Fixtures** (both on the production press
+      route, not a direct `requestSlotSwitch`): `test_s4b_6_a_switch_to_a_slot_without_occupancy_provisions_off_clock`
+      (one bar) and `test_s4b_6_a_switch_to_a_multi_bar_target_without_occupancy_also_provisions_off_clock`
+      (8 bars). **Red-proved twice, each restored byte-identically:** replacing the occupancy term with `false`
+      fails both at *"the switch may not commit before its occupancy exists"* (the commit landed early —
+      `Expected 0 Was 2`), and reverting the binding to `trySlot` fails both at *"the MIDI edge must not
+      provision inline"*. **A measurement that changed the fixture's shape, not the code:** a forced
+      `TRACK_PLAYING` plus `selectSlot` leaves `lastTickInLoop` at `0` across 5,576 ticks, so no loop-end wrap is
+      ever detected and a queued switch can never be *due*; the fixtures therefore reach the production playing
+      state through an overdub **start** on a populated slot (that is what enables it, plays it and publishes its
+      pair) and retire the predecessor's finalizer **before** the press, because a live finalizer freezes the
+      playhead (the S4b.1 measured fact) and would hide the occupancy binding instead of exercising it.
+      **OWED — the demoted target is not covered, and not because a fixture is missing.** Measured with a
+      24-bar target (`> kMaxDetailedWindowBars × TICKS_PER_BAR` = 12,288 ticks) carrying bar-spread committed
+      content: after the off-clock owner has taken its occupancy the switch is **still pending**
+      (`ready=0 occ=1 pending=1`), because the commit's long-loop hold term
+      (`isPlaybackMergedMidiEventsReadyForSlot`) requires a **non-empty** windowed `mergedMidiEvents` and the
+      windowed gather (`Loop::tryGatherPublishedSnapshotEventsInWindow`) holds the window *empty*
+      (`GatherMissHoldEmpty`) unless a published root supplies it. Two consequences, both outside this entry:
+      the shape needs either a published-root fixture on the windowed publication lane (S4c/F) or an architect
+      decision to relax the hold — and until then a demoted target's queued switch can neither commit nor be
+      reported as dropped, which **is** the "silent dead switch" the review named, on that shape only. Both
+      committed fixture shapes stay deliberately below the demotion bound and their doc block says so.
+      Focused suite **36/36**; full native **2,651 cases / 2,644 succeeded / 7 skipped / 0 failed**;
+      `teensy41-capture-serial` SUCCESS, RAM1 `variables 96,192 / code 391,304 + padding 1,912 / locals 34,880`
+      (floor 840; the preceding slice measured code 391,288 / padding 1,928, so the new binding costs 16 B of
+      ITCM and no RAM1 state), firmware hex sha256 `ceb79f0ac74f921ae772499839101e561ae7b26370e8a699042848f00a115f93`.
+      Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.6/S4b.7 — the occupancy the switch binds
+      to, and who provides it".
+- [x] S4b.7 **`TrackManager::provisionSlotForSwitch(trackIndex, slotIndex)` (Revision 19).** The off-clock
       allocation point S4b.6 needs. **Both `requestSlotSwitch` call sites are MIDI-input/action edges**
       (`MidiButtonActions.cpp:62,287`), so inline allocation is illegal: `requestSlotSwitch` marks the pending
       switch as "needs provisioning" and the **deferred provisioning owner** (the existing deferred idle lane, or
@@ -1780,6 +1818,34 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       the switch pending when `slotIfAllocated(targetSlot)` is null and never leaves a silent dead switch; no new
       `trySlot` on the clock path. Fixture: demoted short slot **and** demoted long loop each switch with no
       `trySlot` on the commit path and no dead switch.
+      **PARTIAL (checked 2026-10-01).** Landed `FLASHMEM bool TrackManager::provisionSlotForSwitch(trackIndex,
+      slotIndex)` (`src/TrackManager/TrackManagerSlotMatrix.cpp`), right after `requestSlotSwitch`: index-guarded,
+      **idempotent** (a slot that already has occupancy answers `true` without re-provisioning), provision
+      through `Track::prewarmPlaybackForSlot(slotIndex, /*prepareCapture=*/false)`, and on refusal it reports
+      `MemoryMonitor::reportPrewarmAdmissionDenied(OperationKind::SlotSwitch)` — a **new operation kind**
+      (`SlotSwitch = 6`, row literal `slot_switch`) because the operator repair differs from a record start's and
+      because the contract here is "the switch stays pending", not "the request is dropped". **Eligibility cost
+      zero new state:** `requestSlotSwitch` marks the request through the *existing* deferred owner
+      (`requestDeferredPlaybackPrewarm`), and the *existing* deferred consumer — `main.cpp`'s deferred frame
+      (`prewarmPlaybackMergedEventsForSlot`) — takes it and provisions before it prewarms. **The entry's
+      eligibility worry does not materialise, and it is worth naming why, because the reason is *not* the
+      predicate it points at:** the deferred prewarm consumer is **not** gated by `hasRealtimeIdleWork` —
+      that predicate belongs to the *maintenance* scan (`processDeferredIdleMaintenance`) — so a marked request
+      needs no new eligibility term there. What does bound it is the frame's own shape: the prewarm slot sits
+      after the frame's early return while a deferred overdub stop is outstanding and after
+      `servicePendingPreparedPlaybackPair()`, and the mark is cleared **only** by the take, so a switch that
+      arrives beside a finalizing predecessor provisions on the first eligible turn *after* that finalization
+      retires — a bounded delay, not a dead end. (That sequencing is the observed S4b.1 ordering, and S4b.2's
+      "pre-provision the inbound role before releasing the outbound one" is the stage that would change it.)
+      The commit path keeps the switch pending when the inbound occupancy is
+      absent (S4b.6) and the commit itself performs no `trySlot`; the one shape where the hold cannot be released
+      (a **demoted** target) is measured and owed under S4b.6, above, rather than claimed here. Fixtures: S4b.6's
+      two, which drive the real lane pair (`takeDeferredPlaybackPrewarm` → `provisionSlotForSwitch` →
+      `ensurePlaybackMergedEventsForSlot`) and assert the MIDI edge provisions nothing inline. Red-proof: with the
+      binding reverted to `trySlot`, the fixtures fail *before* the lane's call — i.e. the "the MIDI edge must not
+      provision inline" assertion — so provisioning is proven to be this owner's, off-clock. RAM1 unchanged by the
+      new owner: `code 391,304 / padding 1,912 / locals 34,880` (the 16 B of code belong to the binding and the
+      occupancy term; the new function added no RAM1 state).
 - [ ] S4b.8 **HITL — slot switch while a predecessor finalizes, transport playing (the switch leg alone).**
       Managed run: record A → stop A → switch to B **while A is still finalizing** → assert the switch is accepted
       and completes, `activeLoopIndex` does not move before A's stop is admitted and bound to A's slot, the
