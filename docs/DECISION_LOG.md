@@ -105,7 +105,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-101 -->
+<!-- Append new entries below (newest first). Next ID: DEC-102 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -5818,3 +5818,50 @@ dropped; finalizing holders excluded, which is how the two candidate corrections
 made to allocate) with byte-identical restores. Focused suite 31/31; full native 2,646 cases / 2,639 succeeded /
 7 skipped / 0 failed; `teensy41-capture-serial` SUCCESS with the RAM1 line unchanged. Record:
 `openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4.4 — the declared cap policy".
+
+## DEC-101 — The switch lane gets its own acceptance surface, and the play branch is lifted for it
+
+**Date:** 2026-10-01
+**Owner:** `test/test_runtime_working_set_ownership` (suite + `off_path_deps.h`), i.e. the
+`runtime-working-set-ownership` S4b acceptance surface. No firmware change.
+**Status:** Accepted (prerequisite for the S4b.5/S4b.6/S4b.7 fixtures)
+
+### Problem
+S4b's remaining items — the occupancy-aware binding, its off-clock provisioning owner, and the single
+active-slot write authority — all change, and must be asserted on, the path a **queued switch** commits on. A
+populated target does not take the record-start carrier: the gesture queues a *playback* switch and the commit
+happens inside `TrackManager::updateAllTracks`, the production per-tick entry. No suite could observe that: the
+per-tick entry failed to link for four symbols (`Track::playMidiEvents(uint32_t, bool)`,
+`Track::playMidiEventsForSlot(uint8_t, uint32_t, bool)`, `TrackManager::isTrackAudible(uint8_t) const`,
+`Track::shouldCommitQueuedPlaybackStart(uint32_t) const`), and linking their TUs collides with ten stubs the
+suite's fail-closed surface defines — the entire **play branch**, which the suite had deliberately kept
+fail-closed ("the recording branch is the one under test, and the play branch must remain fail-closed").
+
+### Decision
+* **This suite owns the switch lane's acceptance.** S4b is this change's stage, and its fixtures must live where
+  the stage's other fixtures are; a second suite for one lane would fragment the stage's evidence.
+* **The play branch moves behind `HARNESS_LINKS_PLAYBACK_SWITCH_LANE`** together with the three TUs, as one
+  coherent unit: the lane cannot be observed without it, and a partial lift would let a fixture pass while the
+  path it claims to exercise cannot run.
+* **The trade is explicit, and its blast radius is bounded by construction:** an `OFF_PATH()` abort that is
+  removed cannot have been *reached* by any fixture that was previously passing, so no existing assertion is
+  weakened — the lift only replaces an abort with the real owner on routes that could not run before. The
+  loop-edit manager is *not* lifted: it stays stubbed at the three symbols the hot path references, with its one
+  callback still failing closed, so the lane cannot leak into an edit session.
+* **Observation moves to the real owners where a stub was the observer.** `setMasterLoopLength` was stubbed
+  *counted*, and two S4f.21 fixtures asserted that counter; with the real policy owner linked they assert
+  `TrackManager::getMasterLoopLength()` — the firmware's own state, which is strictly stronger than a stub's
+  bookkeeping.
+
+### Consequences
+The lane is observable and its current behaviour is pinned: a queued playback switch on a populated target is
+**retained** while the predecessor finalizes and **commits** once the finalizer retires, with no further gesture
+— so the review's "silent dead switch" does not occur on this shape. Both named failure modes are red-proved
+(committing early fails *"must not commit while the predecessor finalizes"*; never committing fails *"must commit
+once the predecessor retires"*). The wait is **emergent** (the loop-boundary math with `lastTickInLoop` frozen
+during the finalization), which is recorded rather than presented as a guard. The commitment's occupancy binding,
+`Track::ensurePlaybackMergedEventsForSlot`, is now reachable natively — the surface S4b.6/S4b.7 change next.
+Focused suite 34/34; full native 2,649 cases / 2,642 succeeded / 7 skipped / 0 failed; `teensy41-capture-serial`
+SUCCESS with an unchanged firmware hex and RAM1 line. Record:
+`openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4b.1 — the switch lane's acceptance
+surface".

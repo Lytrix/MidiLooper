@@ -1608,6 +1608,36 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 
 - [ ] S4b.1 Transfer the single complex role (record / overdub / passes / undo/redo / display, resumable
       small-packet logic inside MIDI boundaries) to a newly selected slot or track without a transport stop.
+      **THE SWITCH LANE'S ACCEPTANCE SURFACE EXISTS 2026-10-01 (test-only; no `src/` change — firmware hex
+      unchanged), and the populated-target queued switch is measured and pinned.** The prerequisite recorded
+      by the previous slice is discharged: the suite now defines `HARNESS_LINKS_PLAYBACK_SWITCH_LANE`, which
+      links the playback hot path, the playback-policy owner and the transport-control owner, and moves the
+      **play branch** (`startPlaying`/`stopPlaying`/`togglePlayStop`, the silence owners,
+      `queuePlaybackStartAtGrid`/`commitQueuedPlaybackStart`/`clearQueuedPlaybackStart`, `setMasterLoopLength`)
+      out of the fail-closed stub surface — because a **populated** target's switch commits inside
+      `TrackManager::updateAllTracks`, which is exactly that branch. The trade is recorded (DEC-101) rather
+      than hidden: `Off-path` aborts that were removed cannot have been *reached* by any passing fixture, and
+      the loop-edit manager stays stubbed (a reached `onGlobalGeometryRestored` still fails closed). **Two
+      fixtures that observed through the old counting stub now assert the real owner's state** —
+      `trackManager.getMasterLoopLength()` — which is stronger than the counter it replaces: the stop edge must
+      adopt nothing, the published geometry must be adopted (and a second dispatch must change nothing), and a
+      filtered take must adopt nothing. **The new fixture**
+      `test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_commits` measures the lane: the
+      populated target queues a **playback switch** (`hasPendingSlotSwitch` / `getPendingSlotIndex`), the
+      press does not move the active slot, and while the predecessor still finalizes the request is
+      **retained** across three full loops (pending set, predecessor's finalizer and lease intact); once the
+      finalizer retires the switch **commits with no further gesture** — active slot moved, pending cleared,
+      and the enabled set replaced with the target. **So the review's "silent dead switch" does not occur on
+      this shape.** **Red-proved twice, each restored byte-identically:** committing at any tick (ignoring the
+      boundary) fails it at *"the queued switch must not commit while the predecessor finalizes"*, and
+      never running the commit branch fails it at *"the retained switch must commit once the predecessor
+      retires"* — i.e. both named failure modes (early switch, dead switch) are now covered. Focused suite
+      **34/34**; full native **2,649 cases / 2,642 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial`
+      SUCCESS with the RAM1 line unchanged. **Recorded:** the wait is **emergent**, not an explicit guard — the
+      pending switch is held by the loop-boundary math (`shouldCommitLoopEndSwitch` with `lastTickInLoop`
+      frozen while the predecessor finalizes), which is why the fixture pins both sides rather than an internal
+      condition; and the commit's occupancy binding (`ensurePlaybackMergedEventsForSlot`) is now *reachable*
+      natively, which is the surface S4b.6/S4b.7 need.
       **FINDING (a) DISCHARGED 2026-10-01 (test-only; no `src/` change).** (a) recorded "when
       `Track::stopOverdubbing` denies admission on capacity, the switch returns `false` and the press is
       **dropped** rather than retained". **That is stale:** `MidiButtonActions::handleToggleRecordForSlot`

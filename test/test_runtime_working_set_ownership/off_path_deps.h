@@ -23,9 +23,11 @@ void EditManager::foldLiveCaptureIntoNoteEditSession(Track&) { OFF_PATH(); }
 #endif
 void EditManager::commitAllPendingNoteEditActions(Track&) { OFF_PATH(); }
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
 void Track::stopPlaying() { OFF_PATH(); }
 void Track::startPlaying(uint32_t, bool) { OFF_PATH(); }
 void Track::togglePlayStop() { OFF_PATH(); }
+#endif
 #endif
 // The record-stop commit route is a **separate** boundary from the play/stop transport neighbours above: one
 // fixture has to drive the production transport-stop route and assert that the resulting take *commits* with
@@ -75,7 +77,9 @@ CommitResult Track::commitCaptureForStop(CommitReason, uint32_t, uint32_t, uint8
 // destinations, so failing closed here left the whole `Stopped`-destination deferred drain without any
 // native coverage (see B03). Counting it instead keeps it observable -- a fixture can assert the track
 // was silenced -- without pretending the silence itself is under test. Reset in setUp.
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
 void Track::silenceTrackMidiOutput() { ++g_nativeSilenceTrackCalls; }
+#endif
 #if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
 // `handleTransportStop` reaches these two, so a suite that drives that route makes them observable rather
 // than fail-closed. Neither weakens the fixture that drives it: `clearQueuedPlaybackStart` is a reset of a
@@ -83,6 +87,7 @@ void Track::silenceTrackMidiOutput() { ++g_nativeSilenceTrackCalls; }
 // adopted length while that fixture asserts the loop's own `loopLengthTicks` (set by the commit itself).
 // `queuePlaybackStartAtGrid`/`commitQueuedPlaybackStart` are NOT reachable from the route and stay
 // fail-closed, as do the play/stop neighbours above.
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
 #if defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
 void Track::clearQueuedPlaybackStart() {}
 // S4f.21: record the adopted value rather than dropping it, so a fixture can assert that the master
@@ -97,8 +102,11 @@ void TrackManager::setMasterLoopLength(uint32_t length) {
 void Track::clearQueuedPlaybackStart() { OFF_PATH(); }
 void TrackManager::setMasterLoopLength(uint32_t) { OFF_PATH(); }
 #endif
+#endif
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
 void Track::queuePlaybackStartAtGrid(int32_t, uint32_t) { OFF_PATH(); }
 void Track::commitQueuedPlaybackStart(uint32_t) { OFF_PATH(); }
+#endif
 // The record start ends by reclaiming disabled-pass storage. That reclaim is not the handoff under
 // test, so suites that drive a start keep it observable.
 #if defined(HARNESS_OBSERVABLE_START_RECLAIM)
@@ -196,7 +204,9 @@ void StorageManager::requestWorkspaceFooterPersistWhenSafe() {}
 void StorageManager::requestWorkspaceFooterPersistWhenSafe() { OFF_PATH(); }
 #endif
 #endif
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
 void Track::silenceSlotMidiOutput(uint8_t) { OFF_PATH(); }
+#endif
 #include "BarStepButtonHandler.h"
 BarStepButtonHandler::BarStepButtonHandler() {}
 BarStepButtonHandler barStepButtonHandler;
@@ -241,10 +251,12 @@ MidiFaderActions::MidiFaderActions() {}
 //  * `Track::sendAllNotesOff` -- a physical output boundary, so it is observable for a suite that drives the
 //    stop route (no-op) and fail-closed otherwise.
 void DisplayManager::refreshViewportAfterRecordStop(Track&, uint8_t, uint32_t) {}
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
 #if defined(HARNESS_OBSERVABLE_ALL_NOTES_OFF)
 void Track::sendAllNotesOff() {}
 #else
 void Track::sendAllNotesOff() { OFF_PATH(); }
+#endif
 #endif
 #if defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
 // `handleTransportStop` calls this only when the save query below says yes; it is defined so the route links,

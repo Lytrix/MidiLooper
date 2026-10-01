@@ -61,6 +61,10 @@ bool sequencerRunning = false;
 // ...and the physical all-notes-off fan-out it reaches is observable (no-op) for this route.
 #define HARNESS_OBSERVABLE_ALL_NOTES_OFF
 // The stub surface: physical outputs and unrelated domain routes stay fail-closed or observable.
+// The switch lane: this suite must be able to observe a **queued** switch committing (S4b.5/S4b.6/S4b.7),
+// which happens on the production per-tick entry. That needs the playback hot path and the play/stop
+// owners the rest of the suite keeps fail-closed, so they move behind this macro together.
+#define HARNESS_LINKS_PLAYBACK_SWITCH_LANE
 #include "off_path_deps.h"
 
 // The production symbols this suite's admission routes reach. Kept to the measured closure: the undo
@@ -86,6 +90,20 @@ bool sequencerRunning = false;
 #include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
 #include "../../src/EditManager/NoteGeometryResolver.cpp"
 #include "../../src/EditManager/EditSessionInteraction.cpp"
+// The switch lane's production TUs: the playback hot path (silence owners + `playMidiEvents`), the
+// playback policy owner (`isTrackAudible`) and the transport control owner (`startPlaying`/`stopPlaying`,
+// `queuePlaybackStartAtGrid`/`commitQueuedPlaybackStart`). See the macro above.
+#include "../../src/Track/TrackPlaybackHotPath.cpp"
+#include "../../src/TrackManager/TrackManagerPlaybackPolicy.cpp"
+#include "../../src/Track/TrackTransportControl.cpp"
+// The lane's own boundary: linking the hot path brings `Track::resetPlaybackState`'s frame reset, which
+// knocks on the loop-edit manager when a LOOP_EDIT session is live ("keep the LOOP_EDIT baseline aligned
+// with the playback frame"). This suite never opens an edit session, so the manager is stubbed at the three
+// symbols that TU references instead of linking the edit stack, and its one callback fails closed --
+// reaching it would mean an edit session exists in a suite whose fixtures must never open one.
+LoopEditManager::LoopEditManager(MidiHandler& handler) : midiHandler(handler) {}
+LoopEditManager loopEditManager(midiHandler);
+void LoopEditManager::onGlobalGeometryRestored(Track&) { OFF_PATH(); }
 
 struct TrackCaptureStopTestAccess {
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
@@ -1504,18 +1522,22 @@ void test_record_stop_adopts_published_geometry_not_the_stop_edge_prediction() {
   // adopted as the transport's master length.
   TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
                            "precondition: the Record stop must be deferred");
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(0, g_nativeAdoptedMasterLengthCalls,
-                                 "the stop edge must not latch its predicted length");
+  // The switch lane links the real `TrackManager` policy owner, so the adopted master length is asserted
+  // as the manager's own state rather than through the counting stub this suite used to keep.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, trackManager.getMasterLoopLength(),
+                                   "the stop edge must not latch its predicted length");
 
   for (int turn = 0; turn < 8192 && track.hasPendingDeferredOverdubStop(); ++turn) {
     (void)TrackCaptureStopTestAccess::step(track);
   }
   TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
   trackManager.servicePendingRecordStopGeometry();
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(1, g_nativeAdoptedMasterLengthCalls,
-                                 "the published geometry must be adopted exactly once");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(768, g_nativeAdoptedMasterLength,
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(768, trackManager.getMasterLoopLength(),
                                    "the adopted master length must be the published geometry");
+  // "Exactly once" in state terms: the obligation is consumed, so a second dispatch changes nothing.
+  trackManager.servicePendingRecordStopGeometry();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(768, trackManager.getMasterLoopLength(),
+                                   "the adoption must not run twice");
   TEST_ASSERT_TRUE_MESSAGE(track.getLoop(0).passes.hasRecordPass(),
                            "precondition: the take must have published a pass");
 }
@@ -1549,8 +1571,8 @@ void test_filtered_record_take_publishes_no_master_length() {
 
   TEST_ASSERT_FALSE_MESSAGE(track.getLoop(0).passes.hasRecordPass(),
                             "precondition: the take must have been filtered out");
-  TEST_ASSERT_EQUAL_UINT_MESSAGE(
-      0, g_nativeAdoptedMasterLengthCalls,
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      0, trackManager.getMasterLoopLength(),
       "a take that published nothing must not adopt a master length from the stop-edge prediction");
 }
 
@@ -2553,12 +2575,100 @@ void test_s4b_1_a_denied_stop_on_an_uncommitted_switch_retains_the_targets_start
                            "nothing may be stolen from the retired predecessor either");
 }
 
+
+
+/// **S4b.1 (check 7, populated target) — a queued *playback* switch waits for the predecessor and then
+/// commits in the production tick lane.**
+///
+/// The empty-target case is carried by the record-start carrier; a **populated** target takes a different
+/// route: the gesture queues a **playback switch** (`queuePlayingSlotSwitch` → `SlotStateMachine`'s pending
+/// switch), which commits in `TrackManager::updateAllTracks` — the production per-tick entry, and the lane
+/// S4b.5/S4b.6/S4b.7 change. This fixture is that lane's acceptance, measured first: while the predecessor
+/// still finalizes the request is **retained** (the pending switch stays set, the active slot does not move,
+/// the predecessor's finalizer and lease survive), and once the finalizer retires the switch **commits with
+/// no further gesture** — active slot moved, pending cleared, and the enabled set replaced with the target.
+/// That is the answer to the review's "silent dead switch" risk on this shape: it is neither silent nor dead.
+void test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_commits() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kPredecessor = 0;
+  constexpr uint8_t kTarget = 1;
+  commitRecordPassIntoTrackSlot(track, kPredecessor);
+  commitRecordPassIntoTrackSlot(track, kTarget);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kPredecessor, true));
+
+  // The predecessor captures and its stop is admitted (the finalizer holds the capacity).
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, kPredecessor);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::isOverdubbing(track));
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                           "fixture precondition: the predecessor's stop must be admitted");
+
+  // Press the populated target: a queued playback switch, not a record carrier.
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(kTarget);
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
+                           "a populated target must queue a playback switch");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kTarget, trackManager.getPendingSlotIndex(0),
+                                  "the queued switch must name the target");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kPredecessor, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the press must not move the active slot");
+
+  // Drive the production tick lane across several boundaries while the predecessor still finalizes.
+  for (int round = 0; round < 3; ++round) {
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + 768; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      trackManager.updateAllTracks(tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kPredecessor, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the queued switch must not commit while the predecessor finalizes");
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
+                           "the request must be retained rather than dropped");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kPredecessor),
+                           "the predecessor's finalizer must still be outstanding");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kPredecessor),
+                           "the predecessor's working set must survive the wait");
+
+  // Retire the finalizer and keep driving: the queued switch commits with no further gesture.
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, kPredecessor);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kPredecessor));
+  for (int round = 0; round < 4 && TrackCaptureStopTestAccess::activeLoopIndex(track) != kTarget;
+       ++round) {
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + 768; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      trackManager.updateAllTracks(tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kTarget, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the retained switch must commit once the predecessor retires");
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
+                            "the committed switch must clear its pending state");
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.isSlotEnabled(0, kTarget),
+                           "the committed switch must enable the target slot");
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.isSlotEnabled(0, kPredecessor),
+                            "the committed switch must leave the predecessor slot out of the enabled set");
+}
+
 int main() {
   UNITY_BEGIN();
   // S4b.1 check 7 (repeated same-track switches): accepted, bounded, nothing stolen, executes on capacity.
   RUN_TEST(test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once_capacity_frees);
   // S4b.1 (a): the uncommitted switch whose stop was denied on capacity still retains the start.
   RUN_TEST(test_s4b_1_a_denied_stop_on_an_uncommitted_switch_retains_the_targets_start);
+  // S4b.1 check 7 (populated target): the queued playback switch waits, then commits in the tick lane.
+  RUN_TEST(test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_commits);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);

@@ -141,14 +141,12 @@ non-accumulating, nothing stolen, executing once capacity frees; and (a) turned 
 carrier exists, so its slice is the denied-path reproducer), and the **cross-track** switch already had its
 fixture. So the next native work is:
 
-1. **The harness's linked closure for the pending-switch lane** — the named prerequisite, measured: a
-   *populated* target queues a **playback** switch that commits inside `TrackManager::updateAllTracks`'s
-   multi-slot-commit lane, and driving that entry from `test_runtime_working_set_ownership` fails to link for
-   exactly four symbols: `Track::playMidiEvents(uint32_t, bool)`, `Track::playMidiEventsForSlot(uint8_t,
-   uint32_t, bool)`, `TrackManager::isTrackAudible(uint8_t) const`, `Track::shouldCommitQueuedPlaybackStart(
-   uint32_t) const`. Add them through the `HARNESS_LINKS_*` pattern without shadowing them in the fail-closed
-   stub surface. Until this exists, any fixture for a queued switch can only observe the *request*, not its
-   commit or its absence — which is precisely the "silent dead switch" risk.
+1. **DONE (2026-10-01) — the switch lane's acceptance surface.** `HARNESS_LINKS_PLAYBACK_SWITCH_LANE` links the
+   playback hot path, the playback-policy owner and the transport-control owner and lifts the play branch out of
+   the fail-closed stub surface (DEC-101 records the trade), and the populated-target queued switch is now
+   pinned: retained while the predecessor finalizes, committing once the finalizer retires, with both failure
+   modes (early switch, dead switch) red-proved. So a queued switch's **commit and its absence** are observable
+   natively from here on, which is what the items below needed.
 2. **S4b.6 + S4b.7** — the occupancy-aware, allocation-free binding and the off-clock provisioning owner it
    needs (`TrackManager::provisionSlotForSwitch` on the deferred lane, with a pending switch making its track
    eligible for a deferred turn). This is the largest remaining piece and the one that removes the "silent dead
