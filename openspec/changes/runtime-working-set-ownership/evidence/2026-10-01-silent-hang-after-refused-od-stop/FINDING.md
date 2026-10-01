@@ -84,10 +84,65 @@ regression was the wrap commit's publication, not a load, so the loaded-body ver
   `rows,record,0,1144`, **no `overdub` row**, `rows,effective,0,1144`. So the slot holds this run's 24-bar record pass
   and no overdub — the same shape as the artifact it replaced.
 
+## Why the job never retired (diagnosed 2026-10-01, read-only)
+
+The device row names the predicate. `RecordPublished`'s own doc comment says the job "awaits bounded retirement"
+(`include/TrackPlaybackRuntime.h:66-68`). Retirement is `Track::stepDeferredRecordRetirement`, and it returns `Pending`
+on exactly one wait (`src/Track/TrackOverdubLifecycle.cpp:1815-1818`):
+
+```
+const bool intervalHasGeometry = loop.loopLengthTicks != 0;
+if (runtime != nullptr && runtime->frozenWindowBuildActive() && intervalHasGeometry) {
+  return LoopEventStoreRewriteResult::Pending;
+}
+```
+
+`frozenWindowBuildActive()` is literally `viewBuild.active()` (`src/Track/TrackPlaybackRuntime.cpp:1878-1880`) — **the
+same field `#STOP_PREFIX` prints as `build_active`**. Every poll reported `build_active=1`, so the device's own row
+states the blocking predicate directly, and `loop.loopLengthTicks` is 18432, not the zero of a filtered-out empty take
+that this guard exists for.
+
+The build's only advancer is `serviceFirstRecordingBar`, and its only caller gates on `isRecording()`
+(`src/Track/TrackDeferredMaintenance.cpp:991-1000`):
+
+```
+if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache && isRecording()) {
+  ...
+  if (runtime->serviceFirstRecordingBar(activeLoop, source, Config::TICKS_PER_BAR, ...)) return;
+}
+```
+
+`Track::isRecording()` is `trackState == TRACK_RECORDING` exactly (`src/Track/TrackStateFacade.cpp:124-126`), and
+`TRACK_OVERDUBBING` is a different state (`include/TrackState.h:18-21`). The device's state at every poll was
+`OVERDUBBING`. So once the record has stopped, the advancer can never run again, `viewBuild.active()` can never clear,
+and the retirement returns `Pending` **forever** — for all 30 s it was observed, and for as long as that state lasts.
+
+**The wait is silent by design.** The other early-outs in `processDeferredOverdubStopGrain` were given a
+`noteStallOnce(...)` diagnostic precisely for this wedge — DEC-070's own words: *"a predicate that can never become true
+wedges the slot (no stop is ever admitted again) … an aborted HITL run left exactly this state"*
+(`src/Track/TrackOverdubLifecycle.cpp:1845-1852`) — and this run emitted **no** `Deferred stop stalled:` row, which is
+consistent with this wait having none. DEC-070's bounded fallback (`:1936-1943`) covers the *overdub* route only
+(`retargetedFromPlaying && phase >= CanonicalTail`); the record route has **no bound** on this wait.
+
+That is the documented consequence, observed here: the wedged job holds its raw range and the capture-stop owner, so
+**no stop on the track is ever admitted again** — the overdub stop was refused `stop_job_pending`, and per DEC-069 the
+wrap seal was deferred, so the overdub pass was never sealed (Result 1).
+
+**Proven vs inferred.** Proven: the wait and its predicate, the device row that reports it, the advancer's
+`TRACK_RECORDING` gate, the observed state, and the absent diagnostic. **Inferred, not proven:** *why a build was in
+flight at the record stop at all.* The advancer is one grain per `VisualCache` idle turn against a take that grows to
+24 bars (1,144 events) on a loaded device, so the build plausibly could not finish inside the take; that needs the
+build's own telemetry or a targeted repro, and it is the remaining question.
+
+**Attribution:** pre-existing. The wait is from `9b815bf5` and the `isRecording()` gate from `33027ca3` (`git log -S`),
+and neither `TrackOverdubLifecycle.cpp` nor `TrackDeferredMaintenance.cpp` is touched by any commit after `61e08bda`.
+
 ## Open
 
-1. **Why the record stop job stays `pending=1` at its terminal phase `RecordPublished`.** It refuses subsequent stops
-   and defers overdub wrap seals, so it is the thing that broke this run — a retirement miss to diagnose in its own
-   right.
-2. **The hang's abort site** — needs the loud diagnostic above, or a debugger.
-3. **The publication side of a 24-bar overdub seal** remains unverified (Result 1).
+1. **Why a build was still in flight when the record stopped** (the one inferred link), then the fix: either bound this
+   retirement wait the way the overdub route bounds its fallback, or advance/discard `viewBuild` for a record job whose
+   interval is no longer `TRACK_RECORDING`. A `noteStallOnce` on this wait is the cheap first step, because the wedge is
+   currently invisible from both the host and the device log.
+2. **The hang's abort site** — needs the loud diagnostic above, or a debugger. Not attributed to any of the three sites.
+3. **The publication side of a 24-bar overdub seal** remains unverified (Result 1) — and this wedge is what prevents
+   reaching it.
