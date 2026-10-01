@@ -1608,6 +1608,35 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 
 - [ ] S4b.1 Transfer the single complex role (record / overdub / passes / undo/redo / display, resumable
       small-packet logic inside MIDI boundaries) to a newly selected slot or track without a transport stop.
+      **CHECK 7 REPEATED SWITCHES COVERED 2026-10-01 (test-only; no `src/` change — the rebuilt firmware hex
+      is byte-identical to the S4.4 slice's image).** The review's own next item was "repeated switches B → C
+      while A still finalizes … needs the explicit bounded-overlap policy (`Omax = NUM_TRACKS` inbound holders;
+      an outbound live/finalizing role is already counted and is never released to satisfy O)". That case now
+      has its acceptance fixture —
+      `test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once_capacity_frees` — and the
+      product of writing it is the **measured mechanism**, which the earlier records only described:
+      the repeated switch does **not** move the active slot (S4f.5, `finalizeCaptureAndSelectSlot`'s record
+      branch both latches and waits) and does **not** provision its target on the gesture path
+      (`slotIfAllocated` stays null — the gesture is a MIDI-input edge, so provisioning there would be the
+      S4b.7 violation); instead B's stop is **accepted and latched against B's own slot**
+      (`hasAcceptedInteractionForSlot(1)` true while `hasLiveCaptureStopJobForSlot(1)` is false) and the
+      target's record start stays **queued** (`isRecordingQueued(0, 2)`), i.e. the *carrier* plus the *latch*
+      is what retains the request. Nothing is stolen to satisfy the inbound — A's live finalizer and its lease
+      and B's lease all survive — and the pool does not grow across the gesture (measured 490 → 490 chunks).
+      Once A retires and the deferred lane turns, the retained request **executes without another gesture**:
+      C becomes active, its occupancy is provisioned, B's latch clears, and further turns change neither the
+      active slot nor the pool (the bounded, non-accumulating steady state the design's `TransferOverlap`
+      term budgets for). **Red-proved twice, each restored byte-identically:** provisioning the target inside
+      the record branch's wait fails the fixture (*"must not provision its target on the gesture path"*), and
+      removing that wait fails it (*"Expected 1 Was 2. the repeated switch may not move the active slot"*).
+      A third, deliberate control: emulating the pre-fix **unscoped** clear (`(b)` below) leaves **this**
+      fixture passing and fails `test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds`
+      and `test_the_successor_take_commits_with_content_after_a_transport_stop` — so `(b)`'s fix is covered
+      by those two, not by this one, and the coverage is now attributed rather than assumed. Focused suite
+      **32/32**; full native **2,647 cases / 2,640 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial`
+      SUCCESS with the RAM1 line unchanged. **Still open in S4b.1:** `(a)`'s uncommitted-switch case (a
+      capacity-denied stop is latched and the switch gesture returns without a committed target) and `(d)`/`(e)`
+      as recorded below — this slice adds check 7's repeated case, not those.
       **PARTIAL (2026-09-25): the acceptance sequence now passes end-to-end on S4f.6's carrier.** The user's
       acceptance sequence (A overdubbing → A's stop admitted, finalizer **paused** → switch to B → B starts
       and records MIDI while A still finalizes → A completes without damaging B) is

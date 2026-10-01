@@ -8785,3 +8785,54 @@ queue is the interaction layer's, already covered by its own fixtures
 duplicated here. The new `holder=` field has no device observation yet: no run has emitted a `cap_reached` row
 since the change, and nothing under `scripts/` parses `#MEM_DENIED`, so the field is additive to the row's
 readers.
+
+## S4b.1 — the repeated switch while a predecessor finalizes: measured, and its bounded overlap asserted (2026-10-01)
+
+**Why this slice.** § S4b.1's own "still to do" list put the cross-track and **repeated B → C switches while A
+still finalizes** next, with the policy attached: "*Omax = NUM_TRACKS inbound holders; an outbound
+live/finalizing role is already counted in C/D and is never released to satisfy O*". The cross-track case already
+has a fixture; the *repeated same-track* case had none, and the earlier records described the mechanism in prose
+only (the 2026-09-25 note on `(a)`/`(b)`, and the retention record). The deliverable here is therefore
+**characterization first, then the acceptance fixture** — and the characterization corrected two of my own
+assumptions, which is recorded below rather than smoothed over.
+
+**Measured mechanism (this is new information, not a restatement).** Sequence: A overdubs on slot 0 → A's stop
+admitted and paused → first switch to slot 1 commits and B records/overdubs → **second switch to slot 2 while A
+still finalizes**. Measured on the fixture:
+
+* the active slot **does not move** and the target's runtime is **never allocated** — the gesture retains rather
+  than provisions;
+* B's stop is **accepted and latched against B's own slot**: `hasAcceptedInteractionForSlot(1)` is true while
+  `hasLiveCaptureStopJobForSlot(1)` is false, and the target's record start stays **queued**
+  (`isRecordingQueued(0, 2)`), so the S4f.6 *carrier* plus the S4f.1 *latch* is what holds the request;
+* A's live finalizer and lease and B's lease all survive — nothing is released to satisfy the inbound;
+* the pool does **not** grow across the gesture (490 → 490 chunks), and once A retires and the deferred lane
+  turns, the retained request **executes with no further gesture**: C becomes active, provisioned, B's latch
+  clears, and the steady state neither drifts nor keeps consuming chunks.
+
+**Two assumptions the probe corrected, both worth recording.** (1) My first red-proof mutated the *overdub*
+branch of `finalizeCaptureAndSelectSlot`, and nothing failed: instrumenting the route showed the repeated switch
+takes the **record** branch, because the empty target made B a *record* capture (`handleToggleRecordForSlot(2)` →
+`finalizeCaptureAndSelectSlot(0, 2, capture=1)`). A red-proof that "passes" on the wrong branch proves nothing,
+so the fixture is red-proved on the branch it actually exercises. (2) The accepted interaction is a **Stop**
+latch — `PendingInteractionLatch` declares `Switch` and `Start` kinds, but `latchAcceptedStop` is the only
+writer, so a *switch* is never latched as such: it is carried by the target's queued start plus the predecessor's
+accepted stop. The fixture's assertions were rewritten to say exactly that.
+
+**Fixture and red-proofs.** `test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once_capacity_frees`
+(test-only; the firmware hex is byte-identical to the S4.4 image). Red-proved twice, each restored
+byte-identically: provisioning the target inside the record branch's wait fails it (*"must not provision its
+target on the gesture path"*), and removing that wait fails it (*"Expected 1 Was 2. the repeated switch may not
+move the active slot"*). A third, deliberate **control** — emulating the pre-fix **unscoped** clear that S4b.1's
+finding `(b)` describes — leaves this fixture passing and fails
+`test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds` and
+`test_the_successor_take_commits_with_content_after_a_transport_stop`: `(b)` is fixed in the code (the scoped
+`clearQueuedRecordingTrack(trackIndex, captureSlot)`, with its own comment) and covered **by those two fixtures**,
+so the attribution is now explicit instead of assumed. Focused suite **32/32**; full native **2,647 cases /
+2,640 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS with the RAM1 line unchanged.
+
+**Not claimed.** Check 7's *repeated* case is covered; `(a)`'s uncommitted-switch case (a capacity-denied stop is
+latched and the switch gesture returns without a committed target) and `(d)`/`(e)` remain open as recorded in
+§ S4b.1. `Omax` is asserted as **behaviour** (bounded, non-accumulating, nothing stolen) rather than as a new
+named constant or budget object: the effective inbound bound is the per-track pending state, and the design's
+`TransferOverlap` term stays a budget-arithmetic term owned by S2's accounting rather than by this stage.
