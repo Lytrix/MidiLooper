@@ -1289,6 +1289,17 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 
 ## S4 — release, recycle and stale-owner protection
 
+      **STATE 2026-10-01 (this gate is the chain's earliest open item; S2b gates above is now checked).**
+      *Satisfied today.* S2b.3's post-restore half (397 free vs required 16, readiness attested, walk flat);
+      S2b.7's (b) and (c) (the `PERS,drain_progress` row samples `restoreProgressCounter()` inside the drain call:
+      `795 → 801`, verdict `ok`, no publication in the window) with (a) partially observed; and **S2b gates itself**
+      — the eight-boot slope sweep with the reservation flat in the committed-slot count (N 35 → 44). S2b.5 was
+      already checked.
+      *Still open.* (1) **S2b.7(a)'s third conjunct** — "another track playing" at the same drain edge (the blocking
+      drain does not run mid-take, so it needs an arrangement; the row makes it observable). (2) **S2.2/S2.3's
+      current-root per-class budget**, which runs through **S4c.1 → S2.1** because the `P` class is the playback
+      window lease and S2.1 may not edit behaviour before the phase-F contract exists. (3) The gate's own device
+      clause is satisfied by the S4 gates' holder census (holders rise with activation, fall with deactivation).
 - [x] S4.0 **Per-slot liveness predicate (B6, invariant 33).** (**PARTIAL 2026-09-23:** the live-window
       ring scan, the slot's `captureStopOwner`, an in-flight prepared handover (`preparedPairRequestPending`)
       and the S4f.1 latch term are implemented and fixture-covered; the job-owned-undo-root term has no
