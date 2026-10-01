@@ -2335,8 +2335,140 @@ void test_slot_button_during_pending_overdub_finalization_arms_empty_target() {
   TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
 }
 
+
+/// **S4b.1 (check 7, repeated switches) — B -> C while A still finalizes: accepted, bounded, nothing
+/// stolen, and it executes without another gesture.**
+///
+/// The cross-track case has its own fixture; this is the *same-track repeated* case the review named as
+/// still unproven, and it is where the bounded-overlap claim (`Omax` inbound holders, the design's
+/// `TransferOverlap` budgeted as a transient rather than as slack) has to hold: A finalizes on slot 0, B is
+/// the live capture on slot 1, and the user switches again to slot 2 before A has retired.
+///
+/// Measured mechanism, and what the assertions pin. The repeated switch does **not** move the active slot
+/// (S4f.5 governs it) and does **not** provision its target on the gesture path — the gesture retains the
+/// request instead: B's stop is **accepted and latched** against B's own slot (`hasAcceptedInteractionForSlot`)
+/// while no stop job exists for it (`hasLiveCaptureStopJobForSlot` false), and the target's record start
+/// stays **queued** (`isRecordingQueued`). Nothing is stolen to satisfy the inbound — A's live finalizer and
+/// lease and B's lease all survive — and the pool does not grow across the gesture (490 -> 490 chunks on the
+/// measured run). Once A retires and the deferred lane turns, the retained request **executes without
+/// another gesture**: C becomes active, its occupancy is provisioned, B's latch clears, and further turns
+/// change neither the active slot nor the pool.
+void test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once_capacity_frees() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+
+  // (1) A is live through the production button route and takes MIDI through the real handler; its stop is
+  // then admitted and deliberately **not** advanced, so the finalizer is paused and holding capacity.
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "fixture precondition: A must be overdubbing");
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                           "A's stop must be admitted before the switches");
+
+  // (2) The first switch lands: B becomes the live capture on the running transport while A finalizes.
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the first switch must commit while A finalizes");
+  TrackCaptureStopTestAccess::selectSlotIndex(0, 1);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(1);
+  const uint32_t queuedTick = clockManager.getCurrentTick();
+  for (uint32_t tick = queuedTick + 1; tick <= queuedTick + 768 * 3 &&
+                             !TrackCaptureStopTestAccess::isRecording(track) &&
+                             !TrackCaptureStopTestAccess::isOverdubbing(track);
+       ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track) ||
+                               TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "B must be the live capture before the repeated switch");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 0),
+                           "A's finalizer must still be outstanding");
+
+  // (3) The repeated switch, with A still finalizing.
+  const uint16_t chunksBeforeSecondSwitch = LoopEventStore::freeChunkCount();
+  clockManager.assignCurrentTickSilently(1000);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(2);
+
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the repeated switch may not move the active slot");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, 2),
+                            "the repeated switch must not provision its target on the gesture path");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
+                           "B's stop must be accepted and latched, not dropped");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 1),
+                            "the latch is the accepted request; no stop job has been admitted for it yet");
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.isRecordingQueued(0, 2),
+                           "the target's record start must stay queued for the handoff");
+  // Nothing is taken from the live owner or the live capture.
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, 0),
+                           "A's finalizer must survive the repeated switch");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 0),
+                           "A's working set must not be released to satisfy the inbound");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 1),
+                           "B's working set must survive its own stop being accepted");
+  // ...and the transient overlap is bounded: the gesture itself consumes nothing.
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(chunksBeforeSecondSwitch, LoopEventStore::freeChunkCount(),
+                                   "the repeated switch must not grow the pool");
+
+  // (4) A retires, the deferred lane turns -- and the retained request executes with no further gesture.
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, 0); ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, 0),
+                            "the fixture must retire A's finalizer");
+  for (int round = 0; round < 8 && TrackCaptureStopTestAccess::activeLoopIndex(track) != 2; ++round) {
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + 768 * 2; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      TrackCaptureStopTestAccess::startPendingRecord(tick);
+      (void)TrackCaptureStopTestAccess::step(track);
+      (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurn(track);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the retained switch must execute once the capacity frees");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, 2),
+                           "the executed switch must have provisioned the inbound occupancy");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, 1),
+                            "the latch must clear when the request executes");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track) ||
+                               TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "the successor must be the live capture after the handoff");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 0),
+                           "A's retired working set must still not have been stolen");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 1),
+                           "B's working set must not have been stolen by the inbound");
+
+  // (5) Bounded, not accumulating: further turns change neither the active slot nor the pool.
+  const uint16_t chunksSettled = LoopEventStore::freeChunkCount();
+  const uint32_t baseTick = clockManager.getCurrentTick();
+  for (uint32_t tick = baseTick + 1; tick <= baseTick + 768 * 2; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    TrackCaptureStopTestAccess::startPendingRecord(tick);
+    (void)TrackCaptureStopTestAccess::step(track);
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurn(track);
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the settled state must not drift");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(chunksSettled, LoopEventStore::freeChunkCount(),
+                                   "the settled state must not keep consuming pool chunks");
+}
+
 int main() {
   UNITY_BEGIN();
+  // S4b.1 check 7 (repeated same-track switches): accepted, bounded, nothing stolen, executes on capacity.
+  RUN_TEST(test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once_capacity_frees);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);

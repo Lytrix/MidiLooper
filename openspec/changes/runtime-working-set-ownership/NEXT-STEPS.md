@@ -136,14 +136,24 @@ named".
 
 ## Recommended next slice
 
-S4.4 is done (accept-and-schedule, reported with its holder; see the section above), so the remaining native
-candidates are **S4b's own cases**: the **cross-track** switch while a predecessor finalizes, and **repeated
-switches B → C while A still finalizes**, which need the explicit **bounded-overlap** policy (`Omax = NUM_TRACKS`
-inbound holders; an outbound live/finalizing role is already counted and is never released to satisfy O) rather
-than an assumed-unbounded accumulation — plus the recorded tightening of S4b.1's finalizer-pause lever into a
-phase-specific pause. S4.5 and the S4 gate close with S4f/P3, not before. Every remaining device leg
-(S4.2/S4.3/S4.4 device byte deltas, S4b, phases B–E) and F4's SD-fault evidence needs a per-session device
-authorization.
+**The repeated-switch case is now covered** (2026-10-01: `Omax` asserted as behaviour — bounded,
+non-accumulating, nothing stolen, and it executes once capacity frees; the retention mechanism is measured there
+rather than described), and the **cross-track** switch already had its fixture. So the next native candidates
+are the rest of S4b:
+
+1. **S4b.1 `(a)`** — the *uncommitted* switch case: a capacity-denied stop is latched and the switch gesture
+   returns without a committed target. The measurement above shows exactly what that state looks like
+   (`hasAcceptedInteractionForSlot(1)` true, no job, target's start queued, active slot unmoved), so the slice is
+   the acceptance of the *uncommitted* variant rather than a new mechanism — plus the recorded tightening of
+   S4b.1's finalizer-pause lever into a phase-specific pause.
+2. **S4b.6 + S4b.7** — the occupancy-aware, allocation-free binding and the off-clock provisioning owner it
+   needs (`TrackManager::provisionSlotForSwitch` on the deferred lane, with a pending switch making its track
+   eligible for a deferred turn). This is the largest remaining piece and the one that removes the "silent dead
+   switch" risk the review named.
+3. **S4b.2 / S4b.3 / S4b.5** as written, then S4b.4's inbound-role fixture.
+
+S4.5 and the S4 gate close with S4f/P3, not before. Every remaining device leg (S4.2/S4.3/S4.4 device byte
+deltas, S4b.8/S4b.9, phases B–E) and F4's SD-fault evidence needs a per-session device authorization.
 
 ## Other candidates and why not first
 
