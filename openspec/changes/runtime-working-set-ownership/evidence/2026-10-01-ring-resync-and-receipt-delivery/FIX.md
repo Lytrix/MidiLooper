@@ -110,3 +110,9 @@ nor the clock path took it (which is precisely what S4b.6's native fixture pins)
 * S4b.9's other clauses (acceptance, A's occupancy pinning, display transfer, MIDI continuity) were already measured
   in [`../2026-10-01-s4b9-cross-track/EVIDENCE.md`](../2026-10-01-s4b9-cross-track/EVIDENCE.md); this slice adds the
   provisioning clause and the commit.
+
+* **A PSRAM ring overlap is ruled out as the corrupt head's cause.** The pool's allocator carries a ring-overlap guard
+  (`poolAlloc` reports `#CAP,…,RING,overlap` when an `extmem_malloc` block intersects the ring), and no such row
+  exists in the wipe run or anywhere else in `captures/` (`grep -l "RING,overlap"` finds nothing). So the most
+  alarming explanation for bytes changing under the head is excluded; the `head_bad` rows remain the instrument for
+  whatever did it.
