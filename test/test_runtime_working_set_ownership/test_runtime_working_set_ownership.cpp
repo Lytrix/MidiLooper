@@ -2465,10 +2465,100 @@ void test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once
                                    "the settled state must not keep consuming pool chunks");
 }
 
+/// **S4b.1 (a) — an *uncommitted* switch whose stop was DENIED on capacity still retains the start.**
+///
+/// S4b.1's finding (a) recorded the remainder as "the switch returns `false` and the press is dropped
+/// rather than retained". The code does retain it — `MidiButtonActions::handleToggleRecordForSlot` writes the
+/// same manager pending-start owner through `retainRecordStartForSlot` when `finalizeCaptureAndSelectSlot`
+/// returns false, and reports "switch and record start retained (stop not yet admitted)" — and this fixture is
+/// the reproducer for that path, as distinct from the *admitted*-stop carrier the sibling fixture covers.
+///
+/// The predecessor's stop is denied here for the contract's own reason: **another slot's admitted
+/// finalization already holds the track's single finalization capacity** (DEC-078 item 6), so the
+/// predecessor's stop is accepted-and-retained (never a refusal, DEC-078 item 1) while it stays the active
+/// interval.
+void test_s4b_1_a_denied_stop_on_an_uncommitted_switch_retains_the_targets_start() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kDenied = 0;      // the switch's predecessor: its stop is denied on capacity
+  constexpr uint8_t kTarget = 1;      // the empty switch target whose start must survive
+  constexpr uint8_t kOccupant = 2;    // the slot whose admitted finalization holds the capacity
+  commitRecordPassIntoTrackSlot(track, kDenied);
+  commitRecordPassIntoTrackSlot(track, kOccupant);
+
+  // (1) Occupy the track's finalization capacity with an admitted stop on another slot.
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kOccupant, true));
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, kOccupant);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::isOverdubbing(track));
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, kOccupant),
+                           "fixture precondition: the occupant's stop must be admitted and held");
+
+  // (2) The switch's predecessor is a second live capture on the same track, started while the occupant
+  // finalizes -- the overlap the contract requires (outgoing finalizer + incoming capture).
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::selectSlot(track, kDenied);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "the predecessor must be live while the occupant finalizes");
+  inputNote(62, 200, 224);
+  clockManager.assignCurrentTickSilently(260);
+
+  // (3) The switch gesture to an empty target: the stop cannot be admitted, so the switch does **not**
+  // commit -- and the start must be retained rather than dropped with the gesture.
+  TrackCaptureStopTestAccess::toggleRecordForSlot(kTarget);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kDenied, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "an uncommitted switch must not move the active slot");
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.isRecordingQueued(0, kTarget),
+                           "the target's start must be retained, not dropped with the gesture");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, kDenied),
+                           "the denied stop must be accepted and latched against its own slot");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasLiveCaptureStopJobForSlot(track, kOccupant),
+                           "the occupant's finalization must not be disturbed to admit the stop");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kOccupant),
+                           "the occupant's working set must survive");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "the predecessor must still be capturing after the uncommitted switch");
+
+  // (4) Let the occupant's finalization retire, then turn the lanes: the retained start executes with no
+  // further gesture, so the user never presses twice (DEC-078 item 1).
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOccupant);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOccupant),
+                            "the fixture must retire the occupant's finalizer");
+  for (int round = 0; round < 8 && TrackCaptureStopTestAccess::activeLoopIndex(track) != kTarget; ++round) {
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + 768 * 2; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      TrackCaptureStopTestAccess::startPendingRecord(tick);
+      (void)TrackCaptureStopTestAccess::step(track);
+      (void)TrackCaptureStopTestAccess::serviceAcceptedInteractionTurn(track);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kTarget, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                 "the retained start must execute once the capacity frees");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                           "the retained start must leave the target recording");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedInteractionForSlot(track, kDenied),
+                            "the predecessor's latch must clear when its stop executes");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kDenied),
+                           "nothing may be stolen from the retired predecessor either");
+}
+
 int main() {
   UNITY_BEGIN();
   // S4b.1 check 7 (repeated same-track switches): accepted, bounded, nothing stolen, executes on capacity.
   RUN_TEST(test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once_capacity_frees);
+  // S4b.1 (a): the uncommitted switch whose stop was denied on capacity still retains the start.
+  RUN_TEST(test_s4b_1_a_denied_stop_on_an_uncommitted_switch_retains_the_targets_start);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);
