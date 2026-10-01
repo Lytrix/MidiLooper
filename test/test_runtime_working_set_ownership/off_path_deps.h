@@ -165,7 +165,14 @@ void EditManager::beforeSelectedSlotChange(Track&) { OFF_PATH(); }
 // The switch path invalidates the display cache; suites that drive the switch keep this observable
 // instead of fail-closed, because the display is not the behavior under test.
 #if defined(HARNESS_OBSERVABLE_SLOT_CHANGE)
-void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) {}
+// S4b.4: observable *and* recorded -- the slot identities the panel is told about are the assertion.
+void DisplayManager::invalidateForSlotChange(uint8_t track, uint8_t from, uint8_t to) {
+  SlotChangeObservation& observation = slotChangeObservation();
+  ++observation.count;
+  observation.track = track;
+  observation.from = from;
+  observation.to = to;
+}
 #else
 void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) { OFF_PATH(); }
 #endif

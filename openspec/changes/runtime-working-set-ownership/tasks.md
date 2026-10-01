@@ -1588,7 +1588,17 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       enforces or an architecture decision on per-track cardinality; the emitted report line is a device
       observation, not host-assertable. Full native `2,446 passed / 1 skipped`; RAM1 byte-identical.
       Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4.4.
-- [ ] S4.5 **P3 acceptance (depends on remaining S4f; not a P2 release gate). Per-interval finalization states (DEC-078 acceptance contract)**: preserve the DEC-067 capacity model; native fixture for A-stops-and-finalizes / B-records /
+- [ ] S4.5 **P3 acceptance (depends on remaining S4f; not a P2 release gate). [NATIVE REMAINDER NAMED 2026-10-01: the emission side is already there — `accepted_stop_finalizer_wait` is emitted
+      (`TrackOverdubLifecycle.cpp`), as are the busy-owner names `finalizer_busy`, `transfer_denied`,
+      `canonical_output_busy` and the exceptional `queue_full` — and what is **not** pinned natively is (a) that
+      vocabulary itself: nothing under `test/` or `scripts/` asserts those four literals (checked 2026-10-01;
+      `test_capture_line_tier` pins other families' rows, including S4.2's `ws_release` outcomes, and is the
+      natural host for this), and (b) the S4.5 acceptance fixture itself (A-stops-and-finalizes / B-records /
+      A-releases / B-takes-the-lease, plus a stop arriving while A finalizes executing once the role frees).
+      Much of (b) exists as separate fixtures (the S4.1 lease-release trio, the successor-start/commit pair,
+      `test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds`), so the work is a joined
+      fixture plus the vocabulary pin — deliberately not started here, because this task's own text closes it
+      with P3/S4f rather than before them.]** Per-interval finalization states (DEC-078 acceptance contract)**: preserve the DEC-067 capacity model; native fixture for A-stops-and-finalizes / B-records /
       A-releases / B-stops-and-takes-the-lease, and for a stop arriving while A still finalizes — accepted with no
       partial stop, B still recording/overdubbing, and the accepted stop executing once the role
       frees (the other single-instance resources are re-checked then too). Emit
@@ -1717,7 +1727,16 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       its top *before* it knows the switch will commit, so a switch discards a retained start request for any
       slot — the landed fixture cannot see this because it commits the switch before queuing the start;
       (c) **check 7 coverage** — cross-track targets and cleared / populated targets have no fixture yet;
-      (d) **check 6's** "a successful start cannot execute twice" has no dedicated fixture;
+      (d) **check 6's** "a successful start cannot execute twice" **is discharged by citation
+      (2026-10-01)**: `test_the_switch_carried_start_executes_exactly_once` covers consumption, no re-arm and no
+      second execution for the switch-carried committed start, with `test_the_arm_and_wait_requeue_retains_then_
+      executes_exactly_once` (the re-queue branch) and
+      `test_a_start_refused_by_its_own_live_stop_obligation_retries_to_a_single_take` (refused-then-retried)
+      covering the other two routes -- and the first of them records, checked while writing it, why the *ordinary*
+      immediate start cannot leave a stale request at all (`handleArmedRecordPress` cancels a queued arm and
+      returns before the immediate start). So the gap this line named is a coverage-attribution gap, not a
+      missing fixture; the line is kept (struck through in effect) so the record shows what was checked rather
+      than quietly deleting it;
       (e) the cross-track switch and repeated B → C switches while A finalizes depend on **finalizer
       capacity**, not only on the inbound overlap policy — `Omax` alone does not solve repeated switches
       (recorded per the review). **Retention itself is now proven** (S4f.3 PARTIAL 3): a switch/start
@@ -1805,7 +1824,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       the quantization and bind a role that already exists. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.3 — the boundary the switch lands on, and the
       cold half of it".
-- [ ] S4b.4 Native fixture: switch roles across tracks/slots while playing and assert the inbound holder
+- [x] S4b.4 Native fixture: switch roles across tracks/slots while playing and assert the inbound holder
       serves record/overdub/passes/undo/redo/display with no stop and no allocation at the switch.
       **PARTIAL (coverage attributed 2026-10-01; no new fixture, and why).** The entry's matrix is an
       **integration** claim over six services, and this suite already owns four of them -- so the honest move is
@@ -1849,6 +1868,26 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       change step (1)'s outcome in this fixture (candidate: which entry the stack's top actually is after the
       fixture's own flows, which push their own entries before either leg). That investigation is the named
       follow-up, not a claim.
+      **BOTH OPEN CLAUSES CLOSED 2026-10-01 (test-only; firmware hex byte-identical — `cdab16f4…`).**
+      **(1) The undo clause is red-proved.** The two mutations that had survived were each only *half* a
+      mutation: `TrackUndo::undoForLoop` gates on the slot **twice** -- the outer
+      `entries[cursor-1].slotIndex != slotIndex` check and, inside the apply loop, the same comparison again as a
+      `break` -- so removing either one alone leaves the gate intact and the driver still refuses (measured, which
+      is exactly why both single-gate mutations "survived"). Removing the gate **as a whole** fails the fixture at
+      *"the retired slot's geometry must not be restored either"* (`Expected 0 Was 4242`), so the fixture has
+      teeth; and the double gate itself is worth recording: it is belt-and-braces, so a future edit that
+      "simplifies" one of the two would not be caught by behaviour alone. **(2) The display clause now has its
+      fixture.** This harness already keeps the display boundary observable
+      (`HARNESS_OBSERVABLE_SLOT_CHANGE`), so the stub now **records** what it is told
+      (`SlotChangeObservation{count, track, from, to}`, the harness's own observation pattern) and
+      `test_s4b_4_the_display_authority_moves_to_the_holder_the_switch_moved_to` asserts the identity pair the
+      switch commit names -- `invalidateForSlotChange(i, previousPlaying, getPreviewSlotIndex(i))` -- after a
+      **production press** (the gesture is what moves the panel's preview slot; driving the raw request instead
+      leaves the panel asked to focus the slot it is leaving, which the first version of this fixture measured
+      before switching to the gesture): the retired slot out, the inbound holder in. **Red-proved, restored
+      byte-identically:** making the commit name the predecessor (`…, previousPlaying, previousPlaying`) fails it
+      at *"the display authority must move to the slot that took over"*. Focused suite **45/45**; full native
+      **2,662 cases / 2,655 succeeded / 7 skipped / 0 failed**.
 - [x] S4b.5 **One active-slot write authority (B4).** Route undo/redo-driven active-slot changes
       (`TrackUndo.cpp:558/582`) through the occupancy/pending-switch path and convert the **three** direct
       `Track::setActiveLoopIndex` writes (`TrackManagerSlotMatrix.cpp:240`, `TrackManagerCaptureQueue.cpp:281,335`)
