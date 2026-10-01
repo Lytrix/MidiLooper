@@ -4186,6 +4186,19 @@ has not run to completion.
       continuation's first press, and the harness does play note 83 on that channel, so the mechanism is the record
       pattern bleeding into the overdub window. `overdub_unmatched_open_notes` and `overdub_stored_span_too_short`
       stay unattributed. The owner's live report (*"extended the loop to 3 bars like the loop length fader"*) is
+      **TRACED 2026-10-01 (read-only) — the shared-slot-index hypothesis is DISPROVEN, and the leg's core question is
+      answered in the code.** `Track::admitDeferredOverdubStop` resolves the interval's own slot on the owning track
+      by construction (`getLoop(slot)`, `playbackRuntime.slotIfAllocated(slot)`, under the S4f.0 note that a later
+      active-slot movement must not make the drive test the wrong slot; `playbackRuntime` is a `Track` member), so
+      there is no track-blind slot lookup on this path. The refusal's predicate is that slot's **own** readiness —
+      `canonicalCaptureOutputAdmitted()` = store empty && `reservedAppendReady()` &&
+      `canonicalCaptureChunks.availableChunks() >= 8` (`TrackPlaybackRuntime.cpp:2072-2075`) — so `-01`'s refusal was
+      the destination slot's own capacity/latency: its Loop 1 held an 18,432-tick / 1,716-event loop, its Loop 2 a
+      2,304-tick / 144-event one. The leg's core discriminator therefore reads: the finalization boundary is per
+      **(track, slot)**, corroborated on device by the source releasing once with its own 2-bar geometry independently
+      of the destination's releases. **Named reporting gap, not fixed:** the refusal row carries `slot=%u interval=%lu`
+      and **no track**, and the `ODUB,stop,admission` family carries neither — the *denial* path has no equivalent of
+      the `DIAG,latch` row added for the admitted/waiting path.
       explained in the evidence file: **no length was written** (no `LOOP EDIT: Changing loop length` row and no
       ignored-input row), the display simply followed the switch to the destination, whose 3 bars came from the
       **seed's late record start** (`Recording started @ tick 317` -> `length=2304`). `Transport never stops` stays
