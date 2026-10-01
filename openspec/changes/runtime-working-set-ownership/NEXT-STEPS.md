@@ -193,7 +193,32 @@ fixture. So the next native work is:
    it a scheduling question rather than a new owner.
 
 S4.5 and the S4 gate close with S4f/P3, not before. Every remaining device leg (S4.2/S4.3/S4.4 device byte
-deltas, S4b.8/S4b.9, phases B–E) and F4's SD-fault evidence needs a per-session device authorization.
+deltas, phases B–E) and F4's SD-fault evidence needs a per-session device authorization.
+
+**Device legs as of 2026-10-01 (image `cdab16f4…`, re-flashed unchanged several times, every build byte-identical).**
+**S4b.8 is checked** (slot switch while the predecessor finalizes; record
+[`evidence/2026-10-01-s4b8-switch-during-finalization/`](evidence/2026-10-01-s4b8-switch-during-finalization/EVIDENCE.md)).
+**The S4b gate's timing half is now aimed** by a dedicated three-switch run (`overflow_free` and
+`call_site_gate_ok` green, empty warning list), which also produced the S4b.7 hold terminal's **first device
+observation** ([`evidence/2026-10-01-s4b-repeated-switches/`](evidence/2026-10-01-s4b-repeated-switches/EVIDENCE.md));
+the gate itself stays `[~]` for its `S4 gates` half. **S4b.9 is `[~]`:** the cross-track switch is accepted inside
+A's finalization window, A's occupancy is released exactly once and only by A's own stop terminal, the
+selection/display authority moves with the switch and the transport stays MIDI-continuous — but the leg's
+*cold-boundary provisioning* clause is unexercised, because the press after the track switch is resolved by the
+**new track's own state** (an empty destination becomes the record carrier; the active destination becomes
+`Toggle Play/Stop`), so it needs a **second filled, non-active slot on the destination track**
+([`evidence/2026-10-01-s4b9-cross-track/`](evidence/2026-10-01-s4b9-cross-track/EVIDENCE.md)).
+
+**Read these two device-state findings before re-running a device leg on this device.** (1) The census's
+`chunks_free` counts **ids**, not backable capacity, so it can read 320 while zero events are admitted
+([`evidence/2026-10-01-pool-free-but-append-denied/`](evidence/2026-10-01-pool-free-but-append-denied/FINDING.md)).
+(2) One restore request can churn without progress because `loopSlotRestoreAttempts_` is never incremented, so
+`kMaxLoopSlotRestoreAttempts` cannot fire
+([`evidence/2026-10-01-restore-retry-churn/`](evidence/2026-10-01-restore-retry-churn/FINDING.md)) — that churn
+starves the SD lane and floods the capture ring, which is the measured reason a leg's **precondition** gates
+(the stop-completion receipt, the capture-ring integrity check) fail on this device: a **64-slot** boot restore
+batch competes with the leg. Those failures are not the legs' own assertions; the S4b.9 attempts 05–11 aborted only
+that way.
 
 ## Other candidates and why not first
 
