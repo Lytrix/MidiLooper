@@ -4180,9 +4180,15 @@ has not run to completion.
       `ODUB,stop,admission,…,canonical_output_busy`), and that row family names **no track or slot** — with both
       tracks on Loop 1 = slot 0 it cannot be attributed, and no `DIAG,latch` edge accompanies it (the latch covers
       the accepted/waiting path, not this admission denial). The harness's `FAIL (FIRMWARE_CONTRADICTION)` is its
-      source-leg baseline oracle and is **not** safe to read as a defect: the continuation added a second OD on the
-      same slot number on another track, which is exactly the shape of its `overdub_out_of_range_notes` /
-      `overdub_unmatched_open_notes` / `overdub_stored_span_too_short` issues. `Transport never stops` stays
+      source-leg baseline oracle and is **not** safe to read as a defect. **Corrected 2026-10-01:** its
+      `overdub_out_of_range_notes` is *not* continuation contamination — the device's own
+      `#CAP,682214884,MI,U,144,4,83,100` (note-on 83 on the track channel at the OD-stop edge) sits **before** the
+      continuation's first press, and the harness does play note 83 on that channel, so the mechanism is the record
+      pattern bleeding into the overdub window. `overdub_unmatched_open_notes` and `overdub_stored_span_too_short`
+      stay unattributed. The owner's live report (*"extended the loop to 3 bars like the loop length fader"*) is
+      explained in the evidence file: **no length was written** (no `LOOP EDIT: Changing loop length` row and no
+      ignored-input row), the display simply followed the switch to the destination, whose 3 bars came from the
+      **seed's late record start** (`Recording started @ tick 317` -> `length=2304`). `Transport never stops` stays
       unproven (2 starts, 1 untimed stop). Next: move the destination to a **different slot** to disambiguate (or
       give `ODUB,stop,admission` a track field), then re-read the four discriminators and attribute the harness
       issues. Evidence:

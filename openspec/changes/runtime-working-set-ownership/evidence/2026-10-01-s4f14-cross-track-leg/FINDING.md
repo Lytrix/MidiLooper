@@ -59,3 +59,42 @@ Device rows (`captures/s4f14-cross-track-01/session_20261001_204344.log`), all u
    separates the two — cheaper than a firmware change and it also removes the harness contamination.
 2. Or give the `ODUB,stop,admission` family a track field, the same fix `DIAG,latch` received.
 3. Then re-run and re-read the four discriminators, and attribute the harness issues.
+
+## The owner's live observation, explained (2026-10-01)
+
+Watching the `-02` leg the owner reported: *"it recorded a perfect 2 bar loop, then it started the overdub, but after
+overdub stop it briefly showed a short high note and then extended the loop to 3 bars like the loop length fader was
+modifying it unintentionally."* Both halves are in the device's rows, and neither is a length modification.
+
+**The 3 bars is the destination's own length, shown when the display moves there — not a write.**
+
+- The leg's source loop really is a perfect 2 bars: `[674.782] Record stop truncation rewind: raw=1728
+  final=1536` -> `Recording stopped @ tick 192 (recStart=0 length=1536)`.
+- The switch then presses `Ch16 Note64` (**Track** = index 4 = display track 5) at 682.651 and `Ch16 Note51`
+  (**Loop** = `LOOP_SELECT_NOTE_BASE(50) + 2 - 1` = Loop 2) at 683.288.
+- The display follows: `DISP,1,STOPPED,2304,...,3` at 683.205 -> `DISP,1,PLAYING,2304,...,3` at 683.769, i.e. the
+  destination loop, whose genuine length is 2,304 ticks = **3 bars**. The device echoes that as
+  `Sent loop length CC feedback: 3 bars (2304 ticks) -> CC=2`.
+- **No length was written.** `LoopEditManager::handleLoopLengthInput` logs
+  `LOOP EDIT: Changing loop length from X bars (Y ticks) to A bars (B ticks)` on every real change, and it also logs
+  each ignored input (`not in LOOP_EDIT mode`, `session feedback settle`, `capture active`); the run has **none** of
+  those rows. So the loop-length fader did not touch anything here.
+
+**Why the destination is 3 bars: the seed, before the leg.** The destination was seeded with `--record-bars 2`, and
+the seed's own rows show what happened: `[565.320] Recording started @ tick 317 (startLoopTick=317 loopStart=0)` ->
+`[570.826] Recording stopped @ tick 2243 (recStart=317 length=2304)`. A **late record start** at tick 317 produced
+2,304 ticks = 3 bars from a 2-bar request — the documented late-start quantization up to 3 bars (the same class as the
+earlier "3-bar record loses the undo levels" defect). So the extra bar came from the seed, not from this leg.
+
+**The "short high note" is real, and it corrects the previous attribution.** At the overdub-stop edge the device sent
+`#CAP,682214884,MI,U,144,4,83,100` — note-on **83** (vel 100) on the track's channel (MIDI channel 4) — inside the
+window the OD stop closed, before any of the continuation's presses (683.288+). The harness does play note 83 on that
+channel (its stream there spans 24..83, 1,462 note-ons), so the device did not invent it; it is the row behind the
+harness's `overdub_out_of_range_notes`, whose mechanism is the record pattern bleeding into the overdub window on the
+same channel.
+
+**Correction:** the earlier commit in this file blamed `overdub_out_of_range_notes` on continuation contamination. The
+row above is on the **source** channel **before** the continuation pressed anything, so that blame was wrong for this
+issue. `overdub_unmatched_open_notes` / `overdub_stored_span_too_short` remain unattributed, and the continuation
+contamination question — a second OD on the same slot number — is now separate from the out-of-range issue.
+
