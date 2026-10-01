@@ -2116,6 +2116,12 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       full native **2,655 cases / 2,648 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS with
       RAM1 `variables 96,192 / code 391,288 + padding 1,928 / locals 34,880` — the mask fits the class's existing
       padding, so this slice costs **no RAM1 variable** and the code is FLASH/ITCM-neutral.
+      **The terminal now has a device observation (2026-10-01).** On the S4b gate's dedicated three-switch run a
+      switch queued against destinations with **no runtime occupancy** — the same shape this fixture drives — and
+      the device reported the bound **once**, moving nothing:
+      `Slot switch hold slot_switch_hold_exceeded track=4 target=1 age=3073 ticks` (4 bars inclusive), with the
+      switch still queued afterwards. Evidence and what it does *not* claim:
+      [`evidence/2026-10-01-s4b-repeated-switches/EVIDENCE.md`](evidence/2026-10-01-s4b-repeated-switches/EVIDENCE.md).
       Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.7 — the demoted target, the published
       root, and the bounded hold".
 - [x] S4b.8 **HITL — slot switch while a predecessor finalizes, transport playing (the switch leg alone).**
@@ -2155,14 +2161,23 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 
 ## S4c — readiness contract only (implementation extracted to phase F)
 
-      **TIMING HALF OBSERVED 2026-10-01; the gate itself still closes with S4 gates and one dedicated run.** The
-      MIDI-boundary timing evidence this gate names is **green** on the S4b.8 device runs: both gates report
-      `overflow_free: true` and `call_site_gate_ok: true` with `timing_warnings: []` (`midi_boundary_timing` in
-      each run's report), on the leg run (one playback switch) **and** on a two-switch run (`1->0` then `0->1`).
-      What is still owed: (i) a **dedicated** multi-switch run — the two-switch evidence above comes from runs
-      whose subject is something else, so "across repeated switches" is observed but not *aimed*; and (ii) the
-      `S4 gates` half, whose own line closes only with S4.5's P3/S4f acceptance. So this line is marked `[~]`
-      (partially observed) rather than checked: the timing gates are measured, the gate is not closed.
+      **TIMING HALF NOW AIMED 2026-10-01 (dedicated three-switch run); the gate itself still closes with S4
+      gates.** The MIDI-boundary timing evidence this gate names is **green** across repeated switches on a run
+      whose subject *is* the repeated switch:
+      [`evidence/2026-10-01-s4b-repeated-switches/EVIDENCE.md`](evidence/2026-10-01-s4b-repeated-switches/EVIDENCE.md)
+      — `--switch-loop-slot 2,3,2 --switch-interval-ms 4500`, three presses spaced past one loop period, with the
+      37 s `PLAYING` interval containing all three presses **and** the hold report: `overflow_free: true`,
+      `call_site_gate_ok: true`, `timing_warnings: []`. The two earlier runs (one switch, and a two-switch run
+      whose subject was something else) stay as corroboration. **Two things that run measured, recorded rather
+      than folded into the gate's claim:** (a) the S4b.7 terminal's **first device observation** — the three
+      switches queued against destinations with no runtime occupancy and the bounded hold reported **once**
+      (`slot_switch_hold_exceeded track=4 target=1 age=3073 ticks`, one bar-inclusive tick over `kBoundBars`
+      4 × 768) and moved nothing, which is DEC-104's report-not-decision half on hardware; (b) the switches did
+      **not** commit in that run (no `LoopEnd playback commit` row), because the destinations' restores were
+      served only after the run's final transport stop — so this run evidences the *timing* half, and the
+      *commit* half remains S4b.8's leg. What is still owed: the `S4 gates` half, whose own line closes only with
+      S4.5's P3/S4f acceptance. So this line stays `[~]`: the timing gates are measured on the aimed run, the gate
+      is not closed.
 - [ ] S4c.0 Record the existing publication/consumer inventory and shared work contract as input to F.
 - [ ] S4c.1 Specify interval/window readiness and immutable currency acceptance for the sibling;
       **do not change the publication unit in this change**.
