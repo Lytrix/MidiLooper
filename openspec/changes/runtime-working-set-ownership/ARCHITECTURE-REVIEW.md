@@ -9171,3 +9171,33 @@ successor's lease all survive the gesture). This record says so instead of re-as
 **Evidence.** Focused suite **41/41**; full native **2,658 cases / 2,651 succeeded / 7 skipped / 0 failed**;
 `teensy41-capture-serial` **SUCCESS** with the RAM1 line unchanged (`code 391,416 + padding 1,800`) and a
 **byte-identical** firmware hex (`cdab16f4…`) -- this slice changes no firmware.
+
+## S4b.3 — the boundary the switch lands on, and the cold half of it (2026-10-01)
+
+**What "land the switch on a MIDI boundary" means in this firmware.** The commit is gated by the request's own
+quantization: `SlotQuantization::LoopEnd` (the playback-switch gesture's) commits where the outgoing loop's
+playhead wraps, `NextGrid` (the record carrier's) commits on the start grid. Both are now measured on the
+**tick that actually moved the active slot**, not asserted by name: the fixture queues each switch *off* the
+boundary (`loopStart + 211`), drives the production lane until the active slot changes, and requires that the
+committing tick is not the queue tick, that the `LoopEnd` tick is where the outgoing loop's playhead wrapped
+(phase zero, or below the previous tick's — read modulo the loop length, since the effective tick lives in the
+projection domain), and that the `NextGrid` tick is a multiple of the start grid.
+
+**Why "cold" is a property of the *owner*, not of the boundary.** S4b.2/S4b.6/S4b.7 moved provisioning off the
+boundary entirely: the inbound role is taken by the `SlotProvision` turn, and the boundary only binds a role
+that already exists. The fixture measures that at the tick itself — `freeChunkCount()` is identical immediately
+before and after the committing `updateAllTracks` — so "cold admission boundary by construction" is evidenced as
+*two* things the boundary does (land on the quantization; bind a prepared role) rather than one thing it avoids.
+
+**Red-proved twice, each restored byte-identically.** Making `shouldCommitPendingSlotSwitch`'s `LoopEnd` case
+ignore the boundary fails the `LoopEnd` fixture at *"a LoopEnd switch must land where the outgoing loop's
+playhead wrapped"* — and, as a control that the change really was load-bearing, S4b.1's lane fixture at *"the
+queued switch must not commit while the predecessor finalizes"*. Making the commit branch allocate at the
+boundary fails **both** new fixtures at *"the boundary tick itself may not take or return pool capacity"*
+(measured: 8 chunks taken on the committing tick).
+
+**Evidence.** Focused suite **43/43**; full native **2,660 cases / 2,653 succeeded / 7 skipped / 0 failed**;
+`teensy41-capture-serial` **SUCCESS** with the RAM1 line unchanged (`code 391,416 + padding 1,800`) and a
+**byte-identical** firmware hex (`cdab16f4…`) — this slice changes no firmware. **Not claimed:** the fixtures
+prove the boundary's quantization for these two quantizations on a one-bar loop; a device leg would be what
+shows the same on hardware timing (S4b.8/S4b.9, owed).

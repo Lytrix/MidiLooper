@@ -1777,7 +1777,34 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `teensy41-capture-serial` SUCCESS with the RAM1 line unchanged (`code 391,416 + padding 1,800`).
       Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.2 — the inbound is provisioned before
       the outbound retires, and the overlap is measured".
-- [ ] S4b.3 Land the switch on a MIDI boundary; the switch is a cold admission boundary by construction.
+- [x] S4b.3 Land the switch on a MIDI boundary; the switch is a cold admission boundary by construction.
+      **CHECKED 2026-10-01 (test-only; firmware hex byte-identical — `cdab16f4…`).** Both halves are now
+      measured rather than stated, on the two quantizations the firmware actually uses:
+      `test_s4b_3_a_loop_end_switch_lands_on_the_loop_boundary` (`SlotQuantization::LoopEnd`, the playback-switch
+      gesture's own quantization) and `test_s4b_3_a_next_grid_switch_lands_on_the_start_grid`
+      (`SlotQuantization::NextGrid`, the record carrier's). Each queues the switch **off** the boundary
+      (`loopStart + 211`, deliberately not a boundary tick) and then drives the production tick lane until the
+      active slot changes, recording the tick that actually committed: it is **not** the queue tick (the request
+      is quantized), for `LoopEnd` the outgoing loop's playhead **wrapped** at that tick (its phase is zero or
+      below the previous tick's, read modulo the loop length because the effective tick is projection-domain),
+      for `NextGrid` the tick is on the start grid (`commitTick % queuedStartGridTicks == 0`), and the role the
+      boundary binds was **prepared before it** (`runtimeAllocated` on the inbound). **The cold half is measured
+      at the tick itself:** the pool is exactly where it was one tick earlier
+      (`freeChunkCount()` before == after the committing `updateAllTracks`), i.e. the boundary binds a prepared
+      role and allocates nothing — which is the property S4b.2/S4b.6/S4b.7 established (provisioning is
+      off-clock, on the `SlotProvision` turn) and this entry names. **Red-proved twice, each restored
+      byte-identically:** making `shouldCommitPendingSlotSwitch`'s `LoopEnd` case ignore the boundary fails the
+      `LoopEnd` fixture at *"a LoopEnd switch must land where the outgoing loop's playhead wrapped"* (and, as a
+      control, S4b.1's lane fixture at *"the queued switch must not commit while the predecessor finalizes"*);
+      and making the commit branch allocate at the boundary fails **both** new fixtures at *"the boundary tick
+      itself may not take or return pool capacity"* (measured 8 chunks taken at the committing tick). Focused
+      suite **43/43**; full native **2,660 cases / 2,653 succeeded / 7 skipped / 0 failed**;
+      `teensy41-capture-serial` SUCCESS with the RAM1 line unchanged (`code 391,416 + padding 1,800`).
+      **Recorded:** "cold admission boundary by construction" is realized by the off-clock provisioning owner
+      rather than by anything the boundary does itself, so the boundary's job is exactly two things — land on
+      the quantization and bind a role that already exists. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.3 — the boundary the switch lands on, and the
+      cold half of it".
 - [ ] S4b.4 Native fixture: switch roles across tracks/slots while playing and assert the inbound holder
       serves record/overdub/passes/undo/redo/display with no stop and no allocation at the switch.
 - [x] S4b.5 **One active-slot write authority (B4).** Route undo/redo-driven active-slot changes
