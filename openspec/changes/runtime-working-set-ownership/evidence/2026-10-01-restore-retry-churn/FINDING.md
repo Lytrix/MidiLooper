@@ -83,3 +83,28 @@ the same mechanism presents two different ratios.
   CPU pressure). The census-accounting question in
   [`../2026-10-01-pool-free-but-append-denied/FINDING.md`](../2026-10-01-pool-free-but-append-denied/FINDING.md) is
   its sibling: both are cases where a device-surface number and a device-surface admission disagree.
+
+## Read-only follow-up (2026-10-01, same session) — what the churn is *not*
+
+Requested as a read-only look at the failing body. Three results, from code plus the same rows:
+
+1. **The body itself loads.** The churning coordinate reached `terminal,none,committed` at 105.461 s in run 04
+   (37 ms after its next `running`), and the boots after that show **no** `RRQ,4,7` row at all (a 12 s passive
+   read: 0 storm rows, 0 parse failures). So "an unparseable body on the card" is **not** the mechanism: the parse
+   succeeds as soon as the request gets a service window it can finish in, and the request then becomes terminal
+   and stops being retried.
+2. **A turn-budget expiry cannot produce the `parse failed` warning.** Both parse layers return `MoreWork` when
+   their budget or grain limit runs out (`stepPersistedLoopSnapshotParse`'s `grainDone` / `parseBudgetExhausted`
+   sites return `MoreWork`; `stepLoopSnapshotBodyFormatV1LoadParse` returns `MoreWork` on its grain limit), and the
+   **read resumes across turns** (`bytesRead`, re-open and `seek(payloadOffset + bytesRead)`, `MoreWork` on the
+   deadline) while a short read is a *separate, named* warning (`LoadLoopJob read failed`). So `LSV1 parse failed`
+   means the bytes handed to the parse failed validation — including the parse's own `size == 0` early exit.
+3. **The bytes must therefore have differed between attempts**, since the identical request later parses. The
+   remaining candidates are a body being written while it was read, or a torn/incomplete body at that moment. This
+   is **not resolved**: the body's size/token is not readable from the host, and the persistence rows that ran
+   alongside do not name a slot (`PERS,work` carries a bundle name such as `GlobalMeta`).
+
+So the read-only pass **narrows** the finding to "a request whose reads keep seeing bytes that fail validation,
+retried without a bound" and removes the two cheaper explanations (a bad body; a budget expiry); the *why of the
+bytes* stays open, and the fix direction is unchanged — the retry must be bounded (the missing
+`loopSlotRestoreAttempts_` increment), and a retry should not discard what it already had.
