@@ -2149,13 +2149,35 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       documented overdub issues (and the seed run `INCONCLUSIVE_CAPTURE`), so this evidence is the *switch rows,
       the census and the timing gates*, not a green baseline; and a dedicated multi-switch run is still the
       tighter evidence for the gate wording below.
-- [ ] S4b.9 **HITL — cross-track switch while a predecessor finalizes.** Managed run: record/overdub A on track 4
+- [~] S4b.9 **HITL — cross-track switch while a predecessor finalizes.** Managed run: record/overdub A on track 4
       → stop A → switch the active track to track 5 **while A still finalizes** → assert the track switch is
       accepted and MIDI-continuous, A's occupancy stays pinned on track 4 (no release), track 5's inbound
       occupancy is provisioned at a cold boundary (S4b.7) with no `trySlot` on the clock path, and the
       display/selection transfers without presenting a stale frame (S4e.6). Reuse the baseline's existing
       successor-reentry leg (`legacy_record_baseline.py:4457-4564`) and the track-select press
       (`TRACK_SELECT_NOTE_BASE`). Evidence: session log + MIDI-boundary timing verifier.
+      **RUN 2026-10-01 (image `cdab16f4…`, re-flashed unchanged; track 4 authorized this session; seven attempts,
+      `captures/s4b9-cross-track-01 … -07`).** Runner: the S4b.8 runner with `--switch-track-number 5` (track
+      press, then slot press on the new track). **Observed (attempts 01–04).** The track switch is **accepted
+      inside A's finalization window**: `Button press: Track 5` lands at 768.272 s while A's stop is admitted
+      (762.693 s) and not yet released (768.367 s), and the device answers `Selected track 5` at 768.292 s. **A's
+      occupancy is not released by the switch:** one `canonical_release` for A's slot in the whole session, at A's
+      own reentry-released edge and carrying A's own generation (`canonical_release,0,42,1536,8`). **The
+      display/selection authority moves with the switch:** `LOOP_EDIT session refreshed for focus change`, `Edit
+      state reset for new track`, and the geometry the device then reports comes from the *new* track's stored
+      content (`Sent loop length CC feedback: 2 bars (1536 ticks)`), not from A's loop. **The transport stays
+      MIDI-continuous:** `overflow_free`, `call_site_gate_ok`, and an empty warning list in attempts 01/04 (02/03
+      additionally carry `record_first_note_too_late`, a record-leg latency item). **Why it stays `[~]` — one
+      clause unexercised, with the device semantics behind it measured:** the press *after* the track switch is
+      resolved by the **new track's own state**, not as a cross-track switch — an empty destination becomes the
+      record carrier (`Loop 2: Start Recording`, attempts 01/02) and the new track's **active** slot with content
+      becomes `Toggle Play/Stop` + `Playback started` (attempts 03/04). So the `Queued playback switch` whose
+      inbound occupancy S4b.7 provisions at a cold boundary needs a **non-active, catalog-filled** destination
+      slot; the three attempts at exactly that (`--switch-loop-slot 3`) each failed **before** their intervention
+      and never on the leg's own assertions — `firmware capture ring discarded unreadable content` (05), `record
+      stop did not reach PLAYING` (06), `overdub start refused: no predecessor stop-completion receipt` even at
+      the 25 s wait (07). No attempt shows a `LoopEnd playback commit` row. Evidence:
+      [`evidence/2026-10-01-s4b9-cross-track/EVIDENCE.md`](evidence/2026-10-01-s4b9-cross-track/EVIDENCE.md).
 - [~] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
       active-interval overflow) across repeated switches.
 
