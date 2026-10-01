@@ -98,3 +98,34 @@ row above is on the **source** channel **before** the continuation pressed anyth
 issue. `overdub_unmatched_open_notes` / `overdub_stored_span_too_short` remain unattributed, and the continuation
 contamination question — a second OD on the same slot number — is now separate from the out-of-range issue.
 
+## The different-slot re-run: a clean differential (2026-10-01)
+
+Seeded the destination as **track 5 Loop 2** (`captures/s4f14-seed-t5s2-01`, `Result: PASS`) so the two tracks no longer
+share a slot index, then re-ran the identical gesture into `captures/s4f14-cross-track-02` (source track 4 Loop 1 =
+slot 0, destination track 5 Loop 2 = slot 1, `--continue-hold-ms 2000`).
+
+| | `-01` destination on **Loop 1** (slot 0, same index as the source) | `-02` destination on **Loop 2** (slot 1) |
+|---|---|---|
+| continuation starts a session on the destination | yes (`Overdubbing started @ tick 3347`) | yes |
+| destination's stop | **refused**: `Overdub stop refused: canonical_output slot=0 interval=1`, `ODUB,stop,admission,…,canonical_output_busy` | **not refused** — no refusal row of any kind in the run |
+| `DIAG,latch` edges | `accept`/`wait`/`consume` on **track 4** (its own stop) | **none** |
+| `DIAG,canonical_release` | `0,36,1536,8` and `0,0,18432,8` — both **slot 0**, so the two tracks could not be told apart | **`0,33,1536,8`** (source, its own 2-bar length) and **`1,11,2304,8`** / **`1,1,2304,8`** (destination, its own 3-bar length) |
+| crash | 0 | 0 |
+| transport | 2 starts / 1 untimed stop | 2 starts / 1 untimed stop |
+
+**What this buys.** With the slot index shared (`-01`) the destination's stop was refused and nothing in the row
+family could say *which* track was refused; with the slot index distinct (`-02`) the same gesture produced **no
+refusal at all**, and the releases separate cleanly per slot with each loop's own length. The source released exactly
+once with its own geometry while the destination released independently — the "one finalizer per track+slot, not one
+device-wide" shape S4f.14 exists to test.
+
+**The hypothesis this raises, stated as a hypothesis.** The refusal appears **only** when the two tracks use the same
+slot **index**, which is the shape of a lookup keyed on the slot index without the track. The per-(track,slot)
+`LoopPlaybackRuntime` objects are distinct, so a track-blind slot lookup elsewhere — the capture-stop owner, the
+ledger, or a slot-indexed queue — is the candidate. **Not proven**: this differential is two runs, and the code path
+was not traced. It is the next thing to trace, and it is the difference between "two tracks can never share a slot
+index while one finalizes" (a real S4f.14 defect) and a coincidental timing difference.
+
+**Not established:** `Transport never stops` (the one stop is untimed in both runs), and the two remaining harness
+issues (`overdub_unmatched_open_notes`, `overdub_stored_span_too_short`).
+
