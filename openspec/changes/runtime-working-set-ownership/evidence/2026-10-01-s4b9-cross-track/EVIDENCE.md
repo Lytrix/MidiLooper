@@ -104,3 +104,29 @@ leg's own assertions:
   attempt 01/04's record legs) and, in attempts 01/02, an incidental destination recording on track 5 / Loop 2
   (18 bars, cut by the transport stop, so it did not commit); the seed leg wrote track 5 / Loop 2 (2 bars). All on
   tracks/slots this session authorized.
+
+## Attempts at the clause, continued (08–11) — and the device state behind both failure modes
+
+Attempt 08 (first run after a flash) targeted Loop 3 and showed the destination **empty in the catalog too**
+(`Sent loop length CC feedback: length=0 -> CC=0 (1 bar default)`), so that press became a record: in that boot,
+track 5's only *filled* slot was its **active** one (Loop 2, `2 bars` on selection) — the shape that toggles. The
+clause therefore also needs a **second** filled destination slot. Route taken: seed Loop 3
+(`captures/s4b9-seed2-t5s3`: `Loop 3: Start Recording`, `Recording stopped @ tick 324 (recStart=0 length=1536)`,
+`PERS,result,…,ok`), then re-flash so that Loop 3 is track 5's *selected* slot and Loop 2 is filled-but-non-active,
+then run the leg at Loop 2.
+
+| attempt | state | abort (before its intervention) |
+|---|---|---|
+| 09 | after the seed, same boot | `overdub start refused: no predecessor stop-completion receipt` |
+| 10 | first run after a flash | same receipt refusal |
+| 11 | first run after a flash + 150 s of settling | `firmware capture ring discarded unreadable content` |
+
+**The device state behind both modes is measured, not assumed.** That boot queues **64 restore requests** — one per
+slot of a library this session has filled — and drains all of them (`RRQ,…,queued` 64 rows, 64 `,terminal,` rows),
+so the SD/persistence lane carries a large batch alongside the leg. That is when the stop-completion receipt arrives
+late or not at all (the same refusal also ends run 02 and attempts 07/09/10), and the same batch's log volume is
+what fills the capture ring (attempts 05/11). **Neither mode is the leg's own assertion.**
+**On the plus side, the same boot confirms the Loop 8 churn is gone:** `RRQ,4,7` is an ordinary
+queued/running/terminal triple with **no** `LSV1 parse failed` row, i.e. that body loads normally now (consistent
+with the read-only follow-up in
+[`../2026-10-01-restore-retry-churn/FINDING.md`](../2026-10-01-restore-retry-churn/FINDING.md)).
