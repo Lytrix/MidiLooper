@@ -438,7 +438,7 @@ STORAGE_PERSIST_MEM bool stepFinalizeWorkspaceWorkItem(PersistenceWorkItemJob& j
     storageSession.currentWorkspaceSave.failedAtMs = millis();
     storageSession.currentWorkspaceSave.completedAtMs = 0;
     const uint32_t saveDurationUs = micros() - job.flushStartedAtUs;
-    SC_PERSIST("result", saveDurationUs, job.flushHeapBefore, job.flushHeapBefore, "failed");
+    SC_PERSIST_RESULT(saveDurationUs, job.flushHeapBefore, job.flushHeapBefore, "failed");
     // DEC-091: discharge, do not requeue. The dirty set is untouched, so the next save trigger re-writes
     // everything owed.
     return abandonPersistenceWorkItem(job, "finalize");
@@ -454,7 +454,7 @@ STORAGE_PERSIST_MEM bool stepFinalizeWorkspaceWorkItem(PersistenceWorkItemJob& j
   storageSession.currentWorkspaceSave.completedAtMs = millis();
   storageSession.currentWorkspaceSave.failedAtMs = 0;
   const uint32_t saveDurationUs = micros() - job.flushStartedAtUs;
-  SC_PERSIST("result", saveDurationUs, job.flushHeapBefore, job.flushHeapBefore, "ok");
+  SC_PERSIST_RESULT(saveDurationUs, job.flushHeapBefore, job.flushHeapBefore, "ok");
   if (clearEditDirtyAfterDeferredSave) {
     for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
       Track& track = trackManager.getTrack(t);

@@ -43,14 +43,47 @@ class SlotSwitchInterventionPort(StopInterventionPort):
     """
 
     def __init__(self, output, emit, *, delay_s, channel, target_track_index, target_slots,
-                 press_ms=120, phase_wait_ms=500, switch_interval_ms=0, **kw):
+                 press_ms=120, phase_wait_ms=500, switch_interval_ms=0, preplay_track_index=None,
+                 preplay_slot=None, preplay_source_track_index=None, **kw):
         super().__init__(output, emit, delay_s=delay_s, channel=channel, **kw)
+        # The destination *track* must be playing for a press on one of its other filled slots to be a playback
+        # switch at all: with that track silent, the press is a selection/toggle (measured, `captures/s4b9-cross-track-15/-16`).
+        # So the gesture starts the destination track's own loop and hands the focus back to the source track,
+        # before the pass that owns the finalization window runs.
+        self.preplay_track_index = preplay_track_index
+        self.preplay_slot = preplay_slot
+        self.preplay_source_track_index = preplay_source_track_index
+        self.preplay_done = False
         # Both are 0-based here; the wire notes are the base plus the index (the harness's own convention).
         self.target_track_index = target_track_index
         self.target_slots = list(target_slots)
         self.press_ms = press_ms
         self.phase_wait_ms = phase_wait_ms
         self.switch_interval_ms = switch_interval_ms
+
+    def _preplay_destination_track(self):
+        """Start the destination track's loop and return the focus to the source track."""
+        try:
+            _send_short_press(self.output,
+                              note=TRACK_SELECT_NOTE_BASE + self.preplay_track_index,
+                              channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
+            self._event("preplay_track_select_sent", track_index=self.preplay_track_index)
+            time.sleep(self.phase_wait_ms / 1000.0)
+            _send_short_press(self.output,
+                              note=LOOP_SELECT_NOTE_BASE + self.preplay_slot - 1,
+                              channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
+            self._event("preplay_slot_select_sent", target_slot=self.preplay_slot,
+                        target_track_index=self.preplay_track_index)
+            time.sleep(self.phase_wait_ms / 1000.0)
+            if self.preplay_source_track_index is not None:
+                _send_short_press(self.output,
+                                  note=TRACK_SELECT_NOTE_BASE + self.preplay_source_track_index,
+                                  channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
+                self._event("preplay_source_track_reselected",
+                            track_index=self.preplay_source_track_index)
+        except Exception as exc:  # recorded, not raised: the run's evidence must survive a send failure
+            self.error = str(exc)
+            self._event("preplay_error", detail=self.error)
 
     def _interrupt(self):
         try:
@@ -87,6 +120,11 @@ def run_fixture() -> None:
                         help="Spacing between the presses of a sequence; 0 fires them back to back.")
     parser.add_argument("--switch-track-number", type=int, default=None, choices=range(1, 9),
                         help="S4b.9: also press this track before the slot (a cross-track switch).")
+    parser.add_argument("--preplay-track-number", type=int, default=None, choices=range(1, 9),
+                        help="Start this track's loop (and optionally hand the focus back) before the pass, so a "
+                             "press on one of its other filled slots is a playback switch rather than a selection.")
+    parser.add_argument("--preplay-loop-slot", type=int, default=None, choices=range(1, 9),
+                        help="The destination track's own filled slot to start (required with --preplay-track-number).")
     parser.add_argument("--out-dir", type=pathlib.Path, required=True)
     parser.add_argument("--intervention-delay-ms", type=float, default=305.0,
                         help="Delay from the overdub-stop button release to the switch press.")
@@ -97,15 +135,21 @@ def run_fixture() -> None:
     parser.add_argument("--overdub-high-note", type=int, default=39)
     parser.add_argument("--overdub-step-clocks", type=int, default=12)
     parser.add_argument("--overdub-gate-clocks", type=int, default=12)
-    parser.add_argument("--state-sync-timeout-ms", type=int, default=25000,
-                        help="The harness's precondition wait for serial-confirmed state transitions. Raised well "
-                             "above its 8 s default because the leg's own preconditions are *not* the property under "
-                             "test: a device state that delays a phase's confirmation (measured: a boot restore-retry "
-                             "storm flooding the capture ring) must not be reported as the switch leg failing. This "
-                             "never touches the intervention, which fires from the overdub-stop button release.")
+    parser.add_argument("--state-sync-timeout-ms", type=int, default=120000,
+                        help="The harness's precondition wait for serial-confirmed state transitions. Raised far above "
+                             "its 8 s default because the leg's own preconditions are *not* the property under test, "
+                             "and because the device's own rows show the receipts exist: measured 2026-10-01, "
+                             "`captures/s4b9-cross-track-18` has the `PERS,result` receipt 3.1 s (device time) after "
+                             "the record stop while the harness's 25 s wait still expired -- the ring's drain under "
+                             "transport delays *delivery*, not emission. Waiting is the safe action (the harness says "
+                             "so itself); pressing into an unretired predecessor is the unsafe one. The run's own "
+                             "deadline still bounds this, and it never touches the intervention, which fires from the "
+                             "overdub-stop button release.")
     parser.add_argument("--final-wait-ms", type=int, default=12000,
                         help="Long enough to observe the finalization and the switch commit that follows it.")
     config = parser.parse_args()
+    if config.preplay_track_number is not None and config.preplay_loop_slot is None:
+        parser.error("--preplay-track-number needs --preplay-loop-slot")
     for token in str(config.switch_loop_slot).split(','):
         if token.strip() and not (1 <= int(token) <= 8):
             parser.error("--switch-loop-slot entries must be 1..8")
@@ -144,7 +188,15 @@ def run_fixture() -> None:
             target_track_index=(config.switch_track_number - 1
                                 if config.switch_track_number is not None else None),
             target_slots=[int(x) for x in str(config.switch_loop_slot).split(',') if x.strip()],
-            switch_interval_ms=config.switch_interval_ms)
+            switch_interval_ms=config.switch_interval_ms,
+            preplay_track_index=(config.preplay_track_number - 1
+                                 if config.preplay_track_number is not None else None),
+            preplay_slot=config.preplay_loop_slot,
+            preplay_source_track_index=(config.track_number - 1
+                                        if config.preplay_track_number is not None else None))
+        if config.preplay_track_number is not None and not any(x.preplay_done for x in interventions):
+            wrapped.preplay_done = True
+            wrapped._preplay_destination_track()
         interventions.append(wrapped)
         changed = list(args)
         changed[1] = wrapped

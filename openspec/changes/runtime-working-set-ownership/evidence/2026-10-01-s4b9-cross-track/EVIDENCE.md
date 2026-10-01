@@ -147,3 +147,31 @@ on the fixed image the receipt gate is **admitted** in runs 13/15/16, the leg co
 mid-finalization, `switch sent: True`), and the issue list is down to the base recipe's two known items with no
 lost record rows. So the remaining work is the **gesture**: the destination track must be *playing* when its
 non-playing filled slot is pressed.
+
+## CLAUSE OBSERVED (2026-10-01, `captures/s4b9-cross-track-21`)
+
+The gesture: the destination **track** must be playing when one of its *other* filled slots is pressed (see the
+correction above) — the runner now starts it (`--preplay-track-number 5 --preplay-loop-slot 2`) and hands the focus
+back to the source track before the pass that owns the finalization window.
+
+```
+[39.193] Selected track 5                      <- preplay: the destination track
+[39.905] Loop 2: Toggle Play/Stop              <- its own loop starts playing
+[47.861] [TRACK] Reentry window open slot=0    <- A's stop, track 4
+[48.322] Selected track 5                      <- the cross-track switch, inside A's finalization window
+[49.001] Loop 3: Queued playback switch        <- a SWITCH to a different filled slot
+49.008s  #CAP,…,DIAG,capture_prewarm,track=4,slot=2,full=0,ready=0,credits=0   <- destination COLD at the press
+[51.955] [TRACK] All Notes Off sent @ tick 5506
+[51.992] LoopEnd playback commit track=4 1->2 start=0 len=2304                 <- committed 2.99 s later
+```
+
+A's side: one `canonical_release` in the session (`canonical_release,0,24,1536,8`) carrying A's own generation — its
+own stop's terminal, not the switch's. Report: `integrity: COMPLETE`, `overflow_free: true`,
+`call_site_gate_ok: true`, `timing_warnings: []`, **zero** `slot_switch_hold_exceeded`, exactly one commit.
+
+**Why this is the clause and not a coincidence:** the commit is gated on the target's playback occupancy (S4b.6's
+binding), and the destination read `ready=0` at the press and committed ~3 s later — so its occupancy was taken
+**off-clock, between the press and the commit**, with nothing taken on the MIDI edge or the clock path.
+
+Two device-state defects had to be fixed first; both are recorded in
+[`../2026-10-01-ring-resync-and-receipt-delivery/FIX.md`](../2026-10-01-ring-resync-and-receipt-delivery/FIX.md).

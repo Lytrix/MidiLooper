@@ -305,6 +305,8 @@ SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t tr
 SC_MEM_ATTR void recordLoopRemainderSpan(const char* span, uint32_t durationUs);
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome);
+SC_MEM_ATTR void persistenceResultImmediate(uint32_t durationUs, uint32_t heapBefore,
+                                           uint32_t heapAfter, const char* outcome);
 /// A1.8/A2.1 (design D6): one event-shaped line per restore **request state transition**, carrying the
 /// full identity and the named reason/outcome. Event-shaped, not per-turn: the capture-ring precedent
 /// showed a per-turn family evicts the rows a run is read for. `state`, `wait` and `terminal` are the
@@ -472,6 +474,12 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #endif
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
+/// `#ifndef`-guarded so a native suite can substitute its own recorder (the `SC_ACCEPTED_LATCH` pattern).
+#ifndef SC_PERSIST_RESULT
+/// The save-completion receipt, emitted directly when USB has room (see `persistenceResultImmediate`).
+#define SC_PERSIST_RESULT(durationUs, heapBefore, heapAfter, outcome) \
+  DebugSessionCapture::persistenceResultImmediate(durationUs, heapBefore, heapAfter, outcome)
+#endif
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) \
   DebugSessionCapture::restoreRequest(track, slot, requestGeneration, setEpoch, state, wait, terminal)
 // `restored-library-stability` 1.3. `#ifndef`-guarded so a native suite can substitute its own recorder
@@ -618,6 +626,7 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #define SC_ACCEPTED_LATCH(transition, track, slot, interval, destination, outcome) ((void)0)
 #endif
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
+#define SC_PERSIST_RESULT(durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) ((void)0)
 // `restored-library-stability` 1.3: no records without a capture build (the request trigger is
 // session-capture-only too). `#ifndef`-guarded for a native suite that substitutes its own recorder.
