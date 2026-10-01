@@ -24,6 +24,7 @@ struct CaptureSerial {
 #define Serial captureSerial
 #include "../../src/Utils/DebugSessionCapture.cpp"
 #undef Serial
+#include "../../include/Utils/TelemetryCadence.h"
 
 using namespace DebugSessionCapture;
 static uint8_t backing[1024];
@@ -238,6 +239,50 @@ void test_task22_a_refused_latch_append_is_counted() {
   TEST_ASSERT_TRUE_MESSAGE(CaptureLineTier::isTierALine("#CAP,1,DIAG,latch,accept,0,1,7,1,stopped"),
                            "a latch edge is one-shot per episode: it must not be shed as ordinary timing");
 }
+/// The per-slice persistence rows are the volume that made the ring shed acceptance evidence (measured
+/// `captures/s4b9-cross-track-10/-11`: 5 951 `PERS,work` rows in one boot, 241 per slot body). The cadence keeps
+/// the phases a verifier requires and keeps the carried duration a faithful upper bound.
+void test_persistence_slice_telemetry_is_rate_limited_and_carries_the_max() {
+  TelemetryCadence::SliceLogState state;
+  uint32_t carried = 0;
+  // A phase's first slice always logs: `deferred_persist_large_loop_bounds` requires `payload_slice` and
+  // `finalize_slice` to be present in every completed window.
+  TEST_ASSERT_TRUE(
+      TelemetryCadence::shouldLogSlice(state, 100, TelemetryCadence::kSliceLogInterval, carried));
+  TEST_ASSERT_EQUAL_UINT32(100, carried);
+  // The slices between two logged ones are not emitted ...
+  for (uint32_t i = 0; i < TelemetryCadence::kSliceLogInterval - 2; ++i) {
+    TEST_ASSERT_FALSE(
+        TelemetryCadence::shouldLogSlice(state, 120u + i, TelemetryCadence::kSliceLogInterval, carried));
+  }
+  // ... and a spike among them still reaches the next logged row, because the carried value is the **running
+  // max**, not the last slice's duration (the verifier takes max over the rows it can see).
+  TEST_ASSERT_EQUAL_UINT32(120 + TelemetryCadence::kSliceLogInterval - 3, carried);
+  TEST_ASSERT_TRUE(
+      TelemetryCadence::shouldLogSlice(state, 50, TelemetryCadence::kSliceLogInterval, carried));
+  TEST_ASSERT_EQUAL_UINT32(120 + TelemetryCadence::kSliceLogInterval - 3, carried);
+  // A new work item resets the cadence, so its first slice logs and its max starts fresh.
+  TelemetryCadence::reset(state);
+  TEST_ASSERT_TRUE(
+      TelemetryCadence::shouldLogSlice(state, 7, TelemetryCadence::kSliceLogInterval, carried));
+  TEST_ASSERT_EQUAL_UINT32(7, carried);
+  // Interval 0 is the escape hatch: every slice logs.
+  TelemetryCadence::reset(state);
+  for (int i = 0; i < 5; ++i) {
+    TEST_ASSERT_TRUE(TelemetryCadence::shouldLogSlice(state, 10, 0, carried));
+  }
+  // The volume this buys, on the measured per-slot slice count: 241 slices emit 16 rows, not 241.
+  TelemetryCadence::reset(state);
+  uint32_t rows = 0;
+  for (uint32_t i = 0; i < 241; ++i) {
+    uint32_t carry = 0;
+    if (TelemetryCadence::shouldLogSlice(state, 1000, TelemetryCadence::kSliceLogInterval, carry)) {
+      ++rows;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(16, rows);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_real_emitters_are_accounted_and_drained);
@@ -250,5 +295,6 @@ int main() {
   RUN_TEST(test_unreadable_head_is_reported_as_a_wipe);
   RUN_TEST(test_nested_append_during_a_flush_cannot_evict_the_head);
   RUN_TEST(test_a_non_boundary_head_is_reported_with_its_operation);
+  RUN_TEST(test_persistence_slice_telemetry_is_rate_limited_and_carries_the_max);
   return UNITY_END();
 }

@@ -16,10 +16,16 @@
 #include "TrackManager.h"
 #include "TrackUndo.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/TelemetryCadence.h"
 #include <Arduino.h>
 #include <cstdio>
 
 namespace StorageManagerInternal {
+
+/// The loop-snapshot tail write's per-step telemetry counter (see `Utils/TelemetryCadence.h`). Reset when a tail
+/// write begins, so each slot's tail shows its first step and then one row per `kTailWriteStepLogInterval`. The row
+/// is emitted only in a capture build; the counter exists in both so the reset site needs no guard.
+DMAMEM uint32_t loopSnapshotTailWriteStepRows = 0;
 
 /// DEC-073 RC2: bounded settle re-admissions per loop body write. A coverage-current root with a
 /// publication still pending is transient (the publisher is rebuilding the same committed state on
@@ -679,6 +685,7 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
                     DeferredLoopWriteStage::LoopSnapshotTail;
                 armLoopPersistTailWriteResume(persistKeyForLoop(loop.loopId));
 #if defined(SESSION_CAPTURE)
+                loopSnapshotTailWriteStepRows = 0;
                 SC_PERSIST("work", 0, 0, 0, "LoopPersist,loop_snapshot_tail,enter");
 #endif
                 return true;
@@ -708,7 +715,11 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
             }
             if (stepResult == LoopSnapshotBodyFormatV1SaveStepResult::MoreWork) {
 #if defined(SESSION_CAPTURE)
-                SC_PERSIST("work", 0, 0, 0, "LoopPersist,loop_snapshot_tail,step");
+                if (TelemetryCadence::shouldLogOccurrence(
+                        loopSnapshotTailWriteStepRows,
+                        TelemetryCadence::kTailWriteStepLogInterval)) {
+                  SC_PERSIST("work", 0, 0, 0, "LoopPersist,loop_snapshot_tail,step");
+                }
 #endif
                 return true;
             }
