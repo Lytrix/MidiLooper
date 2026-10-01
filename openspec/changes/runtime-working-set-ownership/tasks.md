@@ -503,7 +503,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       job is the **path** relationship, not the constant. Full native **2,667 cases / 7 skipped / 2,660 succeeded /
       0 failed**; `teensy41-capture-serial` SUCCESS, RAM1 unchanged (`variables 96,192 / ITAG 393,216 = code 391,496
       + padding 1,720`, 880 B above the floor) on a test-only change.
-- [ ] S1.5 **Boot/load residency baseline (B7):** with N committed slots, record the pool chunks and bytes that
+- [x] S1.5 **Boot/load residency baseline (B7):** with N committed slots, record the pool chunks and bytes that
       `TrackManager::prewarmPlaybackRuntime` reserves before any activation (today 8 chunks / 41,056 B per
       committed slot), the free-chunk count, and the smallest N at which a 24-bar overdub is refused.
       **NATIVE LEG DONE 2026-09-23, task still open:** `test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve`
@@ -593,7 +593,36 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       zero". **The refusal clause stays open** (the smallest N at which a 24-bar overdub is refused; this sweep is
       4-bar takes, and that clause's earlier misread is already withdrawn). Evidence:
       [`evidence/2026-10-01-s2b-slope-sweep/EVIDENCE.md`](evidence/2026-10-01-s2b-slope-sweep/EVIDENCE.md).
-- [ ] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
+      **CLAUSE 3 (the smallest N at which a 24-bar overdub is refused) RESOLVED 2026-10-01 — the number does not
+      exist inside today's topology, measured at both ends.** *Device, on the current grown library* (`captures/s15-24bar-01`,
+      the authoritative `hitl_stop_interruption.py` wrapper with `--record-bars 24 --overdub-bars 24 --normal-stop`):
+      the 24-bar record completed — `Recording stopped … length=18432` (exactly 24 bars) — and **`Overdubbing started
+      @ tick 1591`**, i.e. **the 24-bar overdub reserve admission was reached and ADMITTED**, with **zero denials of
+      any kind** (`refused=0/0B` on every census row, no `MEM_EXT_REFUSED`, no `op=overdub_start` denial), the pool
+      falling 404 → 392 free chunks for the take. The same boot measured `post_restore_free_chunks = 412` and the walk
+      flat at 480. *Native:* the clause-3 fixture already records **admitted at every N up to 63** (the topology's
+      maximum). *So:* **no refusing N exists ≤ 63 native and ≤ the device's current library**, and the only device
+      refusal in the vicinity belongs to the **record** admission at N = 56 (`Overdubbing started = 0`, the S1.3
+      hard-failure class — a different admission, already checked), not to the overdub reserve. The premise
+      ("N drives the reserve") was removed by **S2b**: the per-committed-slot reservation is **exactly zero** on both
+      legs, so N does not price the reserve at all. **Recorded rather than glossed:** that run's own *verdict* was
+      `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` on a single **`RING,shed,1`** — the diagnostic-eviction trap at
+      24-bar volume on a grown library — so the finding rests on the device's own rows, which carry it, and the shed
+      is why a long-take leg needs its rows read directly (relevant to the S4/S4b device acceptance).
+- [x] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
+      the slope and failure point in this file as numbers.
+      **CLOSED 2026-10-01.** Every clause this gate carries is satisfied and cited: full native
+      **2,667 cases / 7 skipped / 2,660 succeeded / 0 failed** (run on the S1.4 host fixture's landing);
+      `teensy41-capture-serial` SUCCESS with the enforced RAM1 line (`variables 96,192 / ITAG 393,216 = code
+      391,496 + padding 1,720`, **880 B above the 840 floor**); the red fixture failing and recorded (S1.2);
+      S1.1's per-owner census; the slope **and** the failure point as numbers (S1.3, checked 2026-09-25: the
+      controlled two-bar slope N = 10..56 plus the dense four-bar probe that reached the hard allocator
+      refusal); S1.4's three clauses (the third measured 2026-10-01 on the host transfer path); and **S1.5's
+      last clause resolved 2026-10-01 — the 24-bar overdub refusal-N does not exist inside today's topology**,
+      with the device admitting a 24-bar record and overdub on the grown library at zero denials and the
+      premise removed by S2b's zero per-committed-slot reservation. The gate's earlier confounds (the
+      restored-library instability, the withdrawn "N = 2" misread) are all recorded above as withdrawn rather
+      than carried.
       the slope and failure point in this file as numbers.
       **Recorded 2026-09-23 (native legs only): full native 2,263 cases / 1 skipped / 2,262 succeeded /
       0 failures; `teensy41-capture-serial` SUCCESS with RAM1 `variables 96,128 / code 392,344 /
@@ -650,7 +679,13 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       is satisfied and cited: the native suite and the enforced RAM1 line (re-verified 2026-10-01 at **2,667 cases /
       7 skipped / 2,660 succeeded / 0 failed**, `padding 1,720` ≥ 840), the red fixture (S1.2), S1.1's per-owner
       census, S1.3's slope (checked 2026-09-25), S1.4's three clauses, and S1.5's boot/load baseline with the
-      per-committed-slot reservation flat at zero across every measured boot (S2b gates' eight-boot sweep).
+      census, S1.3's slope (checked 2026-09-25), S1.4's three clauses, and S1.5's clauses — including, since
+      **2026-10-01**, its third: **the 24-bar overdub refusal-N does not exist inside today's topology** (device
+      admits a 24-bar record *and* overdub on the grown library at zero denials; native admits every N up to 63), with
+      the premise removed by S2b's zero per-committed-slot reservation. The boot/load baseline's first clause stands
+      with the per-committed-slot reservation **flat at zero** across every measured boot (S2b gates' eight-boot
+      sweep), `post_restore_free_chunks = 412` on the current library and `512 → 480` for the constant enabled set.
+      **This gate is therefore closed**; see its closing block above.
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
@@ -758,7 +793,8 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       toward **1/32 beat = 6 ticks** (1/16 beat = 12 ticks at 192 PPQN). Record the smallest window that still
       meets the readiness deadline under load; that number bounds the achievable queued-switch quantisation
       and feeds the derived N from S2.3.
-- [ ] S2 gates: S1 gates plus the lease-size measurement and the cap derivation recorded; existing
+- [x] S2 gates: S1 gates plus the lease-size measurement and the cap derivation recorded; existing
+      **CLOSED 2026-10-01** (S1 gates closed the same day, so this gate's "plus" clause is satisfied).
       playback-prewarm fixtures still green.
       **Its two own clauses are satisfied 2026-10-01; the gate waits only on S1 gates' single remainder (S1.5's
       overdub refusal-N).** *Lease-size measurement:* the `P` class is measured on the target ABI in
@@ -1866,7 +1902,18 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       build a queue of stopped intervals: the ring's tail must be free before
       admission, so it cannot stack pending stops, and concurrent finalization needs its own capacity/ownership
       decision first.
-- [~] S4 gates (P2): S3 gates plus the reuse and stale-owner fixtures; S4.5 acceptance closes with P3/S4f, not before it.
+- [x] S4 gates (P2): S3 gates plus the reuse and stale-owner fixtures; S4.5 acceptance closes with P3/S4f, not before it.
+      **CLOSED 2026-10-01.** *S3 gates* closed the same day. *The reuse and stale-owner fixtures* are the S4 items
+      above and every one is checked: **S4.0** (the per-slot liveness predicate), **S4.1** (release only when no live
+      owner remains, with its device row `DIAG,ws_release` observed), **S4.1a** (a persistently failing workspace
+      completion cannot stall at the queue head), **S4.2** (the generation-mismatched release rejected as
+      `stale_generation` and named as the device row names it), **S4.3** (reuse without net pool growth) and **S4.4**
+      (the declared-cap policy: accept-and-schedule, the breach reported and naming its holder). The three items this
+      gate's own list carried through 2026-09-25 are all resolved: **S2b.7(a)** (satisfied on device —
+      `captures/s2b7a-drain-shapeb-10.log`), **S2.2/S2.3's class budget** (`S2C23-CLASS-BUDGET.md`) and the gate's
+      **device clause** (observed in the S4 gates holder census). **S4.5 is explicitly outside this gate** — its own
+      line says it "closes with P3/S4f, not before it" — so its `[ ]` is not a P2 blocker and this gate does not wait
+      on it. What is *not* claimed here: S4.5's P3 acceptance and the remaining device legs of phases B-E.
       **DEVICE HALF OBSERVED 2026-10-01** — "a device run showing holder count rising and falling with
       activation/deactivation": `captures/s4b8-newimage-01` (the S4b.8 leg re-run on the current image, a clean run)
       shows the holder magnitude rising with activation (609.4 → 611.4 s: `live` 4769 → 6463 KB, `blocks` 1150 →
@@ -2520,7 +2567,22 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       red-proofs each restored byte-identically, `teensy41-capture-serial` SUCCESS with RAM1 unchanged
       (`variables 96,192 / padding 1,800 / locals 34,880`; image `a1f4e4c0…`). **Not claimed:** the corrupt head's
       *cause* is not identified — the fix bounds and names the loss instead; the `head_bad` rows stay the instrument.
-- [~] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
+- [x] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
+      active-interval overflow) across repeated switches.
+      **CLOSED 2026-10-01: both halves are satisfied.** *S4 gates* closed the same day (it was this gate's last
+      remainder). *The MIDI-boundary timing evidence across repeated switches* is green on a run whose subject **is**
+      the repeated switch — `captures/s4b8-repeated-switches-04`, three presses inside one finalization window's
+      successor interval, reporting `overflow_free: true`, `call_site_gate_ok: true` and an **empty**
+      `timing_warnings` list across the 37 s `PLAYING` interval that contains all three presses — corroborated by the
+      single-switch and two-switch runs. The stage's own items are checked: **S4b.1** (the switch lane's acceptance
+      surface and the populated-target queued switch), **S4b.2** (the inbound provisioned before the outbound
+      retires), **S4b.3** (the switch lands on the quantization's boundary, binding a prepared role), **S4b.4**
+      (cross-track/slot role transfer), **S4b.5** (one active-slot write authority), **S4b.6**/**S4b.7** (occupancy
+      binding, the off-clock `SlotProvision` turn and the bounded hold), **S4b.8**/**S4b.9** (both device legs,
+      including the cross-track switch inside a finalization window), and the two device-state fixes this session
+      landed so those legs could run at all (the telemetry cadence and the ring resync/direct receipt). What is *not*
+      claimed: the per-class interaction latency measurement (S4f.11) and the phases B-E device legs, which belong to
+      S4f and the remaining device acceptance rather than to this gate.
       active-interval overflow) across repeated switches.
 
 ## S4c — readiness contract only (implementation extracted to phase F)
