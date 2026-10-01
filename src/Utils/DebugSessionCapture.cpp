@@ -1378,11 +1378,13 @@ SC_MEM_ATTR void overdubWrapTick(uint32_t totalUs, uint32_t sealUs, uint32_t pas
 
 SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                                   uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
-                                  size_t chunkRefCount, const char* outcome) {
-  emitCapPrintf("#CAP,%lu,ODUB,stop,%s,%lu,%lu,%lu,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(),
+                                  size_t chunkRefCount, const char* outcome, uint8_t track) {
+  // `track` is appended last so a positional reader that stops at `outcome` keeps working. `0xFF` is
+  // not supplied; see the declaration's note.
+  emitCapPrintf("#CAP,%lu,ODUB,stop,%s,%lu,%lu,%lu,%lu,%lu,%lu,%s,track=%u\r\n", (unsigned long)micros(),
                 stage, (unsigned long)elapsedUs, (unsigned long)durationUs,
                 (unsigned long)heapBefore, (unsigned long)heapAfter, (unsigned long)eventCount,
-                (unsigned long)chunkRefCount, outcome);
+                (unsigned long)chunkRefCount, outcome, static_cast<unsigned>(track));
 }
 
 SC_MEM_ATTR void interactionLatchTransition(const char* transition, uint8_t track, uint8_t slot,

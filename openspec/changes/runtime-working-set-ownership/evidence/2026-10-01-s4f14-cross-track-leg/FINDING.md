@@ -184,3 +184,37 @@ is `Overdub stop refused: %s slot=%u interval=%lu` — slot and interval, **no t
 evidence, even though the behaviour it reports is per-track. That is the same class of gap `DIAG,latch` was added to
 close for the admitted/waiting path; the *denial* path has no equivalent.
 
+## `-03`: the denial is intermittent, and the destination's session can be empty by design (2026-10-01)
+
+Re-ran the identical gesture with the destination back on **Loop 1** (the shared slot index, `-01`'s shape) on the image
+carrying the new trailing `track=` field (`eb2a6212…`): `captures/s4f14-cross-track-03`.
+
+**No denial occurred**, so the new field is **not yet exercised**. That is itself the useful result: the same
+destination slot that produced `canonical_output_busy` in `-01` produced **no** refusal here, so the condition is a
+**race on that slot's readiness** (`store.empty() && reservedAppendReady() && availableChunks() >= 8`), not a
+deterministic rule keyed on the slot index. Two runs of the same shape differ; the third agrees with the
+capacity/latency reading.
+
+**The destination's session is structurally exercised but carries no content — and that is expected.** The owner
+watching the bench reported *"I see overdub on over the 24 bar only and nothing really being added"*. Exactly right:
+the harness keeps playing on the **source** track's channel (the device relays `MI,U,144,4,48..52`, channel 4) while
+the destination (track 5) captures only its own channel's input. The rows agree — the leg's only release is the
+source's
+
+```
+DIAG,canonical_release,0,33,1536,8
+```
+
+with **no** release for the destination, whereas `-01` (a contentful case) also had `canonical_release,0,0,18432,8`.
+An empty overdub produces no pass and no finalization release, which is the correct behaviour, not a defect.
+
+**Consequence for this leg's clauses, stated rather than glossed.** `-03` exercises the *interaction* (a session
+started and stopped on the destination while the source finalizes) with **zero content** on the destination. So it is
+weak evidence for the *content* clauses — `no lost capture`, `no wrong-track publication`, `content exact`
+(leg item 2) — which need a destination session that actually captures something. The empty path does still exercise
+`transport never stops`, the latch/release absence and the source's own single release.
+
+**Still unexercised:** the new `track=` field on a real denial. Forcing it needs the stop to land inside the
+un-admitted window (a much shorter `--continue-hold-ms`), and giving the destination real content needs the harness to
+play on the destination's channel during the hold — the continuation currently presses only the record button.
+

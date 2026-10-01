@@ -243,7 +243,7 @@ TRACK_COLD_MEM void Track::parkAcceptedStopForCanonicalOutput(uint8_t slot) {
   if (!latch->waitReported) {
     latch->waitReported = true;
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0,
-                       "accepted_stop_finalizer_wait");
+                       "accepted_stop_finalizer_wait", resolveTrackIndexForPersistence(*this));
     // Task 2.2: the same wait episode, but with the identity the existing `ODUB,stop` row cannot carry
     // (that family has no slot field, and its `deny`-stage row is end-anchored for a live host consumer).
     SC_ACCEPTED_LATCH("wait", resolveTrackIndexForPersistence(*this), latch->slot, latch->interval,
@@ -745,7 +745,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   // interval is no longer live is a superseded request, not a refusal of a user interaction:
   // it must not bind this job to a later interval's content, staging or generation.
   if (slot >= Config::MAX_LOOPS_PER_TRACK || interval != captureInterval_) {
-    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "stale_interval");
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "stale_interval", resolveTrackIndexForPersistence(*this));
     return false;
   }
   // The ring is the FIFO admission authority. A new stop interval always takes
@@ -754,7 +754,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   CaptureStopJob* admission = captureStopJobTail();
   if (admission == nullptr || !admission->pendingNotes.empty()) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
-                       admission != nullptr, captureStopQueueDepth(), "queue_full");
+                       admission != nullptr, captureStopQueueDepth(), "queue_full", resolveTrackIndexForPersistence(*this));
     return false;
   }
   CaptureStopJob& job = *admission;
@@ -774,7 +774,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
       runtime != nullptr ? runtime->liveCaptureStagingIfPrewarmed() : nullptr;
   if (runtime == nullptr || views == nullptr) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
-                       views != nullptr, loop.hasActiveOverdubTransferAdmission(), "storage_denied");
+                       views != nullptr, loop.hasActiveOverdubTransferAdmission(), "storage_denied", resolveTrackIndexForPersistence(*this));
     return false;
   }
   // DEC-067: this is the admission boundary that owns the finalization resources.
@@ -783,22 +783,22 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestinatio
   // descriptor is taken, and the interval stays the live recording interval.
   if (runtime->captureStopOwner != nullptr) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1,
-                       loop.hasActiveOverdubTransferAdmission(), "finalizer_busy");
+                       loop.hasActiveOverdubTransferAdmission(), "finalizer_busy", resolveTrackIndexForPersistence(*this));
     DENY_REENTRY_RESOURCE();
     return false;
   }
   if (!loop.hasActiveOverdubTransferAdmission()) {
-    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "transfer_denied");
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "transfer_denied", resolveTrackIndexForPersistence(*this));
     DENY_REENTRY_RESOURCE();
     return false;
   }
   if (!runtime->canonicalCaptureOutputAdmitted()) {
-    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "canonical_output_busy");
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "canonical_output_busy", resolveTrackIndexForPersistence(*this));
     DENY_REENTRY_RESOURCE();
     return false;
   }
   if (!loop.canHandoffSessionExitSnapshot()) {
-    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "session_exit_handoff_full");
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "session_exit_handoff_full", resolveTrackIndexForPersistence(*this));
     DENY_REENTRY_RESOURCE();
     return false;
   }
@@ -2771,7 +2771,7 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
       // L2 fell back to UNKNOWN and the run could not be a verdict).
       logger.log(CAT_TRACK, LOG_INFO,
                  "Overdub stop refused: %s slot=%u interval=%lu phase=%u dest=%u closure=%u recycle_owner=%u "
-                 "recycle_started=%u undo_ready=%u",
+                 "recycle_started=%u undo_ready=%u track=%u",
                  busyReason, static_cast<unsigned>(activeLoopIndex),
                  static_cast<unsigned long>(captureInterval_),
                  static_cast<unsigned>(headJob->admission.phase),
@@ -2779,14 +2779,16 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
                  static_cast<unsigned>(headJob->admission.remainingClosureGrains),
                  headJob->admission.historyRecycleOwner != nullptr ? 1u : 0u,
                  headJob->admission.historyRecycleStarted ? 1u : 0u,
-                 headJob->undoPublicationReady ? 1u : 0u);
+                 headJob->undoPublicationReady ? 1u : 0u,
+                 static_cast<unsigned>(resolveTrackIndexForPersistence(*this)));
     } else {
       // Name the slot and the interval. The human row is the timely edge, and without the identity it cannot
       // attribute the denial: "which slot was refused" was previously readable only from the deferred `#CAP`
       // row, which the timing-critical shed could remove.
-      logger.log(CAT_TRACK, LOG_INFO, "Overdub stop refused: %s slot=%u interval=%lu", busyReason,
+      logger.log(CAT_TRACK, LOG_INFO, "Overdub stop refused: %s slot=%u interval=%lu track=%u", busyReason,
                  static_cast<unsigned>(activeLoopIndex),
-                 static_cast<unsigned long>(captureInterval_));
+                 static_cast<unsigned long>(captureInterval_),
+                 static_cast<unsigned>(resolveTrackIndexForPersistence(*this)));
     }
     return;
   }

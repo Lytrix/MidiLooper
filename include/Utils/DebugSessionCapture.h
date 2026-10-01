@@ -178,7 +178,13 @@ SC_MEM_ATTR void capturePrewarmMemory(const char* phase);
 SC_MEM_ATTR void postRestoreCensus(uint16_t freeChunks, uint32_t heapFree);
 SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                                   uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
-                                  size_t chunkRefCount, const char* outcome);
+                                  size_t chunkRefCount, const char* outcome, uint8_t track = 0xFF);
+/** Why `track` exists (appended to the wire row as a trailing `,track=%u`, so a positional reader that stops at
+ *  `outcome` is unaffected): the family previously carried **neither slot nor track**, so on a multi-track run a
+ *  denial could not be attributed to the track that met it -- the same gap `DIAG,latch` closed for the
+ *  admitted/waiting path, left open on the denial path. `0xFF` means "not supplied" (the house sentinel, as in
+ *  `#STOP_PREFIX`'s `ready=255`), which is what the sites that cannot name their track emit. */
+
 /** The accepted-interaction (DEC-078) latch's own sequenced evidence, one shot per latch transition from the
  *  latch's owner. Wire form: `DIAG,latch,<transition>,<track>,<slot>,<interval>,<destination>,<outcome>`.
  *
@@ -464,8 +470,10 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
   DebugSessionCapture::playbackOrder(durationUs, eventCount)
 #define SC_DROID_FEEDBACK_QUEUE(depth, oldestAgeUs, overflowCount) \
   DebugSessionCapture::droidFeedbackQueue(depth, oldestAgeUs, overflowCount)
-#define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) \
-                                           DebugSessionCapture::overdubStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
+// Variadic on purpose: the 34 existing sites pass the eight positional fields, and a site that knows its track
+// appends it as a ninth argument. A fixed-arity macro would have forced all 34 to change for a field most of them
+// cannot supply.
+#define SC_ODUB_STOP_STAGE(...) DebugSessionCapture::overdubStopStage(__VA_ARGS__)
 // `#ifndef`-guarded so a native suite can substitute its own recorder for the latch rows without a capture
 // build (the pattern `SC_LIBRARY_OBSERVATION_*` established).
 #ifndef SC_ACCEPTED_LATCH
@@ -621,7 +629,7 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
   ((void)0)
 #define SC_PLAYBACK_ORDER(durationUs, eventCount) ((void)0)
 #define SC_DROID_FEEDBACK_QUEUE(depth, oldestAgeUs, overflowCount) ((void)0)
-#define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
+#define SC_ODUB_STOP_STAGE(...) ((void)0)
 #ifndef SC_ACCEPTED_LATCH
 #define SC_ACCEPTED_LATCH(transition, track, slot, interval, destination, outcome) ((void)0)
 #endif
