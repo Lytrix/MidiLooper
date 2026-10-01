@@ -259,3 +259,46 @@ Until one of those is in place, the clauses that need concurrency — "track 5's
 "per-track holder counters rise and fall independently" — are **unproven**, and saying otherwise would be reading a
 sequential run as a concurrent one.
 
+## An aborted stop leaves a record job LIVELOCKED in its closure phase (2026-10-01, found while cleaning up)
+
+The 24-bar source attempt (`captures/s4f14-cross-track-04`) exceeded the managed-run watchdog
+(`[hitl-capture] scenario exceeded 360.0s watchdog; no run scope is registered; giving it 30.0s to stop`) and the
+capture was released with the leg's stop unfinished. What the device was left doing is its own finding.
+
+**It was not hung — it was spinning.** `!STOP_STATUS` kept answering, and the device streamed `DIAG,stop_grain` rows:
+
+```
+#CAP,959334014,DIAG,stop_grain,3,0,0,3,1,1,166005,959333965,959334001,892080032,892076922,892080032,0,4294967295,0
+```
+
+which decodes through `stopGrainTiming` as **track 3 (display track 4), slot 0, phase 0 (`ReservedClosure`),
+destination 1 (Stopped), `serviceSequence = 166,005`** — i.e. the deferred lane had serviced **166,005 stop grains**
+of one job. Over three `!STOP_STATUS` polls 18 s apart the job never moved:
+
+```
+us=921472406  state=STOPPED pending=1 phase=0 dest=1 order=0 ranked=0 canonical=137 prefix=2 tail=0 bridge=0 wrap=0 queue=1/4
+us=939421677  state=STOPPED pending=1 phase=0 dest=1 order=0 ranked=0 canonical=137 prefix=2 tail=0 bridge=0 wrap=0 queue=1/4
+```
+
+`canonical=137` identical, `pending=1`, `queue=1/4`: a **livelock** — grains consumed forever with no progress.
+Because the per-grain row is sampled one-in-sixteen and still arrives ~8/s, the capture ring is flooded, which is
+also why the third poll's row never came back through the flood.
+
+**This is the DEC-070 wedge family, on the *record closure* route.** DEC-070's own words — *"a predicate that can
+never become true wedges the slot"* — describe it; the difference is that this one is *serviced* rather than returning
+`Pending`, so it burns the lane and the ring instead of parking quietly.
+
+**Not caused by this session's changes.** The job sits at phase 0 (`ReservedClosure`); DEC-107's bound acts at
+`RecordPublished` (phase 16), and the trailing `track=` field is a format-string change.
+**Trigger observed:** an *aborted* stop — the watchdog released the run mid-flight and the source's stop was left
+unfinished. Whether the livelock needs the abort or merely a long record stop is **not established**.
+
+**Cleared:** `!REBOOT` (transport stopped) — `crash=0`, `Current workspace loaded successfully`, `BOOT,load,ok`, and
+**0** `stop_grain` rows in an 8 s post-reboot read.
+
+**Consequence for the S4f.14 plan.** A 24-bar source does **not** fit the 360 s managed-run bound (this attempt was
+released before the switch ever fired), so "make the source longer" is not a usable route to the leg's concurrency
+premise. Either a moderate source that still fits the bound (the 2-bar case measured 0.37 s; 8 bars is the next point
+to measure) or the owed-stop route is needed — and a route that aborts must be run knowing it can leave a livelocked
+stop job behind.
+
