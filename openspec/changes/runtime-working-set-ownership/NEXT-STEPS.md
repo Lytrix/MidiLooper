@@ -240,6 +240,24 @@ starves the SD lane and floods the capture ring, which is the measured reason a 
 batch competes with the leg. Those failures are not the legs' own assertions; the S4b.9 attempts 05–11 aborted only
 that way.
 
+## S4c.1 landed — the readiness/currency specification (2026-10-01), and S2.1 is the next unblocked step
+
+**S4c.1 is CHECKED (specification only; no firmware, no build, no device action).**
+[`S4C1-READINESS-CURRENCY-CONTRACT.md`](S4C1-READINESS-CURRENCY-CONTRACT.md) turns `design.md` **Revision 11**
+("immutable readiness at re-entry, not whole-loop publication") and its row 11 into nine acceptance criteria for
+the sibling `windowed-playback-generation` — readiness per affected tick before the playhead returns; immutable,
+identified windows; readiness as a predicate that **names its holder**; one definition of current with **no second
+validity counter**; the one-pass-late rule as the only stale authority; nothing allocating or blocking on a
+timing-critical edge (the S4b.6/S4b.7 `SlotProvision` turn is the cited precedent); the existing resumable machinery
+as the mechanism; receipts that obey this change's two delivery rules; and length independence swept, not assumed.
+It also fixes the **four interfaces S2.1 needs** — window identity `(slot, revision, interval)`, the `P`-class
+accounting, the readiness predicate plus lag bound, and the off-clock owner — and names what stays undecided (the
+window size `N` = S2.3/S2.6; the publication unit itself = the sibling's own DEC/reassessment; S4c.4/S4c.5; S4e).
+
+**Why it was on the critical path:** S3 gates' remaining half is S2.2/S2.3's current-root per-class budget, and the
+`P` class *is* the playback window lease that S2.1 may derive only once the phase-F contract's interfaces exist
+(`IMPLEMENTATION_CONTRACT.md` §4). With S4c.1 landed, **S2.1 is the next unblocked step**, with S2.2/S2.3 behind it.
+S2b.7(a)'s third conjunct (a track playing at the same drain edge) remains the other named S3-gates item.
 ## Other candidates and why not first
 
 - S4f.6 — accepted-start execution: the formerly missing arm-and-wait and
