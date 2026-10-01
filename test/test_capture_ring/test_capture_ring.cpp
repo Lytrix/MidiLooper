@@ -283,6 +283,69 @@ void test_persistence_slice_telemetry_is_rate_limited_and_carries_the_max() {
   TEST_ASSERT_EQUAL_UINT32(16, rows);
 }
 
+/// A few corrupt bytes at the head must cost those bytes, not the ring.
+///
+/// Measured on device (`captures/s4b-gate-newimage-01`): 7 unreadable bytes at the head of a 9 524-byte live ring
+/// wiped the whole ring, and the host's `RING,wiped` rule then invalidated the capture and aborted the run. The
+/// resync drops only the unreadable prefix and keeps the records that are still intact.
+void test_a_corrupt_head_prefix_drops_only_the_prefix_and_keeps_the_records() {
+  queueCaptureTextLine("#CAP,1,DIAG,t_a,1");
+  queueCaptureTextLine("#CAP,2,DIAG,t_b,2");
+  queueCaptureTextLine("#CAP,3,DIAG,t_c,3");
+  TEST_ASSERT_EQUAL_UINT32(3, sCaptureRing.appendsOk);
+  // Corrupt the head: move it 3 bytes into the first record, as an interleaved write would leave it.
+  sCaptureRing.head = (sCaptureRing.head + 3) % sCaptureRing.capacity;
+  sCaptureRing.used -= 3;
+  flushCaptureBuffer(64);  // the walk resyncs; the notice is owed, not yet emitted
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.silentWipes);
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.headResyncCount);
+  // The whole corrupt record goes, not just the 3 bytes: its start is what made it unreadable, so dropping a
+  // suffix of it would leave a row with no known origin. What matters is the order of magnitude -- bytes, not
+  // the whole ring.
+  TEST_ASSERT_TRUE(sCaptureRing.headResyncBytes > 3);
+  TEST_ASSERT_TRUE(sCaptureRing.headResyncBytes < 64);
+  TEST_ASSERT_TRUE(sCaptureRing.headResyncPending);
+  // The records after the corrupt prefix are still delivered; only the corrupted one is lost.
+  TEST_ASSERT_TRUE(captureSerial.output.find("t_b,2") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find("t_c,3") != std::string::npos);
+  flushCaptureBuffer(64);  // the next flush entry emits the resync's own row
+  TEST_ASSERT_TRUE(captureSerial.output.find("RING,head_resync,1,") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find("RING,wiped") == std::string::npos);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
+}
+
+/// The fallback is unchanged: with no plausible boundary anywhere in the scan window, the ring resets and the wipe
+/// is reported -- the resync bounds a *small* corruption, it does not pretend a ring of garbage is readable.
+void test_a_head_with_no_boundary_anywhere_still_wipes() {
+  queueCaptureTextLine("#CAP,1,DIAG,t_a,1");
+  const size_t corruptFrom = sCaptureRing.head;
+  const size_t corruptBytes = sCaptureRing.used;
+  for (size_t i = 0; i < corruptBytes; ++i) {
+    sCaptureRing.data[(corruptFrom + i) % sCaptureRing.capacity] = 0x55;
+  }
+  flushCaptureBuffer(64);
+  // The notices are emitted at the *next* flush entry (the reset happens inside this walk), so it takes a second
+  // call for the wipe to be reported -- the same shape a run sees.
+  flushCaptureBuffer(64);
+  TEST_ASSERT_EQUAL_UINT32(1, sCaptureRing.silentWipes);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.headResyncCount);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
+  TEST_ASSERT_TRUE(captureSerial.output.find("RING,wiped,1,") != std::string::npos);
+}
+
+/// The save-completion receipt is emitted **where it is produced**, not enqueued.
+///
+/// The ring under transport is retained by design rather than drained, so an enqueued receipt is delivered only
+/// after the stop -- after its consumer has given up (measured `captures/s4b9-cross-track-18`: the row is in the
+/// capture 3.1 s after the record stop while reader waits of 25 s and then 120 s both expired).
+void test_the_save_completion_receipt_is_emitted_directly() {
+  persistenceResultImmediate(1234, 100, 90, "ok");
+  TEST_ASSERT_TRUE(captureSerial.output.find("PERS,result,1234,100,90,ok") != std::string::npos);
+  // Nothing was enqueued: a reader that never flushes still sees the receipt.
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.appendsOk);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_real_emitters_are_accounted_and_drained);
@@ -296,5 +359,8 @@ int main() {
   RUN_TEST(test_nested_append_during_a_flush_cannot_evict_the_head);
   RUN_TEST(test_a_non_boundary_head_is_reported_with_its_operation);
   RUN_TEST(test_persistence_slice_telemetry_is_rate_limited_and_carries_the_max);
+  RUN_TEST(test_a_corrupt_head_prefix_drops_only_the_prefix_and_keeps_the_records);
+  RUN_TEST(test_a_head_with_no_boundary_anywhere_still_wipes);
+  RUN_TEST(test_the_save_completion_receipt_is_emitted_directly);
   return UNITY_END();
 }

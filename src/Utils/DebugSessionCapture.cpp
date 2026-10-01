@@ -59,6 +59,8 @@ struct CaptureRecordHeader {
 // regression needs, so the run could not be explained from serial at all. The ring lives in
 // PSRAM (see `ensureCaptureRingAllocated`), so the extra budget costs no RAM1/RAM2.
 constexpr size_t kCaptureRingBytes = 1024 * 1024;
+/// How far the head may scan forward for a record boundary after an unreadable head (see `headResyncDropBytes`).
+constexpr size_t kHeadResyncScanBytes = 256;
 constexpr size_t kCaptureRingPressureBytes = (kCaptureRingBytes * 3) / 4;
 constexpr size_t kMaxCaptureTextBytes = 192;
 // Ring slice only Record rows may consume. A take's start/stop/stage/identity rows are at most a
@@ -151,6 +153,16 @@ struct CaptureRing {
   uint16_t headBadPayloadLen = 0;
   uint8_t headBadPrefix[kSilentWipePrefixBytes] = {};
   bool headBadPending = false;
+  // Bounded head resynchronization: a head that is not a record boundary usually has a *valid* boundary a few
+  // bytes ahead (measured 2026-10-01: 7 corrupt bytes at the head of a 9 524-byte live ring caused the whole ring
+  // to be wiped and the HITL run to be aborted, `captures/s4b-gate-newimage-01`). Dropping only the unreadable
+  // prefix keeps the readable records -- in this ring, all of them -- so the loss is bounded and named instead of
+  // total and run-invalidating. Counted, never silent.
+  uint32_t headResyncCount = 0;
+  uint32_t headResyncBytes = 0;
+  uint32_t headResyncFirstUs = 0;
+  uint32_t headResyncHead = 0;
+  bool headResyncPending = false;
   bool wipedPending = false;
   RecordFamilyStats recordStart;
   RecordFamilyStats recordStop;
@@ -460,6 +472,24 @@ SC_MEM_ATTR void checkHeadPlausible(uint8_t op) {
   sCaptureRing.headBadPending = true;
 }
 
+SC_MEM_ATTR void emitHeadResyncNotice() {
+  if (!sCaptureRing.headResyncPending || !serialWriteRoom(96)) {
+    return;
+  }
+  const uint32_t count = sCaptureRing.headResyncCount;
+  const uint32_t bytes = sCaptureRing.headResyncBytes;
+  const uint32_t firstUs = sCaptureRing.headResyncFirstUs;
+  const uint32_t head = sCaptureRing.headResyncHead;
+  sCaptureRing.headResyncPending = false;
+  sCaptureRing.headResyncCount = 0;
+  sCaptureRing.headResyncBytes = 0;
+  sCaptureRing.headResyncFirstUs = 0;
+  Serial.printf(SC_FMT("#CAP,%lu,RING,head_resync,%lu,%lu,%lu,head=%lu\r\n"),
+                static_cast<unsigned long>(micros()), static_cast<unsigned long>(count),
+                static_cast<unsigned long>(bytes), static_cast<unsigned long>(firstUs),
+                static_cast<unsigned long>(head));
+}
+
 SC_MEM_ATTR void emitHeadBadNotice() {
   if (!sCaptureRing.headBadPending || !serialWriteRoom(160)) {
     return;
@@ -489,6 +519,60 @@ SC_MEM_ATTR void resetRingAfterUnreadableHead() {
   sCaptureRing.used = 0;
 }
 
+/// A record header is plausible when its type is one of the record types and the record it declares fits in what
+/// the ring holds. This is the same condition `checkHeadPlausible` reports on, in the form the resync scan needs.
+SC_MEM_ATTR bool headerIsPlausible(const CaptureRecordHeader& header, size_t available) {
+  if (header.type < static_cast<uint8_t>(CaptureRecordType::Revt) ||
+      header.type > static_cast<uint8_t>(CaptureRecordType::DiagTrace)) {
+    return false;
+  }
+  return header.payloadLen != 0 && recordTotalBytes(header) <= available;
+}
+
+/// How far the head must move to sit on a plausible record boundary, or 0 when none is found within the bounded
+/// scan window (the caller then resets, as before). A candidate is accepted only when the record *after* it is
+/// plausible too (or the candidate ends the ring), so a single accidental byte pattern is not taken for a boundary.
+SC_MEM_ATTR size_t headResyncDropBytes() {
+  const size_t window = sCaptureRing.used < kHeadResyncScanBytes ? sCaptureRing.used : kHeadResyncScanBytes;
+  for (size_t skip = 1; skip + sizeof(CaptureRecordHeader) <= window; ++skip) {
+    CaptureRecordHeader candidate{};
+    readBytesAt(sCaptureRing.head + skip, &candidate, sizeof(candidate));
+    const size_t available = sCaptureRing.used - skip;
+    if (!headerIsPlausible(candidate, available)) {
+      continue;
+    }
+    const size_t afterCandidate = skip + recordTotalBytes(candidate);
+    if (afterCandidate + sizeof(CaptureRecordHeader) > window) {
+      return skip;  // the candidate ends the scanned window: nothing follows to contradict it
+    }
+    CaptureRecordHeader next{};
+    readBytesAt(sCaptureRing.head + afterCandidate, &next, sizeof(next));
+    if (headerIsPlausible(next, sCaptureRing.used - afterCandidate)) {
+      return skip;
+    }
+  }
+  return 0;
+}
+
+/// Recover from an unreadable head: drop only the unreadable prefix when a boundary is found nearby, and fall back
+/// to the whole-ring reset when it is not. Op is the caller's site for the head_bad report.
+SC_MEM_ATTR void recoverUnreadableHead() {
+  const size_t drop = headResyncDropBytes();
+  if (drop == 0) {
+    resetRingAfterUnreadableHead();
+    return;
+  }
+  if (sCaptureRing.headResyncCount == 0) {
+    sCaptureRing.headResyncFirstUs = micros();
+    sCaptureRing.headResyncHead = static_cast<uint32_t>(sCaptureRing.head);
+  }
+  incrementSaturated(sCaptureRing.headResyncCount);
+  sCaptureRing.headResyncBytes += static_cast<uint32_t>(drop);
+  sCaptureRing.headResyncPending = true;
+  sCaptureRing.head = (sCaptureRing.head + drop) % sCaptureRing.capacity;
+  sCaptureRing.used -= drop;
+}
+
 /// The kind comes from `CaptureLineTier::evictionKindFor`, which the host tests pin directly
 /// (this translation unit needs Arduino, so the policy lives in the header).
 void discardOldestRecord(CaptureLineTier::EvictionKind kind) {
@@ -504,7 +588,7 @@ void discardOldestRecord(CaptureLineTier::EvictionKind kind) {
   }
   const size_t total = recordTotalBytes(header);
   if (total > sCaptureRing.used) {
-    resetRingAfterUnreadableHead();
+    recoverUnreadableHead();
     return;
   }
   advanceHead(total);
@@ -1316,6 +1400,28 @@ SC_MEM_ATTR void interactionLatchTransition(const char* transition, uint8_t trac
                 static_cast<unsigned>(destination), outcome != nullptr ? outcome : "?");
 }
 
+/// The save-completion receipt, emitted **directly when USB has room**.
+///
+/// This row is the successor-start receipt the acceptance surface fences on (`PERS,result`), and the ring under
+/// transport is *retained by design* rather than drained (see the `kCaptureRingBytes` rationale): with a track
+/// playing throughout, a receipt enqueued during the leg is delivered only after the transport stops -- which is
+/// after its consumer has given up. Measured 2026-10-01, `captures/s4b9-cross-track-18/-19/-20`: the row exists in
+/// the capture 3.1 s (device time) after the record stop while the reader's 25 s **and** 120 s waits both expired.
+/// It is rare (a few per boot), so emitting it where it is produced costs no budget; when USB has no room it falls
+/// back to the ring, so the row is delayed rather than lost.
+SC_MEM_ATTR void persistenceResultImmediate(uint32_t durationUs, uint32_t heapBefore, uint32_t heapAfter,
+                                           const char* outcome) {
+  if (serialWriteRoom(96)) {
+    Serial.printf(SC_FMT("#CAP,%lu,PERS,result,%lu,%lu,%lu,%s\r\n"), (static_cast<unsigned long>(micros())),
+                  static_cast<unsigned long>(durationUs), static_cast<unsigned long>(heapBefore),
+                  static_cast<unsigned long>(heapAfter), outcome == nullptr ? "?" : outcome);
+    return;
+  }
+  emitCapPrintf("#CAP,%lu,PERS,result,%lu,%lu,%lu,%s\r\n", (static_cast<unsigned long>(micros())),
+                static_cast<unsigned long>(durationUs), static_cast<unsigned long>(heapBefore),
+                static_cast<unsigned long>(heapAfter), outcome == nullptr ? "?" : outcome);
+}
+
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome) {
   emitCapPrintf("#CAP,%lu,PERS,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,
@@ -1536,6 +1642,7 @@ void flushCaptureBuffer(size_t maxRecords) {
     emitOverflowNotice();
     emitTierADegradedNotice();
     emitHeadBadNotice();
+    emitHeadResyncNotice();
     emitWipedNotice();
     emitTimingShedNotice();
   }
@@ -1574,13 +1681,19 @@ void flushCaptureBuffer(size_t maxRecords) {
   }
 
   size_t flushed = 0;
+  size_t resyncs = 0;
   while (flushed < maxRecords && sCaptureRing.used >= sizeof(CaptureRecordHeader)) {
     CaptureRecordHeader header{};
     readBytesAt(sCaptureRing.head, &header, sizeof(header));
     const size_t total = recordTotalBytes(header);
     if (header.payloadLen == 0 || total > sCaptureRing.used) {
-      resetRingAfterUnreadableHead();
-      break;
+      recoverUnreadableHead();
+      // The head now sits on a boundary (or the ring was reset): keep draining the records that are still
+      // intact, within a bounded number of recoveries so corruption cannot make this walk loop.
+      if (sCaptureRing.used < sizeof(CaptureRecordHeader) || ++resyncs > 8) {
+        break;
+      }
+      continue;
     }
 
     // Estimate TX bytes for this record; abort flush if USB has no room.

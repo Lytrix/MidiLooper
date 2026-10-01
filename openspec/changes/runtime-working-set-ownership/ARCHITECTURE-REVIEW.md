@@ -9250,3 +9250,30 @@ phases an acceptance surface requires, and must carry the running maximum rather
 sampled rows would silently weaken). The fix is `Utils/TelemetryCadence.h` plus its three call sites, with the
 counters in OCRAM so DTCM (and the RAM1 budget) is untouched. Record:
 [`evidence/2026-10-01-telemetry-must-not-evict-evidence/FIX.md`](evidence/2026-10-01-telemetry-must-not-evict-evidence/FIX.md).
+
+## A corrupt head prefix, and a receipt that outlives its consumer (2026-10-01, second device slice)
+
+Two more device-state defects surfaced while running the S4b legs on a full library, both repaired with their rows
+kept.
+
+**The ring.** `captures/s4b-gate-newimage-01` shows `RING,head_bad,1,op=4,head=604322,tail=613846,used=9524,type=55,plen=12588,prefix=37322c313030…`:
+the header layout (`CaptureRecordHeader` is `{uint8_t type; uint16_t payloadLen}` with a pad byte at +1) proves those
+fields were read out of **text**, with a valid header exactly **7 bytes later** — while `head + used == tail` still
+held. So the ring's *structure* was self-consistent and the *bytes* under the head were not, and the blunt
+whole-ring reset discarded 9 524 readable bytes and invalidated the capture (a leg whose subject was unrelated then
+aborted). The rule this records: **a reproduction of an unreadable head must be bounded before it is destructive.**
+`headResyncDropBytes` drops only the unreadable prefix when a plausible boundary is within a bounded scan
+(accepting a candidate only when the record after it is plausible too), counts and names the loss
+(`RING,head_resync,…`), and keeps draining the intact records; a head with no boundary anywhere still resets and
+wipes. The corrupt head's *cause* remains unidentified — the fix is a repair, and the `head_bad` rows stay the
+instrument for finding it.
+
+**The receipt.** The ring is **retained, not drained, under transport** by design ("retain the full active-transport
+evidence burst until STOPPED"). A gesture that keeps a track playing throughout therefore holds the save-completion
+receipt in the ring until after the stop — after its consumer has moved on: `captures/s4b9-cross-track-18` has the
+receipt 3.1 s (device time) after the stop while the reader's 25 s wait expired, and `-20` shows a 120 s wait expiring
+with the same row in the capture. The rule this records: **a row an acceptance surface fences on must not depend on
+the bulk-retention policy for its delivery.** `DebugSessionCapture::persistenceResultImmediate` emits that one rare
+row where it is produced when USB has room (falling back to the ring when it does not, so it is delayed rather than
+lost) — it is a few rows per boot, so it costs no budget. Record:
+[`evidence/2026-10-01-ring-resync-and-receipt-delivery/FIX.md`](evidence/2026-10-01-ring-resync-and-receipt-delivery/FIX.md).

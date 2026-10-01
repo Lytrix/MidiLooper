@@ -2149,7 +2149,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       documented overdub issues (and the seed run `INCONCLUSIVE_CAPTURE`), so this evidence is the *switch rows,
       the census and the timing gates*, not a green baseline; and a dedicated multi-switch run is still the
       tighter evidence for the gate wording below.
-- [~] S4b.9 **HITL — cross-track switch while a predecessor finalizes.** Managed run: record/overdub A on track 4
+- [x] S4b.9 **HITL — cross-track switch while a predecessor finalizes.** Managed run: record/overdub A on track 4
       → stop A → switch the active track to track 5 **while A still finalizes** → assert the track switch is
       accepted and MIDI-continuous, A's occupancy stays pinned on track 4 (no release), track 5's inbound
       occupancy is provisioned at a cold boundary (S4b.7) with no `trySlot` on the clock path, and the
@@ -2184,6 +2184,23 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       (`RRQ,4,7` an ordinary queued/running/terminal triple, no parse failures). No attempt shows a `LoopEnd
       playback commit` row. Evidence:
       [`evidence/2026-10-01-s4b9-cross-track/EVIDENCE.md`](evidence/2026-10-01-s4b9-cross-track/EVIDENCE.md).
+
+      **CLAUSE OBSERVED 2026-10-01 (`captures/s4b9-cross-track-21`) — S4b.9 is checked.** The missing piece was a
+      *gesture* property, not a state one: after a cross-track switch the new track is selected but its loop is not
+      playing, so a press there is a selection/toggle (runs 15–17). The runner now starts the destination track's own
+      loop and hands the focus back before the pass that owns the finalization window
+      (`--preplay-track-number` / `--preplay-loop-slot`, ledger events `preplay_*`). With that: `39.193 Selected
+      track 5` → `39.905 Loop 2: Toggle Play/Stop` (its loop plays) → `47.861 Reentry window open slot=0` (A's stop)
+      → `48.322 Selected track 5` (the switch, inside the window) → **`49.001 Loop 3: Queued playback switch`** →
+      `49.008 DIAG,capture_prewarm,track=4,slot=2,full=0,ready=0,credits=0` (**the destination is cold at the
+      press**) → **`51.992 LoopEnd playback commit track=4 1->2 start=0 len=2304`** (committed 2.99 s later, with the
+      target's own geometry). Exactly one `canonical_release` in the session (`canonical_release,0,24,1536,8` = A's
+      own stop's terminal, not the switch's), `integrity: COMPLETE`, `overflow_free`/`call_site_gate_ok` true,
+      `timing_warnings: []`, and **zero** `slot_switch_hold_exceeded` rows. **Why this discharges the provisioning
+      clause:** the commit is gated on the target's playback occupancy (S4b.6's binding), and it read `ready=0` at the
+      press and committed ~3 s later — the occupancy was taken **off-clock between the press and the commit**, so
+      neither the MIDI edge nor the clock path took it. Two device-state fixes were prerequisites and are recorded in
+      [`evidence/2026-10-01-ring-resync-and-receipt-delivery/FIX.md`](evidence/2026-10-01-ring-resync-and-receipt-delivery/FIX.md).
 - [x] S4b device-state prerequisite (**2026-10-01, firmware + host tooling**): **the diagnostic must not evict the
       evidence it explains.** The S4b.9 attempts were not blocked by the device's restore *work* but by its
       **telemetry**: a workspace save emitted a `PERS,work` row per slice (241 per slot body, **5 951 in one
@@ -2206,6 +2223,33 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       SUCCESS with the RAM1 line unchanged (image `014af85d…`). **S4b.9's own clause stays `[~]`** for the reason its
       record now names: with the destination track *not playing*, a slot press there is a selection, so the
       `Queued playback switch` shape needs that track's loop to be playing.
+- [x] S4b device-state fixes (**2026-10-01, firmware + host tooling**): **a corrupt head prefix must not cost the
+      ring, and a receipt must not wait for the stop.** Two defects surfaced while chasing the clause above, each with
+      its rows. **(1) The torn record.** `captures/s4b-gate-newimage-01`: `RING,head_bad,1,op=4,head=604322,tail=613846,used=9524,type=55,plen=12588,prefix=37322c313030…`
+      — the header layout (`CaptureRecordHeader` = `{type, payloadLen}` with a pad byte) shows those fields were read
+      out of **text**, with a valid header exactly **7 bytes later** (`type=2 Text`, `len=29`, payload `#CAP,…`),
+      while `head + used == tail` still held: the structure was self-consistent and the bytes were not. The blunt
+      whole-ring reset then discarded 9 524 readable bytes and invalidated the capture, aborting a leg whose subject
+      was unrelated. **Fixed** by a bounded resynchronization (`headResyncDropBytes`, scan ≤ 256 B, accepted only when
+      the record after the candidate is plausible too; counted and named as `RING,head_resync,…`; the walk keeps
+      draining the intact records with a bounded number of recoveries; a head with no boundary anywhere still wipes).
+      **Confirmed by regression:** `captures/s4b-gate-newimage-02` runs the same three-switch leg with `wiped=0`,
+      `head_bad=0`, `integrity: COMPLETE` and **two commits**. **(2) The receipt that arrived after its consumer had
+      given up.** With the ring healthy the leg still refused at the successor gate, and the device's rows show why:
+      `captures/s4b9-cross-track-18` has the record stop at 216.772 s and the `PERS,result` receipt at 222.163 s
+      (+3.1 s device time) while the harness's 25 s wait expired — and at `-20` a **120 s** wait expired too, with the
+      row in the capture. The mechanism is deliberate policy: the ring is **retained, not drained, under transport**
+      ("retain the full active-transport evidence burst until STOPPED"), so a gesture that keeps a track playing
+      throughout leaves the receipt in the ring until after the consumer has moved on. **Fixed** by emitting the
+      save-completion row where it is produced when USB has room
+      (`DebugSessionCapture::persistenceResultImmediate`, via the `SC_PERSIST_RESULT` seam, falling back to the ring
+      when there is no room — delayed, never lost; it is a few rows per boot, so no budget). **Confirmed:**
+      `captures/s4b9-cross-track-21` reports `overdub start admitted after stop receipt: 'PERS,result,'`.
+      **Evidence:** [`evidence/2026-10-01-ring-resync-and-receipt-delivery/FIX.md`](evidence/2026-10-01-ring-resync-and-receipt-delivery/FIX.md).
+      Verified: full native **2,666 cases / 2,659 succeeded / 7 skipped / 0 failed** (three new fixtures), three
+      red-proofs each restored byte-identically, `teensy41-capture-serial` SUCCESS with RAM1 unchanged
+      (`variables 96,192 / padding 1,800 / locals 34,880`; image `a1f4e4c0…`). **Not claimed:** the corrupt head's
+      *cause* is not identified — the fix bounds and names the loss instead; the `head_bad` rows stay the instrument.
 - [~] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
       active-interval overflow) across repeated switches.
 
