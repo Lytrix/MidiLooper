@@ -95,6 +95,55 @@ to "the overdub reserve is admitted on the grown library". But the leg's **own v
 as *admitted, and the take's later wrap commit crashes the device* — the second half being a new, more serious
 finding that this file owns.
 
+## 5b. What the onset cost: the overdub pass was lost (2026-10-01, answering an owner question)
+
+The owner asked, after the library was restored, whether the 24-bar loop really contains no overdub pass. It does not
+contain one, and the loss belongs to this crash, not to the restore.
+
+**What the device holds now** — `!CAPTURE_CONTENT` on track 5 Loop 1:
+
+```
+CAPTURE_CONTENT,begin,track=5,slot=0,length=18432
+CAPTURE_CONTENT,rows,record,0,1152
+CAPTURE_CONTENT,rows,effective,0,1152
+CAPTURE_CONTENT,end
+```
+
+One `rows,record` line, **no `rows,overdub,<i>,…` line at all**. `printStoppedCaptureContentForHitl` prints an *empty*
+pass as `rows,overdub,i,0` (`TrackOverdubLifecycle.cpp:551-555`), so the absence is an absent pass, not an empty one;
+`effective` equals the record pass exactly. The library observation agrees: `LIBOBS,S,t=4,s=0,…,a=1,h=1`, where `a` is
+`committedPassCount` and `h` is `highestCommittedPassId` (`DebugSessionCapture.cpp:934-945`).
+
+**The record pass is faithful, not short.** Its 1,152 events decompose exactly as 384 Note-On + 384 Note-Off + 384 CC
+(event types 144/128/176), matching the leg's own output inside the record window (device 49.9–107.9 s): 385 note-ons
+plus 384 CC74 sweeps in `captures/s15-24bar-01/midi-output.jsonl`, aligned to the device clock by matching the CC74
+value sequence against `Received CC: ch=5 cc=74` (best fit ≈ 47.8 s ± 50 ms). The CCs are captured content too, which
+is why the pass is larger than its note pairs alone.
+
+**There was real overdub content to lose.** In the overdub window (device 113.0–165.5 s) the leg sent 493 note-ons —
+**166 of them in the overdub's own pattern range 24–39**, the rest the 48–79 base pattern. That would have committed a
+pass of roughly the record pass's size. It is absent in full.
+
+**Where it went — and the onset was not the body-load path.** `Overdub wrap committed @ tick 18432` is emitted at the
+**end** of `Track::commitOverdubWrap()` (`TrackOverdubWrap.cpp:174-175`), after `loop.commitCapturePass(…)` returned
+`Committed` (line 77) and after `loop.queueOverdubWrapSnapshotJournal(passId)` (line 84) queued the new revision's
+publication — and building that journal's payload is the `LoopSnapshotChangeSet` construction. So at that row the pass
+**was already in the loop's committed pass list in RAM**. The next row in the log is `#CAPTURE_RECONNECT`: the onset
+fault was on the **publication** side. The body-load path is the *second* fault (the boot loop), and it is that one
+whose address arithmetic §2 decodes.
+
+A hard fault resets the MCU with no unwinding and no flush, and **no save followed the wrap**: the last completed save
+is `[127.777 s] CurrentSet saved successfully` with `#CAP,127777378,PERS,result,55019,159744,159744,ok`, 37 s earlier.
+So the overdub pass never reached SD, and the restore then returned exactly what SD held — **the restore dropped
+nothing**.
+
+**The coverage this leaves open (stated, not claimed).** The fix is on the change-set *type*, so it covers both sides,
+but the two sides are not equally verified. The **load** side is device-verified (the restored body loads; §6). The
+**commit/publication** side — a fresh 24-bar overdub sealing and publishing at its wrap — has **not** been re-exercised.
+The reserve added in `StorageLoopIoBodyFormatV1.cpp` is body-load only; the publication path still grows its change set
+by content, now from PSRAM instead of the fragmented internal heap, under the named FATAL. Re-running the S1.5 shape is
+the leg that would close this, and it is why this file is not closed yet.
+
 ## 6. ROOT CAUSE FOUND AND FIXED (2026-10-01, same day)
 
 ### The mechanism, proven from the disassembly
