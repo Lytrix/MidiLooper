@@ -1284,7 +1284,9 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       boots): this **grows the library on other tracks**, so it needs the user's explicit device authorization —
       it is not covered by this session's track-4/5 grant. (3) **S2.2/S2.3's current-root per-class budget:** the
       classes are per-holder and the `P` class *is* the playback window lease, which S2.1 creates only after the
-      phase-F contract exists — so this runs through **S4c.1 → S2.1 → S2.2/S2.3**. (4) The gate's own device clause
+      phase-F contract exists; that contract is now specified (**S4c.1 landed 2026-10-01** — the interval/window
+      readiness and immutable-currency specification), so the remaining steps are **S2.1 → S2.2/S2.3**.
+      (4) The gate's own device clause
       (holders rising and falling with activation/deactivation) is already observed — see the S4 gates line.
 
 ## S4 — release, recycle and stale-owner protection
@@ -1297,8 +1299,9 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       already checked.
       *Still open.* (1) **S2b.7(a)'s third conjunct** — "another track playing" at the same drain edge (the blocking
       drain does not run mid-take, so it needs an arrangement; the row makes it observable). (2) **S2.2/S2.3's
-      current-root per-class budget**, which runs through **S4c.1 → S2.1** because the `P` class is the playback
-      window lease and S2.1 may not edit behaviour before the phase-F contract exists. (3) The gate's own device
+      current-root per-class budget**, which ran through **S4c.1 → S2.1** because the `P` class is the playback
+      window lease and S2.1 may not edit behaviour before the phase-F contract exists; **S4c.1 landed 2026-10-01**,
+      so S2.1 now has its target interfaces and is the next unblocked step. (3) The gate's own device
       clause is satisfied by the S4 gates' holder census (holders rise with activation, fall with deactivation).
 - [x] S4.0 **Per-slot liveness predicate (B6, invariant 33).** (**PARTIAL 2026-09-23:** the live-window
       ring scan, the slot's `captureStopOwner`, an in-flight prepared handover (`preparedPairRequestPending`)
@@ -2369,8 +2372,30 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       or blocking on a timing-critical edge, reuse before invention). It also hands the sibling four named open
       questions and states what this change must not touch (the publication unit, and no removed playback-root
       dependency). Every symbol it cites was checked to exist at the named location on the day of writing.
-- [ ] S4c.1 Specify interval/window readiness and immutable currency acceptance for the sibling;
+- [x] S4c.1 Specify interval/window readiness and immutable currency acceptance for the sibling;
       **do not change the publication unit in this change**.
+      **DONE 2026-10-01:** [`S4C1-READINESS-CURRENCY-CONTRACT.md`](S4C1-READINESS-CURRENCY-CONTRACT.md) turns
+      `design.md` **Revision 11** ("immutable readiness at re-entry, not whole-loop publication") and its row 11
+      into nine acceptance criteria the sibling must be held to — AC-1 readiness is owed **per affected tick**
+      before the playhead returns to it (whole-loop publication is sufficient, never asserted as the unit);
+      AC-2 a window is immutable and identified by `(slot, revision, interval)`, with no consumer read straddling
+      a replacement; AC-3 readiness is a predicate whose failure **names its holder** (the
+      `hasPendingSnapshotPublish` / S4b.7-hold vocabulary); AC-4 currency compares against `playbackRevision`
+      with **one** definition of current — today `publishedSnapshotIsCurrent()`, with readiness being the merged
+      window (`builtFromRevision == playbackRevision` **and** non-empty, read in `TrackPlaybackWindowBuild.cpp`)
+      — no second validity counter, and the existing coverage outcomes (`wrapTargetRevision` /
+      `coveredPassRevision` / current) named as the comparison's cases; AC-5 the one-pass-late rule (row 12) is
+      the **only** stale authority, bounded at **one** pass and named when exceeded, and a consumer is never
+      blocked by a miss; AC-6 nothing allocates or blocks on a timing-critical edge, with the S4b.6/S4b.7
+      off-clock `SlotProvision` turn cited as the precedent the sibling must match; AC-7 the existing resumable
+      machinery is the mechanism (row 28; S4c.2's inventory) and a second publication scheduler is a recorded
+      failure mode; AC-8 readiness receipts obey the two delivery rules this change's device work produced; AC-9
+      length independence is swept, not assumed (S4c.5's shape). It also states the **four interfaces S2.1
+      needs** (window identity, the `P`-class accounting, the readiness predicate plus lag bound, the off-clock
+      owner) and what stays **undecided** (the window size `N` = S2.3/S2.6; the publication unit itself = the
+      sibling's own DEC/reassessment; S4c.4/S4c.5; S4e's envelope). Every citation was checked live on the day
+      of writing: Revision 11 and rows 11/12/16/28 in `design.md`, §4 of `IMPLEMENTATION_CONTRACT.md`, the
+      16-31 ms jammed-switch figures, and each named symbol.
 - [x] S4c.2 Record the existing resumable publication machinery the sibling must reuse.
       **DONE 2026-10-01 as §2 of the inventory:** [`S4C0-PUBLICATION-INVENTORY.md`](S4C0-PUBLICATION-INVENTORY.md) —
       `StorageLoopIoBodyFormatV1`'s bounded, resumable body write/parse; `armLoopPersistTailWriteResume` with its named
@@ -2388,6 +2413,14 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       length-independent root-residency gate belong to the sibling once its contract is approved.
 - [ ] S4c gate: dependency contract documented; no claim of shipped windowed publication. Phase F's
       artifacts/DEC/reassessment must exist before its implementation; S7/archive waits for its gates.
+      **Reconciliation owed when S4c.4/S4c.5 land:** `ARCHITECTURE-REVIEW.md`'s P5 gate text names "the five gather
+      sites/checkpoint consumers", while the tree has **nine call sites of two entry points across six files**
+      (`DisplayNoteResolveCommitted.cpp` ×2, `DisplayColdHelpers.cpp` ×2, `TrackPlaybackWindowBuild.cpp` ×2,
+      `LoopVisualCache.cpp` ×2, and the intra-wrapper call in `LoopMaterialization.cpp`, whose
+      `…WithCapture` wrapper is itself the second entry point's definition; `include/Loop.h` declares both).
+      `S4C0-PUBLICATION-INVENTORY.md` attributes them **by consumer group** (playback window build; display, which
+      the visual cache belongs to) rather than by literal count, so the gate's wording is reconciled with the tree
+      at check-off instead of being asserted.
 
 ## S4d — standby tier (bounded, scheduled, immutable; playback integration depends on phase F)
 
