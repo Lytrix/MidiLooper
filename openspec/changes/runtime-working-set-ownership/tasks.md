@@ -287,6 +287,12 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       reconstruction/apply/bridge-map/passes, canonical pass inputs, transfer horizon, stop-job capacity,
       prepared pair), per-loop derived bytes (snapshot slabs, whole-loop `VisualCache`), lease holder
       count, owning slot, role.
+      **POST-RESTORE HALF MEASURED 2026-10-01 (`captures/s3gate-boot-census-01`, current image):**
+      `checkpoint_reached=True`, `post_restore_free_chunks = 397` of 512 against the required 16
+      (`s2b3_condition_met=True`, readiness `admission/interactive/undo/stopped/deferred_prewarm_idle` all attested),
+      the library walk flat at `480 → 480` across 17 `(track,slot)` rows with `credits=0` on every one, and the boot
+      pool `live` **1801 KB** (1949 KB settled) recorded against S1.5. Evidence:
+      [`evidence/2026-10-01-s2b3-post-restore-census/EVIDENCE.md`](evidence/2026-10-01-s2b3-post-restore-census/EVIDENCE.md).
       **DEVICE CENSUS 2026-09-23 — tags 1..16 measured.** The 1 Hz tick carries only `tags[1..7]`, so a
       session-gated `#MEM_OWNERS` line (`MemoryMonitor::logWorkingSetOwners`, 4 s cadence, reusing
       `formatTagVector`) was added with the owner's approval; it costs 64 B of ITCM padding (1,096 → 1,032,
@@ -772,7 +778,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       resets the Loop's prepared history -- the DEC-072/5.12 successor hazard. Fixture
       `test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target` is green in the default
       gate.
-- [ ] S2b.3 Boot budget evidence: with N committed slots, `LoopEventStore::freeChunkCount()` after boot is
+- [x] S2b.3 Boot budget evidence: with N committed slots, `LoopEventStore::freeChunkCount()` after boot is
       >= peak reservation + `CHUNK_RESERVE` (16); record the boot pool `live` figure against S1.5.
       **Baseline half measured on device 2026-09-23** (baseline `83be2e19`): `free_chunks` after boot is **400 of
       512**, whose spend is the 96-chunk default-enabled-set cost plus **8 chunks per committed slot** for the 2
@@ -1044,13 +1050,25 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       owner deliberately kept disabled, so no device class is claimed. Packet and full record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.7.
 
-- [ ] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 2.3) — drain fixture: hold the
-      condition on device.** Show the fixture yields a save owed + a restore holding the SD session + another
+- [~] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 2.3) — drain fixture: hold the
+      condition on device.** **PARTIAL 2026-10-01:** the blocking term and the held restore are now observable and
+      observed at a drain edge (`PERS,drain_progress,795,801,3,ok` with continuous `RRQ` activity in
+      `captures/s2b7-drain-probe-01`), but "another track playing" at that same instant is not (the nearest
+      `ST,Track` rows read `PLAYING → STOPPED` 1.5 s earlier). Evidence:
+      [`evidence/2026-10-01-s2b7-drain-edge/EVIDENCE.md`](evidence/2026-10-01-s2b7-drain-edge/EVIDENCE.md). Show the fixture yields a save owed + a restore holding the SD session + another
       track playing, with `deferredSaveBlockedByActiveSlotLoadSd()` true at the drain edge. **Verify:** the
       condition is observed, not assumed; the exact observables are recorded; no external advancement is
       performed inside the run. *Unchecked on transfer; the library change no longer carries it.*
-- [ ] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 3.1) — drain device leg: report
-      which permitted outcome occurs.** Use the authoritative HITL entry point with a registered or reused
+- [x] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 3.1) — drain device leg: report
+      which permitted outcome occurs.** **OBSERVED 2026-10-01 (`captures/s2b7-drain-probe-01`):** the row
+      `PERS,drain_progress,<before>,<after>,<flags>,<verdict>` samples `restoreProgressCounter()` immediately before
+      the drain entry and immediately after it returns (the wrapper in `SyncDrainSaveState.cpp`), so the advancement
+      is measured *inside* the call: `795 → 801` (moved), verdict `ok` (completed; not `TemporarilyBlocked`), and no
+      committed pass or publication inside the window. The `TemporarilyBlocked` / `waiting_commit_gate` alternative is
+      recorded as **not occurring in these runs** rather than claimed. The row costs no RAM1 (it reuses predicates and
+      counters that file already calls; a host-side read-back of the same fields pulls 4 KB of USB receive buffer,
+      which is recorded in the evidence). Evidence:
+      [`evidence/2026-10-01-s2b7-drain-edge/EVIDENCE.md`](evidence/2026-10-01-s2b7-drain-edge/EVIDENCE.md). Use the authoritative HITL entry point with a registered or reused
       stimulus (list before adding; never edit a canonical stimulus). Report **which** outcome occurred,
       with evidence, rather than asserting one: (i) the drain returns `TemporarilyBlocked` with the named
       **`waiting_commit_gate`**; **or** (ii) the owed save is discharged by the documented **urgent-save
@@ -1060,8 +1078,10 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       after it returns; an urgent-save discharge with **no movement of the counter within the call** SHALL NOT
       check off S2b.7's advancement clause and SHALL record `advancement NOT observed inside the drain`.
       *Unchecked on transfer; the library change no longer carries it.*
-- [ ] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 3.2) — the device half is
-      independently reportable.** S2b.7's device confirmation SHALL be checkable from its own evidence alone
+- [x] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 3.2) — the device half is
+      independently reportable.** **SATISFIED 2026-10-01:** the evidence file above cites this change's own runs and
+      nothing from `restored-library-stability`'s closeout, and the observables it needs are rows this change
+      produces. S2b.7's device confirmation SHALL be checkable from its own evidence alone
       and SHALL NOT depend on `restored-library-stability`'s closeout (or any other change's closeout).
       *Unchecked on transfer; the library change no longer carries it.*
 
@@ -1227,6 +1247,24 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       **Still open, and not native work:** the S2b device gates (S2b.3 post-restore half, S2b.5, the
       transferred S2b.7 legs) and the S2.2/S2.3 current-root per-class budget. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3 gate.
+      **DEVICE ITEMS ADVANCED 2026-10-01 — the gate is NOT closed; what each remainder needs is named.**
+      *Done today.* **S2b.3's post-restore half is measured** on the current image with a full library:
+      `post_restore_free_chunks = 397` of 512 against the required 16, `s2b3_condition_met = True`, readiness
+      attested, the library walk flat (`480 → 480`, `credits=0` on all 17 rows), boot pool `live` 1801 KB for S1.5
+      ([`evidence/2026-10-01-s2b3-post-restore-census/`](evidence/2026-10-01-s2b3-post-restore-census/EVIDENCE.md)).
+      **S2b.7's (b) and (c) are satisfied** and its (a) is partially observed: the drain edge now carries
+      `PERS,drain_progress,<before>,<after>,<flags>,<verdict>` (bit 0 = `restoreProgressCounter()` moved inside the
+      call, bit 1 = the save was blocked by the active slot load), observed once as `795,801,3,ok` with a live
+      restore sweep ([`evidence/2026-10-01-s2b7-drain-edge/`](evidence/2026-10-01-s2b7-drain-edge/EVIDENCE.md)).
+      *Still open, with what it needs.* (1) **S2b.7(a)'s third conjunct** — "another track playing" at that same
+      drain edge: the blocking drain is not the path a mid-run deferred save takes (`drain_progress` did not fire in
+      the leg where a track plays throughout), so a run holding all three conjuncts at one edge has to be arranged;
+      the row makes it observable when it happens. (2) **S2b gates' slope-to-failure sweep** (varying N across
+      boots): this **grows the library on other tracks**, so it needs the user's explicit device authorization —
+      it is not covered by this session's track-4/5 grant. (3) **S2.2/S2.3's current-root per-class budget:** the
+      classes are per-holder and the `P` class *is* the playback window lease, which S2.1 creates only after the
+      phase-F contract exists — so this runs through **S4c.1 → S2.1 → S2.2/S2.3**. (4) The gate's own device clause
+      (holders rising and falling with activation/deactivation) is already observed — see the S4 gates line.
 
 ## S4 — release, recycle and stale-owner protection
 
