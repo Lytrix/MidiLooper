@@ -1798,6 +1798,22 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       entry/cancel code is ITCM, +128 B, padding 1,928 → 1,800), firmware hex sha256 `cdab16f4…`, **not
       flashed**. Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.5 — one active-slot write
       authority, and the cancel that owns the trio".
+      **THE GUARD TERM IS COVERED 2026-10-01 (test-only; firmware hex byte-identical to the S4b.5 image).** The
+      coverage gap this entry recorded -- removing `hasAcceptedUnexecutedInteraction()` from the guard left the
+      whole full native suite green -- is closed by
+      `test_s4b_5_an_accepted_unexecuted_interaction_routes_the_write_through_the_switch`. The fixture builds the
+      exact state the term covers and nothing else: a **latch alone** (`latchAcceptedStopForSlot`), asserted with
+      `isRecording` / `isOverdubbing` / `hasPendingDeferredOverdubStop` all **false**, so no other guard term can
+      route the write. What the route decides is then observable rather than asserted by name: the
+      capture-switch commit (`finalizeCaptureAndSelectSlot`) **enables the target slot** (and resets its playback
+      state), while a bare write leaves it disabled on a playing track -- the "piano-roll notes with no MO"
+      hazard the switch's own comment names. Both routes move the active slot, so the fixture asserts the
+      **route** through its effect, not the destination. **Red-proved, restored byte-identically:** with the
+      guard's term removed the fixture fails at *"the accepted interaction must route the write through the
+      switch commit, which enables the target"* -- i.e. the mutation that previously survived every native suite
+      now fails one. Focused suite **40/40**; full native **2,657 cases / 2,650 succeeded / 7 skipped / 0
+      failed**; `teensy41-capture-serial` SUCCESS with the RAM1 line unchanged (`code 391,416 + padding 1,800`)
+      and the firmware hex byte-identical (`cdab16f4…`), since this slice changes no firmware.
 - [x] S4b.6 **Occupancy-aware, allocation-free binding (B5).** `ensurePlaybackMergedEventsForSlot` uses
       `slotIfAllocated` (never `trySlot`); the commit branch keeps the switch pending when the inbound occupancy
       is absent; provisioning happens only at cold boundaries. **Rerun blocker — the named boundaries do not

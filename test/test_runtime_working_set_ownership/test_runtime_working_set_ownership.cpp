@@ -3123,6 +3123,50 @@ void test_s4b_5_a_direct_write_cancels_the_queued_switch_without_a_stale_replace
                            "the enabled layers a stale replacement would wipe must survive");
 }
 
+/// **S4b.5 — an accepted-but-unexecuted interaction makes a direct write take the switch's own route.**
+///
+/// Rev 21.3 adds `hasAcceptedUnexecutedInteraction()` to the active-slot guard, and it is the one term the
+/// S4b.5 slice shipped **without** a fixture (removing it left the whole native suite green). The state it
+/// covers is the latch alone: an interaction accepted and not yet executed, with **no** recording, **no**
+/// overdub and **no** admitted stop -- so nothing else in the guard can route the write.
+///
+/// What the route decides here is observable: the capture-switch commit (`finalizeCaptureAndSelectSlot`)
+/// enables the target slot and resets its playback state, while a bare write leaves the target exactly as it
+/// was -- disabled, on a playing track, which is the "piano-roll notes with no MO" hazard the switch's own
+/// comment names. Both routes move the active slot, so the **route**, not the destination, is the assertion.
+void test_s4b_5_an_accepted_unexecuted_interaction_routes_the_write_through_the_switch() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kPlaying = 0;
+  constexpr uint8_t kTarget = 1;
+  commitRecordPassIntoTrackSlot(track, kPlaying);
+  commitRecordPassIntoTrackSlot(track, kTarget);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kPlaying, true));
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, kPlaying);
+  trackManager.setSlotEnabled(0, kPlaying, true);
+  trackManager.setSlotEnabled(0, kTarget, false);
+
+  // The accepted-but-unexecuted interaction, and nothing else: no capture, no job.
+  TrackCaptureStopTestAccess::latchAcceptedStopForSlot(track, kPlaying);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasAcceptedUnexecutedInteraction(track),
+                           "fixture precondition: the latch must be the accepted interaction");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::isRecording(track));
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::isOverdubbing(track));
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                            "fixture precondition: no admitted stop may stand in for the latch");
+
+  trackManager.setActiveLoopIndex(0, kTarget);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kTarget, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the write still lands, whichever route takes it");
+  TEST_ASSERT_TRUE_MESSAGE(
+      trackManager.isSlotEnabled(0, kTarget),
+      "the accepted interaction must route the write through the switch commit, which enables the target; "
+      "a bare move would leave the active slot disabled on a playing track");
+}
+
 int main() {
   UNITY_BEGIN();
   // S4b.1 check 7 (repeated same-track switches): accepted, bounded, nothing stolen, executes on capacity.
@@ -3142,6 +3186,9 @@ int main() {
   // S4b.5 (B4): one active-slot write authority -- a direct write (the undo route) cancels a queued switch,
   // the cancel clears the whole trio, and an unrelated switch inherits no stale enabled-set replacement.
   RUN_TEST(test_s4b_5_a_direct_write_cancels_the_queued_switch_without_a_stale_replacement);
+  // S4b.5 (B4): the guard's accepted-but-unexecuted term -- the route a direct write takes when a latch,
+  // and nothing else, is in flight.
+  RUN_TEST(test_s4b_5_an_accepted_unexecuted_interaction_routes_the_write_through_the_switch);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);
