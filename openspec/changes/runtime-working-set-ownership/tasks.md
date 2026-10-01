@@ -2551,12 +2551,47 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       beside it): a missed deadline keeps the **previous version** authoritative for that pass — never torn, never
       held, never timing-deferred — and the sibling inherits the no-allocation/no-blocking-on-a-timing-critical-edge
       and reuse-before-invention rules with it.
-- [ ] S4c.4 Specify undo/save checkpoint parity for F; **do not remove playback root dependencies here**.
-- [ ] S4c.5 Record required immutable-window/content-parity fixtures for F. Their implementation and
+- [x] S4c.4 Specify undo/save checkpoint parity for F; **do not remove playback root dependencies here**.
+      **DONE 2026-10-01 as §1 of** [`S4C45-CHECKPOINT-PARITY-AND-FIXTURES.md`](S4C45-CHECKPOINT-PARITY-AND-FIXTURES.md):
+      a checkpoint is the undo/redo entry and the persisted body/library observation; **the checkpoint's root is the
+      published root**, read from the code (`StorageLoopIo.cpp:1317` and `:1363`, `WorkspaceSave.cpp:671`/`:699`,
+      `LibraryObservationSession.cpp:200`/`:222`), and the restore edge installs the loaded body as that root marking
+      the coverage outcome **`kSnapshotCoverageCurrent`** (`StorageLoopIo.cpp:1363`) — the divergence the inventory
+      logged as open question 3, recorded here as the premise F inherits rather than a defect to fix now. The four
+      requirements F must state: (i) the published root stays the **immutable checkpoint authority for undo and save**
+      (Revision 11's carve-out) until F proves otherwise; (ii) a lagging checkpoint is judged against the **current**
+      revision and must be **named** in the S4c.1 AC-3/AC-5 vocabulary, never silently "current"; (iii) undo parity and
+      save parity are one requirement on two consumers, and neither may consult the window's lag — the **one-pass-late
+      rule is a playback rule**, not a checkpoint rule; (iv) nothing here removes a root dependency, and no S5 demotion
+      may lean on this document (`IMPLEMENTATION_CONTRACT.md` §4 keeps reactivation preparing "a whole-loop root until F").
+- [x] S4c.5 Record required immutable-window/content-parity fixtures for F. Their implementation and
       length-independent root-residency gate belong to the sibling once its contract is approved.
-- [ ] S4c gate: dependency contract documented; no claim of shipped windowed publication. Phase F's
+      **DONE 2026-10-01 as §2 of the same file** — the list is **F-1** window identity/immutability, **F-2** readiness
+      per affected tick inside the §Sizing deadline (16-31 ms; the deadline, not a bar count, is the oracle), **F-3**
+      one pass late and only that (a longer lag is named), **F-4** nothing allocates or blocks on the edge (the
+      `SlotProvision` precedent), **F-5**/**F-6** the checkpoint-parity pair (§1), **F-7** content parity across a
+      window boundary, and **F-8** length-independent **root** residency — the inventory's open question 2, expressed
+      as a *residency* statement per slot plus content parity for the demoted state, **swept** over loop lengths
+      (`design.md` row 2's "64 bars ≈ 4 bars"; a single bar count cannot be the oracle). Two ownership rules keep it
+      from duplicating work: F-7/F-8 **extend the existing content-verification pipeline** (the `S5 gates` line already
+      owes demoted/re-activated content parity through it), and none of F-1…F-8 restates `test_playback_prewarm`
+      (which pins today's reserved-capacity formula). **Ownership stays with the sibling**; this change records the
+      list and the acceptance shape, and lands nothing.
+- [x] S4c gate: dependency contract documented; no claim of shipped windowed publication. Phase F's
+      **CLOSED 2026-10-01.** The dependency contract is documented in four artifacts and every one is source-cited:
+      [`S4C0-PUBLICATION-INVENTORY.md`](S4C0-PUBLICATION-INVENTORY.md) (the publication unit, its owners and the six
+      consumer groups), [`S4C1-READINESS-CURRENCY-CONTRACT.md`](S4C1-READINESS-CURRENCY-CONTRACT.md) (nine acceptance
+      criteria plus the four interfaces S2.1/S2.3 need), and
+      [`S4C45-CHECKPOINT-PARITY-AND-FIXTURES.md`](S4C45-CHECKPOINT-PARITY-AND-FIXTURES.md) (checkpoint parity and the
+      F-1…F-8 fixture list, including the length-independent root-residency acceptance the inventory left open). The
+      three S4c task items the gate waits on are checked above. **No claim of shipped windowed publication is made
+      anywhere**: the unit, the coverage vocabulary and the revision identity are unchanged, no root dependency is
+      removed, and phase F's own artifacts/DEC/reassessment (and its implementation) remain required before
+      implementation — `S7 gates` names exactly that dependency. The P5 wording reconciliation the gate asked for is
+      recorded as §3 of the S4c.4/S4c.5 file (the tree's nine call sites of two entry points across six files vs the
+      review's "five", attributed by consumer group).
       artifacts/DEC/reassessment must exist before its implementation; S7/archive waits for its gates.
-      **Reconciliation owed when S4c.4/S4c.5 land:** `ARCHITECTURE-REVIEW.md`'s P5 gate text names "the five gather
+      **Reconciliation DONE 2026-10-01 (as §3 of [`S4C45-CHECKPOINT-PARITY-AND-FIXTURES.md`](S4C45-CHECKPOINT-PARITY-AND-FIXTURES.md)):** `ARCHITECTURE-REVIEW.md`'s P5 gate text names "the five gather
       sites/checkpoint consumers", while the tree has **nine call sites of two entry points across six files**
       (`DisplayNoteResolveCommitted.cpp` ×2, `DisplayColdHelpers.cpp` ×2, `TrackPlaybackWindowBuild.cpp` ×2,
       `LoopVisualCache.cpp` ×2, and the intra-wrapper call in `LoopMaterialization.cpp`, whose
