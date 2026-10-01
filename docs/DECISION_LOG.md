@@ -105,7 +105,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest last). Next ID: DEC-105 -->
+<!-- Append new entries below (newest last). Next ID: DEC-106 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -6094,3 +6094,45 @@ the term covers and nothing else (a latch alone, with `isRecording` / `isOverdub
 it disabled on a playing track. With the term removed the fixture fails, so the mutation that once survived the
 whole suite now fails one fixture. Focused suite 40/40; full native 2,657 cases / 2,650 succeeded / 7 skipped /
 0 failed; firmware hex byte-identical (`cdab16f4…`) because this slice changes no firmware.
+
+## DEC-106 — A playback switch's inbound role is its occupancy; the lease question is deferred, not assumed
+
+**Date:** 2026-10-01
+**Owner:** `runtime-working-set-ownership` S4b.2. Finding from writing the ordering fixture; no firmware change.
+**Status:** Accepted (definition + deferral)
+
+### Problem
+S4b.2 requires "pre-provision the inbound **role** before releasing the outbound one". The fixture that asserts
+the ordering exposed that "role" needed defining per path: the outbound's working set is observed through its
+**lease** (`leaseHoldsWorkingSet`, the S3.1/S4.1 machinery), and every existing fixture that asserted an inbound
+lease only got one because the *test* prewarmed with `prepareCapture = true`. The production playback switch does
+not: `TrackManager::provisionSlotForSwitch` provisions with `prepareCapture = false`, and the lease is acquired
+only by the capture admission (`Track::prewarmPlaybackForSlot(slot, true)`'s `ok && runtime && prepareCapture`
+clause). So a slot provisioned for a playback switch has **occupancy and pool capacity but no lease entry**.
+
+### Decision
+* **For a playback switch, the inbound's role is its occupancy plus the pool capacity it holds** -- not a lease
+  entry. That is what the ordering fixture asserts before the outbound retires, and it is what S4b.6/S4b.7
+  already made the commit bind to (`hasPlaybackOccupancyForSlot`).
+* **Not decided here, and deliberately:** whether a switch's inbound must *also* hold a lease, and if so with
+  which `WorkingSetRole` bits (`PlaybackWindow` alone, or the compound role a capture admission takes). Making
+  the fixture demand a lease would have invented that requirement at the last mile; making the code take one
+  would change the admission envelope, which `IMPLEMENTATION_CONTRACT.md` §2 returns to the architect.
+* **The overlap's accounting stays a budget question.** The measured numbers are recorded rather than resolved:
+  the outbound's own prewarm (capture-inclusive) cost 14 event-pool chunks, the switch turn dropped the pool by
+  1, and a probe slot provisioned the same way as the inbound dropped it by 0 -- so part of the turn's drop
+  belongs to its other work (merged-window build / prepared-pair publication), and splitting that 1 chunk
+  between occupancy and window is S2's budget-accounting, not this fixture's call.
+
+### Consequences
+The ordering is now proven and attackable: the outbound's working set survives the whole wait, the inbound's
+occupancy is taken while the outbound is still held, the commit is what moves the active slot, and only then is
+the retired slot releasable -- with a release-early mutation failing the fixture at *"the outbound must still be
+held while the inbound is provisioned"* (restored byte-identically). The entry's other two clauses are cited
+rather than duplicated: allocation-freedom by S4b.6/S4b.7's fixtures, no-stealing by S4b.1's two "nothing
+stolen" fixtures. Focused suite 41/41; full native 2,658 cases / 2,651 succeeded / 7 skipped / 0 failed;
+`teensy41-capture-serial` SUCCESS with a **byte-identical** firmware hex (`cdab16f4…`), since this slice changes
+no firmware. Remaining in S4b.2's spirit, recorded for the architect: the lease question above, and the
+`TransferOverlap` budget term's exact accounting. Record:
+`openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4b.2 — the inbound is provisioned
+before the outbound retires, and the overlap is measured".

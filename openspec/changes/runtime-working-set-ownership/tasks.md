@@ -1745,9 +1745,38 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       review reports `inventory_equal=False` because track 8 slots 1–4 sound alongside the loop under test;
       L7's deciding evidence is the loop-scoped dump). Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "The rerun after the Tier-A fix".
-- [ ] S4b.2 Pre-provision the inbound role before releasing the outbound one, with the overlap bounded and
+- [x] S4b.2 Pre-provision the inbound role before releasing the outbound one, with the overlap bounded and
       accounted in the S2 budget; the switch point performs no allocation, and the transfer must not steal
       resources from a still-live capture or deferred-finalization owner.
+      **CHECKED 2026-10-01 (test-only; firmware hex byte-identical — `cdab16f4…`).** The ordering is asserted
+      rather than argued, and the overlap is measured in the pool:
+      `test_s4b_2_the_inbound_role_is_provisioned_before_the_outbound_is_released` presses an **unoccupied**
+      inbound target while the outbound holds a working set, then asserts (1) that the clock lane neither
+      commits nor allocates nor releases anything -- the outbound's working set **survives the wait**, so a
+      refused or delayed switch never leaves the track with *neither* role; (2) that the `SlotProvision` turn
+      takes the inbound occupancy while the outbound is **still held** (the overlap the S2 term accounts for);
+      and (3) that only after the commit is the retired slot releasable, with the release touching nothing on the
+      inbound. **Red-proved, restored byte-identically:** provisioning made to release the outbound first (the
+      ordering this stage forbids) fails it at *"the outbound must still be held while the inbound is
+      provisioned"*. The entry's other two clauses are **cited, not duplicated**: "the switch point performs no
+      allocation" is asserted by the S4b.6/S4b.7 fixtures (the MIDI edge and the clock path), and "must not steal
+      from a still-live capture or deferred-finalization owner" by S4b.1's two "nothing stolen" fixtures (the
+      outgoing finalizer, its lease and the successor's lease all survive the gesture). **Two findings
+      recorded, neither decided here:** (a) a playback switch's inbound carries **occupancy but no working-set
+      lease** -- `provisionSlotForSwitch` provisions with `prepareCapture = false`, and the lease is acquired
+      only by the capture admission (S3.1) -- so for that path "the inbound role" means its occupancy plus the
+      pool capacity it holds, and whether a switch's inbound must also hold a lease (and with which
+      `WorkingSetRole` bits) is a contract question (see DEC-106); and (b) the measured overlap unit is **not**
+      the outbound's own prewarm cost -- that prewarm carries the capture horizon (14 pool chunks) while the
+      switch turn dropped the pool by **1** chunk, and a probe slot provisioned the same way as the inbound
+      dropped it by **0**, so part of the turn's drop belongs to its other work (merged-window build /
+      prepared-pair publication) rather than to the occupancy alone. The fixture therefore asserts the bound it
+      can support (`inboundCost <= outboundCost`, i.e. never more than one capture-inclusive working set, and
+      the probe's cost no larger) and records the raw numbers instead of deciding the chunk split by fiat.
+      Focused suite **41/41**; full native **2,658 cases / 2,651 succeeded / 7 skipped / 0 failed**;
+      `teensy41-capture-serial` SUCCESS with the RAM1 line unchanged (`code 391,416 + padding 1,800`).
+      Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.2 — the inbound is provisioned before
+      the outbound retires, and the overlap is measured".
 - [ ] S4b.3 Land the switch on a MIDI boundary; the switch is a cold admission boundary by construction.
 - [ ] S4b.4 Native fixture: switch roles across tracks/slots while playing and assert the inbound holder
       serves record/overdub/passes/undo/redo/display with no stop and no allocation at the switch.
