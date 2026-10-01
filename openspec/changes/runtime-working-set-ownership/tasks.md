@@ -4168,6 +4168,25 @@ has not run to completion.
         `overflow_free` / `call_site_gate_ok`; transport never stops.
       This is the case that distinguishes "one device-wide finalizer" from "one finalizer per **track+slot**" — a
       device-wide singleton would fail it. Evidence: session log + per-track holder census.
+      **STATUS 2026-10-01 — driven for the first time; not accepted.** The runner gained
+      `--continue-on-switched-track` (commit `4fab356d`) and the leg ran
+      (`captures/s4f14-cross-track-01`, source track 4 Loop 1, destination the populated track 5 Loop 1). It
+      establishes: the continuation reaches the destination and opens a session there (`Overdubbing started @ tick
+      3347` — a tick only the 18,432-tick destination can carry); the **track-attributed** latch oracle is live
+      (`DIAG,latch,wait,4,0,1,0,waiting` is track 4's *own* wait, and there is no latch `wait` on track 5, so the
+      forbidden cross-track wait did not occur); and both slots released their finalization capacity once each with
+      their own lengths (`canonical_release,0,36,1536,8` / `,0,0,18432,8`). It does **not** establish acceptance: the
+      destination's stop was **refused** (`Overdub stop refused: canonical_output slot=0 interval=1`, corroborated by
+      `ODUB,stop,admission,…,canonical_output_busy`), and that row family names **no track or slot** — with both
+      tracks on Loop 1 = slot 0 it cannot be attributed, and no `DIAG,latch` edge accompanies it (the latch covers
+      the accepted/waiting path, not this admission denial). The harness's `FAIL (FIRMWARE_CONTRADICTION)` is its
+      source-leg baseline oracle and is **not** safe to read as a defect: the continuation added a second OD on the
+      same slot number on another track, which is exactly the shape of its `overdub_out_of_range_notes` /
+      `overdub_unmatched_open_notes` / `overdub_stored_span_too_short` issues. `Transport never stops` stays
+      unproven (2 starts, 1 untimed stop). Next: move the destination to a **different slot** to disambiguate (or
+      give `ODUB,stop,admission` a track field), then re-read the four discriminators and attribute the harness
+      issues. Evidence:
+      [`evidence/2026-10-01-s4f14-cross-track-leg/FINDING.md`](evidence/2026-10-01-s4f14-cross-track-leg/FINDING.md).
 - [x] **S4f.23 When a record job never retired: the S4f.19 retirement wait is now bounded and device-verified (DEC-107, firmware).** A
       24-bar record's stop job published and then sat at `RecordPublished` with `pending=1` for 30 s
       (`#STOP_PREFIX,...,build_active=1` on every poll) because its wait is on a frozen-window build whose two
