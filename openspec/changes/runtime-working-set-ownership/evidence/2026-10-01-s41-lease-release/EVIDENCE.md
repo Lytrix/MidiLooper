@@ -105,6 +105,9 @@ reported only (`unreconciled_families`) instead of dropping them, with `test_man
     --metadata <out_dir>/metadata.json --out s41-lease-release.json
 ```
 
+Decision: recorded as **DEC-099** — the lease release is read from its own row by one owner, and the
+evidence drain reconciles only the families its log can count.
+
 Files: `lease-release-read.json` (HEAD run, generation required), `lease-release-read-20260930-pass.json`
 (the PASS run), `lease-release-read-20260927-switch-negative.json` (the sibling-slot negative),
 `run-identity.json`, and the two verbatim excerpts (CR stripped, blank rows dropped, source rows named in the

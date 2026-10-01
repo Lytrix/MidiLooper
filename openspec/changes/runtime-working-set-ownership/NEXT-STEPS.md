@@ -117,7 +117,7 @@ f63d5a02`, same hex), each 1.2 ms after the device's own `Button press: Record/O
 (**13/13** tests), and `hitl.retention_probe` now takes the wire form from the same owner. **No firmware change,
 and no new instrumentation or stimulus.** The campaign also found and fixed a host defect that made every base
 run non-verdict-grade (`KeyError: 'DIAG,latch'` in the evidence drain; `test_managed_record_drain` **23/23**,
-mutation red-proved). Record: [`evidence/2026-10-01-s41-lease-release/EVIDENCE.md`](evidence/2026-10-01-s41-lease-release/EVIDENCE.md).
+mutation red-proved). Recorded as **DEC-099**. Record: [`evidence/2026-10-01-s41-lease-release/EVIDENCE.md`](evidence/2026-10-01-s41-lease-release/EVIDENCE.md).
 
 ## Recommended next slice
 

@@ -105,7 +105,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-099 -->
+<!-- Append new entries below (newest first). Next ID: DEC-100 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -5710,3 +5710,62 @@ against `Long press detected: duration=663 >= effectiveLongPress=600` → `Butto
 `scripts/test_clear_before_record_precondition.py` **39/39**, transport-clock 5/5, serial-timing
 33/33, capture-transitions 61/61, accepted-sequence 54/54. Device left stopped (0.00 Hz). Guide:
 [`docs/Guides/HITL_MIDI_CLOCK.md`](Guides/HITL_MIDI_CLOCK.md).
+
+## DEC-099 — The working-set lease release is read from its own row by one owner, and the evidence drain reconciles only the families its log can count
+
+**Date:** 2026-10-01
+**Owner:** HITL host layer (`scripts/hitl/lease_release.py`, `scripts/hitl_s41_lease_release_read.py`,
+`scripts/hitl/managed_capture.py`, `scripts/hitl/retention_probe.py`)
+**Status:** Accepted (discharges `runtime-working-set-ownership` S4.1's recorded device-evidence obligation;
+no firmware or runtime contract changes)
+
+### Problem
+S4.1 was checked on native evidence with one recorded obligation: *a run in which
+`Track::releaseEligiblePlaybackRuntimeSlots` fires for the slot under test, plus an oracle that reads
+`DIAG,ws_release,<slot>,<generation>,<outcome>`*. The change believed the row was hard to reach — five
+2026-09-27 probe runs and one campaign found none — and the packet's recommended route was "a cross-track take
+start, memory pressure, or a same-track switch after retirement". A read-only survey of the whole corpus
+falsified that premise: the row appears **33 times** in ordinary runs of the mandated base preset. Two
+structural facts explain the misses, both in the code: a same-track stop goes down the *retained* route, where
+`Track::invalidatePlaybackMergedMidiEvents` returns early while a deferred stop job is live
+(`captureStopJob().mode == Record`), so no sweep runs; and on a capture-switch shape the row that does appear
+names the **incoming** slot (`captures/s41-lease-20260927-013834`: `ws_release,4,1,released`, nothing for the
+retired A). It fires on the third route the retention oracle already names in its own limitation text: the
+playback-reset/undo path (`TrackUndo.cpp` → `Track::resetPlaybackStateForSlot` →
+`invalidatePlaybackMergedMidiEvents` → `releaseEligiblePlaybackRuntimeSlots`).
+
+Separately, running the mandated entry point exposed a host defect that made every base run non-verdict-grade:
+`drain_record_evidence` reconciled *every* counted family against `record_evidence_row_counts`, which counts
+only `RECA`/`RECS`/`RID` rows, so task 2.2's latch family raised `KeyError: 'DIAG,latch'` and reported
+`INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` on an otherwise verified run.
+
+### Decision
+* **One owner for the row.** `hitl.lease_release` owns `DIAG,ws_release`'s wire form and its reading: the three
+  outcomes, the deliberate silence of `NotHeld` (so absence means "no sweep here", never "the release failed"),
+  and the single 0-based→1-based conversion. `hitl.retention_probe` imports the wire form from it rather than
+  defining its own; a second reader is a second interpretation.
+* **The reader gates on identity, not on a summary.** `hitl_s41_lease_release_read.py` answers for the slot
+  under test (and optionally at a required generation), exits 0 observed / 2 not observed / 3 unreadable, and
+  refuses a sibling slot's row as a substitute — because on the switch shape that is exactly the row a summary
+  would have counted.
+* **The edge is attributed by device clock, not file position.** A managed capture writes the console and
+  `#CAP` ring streams apart, so the human row that caused a reset can sit thousands of lines from the rows it
+  explains.
+* **The drain reconciles what its log can count and reports the rest.** `reconciled_families` names the
+  families with a row cross-check and `unreconciled_families` the reported-only ones, so "loss is detectable"
+  still holds per family while a reported family cannot break a verified run. The consistency rules
+  (`rej`/`evict`, `entered == enq`) still apply to every family.
+
+### Consequences
+The S4.1 device row is observed for the slot under test — `#CAP,3794271032,DIAG,ws_release,0,3,released` in the
+PASS-verdict base run `captures/session_20260930_142350.log` (hex `577841d6…`) and `…,0,0,released` three times
+at HEAD (`git f63d5a02`) — and the durable docs that carried the old reachability conclusion are corrected. The
+native fixtures remain S4.1's behaviour acceptance; today's HEAD runs' *baseline* verdicts were non-PASS for
+unrelated, named reasons, and are recorded as such rather than smoothed over. No firmware, SD or content change
+beyond the authorized scoped clear of the base preset's own target (track 5 slot 1). Evidence:
+[`openspec/changes/runtime-working-set-ownership/evidence/2026-10-01-s41-lease-release/EVIDENCE.md`](openspec/changes/runtime-working-set-ownership/evidence/2026-10-01-s41-lease-release/EVIDENCE.md);
+record: `ARCHITECTURE-REVIEW.md` § "S4.1 device leg — the working-set lease release row, observed".
+Gates: `test_lease_release` 13/13, `test_managed_record_drain` 23/23 (two new, mutation red-proved),
+`test_retention_probe` 43/43, host sweep 1,086 tests with the stashed baseline's own failing set and
+fingerprint (1,071 tests, 6 failures / 1 error), full native 2,643 cases / 2,636 succeeded / 7 skipped / 0
+failed, both OpenSpecs `--strict` valid.

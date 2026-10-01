@@ -1439,6 +1439,8 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       turned a verified base run into `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` — now reconciled per family
       with the rest reported, `test_managed_record_drain` **23/23**, mutation red-proved. Evidence:
       [`evidence/2026-10-01-s41-lease-release/EVIDENCE.md`](evidence/2026-10-01-s41-lease-release/EVIDENCE.md).
+      Recorded as **DEC-099** — the lease release is read from its own row by one owner, and the evidence drain
+      reconciles only the families its log can count.
 - [x] S4.1a Deferred-save completion failure policy: a persistently failing workspace completion must not
       hold the persistence queue. **DONE 2026-09-26 (raised by this task's fixture work; decided as
       DEC-091).** The completion failure branch used to requeue the item **at the queue head**, so a
