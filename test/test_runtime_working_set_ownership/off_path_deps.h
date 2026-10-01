@@ -273,3 +273,12 @@ bool anyCurrentSetLoopSlotDirty() { return false; }
 }  // namespace StorageManagerInternal
 bool CurrentSetStorage::shouldAutoSaveBeforeLoadIntoCurrent(const AnchorFields&) { return false; }
 #endif
+
+// S4b.4 (undo clause): driving `TrackUndo::undoForLoop` -- the production undo call shape -- pulls three
+// symbols the suite did not need before. Each is stubbed the way this harness already treats its neighbours:
+// the edit manager's geometry flush stays **fail-closed** (an undo on a live edit session must not run here,
+// the same rule DEC-101 set for the switch lane), and the display/storage notifications are observable no-ops,
+// because they report the undo's effect rather than decide it.
+// (`LoopEditManager` is declared where the suite defines its other stub -- see the main TU.)
+void DisplayManager::invalidateLiveDisplayCache(bool) {}
+void StorageManager::admitSlotMeta(uint8_t, uint8_t) {}

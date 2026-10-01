@@ -110,7 +110,19 @@ bool sequencerRunning = false;
 // reaching it would mean an edit session exists in a suite whose fixtures must never open one.
 LoopEditManager::LoopEditManager(MidiHandler& handler) : midiHandler(handler) {}
 LoopEditManager loopEditManager(midiHandler);
-void LoopEditManager::onGlobalGeometryRestored(Track&) { OFF_PATH(); }
+// S4b.4's undo clause found a **second** route to this callback: an applied undo restores published loop
+// geometry and *notifies* the edit manager, which is a notification rather than an edit session. DEC-101's own
+// argument applies -- a removed `OFF_PATH()` cannot have been reached by any fixture that was passing, so
+// nothing that was covered is weakened -- while the manager's *session* entries (open/reopen/persist/flush)
+// stay stubbed, so a real session still cannot run in this suite.
+void LoopEditManager::onGlobalGeometryRestored(Track&) {}
+// S4b.4's undo clause drives `TrackUndo::undoForLoop`, which flushes pending loop-edit geometry first. That
+// flush stays **fail-closed**, like the callback above: reaching it would mean a live edit session, which no
+// fixture in this suite may open.
+void LoopEditManager::flushAllPendingGeometry(Track&) { OFF_PATH(); }
+// The undo driver asks whether any geometry is pending before flushing it; with no edit session possible in
+// this suite the honest answer is no.
+bool LoopEditManager::hasPendingGeometry() const { return false; }
 
 struct TrackCaptureStopTestAccess {
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
@@ -3409,7 +3421,100 @@ void test_s4b_3_a_next_grid_switch_lands_on_the_start_grid() {
                                               /*kInbound=*/3);
 }
 
+/// **S4b.4 (clause: undo) — the holder a switch moved to is the one undo addresses.**
+///
+/// The production undo call is `TrackUndo::undoForLoop(track, track.getActiveLoop())` (the shape
+/// `MidiButtonActions` uses), and the driver gates on the **slot**: it refuses when the stack's top entry
+/// belongs to a slot other than the loop the caller passed. That gate *is* what "the inbound holder serves
+/// undo" means once a switch has moved the active slot, so the fixture drives both sides with real stack
+/// entries rather than asserting the gate's name:
+///
+///   * an entry belonging to the **retired** slot, while the inbound holder is active, must be **refused** --
+///     the inbound loop's geometry is untouched and the entry stays on the stack; and
+///   * an entry belonging to the **inbound** slot must be **applied** -- to the *inbound* loop -- and consumed.
+///
+/// The entry kind used is `LoopBoundaryChange`, whose apply is a pure geometry restore, so the observation is
+/// the loop's own `loopStartTick`: the fixture can name the value it expects on the inbound holder.
+void test_s4b_4_the_undo_route_addresses_the_holder_the_switch_moved_to() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kOutbound = 0;
+  constexpr uint8_t kInbound = 2;
+  commitRecordPassIntoTrackSlot(track, kOutbound);
+  commitRecordPassIntoTrackSlot(track, kInbound);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kOutbound, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kInbound, false));
+
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, kOutbound);
+  TrackCaptureStopTestAccess::activateSlot(0, kOutbound);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOutbound);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOutbound));
+
+  // The switch: the same production lane the other S4b fixtures drive, so the inbound holder is active.
+  clockManager.assignCurrentTickSilently(200);
+  trackManager.requestSlotSwitch(0, kInbound, SlotQuantization::LoopEnd,
+                                 clockManager.getCurrentTick());
+  for (int round = 0; round < 4 && TrackCaptureStopTestAccess::activeLoopIndex(track) != kInbound;
+       ++round) {
+    (void)trackManager.servicePendingSlotProvision();
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + 768; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      trackManager.updateAllTracks(tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kInbound, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "fixture precondition: the switch must land on the inbound holder");
+
+  GlobalUndoStack& stack = track.getGlobalUndoStack();
+  const size_t cursorEmpty = stack.cursor;
+  const uint32_t inboundStartBefore = track.getLoop(kInbound).loopStartTick;
+
+  // (1) The retired slot's entry: the undo route must refuse it, because the holder it addresses is the
+  //     inbound -- and a refusal must leave both the loop and the stack exactly as they were.
+  UndoEntry retiredEntry{};
+  retiredEntry.kind = UndoEntryKind::LoopBoundaryChange;
+  retiredEntry.slotIndex = kOutbound;
+  retiredEntry.beforeLoopStartTick = 4242;
+  retiredEntry.beforeLoopLengthTicks = track.getLoop(kOutbound).loopLengthTicks;
+  pushUndoEntry(track, std::move(retiredEntry));
+  TEST_ASSERT_TRUE(stack.canUndo());
+  TEST_ASSERT_EQUAL_MESSAGE(cursorEmpty + 1, stack.cursor, "fixture precondition: one entry on the stack");
+  TrackUndo::undoForLoop(track, track.getActiveLoop());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(inboundStartBefore, track.getLoop(kInbound).loopStartTick,
+                                   "the undo route must not apply the retired slot's entry to the inbound");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, track.getLoop(kOutbound).loopStartTick,
+                                   "the retired slot's geometry must not be restored either");
+  TEST_ASSERT_EQUAL_MESSAGE(cursorEmpty + 1, stack.cursor, "a refusal must leave the entry on the stack");
+
+  // (2) The inbound slot's entry: the same call must consume it and apply it **to the inbound loop**. The
+  // refused entry from (1) is still on the stack by design, so the baseline is the cursor *before* this push.
+  const size_t cursorBeforeInboundPush = stack.cursor;
+  UndoEntry inboundEntry{};
+  inboundEntry.kind = UndoEntryKind::LoopBoundaryChange;
+  inboundEntry.slotIndex = kInbound;
+  inboundEntry.beforeLoopStartTick = 111;
+  inboundEntry.beforeLoopLengthTicks = track.getLoop(kInbound).loopLengthTicks;
+  pushUndoEntry(track, std::move(inboundEntry));
+  TrackUndo::undoForLoop(track, track.getActiveLoop());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(111, track.getLoop(kInbound).loopStartTick,
+                                   "the inbound holder must be the slot undo applies to");
+  TEST_ASSERT_EQUAL_MESSAGE(cursorBeforeInboundPush, stack.cursor,
+                            "the applied entry must be consumed -- and only it: the refused one stays");
+}
+
 int main() {
+
 
 
   UNITY_BEGIN();
@@ -3438,6 +3543,9 @@ int main() {
   // S4b.3: the switch lands on a MIDI boundary, and that boundary binds a prepared role (allocates nothing).
   RUN_TEST(test_s4b_3_a_loop_end_switch_lands_on_the_loop_boundary);
   RUN_TEST(test_s4b_3_a_next_grid_switch_lands_on_the_start_grid);
+  // S4b.4 (undo clause): the holder a switch moved to is the one the undo route addresses -- a retired
+  // slot's entry is refused, the inbound slot's own entry is applied to it.
+  RUN_TEST(test_s4b_4_the_undo_route_addresses_the_holder_the_switch_moved_to);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);

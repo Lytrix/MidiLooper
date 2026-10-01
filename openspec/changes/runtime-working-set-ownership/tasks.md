@@ -1829,6 +1829,26 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       observable boundary here, with no recorded request), so "the inbound holder serves display" belongs to the
       display suites, which do not run a slot switch. Both are owed, and this record says so instead of implying
       the matrix is closed.
+      **The undo clause now has its fixture (2026-10-01; test-only — firmware hex byte-identical).**
+      `test_s4b_4_the_undo_route_addresses_the_holder_the_switch_moved_to` drives the production undo call shape
+      (`TrackUndo::undoForLoop(track, track.getActiveLoop())`, the one `MidiButtonActions` uses) after a switch
+      has moved the active slot to the inbound holder, with real stack entries: a **retired-slot** entry must be
+      **refused** (the inbound loop is untouched, the entry stays on the stack) and an **inbound-slot** entry must
+      be **applied to the inbound loop** and consumed. Two link-closure symbols came with it (the driver's
+      geometry flush and its `hasPendingGeometry` question, stubbed fail-closed/answer-no like their neighbours)
+      plus two observable no-ops (`DisplayManager::invalidateLiveDisplayCache(bool)`,
+      `StorageManager::admitSlotMeta`), and one **stub had to be reclassified**: an applied undo restores
+      published geometry and *notifies* the edit manager through `onGlobalGeometryRestored`, which the earlier
+      slice's fail-closed comment had assumed only a live edit session could reach. DEC-101's own argument applies
+      (a removed `OFF_PATH()` cannot have been reached by a fixture that was passing, so nothing covered is
+      weakened), and the manager's session entries stay stubbed. **Red-proof: OPEN, and recorded as such.** Two
+      mutations of the driver's slot gate — the outer `entries[cursor-1].slotIndex != slotIndex` check and the
+      inner one inside the apply loop — each **survived** this fixture (measured), so the fixture pins the
+      behaviour but is **not** yet shown to have teeth; the same code path does apply the inbound entry in step
+      (2), so the driver clearly reaches the apply, and what needs explaining is why removing a gate does not
+      change step (1)'s outcome in this fixture (candidate: which entry the stack's top actually is after the
+      fixture's own flows, which push their own entries before either leg). That investigation is the named
+      follow-up, not a claim.
 - [x] S4b.5 **One active-slot write authority (B4).** Route undo/redo-driven active-slot changes
       (`TrackUndo.cpp:558/582`) through the occupancy/pending-switch path and convert the **three** direct
       `Track::setActiveLoopIndex` writes (`TrackManagerSlotMatrix.cpp:240`, `TrackManagerCaptureQueue.cpp:281,335`)
