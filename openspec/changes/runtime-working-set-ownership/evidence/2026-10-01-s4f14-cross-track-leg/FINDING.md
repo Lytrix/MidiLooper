@@ -218,3 +218,44 @@ weak evidence for the *content* clauses — `no lost capture`, `no wrong-track p
 un-admitted window (a much shorter `--continue-hold-ms`), and giving the destination real content needs the harness to
 play on the destination's channel during the hold — the continuation currently presses only the record button.
 
+## Clauses settled from the existing runs — and the premise that is not met (2026-10-01)
+
+Three of S4f.14's clauses can be read off `-02`/`-03` without another run, and one of them exposes a problem with the
+leg as configured.
+
+**Clause "`overflow_free` / `call_site_gate_ok`" — PASSES.** `host_midi_automation_baseline_20261001_205329.json`
+(`-02`), at `assertions.serial_verification.midi_boundary_timing`: `overflow_free = True`, `call_site_gate_ok = True`.
+
+**Clause "transport never stops" — PASSES for the interaction, with its window named.** Each run has two
+`Transport started` and exactly one `Transport stopped`, and in both runs the stop sits **inside the source leg's own
+recipe, well before the switch**: `-02` started 659.435, stopped 665.739, started 669.417, switch at 682.640+; `-03`
+started 40.469, stopped 46.713, started 50.907, switch at 63.716+. Nothing stops the transport at or after the switch
+in either run. Stated precisely because it is narrower than the clause's words: the stop is not the teardown, and the
+clause is satisfied *for the cross-track interaction window*, which is what it is about.
+
+**Clause "track 4's finalization is track+slot-scoped" — the timings say the premise is NOT met.** The reentry
+markers bracket the source's finalization and it is **fast**:
+
+```
+-02: [682.640] Reentry window open slot=0   ->   [683.012] Reentry released slot=0 generation=33   (0.372 s)
+-03: [63.716]  Reentry window open slot=0   ->   [64.077]  Reentry released slot=0 generation=33   (0.361 s)
+```
+
+and the destination's session begins **after** that release. The gesture itself cannot get there with a 2-bar
+source: the intervention fires 305 ms after the stop release, then the switch costs two presses
+(`Ch16 Note64` then `Ch16 Note50`, ~0.3 s each), so the destination's own start press lands at ~0.9 s — by which time
+the source retired 0.4 s earlier. **So the two finalizations were never concurrent in `-01`/`-02`/`-03`**, and this
+leg has not yet exercised the overlap it exists for. That also re-reads `-01`'s refusal: it was not cross-track
+contention (the source was long retired), which is consistent with the per-slot readiness trace.
+
+**What has to change to meet the premise** (one of these, decided by whoever owns the leg):
+1. a **longer source interval** — the source's finalization scales with its content, so `--record-bars 24` (matching
+   the destination) should hold it open for seconds rather than 0.37 s; or
+2. a source whose stop is deliberately owed rather than promptly retired (a pending deferred stop), which is the
+   harder, more faithful case but needs the predecessor-job machinery to be live.
+
+Until one of those is in place, the clauses that need concurrency — "track 5's stop executes with **no**
+`accepted_stop_finalizer_wait` attributable to track 4's job **while track 4 finalizes concurrently**", and
+"per-track holder counters rise and fall independently" — are **unproven**, and saying otherwise would be reading a
+sequential run as a concurrent one.
+
