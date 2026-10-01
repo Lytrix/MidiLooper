@@ -2173,10 +2173,16 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       record carrier (`Loop 2: Start Recording`, attempts 01/02) and the new track's **active** slot with content
       becomes `Toggle Play/Stop` + `Playback started` (attempts 03/04). So the `Queued playback switch` whose
       inbound occupancy S4b.7 provisions at a cold boundary needs a **non-active, catalog-filled** destination
-      slot; the three attempts at exactly that (`--switch-loop-slot 3`) each failed **before** their intervention
-      and never on the leg's own assertions — `firmware capture ring discarded unreadable content` (05), `record
-      stop did not reach PLAYING` (06), `overdub start refused: no predecessor stop-completion receipt` even at
-      the 25 s wait (07). No attempt shows a `LoopEnd playback commit` row. Evidence:
+      slot ***and*** a second filled one (this boot's only filled track-5 slot is its active one), which also
+      needs the destination to be non-active — the route taken was seed Loop 3, then re-flash, then press Loop 2.
+      The seven attempts at that all failed **before** their intervention and never on the leg's own assertions:
+      `firmware capture ring discarded unreadable content` (05, 11), `record stop did not reach PLAYING` (06), and
+      `overdub start refused: no predecessor stop-completion receipt` even at the 25 s wait (07, 09, 10). **Both
+      failure modes are attributable to a measured device state, not to the leg:** that boot queues and drains
+      **64** restore requests (one per slot of the library this session filled), whose SD traffic is when the
+      receipt goes missing and whose log volume fills the ring; the same boot shows the Loop 8 churn gone
+      (`RRQ,4,7` an ordinary queued/running/terminal triple, no parse failures). No attempt shows a `LoopEnd
+      playback commit` row. Evidence:
       [`evidence/2026-10-01-s4b9-cross-track/EVIDENCE.md`](evidence/2026-10-01-s4b9-cross-track/EVIDENCE.md).
 - [~] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
       active-interval overflow) across repeated switches.
