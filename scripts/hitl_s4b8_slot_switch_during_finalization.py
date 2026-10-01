@@ -13,6 +13,13 @@ the "switch while a predecessor finalizes" gesture those legs ask for. It never 
 The destination slot is expected to be **populated already** (a second, preceding run of the same preset seeds
 it): an empty destination takes the record carrier instead of the playback-switch lane, which is a different
 leg (`hitl_stop_interruption.py`'s territory), and this runner says so rather than pretending both are one case.
+
+With `--continue-on-switched-track` the runner additionally drives the S4f.14 leg ("stop on track 4, then
+continue directly on track 5"): after the switch presses it starts a record/overdub session on the track the
+switch just selected, holds it for `--continue-hold-ms`, then stops it -- so the continuation starts and stops
+while the source track's finalization is still in flight. S4f.14's discriminators (which slot's finalization
+retired, which destination the continuation's grain went to) are read from the device's own rows in the run's
+capture, **not** from this driver: the driver only reports what it pressed and when.
 """
 from __future__ import annotations
 
@@ -29,7 +36,12 @@ root = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / "scripts"))
 
 from hitl import legacy_record_baseline as baseline  # noqa: E402
-from hitl.control_constants import CONTROL_CHANNEL_1BASED, LOOP_SELECT_NOTE_BASE, TRACK_SELECT_NOTE_BASE  # noqa: E402
+from hitl.control_constants import (  # noqa: E402
+    CONTROL_CHANNEL_1BASED,
+    LOOP_SELECT_NOTE_BASE,
+    RECORD_BUTTON_NOTE,
+    TRACK_SELECT_NOTE_BASE,
+)
 from hitl.midi_io import _send_short_press  # noqa: E402
 from hitl.runner import main  # noqa: E402
 from hitl.stop_intervention import StopInterventionPort  # noqa: E402
@@ -44,7 +56,8 @@ class SlotSwitchInterventionPort(StopInterventionPort):
 
     def __init__(self, output, emit, *, delay_s, channel, target_track_index, target_slots,
                  press_ms=120, phase_wait_ms=500, switch_interval_ms=0, preplay_track_index=None,
-                 preplay_slot=None, preplay_source_track_index=None, **kw):
+                 preplay_slot=None, preplay_source_track_index=None,
+                 continue_on_switched_track=False, continue_hold_ms=4000, **kw):
         super().__init__(output, emit, delay_s=delay_s, channel=channel, **kw)
         # The destination *track* must be playing for a press on one of its other filled slots to be a playback
         # switch at all: with that track silent, the press is a selection/toggle (measured, `captures/s4b9-cross-track-15/-16`).
@@ -60,6 +73,12 @@ class SlotSwitchInterventionPort(StopInterventionPort):
         self.press_ms = press_ms
         self.phase_wait_ms = phase_wait_ms
         self.switch_interval_ms = switch_interval_ms
+        # S4f.14's continuation ("stop on track 4, then continue directly on track 5"): after the switch has
+        # selected the destination, start a record/overdub session on it and stop it again while the source
+        # track's finalization is still in flight. Off by default, so the S4b.8/S4b.9 wire bytes are unchanged.
+        self.continue_on_switched_track = continue_on_switched_track
+        self.continue_hold_ms = continue_hold_ms
+        self.switch_presses_sent = 0
 
     def _preplay_destination_track(self):
         """Start the destination track's loop and return the focus to the source track."""
@@ -95,16 +114,43 @@ class SlotSwitchInterventionPort(StopInterventionPort):
                 if self.target_track_index is not None:
                     _send_short_press(self.output, note=TRACK_SELECT_NOTE_BASE + self.target_track_index,
                                       channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
+                    self.switch_presses_sent += 1
                     self._event("switch_track_select_sent", track_index=self.target_track_index)
                     time.sleep(self.phase_wait_ms / 1000.0)
                 _send_short_press(self.output, note=LOOP_SELECT_NOTE_BASE + target_slot - 1,
                                   channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
+                self.switch_presses_sent += 1
                 self._event("switch_slot_select_sent", target_slot=target_slot,
                             target_track_index=self.target_track_index, sequence_index=index)
             self.sent = True
         except Exception as exc:  # recorded, not raised: the run's evidence must survive a send failure
             self.error = str(exc)
             self._event("switch_intervention_error", detail=self.error)
+        # The continuation is its own step with its own error name, so a failure here is never reported as a
+        # switch failure (and vice versa). It only runs when the switch actually went out: with no press sent
+        # the destination track was never selected, so a record press would land on an arbitrary track.
+        if self.continue_on_switched_track and self.switch_presses_sent and self.error is None:
+            self._continue_on_switched_track()
+
+    def _continue_on_switched_track(self):
+        """S4f.14: start a session on the just-selected destination track, hold it, then stop it.
+
+        Both presses go to `RECORD_BUTTON_NOTE`: with the destination selected, one short press starts a record
+        (or overdub) session on it and the next stops it. The hold is what the leg measures -- the stop must
+        still land inside the predecessor's finalization window. Recorded, never raised.
+        """
+        try:
+            time.sleep(self.phase_wait_ms / 1000.0)
+            _send_short_press(self.output, note=RECORD_BUTTON_NOTE,
+                              channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
+            self._event("continue_session_start_sent", track_index=self.target_track_index)
+            time.sleep(self.continue_hold_ms / 1000.0)
+            _send_short_press(self.output, note=RECORD_BUTTON_NOTE,
+                              channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
+            self._event("continue_session_stop_sent", track_index=self.target_track_index)
+        except Exception as exc:  # recorded, not raised: the run's evidence must survive a send failure
+            self.error = str(exc)
+            self._event("continue_session_error", detail=self.error)
 
 
 def run_fixture() -> None:
@@ -125,6 +171,15 @@ def run_fixture() -> None:
                              "press on one of its other filled slots is a playback switch rather than a selection.")
     parser.add_argument("--preplay-loop-slot", type=int, default=None, choices=range(1, 9),
                         help="The destination track's own filled slot to start (required with --preplay-track-number).")
+    parser.add_argument("--continue-on-switched-track", action="store_true", default=False,
+                        help="S4f.14: after the switch presses, also start a record/overdub session on the "
+                             "destination track the switch just selected and stop it again (see "
+                             "--continue-hold-ms), so the continuation runs while the source track's "
+                             "finalization is still in flight. Off by default: the S4b.8/S4b.9 wire bytes are "
+                             "unchanged. The leg's discriminators are read from the device's own rows, not here.")
+    parser.add_argument("--continue-hold-ms", type=int, default=4000,
+                        help="How long the continuation session stays open (the hold between its start press "
+                             "and its stop press) in ms; only used with --continue-on-switched-track.")
     parser.add_argument("--out-dir", type=pathlib.Path, required=True)
     parser.add_argument("--intervention-delay-ms", type=float, default=305.0,
                         help="Delay from the overdub-stop button release to the switch press.")
@@ -193,7 +248,9 @@ def run_fixture() -> None:
                                  if config.preplay_track_number is not None else None),
             preplay_slot=config.preplay_loop_slot,
             preplay_source_track_index=(config.track_number - 1
-                                        if config.preplay_track_number is not None else None))
+                                        if config.preplay_track_number is not None else None),
+            continue_on_switched_track=config.continue_on_switched_track,
+            continue_hold_ms=config.continue_hold_ms)
         if config.preplay_track_number is not None and not any(x.preplay_done for x in interventions):
             wrapped.preplay_done = True
             wrapped._preplay_destination_track()
