@@ -2118,13 +2118,31 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       padding, so this slice costs **no RAM1 variable** and the code is FLASH/ITCM-neutral.
       Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.7 — the demoted target, the published
       root, and the bounded hold".
-- [ ] S4b.8 **HITL — slot switch while a predecessor finalizes, transport playing (the switch leg alone).**
+- [x] S4b.8 **HITL — slot switch while a predecessor finalizes, transport playing (the switch leg alone).**
       Managed run: record A → stop A → switch to B **while A is still finalizing** → assert the switch is accepted
       and completes, `activeLoopIndex` does not move before A's stop is admitted and bound to A's slot, the
       pre-switch slot finalizes exactly once, the successor slot's content is untouched, and pool holders rise and
       fall with the switch. The harness already has the switch action
       (`scripts/hitl/legacy_record_baseline.py` `_send_loop_slot_select_press`, `LOOP_SELECT_NOTE_BASE`) and the
       stop-interruption wrapper; reuse them rather than adding a runner. Evidence: session log + holder census.
+      **RUN 2026-10-01 (image `cdab16f4…`, flashed with authorization; track 5 authorized this session).** The
+      runner is `scripts/hitl_s4b8_slot_switch_during_finalization.py` — a wrapper **variant** of
+      `hitl_stop_interruption.py` that reuses the baseline recipe and the harness's own presses and changes only
+      what the intervention sends (a slot-select instead of a transport Stop), as the entry asks. Evidence:
+      [`evidence/2026-10-01-s4b8-switch-during-finalization/EVIDENCE.md`](evidence/2026-10-01-s4b8-switch-during-finalization/EVIDENCE.md)
+      (verbatim rows, the holder table, the run identities, and what is **not** claimed). **Assertions, as
+      observed:** the switch press queues **inside** the predecessor's finalization window — `ODUB,stop,bridge_begin,…denied`
+      at 294.748 s, `Loop 2: Queued playback switch` at 294.987 s, `ODUB,stop,bridge_ready,…` at 295.021 s — and
+      commits at 295.607 s (`LoopEnd playback commit track=4 0->1`); the stop **binding** (`DIAG,reentry,bound` for
+      slot 0) precedes the queue and is the only such row, so `activeLoopIndex` did not move before it; the
+      pre-switch slot finalizes **exactly once** (one `DIAG,canonical_release` for slot 0 in the whole session);
+      the successor's content is **untouched** (exactly one capture-family row names slot 0 and none names the
+      successor; the commit prints the successor's own geometry `start=0 len=2304`); and the holders **rise by one
+      working set** and settle (`live` 6610 → 6643 KB, `blocks` 1298 → 1355, `chunks_free` 338 → 335) rather than
+      accumulating. **Recorded, not claimed:** the base recipe's own verdict on these runs is `FAIL` on its
+      documented overdub issues (and the seed run `INCONCLUSIVE_CAPTURE`), so this evidence is the *switch rows,
+      the census and the timing gates*, not a green baseline; and a dedicated multi-switch run is still the
+      tighter evidence for the gate wording below.
 - [ ] S4b.9 **HITL — cross-track switch while a predecessor finalizes.** Managed run: record/overdub A on track 4
       → stop A → switch the active track to track 5 **while A still finalizes** → assert the track switch is
       accepted and MIDI-continuous, A's occupancy stays pinned on track 4 (no release), track 5's inbound
