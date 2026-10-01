@@ -1611,8 +1611,16 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       build a queue of stopped intervals: the ring's tail must be free before
       admission, so it cannot stack pending stops, and concurrent finalization needs its own capacity/ownership
       decision first.
-- [ ] S4 gates (P2): S3 gates plus the reuse and stale-owner fixtures; S4.5 acceptance closes with P3/S4f, not before it. A device run showing holder count
-      rising and falling with activation/deactivation.
+- [~] S4 gates (P2): S3 gates plus the reuse and stale-owner fixtures; S4.5 acceptance closes with P3/S4f, not before it.
+      **DEVICE HALF OBSERVED 2026-10-01** — "a device run showing holder count rising and falling with
+      activation/deactivation": `captures/s4b8-newimage-01` (the S4b.8 leg re-run on the current image, a clean run)
+      shows the holder magnitude rising with activation (609.4 → 611.4 s: `live` 4769 → 6463 KB, `blocks` 1150 →
+      1353), falling with deactivation (615.4 → 617.4 s: `live` 6498 → 6471 KB, `blocks` 1381 → 1277), holding down
+      through the switch window, and settling rather than drifting; the two release rows in that run are
+      `DIAG,ws_release,0,0,released` (611.010 s) and `canonical_release,0,1,2304,8` (623.367 s). Evidence:
+      [`evidence/2026-10-01-s4-gates-holder-census/EVIDENCE.md`](evidence/2026-10-01-s4-gates-holder-census/EVIDENCE.md).
+      **Still owed: S4.5's P3 acceptance** (its own text closes it with the remaining S4f work), so the line stays
+      `[~]` rather than checked.
 
 ## S4b — role transfer (the never-stop requirement)
 
