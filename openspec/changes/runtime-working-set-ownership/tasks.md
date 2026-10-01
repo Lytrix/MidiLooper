@@ -1616,8 +1616,27 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 
 ## S4b — role transfer (the never-stop requirement)
 
-- [ ] S4b.1 Transfer the single complex role (record / overdub / passes / undo/redo / display, resumable
+- [x] S4b.1 Transfer the single complex role (record / overdub / passes / undo/redo / display, resumable
       small-packet logic inside MIDI boundaries) to a newly selected slot or track without a transport stop.
+      **NATIVE WORK COMPLETE 2026-10-01; what remains is device work and one question the record keeps open by
+      instruction.** Every clause of this task now has native evidence, and the attribution is explicit because
+      the stage's own sub-items landed across several slices:
+      *transfer the role* -- S4b.2 (the inbound role exists before the outbound retires, overlap measured),
+      S4b.3 (the transfer lands on the quantization's boundary, and that boundary binds a prepared role), S4b.5
+      (one active-slot write authority over a non-re-entrant commit point), S4b.6/S4b.7 (the commit binds to the
+      inbound occupancy; the off-clock `SlotProvision` turn provides it) and S4b.4 (the inbound holder serves
+      record, overdub, passes -- attributed fixtures -- undo and display, the last two with their own fixtures
+      and red-proofs);
+      *without a transport stop* -- the lane fixtures (the predecessor keeps finalizing, the transport never
+      stops, nothing is stolen);
+      *resumable small-packet logic inside MIDI boundaries* -- S4b.3's two quantization fixtures plus the
+      boundary's measured no-allocation property.
+      **Recorded, not claimed away:** (i) `(e)`'s *immediate* execution under a full finalizer capacity remains
+      the capacity question the earlier record keeps **open by instruction** (`Omax` alone does not solve
+      repeated switches); retention itself is proven; (ii) the device legs are **S4b.8** and **S4b.9** and are
+      unrun; and (iii) the "successful start cannot execute twice" gap `(d)` was discharged by citation (three
+      fixtures, named there). So this task is closed on native evidence with its device legs and its by-
+      instruction question named, which is this stage's state.
       **THE SWITCH LANE'S ACCEPTANCE SURFACE EXISTS 2026-10-01 (test-only; no `src/` change — firmware hex
       unchanged), and the populated-target queued switch is measured and pinned.** The prerequisite recorded
       by the previous slice is discharged: the suite now defines `HARNESS_LINKS_PLAYBACK_SWITCH_LANE`, which
