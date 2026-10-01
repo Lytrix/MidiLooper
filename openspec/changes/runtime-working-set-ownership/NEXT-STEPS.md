@@ -101,15 +101,29 @@ verdict; and the same front-requeue shape remains for **body/bundle** item failu
 content-durability intent (bounding those is a separate decision). **Device evidence owed:** an SD fault path
 with no device fault injection.
 
+## S4.1's device row for the lease release: DONE (2026-10-01)
+
+Closed as **evidence**, not code, exactly as this packet asked — and the row turned out not to be rare at all.
+A read-only survey of the corpus found `DIAG,ws_release` **33 times** in ordinary runs of the mandated base
+preset, so the five 2026-09-27 probe attempts were chasing the wrong two of the three routes. It fires on the
+**playback-reset/undo path** (`TrackUndo.cpp` → `Track::resetPlaybackStateForSlot` →
+`invalidatePlaybackMergedMidiEvents` → `releaseEligiblePlaybackRuntimeSlots`): a same-track stop goes down the
+*retained* route, where `invalidatePlaybackMergedMidiEvents` returns early while a deferred stop job is live, so
+no sweep runs; and on a capture-switch shape the row that appears names the **incoming** slot. Observed for the
+slot under test as `#CAP,3794271032,DIAG,ws_release,0,3,released` in the PASS-verdict base run
+`captures/session_20260930_142350.log` (hex `577841d6…`) and reproduced three times at HEAD (`git_commit
+f63d5a02`, same hex), each 1.2 ms after the device's own `Button press: Record/Overdub (double)` →
+`MIDI: Undo (entries=3)` edge. The oracle is `hitl.lease_release` + `scripts/hitl_s41_lease_release_read.py`
+(**13/13** tests), and `hitl.retention_probe` now takes the wire form from the same owner. **No firmware change,
+and no new instrumentation or stimulus.** The campaign also found and fixed a host defect that made every base
+run non-verdict-grade (`KeyError: 'DIAG,latch'` in the evidence drain; `test_managed_record_drain` **23/23**,
+mutation red-proved). Record: [`evidence/2026-10-01-s41-lease-release/EVIDENCE.md`](evidence/2026-10-01-s41-lease-release/EVIDENCE.md).
+
 ## Recommended next slice
 
-**S4.1's device row for the lease release** — the only behavior-side item left in this change is *evidence*,
-not code: run a case in which `releaseEligiblePlaybackRuntimeSlots` fires for the slot under test (a
-cross-track take start, memory pressure, or a same-track switch after retirement) and read
-`DIAG,ws_release,<slot>,<generation>,<outcome>`, which already exists and is Tier-A. It needs an authorized
-device run plus an oracle that consumes the row; no new instrumentation and no stimulus change.
-
-Then the remaining native candidates below, unchanged.
+The remaining candidates below, unchanged, plus this change's other device legs (S4.2/S4.3/S4.4 device byte
+deltas, S4b, phases B–E) and F4's SD-fault evidence — every one of them needs a per-session device
+authorization.
 
 ## Other candidates and why not first
 

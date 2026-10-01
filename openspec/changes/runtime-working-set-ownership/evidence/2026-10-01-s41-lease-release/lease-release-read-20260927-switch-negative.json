@@ -1,0 +1,16 @@
+{
+  "log": "captures/s41-lease-20260927_013834/session_20260927_013834.log",
+  "slot_1based": 4,
+  "slot0": 3,
+  "required_generation": null,
+  "outcome": "absent",
+  "release_rows": [],
+  "released_slots_1based": [
+    5
+  ],
+  "all_release_rows": [
+    "#CAP,486025325,DIAG,ws_release,4,1,released"
+  ],
+  "identity": {},
+  "verdict": "LEASE_RELEASE_NOT_OBSERVED"
+}

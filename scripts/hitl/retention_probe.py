@@ -68,6 +68,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from hitl.lease_release import WS_RELEASE_RE
+
 CAP_RE = re.compile(r"^#CAP,(\d+),(.*)$")
 WINDOW_OPEN_RE = re.compile(r"^DIAG,reentry_window_open,(\d+),(\d+),(\d+)$")
 # Wire form: DIAG,canonical_release,<slot>,<generation>,<loopLengthTicks>,<availableChunks>. The slot and
@@ -78,8 +80,8 @@ REENTRY_RE = re.compile(r"^DIAG,reentry,([a-z_]+),(\d+),(\d+),(\d+),(\d+)$")
 # Wire form: DIAG,ws_release,<slot>,<generation>,<outcome>. This names the **working-set lease** release,
 # which `canonical_release` does not: that row reports the retiring *occupancy*. Held separately and
 # reported rather than gating, because the release path only fires where a sweep or pressure runs it -- a
-# same-track A/B/C sequence excludes its own track from the take-start sweep.
-WS_RELEASE_RE = re.compile(r"^DIAG,ws_release,(\d+),(\d+),([a-z_]+)$")
+# same-track A/B/C sequence excludes its own track from the take-start sweep. `hitl.lease_release` owns the
+# row's wire form and its reading; this oracle keeps only its own reporting policy.
 RECA_RE = re.compile(r"^RECA,(\d+),(\d+)$")
 # Exactly the documented successful stop kinds, not an open `stop*` pattern: `TrackCaptureStopCommit` emits
 # `"stop"` (the ordinary route) and `"stopToStopped"` (the transport-stop route). Anything else is not a

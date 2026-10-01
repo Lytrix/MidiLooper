@@ -1,0 +1,13 @@
+# verbatim excerpt from captures/session_20260930_142350.log, rows 25038-25052 (CR stripped, blank rows dropped)
+#CAP,3794255742,LED,0,27,0
+#CAP,3794255819,LED,1,28,127
+#CAP,3794269742,GS,15,36,1
+#CAP,3794269950,MO,128,5,78,0
+#CAP,3794269973,MO,128,5,79,0
+#CAP,3794269989,MO,128,5,77,0
+#CAP,3794270004,MO,128,5,34,0
+#CAP,3794270021,MO,128,5,13,0
+#CAP,3794270037,MO,128,5,58,0
+#CAP,3794271032,DIAG,ws_release,0,3,released
+#CAP,3794271109,VCACHE,stale_all,ev,-1,notes,51,first,0,last,1,total,2,dsz,2,dcnt,2,dirty,1
+#CAP,3794274361,VCACHE,idle_src,OverlayRejected,src,PassesResolve,root_rev,5,playback_rev,6

@@ -480,8 +480,17 @@ class ManagedCaptureSession:
                 if idle and all(row["tx"] == row["enq"] for row in stats.values()):
                     observed = record_evidence_row_counts(reply_prefix)
                     result["log_counts"] = observed
+                    # The reply carries every counted family, but only the families whose rows the log
+                    # counter sees have a row counterpart to reconcile against: `RECA`/`RECS`/`RID`
+                    # receipts. A family that is *reported* rather than counted -- `DIAG,latch`, task 2.2's
+                    # latch evidence -- is cross-checked by its own consistency rule above and is named here
+                    # instead of being dropped. Iterating `stats` directly raised `KeyError: DIAG,latch` and
+                    # turned a clean baseline run into `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)`.
+                    reconcile = [family for family in stats if family in observed]
+                    result["reconciled_families"] = sorted(reconcile)
+                    result["unreconciled_families"] = sorted(set(stats) - set(reconcile))
                     if any(observed[family] - drain_start_counts[family] !=
-                           stats[family]["tx"] - drain_start[family]["tx"] for family in stats):
+                           stats[family]["tx"] - drain_start[family]["tx"] for family in reconcile):
                         result["reason"] = "newly transmitted Record rows do not match this session log"
                         return result
                     result.update(complete=True, reason="queued Record rows drained into this session log")

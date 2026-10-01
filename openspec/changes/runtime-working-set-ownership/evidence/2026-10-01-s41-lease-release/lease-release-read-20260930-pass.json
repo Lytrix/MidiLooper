@@ -1,0 +1,24 @@
+{
+  "log": "captures/session_20260930_142350.log",
+  "slot_1based": 1,
+  "slot0": 0,
+  "required_generation": null,
+  "outcome": "released",
+  "release_rows": [
+    "#CAP,3794271032,DIAG,ws_release,0,3,released"
+  ],
+  "released_slots_1based": [
+    1
+  ],
+  "all_release_rows": [
+    "#CAP,3794271032,DIAG,ws_release,0,3,released"
+  ],
+  "identity": {},
+  "verdict": "LEASE_RELEASE_OBSERVED",
+  "edge": [
+    "[3794.269] [DEBUG] [BTN] Double press expired: Ch16 Note36, now=3794269, expire=3794269",
+    "[3794.269] [INFO] Button press: Record/Overdub (double)",
+    "[3794.269] [INFO] MIDI: Undo (entries=2)",
+    "#CAP,3794269742,GS,15,36,1"
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "log": "captures/session_20261001_092818.log",
+  "slot_1based": 1,
+  "slot0": 0,
+  "required_generation": 0,
+  "outcome": "released",
+  "release_rows": [
+    "#CAP,69967546,DIAG,ws_release,0,0,released"
+  ],
+  "released_slots_1based": [
+    1
+  ],
+  "all_release_rows": [
+    "#CAP,69967546,DIAG,ws_release,0,0,released"
+  ],
+  "identity": {
+    "git_commit": "f63d5a023f2bdf84fee15b10601e0638b872eff1",
+    "git_dirty": true,
+    "firmware_hex_sha256": "577841d6b6e2c338a08c3b2b5e6948c95ecbe40ba266b1bd1cbbbbbe59d26785",
+    "preset": "base",
+    "track_number": 5,
+    "loop_slot": 1,
+    "timestamp": "2026-10-01T07:33:31.401462+00:00"
+  },
+  "verdict": "LEASE_RELEASE_OBSERVED",
+  "edge": [
+    "[69.966] [DEBUG] [BTN] Double press expired: Ch16 Note36, now=69966, expire=69966",
+    "[69.966] [INFO] Button press: Record/Overdub (double)",
+    "[69.966] [INFO] MIDI: Undo (entries=3)",
+    "#CAP,69966339,GS,15,36,1"
+  ]
+}
