@@ -42,27 +42,33 @@ class SlotSwitchInterventionPort(StopInterventionPort):
     window in which the predecessor's stop is admitted and its finalization is still in flight.
     """
 
-    def __init__(self, output, emit, *, delay_s, channel, target_track_index, target_slot,
-                 press_ms=120, phase_wait_ms=500, **kw):
+    def __init__(self, output, emit, *, delay_s, channel, target_track_index, target_slots,
+                 press_ms=120, phase_wait_ms=500, switch_interval_ms=0, **kw):
         super().__init__(output, emit, delay_s=delay_s, channel=channel, **kw)
         # Both are 0-based here; the wire notes are the base plus the index (the harness's own convention).
         self.target_track_index = target_track_index
-        self.target_slot = target_slot
+        self.target_slots = list(target_slots)
         self.press_ms = press_ms
         self.phase_wait_ms = phase_wait_ms
+        self.switch_interval_ms = switch_interval_ms
 
     def _interrupt(self):
         try:
-            if self.target_track_index is not None:
-                _send_short_press(self.output, note=TRACK_SELECT_NOTE_BASE + self.target_track_index,
+            for index, target_slot in enumerate(self.target_slots):
+                if index and self.switch_interval_ms:
+                    # The S4b gate asks for the timing evidence "across repeated switches": the interval is
+                    # what makes the presses a sequence rather than one gesture.
+                    time.sleep(self.switch_interval_ms / 1000.0)
+                if self.target_track_index is not None:
+                    _send_short_press(self.output, note=TRACK_SELECT_NOTE_BASE + self.target_track_index,
+                                      channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
+                    self._event("switch_track_select_sent", track_index=self.target_track_index)
+                    time.sleep(self.phase_wait_ms / 1000.0)
+                _send_short_press(self.output, note=LOOP_SELECT_NOTE_BASE + target_slot - 1,
                                   channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
-                self._event("switch_track_select_sent", track_index=self.target_track_index)
-                time.sleep(self.phase_wait_ms / 1000.0)
-            _send_short_press(self.output, note=LOOP_SELECT_NOTE_BASE + self.target_slot - 1,
-                              channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
+                self._event("switch_slot_select_sent", target_slot=target_slot,
+                            target_track_index=self.target_track_index, sequence_index=index)
             self.sent = True
-            self._event("switch_slot_select_sent", target_slot=self.target_slot,
-                        target_track_index=self.target_track_index)
         except Exception as exc:  # recorded, not raised: the run's evidence must survive a send failure
             self.error = str(exc)
             self._event("switch_intervention_error", detail=self.error)
@@ -74,8 +80,11 @@ def run_fixture() -> None:
                         help="The track the predecessor is recorded on (1-based, as the CLI speaks).")
     parser.add_argument("--loop-slot", type=int, required=True, choices=range(1, 9),
                         help="The predecessor's slot (1-based).")
-    parser.add_argument("--switch-loop-slot", type=int, required=True, choices=range(1, 9),
-                        help="The destination slot on the predecessor's track (S4b.8).")
+    parser.add_argument("--switch-loop-slot", type=str, required=True,
+                        help="Destination slot(s) on the predecessor's track, comma-separated: a single "
+                             "press (S4b.8) or a sequence (the S4b gate's repeated switches).")
+    parser.add_argument("--switch-interval-ms", type=float, default=0.0,
+                        help="Spacing between the presses of a sequence; 0 fires them back to back.")
     parser.add_argument("--switch-track-number", type=int, default=None, choices=range(1, 9),
                         help="S4b.9: also press this track before the slot (a cross-track switch).")
     parser.add_argument("--out-dir", type=pathlib.Path, required=True)
@@ -88,9 +97,18 @@ def run_fixture() -> None:
     parser.add_argument("--overdub-high-note", type=int, default=39)
     parser.add_argument("--overdub-step-clocks", type=int, default=12)
     parser.add_argument("--overdub-gate-clocks", type=int, default=12)
+    parser.add_argument("--state-sync-timeout-ms", type=int, default=25000,
+                        help="The harness's precondition wait for serial-confirmed state transitions. Raised well "
+                             "above its 8 s default because the leg's own preconditions are *not* the property under "
+                             "test: a device state that delays a phase's confirmation (measured: a boot restore-retry "
+                             "storm flooding the capture ring) must not be reported as the switch leg failing. This "
+                             "never touches the intervention, which fires from the overdub-stop button release.")
     parser.add_argument("--final-wait-ms", type=int, default=12000,
                         help="Long enough to observe the finalization and the switch commit that follows it.")
     config = parser.parse_args()
+    for token in str(config.switch_loop_slot).split(','):
+        if token.strip() and not (1 <= int(token) <= 8):
+            parser.error("--switch-loop-slot entries must be 1..8")
 
     out = config.out_dir.resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -125,7 +143,8 @@ def run_fixture() -> None:
             channel=int(args[5].midi_channel) - 1,
             target_track_index=(config.switch_track_number - 1
                                 if config.switch_track_number is not None else None),
-            target_slot=config.switch_loop_slot)
+            target_slots=[int(x) for x in str(config.switch_loop_slot).split(',') if x.strip()],
+            switch_interval_ms=config.switch_interval_ms)
         interventions.append(wrapped)
         changed = list(args)
         changed[1] = wrapped
@@ -156,6 +175,7 @@ def run_fixture() -> None:
             "--tempo-bpm", str(config.tempo_bpm), "--no-fixed-grid-notes", "--start-transport",
             "--overdub-start-delay-bars", "0", "--overdub-start-delay-beats", "1",
             "--phase-wait-ms", "500", "--final-wait-ms", str(config.final_wait_ms),
+            "--state-sync-timeout-ms", str(config.state_sync_timeout_ms),
             "--press-ms", "120", "--no-undo-redo-after-overdub-stop", "--second-overdub-bars", "0",
             "--no-stop-after-overdub", "--deferred-save-wait-ms", "15000",
             "--out-dir", str(out),
