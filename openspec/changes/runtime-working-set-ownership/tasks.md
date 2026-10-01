@@ -1533,8 +1533,42 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       structurally and the byte-level device claim stays open with the S2.2/S2.3 budget items. **Still
       open:** an explicit sweep on a same-track slot switch. Full native `2,445 passed / 1 skipped`; RAM1
       byte-identical. Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S4.3.
-- [ ] S4.4 Declared cap policy when activation is requested beyond the envelope (refuse vs queue),
-      reported rather than resolved by allocating.
+- [x] S4.4 Declared cap policy when activation is requested beyond the envelope (refuse vs queue),
+      reported rather than resolved by allocating. **CHECKED 2026-10-01 — the policy is settled as
+      accept-and-schedule, and the report now names its holder.** The question this task asked (refuse vs
+      queue) is answered by the change's own logged contract rather than re-decided: **DEC-078 item 1** makes
+      acceptance unconditional and schedules execution ("the user never re-issues"), so the activation
+      *proceeds* and is ordered by the existing accepted-interaction latch / retained-request machinery;
+      refusing here would change the admission envelope (`IMPLEMENTATION_CONTRACT.md` §2 returns that to the
+      architect) and would reject supported multi-slot flows. It is also never *resolved by allocating*: the
+      enforcing caps stay the lease's own (`WorkingSetLeaseTable`), which refuse at the point of custody.
+      **What this slice adds (firmware, diagnostic-only; no admission, ordering or resource behaviour
+      changes):** `Track::reportEnvelopeBreachIfAny` now returns the slot that holds the class it reported
+      for (`kNoWorkingSetClassHolder` when there is nothing to report) and the row names it
+      (`#MEM_DENIED,…,reason=cap_reached,class=<bit>,holder=<slot0|255>,…`), so the signal is attributable
+      instead of anonymous — and the case the contract *requires* (an outgoing finalizer beside an incoming
+      capture, DEC-078 item 5) is diagnosable rather than a silent false positive. The `PIO_UNIT_TEST_NATIVE`
+      branch records the report it was asked to make (`MemoryMonitor::nativeTestCapDenials()`), so the policy
+      path is **host-assertable for the first time** — the previous record's "the emitted line is a device
+      observation, not host-assertable" is what this closes. **Fixtures:** the existing breach fixture now
+      asserts the empty census reports nothing, the check allocates no runtime (not even for the slot it
+      inspects) and takes no pool chunks, the breach names slot 0 as the holder with class bit 1
+      (`LiveCapture`), the admission proceeds, and the *production* admission path reports it (one report per
+      check); new `test_s4_4_the_breach_report_names_the_finalizing_holder_instead_of_hiding_it` drives the
+      required finalizer-plus-incoming pair, asserts the report names the **finalizing** slot as holder, and
+      asserts the incoming activation is admitted with the finalizer still in flight. **Red-proved three
+      times, each restored byte-identically:** dropping the holder fails both fixtures (*Expected 0 Was 255*);
+      *excluding* finalizing holders from the census (the candidate correction) fails the finalizing-holder
+      fixture, so the fixture discriminates the two possible corrections rather than blessing either; making
+      the census allocate fails the no-allocation assertion. Focused suite **31/31**; full native **2,646
+      cases / 2,639 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` **SUCCESS** with the RAM1
+      line **byte-identical** (`variables 96,192 / ITCM 393,216 (code 391,288 + padding 1,928) / locals
+      34,880`, floor 840) — the check is `TRACK_COLD_MEM` and the row is `FLASHMEM`-resident. **Still owed, and
+      named rather than implied:** the census itself still counts a slot whose capture has stopped as a
+      `LiveCapture` holder (correcting that is **S4b's role-transfer work**, per DEC-078 item 5 and § S4b.1);
+      the new `holder=` field has no device observation yet (no run has emitted a `cap_reached` row since the
+      change, and nothing in `scripts/` parses `#MEM_DENIED`, so the field is additive). Recorded as
+      **DEC-100**.
       **PARTIAL 2026-09-25 — the breach is reported; refuse-vs-queue is deliberately NOT settled.**
       `Track::reportEnvelopeBreachIfAny(slot, role)` reads the per-slot lease census (no storage) and, when
       a class is already held at its declared cap, reports `#MEM_DENIED,reason=cap_reached,class=N` via the

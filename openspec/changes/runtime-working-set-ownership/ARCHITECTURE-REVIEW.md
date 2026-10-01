@@ -8730,3 +8730,58 @@ slot-runtime lifecycle counter. No current caller needs them unified, and unifyi
 that a finalizing interval keeps its lease until its slot is actually released. (3) The `NotHeld` silence is a
 rule of the *sweep* (`if (outcome != WorkingSetOutcome::NotHeld)`), not of the label, so it is
 device-observable only — which is exactly why the reader treats an absent row as absence rather than failure.
+
+## S4.4 — the declared cap policy: accept-and-schedule, and the report names its holder (2026-10-01)
+
+**The question, and where its answer already lived.** S4.4 asks what happens when an activation is requested
+beyond the declared envelope — refuse or queue — with the breach *reported* and never resolved by allocating.
+The 2026-09-25 slice reported the breach and deliberately left the question open. It is not open: **DEC-078 item
+1** logs the contract this change exists to implement — "acceptance is unconditional; execution is scheduled …
+the user never re-issues" — so the activation proceeds and the existing accepted-interaction latch and retained
+requests do the ordering. Refusing at the admission entry would *change the admission envelope*, which
+`IMPLEMENTATION_CONTRACT.md` §2 returns to the architect, and would reject supported multi-slot flows (the first
+cut broke eleven fixtures). "Resolved by allocating" is excluded by the same contract: the enforcing caps are the
+lease's own (`WorkingSetLeaseTable`), which refuse at the point of custody, and §2 forbids pre-provisioning.
+Recorded as **DEC-100**; no new product decision was needed, and this slice implements the policy's
+consequences.
+
+**What was still missing, and is now built (diagnostic-only; no admission, ordering or resource change).**
+1. **The report was anonymous.** `#MEM_DENIED,…,reason=cap_reached,class=N` named a class bit and nothing else,
+   so an operator could not tell "the envelope was really exceeded" from "the outgoing finalizer was counted as a
+   second live capture" — the exact mislabel § S4b.1 corrected the record with. `Track::reportEnvelopeBreachIfAny`
+   now returns the **holder** (`kNoWorkingSetClassHolder` = 0xFF when there is nothing to report) and the row
+   carries `holder=<slot0|255>`; the first holder in slot order is named when several hold the class.
+2. **The policy path was device-only.** § S4.4's own limit was "the emitted line is a device observation, not
+   host-assertable". The `PIO_UNIT_TEST_NATIVE` branch of `MemoryMonitor` now records what the owner asked to
+   report (`nativeTestCapDenials()` / `resetNativeTestCapDenials()`) — the same seam pattern as
+   `setNativeForcedReserveDenied` — so the breach, its class and its holder are assertable on the host.
+
+**Fixtures.** `test_a_declared_envelope_breach_is_reported_and_does_not_block_activation` (tightened) asserts the
+empty census reports nothing and records nothing, that the check allocates no slot runtime — not even for the
+slot it inspects, which is what separates censusing from preparing — and takes no pool chunks, that the breach
+names slot 0 as the holder with class bit 1 (`LiveCapture`), that the activation is admitted, and that the
+*production* admission path reports the breach itself (one report per check).
+`test_s4_4_the_breach_report_names_the_finalizing_holder_instead_of_hiding_it` (new) drives the pair the
+contract requires — an admitted (live) finalizer on slot 0, the incoming activation on slot 1 — and asserts the
+report names the **finalizing** slot as holder while the incoming activation is admitted and the finalizer stays
+in flight. That fixture is deliberately a *recorded fact*, not a fix: the census counts a slot whose capture has
+stopped as a `LiveCapture` holder, and correcting it is S4b's role-transfer work (DEC-078 item 5, § S4b.1).
+
+**Red-proofs, each restored byte-identically.** (1) Dropping the holder from the report/return fails both
+fixtures (*Expected 0 Was 255*). (2) **Excluding** finalizing holders from the census — the candidate correction
+— fails the finalizing-holder fixture, so the two possible corrections are discriminated rather than either being
+blessed in passing. (3) Letting the census allocate the slot it inspects fails the no-allocation assertion.
+
+**Gates.** Focused suite **31/31**; full native **2,646 cases / 2,639 succeeded / 7 skipped / 0 failed**;
+`teensy41-capture-serial` **SUCCESS** with the RAM1 line **byte-identical** (`variables 96,192 / ITCM 393,216
+(code 391,288 + padding 1,928) / locals 34,880`, floor 840), consistent with the change sitting in
+`TRACK_COLD_MEM`/`FLASHMEM` code rather than in RAM1 state. Nothing stores the census: the check still reads the
+per-slot lease state and returns its answer by value.
+
+**Not claimed.** The policy is not enforced, so nothing is refused and nothing is queued *by this check* — the
+queue is the interaction layer's, already covered by its own fixtures
+(`test_the_arm_and_wait_requeue_retains_then_executes_exactly_once`,
+`test_a_start_refused_by_its_own_live_stop_obligation_retries_to_a_single_take`), and cited rather than
+duplicated here. The new `holder=` field has no device observation yet: no run has emitted a `cap_reached` row
+since the change, and nothing under `scripts/` parses `#MEM_DENIED`, so the field is additive to the row's
+readers.

@@ -209,9 +209,10 @@ struct TrackCaptureStopTestAccess {
     return rt != nullptr && rt->ledger.isActive(1, note);
   }
   static void clearAllLedgersForTests(Track& track) { track.playbackRuntime.clearAllLedgers(); }
-  /// S4.4: report a declared-envelope breach if the activation would exceed a class cap.
-  static void reportEnvelopeBreachIfAny(const Track& track, uint8_t slot, WorkingSetRole role) {
-    track.reportEnvelopeBreachIfAny(slot, role);
+  /// S4.4: report a declared-envelope breach if the activation would exceed a class cap. The answer is the
+  /// slot holding the class it reported for (`kNoWorkingSetClassHolder` when there is nothing to report).
+  static uint8_t reportEnvelopeBreachIfAny(const Track& track, uint8_t slot, WorkingSetRole role) {
+    return track.reportEnvelopeBreachIfAny(slot, role);
   }
   /// S4.1/S4.2: the `(slot, generation)` release entry and the identity a caller must present.
   static uint16_t slotGeneration(Track& track, uint8_t slot) {
@@ -999,14 +1000,44 @@ void test_a_declared_envelope_breach_is_reported_and_does_not_block_activation()
   commitRecordPassIntoTrackSlot(track, 0);
   commitRecordPassIntoTrackSlot(track, 1);
 
-  // Control: with nothing holding the class, there is no breach to report.
-  track.reportEnvelopeBreachIfAny(0, WorkingSetRole::LiveCapture);
+  // Control: with nothing holding the class there is no breach, and the check *says so* instead of
+  // reporting an anonymous denial. The check is a read: censusing eight slots must not allocate a slot
+  // runtime (S4.4's "reported rather than resolved by allocating" starts with the check itself).
+  MemoryMonitor::resetNativeTestCapDenials();
+  const uint16_t chunksBeforeCheck = LoopEventStore::freeChunkCount();
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      kNoWorkingSetClassHolder,
+      TrackCaptureStopTestAccess::reportEnvelopeBreachIfAny(track, 0, WorkingSetRole::LiveCapture),
+      "with no holder there is nothing to report");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, MemoryMonitor::nativeTestCapDenials().count,
+                                   "an empty census must not report a breach");
+  // ...including for the very slot it inspects: asking about an unallocated slot must not *create* its
+  // runtime, which is the difference between censusing and preparing.
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::runtimeAllocated(track, 7));
+  (void)TrackCaptureStopTestAccess::reportEnvelopeBreachIfAny(track, 7, WorkingSetRole::LiveCapture);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, 7),
+                            "the census must not allocate a runtime for the slot it inspects");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(chunksBeforeCheck, LoopEventStore::freeChunkCount(),
+                                   "the check must take no pool chunks");
+
   TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true),
                            "the first activation must be admitted");
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 0));
 
-  // Slot 1's activation would put a second live-capture role on the track. It must still be admitted,
-  // and the breach must be reportable as policy rather than surfacing as an allocation failure.
+  // Slot 1's activation would put a second live-capture role on the track. The breach must be reported
+  // **with the slot that holds the class** -- not as an anonymous `class=N` -- and the activation must
+  // still be admitted: the policy is report, never refuse (DEC-078 item 1), and never resolved by
+  // allocating more.
+  MemoryMonitor::resetNativeTestCapDenials();
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      0, TrackCaptureStopTestAccess::reportEnvelopeBreachIfAny(track, 1, WorkingSetRole::LiveCapture),
+      "the report must name the slot holding the class");
+  const MemoryMonitor::NativeCapDenial denial = MemoryMonitor::nativeTestCapDenials();
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, denial.count, "the breach must be reported once");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, denial.lastHolderSlot, "slot 0 holds the class");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, denial.lastRoleClass,
+                                  "the class is the LiveCapture bit, which is what the device row names");
+
   TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(1, true),
                            "a declared-cap breach must not block a supported activation");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, 1),
@@ -1016,6 +1047,65 @@ void test_a_declared_envelope_breach_is_reported_and_does_not_block_activation()
       hasRole(TrackCaptureStopTestAccess::workingSetRolesOf(track, 0), WorkingSetRole::LiveCapture));
   TEST_ASSERT_TRUE(
       hasRole(TrackCaptureStopTestAccess::workingSetRolesOf(track, 1), WorkingSetRole::LiveCapture));
+  // ...and the production admission reported the breach itself, not only the explicit call above: one
+  // report per check, so the counter is 1 (the explicit call) + 1 (the admission's own check).
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(2, MemoryMonitor::nativeTestCapDenials().count,
+                                   "the admission path reports the breach it meets");
+}
+
+
+/// **S4.4 — the report names the holder, and a *finalizing* holder is exactly what it names.**
+///
+/// The declared envelope says one live capture per track, and the census counts **raw role bits**: a slot
+/// whose capture has stopped keeps `LiveCapture` until its working set is released. So the pair the
+/// contract *requires* -- an outgoing finalizer beside an incoming capture (DEC-078 items 5/6, the case
+/// S4b.1 corrected the record with) -- still counts as a second live-capture holder. This fixture pins
+/// that as a **diagnosable fact** rather than a silent false positive: the report names the finalizing
+/// slot as the holder, and the activation is admitted (S4.4's policy: report, never refuse). Correcting
+/// the census itself is S4b's role-transfer work, so this is the fact its slice starts from.
+void test_s4_4_the_breach_report_names_the_finalizing_holder_instead_of_hiding_it() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kFinalizing = 0;
+  constexpr uint8_t kIncoming = 1;
+  commitRecordPassIntoTrackSlot(track, kFinalizing);
+  commitRecordPassIntoTrackSlot(track, kIncoming);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kFinalizing, true));
+
+  // Slot 0's capture ends: its stop is admitted (a deferred finalization), so its `LiveCapture` role is
+  // now the outgoing one while slot 1 is the incoming capture.
+  // The overdub runs on the *outgoing* slot, so the incoming one is still un-leased when it is asked to
+  // activate -- otherwise its own admission would already hold the class and there would be nothing to
+  // report (the check treats an idempotent re-admission as no breach).
+  TrackCaptureStopTestAccess::selectSlot(track, kFinalizing);
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::startOverdubbing(track, 96);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::appendCaptureNote(track, 96, 120, 60));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::admitStopForSlot(track, PendingStopDestination::Playing, 96,
+                                                                kFinalizing, /*interval=*/1));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kFinalizing),
+                           "the fixture needs an admitted — i.e. live — finalizer");
+  TEST_ASSERT_TRUE(hasRole(TrackCaptureStopTestAccess::workingSetRolesOf(track, kFinalizing),
+                           WorkingSetRole::LiveCapture));
+
+  // The incoming activation is reported as a breach and names the finalizing slot as its holder.
+  MemoryMonitor::resetNativeTestCapDenials();
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      kFinalizing,
+      TrackCaptureStopTestAccess::reportEnvelopeBreachIfAny(track, kIncoming, WorkingSetRole::LiveCapture),
+      "the report must name the finalizing slot that still holds the class");
+  const MemoryMonitor::NativeCapDenial denial = MemoryMonitor::nativeTestCapDenials();
+  TEST_ASSERT_EQUAL_UINT16(1, denial.count);
+  TEST_ASSERT_EQUAL_UINT8(kFinalizing, denial.lastHolderSlot);
+
+  // ...and the activation is admitted, so the required pair is not blocked by the declaration.
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(kIncoming, true),
+                           "the required finalizer-plus-incoming pair must be admitted");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, kIncoming));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kFinalizing),
+                           "the finalizer must still be in flight after the incoming admission");
 }
 
 
@@ -2266,6 +2356,8 @@ int main() {
   RUN_TEST(test_s4_1_the_retired_slots_lease_is_released_once_its_finalization_retires);
   RUN_TEST(test_reactivating_a_released_slot_reuses_its_capacity);
   RUN_TEST(test_a_declared_envelope_breach_is_reported_and_does_not_block_activation);
+  // S4.4 -- the breach report names its holder, including the finalizing holder the census still counts.
+  RUN_TEST(test_s4_4_the_breach_report_names_the_finalizing_holder_instead_of_hiding_it);
   RUN_TEST(test_switching_starts_the_new_take_while_the_previous_take_still_finalizes);
   RUN_TEST(test_a_blocked_switch_and_start_survive_until_its_prerequisite_stop_binds);
   // The successor's take must COMMIT with content -- the device failure a start marker hid.

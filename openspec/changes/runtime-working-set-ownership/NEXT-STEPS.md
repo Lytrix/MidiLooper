@@ -136,11 +136,13 @@ named".
 
 ## Recommended next slice
 
-S4.4 is the next unchecked native item in S4, but its remainder is a **decision**, not an implementation step:
-nothing is refused today, and settling refuse-vs-queue beyond the declared envelope needs either a cap the
-resource model also enforces or an architecture call on per-track cardinality (which is S4b's role-transfer
-work). Until that decision is taken, the candidates below are the eligible native work; every remaining device
-leg (S4.2/S4.3/S4.4 device byte deltas, S4b, phases B–E) and F4's SD-fault evidence needs a per-session device
+S4.4 is done (accept-and-schedule, reported with its holder; see the section above), so the remaining native
+candidates are **S4b's own cases**: the **cross-track** switch while a predecessor finalizes, and **repeated
+switches B → C while A still finalizes**, which need the explicit **bounded-overlap** policy (`Omax = NUM_TRACKS`
+inbound holders; an outbound live/finalizing role is already counted and is never released to satisfy O) rather
+than an assumed-unbounded accumulation — plus the recorded tightening of S4b.1's finalizer-pause lever into a
+phase-specific pause. S4.5 and the S4 gate close with S4f/P3, not before. Every remaining device leg
+(S4.2/S4.3/S4.4 device byte deltas, S4b, phases B–E) and F4's SD-fault evidence needs a per-session device
 authorization.
 
 ## Other candidates and why not first

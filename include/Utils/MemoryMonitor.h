@@ -174,13 +174,19 @@ bool admitOperationMemory(OperationKind operation, uint32_t marginBytes);
 void reportPrewarmAdmissionDenied(OperationKind operation);
 
 /**
- * @brief Report that an operation was denied by a **declared** working-set envelope cap.
+ * @brief Report that an activation meets a **declared** working-set envelope cap.
  *
- * S4.4: a refusal at a declared cap is a policy outcome, not an allocation failure, so it is
- * reported with its own reason (`cap_reached`) and the class index that is full. Reporting it separately
+ * S4.4: a class held beyond its declared cardinality is a policy outcome, not an allocation failure, so it
+ * is reported with its own reason (`cap_reached`) and the class index that is full. Reporting it separately
  * keeps "we declined to exceed the envelope" from being read as "the pool ran out".
+ *
+ * `holderSlot` is the slot that already holds that class, or `kNoWorkingSetClassHolder` (0xFF) when none
+ * does. The holder is what makes the signal usable: the census reads raw role bits, so a slot whose capture
+ * has already stopped still counts as a holder, and the row must name it rather than leave it to be guessed.
+ *
+ * The row is `#MEM_DENIED,<us>,op=<op>,reason=cap_reached,class=<bit index>,holder=<slot0|255>,need=0B,…`.
  */
-void reportDeclaredCapDenied(OperationKind operation, uint8_t roleClassIndex);
+void reportDeclaredCapDenied(OperationKind operation, uint8_t roleClassIndex, uint8_t holderSlot);
 
 /**
  * @brief Advisory pressure signal (Phase 1A — compute + telemetry only).
@@ -203,6 +209,17 @@ void resetNativeTestPressureInputs();
 /// Force `admitOperationMemory` to deny, so a test can assert that a failed required
 /// prewarm refuses admission rather than being ignored.
 void setNativeForcedReserveDenied(bool denied);
+/// The declared-cap report is a device `printf`, so a host fixture cannot read the row. This records what
+/// the owner asked to report, which is what makes S4.4's policy path host-assertable for the first time:
+/// the count of reports, the class bit last named and the holder last named (`kNoWorkingSetClassHolder`
+/// when none). Nothing consults it outside `PIO_UNIT_TEST_NATIVE`.
+struct NativeCapDenial {
+  uint16_t count = 0;
+  uint8_t lastRoleClass = 0;
+  uint8_t lastHolderSlot = 0;
+};
+NativeCapDenial nativeTestCapDenials();
+void resetNativeTestCapDenials();
 #endif
 
 }  // namespace MemoryMonitor
