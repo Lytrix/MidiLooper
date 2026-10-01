@@ -466,7 +466,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       measured on the revalidation boot (`free_chunks=450` vs required 16 → met; reservation 512→480 then
       480→480, `credits=0` on 16 rows), and the next step is to resolve the save/restore survival of a new
       scratch payload — a state-changing investigation, not another read-only trace.
-- [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
+- [x] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
       many canonical chunks those roots pin** via `SlotPassReferences` (the B10 baseline).
       **Clause 1 MEASURED 2026-09-23** (dense PASS run, no new telemetry): the undo root retains essentially the
       whole snapshot arena — **≈2,635–2,659 KB over 83–84 live slabs**, releasing only ~17 KB on undo and
@@ -483,6 +483,26 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       **pass/slot** count, which is what `SlotPassReferences` holds; the *chunk* footprint of those passes needs
       each pass's chunk list, deliberately not smuggled in at 64 B of headroom.
       See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S1.4 undo-residency baseline.
+      **Clause 3 (the pass -> chunk conversion) MEASURED 2026-10-01 — no device telemetry needed, so the 64 B of
+      headroom was never spent.** The conversion is a storage-layer property, so it is measured on the real transfer
+      path in the store's own host suite:
+      `test_pass_chunk_conversion_bounds_the_pinned_footprint` (`test_loop_event_store`, 43/43) appends a
+      deliberately unaligned pass (3 x `CHUNK_CAPACITY` + 5 events), detaches it through the production transfer
+      (`detachChunksToCommittedChunkIds`), and asserts the pass holds exactly `ceil(E / CHUNK_CAPACITY)` chunks —
+      **the conversion**, so the pin scales with the pinned *pass count* and never with loop length. Measured device
+      sizes for the byte form: `sizeof(MidiEvent) = 20`, `CHUNK_CAPACITY = 256`, **`sizeof(EventChunk) = 5,132 B**
+      (5,120 of events + 12 of header) on the cortex-m7 ABI, cross-compiled from the real headers. So clause 2's
+      device maximum — **8 pinned passes** — is at this density **32 chunks = 164,224 B (~160 KiB)**, roughly **6 %
+      of the 2,635-2,659 KB arena retention clause 1 measured**: the two clauses are compatible because the undo
+      root's *arena* is the big term, not its chunk pin. **Red-proof:** dropping the tail chunk in the transfer
+      (`tryAssignCommittedChunkIds(..., count - 1)`) fails this fixture at *"Expected 4 Was 3"* (and two pre-existing
+      transfer fixtures), with `src/LoopEventStore.cpp` restored byte-identically (sha256 `74e2571447d59fb1…`).
+      **Honest note on the fixture's teeth:** mutating `CHUNK_CAPACITY` (256 -> 128) does **not** fail it, because the
+      expectation is derived from the same constant — and that constant is already pinned where it belongs
+      (`test_append_fills_chunks_without_realloc_pattern`, *"Expected 2 Was 3"* under that mutation). This fixture's
+      job is the **path** relationship, not the constant. Full native **2,667 cases / 7 skipped / 2,660 succeeded /
+      0 failed**; `teensy41-capture-serial` SUCCESS, RAM1 unchanged (`variables 96,192 / ITAG 393,216 = code 391,496
+      + padding 1,720`, 880 B above the floor) on a test-only change.
 - [ ] S1.5 **Boot/load residency baseline (B7):** with N committed slots, record the pool chunks and bytes that
       `TrackManager::prewarmPlaybackRuntime` reserves before any activation (today 8 chunks / 41,056 B per
       committed slot), the free-chunk count, and the smallest N at which a 24-bar overdub is refused.
@@ -622,6 +642,15 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       is **satisfied** (three-boot manifest PASS 2026-09-24), so the sweep was re-run and S1.3 closed;
       S1.5's clause needs a lower-N target or an explicit boundary decision, not another library-stability
       run.
+      **Consolidated update 2026-10-01.** **S1.4 is checked** (its third clause — the pass -> chunk conversion —
+      measured on the host transfer path; see the S1.4 row). **What remains open is exactly one item:** **S1.5's
+      *overdub* refusal-N** — the bracket is still **(2, 56]** and the 2026-09-25 attempt was refused in the *record*
+      phase before the overdub reserve admission was reached, so it needs **a lower-N target or an explicit boundary
+      decision** (the gate's own words), not another library-stability run. Every other clause this gate ever carried
+      is satisfied and cited: the native suite and the enforced RAM1 line (re-verified 2026-10-01 at **2,667 cases /
+      7 skipped / 2,660 succeeded / 0 failed**, `padding 1,720` ≥ 840), the red fixture (S1.2), S1.1's per-owner
+      census, S1.3's slope (checked 2026-09-25), S1.4's three clauses, and S1.5's boot/load baseline with the
+      per-committed-slot reservation flat at zero across every measured boot (S2b gates' eight-boot sweep).
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
@@ -731,6 +760,16 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       and feeds the derived N from S2.3.
 - [ ] S2 gates: S1 gates plus the lease-size measurement and the cap derivation recorded; existing
       playback-prewarm fixtures still green.
+      **Its two own clauses are satisfied 2026-10-01; the gate waits only on S1 gates' single remainder (S1.5's
+      overdub refusal-N).** *Lease-size measurement:* the `P` class is measured on the target ABI in
+      [`S2C1-PLAYBACK-WINDOW-LEASE.md`](S2C1-PLAYBACK-WINDOW-LEASE.md) — **331 KiB per holder** windowed-only, 831 KiB
+      whole-take, with 35 B/event and four exact cross-checks against `ExecutionBounds.md`. *Cap derivation:*
+      [`S2C23-CLASS-BUDGET.md`](S2C23-CLASS-BUDGET.md) charges §2's envelope per class with source-derived holder
+      maxima (`Cmax = Dmax = Omax = 8`, `Imax = 1`), reports the conservative sum as **not fitting** (12,626 KiB
+      against 8,192) with the representative cases fitting, and records `N` as **provisional, bounded by phase F**.
+      *Existing playback-prewarm fixtures:* `test_playback_prewarm` is green in the 2026-10-01 full native run
+      (**2,667 cases / 7 skipped / 2,660 succeeded / 0 failed**). What this gate does **not** claim: a proved `N`
+      (`N x P` is not the memory law until phase F lands).
 
 - [ ] S2.9 **EXTRACTED (2026-09-19, Revision 18 § 3) — not a task of this change.** The decoupling of active
       playback from whole-loop snapshot residency moves to the sibling change
