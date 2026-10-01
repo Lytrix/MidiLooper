@@ -1881,6 +1881,32 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       the new turn is `FLASHMEM`, and FLASH code grows 120 B), firmware hex sha256
       `257adab1a5ab7dac98bed728aa37bed9a6a1caf1324ac068f5e963028cb4e6a4`. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.7 — the provisioning turn the contract named".
+      **THE OWED ITEMS ARE DISCHARGED 2026-10-01 (third slice).** Two things this entry recorded as owed are now
+      measured and asserted, and both came from one root cause: the merged window is gathered from the loop's
+      **published snapshot root**, which a hand-committed fixture slot has none of (`GatherMissHoldEmpty`).
+      **A published-root fixture exists:** `publishBarSpacedRootForSlot` installs a *current* root through the
+      existing test seam (`Loop::storePublishedSnapshotForTest`) with the same bar-spaced content the slot
+      commits — the state a **restored** slot has — and `test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn`
+      drives a **24-bar** target (above `kMaxDetailedWindowBars` = 16 bars, i.e. the demoted policy) end to end:
+      the production press queues the switch with nothing taken inline, the clock lane does not commit it, the
+      `SlotProvision` turn takes the occupancy **and** builds the window, `isPlaybackMergedMidiEventsReadyForSlot`
+      becomes **true**, and the switch **commits**. So the demoted-target clause ("no dead switch") is no longer
+      owed. **The turn's merged-window half is red-provable now**: dropping `ensurePlaybackMergedEventsForSlot`
+      from the turn fails that fixture at *"the turn's build is only ready when the slot has a published root"*
+      (the same mutation left all 36 fixtures green before this slice). **And the hold carries its age/bound**
+      (see S4b.7's record): `test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound` drives the
+      same demoted target with **no** root, where the occupancy is taken but the window can never be ready, and
+      asserts: no commit, the switch still pending (**not dropped**), **exactly one** report at/after the bound
+      naming track 0 and the target slot, no re-report on further turns, and a **second** episode (cancel, turn
+      while nothing is pending, press again) reporting on its own account. Both fixtures red-proved: the
+      root-backed one by removing the published root and by removing the turn's build; the bounded one by
+      disabling the age test. Focused suite **38/38**; `test_midi_service_drain` **37/37** (the age test's own
+      pins: unset sentinel, one-tick-short, inclusive bound, wrap safety, zero-means-unbounded);
+      full native **2,655 cases / 2,648 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS with
+      RAM1 `variables 96,192 / code 391,288 + padding 1,928 / locals 34,880` — the mask fits the class's existing
+      padding, so this slice costs **no RAM1 variable** and the code is FLASH/ITCM-neutral.
+      Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.7 — the demoted target, the published
+      root, and the bounded hold".
 - [ ] S4b.8 **HITL — slot switch while a predecessor finalizes, transport playing (the switch leg alone).**
       Managed run: record A → stop A → switch to B **while A is still finalizing** → assert the switch is accepted
       and completes, `activeLoopIndex` does not move before A's stop is admitted and bound to A's slot, the

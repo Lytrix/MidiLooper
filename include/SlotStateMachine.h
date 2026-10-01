@@ -33,6 +33,10 @@ public:
   SlotQuantization getPendingSlotQuantization(uint8_t trackIndex) const;
 
   /// Queue a pending slot switch (transient; cleared when committed or cancelled).
+
+  /// S4b.7: the tick a pending switch was queued at (`UINT32_MAX` when there is none). The bounded hold's age
+  /// is measured from it, so the hold needs no timestamp of its own.
+  uint32_t getPendingQueuedAtTick(uint8_t trackIndex) const;
   void requestPendingSlotSwitch(uint8_t trackIndex,
                                  uint8_t slotIndex,
                                  SlotQuantization quantization,

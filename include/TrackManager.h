@@ -203,8 +203,13 @@ public:
   /// switch needs provisioning (`MidiServiceDrain::slotProvisionNeeded`), provisions that target and then
   /// runs `ensurePlaybackMergedEventsForSlot` on it, which is the merged-window build that releases the
   /// long-loop pending hold. Returns whether the turn did work; a refusal reports and leaves the switch
-  /// pending for a later turn.
+  /// pending for a later turn. It also carries the hold's **age/bound**
+  /// (`SlotProvisionHold::holdExceeded`): a switch still pending past it is reported once per episode and left
+  /// exactly as it was.
   bool servicePendingSlotProvision();
+  /// S4b.7: report the bounded hold once for one track's current pending switch. A report, not a decision —
+  /// nothing moves, so a later turn can still satisfy the switch.
+  void reportSlotSwitchHold(uint8_t trackIndex, uint8_t slotIndex, uint32_t ageTicks);
   /// Piano roll + loop LEDs when preview launch is queued or split focus is reaffirmed.
   void refreshPreviewSlotFocus(uint8_t trackIndex, uint8_t slotIndex);
   /// Bar/16th phase slot: playing slot while transport runs, preview slot when stopped.
@@ -284,6 +289,12 @@ private:
   uint8_t deferredPlaybackPrewarmTrack_ = 0;
   uint8_t deferredPlaybackPrewarmSlot_ = 0;
 
+
+  /// S4b.7: one bit per track — has the bounded-hold terminal already been reported for this track's *current*
+  /// pending switch? Packed and cleared when the switch is gone, so the report fires once per episode rather
+  /// than once per turn or once per boot. `Config::NUM_TRACKS <= 8` is static-asserted for it.
+  uint8_t slotSwitchHoldReportedMask_ = 0;
+  static_assert(Config::NUM_TRACKS <= 8, "slotSwitchHoldReportedMask_ is a one-byte bit set");
   // S3.3: the native fixtures read the selection mechanism directly, so a selection-cost assertion
   // does not have to route through the storage-side focus hook (a fail-closed boundary in the
   // continuous-capture harness).

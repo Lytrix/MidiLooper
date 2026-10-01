@@ -9045,3 +9045,48 @@ fixture on the windowed publication lane (S4c/F). Also still owed from the same 
 `code 391,288 + padding 1,928 / locals 34,880` (floor 840) — ITCM returns to its pre-slice value because the new
 turn is `FLASHMEM`, and FLASH code grows by 120 B; firmware hex sha256 `257adab1…`. The board was flashed with
 the *previous* image in this session (authorized); this image is **not** flashed.
+
+## S4b.7 — the demoted target, the published root, and the bounded hold (2026-10-01, third slice)
+
+**One root cause had two faces, and this slice closes both.** The previous slice recorded two owed items and named
+their cause: the merged window is gathered from the loop's **published snapshot root**, so for a hand-committed
+fixture slot the gather misses and the window stays empty (`GatherMissHoldEmpty`). That made (a) the *demoted*
+target — above `kMaxDetailedWindowBars`, 16 bars, i.e. the windowed policy — unable to commit even after
+provisioning, and (b) the `SlotProvision` turn's `ensurePlaybackMergedEventsForSlot` half **unprovable**: removing
+it left all 36 fixtures green.
+
+**The fixture side: a root that a restored slot would have.** `publishBarSpacedRootForSlot` builds a `LoopSnapshot`
+through `LoopSnapshotConstruction` and installs it with the existing test seam
+(`Loop::storePublishedSnapshotForTest`), asserting the root is *current*. Two details were measured rather than
+assumed: the windowed gather walks the snapshot's **event** membership (`gatherPublishedSnapshotMembership` reads
+`eventMembership(bar)`), so the change set must carry `SnapshotEventChange`s and not only notes — the first attempt
+populated notes alone and the probe showed `gathered=1 events=0`; and the demoted loop's window is two bars centred
+on the playhead (`kMergedMidiEventsGatherBars`), so the root's events must be spread across the loop rather than
+clustered at tick 0. With both, the probe reads `gathered=1 path=Snapshot events=4`.
+
+**The behavior side: an age/bound, and a terminal that reports instead of deciding.** `SlotProvisionHold`
+(`kBoundBars = 4`, converted with `Config::TICKS_PER_BAR`) with a wrap-safe `holdExceeded`; the age comes from the
+pending switch's own `pendingQueuedAtTick` (the state machine already stamps it, so the bound adds no timestamp);
+one packed bit per track makes the report **once per episode** (cleared when the track has no pending switch); and
+the check runs on the off-clock turn **regardless of whether that turn could make progress**, because the case the
+bound exists for is a switch whose occupancy *was* taken and which still cannot commit. The terminal names the
+switch (`slot_switch_hold_exceeded`, with track/target/age) and **nothing moves** — the pending switch, the latch,
+the enabled-set replacement and any retained start stay as they were, so DEC-078 item 1 survives the bound.
+
+**What is asserted, and how it was attacked.** Two fixtures on the same helper, differing only in whether the root
+exists. With it: press → nothing inline → clock lane does not commit → the turn takes the occupancy *and* builds
+the window → `isPlaybackMergedMidiEventsReadyForSlot` **true** → **commit**. Without it: the occupancy is taken and
+the window can never be ready → no commit, switch **retained**, **exactly one** report at/after the bound naming
+track 0 and the target, no re-report on further turns, and a **second episode** (cancel, a turn while nothing is
+pending, press again) reporting on its own account. Red-proved three times, each restored byte-identically:
+removing the published root, removing the turn's build (which now fails, closing (b)), and disabling the age test.
+The drain suite pins the age test's own edges (unset sentinel, one-tick-short, inclusive bound, wrap safety,
+zero-means-unbounded).
+
+**Evidence.** Focused suite **38/38**; `test_midi_service_drain` **37/37**; full native **2,655 cases / 2,648
+succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` **SUCCESS** with RAM1
+`variables 96,192 / code 391,288 + padding 1,928 / locals 34,880` (floor 840) — the hold's mask fits the class's
+existing padding, so the slice costs no RAM1 variable and no ITCM. Firmware hex `d3b9d2b1…`, **not flashed** (the
+board still runs the earlier image; an upload needs a fresh ask). **Recorded, not claimed:** the terminal has no
+device observation yet, and the 4-bar bound is argued from the two known waits rather than from a device
+measurement of the hold's distribution.

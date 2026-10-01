@@ -91,6 +91,10 @@ bool sequencerRunning = false;
 #include "../../src/EditManager/NoteGeometryResolver.cpp"
 // S4b.7: the `SlotProvision` turn's own eligibility predicate (`slotProvisionNeeded`), so a fixture can
 // assert the turn's work without re-stating it.
+// S4b.7: the bounded hold's own age test and named terminal, and the snapshot root the demoted target's merged
+// window is gathered from (`storePublishedSnapshotForTest` is the existing test seam).
+#include "Utils/SlotProvisionHold.h"
+#include "LoopSnapshot.h"
 #include "Utils/MidiServiceDrain.h"
 #include "../../src/EditManager/EditSessionInteraction.cpp"
 // The switch lane's production TUs: the playback hot path (silence owners + `playMidiEvents`), the
@@ -2813,6 +2817,213 @@ void test_s4b_6_a_switch_to_a_multi_bar_target_without_occupancy_also_provisions
   assert_s4b_6_a_switch_provisions_off_clock(6144);
 }
 
+// --- S4b.7: the demoted (windowed-policy) target, with and without a published root ------------------------
+
+/// Commit a bar-spaced pass: one note per bar, so any windowed gather of this slot finds events no matter
+/// where the playhead is. The demoted shape needs spread content for the same reason a restored slot has it --
+/// a window centred on the playhead must not fall on empty space.
+void commitBarSpacedPassIntoTrackSlot(Track& track, uint8_t slot, uint32_t bars) {
+  TrackCaptureStopTestAccess::selectSlot(track, slot);
+  Loop& loop = track.getActiveLoop();
+  loop.loopLengthTicks = bars * 768;
+  loop.beginCapture(CapturePhase::Record);
+  for (uint32_t bar = 0; bar < bars; ++bar) {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(bar * 768, 1, 48, 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(bar * 768 + 48, 1, 48, 0)));
+  }
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(bars * 768, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+}
+
+/// Install a **published snapshot root** for `loop` with the same bar-spaced notes. This is the state a
+/// *restored* slot has (SD load publishes a root) and the only source the merged-window build gathers from
+/// (`Loop::tryGatherPublishedSnapshotEventsInWindow`); a hand-committed slot has none, which is the
+/// `GatherMissHoldEmpty` case. Same recipe as `test_loop_take_survival`'s root fixtures.
+void publishBarSpacedRootForSlot(Loop& loop, uint32_t bars) {
+  auto empty = std::make_shared<const LoopSnapshot>(
+      LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
+  LoopSnapshotChangeSet changes;
+  for (uint32_t bar = 0; bar < bars; ++bar) {
+    SnapshotNoteChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.noteId = static_cast<NoteId>(2000 + bar);
+    add.next.pitch = 48;
+    add.next.velocity = 100;
+    add.next.startTick = bar * 768;
+    add.next.endTick = bar * 768 + 48;
+    changes.notes.push_back(add);
+    // The **event** index is what a windowed gather reads (`gatherPublishedSnapshotMembership` walks
+    // `eventMembership(bar)`), so the root must carry the events as well as the notes -- the real builder
+    // populates both views.
+    SnapshotEventChange on{};
+    on.kind = SnapshotChangeKind::Add;
+    on.next.loopId = loop.loopId;
+    on.next.eventId = static_cast<EventId>(4000 + bar * 2);
+    on.next.canonicalOrder = bar * 2;
+    on.next.value = MidiEvent::NoteOn(bar * 768, 1, 48, 100);
+    changes.events.push_back(on);
+    SnapshotEventChange off{};
+    off.kind = SnapshotChangeKind::Add;
+    off.next.loopId = loop.loopId;
+    off.next.eventId = static_cast<EventId>(4001 + bar * 2);
+    off.next.canonicalOrder = bar * 2 + 1;
+    off.next.value = MidiEvent::NoteOff(bar * 768 + 48, 1, 48, 0);
+    changes.events.push_back(off);
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  loop.storePublishedSnapshotForTest(snapshot, loop.playbackRevision);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                           "the fixture must install a *current* root, or the gather terms refuse it");
+}
+
+/// **S4b.7 — the demoted target: the merged window is what releases the hold, and its absence is bounded.**
+///
+/// Above `kMaxDetailedWindowBars` (16 bars) a slot is *demoted* to the windowed policy, and the switch commit's
+/// hold term (`isPlaybackMergedMidiEventsReadyForSlot`) then reads the merged window that the `SlotProvision`
+/// turn builds. That build gathers from the loop's **published snapshot root**, so the two shapes this helper
+/// drives are the two halves of the contract line ("the long-loop pending hold is satisfied by that turn … and
+/// carries an age/bound"):
+///
+///   * `withRoot` — a restored-slot root exists, the turn's build makes the window ready, and the switch
+///     **commits**. This is the evidence the earlier slice had to record as missing.
+///   * without a root — the occupancy is taken but the window can never become ready, so the switch is
+///     **reported once per episode** at the bound and left exactly as it was: bounded, never silent, never
+///     dropped (DEC-078 item 1's "the user never re-issues" survives).
+void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot) {
+  SlotProvisionHold::resetReportRecordForTest();
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kPlaying = 0;
+  constexpr uint8_t kTarget = 2;
+  constexpr uint32_t kTargetBars = 24;  // > 16 bars: the demoted policy, measured (not the below-bound case)
+  constexpr uint32_t kBar = 768;
+  commitRecordPassIntoTrackSlot(track, kPlaying);
+  commitBarSpacedPassIntoTrackSlot(track, kTarget, kTargetBars);
+  if (withRoot) {
+    publishBarSpacedRootForSlot(track.getLoop(kTarget), kTargetBars);
+  }
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kPlaying, true));
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
+                            "fixture precondition: the target starts without occupancy");
+
+  // The production playing state for the predecessor (an overdub start enables, plays and publishes it), then
+  // its finalizer retires -- a live finalizer freezes the playhead, so the switch could never be due.
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, kPlaying);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track));
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, kPlaying);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kPlaying));
+
+  // Press the demoted target through the production edge: queued, nothing taken inline.
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(kTarget);
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
+                           "the press must queue the switch");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kTarget, trackManager.getPendingSlotIndex(0),
+                                  "the queued switch must name the demoted target");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget));
+
+  // The clock lane may not commit it: the demoted hold waits for the merged window.
+  for (uint32_t tick = clockManager.getCurrentTick() + 1; tick <= 200 + kBar; ++tick) {
+    clockManager.assignCurrentTickSilently(tick);
+    trackManager.updateAllTracks(tick);
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kPlaying, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "a demoted target may not commit before its window is built");
+  TEST_ASSERT_TRUE(trackManager.hasPendingSlotSwitch(0));
+
+  // The provisioning turn takes the occupancy **and** builds the window -- the two halves of the contract.
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.servicePendingSlotProvision(),
+                           "the turn must take the demoted switch as its work");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget));
+  TEST_ASSERT_EQUAL_MESSAGE(withRoot, track.isPlaybackMergedMidiEventsReadyForSlot(kTarget),
+                            "the turn's build is only ready when the slot has a published root");
+
+  const uint32_t holdBoundTicks = SlotProvisionHold::boundTicksFor(768);
+  if (withRoot) {
+    for (int round = 0; round < 4 && TrackCaptureStopTestAccess::activeLoopIndex(track) != kTarget;
+         ++round) {
+      const uint32_t base = clockManager.getCurrentTick();
+      for (uint32_t tick = base + 1; tick <= base + kBar; ++tick) {
+        clockManager.assignCurrentTickSilently(tick);
+        trackManager.updateAllTracks(tick);
+      }
+    }
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(kTarget, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                    "the root-backed demoted switch must commit");
+    TEST_ASSERT_FALSE(trackManager.hasPendingSlotSwitch(0));
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, SlotProvisionHold::reportRecordForTest().count,
+                                     "a switch that completes must never report a hold");
+    return;
+  }
+
+  // No root: drive past the bound while the turn keeps running. The switch is reported once, and stays.
+  const uint32_t firstQueuedTick = clockManager.getCurrentTick();
+  for (int round = 0; round < 8; ++round) {
+    (void)trackManager.servicePendingSlotProvision();
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + kBar; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      trackManager.updateAllTracks(tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kPlaying, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "an unready demoted target must not commit");
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
+                           "the switch must be retained, not dropped");
+  const SlotProvisionHold::ReportRecord& report = SlotProvisionHold::reportRecordForTest();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, report.count, "the hold must report exactly once per episode");
+  TEST_ASSERT_EQUAL_UINT8(0, report.trackIndex);
+  TEST_ASSERT_EQUAL_UINT8(kTarget, report.slotIndex);
+  TEST_ASSERT_TRUE_MESSAGE(report.ageTicks >= holdBoundTicks,
+                           "the report must be at or past the bound, not merely late");
+  TEST_ASSERT_TRUE(clockManager.getCurrentTick() - firstQueuedTick >= holdBoundTicks);
+
+  // A second episode (cancel, turn while nothing is pending, press again) reports on its own account.
+  trackManager.clearPendingSlotSwitch(0);
+  (void)trackManager.servicePendingSlotProvision();
+  clockManager.assignCurrentTickSilently(clockManager.getCurrentTick() + 1);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(kTarget);
+  TEST_ASSERT_TRUE(trackManager.hasPendingSlotSwitch(0));
+  for (int round = 0; round < 8; ++round) {
+    (void)trackManager.servicePendingSlotProvision();
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + kBar; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      trackManager.updateAllTracks(tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, SlotProvisionHold::reportRecordForTest().count,
+                                   "a new episode reports again: once per episode, not once per boot");
+}
+
+/// A **restored** demoted slot (a published root exists): the turn's build makes the window ready and the
+/// switch commits -- the evidence the first slice had to record as missing.
+void test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn() {
+  assert_s4b_7_a_demoted_target_through_the_turn(/*withRoot=*/true);
+}
+
+/// An unready demoted slot: the hold is real but **bounded** -- one report per episode, switch retained.
+void test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound() {
+  assert_s4b_7_a_demoted_target_through_the_turn(/*withRoot=*/false);
+}
+
 int main() {
   UNITY_BEGIN();
   // S4b.1 check 7 (repeated same-track switches): accepted, bounded, nothing stolen, executes on capacity.
@@ -2825,6 +3036,10 @@ int main() {
   // may allocate it, and a switch without it must not dead-end.
   RUN_TEST(test_s4b_6_a_switch_to_a_slot_without_occupancy_provisions_off_clock);
   RUN_TEST(test_s4b_6_a_switch_to_a_multi_bar_target_without_occupancy_also_provisions_off_clock);
+  // S4b.7 (demoted): the merged window releases the hold when a published root exists, and its absence is
+  // bounded -- one report per episode, switch retained.
+  RUN_TEST(test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn);
+  RUN_TEST(test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);

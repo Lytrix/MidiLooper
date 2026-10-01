@@ -10,6 +10,8 @@
 #include "LooperState.h"
 // S4b.7: the `SlotProvision` turn's own predicates (`slotProvisionNeeded`) live with the drain owners.
 #include "Utils/MidiServiceDrain.h"
+// S4b.7: the bounded hold's age test and named terminal (`SlotProvisionHold`, `holdExceeded`).
+#include "Utils/SlotProvisionHold.h"
 #include "StorageManager.h"
 #include "Utils/SlotLoopContent.h"
 
@@ -333,8 +335,19 @@ FLASHMEM bool TrackManager::servicePendingSlotProvision() {
   // needs provisioning -- `slotProvisionNeeded` is the state-driven eligibility, so a switch needs no
   // request record -- and performs both halves the contract names: the provisioning (`provisionSlotForSwitch`,
   // idempotent, reporting its own refusal) and the target's merged-window build
-  // (`ensurePlaybackMergedEventsForSlot`), which is what releases the long-loop pending hold on the shapes
-  // where a window can be built. Nothing else moves here: the commit stays the clock path's own step.
+  // (`ensurePlaybackMergedEventsForSlot`), which is what releases the long-loop pending hold. Nothing else
+  // moves here: the commit stays the clock path's own step.
+  //
+  // Episode bookkeeping first: a track with no pending switch has no hold, so its report bit clears and a
+  // later switch on the same track reports on its own account (once per episode, not once per boot).
+  for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+    if (!slotStateMachine.hasPendingSlotSwitch(trackIndex)) {
+      slotSwitchHoldReportedMask_ =
+          static_cast<uint8_t>(slotSwitchHoldReportedMask_ & ~(1u << trackIndex));
+    }
+  }
+  const uint32_t nowTick = clockManager.getCurrentTick();
+  const uint32_t holdBoundTicks = SlotProvisionHold::boundTicksFor(Config::TICKS_PER_BAR);
   for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
     if (!slotStateMachine.hasPendingSlotSwitch(trackIndex)) {
       continue;
@@ -344,16 +357,44 @@ FLASHMEM bool TrackManager::servicePendingSlotProvision() {
       continue;
     }
     Track& track = tracks[trackIndex];
-    if (!MidiServiceDrain::slotProvisionNeeded(true, track.hasPlaybackOccupancyForSlot(targetSlot))) {
-      continue;  // already provisioned: the commit path's business, not this turn's
+    bool didWork = false;
+    if (MidiServiceDrain::slotProvisionNeeded(true, track.hasPlaybackOccupancyForSlot(targetSlot))) {
+      if (!provisionSlotForSwitch(trackIndex, targetSlot)) {
+        return false;  // refused and reported; the switch stays pending for a later turn
+      }
+      track.ensurePlaybackMergedEventsForSlot(targetSlot);
+      didWork = true;
     }
-    if (!provisionSlotForSwitch(trackIndex, targetSlot)) {
-      return false;  // refused and reported; the switch stays pending for a later turn
+    // The bounded hold, checked **whether or not** this turn could make progress: the case the bound exists
+    // for is precisely a switch whose occupancy was taken and which still cannot commit (a demoted target
+    // whose merged window needs a published root that never arrives). One report per episode; nothing moves,
+    // so a later turn can still satisfy the switch (DEC-078 item 1).
+    const uint32_t bit = 1u << trackIndex;
+    if ((slotSwitchHoldReportedMask_ & bit) == 0) {
+      const uint32_t queuedAtTick = slotStateMachine.getPendingQueuedAtTick(trackIndex);
+      if (SlotProvisionHold::holdExceeded(nowTick, queuedAtTick, holdBoundTicks)) {
+        reportSlotSwitchHold(trackIndex, targetSlot,
+                             static_cast<uint32_t>(nowTick - queuedAtTick));
+        slotSwitchHoldReportedMask_ = static_cast<uint8_t>(slotSwitchHoldReportedMask_ | bit);
+      }
     }
-    track.ensurePlaybackMergedEventsForSlot(targetSlot);
-    return true;
+    return didWork;
   }
   return false;
+}
+
+FLASHMEM void TrackManager::reportSlotSwitchHold(uint8_t trackIndex, uint8_t slotIndex,
+                                                uint32_t ageTicks) {
+  // A **report**, not a decision: the pending switch, the accepted-interaction latch, the enabled-set
+  // replacement and any retained record start all stay exactly as they were, so a later turn can still
+  // satisfy the switch. The terminal names the class (`SlotProvisionHold::kTerminalName`) and this row names
+  // the switch it is about, so an operator can tell a slow switch from a dropped press.
+  logger.info("Slot switch hold %s track=%u target=%u age=%lu ticks",
+              SlotProvisionHold::kTerminalName, static_cast<unsigned>(trackIndex),
+              static_cast<unsigned>(slotIndex), static_cast<unsigned long>(ageTicks));
+#if defined(PIO_UNIT_TEST_NATIVE)
+  SlotProvisionHold::recordReportForTest(trackIndex, slotIndex, ageTicks);
+#endif
 }
 
 void TrackManager::refreshPreviewSlotFocus(uint8_t trackIndex, uint8_t slotIndex) {

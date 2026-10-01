@@ -31,6 +31,10 @@ SlotQuantization SlotStateMachine::getPendingSlotQuantization(uint8_t trackIndex
   return (trackIndex < Config::NUM_TRACKS) ? pendingSlotQuantization[trackIndex] : SlotQuantization::NextGrid;
 }
 
+uint32_t SlotStateMachine::getPendingQueuedAtTick(uint8_t trackIndex) const {
+  return (trackIndex < Config::NUM_TRACKS) ? pendingQueuedAtTick[trackIndex] : UINT32_MAX;
+}
+
 void SlotStateMachine::requestPendingSlotSwitch(uint8_t trackIndex,
                                                   uint8_t slotIndex,
                                                   SlotQuantization quantization,
