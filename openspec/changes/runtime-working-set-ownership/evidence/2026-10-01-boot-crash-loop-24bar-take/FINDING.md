@@ -94,3 +94,47 @@ to "the overdub reserve is admitted on the grown library". But the leg's **own v
 `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` and the run **ended in a device crash**, so the resolution should be read
 as *admitted, and the take's later wrap commit crashes the device* — the second half being a new, more serious
 finding that this file owns.
+
+## 6. ROOT CAUSE FOUND AND FIXED (2026-10-01, same day)
+
+### The mechanism, proven from the disassembly
+
+The faulting instruction (`0x600928B6`) is a **byte store**: `strb.w r3, [r8, fp]` with `r8` (the destination
+base) **= 0** and `fp` (the byte offset) **= 45,056 = 512 × 88**. So the reallocation was copying change-set
+elements into a **NULL buffer**, and the write only faulted once the offset left the mapped region: the first
+32 KB of the address space is **ITCM (writable RAM)**, so the writes at `0x0…0x7FFF` silently corrupted ITCM and
+the first *unmapped* address — `0xB000` — raised `DACCVIOL`.
+
+Why was the buffer null? Because **Teensyduino's `operator new` is `return malloc(size);`** — no null check, no
+throw (`cores/teensy4/new.cpp`) — while `std::vector`'s growth path assumes a throwing allocator and never checks
+the pointer. So a **failed `malloc`** (a fragmented internal heap, with a ~45-180 KB request) hands the vector
+null, and the vector writes into it. That single mechanism explains all three `_M_realloc_insert` faults this
+repo has recorded (this one, `captures/task23-undo-crash`, and the `vector<DisplayNote>` reallocation in the
+24-bar heap runs).
+
+### The fix
+
+`LoopSnapshotChangeSet` — the change set both the body-load path and the publish/journal path grow — now allocates
+its two vectors with **`ExternalMemoryFirstAllocator`** (`include/LoopSnapshot.h`), which prefers the **PSRAM**
+pool for exactly this kind of length-scaling, non-hot buffer and, if both pools are ever exhausted, prints a
+**named FATAL** and stops instead of returning null. The body-load path additionally **reserves** both vectors up
+front from the counts the gather already knows (`src/StorageLoopIoBodyFormatV1.cpp`), so the growth-by-content
+reallocation churn — what made the failure likely — is gone. A pair of **`static_assert`s** pins the vector types,
+so the fix cannot be silently reverted.
+
+### Verification
+
+| check | result |
+|---|---|
+| full native | **2,667 cases / 7 skipped / 2,660 succeeded / 0 failed** |
+| `teensy41-capture-serial` | SUCCESS, RAM1 guard `variables 96,192 / ITAG 393,216 (code 391,880 + padding 1,336) / locals 34,880`, floor 840 met (496 B headroom) |
+| **red-proof of the guard** | reverting `events` to the default allocator **fails the build**: `static assertion failed: LoopSnapshotChangeSet::events must use ExternalMemoryFirstAllocator`; the file was restored byte-identically (sha256 `fdf246fa…`) |
+| fixed image | `eca0b0139d864734ae5a3164126c20e18cbde60eb2c6b437df851126f988fc5a` |
+
+### What still has to be shown (device)
+
+The fix's *mechanism* claim is that the change set no longer depends on the fragmented internal heap. That is
+verified **on device only**: flash this image, confirm a clean boot (`DIAG,boot_reset,crash=0`, no `CrashReport`),
+then `!RESTORE_WORKSPACE` and confirm the library returns **and** the 24-bar body on track 5 Loop 1 no longer
+crashes the boot. Until that run, the fault is *fixed on reasoning and host verification*, not yet re-verified on
+hardware.
