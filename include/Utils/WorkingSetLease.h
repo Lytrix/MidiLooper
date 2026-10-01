@@ -31,6 +31,11 @@ enum class WorkingSetRole : uint8_t {
   Interactive = 1u << 3,
 };
 
+/// The declared-cap check's "nobody holds this class" answer (S4.4). The check reports and names, it never
+/// refuses, so the *absence* of a holder must be distinguishable from a holder slot -- otherwise a
+/// diagnostic cannot tell "the envelope is fine" from "slot 0 holds it".
+inline constexpr uint8_t kNoWorkingSetClassHolder = 0xFF;
+
 /// Roles are composable: one slot may hold PlaybackWindow | LiveCapture at once.
 constexpr WorkingSetRole operator|(WorkingSetRole a, WorkingSetRole b) {
   return static_cast<WorkingSetRole>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));

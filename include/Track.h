@@ -255,12 +255,23 @@ public:
   /// S3.2 owner kind: an accepted-but-not-yet-executed interaction latched for `slot` (S4f.1).
   bool hasAcceptedInteractionForSlot(uint8_t slot) const;
   /// S4.4: report when an activation would exceed a **declared** envelope cap, so a class held beyond
-  /// its declared cardinality is visible as a policy signal rather than silent. It does **not** refuse:
-  /// the resource model still supports the request, and refusing here would be stricter than the
-  /// implementation and would reject supported multi-slot flows. The enforcing caps are the lease's own
+  /// its declared cardinality is visible as a policy signal rather than silent.
+  ///
+  /// **The policy is reported, never refused, and never resolved by allocating.** DEC-078 item 1 makes
+  /// acceptance unconditional and schedules execution instead ("the user never re-issues"), and a refusal
+  /// here would change the admission envelope — which `IMPLEMENTATION_CONTRACT.md` §2 returns to the
+  /// architect — while rejecting supported multi-slot flows. The enforcing caps are the lease's own
   /// (`WorkingSetLeaseTable`, `test_working_set_lease`), which refuse at the point of custody.
-  /// No storage: the census is read from the per-slot lease state.
-  void reportEnvelopeBreachIfAny(uint8_t slot, WorkingSetRole role) const;
+  ///
+  /// Returns the slot that holds the class it reported for, or `kNoWorkingSetClassHolder` when there is
+  /// nothing to report. The holder's identity is what makes the signal usable: the census counts raw role
+  /// bits, so a slot whose capture has already stopped still holds `LiveCapture` until its working set is
+  /// released, and the report must say *which* slot that was rather than leave it to be guessed. Naming
+  /// it also keeps the case the contract requires (an outgoing finalizer beside an incoming capture,
+  /// DEC-078 item 5) diagnosable; correcting that census is S4b's role-transfer work.
+  ///
+  /// No storage: the census is read from the per-slot lease state, and the check allocates nothing.
+  uint8_t reportEnvelopeBreachIfAny(uint8_t slot, WorkingSetRole role) const;
   /// S4.1: release every slot whose liveness predicate reports no live owner, through the
   /// `(slot, generation)` entry. The predicate-free `TrackPlaybackRuntime::resetAll` discarded each
   /// slot's refusal; this preserves it.

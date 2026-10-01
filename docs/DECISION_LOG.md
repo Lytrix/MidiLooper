@@ -105,7 +105,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-100 -->
+<!-- Append new entries below (newest first). Next ID: DEC-101 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -5769,3 +5769,52 @@ Gates: `test_lease_release` 13/13, `test_managed_record_drain` 23/23 (two new, m
 `test_retention_probe` 43/43, host sweep 1,086 tests with the stashed baseline's own failing set and
 fingerprint (1,071 tests, 6 failures / 1 error), full native 2,643 cases / 2,636 succeeded / 7 skipped / 0
 failed, both OpenSpecs `--strict` valid.
+
+## DEC-100 — The declared envelope is reported, never enforced: accept-and-schedule, and the report names its holder
+
+**Date:** 2026-10-01
+**Owner:** `Track::reportEnvelopeBreachIfAny` and `MemoryMonitor::reportDeclaredCapDenied` (runtime-working-set-ownership S4.4)
+**Status:** Accepted (settles S4.4's refuse-vs-queue question by following DEC-078 item 1; implements the
+policy's consequences, which are diagnostic-only)
+
+### Problem
+S4.4 asks what an activation beyond a declared working-set envelope cap should do — refuse or queue — with the
+breach reported and never resolved by allocating. The 2026-09-25 slice built the report
+(`#MEM_DENIED,reason=cap_reached,class=N`, deliberately distinct from an allocation failure) and left the policy
+open, recording two reasons: the census could not tell an outgoing finalizer from an incoming live capture, and
+the choice "needs either a cap the resource model also enforces or an architecture decision on per-track
+cardinality". Its residue was also named: the emitted line was a device observation, so no host fixture could
+assert the policy path at all.
+
+### Decision
+* **The policy is accept-and-schedule, and it is not a new decision.** DEC-078 item 1 already fixes it:
+  acceptance is unconditional and execution is scheduled, resolved at the earliest valid boundary once the owner
+  frees — "the user never re-issues". The activation therefore proceeds, and the ordering is the existing
+  accepted-interaction latch / retained-request machinery's, which has its own fixtures.
+* **Refusing at the admission entry is rejected**, for two logged reasons: it would change the admission
+  envelope, which `IMPLEMENTATION_CONTRACT.md` §2 returns to the architect, and it would reject supported
+  multi-slot flows (the first cut broke eleven fixtures).
+* **Resolving by allocating is rejected** by the same §2: the enforcing caps stay the lease's own
+  (`WorkingSetLeaseTable`), which refuse at the point of custody, and pre-provisioning extra capacity is what
+  the envelope exists to prevent.
+* **The report must name its holder.** `reportEnvelopeBreachIfAny` returns the slot that holds the class
+  (`kNoWorkingSetClassHolder` = 0xFF when none) and the row carries `holder=`. An anonymous `class=N` cannot
+  distinguish a real breach from the case the contract *requires* — an outgoing finalizer beside an incoming
+  capture (DEC-078 item 5) — which § S4b.1 already corrected the record about; naming the holder is what makes
+  that distinguishable, and it is the fact S4b's census correction starts from.
+* **The policy path is host-assertable.** The `PIO_UNIT_TEST_NATIVE` branch records the report the owner was
+  asked to make (`nativeTestCapDenials()`), so a fixture asserts the breach, its class and its holder instead of
+  leaving the policy to a device-only observation. The census still stores nothing.
+
+### Consequences
+S4.4 is checked with its question answered and its consequences asserted; the change is diagnostic-only (the
+check is `TRACK_COLD_MEM`, the row `FLASHMEM`-resident, and the RAM1 line is byte-identical), so it moves no
+resource, admission or ordering behaviour. Still owed and named: the census continues to count a slot whose
+capture has stopped as a `LiveCapture` holder — correcting that is S4b's role-transfer work — and the new
+`holder=` field has no device observation yet (nothing under `scripts/` parses `#MEM_DENIED`, so it is additive).
+Fixtures: the tightened `test_a_declared_envelope_breach_is_reported_and_does_not_block_activation` and the new
+`test_s4_4_the_breach_report_names_the_finalizing_holder_instead_of_hiding_it`, red-proved three times (holder
+dropped; finalizing holders excluded, which is how the two candidate corrections are discriminated; the census
+made to allocate) with byte-identical restores. Focused suite 31/31; full native 2,646 cases / 2,639 succeeded /
+7 skipped / 0 failed; `teensy41-capture-serial` SUCCESS with the RAM1 line unchanged. Record:
+`openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4.4 — the declared cap policy".

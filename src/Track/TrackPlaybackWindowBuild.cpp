@@ -472,30 +472,43 @@ void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
   invalidatePlaybackMergedMidiEvents(true);
 }
 
-TRACK_COLD_MEM void Track::reportEnvelopeBreachIfAny(uint8_t slot, WorkingSetRole role) const {
+TRACK_COLD_MEM uint8_t Track::reportEnvelopeBreachIfAny(uint8_t slot, WorkingSetRole role) const {
   // S4.4: the declared caps are the measured envelope (design.md role classes). A role class held
   // beyond its declared cardinality is reported as a policy signal -- `reason=cap_reached`, distinct
   // from an allocation failure -- and the activation proceeds, because the resource model still
-  // supports it. Enforcing here would reject supported multi-slot flows.
+  // supports it. Enforcing here would reject supported multi-slot flows, and the policy is
+  // accept-and-schedule (DEC-078 item 1), so this check reports and never refuses.
+  //
+  // It also *names* what it found: the census reads raw role bits, and a slot whose capture has already
+  // stopped still holds `LiveCapture` until its working set is released, so the emitted holder is what
+  // makes the signal diagnosable (and is what tells an operator that the case the contract requires --
+  // an outgoing finalizer beside an incoming capture -- is being counted). Correcting that census is
+  // S4b's role-transfer work.
   static constexpr WorkingSetLeaseCaps kDeclaredCaps{};
-  if (slot >= Config::MAX_LOOPS_PER_TRACK) return;
+  if (slot >= Config::MAX_LOOPS_PER_TRACK) return kNoWorkingSetClassHolder;
   const WorkingSetRole held = playbackRuntime.workingSetRolesAt(slot);
   const WorkingSetRole added = role & static_cast<WorkingSetRole>(~static_cast<uint8_t>(held));
-  if (added == WorkingSetRole::None) return;  // idempotent re-admission is not a breach
+  if (added == WorkingSetRole::None) {
+    return kNoWorkingSetClassHolder;  // idempotent re-admission is not a breach
+  }
   for (uint8_t bit = 0; bit < 4; ++bit) {
     const WorkingSetRole single = static_cast<WorkingSetRole>(1u << bit);
     if (!hasRole(added, single)) continue;
     uint8_t heldElsewhere = 0;
+    uint8_t holder = kNoWorkingSetClassHolder;
     for (uint8_t other = 0; other < Config::MAX_LOOPS_PER_TRACK; ++other) {
       if (other != slot && hasRole(playbackRuntime.workingSetRolesAt(other), single)) {
+        // The first holder in slot order, so the report is deterministic when several hold the class.
+        if (holder == kNoWorkingSetClassHolder) holder = other;
         ++heldElsewhere;
       }
     }
     if (heldElsewhere >= workingSetCapFor(kDeclaredCaps, single)) {
-      MemoryMonitor::reportDeclaredCapDenied(MemoryMonitor::OperationKind::RecordStart, bit);
-      return;
+      MemoryMonitor::reportDeclaredCapDenied(MemoryMonitor::OperationKind::RecordStart, bit, holder);
+      return holder;
     }
   }
+  return kNoWorkingSetClassHolder;
 }
 
 namespace {
@@ -575,11 +588,12 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   // deferred stop grains allocation-free must have been established. Callers that are
   // admitting a take must act on it; the boot/load caller may ignore it.
   bool ok = true;
-  // S4.4: surface a declared-envelope breach before the resources are taken. Reported, not refused --
-  // see `reportEnvelopeBreachIfAny`.
+  // S4.4: surface a declared-envelope breach before the resources are taken. **Reported, not refused** --
+  // the policy is accept-and-schedule (DEC-078 item 1), so the answer (the holder's slot, or 0xFF) is a
+  // diagnostic and the admission proceeds below regardless of it.
   if (prepareCapture) {
-    reportEnvelopeBreachIfAny(slotIndex,
-                              WorkingSetRole::PlaybackWindow | WorkingSetRole::LiveCapture);
+    (void)reportEnvelopeBreachIfAny(slotIndex,
+                                    WorkingSetRole::PlaybackWindow | WorkingSetRole::LiveCapture);
   }
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStopJobs);
   ok = prewarmCaptureStopJobs() && ok;
