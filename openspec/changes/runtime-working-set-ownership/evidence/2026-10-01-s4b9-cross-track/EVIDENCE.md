@@ -130,3 +130,20 @@ what fills the capture ring (attempts 05/11). **Neither mode is the leg's own as
 queued/running/terminal triple with **no** `LSV1 parse failed` row, i.e. that body loads normally now (consistent
 with the read-only follow-up in
 [`../2026-10-01-restore-retry-churn/FINDING.md`](../2026-10-01-restore-retry-churn/FINDING.md)).
+
+## Correction (2026-10-01, later the same session): what the clause actually needs
+
+The route above was tried with both prerequisites in place (a second filled slot on track 5, and the press on a
+non-active one: seeds `s4b9-seed2-t5s3` / `-seed3-t5s3`) and the press still resolved to **`Loop 2: Toggle Play/Stop`**
+rather than a queued switch (runs 13/15/16). So a filled, non-active destination slot is **not sufficient**. The
+shape that does queue a switch is the one run 04 had: the pressed slot differs from the slot the destination
+**track is currently playing**. After a cross-track switch, the new track is *selected* but its loop is not
+playing (the seed's playback ended with the harness's own teardown), so a press there is a selection/toggle —
+which is the device's documented same-track semantics, not a switch.
+
+The device-state competitor that used to stop these attempts is fixed (see
+[`../2026-10-01-telemetry-must-not-evict-evidence/FIX.md`](../2026-10-01-telemetry-must-not-evict-evidence/FIX.md)):
+on the fixed image the receipt gate is **admitted** in runs 13/15/16, the leg completes (`Selected track 5`
+mid-finalization, `switch sent: True`), and the issue list is down to the base recipe's two known items with no
+lost record rows. So the remaining work is the **gesture**: the destination track must be *playing* when its
+non-playing filled slot is pressed.

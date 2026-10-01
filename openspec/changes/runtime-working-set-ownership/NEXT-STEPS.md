@@ -209,6 +209,17 @@ selection/display authority moves with the switch and the transport stays MIDI-c
 `Toggle Play/Stop`), so it needs a **second filled, non-active slot on the destination track**
 ([`evidence/2026-10-01-s4b9-cross-track/`](evidence/2026-10-01-s4b9-cross-track/EVIDENCE.md)).
 
+**A third, now FIXED device-state item (2026-10-01, firmware + host tooling): the diagnostic must not evict the
+evidence.** The telemetry flood that made legs abort (a `PERS,work` row per persistence slice and per tail-write
+step: 5 951 + 2 705 rows in one boot) is bounded (`Utils/TelemetryCadence.h` and its three call sites), the counters
+are DMAMEM so RAM1 is untouched, and the successor-start gate now names the abort reason instead of blaming a
+missing receipt. Measured: `PERS,work` 5 951/6 967 → 382, tail-write rows 2 705 → 29, `RING,wiped` 1 → 0, and the
+legs' preconditions pass (`admitted after stop receipt`) with the device's large-library work still running.
+Record: [`evidence/2026-10-01-telemetry-must-not-evict-evidence/FIX.md`](evidence/2026-10-01-telemetry-must-not-evict-evidence/FIX.md).
+**The image is now `014af85d…`** (the S4b.8 / S4b-gate evidence above was taken on `cdab16f4…`; re-running those on
+the new image is a cheap regression check, and S4b.9's remaining clause is a *gesture* shape: the destination track
+must be **playing** when its non-playing filled slot is pressed).
+
 **Read these two device-state findings before re-running a device leg on this device.** (1) The census's
 `chunks_free` counts **ids**, not backable capacity, so it can read 320 while zero events are admitted
 ([`evidence/2026-10-01-pool-free-but-append-denied/`](evidence/2026-10-01-pool-free-but-append-denied/FINDING.md)).
