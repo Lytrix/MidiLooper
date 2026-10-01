@@ -2184,6 +2184,28 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       (`RRQ,4,7` an ordinary queued/running/terminal triple, no parse failures). No attempt shows a `LoopEnd
       playback commit` row. Evidence:
       [`evidence/2026-10-01-s4b9-cross-track/EVIDENCE.md`](evidence/2026-10-01-s4b9-cross-track/EVIDENCE.md).
+- [x] S4b device-state prerequisite (**2026-10-01, firmware + host tooling**): **the diagnostic must not evict the
+      evidence it explains.** The S4b.9 attempts were not blocked by the device's restore *work* but by its
+      **telemetry**: a workspace save emitted a `PERS,work` row per slice (241 per slot body, **5 951 in one
+      boot**) and the loop-snapshot tail write one per step (2 705), and that volume made the capture ring shed
+      rows the acceptance surface fences on (`RING,shed`, once `RING,wiped`) — shed rows → `SERIAL_INCOMPLETE` →
+      abort → the successor-start gate refusing with *"no predecessor stop-completion receipt"* **while the receipt
+      was in the capture** (`captures/s4b9-cross-track-10`). **Fixed:** `include/Utils/TelemetryCadence.h` (a
+      phase's first slice always logs; the emitted duration is the **running maximum** so a bound check stays
+      faithful; per-step tail rows gated; stall/phase/interval/completion rows kept) wired into
+      `PersistenceWorkItemPersist.cpp`, `StorageLoopIoBodyFormatV1.cpp` (the progress signature includes the write
+      offset, so `sigChanged` was making the interval irrelevant) and `WorkspaceSave.cpp`; the counters are
+      `DMAMEM`, so RAM1 variables stay 96,192 B and `ram1_budget.json` needs no re-base. **Measured on the same
+      class of work:** `PERS,work` 5 951/6 967 → **382**, per-slot `payload_slice` 241 → ~18, tail-write rows
+      2 705 → **29**, `RING,wiped` 1 → **0**, tier-A evictions 0, and run 16's issue list holds only the base
+      recipe's two known items — no lost-record rows. **The host gate now names the real cause** (`scripts/hitl/legacy_record_baseline.py::_await_successor_start_receipt`
+      prints the abort reason instead of claiming a missing receipt). **Evidence:**
+      [`evidence/2026-10-01-telemetry-must-not-evict-evidence/FIX.md`](evidence/2026-10-01-telemetry-must-not-evict-evidence/FIX.md).
+      Verified: full native **2,663 cases / 2,656 succeeded / 7 skipped / 0 failed**, `test_capture_transitions`
+      62/62, two cadence red-proofs + one gate red-proof with byte-identical restores, `teensy41-capture-serial`
+      SUCCESS with the RAM1 line unchanged (image `014af85d…`). **S4b.9's own clause stays `[~]`** for the reason its
+      record now names: with the destination track *not playing*, a slot press there is a selection, so the
+      `Queued playback switch` shape needs that track's loop to be playing.
 - [~] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
       active-interval overflow) across repeated switches.
 

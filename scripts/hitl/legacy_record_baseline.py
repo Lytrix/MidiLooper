@@ -4744,7 +4744,17 @@ def _await_successor_start_receipt(
         if receipt_index > stop_index:
             print(f"[info] {pass_label} start admitted after stop receipt: {receipt!r}")
             return receipt
-        if abort is not None and abort.check() is not None:
+        abort_reason = abort.check() if abort is not None else None
+        if abort_reason is not None:
+            # Name the abort, do not claim the receipt. This branch used to return silently, so the caller
+            # reported "no predecessor stop-completion receipt" for a run that its own abort had already ended
+            # -- and the receipt was often *in* the capture. That misdirection cost a session's investigation
+            # (`captures/s4b9-cross-track-10`: `RING,shed` dropped the record evidence, which set
+            # `SERIAL_INCOMPLETE`, which ended the run before the receipt was ever considered).
+            print(
+                f"[error] {pass_label} start refused: the run already ended ({abort_reason}); the "
+                "stop-completion receipt was not the decider."
+            )
             return None
         if time.monotonic() >= deadline:
             print(

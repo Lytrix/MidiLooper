@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -581,6 +583,33 @@ class SuccessorStartReceiptTests(unittest.TestCase):
             "Record pass undo reset for slot",
             _await_successor_start_receipt(self._Collector(lines), timeout_s=0.5),
         )
+
+    class _Aborted:
+        """The run's own abort, as `RunAbort.check()` reports it."""
+
+        def check(self) -> str:
+            return "SERIAL_INCOMPLETE"
+
+    def test_an_aborted_run_is_named_instead_of_claiming_a_missing_receipt(self) -> None:
+        """The gate must not take credit for the run's own abort.
+
+        `captures/s4b9-cross-track-10`: shed capture rows set `SERIAL_INCOMPLETE`, the run ended on that, and the
+        gate still reported "no predecessor stop-completion receipt" -- which sent a session's investigation after
+        the device instead of after the abort.
+        """
+        from hitl.legacy_record_baseline import _await_successor_start_receipt
+
+        lines = ["[70.203] [DEBUG] [TRACK] Recording stopped (to STOPPED) @ tick 2366"]
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertIsNone(
+                _await_successor_start_receipt(
+                    self._Collector(lines), timeout_s=0.05, abort=self._Aborted()
+                )
+            )
+        printed = out.getvalue()
+        self.assertIn("SERIAL_INCOMPLETE", printed)
+        self.assertIn("the stop-completion receipt was not the decider", printed)
+        self.assertNotIn("no stop-completion receipt within", printed)
 
 
 class EvidenceVersusContradictionTests(unittest.TestCase):

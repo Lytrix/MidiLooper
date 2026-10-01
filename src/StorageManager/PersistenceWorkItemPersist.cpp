@@ -13,6 +13,7 @@
 #include "StorageManagerInternal/PersistenceWorkQueue.h"
 #include "TrackManager.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/TelemetryCadence.h"
 #include "Utils/MemoryMonitor.h"
 #include <Arduino.h>
 #include <cstdio>
@@ -101,9 +102,30 @@ STORAGE_PERSIST_MEM const char* deferredLoopFinalizeStageName(DeferredLoopFinali
 uint32_t persistenceSliceStartUs = 0;
 #endif
 
-STORAGE_PERSIST_MEM void emitPersistenceWorkTelemetry(const PersistWorkItem& item, const char* phase,
-                                    const char* outcome) {
+/// Per-phase slice-log cadence for the item currently being written. **OCRAM, not DTCM:** these are mutable
+/// telemetry counters, and the RAM1 budget's own note records the rule that such state must not grow DTCM (it would
+/// come out of the local allowance). Placing them in `DMAMEM` keeps RAM1 variables unchanged at 96,192 B.
+/// The states are reset whenever the item's key
+/// changes, so a new item always emits the first slice of each phase (the acceptance surface asserts phase
+/// presence, and `deferred_persist_large_loop_bounds` requires `payload_slice` and `finalize_slice`).
+DMAMEM TelemetryCadence::SliceLogState loopPersistPayloadSliceLog;
+DMAMEM TelemetryCadence::SliceLogState loopPersistFinalizeSliceLog;
+DMAMEM PersistKey loopPersistSliceLogKey{};
+DMAMEM bool loopPersistSliceLogKeyValid = false;
+
+STORAGE_PERSIST_MEM void noteLoopPersistItemForKey(const PersistKey& key) {
+  if (loopPersistSliceLogKeyValid && persistKeysEqual(loopPersistSliceLogKey, key)) {
+    return;
+  }
+  loopPersistSliceLogKey = key;
+  loopPersistSliceLogKeyValid = true;
+  TelemetryCadence::reset(loopPersistPayloadSliceLog);
+  TelemetryCadence::reset(loopPersistFinalizeSliceLog);
+}
+
 #if defined(SESSION_CAPTURE)
+STORAGE_PERSIST_MEM void emitPersistenceWorkTelemetry(const PersistWorkItem& item, const char* phase,
+                                    const char* outcome, uint32_t durationUs) {
   if (strcmp(phase, "bundle_slice") == 0) {
     return;
   }
@@ -120,13 +142,41 @@ STORAGE_PERSIST_MEM void emitPersistenceWorkTelemetry(const PersistWorkItem& ite
     std::snprintf(detail, sizeof(detail), "%s,%s,%s,%s", persistWorkTypeName(item.type), keyLabel,
                   phase, outcome);
   }
-  SC_PERSIST("work", micros() - persistenceSliceStartUs, 0, 0, detail);
+  SC_PERSIST("work", durationUs, 0, 0, detail);
+}
+
+STORAGE_PERSIST_MEM void emitPersistenceWorkTelemetry(const PersistWorkItem& item, const char* phase,
+                                    const char* outcome) {
+  emitPersistenceWorkTelemetry(item, phase, outcome, micros() - persistenceSliceStartUs);
+}
+
+/// A LoopPersist slice row: one row per `kSliceLogInterval` slices, carrying the **running maximum** slice
+/// duration so a bound check over these rows stays a faithful upper bound (see `Utils/TelemetryCadence.h`).
+STORAGE_PERSIST_MEM void emitLoopPersistSliceTelemetry(const PersistWorkItem& item, const char* phase,
+                                    TelemetryCadence::SliceLogState& state) {
+  uint32_t carriedUs = 0;
+  const uint32_t sliceUs = micros() - persistenceSliceStartUs;
+  if (!TelemetryCadence::shouldLogSlice(state, sliceUs, TelemetryCadence::kSliceLogInterval,
+                                        carriedUs)) {
+    return;
+  }
+  emitPersistenceWorkTelemetry(item, phase, "ok", carriedUs);
+}
 #else
+STORAGE_PERSIST_MEM void emitPersistenceWorkTelemetry(const PersistWorkItem& item, const char* phase,
+                                    const char* outcome) {
   (void)item;
   (void)phase;
   (void)outcome;
-#endif
 }
+
+STORAGE_PERSIST_MEM void emitLoopPersistSliceTelemetry(const PersistWorkItem& item, const char* phase,
+                                    TelemetryCadence::SliceLogState& state) {
+  (void)item;
+  (void)phase;
+  (void)state;
+}
+#endif
 
 STORAGE_PERSIST_MEM bool recoverPersistenceWorkQueueStall(PersistenceWorkItemJob& job) {
   if (job.itemActive || PersistenceWorkQueue::writingWorkItemCount() == 0) {
@@ -303,6 +353,7 @@ STORAGE_PERSIST_MEM bool stepLoopPersistWorkItem(PersistenceWorkItemJob& job) {
   if (!job.itemActive || job.item.type != PersistWorkType::LoopPersist) {
     return true;
   }
+  noteLoopPersistItemForKey(job.item.key);
   if (job.trackIndex >= Config::NUM_TRACKS || job.slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return completePersistenceWorkItem(job, "resolve", false);
   }
@@ -325,7 +376,7 @@ STORAGE_PERSIST_MEM bool stepLoopPersistWorkItem(PersistenceWorkItemJob& job) {
       return completePersistenceWorkItem(job, "payload_slice", false);
     }
     if (!loopDone) {
-      emitPersistenceWorkTelemetry(job.item, "payload_slice", "ok");
+      emitLoopPersistSliceTelemetry(job.item, "payload_slice", loopPersistPayloadSliceLog);
       return true;
     }
     beginDeferredLoopSlotFinalize();
@@ -338,7 +389,7 @@ STORAGE_PERSIST_MEM bool stepLoopPersistWorkItem(PersistenceWorkItemJob& job) {
     return completePersistenceWorkItem(job, "finalize", false);
   }
   if (!finalizeDone) {
-    emitPersistenceWorkTelemetry(job.item, "finalize_slice", "ok");
+    emitLoopPersistSliceTelemetry(job.item, "finalize_slice", loopPersistFinalizeSliceLog);
     return true;
   }
 

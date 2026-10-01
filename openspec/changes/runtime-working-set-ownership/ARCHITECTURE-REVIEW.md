@@ -9230,3 +9230,23 @@ by making the commit name the predecessor.
 
 **Evidence.** Focused suite 45/45; full native 2,662 cases / 2,655 succeeded / 7 skipped / 0 failed;
 `teensy41-capture-serial` SUCCESS with an unchanged RAM1 line and a byte-identical firmware hex (`cdab16f4…`).
+
+## The diagnostic must not evict the evidence it explains (2026-10-01, device session)
+
+Found while trying to run S4b.9 against a device whose library this session had filled. The leg's *precondition*
+gates (the successor-start stop-completion receipt; the capture-ring integrity check) refused, and the reason was
+**not** the restore work the device was doing but the **telemetry about that work**:
+`PERS,work` rows were emitted once per persistence slice — 241 per slot body, **5 951 in one boot**, plus 2 705
+rows from the loop-snapshot tail write's per-step row. That volume made the capture ring shed
+(`RING,shed`) and once wipe (`RING,wiped`), shedding exactly the record/phase rows the acceptance surface
+fences on; the resulting `SERIAL_INCOMPLETE` ended the run, and the gate then reported *"no predecessor
+stop-completion receipt"* while the receipt was in the capture. Two silent behaviours hid the chain: the tail
+emitter's progress signature includes the write offset (so `sigChanged` made its 512-step interval irrelevant),
+and the gate's abort branch returned without naming the abort.
+
+The rule this records: **diagnostics are sheddable; evidence is not.** A telemetry emitter whose rate scales with
+the work it instruments can evict the evidence it exists to explain, so its cadence must be bounded, must keep the
+phases an acceptance surface requires, and must carry the running maximum rather than a sample (a bound check over
+sampled rows would silently weaken). The fix is `Utils/TelemetryCadence.h` plus its three call sites, with the
+counters in OCRAM so DTCM (and the RAM1 budget) is untouched. Record:
+[`evidence/2026-10-01-telemetry-must-not-evict-evidence/FIX.md`](evidence/2026-10-01-telemetry-must-not-evict-evidence/FIX.md).

@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "StorageLoopIo.h"
+#include "Utils/TelemetryCadence.h"
 
 #if defined(ARDUINO)
 #include <Arduino.h>
@@ -1141,7 +1142,9 @@ LSV1_SAVE_STEP_MEM void emitLoopSnapshotTailStepTelemetry(
     const LoopSnapshotBodyFormatV1SaveWriteState& state,
     const Lsv1GatheredLoopSnapshotPayload& payload, uint32_t previousSig, bool sigChanged,
     bool completed) {
-  constexpr uint32_t kTailStepLogInterval = 64u;
+  // Routine cadence only: phase changes, signature changes, stalls and completion always log (see
+  // `Utils/TelemetryCadence.h` for the measured volume this bounds).
+  constexpr uint32_t kTailStepLogInterval = TelemetryCadence::kTailStepLogInterval;
   constexpr uint16_t kTailStepStallStreak = 64u;
 
   const uint32_t sig = loopSnapshotTailProgressSignature(state);
@@ -1150,7 +1153,13 @@ LSV1_SAVE_STEP_MEM void emitLoopSnapshotTailStepTelemetry(
   const bool intervalDue =
       state.tailStepCount == 1u || (state.tailStepCount % kTailStepLogInterval) == 0u;
   const bool stallDue = state.unchangedSigStreak >= kTailStepStallStreak;
-  if (!completed && !phaseChanged && !intervalDue && !stallDue && !sigChanged) {
+  // `sigChanged` is deliberately **not** an emission trigger. The progress signature includes the write offset, so
+  // it changes on nearly every step of a large body — which made this emitter's interval irrelevant and produced
+  // 3 275 rows for one boot's saves (`captures/s4b9-cross-track-14`). The signature still drives stall detection
+  // (`state.unchangedSigStreak`, updated by the caller), which is what it exists for; routine progress is logged
+  // on the interval, and phase changes, stalls and completion always log.
+  (void)sigChanged;
+  if (!completed && !phaseChanged && !intervalDue && !stallDue) {
     return;
   }
 
