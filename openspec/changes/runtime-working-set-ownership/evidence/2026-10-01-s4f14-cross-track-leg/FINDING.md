@@ -129,3 +129,58 @@ index while one finalizes" (a real S4f.14 defect) and a coincidental timing diff
 **Not established:** `Transport never stops` (the one stop is untimed in both runs), and the two remaining harness
 issues (`overdub_unmatched_open_notes`, `overdub_stored_span_too_short`).
 
+## The trace: the shared-slot-index hypothesis is disproven (2026-10-01, read-only)
+
+The hypothesis above was that a lookup keyed on the slot index without the track caused the `-01` refusal. The code
+settles it the other way.
+
+**The admission boundary resolves the interval's own slot on the owning track — by construction.**
+`Track::admitDeferredOverdubStop` (the drive the refusal comes from, `src/Track/TrackOverdubLifecycle.cpp`) carries
+the S4f.0 note and then does exactly that:
+
+```
+// S4f.0: every Loop/runtime-derived guard and binding below resolves the interval's own
+// slot, so a later active-slot movement cannot make the drive test the wrong slot.
+Loop& loop = getLoop(slot);
+LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+```
+
+`playbackRuntime` is a **`Track` member**, so `slotIfAllocated(slot)` indexes *that track's* per-slot runtimes;
+`getLoop(slot)` likewise. The caller also validates `interval != captureInterval_` -> `stale_interval`, so a drive for
+a dead interval is a superseded request rather than a refusal. There is no track-blind slot lookup on this path.
+
+**What the refusal actually tests** (`src/Track/TrackPlaybackRuntime.cpp:2072-2075`):
+
+```
+bool LoopPlaybackRuntime::canonicalCaptureOutputAdmitted() const {
+  return canonicalCaptureOutput.store.empty() && canonicalCaptureOutput.store.reservedAppendReady() &&
+         canonicalCaptureChunks.availableChunks() >= PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS;  // 8
+}
+```
+
+— that slot's **own** store empty, its append reserved, and at least **8** canonical-copy credits available. So
+`canonical_output_busy` is a **per-slot readiness** condition, and it was the *destination slot's own* readiness that
+failed.
+
+**Why the two runs differ, then.** Not the track: the **loop sitting on the destination slot**.
+
+| run | destination slot held | at the continuation's stop (≈1.9 s after its own OD start) |
+|---|---|---|
+| `-01` | track 5 **Loop 1**: 18,432 ticks, 1,716 events, just switched into playback | `canonicalCaptureOutputAdmitted()` false -> refused |
+| `-02` | track 5 **Loop 2**: 2,304 ticks, 144 events | admitted -> no refusal |
+
+A slot whose interval just ran on a 1,716-event loop is far likelier to be holding chunks / an un-drained store than
+one carrying 144 events, so the differential is capacity-and-latency, not aliasing.
+
+**What this means for S4f.14 — a positive result.** The *core* question of the leg ("one device-wide finalizer" vs
+"one finalizer per **track+slot**") is answered in the code for this boundary: it is per-(track, slot), explicitly so
+that an active-slot movement cannot make the drive test the wrong slot. The device corroborates it: in `-02` the
+source's slot released once with its **own** 2-bar geometry (`canonical_release,0,33,1536,8`) independently of the
+destination's (`canonical_release,1,11,2304,8`, `,1,1,2304,8`). A device-wide singleton could not produce that split.
+
+**A reporting gap this leaves (named, not fixed).** The *code* is track-scoped, but the *rows* are not: the human row
+is `Overdub stop refused: %s slot=%u interval=%lu` — slot and interval, **no track** — and the
+`ODUB,stop,admission` family carries neither slot nor track. So a refusal cannot be attributed to a track from the
+evidence, even though the behaviour it reports is per-track. That is the same class of gap `DIAG,latch` was added to
+close for the admitted/waiting path; the *denial* path has no equivalent.
+
