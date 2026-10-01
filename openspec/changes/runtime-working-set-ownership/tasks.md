@@ -1461,8 +1461,35 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       than widening the floor. **Device evidence owed:** this is an SD fault path and no device fault
       injection exists for it; the behavior is host-verified only. Record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "F4 — a failed workspace completion is discharged".
-- [ ] S4.2 Generation-mismatched release rejected and reported (native fixture reproducing the
-      A-releases / C-reuses / late-A-cleanup sequence).
+- [x] S4.2 Generation-mismatched release rejected and reported (native fixture reproducing the
+      A-releases / C-reuses / late-A-cleanup sequence). **CHECKED 2026-10-01 — the named sequence is now
+      fixture-covered on both identities, and the outcome is pinned to the row's vocabulary.** The two
+      earlier halves (2026-09-25) put a generation on `captureStopOwner` and made `releaseSlot`/`slotGeneration`
+      the `(slot, generation)` lease entry; what the task's parenthetical still owed was the *sequence* with a
+      live successor in place, and the *naming* of the refusal. **Added, test-only (no `src/` change,
+      firmware hex byte-identical `577841d6…`):**
+      `test_s4_2_a_retired_owners_late_release_cannot_release_a_successors_working_set` drives A admitting
+      through the production record-arm admission (identity and roles captured), A retiring through the
+      track-level sweep (lease dropped, generation advanced), C **reusing** the slot (same runtime address,
+      same role set, its own identity — admission bumps nothing), and then A's late release presenting the
+      retired identity: it must answer `StaleGeneration` — **not** the silent `NotHeld` an identity-free check
+      returns for a slot that looks empty or has been re-admitted — while C's lease, roles and generation are
+      untouched, with the successor's own identity releasing as the control.
+      `test_s4_2_the_release_outcomes_are_named_as_the_device_row_names_them` pins the emitter's
+      outcome→literal mapping (`released`, `refused_busy`, `stale_generation`, `not_held`) — the vocabulary
+      `scripts/hitl/lease_release.py` decodes and `test_capture_line_tier` classifies, so "reported" is tied to
+      the row rather than to an enum ordinal. **Red-proved twice, each restored byte-identically:** removing
+      `releaseSlot`'s identity check fails the new fixture (*"Expected 5 Was 1. the retired owner's identity
+      must be rejected as stale…"*) plus the release-entry and two S4.1 fixtures; renaming the
+      `stale_generation` literal fails the vocabulary fixture (*Expected 'stale_generation' Was 'stale'*).
+      Focused suite **30/30**; full native **2,645 cases / 2,638 succeeded / 7 skipped / 0 failed**;
+      `teensy41-capture-serial` **SUCCESS** with the RAM1 line unchanged (`variables 96,192 / ITCM 393,216
+      (code 391,288 + padding 1,928) / locals 34,880`, floor 840). **Recorded, not claimed away:** a device run
+      in which a *stale* release actually fires has never been observed — the corpus carries only `released`
+      rows, and the device refusal that has fired is `refused_busy` — so the stale literal is native-pinned and
+      reader-consumed, not device-observed; and the two identities stay unaliased by design (below). Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.2 — the generation-mismatched release, rejected
+      and named".
       **PARTIAL 2026-09-25 — the finalization identity is generation-qualified; the lease's own
       release is not wired yet.** `LoopPlaybackRuntime::captureStopOwnerGeneration` now records the
       owner's identity beside the pointer, and `setCaptureStopOwner(admission, generation)` /

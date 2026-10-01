@@ -624,6 +624,92 @@ void test_the_slot_generation_release_entry_is_identity_qualified_and_preserves_
       static_cast<uint8_t>(TrackCaptureStopTestAccess::releaseSlot(track, 200, 0)));
 }
 
+
+/// **S4.2 — a retired owner's late release cannot release a successor's working set.**
+///
+/// The task's named sequence is A-releases / C-reuses / late-A-cleanup, and the *lease* half of it is why
+/// the identity check exists: `releaseSlot(slot, generation)` presents an identity, `releaseAll` bumps the
+/// generation when it releases, and a reused slot must therefore answer the **retired** owner's late release
+/// with `StaleGeneration` rather than releasing the successor's working set underneath it. The
+/// finalization-identity half of the same sequence is pinned by
+/// `test_a_late_cleanup_cannot_clear_a_successor_finalization_marker`.
+///
+/// The assertion that carries the weight is the *specific* answer: `StaleGeneration`, not the silent
+/// `NotHeld` an identity-free check would return for a slot that looks empty or for one that has been
+/// re-admitted. The pre-S4.1 sweep discarded exactly that distinction.
+void test_s4_2_a_retired_owners_late_release_cannot_release_a_successors_working_set() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 2);
+
+  // A admits through the production record-arm admission and holds the slot's working set.
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(2, true));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 2));
+  const uint16_t aGeneration = TrackCaptureStopTestAccess::slotGeneration(track, 2);
+  const uint8_t aRoles = TrackCaptureStopTestAccess::workingSetRoles(track, 2);
+  LoopPlaybackRuntime* const runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+
+  // A retires through the track-level sweep (the entry S4.1 converted): the lease drops and the generation
+  // advances, so A's identity is spent even though the runtime object stays where it is.
+  track.releasePlaybackMergedMidiEventsMemory();
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 2),
+                            "the sweep must release A's working set");
+  const uint16_t retiredGeneration = TrackCaptureStopTestAccess::slotGeneration(track, 2);
+  TEST_ASSERT_TRUE_MESSAGE(retiredGeneration > aGeneration,
+                           "A's release must advance the slot generation");
+
+  // C reuses the same capacity: same runtime object, the same role set, and its own identity -- the
+  // post-release generation, not A's. Re-admission itself allocates nothing and bumps nothing.
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(2, true), "the slot must re-admit");
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(runtime, TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2),
+                                "C must reuse the slot's runtime object");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 2));
+  const uint16_t cGeneration = TrackCaptureStopTestAccess::slotGeneration(track, 2);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(retiredGeneration, cGeneration,
+                                   "re-admission must not spend the successor's identity");
+  TEST_ASSERT_EQUAL_UINT8(aRoles, TrackCaptureStopTestAccess::workingSetRoles(track, 2));
+
+  // Late A cleanup presenting the retired identity: rejected **and reported** -- `StaleGeneration`, never a
+  // release and never the silent `NotHeld`.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(WorkingSetOutcome::StaleGeneration),
+      static_cast<uint8_t>(TrackCaptureStopTestAccess::releaseSlot(track, 2, aGeneration)),
+      "the retired owner's identity must be rejected as stale, not answered as NotHeld");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 2),
+                           "a late release must not release a successor's working set");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(aRoles, TrackCaptureStopTestAccess::workingSetRoles(track, 2),
+                                  "a late release must not disturb the successor's roles");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(cGeneration, TrackCaptureStopTestAccess::slotGeneration(track, 2),
+                                   "a rejected release must not advance the successor's identity");
+
+  // Control: the successor's own identity releases, and only then does the generation move again.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(WorkingSetOutcome::Released),
+      static_cast<uint8_t>(TrackCaptureStopTestAccess::releaseSlot(track, 2, cGeneration)),
+      "the live identity must release");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::leaseHoldsWorkingSet(track, 2));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::slotGeneration(track, 2) > cGeneration,
+                           "the accepted release must advance the generation");
+}
+
+
+/// **S4.2 — the release outcomes carry the device row's own vocabulary.**
+///
+/// "Reported" has two halves: the caller sees a distinguishable outcome (pinned above and by the
+/// `(slot, generation)` release-entry fixture), and the row that leaves the box names it. The emitter's
+/// literal mapping is the only place that second half lives, so it is pinned here directly against the
+/// vocabulary the reader consumes (`scripts/hitl/lease_release.py` decodes the same four literals, and
+/// `test_capture_line_tier` pins the row's Tier-A classification). `NotHeld` is included on purpose: it is
+/// the one outcome the sweep deliberately does **not** emit, which is why a slot with no row means "no sweep
+/// ran here", never "the release failed".
+void test_s4_2_the_release_outcomes_are_named_as_the_device_row_names_them() {
+  TEST_ASSERT_EQUAL_STRING("released", workingSetOutcomeLabel(WorkingSetOutcome::Released));
+  TEST_ASSERT_EQUAL_STRING("refused_busy", workingSetOutcomeLabel(WorkingSetOutcome::RefusedBusy));
+  TEST_ASSERT_EQUAL_STRING("stale_generation", workingSetOutcomeLabel(WorkingSetOutcome::StaleGeneration));
+  TEST_ASSERT_EQUAL_STRING("not_held", workingSetOutcomeLabel(WorkingSetOutcome::NotHeld));
+}
+
 /// **S4.1 — the track-level release is gated by liveness.** `releaseEligiblePlaybackRuntimeSlots`
 /// must skip a slot whose predicate reports a live owner: releasing underneath one is what the
 /// predicate-free `resetAll` did.
@@ -2169,6 +2255,9 @@ int main() {
   RUN_TEST(test_selection_acquires_no_working_set);
   RUN_TEST(test_a_late_cleanup_cannot_clear_a_successor_finalization_marker);
   RUN_TEST(test_the_slot_generation_release_entry_is_identity_qualified_and_preserves_refusals);
+  // S4.2 -- the generation-mismatched release: rejected on the lease path, and named as the row names it.
+  RUN_TEST(test_s4_2_a_retired_owners_late_release_cannot_release_a_successors_working_set);
+  RUN_TEST(test_s4_2_the_release_outcomes_are_named_as_the_device_row_names_them);
   RUN_TEST(test_the_release_sweep_skips_a_slot_with_a_live_owner);
   // S4.1 -- the working-set lease release on a same-track slot switch (the device run only evidences
   // the finalization-capacity release).
