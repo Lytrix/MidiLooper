@@ -198,9 +198,15 @@ Native fault injection proves logical preservation; no claim that it measures de
 
 Owner: architect for dependency definition; this change implements no publication-unit switch.
 Preconditions: existing root/consumer inventory. Commit: contract-only S4c evidence. Gate: strict OpenSpec
-validation and source-cited inventory of the five gather sites/checkpoint consumers; no firmware tests needed.
+validation and source-cited inventory of the gather sites/checkpoint consumers — **CLOSED 2026-10-01; the
+source-cited inventory covers the tree's nine call sites of two entry points across six files, attributed by
+consumer group rather than by the count below, which is a group count**; no firmware tests needed.
 Phase F implementation, S2.1/S2.5/S2.6 and S4d playback integration are **blocked** until the planned sibling has
 its own approved contract/DEC and execution packet. Do not create green placeholder acceptance for missing work.
+**S4c is complete (S4c.0 through S4c.5 and the gate).** The three artifacts are
+`S4C0-PUBLICATION-INVENTORY.md`, `S4C1-READINESS-CURRENCY-CONTRACT.md` and
+`S4C45-CHECKPOINT-PARITY-AND-FIXTURES.md` (checkpoint parity; the F-1 to F-8 fixture list including the
+length-independent root-residency acceptance; and this wording's reconciliation as its section 3).
 
 ### P6 — S4e visual tier and S2.8 cap accounting
 
