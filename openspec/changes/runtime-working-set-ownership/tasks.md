@@ -1144,7 +1144,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       owner deliberately kept disabled, so no device class is claimed. Packet and full record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.7.
 
-- [~] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 2.3) — drain fixture: hold the
+- [x] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 2.3) — drain fixture: hold the
       condition on device.** **PARTIAL 2026-10-01:** the blocking term and the held restore are now observable and
       observed at a drain edge (`PERS,drain_progress,795,801,3,ok` with continuous `RRQ` activity in
       `captures/s2b7-drain-probe-01`), but "another track playing" at that same instant is not (the nearest
@@ -1178,6 +1178,20 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       **Device-state consequence (not reversible):** track 6 Loop 8 — the clear target authorized above — no longer
       has its card payload: in `-02` the drain **completed** after that clear and persisted the cleared state
       (`State saved successfully (v4)`). No other slot was cleared.
+      **SATISFIED 2026-10-01 (`captures/s2b7a-drain-shapeb-10.log`, 24.318 s): all three conditions *and* the literal
+      bit-1 clause at ONE edge.** The last leg differs in one decisive way — a **background clock thread keeps the
+      transport running through the CLEAR** (the earlier legs let the clock stream end first, so the sounding track
+      stopped just before the edge). At that edge: `Clear waiting for deferred save completion` (**a save owed**,
+      which stays owed), then `PERS,drain_progress,665,665,`**`2`**`,transport_active` — `flags` bit 1 is
+      **`deferredSaveBlockedByActiveSlotLoadSd()` true at the drain entry** (**a restore holding the SD session**;
+      adjacent `RRQ,4,4,running` 20.26 s, `RRQ,4,5,running` 20.34 s) — with the drain's own verdict naming
+      **`transport_active`** (**another track playing**: the scratch track's capture opened at 20.221 s on
+      `Selected track 5` while the clear targets track 6 Loop 8) and the clear **refused by that name** with the slot
+      left untouched. No external advancement was performed inside the run. Corroboration: `-01` (bit 1 + progress
+      moved inside the call), `-05`/`-06` (a restore terminal 3 ms before the drain; the drain naming
+      `post_load_holdoff` and refusing by name). Stated rather than inflated: the third conjunct is carried by the
+      **drain's named gate** plus the same-window activity of a different track, not by a note row (this run's ring
+      shed twice, `RING,shed,2`).
 - [x] **S2b.7 (TRANSFERRED 2026-09-24 from `restored-library-stability` task 3.1) — drain device leg: report
       which permitted outcome occurs.** **OBSERVED 2026-10-01 (`captures/s2b7-drain-probe-01`):** the row
       `PERS,drain_progress,<before>,<after>,<flags>,<verdict>` samples `restoreProgressCounter()` immediately before
@@ -1354,7 +1368,17 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       re-pinning the per-slot runtime for test observation. Suite 101/101; full native
       `2,436 passed / 1 skipped` (clean build); firmware RAM1 byte-identical to S3.1. Packet and record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3.3.
-- [ ] S3 gates: S2b gates plus S2.2/S2.3 current-root budget (no phase-F behavior prerequisite), plus `test_runtime_working_set_ownership`; `test_playback_prewarm` unchanged.
+- [x] S3 gates: S2b gates plus S2.2/S2.3 current-root budget (no phase-F behavior prerequisite), plus `test_runtime_working_set_ownership`; `test_playback_prewarm` unchanged.
+      **CLOSED 2026-10-01.** Every requirement of this gate is satisfied and each is cited where it lives:
+      **S2b gates** checked (the eight-boot slope sweep); **S2.4/S2.2/S2.3's class budget** checked
+      ([`S2C23-CLASS-BUDGET.md`](S2C23-CLASS-BUDGET.md), whose conservative sum is *reported* as not fitting rather
+      than papered over); **S2b.3's** post-restore half measured; **S2b.7's legs (a)/(b)/(c)** all satisfied, (a) by
+      `captures/s2b7a-drain-shapeb-10.log` at 24.318 s (save owed + `flags` bit 1 true at the drain entry + the drain
+      naming `transport_active`); `test_runtime_working_set_ownership` exists and is linked as a firmware-boundary
+      suite; `test_playback_prewarm` unchanged; and the gate's own device clause (holders rising and falling with
+      activation) observed in the S4 gates holder census. The two remainders this gate carried through 2026-09-25 are
+      discharged above; nothing here is deferred to a later gate.
+      **NATIVE HALF DONE 2026-09-25; DEVICE ITEMS COMPLETED 2026-10-01.**
       **NATIVE HALF DONE 2026-09-25; the gate stays OPEN on its device items.**
       `test_runtime_working_set_ownership` now exists and is linked as a firmware-boundary suite: boot/load
       is an admission boundary (a committed slot leaves boot with no working set; the record arm on the same
@@ -1377,7 +1401,9 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       call, bit 1 = the save was blocked by the active slot load), observed once as `795,801,3,ok` with a live
       restore sweep ([`evidence/2026-10-01-s2b7-drain-edge/`](evidence/2026-10-01-s2b7-drain-edge/EVIDENCE.md)).
       *Still open, with what it needs.* (1) **S2b.7(a)'s third conjunct** — "another track playing" at that same
-      drain edge. **Five device legs on 2026-10-01 arranged it and mapped it** (see the item's own text and
+      drain edge. **RESOLVED 2026-10-01** (`captures/s2b7a-drain-shapeb-10.log`, 24.318 s): save owed + `flags` bit 1
+      true at the drain entry + the drain naming `transport_active`, at one edge. **Six device legs on 2026-10-01
+      arranged and mapped it** (see the item's own text and
       [`evidence/2026-10-01-s2b7a-drain-edge-arrangement/EVIDENCE.md`](evidence/2026-10-01-s2b7a-drain-edge-arrangement/EVIDENCE.md)):
       the drain's two call sites, the `hasDeferredSaveWork()` precondition, the exact meaning of bit 1
       (`SlotLoadSession::isActive() || loadLoopJobHasOpenSdFile()`) and the fresh-boot requirement are all measured,
@@ -1410,7 +1436,9 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       *Still open.* (1) **S2b.7(a)'s third conjunct** — "another track playing" at the same drain edge. **Arranged and
       mapped on 2026-10-01 (five device legs):** `captures/s2b7a-drain-shapeb-05` holds a save owed, a restore
       completing 3 ms before the drain with the drain naming `post_load_holdoff` and refusing the clear by name, and
-      notes sounding across the edge — what remains is **bit 1 true** together with a *different* track's notes
+      notes sounding across the edge — and the **bit-1-plus-transport** co-occurrence was then achieved
+      (`captures/s2b7a-drain-shapeb-10.log`, 24.318 s: `PERS,drain_progress,665,665,2,transport_active` with a save
+      owed and the clear refused by name), so this item is **resolved**
       ([`evidence/2026-10-01-s2b7a-drain-edge-arrangement/`](evidence/2026-10-01-s2b7a-drain-edge-arrangement/EVIDENCE.md)).
       (2) **S2.2/S2.3's
       current-root per-class budget**, which ran through **S4c.1 → S2.1** because the `P` class is the playback
