@@ -8836,3 +8836,51 @@ latched and the switch gesture returns without a committed target) and `(d)`/`(e
 § S4b.1. `Omax` is asserted as **behaviour** (bounded, non-accumulating, nothing stolen) rather than as a new
 named constant or budget object: the effective inbound bound is the per-track pending state, and the design's
 `TransferOverlap` term stays a budget-arithmetic term owned by S2's accounting rather than by this stage.
+
+## S4b.1 (a) — the "press dropped" reading was stale, and the real remainder has a named prerequisite (2026-10-01)
+
+**What (a) said, and what the code does.** S4b.1 (a) recorded that "when `Track::stopOverdubbing` denies
+admission on capacity, the switch returns `false` and the press is **dropped** rather than retained — that needs
+the switch's own retained carrier". Reading the gesture rather than the note: the carrier exists.
+`MidiButtonActions::handleToggleRecordForSlot` calls `finalizeCaptureAndSelectSlot`, and when it returns false,
+the empty-target branch calls `TrackManager::retainRecordStartForSlot(trackIdx, slotIndex)` and logs "Track %d
+loop %d: switch and record start retained (stop not yet admitted)" — explicitly, "the request is **retained**,
+not dropped … `handlePendingRecordStart` then re-attempts activation on every eligible boundary and consumes the
+request only at a successful start."
+
+**The reproducer on the denied path.** `test_s4b_1_a_denied_stop_on_an_uncommitted_switch_retains_the_targets_start`
+(test-only; the firmware hex is unchanged): a second slot's admitted finalization occupies the track's single
+finalization capacity (DEC-078 item 6), the switch's predecessor then captures live beside it — the required
+outgoing-finalizer + incoming-capture overlap — and *its* stop is denied. The fixture asserts the whole
+contract on that path: the active slot does not move; the target's start **is** retained
+(`isRecordingQueued`); the predecessor's stop **is** accepted-and-latched against its own slot; the occupant's
+job and lease are untouched; and retiring the occupant's finalization plus turning the lanes makes the retained
+start **execute with no further gesture** (target active and recording, latch cleared, nothing stolen).
+
+**Two red-proofs, each restored byte-identically.** Dropping `retainRecordStartForSlot` from the gesture fails
+this fixture (*"the target's start must be retained, not dropped with the gesture"*), the sibling repeated-switch
+fixture, and the two existing retention fixtures — the retention is load-bearing, and now covered on both the
+admitted and the denied path. Dropping the denied-stop latch fails this fixture at *"Expected 0 Was 1. an
+uncommitted switch must not move the active slot"*: **the latch is what holds the active slot in place**, so what
+(a) read as "the press was dropped" was the S4f.5 protection working. That distinction matters for the next
+slice: nothing here is a defect to fix.
+
+**The real remainder, with its prerequisite measured.** The *populated*-target variant does not take the record
+carrier at all: with a target that has committed passes, the gesture queues a **playback** switch
+(`queuePlayingSlotSwitch` → the state machine's pending switch plus `pendingSlotEnabled`), and that queued switch
+commits in the **multi-slot-commit lane inside `TrackManager::updateAllTracks`** — the production per-tick entry.
+Driving that entry from this suite **fails to link**, for exactly four symbols:
+
+    Track::playMidiEvents(uint32_t, bool)
+    Track::playMidiEventsForSlot(uint8_t, uint32_t, bool)
+    TrackManager::isTrackAudible(uint8_t) const
+    Track::shouldCommitQueuedPlaybackStart(uint32_t) const
+
+So the pending-switch lane — where a queued switch actually commits and where the review's "silent dead switch"
+risk lives (S4b.6/S4b.7) — is not yet drivable natively, and extending the shared harness's linked closure for
+those four (following the `HARNESS_LINKS_*` pattern, without shadowing them in the fail-closed stub surface) is
+the prerequisite for those fixtures. Recorded as a prerequisite rather than worked around: the alternative,
+driving only the *dispatch* helpers the suite already links, cannot see a switch that commits in the tick lane.
+
+Full native **2,648 cases / 2,641 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS with the
+RAM1 line unchanged.

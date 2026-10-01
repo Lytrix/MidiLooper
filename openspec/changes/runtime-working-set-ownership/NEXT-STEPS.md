@@ -136,16 +136,19 @@ named".
 
 ## Recommended next slice
 
-**The repeated-switch case is now covered** (2026-10-01: `Omax` asserted as behaviour — bounded,
-non-accumulating, nothing stolen, and it executes once capacity frees; the retention mechanism is measured there
-rather than described), and the **cross-track** switch already had its fixture. So the next native candidates
-are the rest of S4b:
+**Check 7's repeated case and finding (a) are both done** (2026-10-01: `Omax` asserted as behaviour — bounded,
+non-accumulating, nothing stolen, executing once capacity frees; and (a) turned out to be stale — the retention
+carrier exists, so its slice is the denied-path reproducer), and the **cross-track** switch already had its
+fixture. So the next native work is:
 
-1. **S4b.1 `(a)`** — the *uncommitted* switch case: a capacity-denied stop is latched and the switch gesture
-   returns without a committed target. The measurement above shows exactly what that state looks like
-   (`hasAcceptedInteractionForSlot(1)` true, no job, target's start queued, active slot unmoved), so the slice is
-   the acceptance of the *uncommitted* variant rather than a new mechanism — plus the recorded tightening of
-   S4b.1's finalizer-pause lever into a phase-specific pause.
+1. **The harness's linked closure for the pending-switch lane** — the named prerequisite, measured: a
+   *populated* target queues a **playback** switch that commits inside `TrackManager::updateAllTracks`'s
+   multi-slot-commit lane, and driving that entry from `test_runtime_working_set_ownership` fails to link for
+   exactly four symbols: `Track::playMidiEvents(uint32_t, bool)`, `Track::playMidiEventsForSlot(uint8_t,
+   uint32_t, bool)`, `TrackManager::isTrackAudible(uint8_t) const`, `Track::shouldCommitQueuedPlaybackStart(
+   uint32_t) const`. Add them through the `HARNESS_LINKS_*` pattern without shadowing them in the fail-closed
+   stub surface. Until this exists, any fixture for a queued switch can only observe the *request*, not its
+   commit or its absence — which is precisely the "silent dead switch" risk.
 2. **S4b.6 + S4b.7** — the occupancy-aware, allocation-free binding and the off-clock provisioning owner it
    needs (`TrackManager::provisionSlotForSwitch` on the deferred lane, with a pending switch making its track
    eligible for a deferred turn). This is the largest remaining piece and the one that removes the "silent dead

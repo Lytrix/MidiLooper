@@ -1608,6 +1608,35 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 
 - [ ] S4b.1 Transfer the single complex role (record / overdub / passes / undo/redo / display, resumable
       small-packet logic inside MIDI boundaries) to a newly selected slot or track without a transport stop.
+      **FINDING (a) DISCHARGED 2026-10-01 (test-only; no `src/` change).** (a) recorded "when
+      `Track::stopOverdubbing` denies admission on capacity, the switch returns `false` and the press is
+      **dropped** rather than retained". **That is stale:** `MidiButtonActions::handleToggleRecordForSlot`
+      retains the start instead — when `finalizeCaptureAndSelectSlot` returns false it calls
+      `TrackManager::retainRecordStartForSlot(trackIdx, slotIndex)` and reports "Track %d loop %d: switch and
+      record start retained (stop not yet admitted)", which is the retained carrier (a) asked for. The new
+      fixture `test_s4b_1_a_denied_stop_on_an_uncommitted_switch_retains_the_targets_start` is its
+      **reproducer on the denied path**: another slot's admitted finalization occupies the track's single
+      finalization capacity (DEC-078 item 6), the predecessor then captures live beside it (the required
+      outgoing-finalizer + incoming-capture overlap) and its own stop is **denied**, the gesture to an empty
+      target therefore does not commit — and the fixture asserts the active slot does not move, the target's
+      start **is** retained (`isRecordingQueued`), the predecessor's stop **is** accepted-and-latched against
+      its own slot, the occupant's job and lease are untouched and the predecessor keeps capturing; then that
+      retiring the occupant's finalization and turning the lanes makes the retained start **execute with no
+      further gesture** (target active and recording, latch cleared, nothing stolen). **Red-proved twice, each
+      restored byte-identically:** dropping the retention call in the gesture fails it (*"the target's start
+      must be retained, not dropped with the gesture"*) plus the sibling fixture and the two existing retention
+      fixtures; dropping the denied-stop latch fails it (*"Expected 0 Was 1. an uncommitted switch must not move
+      the active slot"*) — i.e. the latch is what keeps the active slot in place, so (a)'s "press dropped"
+      reading was really the S4f.5 protection doing its job. Focused suite **33/33**; full native **2,648 cases
+      / 2,641 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS, firmware hex unchanged.
+      **Still open, and now named with its prerequisite:** the *populated-target* variant routes through the
+      **pending-playback-switch / multi-slot-commit lane inside `TrackManager::updateAllTracks`** (not the
+      record carrier), and that lane **cannot be driven from this suite yet**: calling `updateAllTracks` fails
+      to link for exactly four symbols — `Track::playMidiEvents(uint32_t, bool)`,
+      `Track::playMidiEventsForSlot(uint8_t, uint32_t, bool)`, `TrackManager::isTrackAudible(uint8_t) const`
+      and `Track::shouldCommitQueuedPlaybackStart(uint32_t) const`. Extending the harness's linked closure for
+      those four is the prerequisite for the S4b.5/S4b.6/S4b.7 fixtures (that lane is where a queued switch
+      commits, and where the "silent dead switch" risk lives).
       **CHECK 7 REPEATED SWITCHES COVERED 2026-10-01 (test-only; no `src/` change — the rebuilt firmware hex
       is byte-identical to the S4.4 slice's image).** The review's own next item was "repeated switches B → C
       while A still finalizes … needs the explicit bounded-overlap policy (`Omax = NUM_TRACKS` inbound holders;
