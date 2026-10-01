@@ -4168,7 +4168,7 @@ has not run to completion.
         `overflow_free` / `call_site_gate_ok`; transport never stops.
       This is the case that distinguishes "one device-wide finalizer" from "one finalizer per **track+slot**" — a
       device-wide singleton would fail it. Evidence: session log + per-track holder census.
-- [ ] **S4f.23 When a record job never retired: the S4f.19 retirement wait is now bounded (DEC-107, firmware).** A
+- [x] **S4f.23 When a record job never retired: the S4f.19 retirement wait is now bounded and device-verified (DEC-107, firmware).** A
       24-bar record's stop job published and then sat at `RecordPublished` with `pending=1` for 30 s
       (`#STOP_PREFIX,...,build_active=1` on every poll) because its wait is on a frozen-window build whose two
       writers both sit on other owners — the playback hot path and `serviceFirstRecordingBar`, gated on
@@ -4180,7 +4180,14 @@ has not run to completion.
       existing wait-yield fixture stays green; full native **2,668 / 2,661 succeeded / 7 skipped / 0 failed**;
       `teensy41-capture-serial` SUCCESS, `padding 1,272` (floor 840), DTCM `variables` unchanged. **Device
       acceptance owed:** re-run the 24-bar record + 24-bar overdub shape on this image and require the record job
-      to retire and the overdub pass to be present. Evidence:
+      to retire and the overdub pass to be present. **DEVICE ACCEPTED 2026-10-01** (image `db95f8ab…`, `captures/s15-24bar-03`, the same shape):
+      the record job retired (`#STOP_STATUS,state=STOPPED,pending=0,…,queue=0/4`; **0** parked `phase=16` rows against 18 before),
+      `Overdub wrap committed @ tick 18432` fired instead of being deferred, **no** `stop_job_pending` refusal,
+      `DIAG,canonical_release,0,119,18432,8`, and the overdub pass is present (`!CAPTURE_CONTENT`: `rows,record,0,1148` +
+      `rows,overdub,0,454` + `rows,overdub,1,114` = `rows,effective,0,1716`, an exact sum). No crash and no hang. The run's own
+      verdict is `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` on a capture-ring overflow (the known shed at this library size), so
+      the acceptance is read from the device's rows; the harness's stored-overdub-span oracle still reports short
+      (`count=62/191`, `bars=9/24`) with `overdub_unmatched_open_notes` — recorded as open and **not** attributed here. Evidence:
       [`evidence/2026-10-01-silent-hang-after-refused-od-stop/FINDING.md`](evidence/2026-10-01-silent-hang-after-refused-od-stop/FINDING.md).
 - **UNRESOLVED OBSERVATION (2026-09-24, user capture `captures/session_20260924_183229.log`) — the ordinary
   Playing stop route under repeated press; acceptance and progress UNPROVEN.** Recorded, not diagnosed: no

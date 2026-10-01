@@ -174,3 +174,28 @@ byte-identically (`8085d94b…`). Full native **2,668 cases / 2,661 succeeded / 
 and the overdub pass present. And the inferred link above — why a build was still in flight at the record stop —
 remains open.
 
+## Device acceptance (2026-10-01) — met
+
+Flashed `db95f8ab62349a76149d731f7ca08ef6e3123fd8f1cf0c8ab9bc599876c3d054` (clean boot: `boot_reset,crash=0`, workspace loaded) and re-ran the
+same shape on the same slot — `captures/s15-24bar-03`, 24-bar record + 24-bar overdub on track 5 Loop 1.
+
+| the wedge, before | this run, after |
+|---|---|
+| `#STOP_STATUS,state=OVERDUBBING,pending=1,phase=16,dest=1` on all 18 polls | **`#STOP_STATUS,state=STOPPED,pending=0,phase=0,dest=0,…,queue=0/4`** |
+| 18 parked `pending=1,phase=16` rows | **0** |
+| no `Overdub wrap committed` row | **`[145.983] Overdub wrap committed @ tick 18432`** |
+| `Overdub stop refused: stop_job_pending slot=0 interval=2 phase=16` | **absent** |
+| no `rows,overdub` line at all | **`rows,record,0,1148` + `rows,overdub,0,454` + `rows,overdub,1,114`**, `effective` **1,716** (the exact sum) |
+| `#CAPTURE_RECONNECT` 0, but hung silent afterwards | **no crash and no hang** — the device answers and is `STOPPED` |
+
+Also `#CAP,162800768,DIAG,canonical_release,0,119,18432,8` — the slot's finalization capacity was released — and the run's own stall/
+supersede/`FATAL` counters are all zero.
+
+**Read honestly.** The harness's own verdict is `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` on a capture-ring overflow
+(`capture_tier_a_evicted:329`, `overflow_free=False`) — the known shed at this library size — so the acceptance is taken from the
+device's rows above, not the verdict. Two harness gates stay unmet and are **not** attributed here: the stored-overdub-span oracle
+(`count=62/191`, `bars=9/24`) and `overdub_unmatched_open_notes` / `display_empty_after_overdub_stop`. The second committed overdub
+pass (`rows,overdub,1,114`) is reported as observed, not explained.
+
+Still open from this session: *why a build was in flight when the record stopped* (the inferred link), and the hang's abort site.
+

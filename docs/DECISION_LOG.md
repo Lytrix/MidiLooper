@@ -6140,7 +6140,7 @@ before the outbound retires, and the overlap is measured".
 ## DEC-107 — The S4f.19 retirement wait is bounded: a frozen-window build no writer can advance must not park the record job
 
 **Date:** 2026-10-01
-**Status:** Accepted — implemented; the new fixture fails without the bound (`Expected 1 Was 0`); full native **2,668 cases / 2,661 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS with the RAM1 guard met (`padding 1,272` >= 840, DTCM `variables` unchanged at 96,192). Device acceptance owed.
+**Status:** Accepted — implemented, and **device-verified** (`captures/s15-24bar-03`). Host: the new fixture fails without the bound (`Expected 1 Was 0`); full native **2,668 cases / 2,661 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS with the RAM1 guard met (`padding 1,272` >= 840, DTCM `variables` unchanged at 96,192). Device (image `db95f8ab…`, 24-bar record + 24-bar overdub on track 5 Loop 1): the record job **retired** (`#STOP_STATUS,state=STOPPED,pending=0,…,queue=0/4`; 0 parked `phase=16` rows against 18 before), `Overdub wrap committed @ tick 18432` fired instead of being deferred, **no** `stop_job_pending` refusal, `DIAG,canonical_release,0,119,18432,8`, and the overdub pass is present — `!CAPTURE_CONTENT`: `rows,record,0,1148` + `rows,overdub,0,454` + `rows,overdub,1,114` = `rows,effective,0,1716`. No crash and no hang.
 **Owner:** `Track::stepDeferredRecordRetirement` (the wait), `LoopPlaybackRuntime::frozenWindowStallGrains` / `frozenWindowStallGrain` (the bound's state), `LoopPlaybackRuntime::frozenWindowBuildGrain` (the progress signal)
 **Follows:** DEC-069 (the pending-stop wrap deferral), DEC-070 (a predicate that can never become true must not park a job), DEC-072 (the same wedge family)
 
