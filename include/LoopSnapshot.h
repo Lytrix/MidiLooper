@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <type_traits>
 #include <vector>
 
 #include "Globals.h"
@@ -209,9 +210,29 @@ struct SnapshotEventChange {
 };
 
 struct LoopSnapshotChangeSet {
-  std::vector<SnapshotNoteChange> notes;
-  std::vector<SnapshotEventChange> events;
+  // These two vectors are the growth-by-content scratch of the snapshot publish/journal and body-load
+  // paths, and they are exactly the "length-scaling, non-hot buffer" this allocator exists for. They must
+  // NOT use the default allocator: Teensyduino's `operator new` is `return malloc(size);` with no null
+  // check, so a failed internal-heap allocation hands `std::vector` a NULL buffer and its growth copies
+  // elements into it -- the writes below the 32 KB ITCM boundary land in mapped memory (silent
+  // corruption) and the first unmapped address faults. That is the 2026-10-01 boot-crash loop: DACCVIOL
+  // at 0xB000 = 512 x sizeof(SnapshotEventChange), i.e. a null base with a 512-element offset, while a
+  // 24-bar body was restored. ExternalMemoryFirstAllocator prefers the PSRAM pool for these buffers and
+  // reports a named FATAL if both pools are exhausted, so the failure is never silent.
+  using notes_t = std::vector<SnapshotNoteChange, ExternalMemoryFirstAllocator<SnapshotNoteChange>>;
+  using events_t = std::vector<SnapshotEventChange, ExternalMemoryFirstAllocator<SnapshotEventChange>>;
+  notes_t notes;
+  events_t events;
 };
+
+// Compile-time pin, so this fix cannot be silently reverted: a default-allocator change set is unsafe on a
+// target whose `operator new` returns null instead of throwing (Teensyduino). See the type comment above.
+static_assert(std::is_same_v<LoopSnapshotChangeSet::notes_t::allocator_type,
+                             ExternalMemoryFirstAllocator<SnapshotNoteChange>>,
+              "LoopSnapshotChangeSet::notes must use ExternalMemoryFirstAllocator");
+static_assert(std::is_same_v<LoopSnapshotChangeSet::events_t::allocator_type,
+                             ExternalMemoryFirstAllocator<SnapshotEventChange>>,
+              "LoopSnapshotChangeSet::events must use ExternalMemoryFirstAllocator");
 
 class LoopSnapshot;
 class LoopSnapshotConstruction;

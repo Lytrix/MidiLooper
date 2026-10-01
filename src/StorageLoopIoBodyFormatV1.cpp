@@ -476,6 +476,11 @@ ImmutableLoopSnapshotRef buildLoopSnapshotFromValidatedPayload(
   }
 
   LoopSnapshotChangeSet changes;
+  // One allocation per vector, from counts the gather already knows: this path must never grow the change
+  // set by repeated push_back reallocation (see LoopSnapshotChangeSet's note -- a null allocation there is
+  // what faults the device), and a single reservation removes the churn that made it likely.
+  changes.notes.reserve(payload.notes.size());
+  changes.events.reserve(payload.events.size());
   for (const Lsv1GatheredNote& note : payload.notes) {
     SnapshotNoteChange change{};
     change.kind = SnapshotChangeKind::Add;
