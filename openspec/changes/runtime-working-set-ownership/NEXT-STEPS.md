@@ -147,11 +147,18 @@ fixture. So the next native work is:
    pinned: retained while the predecessor finalizes, committing once the finalizer retires, with both failure
    modes (early switch, dead switch) red-proved. So a queued switch's **commit and its absence** are observable
    natively from here on, which is what the items below needed.
-2. **S4b.6 + S4b.7** — the occupancy-aware, allocation-free binding and the off-clock provisioning owner it
-   needs (`TrackManager::provisionSlotForSwitch` on the deferred lane, with a pending switch making its track
-   eligible for a deferred turn). This is the largest remaining piece and the one that removes the "silent dead
-   switch" risk the review named.
-3. **S4b.2 / S4b.3 / S4b.5** as written, then S4b.4's inbound-role fixture.
+2. **PARTIAL (2026-10-01) — S4b.6 + S4b.7.** The occupancy-aware, allocation-free binding and the off-clock
+   provisioning owner landed: `slotIfAllocated` (never `trySlot`) with the commit keeping the switch pending when
+   the inbound occupancy is absent, and `TrackManager::provisionSlotForSwitch` reached through the existing
+   deferred request owner (so a pending switch needs no new eligibility term — the prewarm consumer is not gated
+   by `hasRealtimeIdleWork`, and the mark survives until taken). Two fixtures, each red-proved twice (the
+   occupancy term; the binding). **Owed here, measured: the *demoted* target** (> `kMaxDetailedWindowBars` bars)
+   does not commit even after provisioning, because the commit's long-loop hold term needs a non-empty windowed
+   `mergedMidiEvents` and the windowed gather holds it empty without a published root — an architect question or a
+   published-root fixture on S4c/F's lane, not a missing fixture. `tasks.md` S4b.6/S4b.7 carry the record.
+3. **S4b.2 / S4b.3 / S4b.5** as written, then S4b.4's inbound-role fixture. S4b.2 also owns the ordering question
+   this slice left alone: with the deferred frame returning early while a deferred overdub stop is outstanding, a
+   switch's occupancy is provisioned *after* the predecessor's finalization retires.
 
 S4.5 and the S4 gate close with S4f/P3, not before. Every remaining device leg (S4.2/S4.3/S4.4 device byte
 deltas, S4b.8/S4b.9, phases B–E) and F4's SD-fault evidence needs a per-session device authorization.

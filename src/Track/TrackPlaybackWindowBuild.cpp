@@ -692,13 +692,22 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   return ok;
 }
 
+TRACK_COLD_MEM bool Track::hasPlaybackOccupancyForSlot(uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return false;
+  return playbackRuntime.slotIfAllocated(slotIndex) != nullptr;
+}
+
 TRACK_COLD_MEM void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
   ensureLoopsAllocated();
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
   }
   Loop& loop = loopForSlot(slotIndex);
-  LoopPlaybackRuntime* runtime = playbackRuntime.trySlot(slotIndex);
+  // S4b.6 (B5): **never** allocate here. This is reached from the switch commit on the clock path and from
+  // a MIDI-input edge (`MidiButtonActions`), where taking the runtime is illegal; occupancy is the
+  // provisioning owner's job (`TrackManager::provisionSlotForSwitch`, off-clock). A missing runtime is
+  // therefore a no-op, and every caller that needs one has already been given it.
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   if (runtime == nullptr) {
     return;
   }

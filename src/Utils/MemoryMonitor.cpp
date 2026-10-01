@@ -230,6 +230,8 @@ FLASHMEM const char* operationName(OperationKind operation) {
       return PSTR("boot_probe");
     case OperationKind::CompanionHistoryReserve:
       return PSTR("companion_history_reserve");
+    case OperationKind::SlotSwitch:
+      return PSTR("slot_switch");
   }
   return PSTR("unknown");
 }

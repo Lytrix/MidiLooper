@@ -211,6 +211,11 @@ public:
   bool prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture = true);
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
   void ensurePlaybackMergedEventsForSlot(uint8_t slotIndex);
+  /// S4b.6: does this slot's **inbound occupancy** (its playback runtime) exist? The switch commit path
+  /// asks this instead of allocating: `ensurePlaybackMergedEventsForSlot` intentionally never takes the
+  /// runtime, so a switch to a slot without occupancy stays pending until the off-clock provisioning owner
+  /// (`TrackManager::provisionSlotForSwitch`) has taken it. Answered without allocating.
+  bool hasPlaybackOccupancyForSlot(uint8_t slotIndex) const;
   /// Task 2.4 slice 2: satisfy a pending prepared-pair request off the MIDI tick.
   /// Runs the existing gather + order builder, publishes the immutable
   /// `PreparedPlaybackPair` in one atomic authority change and clears the request.
