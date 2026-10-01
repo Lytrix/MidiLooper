@@ -256,8 +256,11 @@ window size `N` = S2.3/S2.6; the publication unit itself = the sibling's own DEC
 
 **Why it was on the critical path:** S3 gates' remaining half is S2.2/S2.3's current-root per-class budget, and the
 `P` class *is* the playback window lease that S2.1 may derive only once the phase-F contract's interfaces exist
-(`IMPLEMENTATION_CONTRACT.md` §4). With S4c.1 landed, **S2.1 is the next unblocked step**, with S2.2/S2.3 behind it.
-S2b.7(a)'s third conjunct (a track playing at the same drain edge) remains the other named S3-gates item.
+(`IMPLEMENTATION_CONTRACT.md` §4). **S2.1 then landed the same day** — [`S2C1-PLAYBACK-WINDOW-LEASE.md`](S2C1-PLAYBACK-WINDOW-LEASE.md)
+derives the `P` term from the resolved window with the composition measured on the **target ABI** (331 KiB per
+holder windowed-only; a 2-bar window at typical density is 28.6 KB, ~12× smaller) — so the remaining step is
+**S2.2/S2.3** (measure each class separately and prove the envelope). S2b.7(a)'s third conjunct (a track playing
+at the same drain edge) remains the other named S3-gates item.
 ## Other candidates and why not first
 
 - S4f.6 — accepted-start execution: the formerly missing arm-and-wait and

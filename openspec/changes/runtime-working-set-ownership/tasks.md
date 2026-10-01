@@ -625,9 +625,33 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
-- [ ] S2.1 **Depends on phase F contract before behavior edits.** Derive the **playback window lease** capacities from the resolved window instead of the
+- [x] S2.1 **Depends on phase F contract before behavior edits.** Derive the **playback window lease** capacities from the resolved window instead of the
       2048-event ceiling (playback views and their ordering/provenance only). This is the promotion of
       RC-MEM-2's outstanding item, and it is the term multiplied by the derived N.
+      **DONE 2026-10-01 (derivation only; no firmware, no `src/`/`include/` change, no build, no device action):**
+      [`S2C1-PLAYBACK-WINDOW-LEASE.md`](S2C1-PLAYBACK-WINDOW-LEASE.md) — the `P` class is one
+      `RuntimePlaybackViewSet`, and the code already computes its total (`fixedExternalBytes()`, pinned by
+      `test_runtime_view_set_prewarm_has_fixed_capacity_and_no_growth`), so the derivation is about its
+      **inputs**. **The inputs are measured on the target ABI, not on the host**, by cross-compiling the real
+      headers with the project's own toolchain: `MidiEvent` holds a `sysexData` pointer, so
+      `sizeof(MidiEvent)` is **20 B on cortex-m7 and 32 B on x86-64** and a host derivation would inflate every
+      figure by **34 %**. The resulting term: **35 B/event** per view (the design's own figure, now verified on
+      device), **29 B/event** for capture staging, **331 KiB per holder** windowed-only (the long-loop shape,
+      RC-MEM-2's release path) and **831 KiB** whole-take reserved. Four exact cross-checks against existing
+      authority figures verify the arithmetic: `design.md`'s 35 B/event; `ExecutionBounds.md`'s views+bases
+      **350.0 KiB**, bridges **360.0 KiB**, `captureStagings[2]` **61,952 B each** (59,392 + 128 × 20) and
+      `canonicalPassInputs` **147,456 B at C=2048**. **The derivation:** capacity is the events the *resolved
+      window* may hold (`eventsPerBar × windowBars`, design densities ~72/bar typical and 4,096 refs/bar
+      ceiling), not the global 2048 — and it is `min(declared product limit, windowEvents)`, because at the
+      ceiling density a 2-bar window needs **8,192** events, *more* than today's ceiling. A 2-bar window at
+      typical density is **28.6 KB**, ~**12×** smaller than today (1 bar: 20×), so `N × P` becomes affordable
+      rather than merely paid, and length independence follows from the formula (nothing in it references the
+      loop length). **One coincidence is named rather than conflated:** `design.md` Revision 11's "~325 KB per
+      loop, ~2.6 MB at N = 8" is the **`N × whole-root`** term (the published snapshot root), a different
+      structure from this one. **Owed and named:** the **product limit** value (what one interval may capture —
+      the decision RC-MEM-2's own record called "the decision to take"); **`N`** itself (S2.3/S2.4, provisional
+      per phase F); and C3(a)'s per-slot saturation claim (`committedEvents + intervalHorizon`) plus the
+      `C`/`D`/`I` classes, which are **S2.2/S2.3**'s measurements.
 - [ ] S2.2 Measure each class separately: `P` playback window lease, `C` live-capture extension, `D`
       deferred-finalization extension, `I` interactive extension. Do **not** size the specialized classes by
       the playback target.
@@ -1285,7 +1309,8 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       it is not covered by this session's track-4/5 grant. (3) **S2.2/S2.3's current-root per-class budget:** the
       classes are per-holder and the `P` class *is* the playback window lease, which S2.1 creates only after the
       phase-F contract exists; that contract is now specified (**S4c.1 landed 2026-10-01** — the interval/window
-      readiness and immutable-currency specification), so the remaining steps are **S2.1 → S2.2/S2.3**.
+      readiness and immutable-currency specification), and **S2.1 landed 2026-10-01** (the `P` term measured on
+      the target ABI: 331 KiB per holder windowed-only), so the remaining step is **S2.2/S2.3**.
       (4) The gate's own device clause
       (holders rising and falling with activation/deactivation) is already observed — see the S4 gates line.
 
@@ -1301,7 +1326,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       drain does not run mid-take, so it needs an arrangement; the row makes it observable). (2) **S2.2/S2.3's
       current-root per-class budget**, which ran through **S4c.1 → S2.1** because the `P` class is the playback
       window lease and S2.1 may not edit behaviour before the phase-F contract exists; **S4c.1 landed 2026-10-01**,
-      so S2.1 now has its target interfaces and is the next unblocked step. (3) The gate's own device
+      so S2.1 has its target interfaces and its term — **S2.1 landed 2026-10-01** — leaving **S2.2/S2.3**. (3) The gate's own device
       clause is satisfied by the S4 gates' holder census (holders rise with activation, fall with deactivation).
 - [x] S4.0 **Per-slot liveness predicate (B6, invariant 33).** (**PARTIAL 2026-09-23:** the live-window
       ring scan, the slot's `captureStopOwner`, an in-flight prepared handover (`preparedPairRequestPending`)
