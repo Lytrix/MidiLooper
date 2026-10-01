@@ -6085,3 +6085,12 @@ accepted-but-unexecuted interaction beside a direct write, which must route thro
 than move the slot) is the named next step, and this record says so instead of implying it is covered. Record:
 `openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4b.5 — one active-slot write
 authority, and the cancel that owns the trio".
+
+**Discharged 2026-10-01 (test-only; firmware hex byte-identical).** That gap is closed by
+`test_s4b_5_an_accepted_unexecuted_interaction_routes_the_write_through_the_switch`: the fixture builds the state
+the term covers and nothing else (a latch alone, with `isRecording` / `isOverdubbing` /
+`hasPendingDeferredOverdubStop` all asserted false, so no other term can route the write) and asserts the
+**route** through its effect -- the capture-switch commit enables the target slot while a bare write would leave
+it disabled on a playing track. With the term removed the fixture fails, so the mutation that once survived the
+whole suite now fails one fixture. Focused suite 40/40; full native 2,657 cases / 2,650 succeeded / 7 skipped /
+0 failed; firmware hex byte-identical (`cdab16f4…`) because this slice changes no firmware.
