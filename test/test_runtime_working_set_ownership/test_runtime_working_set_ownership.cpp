@@ -3308,7 +3308,109 @@ void test_s4b_2_the_inbound_role_is_provisioned_before_the_outbound_is_released(
                            "the inbound stays in place at the end of the transfer");
 }
 
+/// **S4b.3 — the switch lands on a MIDI boundary, and that boundary is cold: it binds, it does not build.**
+///
+/// "Land the switch on a MIDI boundary" is the quantization's job (`SlotQuantization::LoopEnd` for the
+/// playback-switch gesture, `NextGrid` for the record carrier), and "a cold admission boundary by
+/// construction" is what S4b.2/S4b.6/S4b.7 made true: the inbound role is provisioned **off-clock** by the
+/// `SlotProvision` turn, so the boundary itself only binds an already-prepared role. Both halves are measured
+/// here instead of asserted by name:
+///
+///   * the tick at which the active slot actually changes is the boundary the quantization promises -- the
+///     outgoing loop's playhead has wrapped at that tick (`LoopEnd`), or the tick is on the start grid
+///     (`NextGrid`) -- and it is **not** the tick the request was queued at; and
+///   * the boundary tick itself allocates nothing: the pool is exactly where it was immediately before the
+///     tick that committed, because the role it binds was prepared earlier.
+void assert_s4b_3_the_switch_lands_on_a_boundary(SlotQuantization quantization, uint8_t kOutbound,
+                                                uint8_t kInbound) {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, kOutbound);
+  commitRecordPassIntoTrackSlot(track, kInbound);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kOutbound, true));
+  // The inbound role is prepared **before** the boundary: that is what makes the boundary cold.
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kInbound, false));
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, kOutbound);
+  TrackCaptureStopTestAccess::activateSlot(0, kOutbound);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOutbound);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOutbound));
+  TEST_ASSERT_EQUAL_UINT8(kOutbound, TrackCaptureStopTestAccess::activeLoopIndex(track));
+
+  const Loop& outboundLoop = track.getLoop(kOutbound);
+  const uint32_t loopStart = outboundLoop.loopStartTick;
+  const uint32_t loopLength = outboundLoop.loopLengthTicks;
+  const uint32_t gridTicks = track.getQueuedStartGridTicks();
+  TEST_ASSERT_TRUE(loopLength > 0);
+  TEST_ASSERT_TRUE(gridTicks > 0);
+
+  // Queue deliberately **off** the boundary, so a commit that lands on the queue tick would be visible.
+  const uint32_t queueTick = loopStart + 211;
+  clockManager.assignCurrentTickSilently(queueTick);
+  trackManager.requestSlotSwitch(0, kInbound, quantization, queueTick);
+  TEST_ASSERT_TRUE(trackManager.hasPendingSlotSwitch(0));
+  TEST_ASSERT_EQUAL_UINT8(kOutbound, TrackCaptureStopTestAccess::activeLoopIndex(track));
+
+  uint32_t commitTick = UINT32_MAX;
+  uint32_t phaseBeforeCommit = 0;
+  uint32_t phaseAtCommit = 0;
+  uint32_t chunksBeforeCommit = 0;
+  uint32_t chunksAfterCommit = 0;
+  for (uint32_t tick = queueTick + 1; tick <= queueTick + 2 * loopLength + gridTicks; ++tick) {
+    // The outgoing loop's own phase (modulo its length: the effective tick is projection-domain), read while
+    // it is still the active slot.
+    phaseBeforeCommit = (track.getEffectivePlaybackTick(tick - 1) - loopStart) % loopLength;
+    phaseAtCommit = (track.getEffectivePlaybackTick(tick) - loopStart) % loopLength;
+    chunksBeforeCommit = LoopEventStore::freeChunkCount();
+    clockManager.assignCurrentTickSilently(tick);
+    trackManager.updateAllTracks(tick);
+    chunksAfterCommit = LoopEventStore::freeChunkCount();
+    if (TrackCaptureStopTestAccess::activeLoopIndex(track) == kInbound) {
+      commitTick = tick;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(commitTick != UINT32_MAX, "the queued switch must commit");
+  TEST_ASSERT_TRUE_MESSAGE(commitTick != queueTick,
+                           "the commit may not land on the request's own tick: it is quantized");
+
+  if (quantization == SlotQuantization::LoopEnd) {
+    TEST_ASSERT_TRUE_MESSAGE(phaseAtCommit == 0 || phaseAtCommit < phaseBeforeCommit,
+                             "a LoopEnd switch must land where the outgoing loop's playhead wrapped");
+  } else {
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, commitTick % gridTicks,
+                                     "a NextGrid switch must land on a start-grid tick");
+  }
+
+  // The cold half: the boundary tick binds the prepared role and allocates nothing.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(chunksBeforeCommit, chunksAfterCommit,
+                                   "the boundary tick itself may not take or return pool capacity");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kInbound),
+                           "the role the boundary bound was already prepared");
+}
+
+/// `LoopEnd` -- the quantization the playback-switch gesture itself uses.
+void test_s4b_3_a_loop_end_switch_lands_on_the_loop_boundary() {
+  assert_s4b_3_the_switch_lands_on_a_boundary(SlotQuantization::LoopEnd, /*kOutbound=*/0, /*kInbound=*/2);
+}
+
+/// `NextGrid` -- the record carrier's quantization: the switch waits for the start grid instead.
+void test_s4b_3_a_next_grid_switch_lands_on_the_start_grid() {
+  assert_s4b_3_the_switch_lands_on_a_boundary(SlotQuantization::NextGrid, /*kOutbound=*/1,
+                                              /*kInbound=*/3);
+}
+
 int main() {
+
 
   UNITY_BEGIN();
   // S4b.1 check 7 (repeated same-track switches): accepted, bounded, nothing stolen, executes on capacity.
@@ -3333,6 +3435,9 @@ int main() {
   RUN_TEST(test_s4b_5_an_accepted_unexecuted_interaction_routes_the_write_through_the_switch);
   // S4b.2: the inbound role is provisioned before the outbound one is released, and the overlap is bounded.
   RUN_TEST(test_s4b_2_the_inbound_role_is_provisioned_before_the_outbound_is_released);
+  // S4b.3: the switch lands on a MIDI boundary, and that boundary binds a prepared role (allocates nothing).
+  RUN_TEST(test_s4b_3_a_loop_end_switch_lands_on_the_loop_boundary);
+  RUN_TEST(test_s4b_3_a_next_grid_switch_lands_on_the_start_grid);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);

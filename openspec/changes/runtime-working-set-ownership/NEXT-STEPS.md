@@ -179,9 +179,13 @@ fixture. So the next native work is:
    S4b.1. Two findings recorded there: a **playback** switch's inbound has occupancy but **no lease** (a contract
    question for the architect), and the overlap's unit is not the outbound's capture-inclusive prewarm (1 vs 14
    vs 0 chunks measured), so the fixture asserts only the bound it can support.
-5. **S4b.3 / S4b.4** as written -- S4b.3 (the switch as a MIDI-boundary cold-admission boundary) and S4b.4's
-   inbound-role fixture (the inbound holder serving record/overdub/passes/undo/redo/display with no stop and no
-   allocation at the switch). S4b.2 now has a concrete immediate
+5. **DONE (2026-10-01) -- S4b.3**: the boundary is measured on both quantizations the firmware uses (`LoopEnd`
+   for the playback-switch gesture, `NextGrid` for the record carrier) -- the committing tick is not the queue
+   tick, the `LoopEnd` tick is where the outgoing loop's playhead wrapped, the `NextGrid` tick is on the start
+   grid, and the boundary tick allocates nothing (pool identical before/after). Red-proved by making `LoopEnd`
+   ignore the boundary (which also trips S4b.1's lane fixture as a control) and by allocating at the boundary
+   (which fails both new fixtures). Still to write: **S4b.4's** inbound-role fixture (the inbound holder serving
+   record/overdub/passes/undo/redo/display with no stop and no allocation at the switch). S4b.2 now has a concrete immediate
    question: the `SlotProvision` turn is dispatched from the deferred-idle lane `main.cpp` gates, but the
    **ordering** it inherits is "provision *after* the predecessor's finalization retires" (the deferred frame
    returns early while a deferred overdub stop is outstanding, and the drain turn shares that lane). Pre-
