@@ -2149,6 +2149,13 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       documented overdub issues (and the seed run `INCONCLUSIVE_CAPTURE`), so this evidence is the *switch rows,
       the census and the timing gates*, not a green baseline; and a dedicated multi-switch run is still the
       tighter evidence for the gate wording below.
+      **RE-EVIDENCED ON THE CURRENT IMAGE (`a1f4e4c0…`, `captures/s4b8-newimage-01`).** Same runner and gesture:
+      `622.685 Reentry window open slot=0` → `623.139 Loop 2: Queued playback switch` (inside the window) →
+      `628.703 LoopEnd playback commit track=4 0->1 start=0 len=1536`, with **one** `canonical_release`
+      (`0,1,2304,8`), `wiped=0`, gates green and an empty warning list, `integrity: COMPLETE`. So the leg's
+      assertions hold on the firmware the change now produces, and the commit is observed in the same run.
+      The repeated-switch gate leg was re-run on the same image (`captures/s4b-gate-newimage-02`: three switches,
+      two commits, `integrity: COMPLETE`), so the timing half's evidence is no longer tied to the older image.
 - [x] S4b.9 **HITL — cross-track switch while a predecessor finalizes.** Managed run: record/overdub A on track 4
       → stop A → switch the active track to track 5 **while A still finalizes** → assert the track switch is
       accepted and MIDI-continuous, A's occupancy stays pinned on track 4 (no release), track 5's inbound

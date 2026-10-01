@@ -93,3 +93,23 @@ wording, and is recorded as such rather than claimed.
 * The predecessor's *stop* was **not** synchronised to a loop boundary by this runner; the leg shows the
   ordering (binding → queue → commit) and not a musical alignment claim.
 * `captures/s4b8-leg-02` armed nothing; it is evidence about the runner, not about the device.
+
+## RE-EVIDENCED ON THE CURRENT IMAGE (2026-10-01, `captures/s4b8-newimage-01`)
+
+The leg above was taken on `cdab16f4…`. After the day's three fixes (telemetry cadence, ring resync, direct
+receipt) the image is `a1f4e4c0…`, so the same leg was re-run on it — same runner, `--track-number 5 --loop-slot 1
+--switch-loop-slot 2`:
+
+```
+[622.685] [INFO] [TRACK] Reentry window open slot=0                            <- A's stop
+[623.139] [INFO] Loop 2: Queued playback switch                                <- the switch, inside the window
+[628.703] [INFO] LoopEnd playback commit track=4 0->1 start=0 len=1536         <- committed at the loop end
+#CAP,623367300,DIAG,canonical_release,0,1,2304,8                               <- one release, A's own stop's
+```
+
+`overdub start admitted after stop receipt: 'Record pass undo reset for slot'`, `wiped=0`, `head_resync=0`,
+`overflow_free`/`call_site_gate_ok` true with an **empty** `timing_warnings` list, `capture_integrity: COMPLETE`,
+and exactly one `canonical_release` naming A's slot. So every S4b.8 assertion holds on the firmware the change
+currently produces, **and** the commit is observed in the same run rather than only in the earlier leg. The
+repeated-switch gate leg was re-run on the same image too (`captures/s4b-gate-newimage-02`: three switches, two
+commits, `integrity: COMPLETE`).
