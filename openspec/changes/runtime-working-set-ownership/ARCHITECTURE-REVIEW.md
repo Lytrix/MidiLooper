@@ -8884,3 +8884,50 @@ driving only the *dispatch* helpers the suite already links, cannot see a switch
 
 Full native **2,648 cases / 2,641 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS with the
 RAM1 line unchanged.
+
+## S4b.1 — the switch lane's acceptance surface, and the populated-target queued switch (2026-10-01)
+
+**Why a harness slice.** The previous slice recorded, measured, that the S4b.5/S4b.6/S4b.7 fixtures cannot be
+written yet: a **populated** target does not take the record-start carrier, it queues a **playback** switch that
+commits in `TrackManager::updateAllTracks`, and driving that production per-tick entry from this suite failed to
+link for exactly four symbols. This slice discharges the prerequisite — and, doing so, measures the lane's
+behaviour and pins it.
+
+**What the closure needed.** Four symbols live in three TUs (`Track::playMidiEvents`/`playMidiEventsForSlot` in
+`TrackPlaybackHotPath.cpp`, `TrackManager::isTrackAudible` in `TrackManagerPlaybackPolicy.cpp`,
+`Track::shouldCommitQueuedPlaybackStart` in `TrackTransportControl.cpp`); including them collided with **ten**
+stubs the suite's fail-closed surface defines — i.e. with the **whole play branch**. So the suite gains the macro
+`HARNESS_LINKS_PLAYBACK_SWITCH_LANE`, and those ten stubs move behind it. Two consequences are stated rather than
+absorbed: (1) a removed `OFF_PATH()` abort cannot have been *reached* by any fixture that was passing, so no
+existing coverage was silently weakened — the change only replaces an abort with the real owner for routes that
+previously could not run at all; (2) the loop-edit manager stays stubbed at its three referenced symbols (its
+callback still fails closed), so the lane cannot leak into an edit session. Recorded as **DEC-101**.
+
+**Two fixtures that observed through a removed stub now observe the real owner.** `setMasterLoopLength` was
+stubbed *counted* (`g_nativeAdoptedMasterLengthCalls`), and the counter is what two S4f.21 fixtures asserted. With
+the real policy owner linked, they assert `trackManager.getMasterLoopLength()` instead — the stop edge must adopt
+nothing, the published geometry must be adopted, a second dispatch must change nothing ("exactly once" in state
+terms), and a filtered take must adopt nothing. That is strictly stronger than the counter: it checks the state
+the firmware will use, not a stub's bookkeeping.
+
+**What the lane does, measured.** `test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_commits`:
+a populated target pressed while the predecessor's stop is admitted queues a playback switch
+(`hasPendingSlotSwitch` true, `getPendingSlotIndex` = target) and moves nothing; three full loops of
+`updateAllTracks` later the request is **still pending**, with the predecessor's finalizer and lease intact; once
+the finalizer retires the switch **commits with no further gesture** — active slot moved, pending cleared, enabled
+set replaced with the target. **The review's "silent dead switch" does not occur on this shape.**
+
+**Both named failure modes are now red-proved, each restored byte-identically.** Committing at any tick
+(ignoring the boundary) fails the fixture at *"the queued switch must not commit while the predecessor
+finalizes"*; never running the commit branch fails it at *"the retained switch must commit once the predecessor
+retires"*. So the lane can neither switch early under a finalizing predecessor nor dead-end silently.
+
+**Recorded, not claimed.** The wait is **emergent**, not an explicit guard: the pending switch is held by the
+loop-boundary math (`shouldCommitLoopEndSwitch` with `lastTickInLoop` frozen while the predecessor finalizes), so
+the fixture pins the two *sides* of the behaviour rather than an internal condition — a future refactor that makes
+the hold explicit is welcome and this fixture will still describe it. And the commit's occupancy binding
+(`Track::ensurePlaybackMergedEventsForSlot` on the clock path) is now reachable natively, which is precisely the
+surface S4b.6 ("occupancy-aware, allocation-free binding") and S4b.7 (its off-clock provisioning owner) must
+change; no claim is made here about that binding's current durability beyond this shape. Full native **2,649
+cases / 2,642 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS with an unchanged firmware hex
+and RAM1 line.
