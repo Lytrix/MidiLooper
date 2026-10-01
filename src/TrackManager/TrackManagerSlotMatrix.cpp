@@ -8,6 +8,8 @@
 #include "DisplayManager.h"
 #include "EditManager.h"
 #include "LooperState.h"
+// S4b.7: the `SlotProvision` turn's own predicates (`slotProvisionNeeded`) live with the drain owners.
+#include "Utils/MidiServiceDrain.h"
 #include "StorageManager.h"
 #include "Utils/SlotLoopContent.h"
 
@@ -300,11 +302,10 @@ void TrackManager::requestSlotSwitch(uint8_t trackIndex, uint8_t slotIndex,
                                      SlotQuantization quantization, uint32_t queuedAtTick) {
   StorageManager::refreshLoopSlotPayloadOnSdInRam(trackIndex, slotIndex);
   slotStateMachine.requestPendingSlotSwitch(trackIndex, slotIndex, quantization, queuedAtTick);
-  // S4b.7: this is a MIDI-input/action edge, so the inbound occupancy may **not** be taken inline. The
-  // pending switch is marked as needing provisioning through the existing deferred-request owner, which
-  // makes the switch's track eligible for a deferred turn; the lane calls `provisionSlotForSwitch`
-  // off-clock. The commit path keeps the switch pending until the occupancy exists.
-  requestDeferredPlaybackPrewarm(trackIndex, slotIndex);
+  // S4b.7 (Rev 20.3/21.7): this is a MIDI-input/action edge, so the inbound occupancy may **not** be taken
+  // inline. Nothing is marked either: the pending switch *is* the eligibility for the `SlotProvision`
+  // deferred-idle turn (`MidiServiceDrain::slotProvisionNeeded` reads exactly this state), so the switch
+  // needs no separate request record and cannot be starved by one being consumed elsewhere.
 }
 
 FLASHMEM bool TrackManager::provisionSlotForSwitch(uint8_t trackIndex, uint8_t slotIndex) {
@@ -325,6 +326,34 @@ FLASHMEM bool TrackManager::provisionSlotForSwitch(uint8_t trackIndex, uint8_t s
     return false;
   }
   return true;
+}
+
+FLASHMEM bool TrackManager::servicePendingSlotProvision() {
+  // S4b.7 (Rev 20.3/21.7): one `SlotProvision` turn. It serves the **first** track whose pending switch
+  // needs provisioning -- `slotProvisionNeeded` is the state-driven eligibility, so a switch needs no
+  // request record -- and performs both halves the contract names: the provisioning (`provisionSlotForSwitch`,
+  // idempotent, reporting its own refusal) and the target's merged-window build
+  // (`ensurePlaybackMergedEventsForSlot`), which is what releases the long-loop pending hold on the shapes
+  // where a window can be built. Nothing else moves here: the commit stays the clock path's own step.
+  for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+    if (!slotStateMachine.hasPendingSlotSwitch(trackIndex)) {
+      continue;
+    }
+    const uint8_t targetSlot = slotStateMachine.getPendingSlotIndex(trackIndex);
+    if (targetSlot >= Config::MAX_LOOPS_PER_TRACK) {
+      continue;
+    }
+    Track& track = tracks[trackIndex];
+    if (!MidiServiceDrain::slotProvisionNeeded(true, track.hasPlaybackOccupancyForSlot(targetSlot))) {
+      continue;  // already provisioned: the commit path's business, not this turn's
+    }
+    if (!provisionSlotForSwitch(trackIndex, targetSlot)) {
+      return false;  // refused and reported; the switch stays pending for a later turn
+    }
+    track.ensurePlaybackMergedEventsForSlot(targetSlot);
+    return true;
+  }
+  return false;
 }
 
 void TrackManager::refreshPreviewSlotFocus(uint8_t trackIndex, uint8_t slotIndex) {

@@ -1777,8 +1777,9 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       (`TRACK_COLD_MEM`, defined beside the binding). (b) The commit branch in `TrackManager::updateAllTracks`
       gained the explicit occupancy term the entry asked for: when
       `!tracks[i].hasPlaybackOccupancyForSlot(targetSlot)` the switch **stays pending** instead of committing
-      into a slot whose runtime does not exist. Provisioning is off-clock and lands in S4b.7 (below);
-      `main.cpp`'s deferred frame provisions and only then prewarms. **Fixtures** (both on the production press
+      into a slot whose runtime does not exist. Provisioning is off-clock and lands in S4b.7 (below) — **and the
+      vehicle it lands in was corrected there**: the switch's provisioning is the `SlotProvision` deferred-idle
+      turn, not a mark consumed by `main.cpp`'s restore-prewarm frame. **Fixtures** (both on the production press
       route, not a direct `requestSlotSwitch`): `test_s4b_6_a_switch_to_a_slot_without_occupancy_provisions_off_clock`
       (one bar) and `test_s4b_6_a_switch_to_a_multi_bar_target_without_occupancy_also_provisions_off_clock`
       (8 bars). **Red-proved twice, each restored byte-identically:** replacing the occupancy term with `false`
@@ -1846,6 +1847,40 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       provision inline" assertion — so provisioning is proven to be this owner's, off-clock. RAM1 unchanged by the
       new owner: `code 391,304 / padding 1,912 / locals 34,880` (the 16 B of code belong to the binding and the
       occupancy term; the new function added no RAM1 state).
+      **THE TURN LANDED 2026-10-01 (second slice; DEC-103).** The first slice's vehicle was wrong: it reused the
+      *slot-restore* prewarm request, which is a shared `(track, slot)` record a restore and a switch could
+      consume from each other, and it reached a switch's provisioning only through the restore lane's gating. The
+      binding corrections had named the vehicle (Rev 20.3/21.7 and Rev 22 §6 — which this entry's own task text
+      did not repeat), so this slice builds **exactly that**: `DeferredIdleOwner::SlotProvision = 5` with
+      `kDeferredIdleOwnerCount = 6`; the body is `TrackManager::servicePendingSlotProvision()`, dispatched from
+      `runDeferredIdleMaintenance` **before** the all-stopped guard (the exemption Rev 22 §6 asks for, now
+      structural — the turn returns before the guard is reached); and the turn runs **both** halves the contract
+      names — `provisionSlotForSwitch` and then `ensurePlaybackMergedEventsForSlot(targetSlot)`, the merged-window
+      build that releases the long-loop pending hold. **The eligibility is the pending switch itself**
+      (`MidiServiceDrain::slotProvisionNeeded(hasPendingSlotSwitch, inboundOccupancyPresent)`), so
+      `requestSlotSwitch` marks **nothing** any more and there is no request record left to be consumed elsewhere:
+      the smallest possible state, none. The restore lane keeps its own `provisionSlotForSwitch` call, because
+      that is the *restore's* occupancy need at the slot-restore boundary and it is what
+      `ensurePlaybackMergedEventsForSlot` used to provide implicitly. **Tests updated as the contract requires:**
+      `test_midi_service_drain` re-pins the rotation, the six-owner absent cycle, the interleaved session-exit
+      sequence and the backlog sequence with its per-period tally (`two_of_seven`), and adds a pin that the turn's
+      work is the pending switch and that `SlotProvision` does not depend on the visual cache. The S4b.6 fixtures
+      now model the real turn (`servicePendingSlotProvision`) instead of the request/take pair, and assert the
+      turn takes the pending switch as its work and then stops being its owner. **Red-proved, restored
+      byte-identically:** removing the turn's provisioning fails three fixtures — *"the retained switch must
+      commit once the predecessor retires"* and both S4b.6 *"provisioning must have taken the target's
+      occupancy"* assertions. **Recorded as a measured coverage gap, not assumed:** removing the turn's
+      `ensurePlaybackMergedEventsForSlot(targetSlot)` call leaves all 36 fixtures passing, because the merged
+      window is gathered from the loop's **published snapshot root** and a hand-committed slot has none (the
+      `GatherMissHoldEmpty` path), so the window stays empty; the fixture pins that harness fact as a tripwire and
+      names the discharge path — the same published-root fixture the demoted-target hold needs (S4c/F). **Still
+      owed from the contract line:** the long-loop hold "carries an age/bound"; a switch still pending after
+      provisioning is not yet reported with an age. Focused suite **36/36**; deferred-idle-owner suite **36/36**;
+      full native **2,652 cases / 2,645 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS with
+      RAM1 `code 391,288 + padding 1,928 / locals 34,880` (floor 840 — ITCM returns to the pre-slice value because
+      the new turn is `FLASHMEM`, and FLASH code grows 120 B), firmware hex sha256
+      `257adab1a5ab7dac98bed728aa37bed9a6a1caf1324ac068f5e963028cb4e6a4`. Record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.7 — the provisioning turn the contract named".
 - [ ] S4b.8 **HITL — slot switch while a predecessor finalizes, transport playing (the switch leg alone).**
       Managed run: record A → stop A → switch to B **while A is still finalizing** → assert the switch is accepted
       and completes, `activeLoopIndex` does not move before A's stop is admitted and bound to A's slot, the

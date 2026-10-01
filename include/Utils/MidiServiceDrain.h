@@ -16,6 +16,11 @@ enum class DeferredIdleOwner : uint8_t {
   VisualCacheWrapAppend = 2,
   Persistence = 3,
   LoadAndDisplay = 4,
+  /// S4b.7 (Rev 20.3/21.7): the off-clock owner of a **pending slot switch's inbound occupancy**. A switch
+  /// may not take its runtime on the MIDI edge that requests it nor on the clock path that commits it, so
+  /// this turn does both halves the contract names: the provisioning and the target's merged-window build.
+  /// Its work is state-driven (`slotProvisionNeeded`), so a pending switch needs no separate request state.
+  SlotProvision = 5,
 };
 
 // Overdub paint dirtiness cannot prioritize reconstruction that is disabled
@@ -101,7 +106,7 @@ struct ActiveLoadDisplayContinuation {
   bool hasPendingChild() const { return pendingChild != ActiveLoadDisplayChild::None; }
 };
 
-constexpr uint8_t kDeferredIdleOwnerCount = 5;
+constexpr uint8_t kDeferredIdleOwnerCount = 6;
 
 /// Snapshot idle admits two construction units per turn (DEC-053). Each unit
 /// remains one row-21 step or one journal-capped fragment start.
@@ -149,14 +154,14 @@ inline DeferredIdleOwner nextDeferredIdleOwner(DeferredIdleOwner owner) {
   return static_cast<DeferredIdleOwner>(next % kDeferredIdleOwnerCount);
 }
 
-/// 5-owner cursor plus the after-cycle extra Snapshot slot used while a
+/// 6-owner cursor plus the after-cycle extra Snapshot slot used while a
 /// publication backlog is present. Caller-owned; no content-size input.
 struct DeferredIdleOwnerCursor {
   DeferredIdleOwner owner = DeferredIdleOwner::Snapshot;
   bool extraSnapshotPending = false;
 };
 
-/// Ordinary 5-owner identity, or the extra Snapshot after a completed cycle
+/// Ordinary 6-owner identity, or the extra Snapshot after a completed cycle
 /// when `snapshotBacklogPending` is true. Boolean backlog-present only.
 inline DeferredIdleOwner selectDeferredIdleOwner(DeferredIdleOwnerCursor& cursor,
                                                  bool snapshotBacklogPending,
@@ -196,6 +201,14 @@ inline bool allowDeferredIdleOwner(DeferredIdleOwner owner,
                                    bool wrapAppendPending) {
   return !wrapAppendPending ||
          !deferredIdleOwnerDependsOnVisualCacheWrap(owner);
+}
+
+/// S4b.7 (Rev 20.3/21.7): does the `SlotProvision` turn have work? A **pending switch whose inbound
+/// occupancy has not been taken yet**. State-driven on purpose: the pending switch *is* the eligibility, so
+/// no separate request state is needed, and the occupancy answer belongs to the caller that owns the
+/// runtime. A switch that is already provisioned is the commit path's business, not this turn's.
+inline bool slotProvisionNeeded(bool hasPendingSlotSwitch, bool inboundOccupancyPresent) {
+  return hasPendingSlotSwitch && !inboundOccupancyPresent;
 }
 
 inline bool aroundIdleMaintenance(bool postOverdubPlayingDrain, bool overdubStopping = false) {

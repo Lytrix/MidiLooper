@@ -168,6 +168,7 @@ void test_deferred_idle_owner_rotates_unconditionally() {
       MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
       MidiServiceDrain::DeferredIdleOwner::Persistence,
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
+      MidiServiceDrain::DeferredIdleOwner::SlotProvision,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
   };
   for (const MidiServiceDrain::DeferredIdleOwner next : expected) {
@@ -176,7 +177,7 @@ void test_deferred_idle_owner_rotates_unconditionally() {
   }
 }
 
-void test_select_deferred_idle_owner_absent_matches_five_owner_cycle() {
+void test_select_deferred_idle_owner_absent_matches_six_owner_cycle() {
   MidiServiceDrain::DeferredIdleOwnerCursor cursor;
   const MidiServiceDrain::DeferredIdleOwner expected[] = {
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
@@ -184,11 +185,13 @@ void test_select_deferred_idle_owner_absent_matches_five_owner_cycle() {
       MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
       MidiServiceDrain::DeferredIdleOwner::Persistence,
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
+      MidiServiceDrain::DeferredIdleOwner::SlotProvision,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
       MidiServiceDrain::DeferredIdleOwner::VisualCache,
       MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
       MidiServiceDrain::DeferredIdleOwner::Persistence,
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
+      MidiServiceDrain::DeferredIdleOwner::SlotProvision,
   };
   for (const MidiServiceDrain::DeferredIdleOwner next : expected) {
     TEST_ASSERT_EQUAL(static_cast<int>(next),
@@ -208,6 +211,8 @@ void test_select_deferred_idle_owner_session_exit_drain_extra_snapshot() {
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::SlotProvision,
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
   };
   for (const MidiServiceDrain::DeferredIdleOwner next : expected) {
     TEST_ASSERT_EQUAL(static_cast<int>(next),
@@ -215,7 +220,7 @@ void test_select_deferred_idle_owner_session_exit_drain_extra_snapshot() {
   }
 }
 
-void test_select_deferred_idle_owner_backlog_snapshot_two_of_six() {
+void test_select_deferred_idle_owner_backlog_snapshot_two_of_seven() {
   MidiServiceDrain::DeferredIdleOwnerCursor cursor;
   const MidiServiceDrain::DeferredIdleOwner expected[] = {
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
@@ -224,19 +229,22 @@ void test_select_deferred_idle_owner_backlog_snapshot_two_of_six() {
       MidiServiceDrain::DeferredIdleOwner::Persistence,
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::SlotProvision,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
       MidiServiceDrain::DeferredIdleOwner::VisualCache,
       MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
       MidiServiceDrain::DeferredIdleOwner::Persistence,
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::SlotProvision,
   };
   uint8_t snapshotTurns = 0;
   uint8_t visualCacheTurns = 0;
   uint8_t wrapAppendTurns = 0;
   uint8_t persistenceTurns = 0;
   uint8_t loadTurns = 0;
-  for (uint8_t i = 0; i < 12; ++i) {
+  uint8_t slotProvisionTurns = 0;
+  for (uint8_t i = 0; i < 14; ++i) {
     const MidiServiceDrain::DeferredIdleOwner selected =
         MidiServiceDrain::selectDeferredIdleOwner(cursor, true);
     TEST_ASSERT_EQUAL(static_cast<int>(expected[i]), static_cast<int>(selected));
@@ -256,18 +264,23 @@ void test_select_deferred_idle_owner_backlog_snapshot_two_of_six() {
       case MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay:
         ++loadTurns;
         break;
+      case MidiServiceDrain::DeferredIdleOwner::SlotProvision:
+        ++slotProvisionTurns;
+        break;
     }
-    if ((i + 1) % 6 == 0) {
+    if ((i + 1) % 7 == 0) {
       TEST_ASSERT_EQUAL_UINT8(2, snapshotTurns);
       TEST_ASSERT_EQUAL_UINT8(1, visualCacheTurns);
       TEST_ASSERT_EQUAL_UINT8(1, wrapAppendTurns);
       TEST_ASSERT_EQUAL_UINT8(1, persistenceTurns);
       TEST_ASSERT_EQUAL_UINT8(1, loadTurns);
+      TEST_ASSERT_EQUAL_UINT8(1, slotProvisionTurns);
       snapshotTurns = 0;
       visualCacheTurns = 0;
       wrapAppendTurns = 0;
       persistenceTurns = 0;
       loadTurns = 0;
+      slotProvisionTurns = 0;
     }
   }
 }
@@ -285,6 +298,22 @@ void test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap() {
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay, true));
   TEST_ASSERT_TRUE(MidiServiceDrain::allowDeferredIdleOwner(
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay, false));
+}
+
+void test_slot_provision_turn_work_is_the_pending_switch_itself() {
+  // S4b.7: the `SlotProvision` turn exists exactly while a pending switch's inbound occupancy is absent.
+  // No request record is involved, so nothing can consume the eligibility elsewhere -- the pending switch
+  // *is* the work, and a switch that is already provisioned belongs to the commit path.
+  TEST_ASSERT_TRUE(MidiServiceDrain::slotProvisionNeeded(true, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::slotProvisionNeeded(true, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::slotProvisionNeeded(false, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::slotProvisionNeeded(false, true));
+  // And provisioning does not depend on the visual cache, unlike VisualCache/LoadAndDisplay: a switch must
+  // still be provisioned while a wrap append is pending.
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowDeferredIdleOwner(
+      MidiServiceDrain::DeferredIdleOwner::SlotProvision, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::deferredIdleOwnerDependsOnVisualCacheWrap(
+      MidiServiceDrain::DeferredIdleOwner::SlotProvision));
 }
 
 void test_live_record_snapshot_starts_after_first_bar() {
@@ -490,8 +519,11 @@ int main() {
   RUN_TEST(test_after_display_keeps_capture_and_adds_post_overdub);
   RUN_TEST(test_around_load_frame_only_when_post_overdub_playing_drain);
   RUN_TEST(test_deferred_idle_owner_rotates_unconditionally);
-  RUN_TEST(test_select_deferred_idle_owner_absent_matches_five_owner_cycle);
-  RUN_TEST(test_select_deferred_idle_owner_backlog_snapshot_two_of_six);
+  RUN_TEST(test_select_deferred_idle_owner_absent_matches_six_owner_cycle);
+  RUN_TEST(test_select_deferred_idle_owner_backlog_snapshot_two_of_seven);
+  // S4b.7: the `SlotProvision` turn's eligibility is the pending switch itself, and it does not depend on
+  // the visual cache -- a switch must still be provisioned while a wrap append is pending.
+  RUN_TEST(test_slot_provision_turn_work_is_the_pending_switch_itself);
   RUN_TEST(test_select_deferred_idle_owner_session_exit_drain_extra_snapshot);
   RUN_TEST(test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap);
   RUN_TEST(test_live_record_snapshot_starts_after_first_bar);

@@ -89,6 +89,9 @@ bool sequencerRunning = false;
 #include "../../src/Track/TrackStopTelemetryColdHelpers.cpp"
 #include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
 #include "../../src/EditManager/NoteGeometryResolver.cpp"
+// S4b.7: the `SlotProvision` turn's own eligibility predicate (`slotProvisionNeeded`), so a fixture can
+// assert the turn's work without re-stating it.
+#include "Utils/MidiServiceDrain.h"
 #include "../../src/EditManager/EditSessionInteraction.cpp"
 // The switch lane's production TUs: the playback hot path (silence owners + `playMidiEvents`), the
 // playback policy owner (`isTrackAudible`) and the transport control owner (`startPlaying`/`stopPlaying`,
@@ -2621,14 +2624,11 @@ void test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_comm
                                   "the press must not move the active slot");
 
   // Drive the production tick lane across several boundaries while the predecessor still finalizes. The
-  // lane's own provisioning step is modelled too (`main.cpp`'s deferred frame is not linked here): a marked
-  // request is taken and provisioned off-clock, exactly as the firmware does.
+  // lane's own provisioning turn is modelled too (`main.cpp`'s deferred-idle dispatch is not linked here), so
+  // the switch's inbound occupancy is taken off-clock exactly as the firmware does -- and, as on the device,
+  // this lane is the *only* place it can be taken.
   for (int round = 0; round < 3; ++round) {
-    uint8_t prewarmTrack = 0xFF;
-    uint8_t prewarmSlot = 0xFF;
-    if (trackManager.takeDeferredPlaybackPrewarm(prewarmTrack, prewarmSlot)) {
-      (void)trackManager.provisionSlotForSwitch(prewarmTrack, prewarmSlot);
-    }
+    (void)trackManager.servicePendingSlotProvision();
     const uint32_t base = clockManager.getCurrentTick();
     for (uint32_t tick = base + 1; tick <= base + 768; ++tick) {
       clockManager.assignCurrentTickSilently(tick);
@@ -2677,13 +2677,13 @@ void test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_comm
 /// drives both for one target shape:
 ///
 ///   1. the **production MIDI edge** (`toggleRecordForSlot` -> `queuePlayingSlotSwitch` ->
-///      `requestSlotSwitch`) queues the switch and marks it through the existing deferred owner
-///      (`hasPendingDeferredPlaybackPrewarm`), without taking the runtime inline;
-///      (`hasPendingDeferredPlaybackPrewarm`), so the pending switch makes its track eligible for a
-///      deferred turn;
+///      `requestSlotSwitch`) queues the switch and takes no runtime inline; the pending switch **is** the
+///      `SlotProvision` turn's eligibility (`MidiServiceDrain::slotProvisionNeeded`), so no request record
+///      exists to be consumed elsewhere;
 ///   2. driving the clock lane leaves the switch **pending** and the target's occupancy **absent** -- the
 ///      record of "no allocation on the clock path";
-///   3. the off-clock owner (`provisionSlotForSwitch`, the lane's call) takes the occupancy;
+///   3. one `SlotProvision` turn (`TrackManager::servicePendingSlotProvision`) takes the occupancy and builds
+///      the target's merged window;
 ///   4. driving again **commits** the switch, so it was never dead.
 ///
 /// `lengthTicks` gives the target the shape under test. Both shapes used here stay **below** the demotion
@@ -2736,21 +2736,24 @@ void assert_s4b_6_a_switch_provisions_off_clock(uint32_t lengthTicks) {
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
                             "retiring the finalizer must not take the target's occupancy");
 
-  // (1) The production MIDI edge presses the populated target: it queues the playback switch and marks the
-  // deferred provisioning, and it must not take the runtime inline.
+  // (1) The production MIDI edge presses the populated target: it queues the playback switch and takes
+  // nothing inline. The pending switch *is* the `SlotProvision` turn's eligibility, so no request record is
+  // involved -- the predicate reads exactly this state.
   clockManager.assignCurrentTickSilently(200);
   TrackCaptureStopTestAccess::toggleRecordForSlot(kTarget);
   TEST_ASSERT_TRUE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
                            "the request must queue a pending switch");
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(kTarget, trackManager.getPendingSlotIndex(0),
                                   "the queued switch must name the target");
-  TEST_ASSERT_TRUE_MESSAGE(trackManager.hasPendingDeferredPlaybackPrewarm(),
-                           "the request must mark the pending switch for off-clock provisioning");
+  TEST_ASSERT_TRUE_MESSAGE(
+      MidiServiceDrain::slotProvisionNeeded(trackManager.hasPendingSlotSwitch(0),
+                                            TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget)),
+      "the pending switch with no inbound occupancy must be the provisioning turn's work");
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
                             "the MIDI edge must not provision inline");
 
-  // (2) The clock lane may not allocate: the switch stays pending, the occupancy stays absent. The lane's
-  // provisioning step is deliberately **not** modelled here -- that is the point of this window.
+  // (2) The clock lane may not allocate: the switch stays pending, the occupancy stays absent. The
+  // provisioning turn is deliberately **not** modelled in this window -- that is the point of it.
   for (int round = 0; round < 3; ++round) {
     const uint32_t base = clockManager.getCurrentTick();
     for (uint32_t tick = base + 1; tick <= base + 768; ++tick) {
@@ -2765,24 +2768,24 @@ void assert_s4b_6_a_switch_provisions_off_clock(uint32_t lengthTicks) {
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
                             "the clock path must not allocate the inbound occupancy");
 
-  // (3) The off-clock owner takes the occupancy: exactly `main.cpp`'s deferred frame -- the marked request
-  // is taken, `provisionSlotForSwitch` provides the runtime, and the merged window is prewarmed on top.
-
-  uint8_t prewarmTrack = 0xFF;
-  uint8_t prewarmSlot = 0xFF;
-  TEST_ASSERT_TRUE_MESSAGE(trackManager.takeDeferredPlaybackPrewarm(prewarmTrack, prewarmSlot),
-                           "the marked request must still be awaiting its off-clock turn");
-  TEST_ASSERT_EQUAL_UINT8(0, prewarmTrack);
-  TEST_ASSERT_EQUAL_UINT8(kTarget, prewarmSlot);
+  // (3) The off-clock owner takes the occupancy: exactly one `SlotProvision` turn -- the turn provisions the
+  // pending switch's target **and** builds that slot's merged window, which is the pair the contract names.
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
                             "nothing may have provisioned the target behind this window's back");
-  TEST_ASSERT_TRUE_MESSAGE(trackManager.provisionSlotForSwitch(prewarmTrack, prewarmSlot),
-                           "the off-clock owner must provision the inbound occupancy");
-  track.ensurePlaybackMergedEventsForSlot(kTarget);
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.servicePendingSlotProvision(),
+                           "the SlotProvision turn must take the pending switch as its work");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
                            "provisioning must have taken the target's occupancy");
-
-  // (4) Driving again commits it with no further request, so the switch was never dead.
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.servicePendingSlotProvision(),
+                           "a provisioned switch is the commit path's, not the turn's");
+  // The turn's second half is `ensurePlaybackMergedEventsForSlot`, and its effect is deliberately asserted as
+  // **not** observable here: that window is gathered from the loop's *published snapshot root*, which a
+  // hand-committed slot has none of, so the gather misses and the window stays empty (measured). This is a
+  // tripwire on the harness, not on the firmware -- if a fixture ever publishes a root, it fails and the
+  // assertion moves to the ready side. Discharge path for the missing evidence: the published-root fixture
+  // owed under S4b.6's demoted-target item (the windowed publication lane, S4c/F).
+  TEST_ASSERT_FALSE_MESSAGE(track.isPlaybackMergedMidiEventsReadyForSlot(kTarget),
+                            "a hand-committed slot has no published root, so the merged window stays empty");
   for (int round = 0; round < 4 && TrackCaptureStopTestAccess::activeLoopIndex(track) != kTarget;
        ++round) {
     const uint32_t base = clockManager.getCurrentTick();

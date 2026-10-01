@@ -228,9 +228,11 @@ FLASHMEM __attribute__((noinline)) static void prewarmPlaybackMergedEventsForSlo
 #if defined(SESSION_CAPTURE)
   const uint32_t firstCommitStartUs = micros();
 #endif
-  // S4b.6/S4b.7: this lane is the off-clock owner of a slot's inbound occupancy, so it *provisions* before
-  // it prewarms. `ensurePlaybackMergedEventsForSlot` no longer allocates on any path, which is what keeps
-  // the switch commit and the MIDI edges allocation-free.
+  // S4b.6/S4b.7: the **restore** lane's own provisioning point. This request is a slot *restore's* prewarm
+  // (S1.3/S2b.3's census checkpoint waits on it), not a switch's: a switch's inbound occupancy belongs to
+  // the `SlotProvision` deferred-idle turn (`TrackManager::servicePendingSlotProvision`). Both call the same
+  // owner, `provisionSlotForSwitch`, because `ensurePlaybackMergedEventsForSlot` no longer allocates on any
+  // path -- which is what keeps the switch commit and the MIDI edges allocation-free.
   (void)trackManager.provisionSlotForSwitch(trackIndex, slotIndex);
   prewarmTrackRef.ensurePlaybackMergedEventsForSlot(slotIndex);
 #if defined(SESSION_CAPTURE)
@@ -444,6 +446,14 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     uint32_t now, bool postOverdubPlayingMidiDrain,
     MidiServiceDrain::DeferredIdleOwner deferredOwner) {
+  // S4b.7 (Rev 20.3/21.7): the `SlotProvision` turn is served **before** the all-stopped guard below and
+  // returns through it -- the contract exempts it, because a queued switch is retained exactly while the
+  // track's state is unsettled. It takes the pending switch's inbound occupancy off-clock and builds that
+  // slot's merged window; nothing else moves here.
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::SlotProvision) {
+    (void)trackManager.servicePendingSlotProvision();
+    return;
+  }
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Persistence ||
       deferredOwner == MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay) {
     return;
