@@ -131,10 +131,52 @@ so the fix cannot be silently reverted.
 | **red-proof of the guard** | reverting `events` to the default allocator **fails the build**: `static assertion failed: LoopSnapshotChangeSet::events must use ExternalMemoryFirstAllocator`; the file was restored byte-identically (sha256 `fdf246fa…`) |
 | fixed image | `eca0b0139d864734ae5a3164126c20e18cbde60eb2c6b437df851126f988fc5a` |
 
-### What still has to be shown (device)
+### Device verification (2026-10-01, complete)
 
-The fix's *mechanism* claim is that the change set no longer depends on the fragmented internal heap. That is
-verified **on device only**: flash this image, confirm a clean boot (`DIAG,boot_reset,crash=0`, no `CrashReport`),
-then `!RESTORE_WORKSPACE` and confirm the library returns **and** the 24-bar body on track 5 Loop 1 no longer
-crashes the boot. Until that run, the fault is *fixed on reasoning and host verification*, not yet re-verified on
-hardware.
+All three steps of the approved plan ran on `/dev/cu.usbmodem154944801`:
+
+| step | command | result |
+|---|---|---|
+| flash | `pio run -e teensy41-capture-serial -t upload` | SUCCESS; RAM1 guard `padding 1,336`, floor 840 met |
+| clean boot | `!REBOOT` | `#CAP,854780,DIAG,boot_reset,crash=0`, **no `CrashReport`**, one boot in 75 s, 71.9 s continuous uptime |
+| restore | `!RESTORE_WORKSPACE 5202` | `Restored: /MidiLooper/current.bad.5202 -> /MidiLooper/current` and `checkpoints.bad.5202 -> checkpoints`; parked current=1 checkpoints=1, restored current=1 checkpoints=1 |
+| boot with the library | `!REBOOT` (twice) | `crash=0`, `Current workspace loaded successfully`, `BOOT,load,ok`, `post_restore_census free_chunks=407 admission_complete=1 interactive_ready=1 undo_hydrated=1 transport_stopped=1 deferred_prewarm_idle=1` |
+
+The 24-bar body is present **and current** after the load, read from the library observation:
+
+```
+LIBOBS,S,t=4,s=0,st=2,c=n,p=3,o=2,q=5,w=0,m=1,g=0,e=0,k=1,kp=1,kr=1,kc=1,a=1,h=1,l=18432,v=1152,n=1,i=0,x=0
+```
+
+— track 5 (**t=4**), Loop 1 (**s=0**), **`l=18432` ticks = 24 bars**, 1,152 events, `kp=1 kr=1 kc=1` (published,
+revision and coverage all current). The observation itself completed without a restart: `LIBOBS,E,…,t=64,r=0,s=64,p=64`
+and `LIBOBS,status,…,turns=64,restarts=0,collected=64,emitted=64`.
+
+The library is not a stub: the observation reports content-filled slots on seven tracks with independent lengths
+(`t=0,s=0 l=15360 v=729`; `t=1,s=2 l=13824 v=989`; `t=4,s=0 l=18432 v=1152`; `t=7,s=0 l=13056 v=1742`), and the pool
+is still consumed (`chunks_free=407` of 512, snapshots 842 KB, external `live=3,319 KB` against 1,801 KB empty).
+
+So the fault is now **re-verified on hardware**: the same body that crashed the boot loop loads and reads back current.
+
+### A hazard this run re-encountered (already documented; not this change's scope)
+
+`!RESTORE_WORKSPACE` with no stamp restores the **maximum numeric** `…bad.<stamp>` tree
+(`findNewestQuarantinedSibling` compares stamps numerically). The stamp is `millis()` — device *uptime* when the tree
+was parked, not wall-clock — so a bare restore would have selected `current.bad.623624` (parked after ~10 min of uptime)
+instead of this session's `current.bad.5202` (parked ~5.2 s into a boot, i.e. what the quarantine-during-boot window
+produces). The restore here was therefore issued as `!RESTORE_WORKSPACE 5202`, the stamp this session's own quarantine
+row named. This is the same trap already recorded in `docs/Runtime/CURRENT_WORK.md` for the 2026-09-17 session (*"the
+stamp … cannot be derived from the host … identification must use the boot signature, never the name"*), whose standing
+rule is the `list`-first procedure in `.cursor/rules/Destructive-SD-Operations.mdc`. Followed here; nothing new to fix,
+and the record is cross-referenced rather than duplicated.
+
+## 7. Captures
+
+| capture | what it holds |
+|---|---|
+| `captures/regression-fix-step2-boot-01.log` | flashed-image boot with the library still quarantined; `boot_reset,crash=0` |
+| `captures/regression-fix-step3a-quarantine-list-01.log` | quarantine inventory (21 `current.bad.*`, 22 `checkpoints.bad.*`) |
+| `captures/regression-fix-step3b-restore-01.log` | the restore itself (both trees, four flags = 1) |
+| `captures/regression-fix-step3c-reboot-restored-01.log` | first boot with the restored library: one boot, `crash=0`, `BOOT,load,ok` |
+| `captures/regression-fix-step3c-libobserve-01.log` | the library observation: 64/64 slots, `restarts=0`, the 24-bar slot row |
+| `captures/regression-fix-step3d-reboot-repeat-01.log` | repeat boot: `crash=0`, `post_restore_census` with the library admitted |
