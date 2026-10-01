@@ -9136,3 +9136,38 @@ this entry, and DEC-105 says the same.
 ERRORED suites — the harness repair above); `teensy41-capture-serial` **SUCCESS** with RAM1
 `variables 96,192 / code 391,416 + padding 1,800 / locals 34,880` (floor 840; ITCM +128 B, padding 1,928 →
 1,800), firmware hex `cdab16f4…`, **not flashed**.
+
+## S4b.2 — the inbound is provisioned before the outbound retires, and the overlap is measured (2026-10-01)
+
+**The ordering, asserted at the sequence level.** `test_s4b_2_the_inbound_role_is_provisioned_before_the_outbound_
+is_released` presses an **unoccupied** inbound target while the outbound holds a working set, then checks the
+order in three steps: (1) the clock lane neither commits nor allocates nor releases -- the outbound's working set
+**survives the wait**, so a refused or delayed switch never leaves the track with *neither* role; (2) the
+`SlotProvision` turn takes the inbound occupancy while the outbound is **still held**; and (3) only after the
+commit is the retired slot releasable, and the release touches nothing on the inbound. **Red-proved, restored
+byte-identically:** `provisionSlotForSwitch` mutated to release the outbound first (the ordering this stage
+forbids) fails it at *"the outbound must still be held while the inbound is provisioned"*.
+
+**What "the inbound role" means, per path -- a finding the fixture forced.** The outbound's working set is
+observed through its lease, but a **playback** switch's inbound has **occupancy and no lease**: the production
+provisioner runs with `prepareCapture = false`, and the lease is a capture admission's (S3.1). Every earlier
+fixture that asserted an inbound lease had got one because the *test* prewarmed with `prepareCapture = true` --
+so the assumption would have been inherited silently. The fixture asserts the occupancy instead, and DEC-106
+records the lease question (and its `WorkingSetRole` bits) for the architect rather than inventing it at the
+last mile.
+
+**The overlap's bound, measured rather than assumed.** The obvious unit -- the outbound's own prewarm cost --
+is the wrong one: it carries the capture horizon (14 event-pool chunks) while the switch turn dropped the pool
+by **1**, and a probe slot provisioned the same way as the inbound dropped it by **0**. So part of that 1 chunk
+is the turn's other work (merged-window build / prepared-pair publication), not the occupancy alone. The fixture
+asserts the bound it can support (`inboundCost <= outboundCost`; the probe's cost no larger) and records the raw
+numbers, leaving the chunk split to S2's budget accounting.
+
+**Cited, not duplicated.** "The switch point performs no allocation" is the S4b.6/S4b.7 fixtures' subject (the
+MIDI edge and the clock path both assert it), and "must not steal from a still-live capture or
+deferred-finalization owner" is S4b.1's two "nothing stolen" fixtures (the outgoing finalizer, its lease and the
+successor's lease all survive the gesture). This record says so instead of re-asserting them here.
+
+**Evidence.** Focused suite **41/41**; full native **2,658 cases / 2,651 succeeded / 7 skipped / 0 failed**;
+`teensy41-capture-serial` **SUCCESS** with the RAM1 line unchanged (`code 391,416 + padding 1,800`) and a
+**byte-identical** firmware hex (`cdab16f4…`) -- this slice changes no firmware.

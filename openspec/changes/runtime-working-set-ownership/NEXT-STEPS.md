@@ -173,7 +173,15 @@ fixture. So the next native work is:
    guard term's own fixture — removing `hasAcceptedUnexecutedInteraction()` leaves the whole full native suite
    green (measured), so the reproducer (an accepted-but-unexecuted interaction beside a direct write, which must
    route through the capture switch rather than move) is the next thing to write.
-4. **S4b.2 / S4b.3** as written, then S4b.4's inbound-role fixture. S4b.2 now has a concrete immediate
+4. **DONE (2026-10-01) — S4b.2** (DEC-106): the inbound-before-outbound ordering is asserted (the outbound
+   survives the wait; the provisioning turn overlaps it; the release comes after and touches nothing on the
+   inbound), red-proved by a release-early mutation; the entry's other clauses are cited from S4b.6/S4b.7 and
+   S4b.1. Two findings recorded there: a **playback** switch's inbound has occupancy but **no lease** (a contract
+   question for the architect), and the overlap's unit is not the outbound's capture-inclusive prewarm (1 vs 14
+   vs 0 chunks measured), so the fixture asserts only the bound it can support.
+5. **S4b.3 / S4b.4** as written -- S4b.3 (the switch as a MIDI-boundary cold-admission boundary) and S4b.4's
+   inbound-role fixture (the inbound holder serving record/overdub/passes/undo/redo/display with no stop and no
+   allocation at the switch). S4b.2 now has a concrete immediate
    question: the `SlotProvision` turn is dispatched from the deferred-idle lane `main.cpp` gates, but the
    **ordering** it inherits is "provision *after* the predecessor's finalization retires" (the deferred frame
    returns early while a deferred overdub stop is outstanding, and the drain turn shares that lane). Pre-
