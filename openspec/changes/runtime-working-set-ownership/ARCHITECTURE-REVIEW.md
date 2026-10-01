@@ -8683,3 +8683,6 @@ verdicts were non-PASS for unrelated, named reasons (the drain defect above; `ov
 a missing persistence-result stage; `persistence_active_snapshot_unavailable_during_save`) — the documented
 non-repeatable-green baseline problems, not S4.1 findings. Evidence, excerpts and the reader's JSON records:
 [`evidence/2026-10-01-s41-lease-release/EVIDENCE.md`](evidence/2026-10-01-s41-lease-release/EVIDENCE.md).
+
+Recorded as **DEC-099** (the lease release is read from its own row by one owner, and the evidence drain
+reconciles only the families its log can count).
