@@ -1418,6 +1418,27 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       robustness property it is. No production code changed: `src/` is untouched. Recorded as **DEC-090**;
       packet and record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4.1 — persistence identity
       during handoff".
+      **DEVICE ROW OBSERVED 2026-10-01 — the obligation above is discharged.** The release fires in the
+      mandated **base preset** at the **undo-driven playback reset** (`TrackUndo.cpp` →
+      `Track::resetPlaybackStateForSlot` → `invalidatePlaybackMergedMidiEvents` →
+      `releaseEligiblePlaybackRuntimeSlots`), which is the third route the retention oracle's own limitation
+      text names; the five 2026-09-27 probe attempts chased the other two. A corpus survey found the row
+      **33 times** in ordinary runs of the same preset, so it was never unreachable: the same-track shape's
+      stop takes the *retained* route, and `invalidatePlaybackMergedMidiEvents` returns early while a deferred
+      stop job is live, so no sweep runs there. Observed for the slot under test (`Loop 1` = slot 0) as
+      `#CAP,3794271032,DIAG,ws_release,0,3,released` in the **PASS**-verdict base run
+      `captures/session_20260930_142350.log`, and reproduced three times at HEAD (`0,0,released`), each
+      **1.2 ms after** the device's own `Button press: Record/Overdub (double)` → `MIDI: Undo` edge. The
+      reader `scripts/hitl_s41_lease_release_read.py` (owner `hitl.lease_release`, tests **13/13**) gates on
+      the row for the slot under test and at a required generation, refuses a sibling slot's row as a
+      substitute (the switch shape's row names the *incoming* slot — recorded as the negative), and reports
+      absence as absence (`NotHeld` is deliberately silent). Identity: `git_commit f63d5a02`,
+      `firmware_hex_sha256 577841d6…` (the same hex as the 2026-09-30 PASS run), no firmware change. Found by
+      running and fixed in the same campaign: `drain_record_evidence` iterated *every* counted family against
+      a row counter that only sees the record trio, so the latch family raised `KeyError: 'DIAG,latch'` and
+      turned a verified base run into `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` — now reconciled per family
+      with the rest reported, `test_managed_record_drain` **23/23**, mutation red-proved. Evidence:
+      [`evidence/2026-10-01-s41-lease-release/EVIDENCE.md`](evidence/2026-10-01-s41-lease-release/EVIDENCE.md).
 - [x] S4.1a Deferred-save completion failure policy: a persistently failing workspace completion must not
       hold the persistence queue. **DONE 2026-09-26 (raised by this task's fixture work; decided as
       DEC-091).** The completion failure branch used to requeue the item **at the queue head**, so a

@@ -29,6 +29,7 @@ class Device:
         self.no_fence = False
         self.regress = False
         self.flush_after_stats_fence = False
+        self.latch_stats = False
 
     def stop(self):
         self.commands.append("MIDI_STOP")
@@ -45,6 +46,8 @@ class Device:
                 rows += ["#CAP,1,RID,stats,entered=0,enq=0,rej=0,tx=0,evict=0",
                          "#CAP,1,RING,record_stats,RECA,entered=0,enq=0,rej=0,tx=0,evict=0",
                          f"#CAP,1,RING,record_stats,RECS,entered={self.enqueued},enq={self.enqueued},rej={self.rejected},tx={self.tx},evict={self.evicted}"]
+                if self.latch_stats:
+                    rows.append("#CAP,1,RING,record_stats,DIAG,latch,entered=0,enq=0,rej=0,tx=0,evict=0")
             elif command == "!TRACE_DRAIN":
                 if self.pending:
                     self.pending = 0
@@ -125,6 +128,41 @@ class DrainTests(unittest.TestCase):
         result = self.drain()
         self.assertFalse(result["complete"])
         self.assertIn("do not match", result["reason"])
+
+    def test_a_reported_family_without_log_rows_does_not_break_the_reconciliation(self):
+        """Task 2.2's latch family is *reported*, not counted in the log, and must not break the drain.
+
+        Regression: the reconciliation iterated every reported family against a row counter that only sees
+        `RECA`/`RECS`/`RID`, so a real baseline run carrying `RING,record_stats,DIAG,latch,…` died with
+        `KeyError: 'DIAG,latch'` and reported `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` on an otherwise clean
+        run (`captures/session_20261001_092818.log`). The family is now named as reported-not-reconciled
+        instead of being dropped, so a reader can see which families carry a row cross-check.
+        """
+        self.device.latch_stats = True
+        result = self.drain()
+        self.assertTrue(result["complete"], result)
+        self.assertEqual(["RECA", "RECS", "RID"], result["reconciled_families"])
+        self.assertEqual(["DIAG,latch"], result["unreconciled_families"])
+        self.assertEqual(130, result["log_counts"]["RECS"])
+        self.assertEqual(130, result["families"]["RECS"]["tx"])
+        self.assertEqual({"entered": 0, "enq": 0, "rej": 0, "tx": 0, "evict": 0},
+                         result["families"]["DIAG,latch"])
+
+    def test_a_reported_family_does_not_weaken_the_row_reconciliation(self):
+        """The extra family is reported, not a licence: rows missing from the log still fail, with or without it."""
+        for latch in (False, True):
+            with self.subTest(latch=latch):
+                root = Path(self.temp.name) / f"drop-{latch}"
+                root.mkdir()
+                device = Device(root / "session.log")
+                device.drop_log = True
+                device.latch_stats = latch
+                session = ManagedCaptureSession(out_dir=root)
+                session._session_log = device.path
+                session._process = SimpleNamespace(stdin=device, poll=lambda: None)
+                result = session.drain_record_evidence(device.stop, timeout_s=.2)
+                self.assertFalse(result["complete"], result)
+                self.assertIn("do not match", result["reason"])
 
     def test_lost_rows_do_not_become_a_successful_drain(self):
         for field in ("evicted", "rejected"):

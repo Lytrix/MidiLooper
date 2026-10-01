@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-10-01T07:33:31.401462+00:00",
+  "git_commit": "f63d5a023f2bdf84fee15b10601e0638b872eff1",
+  "git_dirty": true,
+  "build_env": "teensy41-capture-serial",
+  "firmware_hex_sha256": "577841d6b6e2c338a08c3b2b5e6948c95ecbe40ba266b1bd1cbbbbbe59d26785",
+  "preset": "base",
+  "track_number": 5,
+  "loop_slot": 1,
+  "midi_channel": 1
+}

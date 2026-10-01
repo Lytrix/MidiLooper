@@ -8635,3 +8635,51 @@ contract/tasks: actual per-slice closure, scalar/role byte accounting, productio
 bounded-grain assertions before behavior edits. No unresolved product alternative remains.
 This is not blanket firmware readiness: each execution packet must prove its own prerequisites;
 resource/readiness/timing failures remain failures and cannot waive the shared-mode acceptance.
+
+## S4.1 device leg — the working-set lease release row, observed (2026-10-01, G2 packet + record)
+
+**Obligation.** S4.1 is checked on native evidence; what it owed was *evidence*, not code: a run in which
+`Track::releaseEligiblePlaybackRuntimeSlots` fires for the slot under test, observed as
+`DIAG,ws_release,<slot>,<generation>,<outcome>` (already emitted, Tier-A since `bbedfeac`), read by name rather
+than inferred.
+
+**The route, corrected by measurement.** A read-only survey of the whole capture corpus found the row **33
+times** in ordinary runs of the mandated **base preset**, so it was never unreachable — the five 2026-09-27
+probe attempts chased the wrong two of the three routes the retention oracle's own limitation text names. The
+route that fires it is the **playback-reset/undo path**: `TrackUndo.cpp` →
+`Track::resetPlaybackStateForSlot` → `invalidatePlaybackMergedMidiEvents` →
+`releaseEligiblePlaybackRuntimeSlots`. Two structural reasons the probe shape cannot fire it, both confirmed in
+the code: a same-track stop goes down the *retained* route and `invalidatePlaybackMergedMidiEvents` returns
+early while a deferred stop job is live (`captureStopJob().mode == Record`) so no sweep runs; and on a
+capture-switch shape the row that does appear names the **incoming** slot
+(`captures/s41-lease-20260927_013834`: `ws_release,4,1,released`, nothing for the retired slot A).
+
+**Observation.** `#CAP,3794271032,DIAG,ws_release,0,3,released` in the **PASS**-verdict base run
+`captures/session_20260930_142350.log` (hex `577841d6…`), and `#CAP,69967546,DIAG,ws_release,0,0,released`
+(plus two more) at HEAD in the 2026-10-01 runs, each landing **1.2 ms after** the device's own
+`Button press: Record/Overdub (double)` → `MIDI: Undo (entries=3)` edge and before `VCACHE,stale_all`, for the
+slot under test (`Loop 1` = firmware slot 0), identity `git_commit f63d5a02` / `firmware_hex_sha256 577841d6…`.
+
+**The oracle half.** `hitl.lease_release` owns the row's wire form and its reading (three outcomes, `NotHeld`
+deliberately silent, one 0-based→1-based conversion), `scripts/hitl_s41_lease_release_read.py` gates on the slot
+under test and optionally on a required generation (0 observed / 2 not observed / 3 unreadable), and
+`hitl.retention_probe` now takes the wire form from that owner instead of defining its own. `13/13` tests:
+verbatim rows with provenance, the `RING,record_stats,DIAG,latch` read-back proved not to parse as a release, a
+sibling slot proved not to stand in, absence and the refusal outcomes proved not to count as success, and the
+edge selection proved to be by **device clock** (a managed capture writes the console and `#CAP` streams apart,
+so the human row that caused the reset sits thousands of lines from the rows it explains).
+
+**Found by running, fixed in the same campaign (host tooling).** Every base run at HEAD ended
+`INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` on `Record evidence cleanup failed: 'DIAG,latch'`:
+`drain_record_evidence` reconciled *every* counted family against a row counter that only sees
+`RECA`/`RECS`/`RID`, so task 2.2's latch family raised `KeyError: 'DIAG,latch'`. The reconciliation now states
+which families carry a row cross-check and which are reported only, so a family is named rather than dropped;
+`test_managed_record_drain` **23/23** (two new) and the mutation red-proved (iterating `stats` reproduces the
+exact `KeyError`), restored byte-identically.
+
+**Not claimed.** No firmware or behaviour change: the native fixtures remain S4.1's behaviour acceptance, and the
+retired-slot case stays covered natively. Today's three HEAD runs reproduced the row while their *baseline*
+verdicts were non-PASS for unrelated, named reasons (the drain defect above; `overdub_stored_span_too_short` plus
+a missing persistence-result stage; `persistence_active_snapshot_unavailable_during_save`) — the documented
+non-repeatable-green baseline problems, not S4.1 findings. Evidence, excerpts and the reader's JSON records:
+[`evidence/2026-10-01-s41-lease-release/EVIDENCE.md`](evidence/2026-10-01-s41-lease-release/EVIDENCE.md).

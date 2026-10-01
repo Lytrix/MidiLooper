@@ -100,6 +100,17 @@ Stage owner: existing serial command/capture service and operation owners. Preco
       `test_managed_record_drain` **21/21**, 15 neighbouring Python suites green from the repository root, full
       native **2,643 / 2,636 succeeded / 7 skipped / 0 failed** on an unchanged firmware tree, four mutations
       red-proved and restored byte-identically, and `captures/s4f22-dec096-od-13` re-graded unchanged. Packet §7.
+      **2026-10-01 (host; found by an S4.1 device run) — the read-back's latch family no longer breaks the drain.**
+      The clause above made the parser carry `DIAG,latch`, but the *drain* still assumed the trio:
+      `ManagedCaptureSession.drain_record_evidence` reconciled every reported family against
+      `record_evidence_row_counts`, which only counts `RECA`/`RECS`/`RID` rows, so a real base run ended
+      `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` on `Record evidence cleanup failed: 'DIAG,latch'`
+      (`captures/session_20261001_092818.log`). The reconciliation now names the families that carry a row
+      cross-check (`reconciled_families`) and those that are reported only (`unreconciled_families`) instead of
+      dropping them, so loss stays detectable per family and the latch family cannot fail a verified run.
+      `test_managed_record_drain` **23/23** (two new), the mutation red-proved (iterating `stats` reproduces the
+      exact `KeyError`), restored byte-identically. Host defect, not a firmware finding; 2.2's three owed
+      clauses above are unchanged.
       **2026-09-30 (host; the read half of this task's "including record and overdub interval identity").** The
       overdub leg already *has* identity-bearing rows at its owners -- start admission `DIAG,reentry,admit`, the
       accepted-stop binding edge `DIAG,reentry,bound` (S4f.3), the execution `DIAG,stop_state` 6→7 / 7→5|1, the
