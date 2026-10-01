@@ -3024,6 +3024,105 @@ void test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound() 
   assert_s4b_7_a_demoted_target_through_the_turn(/*withRoot=*/false);
 }
 
+/// **S4b.5 — one active-slot write authority: a direct write cancels the queued switch, and cancelling is the
+/// whole trio.**
+///
+/// The entry's shape: a **replace-enabled-set** switch is queued, the **undo route** moves the active slot
+/// (`TrackUndo.cpp`'s `applyClearSlotUndoSideEffects` calls `TrackManager::setActiveLoopIndex` -- the authority
+/// this stage establishes), and then an **unrelated** switch is triggered. Three properties must hold:
+///
+///   1. the queued switch is **cancelled** rather than left armed underneath a slot that already moved (one
+///      transfer, not two);
+///   2. the cancel clears the **whole** trio, so the unrelated switch does not inherit a stale enabled-set
+///      replacement and wipe the enabled set; and
+///   3. the cancel itself mutates nothing but the slot -- the pool does not grow and the switch is gone.
+void test_s4b_5_a_direct_write_cancels_the_queued_switch_without_a_stale_replacement() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kPlaying = 0;
+  constexpr uint8_t kReplaceTarget = 1;
+  constexpr uint8_t kUndoSlot = 2;
+  constexpr uint8_t kLaterTarget = 3;
+  commitRecordPassIntoTrackSlot(track, kPlaying);
+  commitRecordPassIntoTrackSlot(track, kReplaceTarget);
+  commitRecordPassIntoTrackSlot(track, kUndoSlot);
+  commitRecordPassIntoTrackSlot(track, kLaterTarget);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kPlaying, true));
+  // The undo slot is a slot the track has played (a restored take has occupancy), so the undo route's own
+  // `resetPlaybackStateForSlot` below has a runtime to anchor.
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kUndoSlot, false));
+  // The enabled set a stale replacement would wipe: the played slot plus one other layer. Set directly --
+  // the enabled set is this fixture's subject, and the gesture routes that build it are covered above.
+  trackManager.setSlotEnabled(0, kPlaying, true);
+  trackManager.setSlotEnabled(0, kUndoSlot, true);
+
+  // The production playing state, then retire the finalizer so a later switch can be due.
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, kPlaying);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track));
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, kPlaying);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kPlaying));
+
+  // (1) A **replace-enabled-set** switch is queued by the production gesture (the populated target route
+  // arms the replacement, so this is the state whose cancel must clear it).
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(kReplaceTarget);
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
+                           "the populated target must queue a playback switch");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kReplaceTarget, trackManager.getPendingSlotIndex(0),
+                                  "the queued switch must name the replace target");
+  TEST_ASSERT_EQUAL_UINT8(kPlaying, TrackCaptureStopTestAccess::activeLoopIndex(track));
+
+  // (2) The **undo route**'s write -- exactly the call `applyClearSlotUndoSideEffects` makes. The queued
+  // switch must be cancelled rather than left armed under a slot that already moved, and the cancel must not
+  // allocate (nothing is stolen, nothing grows).
+  const size_t chunksBeforeCancel = LoopEventStore::freeChunkCount();
+  trackManager.setActiveLoopIndex(0, kUndoSlot);
+  // The undo route continues with its own playback-state reset (`applyClearSlotUndoSideEffects`), so the
+  // fixture does too: without it the new active slot has no anchored playhead and no switch can be due.
+  track.resetPlaybackStateForSlot(kUndoSlot, clockManager.getCurrentTick());
+  TEST_ASSERT_FALSE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
+                            "a direct active-slot write must cancel the queued switch, not race it");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kUndoSlot, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the undo route's write lands in one transfer");
+  TEST_ASSERT_EQUAL_UINT32(chunksBeforeCancel, LoopEventStore::freeChunkCount());
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.isSlotEnabled(0, kPlaying),
+                           "the cancel must not touch the enabled set");
+
+  // (3) An **unrelated** switch, queued through a route that does not arm a replacement
+  // (`requestSlotSwitch`). If the cancel had left the replacement armed, this commit would inherit it and
+  // replace the enabled set with the target alone -- the stale-replacement defect.
+  clockManager.assignCurrentTickSilently(clockManager.getCurrentTick() + 1);
+  trackManager.requestSlotSwitch(0, kLaterTarget, SlotQuantization::LoopEnd,
+                                 clockManager.getCurrentTick());
+  TEST_ASSERT_TRUE(trackManager.hasPendingSlotSwitch(0));
+  for (int round = 0; round < 4 && TrackCaptureStopTestAccess::activeLoopIndex(track) != kLaterTarget;
+       ++round) {
+    (void)trackManager.servicePendingSlotProvision();
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + 768; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      trackManager.updateAllTracks(tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kLaterTarget, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "the unrelated switch must commit");
+  TEST_ASSERT_FALSE(trackManager.hasPendingSlotSwitch(0));
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.isSlotEnabled(0, kPlaying),
+                           "no stale enabled-set replacement may reach an unrelated switch");
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.isSlotEnabled(0, kUndoSlot),
+                           "the enabled layers a stale replacement would wipe must survive");
+}
+
 int main() {
   UNITY_BEGIN();
   // S4b.1 check 7 (repeated same-track switches): accepted, bounded, nothing stolen, executes on capacity.
@@ -3040,6 +3139,9 @@ int main() {
   // bounded -- one report per episode, switch retained.
   RUN_TEST(test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn);
   RUN_TEST(test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound);
+  // S4b.5 (B4): one active-slot write authority -- a direct write (the undo route) cancels a queued switch,
+  // the cancel clears the whole trio, and an unrelated switch inherits no stale enabled-set replacement.
+  RUN_TEST(test_s4b_5_a_direct_write_cancels_the_queued_switch_without_a_stale_replacement);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);

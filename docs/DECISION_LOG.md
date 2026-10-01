@@ -105,7 +105,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest last). Next ID: DEC-104 -->
+<!-- Append new entries below (newest last). Next ID: DEC-105 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -6031,3 +6031,57 @@ device observation yet (no HITL leg drives a demoted target's switch, and nothin
 row), and the bound is chosen from the two known waits rather than from a device measurement of the hold's
 distribution. Record: `openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4b.7 — the
 demoted target, the published root, and the bounded hold".
+
+## DEC-105 — One active-slot write authority: a guarded entry point over a non-re-entrant commit point, and one cancel for the trio
+
+**Date:** 2026-10-01
+**Owner:** `runtime-working-set-ownership` S4b.5 (B4). Firmware: `TrackManager` (entry point, commit point, cancel
+helper, guard), its callers in the capture-queue, transport-tick and MIDI-action TUs, plus the minimal native
+harness's counted stubs.
+**Status:** Accepted
+
+### Problem
+The active slot had four writers and no single authority: the manager entry point, two direct
+`Track::setActiveLoopIndex` writes (the boot/SD entry and the capture-switch commit point), and a manager
+`setActiveLoopIndex` that would happily **move the slot underneath a queued switch** — leaving two transfers and a
+pending switch that then fired on top of the move. Cancelling a queued switch was worse than it looked: the trio
+(`clearPendingSlotSwitch` + `setPendingEnabledSetReplacement(false)` + `cancelSlotSelectionHold`) was open-coded at
+five sites and **partially** done at several others, so a cancel that cleared only the state machine left the
+enabled-set replacement armed; the next switch that did *not* arm a replacement then inherited it and replaced the
+enabled set — a real defect, not a hypothetical (red-proved below).
+
+### Decision
+* **The entry point decides; a commit point writes.** `TrackManager::setActiveLoopIndex` owns the policy
+  (guard, cancel, then write) and `applyActiveLoopIndex` -- new, private, `TRACK_MANAGER`-internal -- is the
+  **non-re-entrant commit point**: the slot write plus its two side effects and nothing else. The
+  capture-switch commit point lands there directly, because routing it through the guarded entry would re-enter
+  the switch it is in the middle of committing (that is exactly what Rev 21.3's "keep a non-re-entrant
+  commit-point write ... or split `applyActiveLoopIndex`" preserves).
+* **The guard gains `hasAcceptedUnexecutedInteraction()`.** A stop *in flight* was already covered
+  (`isRecording` / `isOverdubbing` / `hasPendingDeferredOverdubStop`); an interaction that has been **accepted
+  but not executed** is the state the switch's own latch sits in before any job exists, and moving the slot under
+  it is the same double transfer.
+* **A direct write cancels a queued switch rather than racing it.** One transfer, not a move plus a queued
+  transfer.
+* **Cancelling is one call.** `TrackManager::cancelPendingSlotSwitch(trackIndex)` owns the trio; every site
+  that cancelled part of it now calls the helper. The helper is one call *site*, not one mutation: the minimal
+  harness expresses it through the three counted stubs, so a cancel still counts the same three slot-mutation
+  calls it did before.
+* **The commit branches land their write at the commit point**, not through the guard: `updateAllTracks`' switch
+  commit (the pending switch was just consumed there, so the entry's cancel branch would be wrong twice over) and
+  `handleTransportStop`'s per-track remap (the stop has already decided).
+
+### Consequences
+The active slot has one writer again, and the cancel defect is closed and **demonstrated**: making the cancel
+partial fails the new fixture at *"no stale enabled-set replacement may reach an unrelated switch"*, and removing
+the cancel-on-write fails it at *"a direct active-slot write must cancel the queued switch, not race it"* (both
+restored byte-identically). The fixture drives the entry through the **undo route's own call** and its own
+playback-state reset, which is what "press Undo, then trigger an unrelated switch" means in code. Focused suite
+39/39; full native 2,656 cases / 2,649 succeeded / 7 skipped / 0 failed (no ERRORED); `teensy41-capture-serial`
+SUCCESS with RAM1 `code 391,416 + padding 1,800 / locals 34,880` (floor 840; ITCM +128 B, padding 1,928 → 1,800).
+**Recorded as a measured coverage gap:** removing the guard's `hasAcceptedUnexecutedInteraction()` term leaves the
+**whole** full native suite green, so that contract-mandated term has no fixture yet; the reproducer (an
+accepted-but-unexecuted interaction beside a direct write, which must route through the capture switch rather
+than move the slot) is the named next step, and this record says so instead of implying it is covered. Record:
+`openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4b.5 — one active-slot write
+authority, and the cancel that owns the trio".

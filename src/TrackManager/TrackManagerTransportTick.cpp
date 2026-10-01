@@ -24,9 +24,7 @@ void TrackManager::stopPlayingTrack(uint8_t trackIndex) {
     return;
   }
   tracks[trackIndex].stopPlaying();
-  clearPendingSlotSwitch(trackIndex);
-  pendingEnabledSetReplacement[trackIndex] = false;
-  cancelSlotSelectionHold(trackIndex);
+  cancelPendingSlotSwitch(trackIndex);
   tracks[trackIndex].clearQueuedPlaybackStart();
 }
 
@@ -49,9 +47,7 @@ void TrackManager::handleTransportStop() {
       heldLayerSlot[i][s] = false;
     }
     pendingStop[i] = false;
-    slotStateMachine.clearPendingSlotSwitch(i);
-    pendingEnabledSetReplacement[i] = false;
-    cancelSlotSelectionHold(i);
+    cancelPendingSlotSwitch(i);
     tracks[i].clearQueuedPlaybackStart();
     if (t.isRecording()) {
       // Stop recording BEFORE sendAllNotesOff(): finalizePendingNotes() must record
@@ -101,8 +97,7 @@ void TrackManager::queueBarPlaybackStart(uint8_t trackIndex, int32_t storageTick
   if (trackIndex >= Config::NUM_TRACKS) {
     return;
   }
-  slotStateMachine.clearPendingSlotSwitch(trackIndex);
-  pendingEnabledSetReplacement[trackIndex] = false;
+  cancelPendingSlotSwitch(trackIndex);
   tracks[trackIndex].queuePlaybackStartAtGrid(storageTick, queuedAtTick);
 }
 
@@ -175,7 +170,9 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         }
       }
       slotStateMachine.setSelectedSlotIndex(i, selectedSlot);
-      setActiveLoopIndex(i, selectedSlot);
+      // S4b.5: the stop path has already decided; it lands the write at the non-re-entrant commit point rather
+      // than through the guarded entry, which would divert a stop-path write into a capture switch.
+      applyActiveLoopIndex(i, selectedSlot);
       // Reset playback indices so all newly enabled slots start at the commit phase.
       tracks[i].resetPlaybackStateForSlot(selectedSlot, currentTick);
       for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
@@ -205,8 +202,7 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         slotStateMachine.shouldCommitPendingSlotSwitch(i, tracks[i], playTick)) {
       const uint8_t targetSlot = slotStateMachine.getPendingSlotIndex(i);
       if (targetSlot >= Config::MAX_LOOPS_PER_TRACK) {
-        slotStateMachine.clearPendingSlotSwitch(i);
-        pendingEnabledSetReplacement[i] = false;
+        cancelPendingSlotSwitch(i);
       } else if (!tracks[i].hasCommittedPassesInSlot(targetSlot)) {
         // HEADER_READY / SD still loading: keep pending until Commit.
         // hasDataInSlot is true from metadata length alone — launching that empty 64-bar
@@ -215,8 +211,7 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         if (!StorageManager::hasLoopSlotPayloadOnSdInRam(i, targetSlot)) {
           logger.info("LoopEnd playback commit cancelled track=%u target=%u (no committed MIDI)",
                       static_cast<unsigned>(i), static_cast<unsigned>(targetSlot));
-          slotStateMachine.clearPendingSlotSwitch(i);
-          pendingEnabledSetReplacement[i] = false;
+          cancelPendingSlotSwitch(i);
         }
       } else if (!tracks[i].isPlaybackMergedMidiEventsReadyForSlot(targetSlot) &&
                  tracks[i].getLoop(targetSlot).shouldAvoidFullVisualRebuild(
@@ -232,11 +227,13 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         // commit lands.
       } else if (tracks[i].hasDataInSlot(targetSlot)) {
         const uint8_t previousPlaying = getPlayingSlotIndex(i);
-        slotStateMachine.clearPendingSlotSwitch(i);
+        clearPendingSlotSwitch(i);
         // Wire silence before swapping the audible slot (same pattern as overdub→play).
         tracks[i].sendAllNotesOff();
         tracks[i].ensurePlaybackMergedEventsForSlot(targetSlot);
-        setActiveLoopIndex(i, targetSlot);
+        // S4b.5: the commit is the actor here (the pending switch was just consumed), so it lands the write at
+        // the non-re-entrant commit point: the guarded entry could otherwise divert it into a capture switch.
+        applyActiveLoopIndex(i, targetSlot);
         const Loop& targetLoop = tracks[i].getLoop(targetSlot);
         tracks[i].clearQueuedPlaybackStart();
         tracks[i].queuePlaybackStartAtGrid(static_cast<int32_t>(targetLoop.loopStartTick),
@@ -268,8 +265,7 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         // Safety: pending target no longer has loop data, cancel it.
         logger.info("LoopEnd playback commit cancelled track=%u target=%u (no RAM data)",
                     static_cast<unsigned>(i), static_cast<unsigned>(targetSlot));
-        slotStateMachine.clearPendingSlotSwitch(i);
-        pendingEnabledSetReplacement[i] = false;
+        cancelPendingSlotSwitch(i);
       }
     }
 

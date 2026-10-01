@@ -9090,3 +9090,49 @@ existing padding, so the slice costs no RAM1 variable and no ITCM. Firmware hex 
 board still runs the earlier image; an upload needs a fresh ask). **Recorded, not claimed:** the terminal has no
 device observation yet, and the 4-bar bound is argued from the two known waits rather than from a device
 measurement of the hold's distribution.
+
+## S4b.5 — one active-slot write authority, and the cancel that owns the trio (2026-10-01)
+
+**Two defects, one stage.** The active slot had four writers (the manager entry, two direct
+`Track::setActiveLoopIndex` sites, and an entry that would move the slot *underneath* a queued switch — two
+transfers instead of one), and cancelling a queued switch was open-coded at five sites and done **partially** at
+several others. The partial cancels are the real find: clearing only the state machine left the enabled-set
+replacement armed, and the next switch that armed no replacement inherited it and wiped the enabled set.
+
+**What is built.** `TrackManager::setActiveLoopIndex` is the authority and `applyActiveLoopIndex` (new, private)
+is the **non-re-entrant commit point** that performs the write and its two side effects — Rev 21.3's split, so
+the capture-switch commit point can land a write without re-entering the switch it is committing. The entry's
+guard gains `hasAcceptedUnexecutedInteraction()`, the "accepted but not executed" state a switch's own latch sits
+in before any job exists. A direct write now **cancels** a queued switch rather than racing it, and cancelling is
+**one call**: `cancelPendingSlotSwitch(trackIndex)` owns the trio, and `stopPlayingTrack`, `handleTransportStop`,
+`queueBarPlaybackStart` (which had *forgotten* the selection hold), `updateAllTracks`' three cancel branches and
+`MidiButtonActions::discardQueuedSlotActions` all go through it. The two commit branches (the playback-switch
+commit and the transport-stop remap) land at the commit point, because both have already decided.
+
+**The minimal harness is part of the contract here.** `capture_storage_harness.inc` stubs this surface with a
+counter (`A34aBoundary::slotMutationCalls`) that a boundary test asserts on, so the two new symbols are defined
+there *through* its counted stubs: a cancel still counts exactly the three slot-mutation calls it did before, and
+the commit point counts as the write `setActiveLoopIndex` used to. The link failure that revealed this (two
+suites could not resolve the new symbols) is why the harness is edited rather than the suites.
+
+**Fixture, and what the red-proofs show.** `test_s4b_5_a_direct_write_cancels_the_queued_switch_without_a_stale_
+replacement` queues a **replace-enabled-set** switch through the production gesture, drives the **undo route's
+own write** (plus its playback-state reset, which the fixture mirrors because without it the new active slot has
+no anchored playhead and nothing can be due), then queues an **unrelated** switch through a route that arms no
+replacement. Asserted: the queued switch is cancelled, the write lands in one transfer, the pool does not grow
+across the cancel, the unrelated switch commits, and the enabled set survives. **Red-proved twice, restored
+byte-identically:** removing the cancel-on-write fails *"a direct active-slot write must cancel the queued
+switch, not race it"*; making the cancel partial (dropping the replacement clear — the pre-fix shape) fails
+*"no stale enabled-set replacement may reach an unrelated switch"*. The second is the defect demonstrated rather
+than described.
+
+**Recorded as a measured coverage gap, not assumed.** Removing the guard's `hasAcceptedUnexecutedInteraction()`
+term leaves the **entire** full native suite green (2,656 cases, measured, twice). The term is contract-mandated
+and stays, but it has no fixture of its own yet; the reproducer — an accepted-but-unexecuted interaction beside a
+direct write, which must route through the capture switch rather than move the slot — is the named next step for
+this entry, and DEC-105 says the same.
+
+**Evidence.** Focused suite **39/39**; full native **2,656 cases / 2,649 succeeded / 7 skipped / 0 failed** (and no
+ERRORED suites — the harness repair above); `teensy41-capture-serial` **SUCCESS** with RAM1
+`variables 96,192 / code 391,416 + padding 1,800 / locals 34,880` (floor 840; ITCM +128 B, padding 1,928 →
+1,800), firmware hex `cdab16f4…`, **not flashed**.

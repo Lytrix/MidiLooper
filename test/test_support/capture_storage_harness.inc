@@ -189,6 +189,16 @@ void TrackManager::toggleSlotMuted(uint8_t trackIndex, uint8_t slotIndex) {
 void TrackManager::setActiveLoopIndex(uint8_t, uint8_t) { ++A34aBoundary::slotMutationCalls; }
 void TrackManager::setLayeredSlotHeld(uint8_t, uint8_t, bool) { ++A34aBoundary::slotMutationCalls; }
 void TrackManager::cancelSlotSelectionHold(uint8_t) { ++A34aBoundary::slotMutationCalls; }
+// S4b.5: the guarded entry's write half and the one cancel helper. The write is counted exactly as
+// `setActiveLoopIndex` was (this harness asserts on `slotMutationCalls`), and the cancel is expressed through
+// the three counted stubs below so a cancel still counts the same three slot-mutation calls it did before --
+// the helper is one call site, not one mutation.
+void TrackManager::applyActiveLoopIndex(uint8_t, uint8_t) { ++A34aBoundary::slotMutationCalls; }
+void TrackManager::cancelPendingSlotSwitch(uint8_t trackIndex) {
+  clearPendingSlotSwitch(trackIndex);
+  setPendingEnabledSetReplacement(trackIndex, false);
+  cancelSlotSelectionHold(trackIndex);
+}
 void TrackManager::clearPendingSlotSwitch(uint8_t) { ++A34aBoundary::slotMutationCalls; }
 void TrackManager::refreshPreviewSlotFocus(uint8_t, uint8_t) { A34A_OFF_PATH(); }
 void TrackManager::requestSlotSwitch(uint8_t, uint8_t, SlotQuantization, uint32_t) { A34A_OFF_PATH(); }

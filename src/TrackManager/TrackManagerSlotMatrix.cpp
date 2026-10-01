@@ -19,19 +19,40 @@ uint8_t TrackManager::getActiveLoopIndex(uint8_t trackIndex) const {
   return (trackIndex < Config::NUM_TRACKS) ? tracks[trackIndex].getActiveLoopIndex() : 0;
 }
 
+void TrackManager::applyActiveLoopIndex(uint8_t trackIndex, uint8_t index) {
+  // S4b.5: the commit point itself. No guard, no cancel, no capture switch -- the callers decide that, and the
+  // capture-switch commit point must be able to land a write without re-entering the switch it is committing.
+  Track& t = tracks[trackIndex];
+  t.setActiveLoopIndex(index);
+  StorageManager::prioritizeLoopSlotRestoreForFocus(trackIndex, index);
+  forceMidiLedUpdate(clockManager.getCurrentTick());
+}
+
 void TrackManager::setActiveLoopIndex(uint8_t trackIndex, uint8_t index) {
-  if (trackIndex < Config::NUM_TRACKS) {
-    Track& t = tracks[trackIndex];
-    const uint8_t prev = t.getActiveLoopIndex();
-    if (prev != index &&
-        (t.isRecording() || t.isOverdubbing() || t.hasPendingDeferredOverdubStop())) {
-      finalizeCaptureAndSelectSlot(trackIndex, index, clockManager.getCurrentTick());
-      return;
-    }
-    t.setActiveLoopIndex(index);
-    StorageManager::prioritizeLoopSlotRestoreForFocus(trackIndex, index);
-    forceMidiLedUpdate(clockManager.getCurrentTick());
+  if (trackIndex >= Config::NUM_TRACKS) {
+    return;
   }
+  Track& t = tracks[trackIndex];
+  const uint8_t prev = t.getActiveLoopIndex();
+  if (prev == index) {
+    return;
+  }
+  // S4b.5 (B4, Rev 21.3): the guard gains the **accepted-but-unexecuted** interaction. `isRecording` /
+  // `isOverdubbing` / a pending deferred stop describe a stop *in flight*; an accepted interaction that has
+  // not executed yet is the state the switch's own latch can be in before any job exists, and moving the slot
+  // under it is exactly the double transfer this stage exists to remove.
+  if (t.isRecording() || t.isOverdubbing() || t.hasPendingDeferredOverdubStop() ||
+      t.hasAcceptedUnexecutedInteraction()) {
+    finalizeCaptureAndSelectSlot(trackIndex, index, clockManager.getCurrentTick());
+    return;
+  }
+  // A queued switch owns the active slot until it commits or is cancelled: this write cancels it rather than
+  // moving underneath it. Cancelling is the helper's trio -- doing only part of it here is how a stale
+  // enabled-set replacement survives to fire on an *unrelated* switch later.
+  if (hasPendingSlotSwitch(trackIndex)) {
+    cancelPendingSlotSwitch(trackIndex);
+  }
+  applyActiveLoopIndex(trackIndex, index);
 }
 
 void TrackManager::setLayeredSlotHeld(uint8_t trackIndex, uint8_t slotIndex, bool held) {
@@ -241,7 +262,11 @@ void TrackManager::loadTransportSlotIndices(uint8_t trackIndex, uint8_t activeSl
   Track& track = tracks[trackIndex];
   const uint8_t playingSlot =
       track.isAudiblePlaybackActive() ? activeSlot : selectedSlot;
-  track.setActiveLoopIndex(playingSlot);
+  // S4b.5: boot/SD load still routes through the **manager's** write authority (the entry point, not
+  // `Track::setActiveLoopIndex`). At boot no interaction is in flight and no switch is pending, so the guard
+  // takes the plain path; the only difference from the raw write is the restore priority and the LED update
+  // that any other active-slot move gets.
+  applyActiveLoopIndex(trackIndex, playingSlot);
   // updateAllTracks only calls playMidiEvents when slotEnabled[playingSlot].
   // Bundle slotEnabled can leave the selected slot disabled while another slot
   // remains enabled — after stopped remap (active:=selected) that yields piano-roll
@@ -406,4 +431,13 @@ void TrackManager::refreshPreviewSlotFocus(uint8_t trackIndex, uint8_t slotIndex
 
 void TrackManager::clearPendingSlotSwitch(uint8_t trackIndex) {
   slotStateMachine.clearPendingSlotSwitch(trackIndex);
+}
+
+void TrackManager::cancelPendingSlotSwitch(uint8_t trackIndex) {
+  // S4b.5 (B4, Rev 21.3): the trio, in one place. `clearPendingSlotSwitch` alone leaves the enabled-set
+  // replacement armed and the selection hold running, and both of those then act on a *later*, unrelated
+  // switch -- the stale replacement wiping the enabled set is the defect this helper exists to prevent.
+  clearPendingSlotSwitch(trackIndex);
+  setPendingEnabledSetReplacement(trackIndex, false);
+  cancelSlotSelectionHold(trackIndex);
 }

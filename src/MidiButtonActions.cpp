@@ -47,9 +47,7 @@ void enableOnlySlot(uint8_t trackIdx, uint8_t slotIndex) {
 }
 
 void discardQueuedSlotActions(uint8_t trackIdx) {
-  trackManager.clearPendingSlotSwitch(trackIdx);
-  trackManager.setPendingEnabledSetReplacement(trackIdx, false);
-  trackManager.cancelSlotSelectionHold(trackIdx);
+  trackManager.cancelPendingSlotSwitch(trackIdx);
   trackManager.getTrack(trackIdx).clearQueuedPlaybackStart();
 }
 
