@@ -36,6 +36,22 @@ bool sequencerRunning = false;
 
 #include "../test_support/track_harness.inc"
 
+/// S4b.4 (display clause): the display boundary this harness already keeps observable now **records** what it
+/// was told, because after a role handoff *which* slots the panel is told about is the fact worth asserting --
+/// the switch's own commit calls `displayManager.invalidateForSlotChange(i, previousPlaying,
+/// getPreviewSlotIndex(i))`, so the incoming slot must be the one it names.
+struct SlotChangeObservation {
+  uint32_t count = 0;
+  uint8_t track = 0xFF;
+  uint8_t from = 0xFF;
+  uint8_t to = 0xFF;
+};
+SlotChangeObservation& slotChangeObservation() {
+  static SlotChangeObservation observation;
+  return observation;
+}
+void resetSlotChangeObservation() { slotChangeObservation() = SlotChangeObservation{}; }
+
 // S4b: this suite links the real stop-telemetry TU (the switch requests persistence for the slot the
 // capture left), so the stub surface must not also define those diagnostics.
 #define HARNESS_LINKS_REAL_STOP_TELEMETRY
@@ -3435,6 +3451,67 @@ void test_s4b_3_a_next_grid_switch_lands_on_the_start_grid() {
 ///
 /// The entry kind used is `LoopBoundaryChange`, whose apply is a pure geometry restore, so the observation is
 /// the loop's own `loopStartTick`: the fixture can name the value it expects on the inbound holder.
+/// **S4b.4 (clause: display) — the panel is told about the holder that took over.**
+///
+/// The switch commit's own display call is `displayManager.invalidateForSlotChange(i, previousPlaying,
+/// getPreviewSlotIndex(i))` (`TrackManager::updateAllTracks`), i.e. it names the outgoing slot and the slot the
+/// panel should now focus. This harness keeps that boundary observable (no `OFF_PATH()`), so the fixture makes
+/// it **record** instead and asserts the identity pair after a switch lands: the retired slot out, the inbound
+/// holder in. That is what "the inbound holder serves display" means at this stage -- the display *authority*
+/// moves with the roles rather than being left pointing at the predecessor.
+void test_s4b_4_the_display_authority_moves_to_the_holder_the_switch_moved_to() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kOutbound = 0;
+  constexpr uint8_t kInbound = 2;
+  commitRecordPassIntoTrackSlot(track, kOutbound);
+  commitRecordPassIntoTrackSlot(track, kInbound);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kOutbound, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kInbound, false));
+
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, kOutbound);
+  TrackCaptureStopTestAccess::activateSlot(0, kOutbound);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOutbound);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOutbound));
+
+  // The **production press** (not the raw request): the gesture is what moves the panel's preview slot, and
+  // the display pair the commit names is (outgoing, preview) -- so driving the raw call would ask the panel to
+  // focus the slot it is leaving.
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(kInbound);
+  TEST_ASSERT_TRUE(trackManager.hasPendingSlotSwitch(0));
+  resetSlotChangeObservation();
+  for (int round = 0; round < 4 && TrackCaptureStopTestAccess::activeLoopIndex(track) != kInbound;
+       ++round) {
+    (void)trackManager.servicePendingSlotProvision();
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + 768; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      trackManager.updateAllTracks(tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kInbound, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "fixture precondition: the switch must land on the inbound holder");
+  const SlotChangeObservation& observation = slotChangeObservation();
+  TEST_ASSERT_TRUE_MESSAGE(observation.count > 0,
+                           "the display boundary must be told about a role handoff");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, observation.track, "the observation names the switched track");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kOutbound, observation.from,
+                                  "the display must be told which slot the roles left");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kInbound, observation.to,
+                                  "the display authority must move to the slot that took over");
+}
+
 void test_s4b_4_the_undo_route_addresses_the_holder_the_switch_moved_to() {
   LoopEventStore::initPool();
   Track& track = trackManager.getSelectedTrack();
@@ -3546,6 +3623,8 @@ int main() {
   // S4b.4 (undo clause): the holder a switch moved to is the one the undo route addresses -- a retired
   // slot's entry is refused, the inbound slot's own entry is applied to it.
   RUN_TEST(test_s4b_4_the_undo_route_addresses_the_holder_the_switch_moved_to);
+  // S4b.4 (display clause): the display authority moves to the holder the switch moved to.
+  RUN_TEST(test_s4b_4_the_display_authority_moves_to_the_holder_the_switch_moved_to);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);

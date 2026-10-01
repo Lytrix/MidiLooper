@@ -9201,3 +9201,32 @@ boundary fails **both** new fixtures at *"the boundary tick itself may not take 
 **byte-identical** firmware hex (`cdab16f4…`) — this slice changes no firmware. **Not claimed:** the fixtures
 prove the boundary's quantization for these two quantizations on a one-bar loop; a device leg would be what
 shows the same on hardware timing (S4b.8/S4b.9, owed).
+
+## S4b.4 — the undo route and the display authority on the holder that took over (2026-10-01)
+
+**Two clauses, and both needed a measurement before they could be asserted.** S4b.4's matrix had four of its six
+services already attributed to existing fixtures; these are the other two, and each taught something about how the
+firmware routes them.
+
+**Undo.** The production call is `TrackUndo::undoForLoop(track, track.getActiveLoop())` (the shape
+`MidiButtonActions` uses), and it gates on the slot. Driving it needed two link-closure symbols (the driver's
+geometry flush, kept fail-closed, and its `hasPendingGeometry` question, answered no) plus two observable no-ops,
+and it forced one stub to be **reclassified**: an applied undo restores published geometry and *notifies* the edit
+manager through `onGlobalGeometryRestored`, a route the earlier comment assumed only a live edit session could
+reach. DEC-101's argument applies (a removed `OFF_PATH()` cannot have been reached by a fixture that was passing),
+and the manager's session entries stay stubbed, so no edit session can run here. **The red-proof took two tries for
+an instructive reason:** `undoForLoop` checks the slot **twice** — the outer check and, inside the apply loop, the
+same comparison as a `break` — so each single-gate mutation left the gate intact and "survived" (measured).
+Removing the gate as a whole fails the fixture (`Expected 0 Was 4242` on the retired slot's geometry). The double
+gate is worth knowing before anyone "simplifies" it: behaviour alone will not catch that edit.
+
+**Display.** The switch commit's own call is `displayManager.invalidateForSlotChange(i, previousPlaying,
+getPreviewSlotIndex(i))`, and this harness already keeps that boundary observable — so the stub now **records**
+(`SlotChangeObservation{count, track, from, to}`, the harness's own observation pattern) and the fixture asserts
+the pair after a **production press**: the retired slot out, the inbound holder in. The first version drove the raw
+`requestSlotSwitch` and measured `(outgoing, outgoing)` — the panel asked to focus the slot it was leaving — which
+is exactly why the fixture uses the gesture: the press is what moves the preview slot the commit names. Red-proved
+by making the commit name the predecessor.
+
+**Evidence.** Focused suite 45/45; full native 2,662 cases / 2,655 succeeded / 7 skipped / 0 failed;
+`teensy41-capture-serial` SUCCESS with an unchanged RAM1 line and a byte-identical firmware hex (`cdab16f4…`).
