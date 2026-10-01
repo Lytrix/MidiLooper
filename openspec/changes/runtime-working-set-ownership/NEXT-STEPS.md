@@ -201,12 +201,16 @@ deltas, phases B–E) and F4's SD-fault evidence needs a per-session device auth
 **The S4b gate's timing half is now aimed** by a dedicated three-switch run (`overflow_free` and
 `call_site_gate_ok` green, empty warning list), which also produced the S4b.7 hold terminal's **first device
 observation** ([`evidence/2026-10-01-s4b-repeated-switches/`](evidence/2026-10-01-s4b-repeated-switches/EVIDENCE.md));
-the gate itself stays `[~]` for its `S4 gates` half. **S4b.9 is `[~]`:** the cross-track switch is accepted inside
+the gate itself stays `[~]` for its `S4 gates` half. **S4b.9 is CHECKED (2026-10-01).** The cross-track switch is accepted inside
+
 A's finalization window, A's occupancy is released exactly once and only by A's own stop terminal, the
-selection/display authority moves with the switch and the transport stays MIDI-continuous — but the leg's
-*cold-boundary provisioning* clause is unexercised, because the press after the track switch is resolved by the
-**new track's own state** (an empty destination becomes the record carrier; the active destination becomes
-`Toggle Play/Stop`), so it needs a **second filled, non-active slot on the destination track**
+selection/display authority moves with the switch and the transport stays MIDI-continuous, and the leg's
+*cold-boundary provisioning* clause is **observed on hardware**: the destination **track must be playing** (the
+runner's `--preplay-track-number`/`--preplay-loop-slot`; after a cross-track switch the new track is selected but not
+playing, so a press there is a selection/toggle). `captures/s4b9-cross-track-21` queues `Loop 3: Queued playback
+switch` against a **cold** destination (`capture_prewarm,full=0,ready=0`), commits 2.99 s later
+(`LoopEnd playback commit track=4 1->2`), has one `canonical_release` for A's own stop, gates green and zero hold
+reports — the occupancy taken off-clock between press and commit
 ([`evidence/2026-10-01-s4b9-cross-track/`](evidence/2026-10-01-s4b9-cross-track/EVIDENCE.md)).
 
 **A third, now FIXED device-state item (2026-10-01, firmware + host tooling): the diagnostic must not evict the
@@ -216,7 +220,12 @@ are DMAMEM so RAM1 is untouched, and the successor-start gate now names the abor
 missing receipt. Measured: `PERS,work` 5 951/6 967 → 382, tail-write rows 2 705 → 29, `RING,wiped` 1 → 0, and the
 legs' preconditions pass (`admitted after stop receipt`) with the device's large-library work still running.
 Record: [`evidence/2026-10-01-telemetry-must-not-evict-evidence/FIX.md`](evidence/2026-10-01-telemetry-must-not-evict-evidence/FIX.md).
-**The image is now `014af85d…`** (the S4b.8 / S4b-gate evidence above was taken on `cdab16f4…`; re-running those on
+**Two further device-state fixes landed on the way there (same day, firmware):** a corrupt **head prefix** no longer
+costs the ring (bounded resync, counted and named `RING,head_resync,…`; the wipe stays the fallback), and the rare
+**save-completion receipt** is emitted where it is produced when USB has room — the ring is retained rather than
+drained under transport, and a receipt delayed past its consumer is not a receipt. Rows and red-proofs:
+[`evidence/2026-10-01-ring-resync-and-receipt-delivery/FIX.md`](evidence/2026-10-01-ring-resync-and-receipt-delivery/FIX.md).
+**The image is now `a1f4e4c0…`** (the S4b.8 / S4b-gate evidence above was taken on `cdab16f4…`; re-running those on
 the new image is a cheap regression check, and S4b.9's remaining clause is a *gesture* shape: the destination track
 must be **playing** when its non-playing filled slot is pressed).
 
