@@ -1116,11 +1116,45 @@ void test_snapshot_reused_membership_preserves_capacity_limit() {
   TEST_ASSERT_EQUAL(0, snapshotMembershipCount(parent->noteMembership(60, 0).get()));
 }
 
+// S1.4's residual: clause 2 measured how many *passes* an undo root pins (0 -> 5 -> 8 -> 3 -> 7 across
+// 0 -> 2 slots), and what those passes cost in *chunks* was deliberately left without device telemetry (it
+// would have cost padding at 64 B of headroom). The conversion is a property of the storage layer, so it is
+// measured here on the real transfer path instead: a pass of E events holds exactly ceil(E / CHUNK_CAPACITY)
+// chunks, so the undo pin's chunk footprint scales with the pinned *pass count* and not with loop length.
+void test_pass_chunk_conversion_bounds_the_pinned_footprint() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+
+  const size_t perChunk = LoopEventStoreConfig::CHUNK_CAPACITY;
+  const size_t events = perChunk * 3 + 5;  // deliberately not chunk-aligned
+  for (size_t i = 0; i < events; ++i) {
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(static_cast<uint32_t>(i), 1, 60, 100)));
+  }
+  TEST_ASSERT_EQUAL_UINT32(events, store.size());
+
+  CommittedChunkIdList committedChunkIds;
+  TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(committedChunkIds));
+  // The pass carries every chunk the take used, and the conversion is the chunk capacity.
+  const size_t expectedChunks = (events + perChunk - 1) / perChunk;
+  TEST_ASSERT_EQUAL_UINT32(expectedChunks, committedChunkIds.size());
+  // The S1.4 clause-2 device maximum is 8 pinned passes across 2 slots. The pin is bounded in *chunks*, which is
+  // the ABI-free form of the baseline (a byte bound here would be a host figure, not the device's): at this density
+  // 8 pinned passes is 32 chunks -- a tenth of the pool and below the 16-chunk reserve's wake -- against the
+  // MB-scale *arena* retention clause 1 measured, which is what makes the two clauses compatible.
+  const size_t pinnedPassesMax = 8;
+  const size_t pinnedChunks = committedChunkIds.size() * pinnedPassesMax;
+  TEST_ASSERT_TRUE(pinnedChunks < LoopEventStoreConfig::POOL_CHUNK_COUNT / 10);
+  LoopEventStore::releaseChunkRefs(committedChunkIds);
+  LoopEventStore::resetPoolForTests();
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_pass_chunk_conversion_bounds_the_pinned_footprint);
   RUN_TEST(test_snapshot_batch_reuses_private_index_nodes);
-  RUN_TEST(test_snapshot_reused_edits_isolate_parent_sibling_and_failure);
   RUN_TEST(test_snapshot_reused_membership_preserves_capacity_limit);
+  RUN_TEST(test_snapshot_reused_edits_isolate_parent_sibling_and_failure);
   RUN_TEST(test_snapshot_release_shared_root_is_one_unit_and_readable);
   RUN_TEST(test_snapshot_release_unique_graph_is_quantized_and_releases_all_leaves);
   RUN_TEST(test_snapshot_release_preserves_shared_descendants_during_every_grain);
