@@ -153,7 +153,29 @@ SyncDrainResult makeDrainResult(SyncDrainFailureReason failureReason,
 }
 }  // namespace
 
+/// The original body, so the wrapper below can bracket it with the restore-progress counters.
+SyncDrainResult drainPersistenceWorkBlockingDetailedImpl(const LooperState& state);
+
+/// S2b.7's advancement clause is defined **inside** the drain call: sample `restoreProgressCounter()`
+/// immediately before the drain entry and immediately after it returns. This wrapper is that sample, so the
+/// movement is a device row (`PERS,drain_progress,<before>,<after>,<moved>,<verdict>`) instead of an inference
+/// from unrelated rows. An urgent-save discharge with no movement is then visible as `moved=0` in the same call.
 SyncDrainResult drainPersistenceWorkBlockingDetailed(const LooperState& state) {
+    const uint32_t progressBefore = restoreProgressCounter();
+    const SyncDrainResult result = drainPersistenceWorkBlockingDetailedImpl(state);
+    const uint32_t progressAfter = restoreProgressCounter();
+    // S2b.7's device items, sampled **at the drain edge** (where the save is owed and the restore holds the SD
+    // session): the restore-progress movement *inside* this call, and whether the deferred save is blocked by the
+    // active slot load. Both come from predicates and counters this file already uses, so the row adds no code to
+    // the image and no state to DTCM (a host-side read-back of the same fields would link the USB receive buffer).
+    SC_PERSIST("drain_progress", progressBefore, progressAfter,
+               (progressAfter != progressBefore ? 1u : 0u) |
+                   (deferredSaveBlockedByActiveSlotLoadSd() ? 2u : 0u),
+               result.reason);
+    return result;
+}
+
+SyncDrainResult drainPersistenceWorkBlockingDetailedImpl(const LooperState& state) {
     if (StorageManager::bootRecoveryBlocked())
         return SyncDrainResult{SyncDrainOutcome::Failed, "boot_recovery_blocked"};
 #if BYPASS_STOP_UNDO_SAVE
