@@ -146,3 +146,31 @@ and neither `TrackOverdubLifecycle.cpp` nor `TrackDeferredMaintenance.cpp` is to
 2. **The hang's abort site** — needs the loud diagnostic above, or a debugger. Not attributed to any of the three sites.
 3. **The publication side of a 24-bar overdub seal** remains unverified (Result 1) — and this wedge is what prevents
    reaching it.
+
+## Fix (2026-10-01, DEC-107)
+
+The retirement wait is now bounded in DEC-070's shape. `Track::stepDeferredRecordRetirement` carries a grain budget
+over the wait with an **unchanged frozen-window build phase**, read through the new
+`LoopPlaybackRuntime::frozenWindowBuildGrain()` (`viewBuild.nextGrain()`) — a phase change is progress and resets the
+count, so a build a writer is still feeding is never cut, while a build no writer can advance is bounded. Past the
+bound the existing `releaseFrozenRecordWindow()` discards the stale build **before**
+`retireJobCaptureSourceGrain` releases the raw range, so the use-after-free the S4f.19 gate exists to prevent is
+still prevented; only the completion of a window that retirement discards anyway is given up.
+
+The counter lives on `LoopPlaybackRuntime` (extmem) because `Track` is the pinned eight-way DTCM array
+(`sizeof(Track) == 384`): the per-slot runtime's pin was re-based `6,352 -> 6,360` B with the reason recorded at the
+assert, and DTCM `variables` stayed at 96,192.
+
+**Verification.** New fixture `test_stalled_frozen_window_build_does_not_park_the_record_job` (same setup as
+`test_published_record_interval_does_not_replay_the_return_window`, reaches `RecordPublished`, forces
+`TRACK_OVERDUBBING`, starts a build nothing will advance, asserts retirement still yields once — the gate is not
+weakened — then that it completes and drains the ring within a generous bound, with the build discarded).
+**Red-proof:** replacing the bound with the pre-fix unconditional `Pending` fails it with
+`Expected 1 Was 0. a frozen window build nothing advances parked the record job`; the file was restored
+byte-identically (`8085d94b…`). Full native **2,668 cases / 2,661 succeeded / 7 skipped / 0 failed**;
+`teensy41-capture-serial` SUCCESS, RAM1 `padding 1,272` (floor 840, 432 B headroom).
+
+**Owed.** Device acceptance: the same 24-bar record + 24-bar overdub shape must now show the record job retiring
+and the overdub pass present. And the inferred link above — why a build was still in flight at the record stop —
+remains open.
+

@@ -1879,6 +1879,11 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::frozenWindowBuildActiv
   return viewBuild.active();
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackViewBuildGrain
+LoopPlaybackRuntime::frozenWindowBuildGrain() const {
+  return viewBuild.nextGrain();
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::releaseFrozenRecordWindow() {
   viewBuild.discard();
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
@@ -2231,8 +2236,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // `teensy41-capture-serial`; the configuration-independent guard is the post-link budget check.
 #if defined(__IMXRT1062__) && defined(SESSION_CAPTURE) && defined(PERF_TELEMETRY)
 // Record closure output adds an owner+generation cursor receipt: measured +8 B.
-static_assert(sizeof(LoopPlaybackRuntime) == 6352,
-              "S3.0: LoopPlaybackRuntime is the per-slot working set (6,352 B extmem)");
+// S4f.19 bounded retirement wait: measured +8 B (a 3-byte `uint16_t` count + `uint8_t` phase pair,
+// 8-byte aligned) for the frozen-window wait's progress count and phase. It cannot live on `Track`
+// -- that is the pinned eight-way DTCM array (`sizeof(Track) == 384`), so a by-value member costs
+// 8x there -- and the wait must be bounded: a build no writer can advance otherwise parks the job,
+// its raw range and the capture-stop owner, and refuses every later stop on the track.
+static_assert(sizeof(LoopPlaybackRuntime) == 6360,
+              "S3.0: LoopPlaybackRuntime is the per-slot working set (6,360 B extmem)");
 static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "

@@ -4168,6 +4168,20 @@ has not run to completion.
         `overflow_free` / `call_site_gate_ok`; transport never stops.
       This is the case that distinguishes "one device-wide finalizer" from "one finalizer per **track+slot**" — a
       device-wide singleton would fail it. Evidence: session log + per-track holder census.
+- [ ] **S4f.23 When a record job never retired: the S4f.19 retirement wait is now bounded (DEC-107, firmware).** A
+      24-bar record's stop job published and then sat at `RecordPublished` with `pending=1` for 30 s
+      (`#STOP_PREFIX,...,build_active=1` on every poll) because its wait is on a frozen-window build whose two
+      writers both sit on other owners — the playback hot path and `serviceFirstRecordingBar`, gated on
+      `TRACK_RECORDING` exactly — and the interval had left that state. Every later stop on the track was then
+      refused (`Overdub stop refused: stop_job_pending`), so DEC-069 deferred that interval's wrap seal and its
+      pass was never sealed. Fix: the wait carries a grain budget with an unchanged build phase, progress resets it,
+      and the stale build is discarded before the raw range is released. Fixture
+      `test_stalled_frozen_window_build_does_not_park_the_record_job` (red-proved: `Expected 1 Was 0`); the
+      existing wait-yield fixture stays green; full native **2,668 / 2,661 succeeded / 7 skipped / 0 failed**;
+      `teensy41-capture-serial` SUCCESS, `padding 1,272` (floor 840), DTCM `variables` unchanged. **Device
+      acceptance owed:** re-run the 24-bar record + 24-bar overdub shape on this image and require the record job
+      to retire and the overdub pass to be present. Evidence:
+      [`evidence/2026-10-01-silent-hang-after-refused-od-stop/FINDING.md`](evidence/2026-10-01-silent-hang-after-refused-od-stop/FINDING.md).
 - **UNRESOLVED OBSERVATION (2026-09-24, user capture `captures/session_20260924_183229.log`) — the ordinary
   Playing stop route under repeated press; acceptance and progress UNPROVEN.** Recorded, not diagnosed: no
   firmware edit, no device run, no solution adopted.
