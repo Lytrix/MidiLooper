@@ -71,9 +71,9 @@ regression was the wrap commit's publication, not a load, so the loaded-body ver
   not evidence of absence.** It is, however, the only abort in the path this run exercises: the run's own rows show
   `DIAG,snapshot_unit,…` active and `snap=1156KB`.
 - A blocking or spinning loop in the stop path is **not excluded** either; the class is identified, the site is not.
-- **The diagnostic defect:** the one abort whose report cannot reach the host is the one that matters most. Recommended
-  (not implemented here) — `emitSnapshotAllocFailure` should write its **already-built** `line` to `Serial` as well as
-  the ring. That adds no new string literal, so the RAM1 guard's 496 B of headroom is untouched.
+- **The diagnostic defect (fixed — see below):** the one abort whose report cannot reach the host is the one that
+  matters most. `emitSnapshotAllocFailure` writes its line **only** into the ring, while the other two abort sites print
+  a FATAL to `Serial` and flush first.
 
 ## Cost, and the device's state after the reset
 
@@ -198,4 +198,20 @@ device's rows above, not the verdict. Two harness gates stay unmet and are **not
 pass (`rows,overdub,1,114`) is reported as observed, not explained.
 
 Still open from this session: *why a build was in flight when the record stopped* (the inferred link), and the hang's abort site.
+
+## The silent abort is now loud (2026-10-01)
+
+`emitSnapshotAllocFailure` (`src/Loop/LoopSnapshot.cpp`) now also writes its **already-built** `line` to `Serial` and
+flushes, mirroring the two allocator FATALs, so all three `abort()` sites report before they die. There are no other
+aborts whose only report is ring-only.
+
+Cost and coverage: the RAM1 guard line is **byte-identical** before and after (`code 391,944 + padding 1,272`,
+`variables 96,192`) — the change reuses the existing 160-byte `line` buffer and the `Stream` class's own end-of-line
+literal, so it adds no string literal and no `ram1_budget.json` re-base. The human-channel emission is `#if
+defined(ARDUINO)`-guarded (as the allocator FATALs are), so host behaviour is unchanged; the line's format and tier
+classification stay pinned by `test/test_capture_line_tier` (**17/17**). Full native **2,668 cases / 2,661 succeeded /
+7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS.
+
+**Not yet device-exercised** — by construction it only emits when the snapshot slab allocator fails, which no run has
+reproduced deliberately. What it buys is that the *next* occurrence names itself instead of hanging in silence.
 

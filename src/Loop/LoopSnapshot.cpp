@@ -1497,6 +1497,15 @@ LOOP_SNAPSHOT_COLD_MEM void emitSnapshotAllocFailure(const char* site, size_t by
            static_cast<unsigned long>(snapshotAllocNodeCount()),
            static_cast<unsigned long>(snapshotAllocSlabCount()));
   DebugSessionCapture::appendCaptureTextLine(line);
+  // The ring is RAM and is never drained again after the `abort()` below, so a ring-only report
+  // leaves a hard abort with no readable cause: the `0 bytes` silent hang of 2026-10-01 was
+  // exactly this site being unable to say why. Write the same already-built line to the human
+  // channel and flush it (the allocator FATALs do the same), so every one of the three abort()
+  // sites now reports before it dies. Reuses `line`, so no new string literal and no RAM1.
+#if defined(ARDUINO)
+  Serial.println(line);
+  Serial.flush();
+#endif
 #else
   (void)site;
   (void)bytes;
