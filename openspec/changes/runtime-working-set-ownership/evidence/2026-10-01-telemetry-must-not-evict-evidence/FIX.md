@@ -81,3 +81,21 @@ instead of the max; drop the cadence) with the header restored byte-identically 
   `Loop 2: Toggle Play/Stop` is that semantics, not a missing fixture.
 * The prelude failure in run 12 is recorded, not diagnosed; it did not recur in 13/15/16.
 * The restore-retry churn (the other device finding) is untouched by this change.
+
+## Remaining after this fix: a wipe from a **torn ring record**, not from volume
+
+The regression run on the fixed image (`captures/s4b-gate-newimage-01`, the S4b gate's three-switch leg) still
+ended with the capture invalid — but with a different signature, and its own rows name it:
+
+```
+#CAP,194244560,RING,head_bad,1,op=4,head=604322,tail=613846,used=9524,type=55,plen=12588,prefix=37322c3130300002fb1d00234341502c
+#CAP,194244574,RING,wiped,1,9524,194242578
+```
+
+The head record's declared payload length (`plen=12588`) exceeds the space the ring holds (`used=9524`) with
+`op=4`, so the head is unreadable and the ring resets and wipes — which marks the capture invalid and the
+intervention never fired (`switch sent: False`). In that same boot `PERS,work` was only **179** rows, so this is
+**not** the volume effect this fix bounds: it is a *ring record* defect (a record whose declared length and the
+buffered space disagree, at or after a wrap). It is recorded here as the next device-leg blocker, **not** as
+something this fix addressed; the "no wipe" result above is scoped to the S4b.9 legs (runs 12–16) of the same
+image.
