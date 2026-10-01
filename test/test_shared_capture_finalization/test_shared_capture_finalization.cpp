@@ -1567,6 +1567,85 @@ void test_published_record_interval_does_not_replay_the_return_window() {
   TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::stopQueueDepth(t));
 }
 
+// S4f.19: the retirement wait is bounded (DEC-070's shape for a predicate that can no longer
+// become true). The frozen-window build has two writers and both sit on other owners: the playback
+// hot path (`adoptOrServiceOnwardRecordWindow` -> `serviceFrozenRecordWindow`) and the maintenance
+// owner's `serviceFirstRecordingBar`, which is gated on `TRACK_RECORDING`. A job whose interval has
+// left that state therefore holds a build no writer can advance. The device parked exactly that
+// way: `#STOP_STATUS,state=OVERDUBBING,pending=1,phase=16` with `build_active=1` on every poll for
+// 30 s, and every later stop on the track refused (`Overdub stop refused: stop_job_pending`).
+//
+// The gate itself is not weakened -- `test_published_record_interval_does_not_replay_the_return_window`
+// above drives the same state to completion and asserts that retirement yields while a build is
+// being fed. This fixture is the case where nothing feeds it.
+void test_stalled_frozen_window_build_does_not_park_the_record_job() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  Loop& loop = t.getLoop(0);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  if (runtime.viewSetIfPrewarmed() == nullptr) {
+    TEST_ASSERT_TRUE(runtime.prewarmViews(loop.companionRowHorizonBound(),
+                                          loop.fullTakePlaybackViewAdmissible()));
+  }
+  t.startRecording(100);
+  t.noteOn(1, 60, 100, 112);
+  t.noteOff(1, 60, 0, 180);
+  loop.loopLengthTicks = 768;
+  const PlaybackViewSourceIdentity recordingSource{
+      loop.playbackRevision, TrackCaptureStopTestAccess::playbackGenerationOf(t),
+      loop.publishedSnapshotIdentity()};
+  for (size_t i = 0; i < 32; ++i) {
+    runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 1);
+  }
+  auto& job = TrackCaptureStopTestAccess::bindRecordClosure(t, 0, 768, 768);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    TrackCaptureStopTestAccess::closureGrain(t));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::stagingGrain));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::normalizationGrain));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::passTransferGrain));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete,
+                    driveGrains(t, TrackCaptureStopTestAccess::publicationGrain));
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPublished, job.admission.phase);
+
+  // The device's state when it wedged: the interval is audible, but this is not the state the
+  // record-window writer is gated on (`isRecording()` is `TRACK_RECORDING` exactly).
+  t.forceSetState(TRACK_OVERDUBBING);
+
+  // An in-flight build that nothing will advance.
+  const PlaybackViewSourceIdentity expected{
+      loop.playbackRevision, TrackCaptureStopTestAccess::playbackGenerationOf(t),
+      loop.publishedSnapshotIdentity()};
+  TEST_ASSERT_TRUE(runtime.serviceFrozenRecordWindow(job.rawRange, job.rawRange.generation(),
+                                                    expected, 768, 400, 768, 1));
+  TEST_ASSERT_TRUE(runtime.frozenWindowBuildActive());
+
+  // The gate is not weakened: retirement still yields to a live build ...
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Pending,
+                    TrackCaptureStopTestAccess::retirementGrain(t));
+  TEST_ASSERT_EQUAL(PendingStopPhase::RecordPublished, job.admission.phase);
+
+  // ... but a build no writer can advance must not park the job, its raw range and its
+  // capture-stop owner forever. The bound is deliberately asserted as *boundedness* (generously
+  // above the source's grain budget), not as the exact constant.
+  const size_t depthBefore = TrackCaptureStopTestAccess::stopQueueDepth(t);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, depthBefore);
+  size_t turns = 0;
+  LoopEventStoreRewriteResult retired = LoopEventStoreRewriteResult::Pending;
+  for (; turns < 1024; ++turns) {
+    retired = TrackCaptureStopTestAccess::retirementGrain(t);
+    if (retired == LoopEventStoreRewriteResult::Complete) break;
+  }
+  TEST_ASSERT_EQUAL_MESSAGE(LoopEventStoreRewriteResult::Complete, retired,
+                            "a frozen window build nothing advances parked the record job");
+  TEST_ASSERT_LESS_THAN_UINT32(1024, turns);
+  // The stale build went before the raw range: the gate's own protection, kept.
+  TEST_ASSERT_FALSE(runtime.frozenWindowBuildActive());
+  TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::stopQueueDepth(t));
+}
+
 // S4f.19 traversal: past the bound bar-1 window the unpublished interval is served from
 // a window built over the job's own frozen source, so bar two stays audible while the
 // pass is still finalizing.
@@ -2551,6 +2630,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_two_tracks_each_serve_their_own_deferred_window);
   RUN_TEST(test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source);
   RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);
+  RUN_TEST(test_stalled_frozen_window_build_does_not_park_the_record_job);
   RUN_TEST(test_private_grains_never_hold_the_global_ephemeral_seal);
   RUN_TEST(test_record_job_closures_preserve_a_live_successor);
   RUN_TEST(test_record_job_closure_denial_retains_obligation_for_retry);

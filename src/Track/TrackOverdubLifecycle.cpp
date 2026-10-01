@@ -1360,6 +1360,11 @@ namespace {
 /// Grain budget for one phase of a retargeted job's companion preparation before the raw-only
 /// fallback takes over (DEC-070). Generous: the device completes healthy phases in a few grains.
 constexpr uint16_t kRetargetStallGrainLimit = 512;
+/// Grain budget for the S4f.19 `RecordPublished` retirement wait with an unchanged frozen-window
+/// build phase, before the stale build is given up (DEC-070's shape for a predicate that can no
+/// longer become true). Generous for the same reason as the retarget bound above: a healthy build
+/// advances its own phase within a few grains, and progress restarts the count either way.
+constexpr uint16_t kFrozenWindowStallGrainLimit = 512;
 }  // namespace
 
 TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordClosure(CaptureStopJob& job) {
@@ -1814,7 +1819,29 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
   // job, its raw range and the capture-stop owner forever instead of transferring them.
   const bool intervalHasGeometry = loop.loopLengthTicks != 0;
   if (runtime != nullptr && runtime->frozenWindowBuildActive() && intervalHasGeometry) {
-    return LoopEventStoreRewriteResult::Pending;
+    // Bounded in DEC-070's shape. The build has two writers and both sit on other owners: the
+    // playback hot path (`adoptOrServiceOnwardRecordWindow` -> `serviceFrozenRecordWindow`) and
+    // the maintenance owner's `serviceFirstRecordingBar`, which is gated on `TRACK_RECORDING`.
+    // With neither feeding it this predicate can never become false, and waiting is the unbounded
+    // wedge DEC-070 warns about: the job keeps its raw range, its capture-stop owner and its ring
+    // entry, so no stop on the track is ever admitted again. Progress -- the build's own next
+    // grain -- resets the count, so a build its writers are still feeding is never cut. Past the
+    // bound `releaseFrozenRecordWindow` below discards the stale build *before* the raw range is
+    // released, so the use-after-free this gate exists to prevent is still prevented; only the
+    // completion of a window that retirement discards anyway is given up.
+    const auto buildGrain = static_cast<uint8_t>(runtime->frozenWindowBuildGrain());
+    if (runtime->frozenWindowStallGrain != buildGrain) {
+      runtime->frozenWindowStallGrain = buildGrain;
+      runtime->frozenWindowStallGrains = 0;
+    } else if (runtime->frozenWindowStallGrains < kFrozenWindowStallGrainLimit) {
+      ++runtime->frozenWindowStallGrains;
+    }
+    if (runtime->frozenWindowStallGrains < kFrozenWindowStallGrainLimit) {
+      return LoopEventStoreRewriteResult::Pending;
+    }
+  } else if (runtime != nullptr) {
+    runtime->frozenWindowStallGrains = 0;
+    runtime->frozenWindowStallGrain = 0;
   }
   if (runtime != nullptr) runtime->releaseFrozenRecordWindow();
   // Bounded: one raw-extent grain per call until the frozen source is gone.

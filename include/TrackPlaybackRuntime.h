@@ -371,6 +371,15 @@ struct LoopPlaybackRuntime {
   /// the lifecycle's build view; current and ready coverage are never passed
   /// to it.
   RuntimePlaybackViewBuild viewBuild;
+  /// S4f.19 continuity gate, bounded in DEC-070's shape: grains spent in the `RecordPublished`
+  /// retirement wait with an unchanged frozen-window build phase, and that phase. A phase change
+  /// is progress and resets the count, so a build its writers are still feeding is never cut; a
+  /// build no writer can advance -- the device held one at `build_active=1` for 30 s while the
+  /// track sat in `TRACK_OVERDUBBING` -- is bounded instead of parking the job, its raw range and
+  /// the capture-stop owner, and refusing every later stop on the track. This lives here, not on
+  /// `Track`, because `Track` is the pinned eight-way DTCM array (`sizeof(Track) == 384`).
+  uint16_t frozenWindowStallGrains = 0;
+  uint8_t frozenWindowStallGrain = 0;
   /// Orders only a frozen capture candidate. It owns no event memory and can
   /// never touch the current/ready audible views.
   RuntimePlaybackOrderBuilder frozenCaptureOrder;
@@ -723,6 +732,10 @@ struct LoopPlaybackRuntime {
   /// True while a view build is in flight, so the raw range is still being read. Retirement
   /// must wait for it to drain rather than free chunks under the reader.
   bool frozenWindowBuildActive() const;
+  /// The in-flight build's next grain. A change is the cheap "this build is still advancing"
+  /// signal the S4f.19 retirement wait resets its bound on, so a build a writer is still feeding
+  /// is never cut while one no writer can advance is bounded instead of parking the job.
+  RuntimePlaybackViewBuildGrain frozenWindowBuildGrain() const;
   /// Drop the range-derived onward window (and any in-flight frozen build) once a matching
   /// committed replacement exists. Idempotent; the bar-1 return window is left alone because
   /// it is served until a replacement view is handed off.

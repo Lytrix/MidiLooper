@@ -6136,3 +6136,41 @@ no firmware. Remaining in S4b.2's spirit, recorded for the architect: the lease 
 `TransferOverlap` budget term's exact accounting. Record:
 `openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4b.2 — the inbound is provisioned
 before the outbound retires, and the overlap is measured".
+
+## DEC-107 — The S4f.19 retirement wait is bounded: a frozen-window build no writer can advance must not park the record job
+
+**Date:** 2026-10-01
+**Status:** Accepted — implemented; the new fixture fails without the bound (`Expected 1 Was 0`); full native **2,668 cases / 2,661 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial` SUCCESS with the RAM1 guard met (`padding 1,272` >= 840, DTCM `variables` unchanged at 96,192). Device acceptance owed.
+**Owner:** `Track::stepDeferredRecordRetirement` (the wait), `LoopPlaybackRuntime::frozenWindowStallGrains` / `frozenWindowStallGrain` (the bound's state), `LoopPlaybackRuntime::frozenWindowBuildGrain` (the progress signal)
+**Follows:** DEC-069 (the pending-stop wrap deferral), DEC-070 (a predicate that can never become true must not park a job), DEC-072 (the same wedge family)
+
+**Report.** A 24-bar record on the loaded library stopped and was published, and then **never retired**:
+`#STOP_STATUS,state=OVERDUBBING,pending=1,phase=16,dest=1` on all 18 host polls across 30 s, with
+`#STOP_PREFIX,...,build_active=1` on every one. Because the job stayed pending, the overdub on the same slot
+could never stop (`Overdub stop refused: stop_job_pending slot=0 interval=2 phase=16`), DEC-069 deferred that
+interval's wrap seal, and its pass was never committed. The device later went silent in the same state (recorded
+separately, not attributed here).
+
+**Mechanism.** `phase 16` is `RecordPublished`, which by its own comment "awaits bounded retirement", and
+`stepDeferredRecordRetirement` returns `Pending` on exactly one wait —
+`runtime->frozenWindowBuildActive() && intervalHasGeometry`. `frozenWindowBuildActive()` is `viewBuild.active()`,
+the same field `#STOP_PREFIX` prints as `build_active`. The build has two writers, both on other owners: the
+playback hot path (`adoptOrServiceOnwardRecordWindow` -> `serviceFrozenRecordWindow`) and the maintenance owner's
+`serviceFirstRecordingBar`, gated on `isRecording()`, i.e. `trackState == TRACK_RECORDING` **exactly**. With
+neither feeding it, the predicate can never become false and the wait is unbounded.
+
+**Decision.** Bound the wait in DEC-070's shape: a grain budget on the wait with an unchanged build phase, where a
+**phase change is progress and resets the count**, so a build a writer is still feeding is never cut. Past the
+bound `releaseFrozenRecordWindow` discards the stale build **before** the raw range is released, so the
+use-after-free the gate exists to prevent is still prevented; only the completion of a window that retirement
+discards anyway is given up. The gate's yield while a build *is* being fed stays pinned by
+`test_published_record_interval_does_not_replay_the_return_window`; the new
+`test_stalled_frozen_window_build_does_not_park_the_record_job` is the case where nothing feeds it.
+
+**Placement.** The counter lives on `LoopPlaybackRuntime` (extmem), not `Track`: `Track` is the pinned eight-way
+DTCM array (`sizeof(Track) == 384`), so a by-value member there costs 8x. The per-slot runtime's pin was re-based
+`6,352 -> 6,360` B with the reason recorded at the assert.
+
+**Not established (recorded, not glossed).** *Why* a build was still in flight when the record stopped. That the
+interval had left `TRACK_RECORDING` (it sat in `TRACK_OVERDUBBING`) is what makes the wait un-advanceable and is
+observed; the reason the build had not completed inside the take is inferred, not proven, and is the next question.
