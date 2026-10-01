@@ -150,6 +150,12 @@ public:
   // --- Active loop slot (per track, 0-7) ---
   uint8_t getActiveLoopIndex(uint8_t trackIndex) const;
   uint8_t getPlayingSlotIndex(uint8_t trackIndex) const;
+  /// S4b.5 (B4, Rev 21.3): **the one active-slot write authority.** A direct write must not silently move the
+  /// slot underneath an in-flight interaction: with a capture/overdub/stop in flight -- or an *accepted but
+  /// unexecuted* interaction, which is the term Rev 21.3 adds -- it routes through the capture-switch path
+  /// (`finalizeCaptureAndSelectSlot`) instead of moving; with a **queued switch** pending it cancels that
+  /// switch first (one transfer, no stale enabled-set replacement); and it only then performs the write
+  /// through the non-re-entrant commit point (`applyActiveLoopIndex`).
   void setActiveLoopIndex(uint8_t trackIndex, uint8_t index);
   void setLayeredSlotHeld(uint8_t trackIndex, uint8_t slotIndex, bool held);
 
@@ -217,6 +223,12 @@ public:
   /// After deferred SD slot restores finish — display, LOOP_EDIT faders, loop row LEDs.
   void onBootSlotLoadComplete();
   void clearPendingSlotSwitch(uint8_t trackIndex);
+  /// S4b.5 (B4, Rev 21.3): **cancel a queued switch in one call.** Cancelling is three coupled actions --
+  /// drop the pending switch, drop its enabled-set replacement, cancel the slot-selection hold -- and every
+  /// site that cancelled only *some* of them left the rest to fire on an unrelated switch later (a stale
+  /// replacement wiping the enabled set). This is the single place that owns the trio; a caller that also
+  /// wants its queued playback start cleared says so itself (`MidiButtonActions::discardQueuedSlotActions`).
+  void cancelPendingSlotSwitch(uint8_t trackIndex);
   /// Queue bar/16th playback restart at next grid; clears any pending slot switch (D14).
   void queueBarPlaybackStart(uint8_t trackIndex, int32_t storageTick, uint32_t queuedAtTick);
 
@@ -231,6 +243,12 @@ public:
   void endBootLoad();
 
 private:
+  /// S4b.5 (B4, Rev 21.3): the **non-re-entrant commit-point write**. It performs the slot write and its two
+  /// side effects (SD restore priority for the new focus, loop LEDs) and nothing else -- no guard, no cancel,
+  /// no capture switch. `setActiveLoopIndex` decides *whether* a write may move the slot and then lands it
+  /// here; the capture-switch commit point (`TrackManagerCaptureQueue`) lands here directly, because routing it
+  /// through the guarded entry would re-enter the switch it is in the middle of committing.
+  void applyActiveLoopIndex(uint8_t trackIndex, uint8_t index);
   /// Track row + loop row (notes 60–67, 50–57). Used from updateMidiLedsDeferred and forceMidiLedUpdate
   /// because MidiLedManager::updateLeds / clearAllLeds can turn off loop LEDs without this pass.
   void refreshTrackAndLoopSelectMidiLeds();

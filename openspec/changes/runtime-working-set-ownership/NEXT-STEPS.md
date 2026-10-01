@@ -165,7 +165,15 @@ fixture. So the next native work is:
    switch is retained and reported once, and that a fresh episode reports again. Measured while writing it: the
    windowed gather reads the snapshot's **event** membership (a notes-only root gathers nothing) and its window is
    two bars centred on the playhead (root events must be spread). `tasks.md` S4b.6/S4b.7 carry the record.
-3. **S4b.2 / S4b.3 / S4b.5** as written, then S4b.4's inbound-role fixture. S4b.2 now has a concrete immediate
+3. **DONE (2026-10-01) — S4b.5**, one active-slot write authority (DEC-105): the guarded entry point over a split
+   non-re-entrant commit point, the guard's `hasAcceptedUnexecutedInteraction()` term, the cancel-on-write, and
+   `cancelPendingSlotSwitch` as the one owner of the trio (five open-coded/partial sites routed through it), with
+   the named fixture red-proved twice — including the **partial-cancel defect** (a stale enabled-set replacement
+   wiping the enabled set on an unrelated switch), now demonstrated rather than described. **Owed from it:** the
+   guard term's own fixture — removing `hasAcceptedUnexecutedInteraction()` leaves the whole full native suite
+   green (measured), so the reproducer (an accepted-but-unexecuted interaction beside a direct write, which must
+   route through the capture switch rather than move) is the next thing to write.
+4. **S4b.2 / S4b.3** as written, then S4b.4's inbound-role fixture. S4b.2 now has a concrete immediate
    question: the `SlotProvision` turn is dispatched from the deferred-idle lane `main.cpp` gates, but the
    **ordering** it inherits is "provision *after* the predecessor's finalization retires" (the deferred frame
    returns early while a deferred overdub stop is outstanding, and the drain turn shares that lane). Pre-

@@ -513,7 +513,10 @@ bool TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
   // *unadmitted* stop is still refused above: S4f.5 requires the active slot not to move under an
   // accepted-but-unexecuted stop, whose interval slot the latch has not yet bound.
 
-  t.setActiveLoopIndex(newSlot);
+  // S4b.5 (Rev 21.3): the capture-switch **commit point** lands the write through the non-re-entrant
+  // `applyActiveLoopIndex`, not through the guarded manager entry -- the entry would re-enter the switch this
+  // call is in the middle of committing (the interval is still capturing here).
+  applyActiveLoopIndex(trackIndex, newSlot);
   // A captured slot becomes part of the enabled playback set.
   slotEnabled[trackIndex][newSlot] = true;
   slotMuted[trackIndex][newSlot] = false;

@@ -1751,7 +1751,7 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 - [ ] S4b.3 Land the switch on a MIDI boundary; the switch is a cold admission boundary by construction.
 - [ ] S4b.4 Native fixture: switch roles across tracks/slots while playing and assert the inbound holder
       serves record/overdub/passes/undo/redo/display with no stop and no allocation at the switch.
-- [ ] S4b.5 **One active-slot write authority (B4).** Route undo/redo-driven active-slot changes
+- [x] S4b.5 **One active-slot write authority (B4).** Route undo/redo-driven active-slot changes
       (`TrackUndo.cpp:558/582`) through the occupancy/pending-switch path and convert the **three** direct
       `Track::setActiveLoopIndex` writes (`TrackManagerSlotMatrix.cpp:240`, `TrackManagerCaptureQueue.cpp:281,335`)
       to the manager entry point. **Cancelling a queued switch is three calls, not one** — `clearPendingSlotSwitch`
@@ -1759,6 +1759,45 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `TrackManager::setActiveLoopIndex` must cancel/re-queue rather than move. Fixture: queue a replace-enabled-set
       switch, press Undo, then trigger an unrelated switch → exactly one transfer, one release, no stale
       enabled-set replacement, no `TransferOverlap` overshoot.
+      **CHECKED 2026-10-01 (DEC-105).** The authority is one entry point with a split commit point, exactly as
+      Rev 21.3 asks: `TrackManager::setActiveLoopIndex` owns the decision and `applyActiveLoopIndex` (new,
+      private) is the **non-re-entrant commit point** that performs the write and its two side effects. The
+      entry point now (i) routes an in-flight interaction through `finalizeCaptureAndSelectSlot` -- and its
+      guard gains **`hasAcceptedUnexecutedInteraction()`**, the term Rev 21.3 names, the state a switch's own
+      latch sits in before any job exists; (ii) **cancels** a queued switch rather than moving underneath it;
+      and (iii) lands the write at the commit point. **Cancelling is one call:** the new
+      `TrackManager::cancelPendingSlotSwitch(trackIndex)` owns the trio (`clearPendingSlotSwitch` +
+      `setPendingEnabledSetReplacement(false)` + `cancelSlotSelectionHold`), and every site that cancelled only
+      *part* of it now goes through the helper -- `stopPlayingTrack`, `handleTransportStop` (which also lands
+      its per-track write at the commit point, since the stop has already decided),
+      `queueBarPlaybackStart` (which previously forgot the selection hold), `updateAllTracks`' three cancel
+      branches, `MidiButtonActions::discardQueuedSlotActions`, and the playback-switch **commit** branch (which
+      keeps its own consumption of the replacement and lands its write at the commit point).
+      **Direct writes converted:** the boot/SD-entry write and the capture-queue commit point
+      (`TrackManagerCaptureQueue.cpp`, the site whose conversion was the entry's point) now land at the commit
+      point instead of on `Track::setActiveLoopIndex`; the minimal native harness
+      (`test/test_support/capture_storage_harness.inc`) expresses both new symbols through its counted stubs, so
+      a cancel still counts the same three slot-mutation calls it did before (its `A34aBoundary::slotMutationCalls`
+      counter keeps its meaning).
+      a **replace-enabled-set** switch is queued by the production gesture, the **undo route**'s write lands
+      (`applyClearSlotUndoSideEffects`'s own call, plus its own playback-state reset, which the fixture mirrors
+      because without it the new active slot has no anchored playhead), and then an **unrelated** switch is
+      queued through a route that arms no replacement (`requestSlotSwitch`): the queued switch is cancelled, the
+      write lands in one transfer, the pool does not grow across the cancel, and the unrelated switch commits
+      **without** replacing the enabled set. **Red-proved twice, each restored byte-identically:** removing the
+      cancel-on-write fails it at *"a direct active-slot write must cancel the queued switch, not race it"*; and
+      making the cancel **partial** (dropping the replacement clear -- the pre-fix shape) fails it at *"no stale
+      enabled-set replacement may reach an unrelated switch"*, which is the defect the helper exists to prevent,
+      now demonstrated rather than asserted. **Recorded as a measured coverage gap, not assumed:** removing the
+      guard's `hasAcceptedUnexecutedInteraction()` term leaves the **entire** full native suite green (2,656
+      cases, measured), so that term -- though contract-mandated and kept -- has **no fixture of its own yet**;
+      the reproducing fixture (an accepted-but-unexecuted interaction beside a direct write, which must route
+      through the capture switch rather than move) is the named next step for this entry. Focused suite
+      **39/39**; full native **2,656 cases / 2,649 succeeded / 7 skipped / 0 failed**; `teensy41-capture-serial`
+      SUCCESS with RAM1 `variables 96,192 / code 391,416 + padding 1,800 / locals 34,880` (floor 840; the new
+      entry/cancel code is ITCM, +128 B, padding 1,928 → 1,800), firmware hex sha256 `cdab16f4…`, **not
+      flashed**. Record: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § "S4b.5 — one active-slot write
+      authority, and the cancel that owns the trio".
 - [x] S4b.6 **Occupancy-aware, allocation-free binding (B5).** `ensurePlaybackMergedEventsForSlot` uses
       `slotIfAllocated` (never `trySlot`); the commit branch keeps the switch pending when the inbound occupancy
       is absent; provisioning happens only at cold boundaries. **Rerun blocker — the named boundaries do not
