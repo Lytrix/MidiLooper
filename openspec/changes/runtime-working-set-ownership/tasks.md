@@ -2150,11 +2150,19 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       display/selection transfers without presenting a stale frame (S4e.6). Reuse the baseline's existing
       successor-reentry leg (`legacy_record_baseline.py:4457-4564`) and the track-select press
       (`TRACK_SELECT_NOTE_BASE`). Evidence: session log + MIDI-boundary timing verifier.
-- [ ] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
+- [~] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
       active-interval overflow) across repeated switches.
 
 ## S4c — readiness contract only (implementation extracted to phase F)
 
+      **TIMING HALF OBSERVED 2026-10-01; the gate itself still closes with S4 gates and one dedicated run.** The
+      MIDI-boundary timing evidence this gate names is **green** on the S4b.8 device runs: both gates report
+      `overflow_free: true` and `call_site_gate_ok: true` with `timing_warnings: []` (`midi_boundary_timing` in
+      each run's report), on the leg run (one playback switch) **and** on a two-switch run (`1->0` then `0->1`).
+      What is still owed: (i) a **dedicated** multi-switch run — the two-switch evidence above comes from runs
+      whose subject is something else, so "across repeated switches" is observed but not *aimed*; and (ii) the
+      `S4 gates` half, whose own line closes only with S4.5's P3/S4f acceptance. So this line is marked `[~]`
+      (partially observed) rather than checked: the timing gates are measured, the gate is not closed.
 - [ ] S4c.0 Record the existing publication/consumer inventory and shared work contract as input to F.
 - [ ] S4c.1 Specify interval/window readiness and immutable currency acceptance for the sibling;
       **do not change the publication unit in this change**.
