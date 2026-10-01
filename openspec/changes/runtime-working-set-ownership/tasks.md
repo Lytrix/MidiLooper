@@ -609,8 +609,8 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` on a single **`RING,shed,1`** — the diagnostic-eviction trap at
       24-bar volume on a grown library — so the finding rests on the device's own rows, which carry it, and the shed
       is why a long-take leg needs its rows read directly (relevant to the S4/S4b device acceptance).
-- [ ] **BLOCKER (2026-10-01, found while resolving S1.5) — a 24-bar take faults the device at boot, inside the
-      snapshot change-set vector.** The 24-bar leg's take crashes the device at its **overdub wrap commit**
+- [x] **REGRESSION RESOLVED (2026-10-01, found while resolving S1.5) — a 24-bar take faulted the device at boot,
+      inside the snapshot change-set vector; fixed and re-verified on hardware.** The 24-bar leg's take crashed the device at its **overdub wrap commit**
       (`captures/s15-24bar-01`: `Overdubbing wrap committed @ tick 18432` → reconnect → `boot_reset,crash=1`), and
       the persisted body then **crash-loops every boot** (~14 s cycles with the USB CDC dropping each time) while its
       restore runs — every cycle's last activity is `RRQ,4,0,…running`, i.e. **track 5 Loop 1**, exactly where the
@@ -627,9 +627,19 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       session's firmware changes** — none of them touches that path (telemetry cadence, ring resynchronisation, the
       direct persistence receipt, the `drain_progress` wrapper) — and it is the **third** instance of the
       "a vector reallocation faults on large content" class already recorded in this repo (`captures/task23-undo-crash`,
-      and the `vector<DisplayNote>` reallocation in the 24-bar heap runs). **It blocks any further device acceptance
-      that loads large content, including restoring the library.** Evidence:
+      and the `vector<DisplayNote>` reallocation in the 24-bar heap runs). Evidence:
       [`evidence/2026-10-01-boot-crash-loop-24bar-take/FINDING.md`](evidence/2026-10-01-boot-crash-loop-24bar-take/FINDING.md).
+      **FIXED AND DEVICE-VERIFIED 2026-10-01 (commit `cce0739a`).** Root cause: Teensyduino's `operator new` is
+      `return malloc(size);` with no null check, while `std::vector` growth assumes a throwing allocator — so a failed
+      `malloc` hands the vector NULL and the growth copies into it. Fix: `LoopSnapshotChangeSet` allocates through
+      **`ExternalMemoryFirstAllocator`** (PSRAM-first; a named FATAL if both pools are exhausted), the body-load path
+      **reserves** both vectors up front from the gather's known counts, and two `static_assert`s pin the vector types
+      (reverting them fails the build — red-proofed). Image
+      `eca0b0139d864734ae5a3164126c20e18cbde60eb2c6b437df851126f988fc5a` flashed: clean boot
+      (`boot_reset,crash=0`, no `CrashReport`), `!RESTORE_WORKSPACE 5202` returned the library, and the 24-bar body on
+      track 5 Loop 1 now **loads and reads back current** (`LIBOBS,S,t=4,s=0,…,l=18432,v=1152,kp=1,kr=1,kc=1`),
+      admitted on two consecutive boots (`post_restore_census … admission_complete=1 interactive_ready=1
+      undo_hydrated=1`). The block on large-content device acceptance is lifted; S4f.14 resumes.
 - [x] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
       the slope and failure point in this file as numbers.
       **CLOSED 2026-10-01.** Every clause this gate carries is satisfied and cited: full native
