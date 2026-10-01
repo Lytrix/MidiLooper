@@ -20,6 +20,14 @@ switch just selected, holds it for `--continue-hold-ms`, then stops it -- so the
 while the source track's finalization is still in flight. S4f.14's discriminators (which slot's finalization
 retired, which destination the continuation's grain went to) are read from the device's own rows in the run's
 capture, **not** from this driver: the driver only reports what it pressed and when.
+
+The continuation captures content of its own: `--continue-midi-channel` (default: the `--switch-track-number`
+value, because in this instrument track N listens on channel N) makes it play an ascending note burst -- notes
+`60..67` at the baseline's own content velocity -- inside the hold, i.e. after the Record/Overdub press that
+starts the session and before the one that stops it. A hold too short for the whole burst truncates the burst
+(`notes_sent` in `continue_note_burst_sent`) instead of delaying the stop press, whose timing is what the leg
+measures; a short `--continue-hold-ms` is therefore legal and unclamped. Without a channel there is no burst,
+and the continuation's bytes are the two Record/Overdub presses exactly as before.
 """
 from __future__ import annotations
 
@@ -54,10 +62,17 @@ class SlotSwitchInterventionPort(StopInterventionPort):
     window in which the predecessor's stop is admitted and its finalization is still in flight.
     """
 
+    # The continuation's own content: a trivially recognisable ascending run, played at the baseline's content
+    # velocity, so the destination session's rows can be read by note number alone.
+    CONTINUE_BURST_FIRST_NOTE = 60
+    CONTINUE_BURST_NOTES = 8
+    CONTINUE_NOTE_VELOCITY = 98
+
     def __init__(self, output, emit, *, delay_s, channel, target_track_index, target_slots,
                  press_ms=120, phase_wait_ms=500, switch_interval_ms=0, preplay_track_index=None,
                  preplay_slot=None, preplay_source_track_index=None,
-                 continue_on_switched_track=False, continue_hold_ms=4000, **kw):
+                 continue_on_switched_track=False, continue_hold_ms=4000, continue_midi_channel=None,
+                 continue_note_spacing_ms=150.0, **kw):
         super().__init__(output, emit, delay_s=delay_s, channel=channel, **kw)
         # The destination *track* must be playing for a press on one of its other filled slots to be a playback
         # switch at all: with that track silent, the press is a selection/toggle (measured, `captures/s4b9-cross-track-15/-16`).
@@ -79,6 +94,10 @@ class SlotSwitchInterventionPort(StopInterventionPort):
         self.continue_on_switched_track = continue_on_switched_track
         self.continue_hold_ms = continue_hold_ms
         self.switch_presses_sent = 0
+        # The continuation's note burst is off unless a channel was named (`run_fixture` defaults the channel
+        # to the switch track's own), so a run that names none keeps the two-press continuation byte for byte.
+        self.continue_midi_channel = continue_midi_channel
+        self.continue_note_spacing_ms = continue_note_spacing_ms
 
     def _preplay_destination_track(self):
         """Start the destination track's loop and return the focus to the source track."""
@@ -137,20 +156,88 @@ class SlotSwitchInterventionPort(StopInterventionPort):
 
         Both presses go to `RECORD_BUTTON_NOTE`: with the destination selected, one short press starts a record
         (or overdub) session on it and the next stops it. The hold is what the leg measures -- the stop must
-        still land inside the predecessor's finalization window. Recorded, never raised.
+        still land inside the predecessor's finalization window -- so the note burst runs *inside* that window
+        (after the start press, before the stop press) and the hold is never extended for it. Recorded, never
+        raised.
         """
         try:
             time.sleep(self.phase_wait_ms / 1000.0)
             _send_short_press(self.output, note=RECORD_BUTTON_NOTE,
                               channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
             self._event("continue_session_start_sent", track_index=self.target_track_index)
-            time.sleep(self.continue_hold_ms / 1000.0)
+            burst_ms = self._play_continue_note_burst()
+            # Whatever the burst did not consume of the hold is waited here, so the stop press keeps its
+            # `--continue-hold-ms` distance from the start press even when the burst was truncated (or absent).
+            time.sleep(max(self.continue_hold_ms - burst_ms, 0.0) / 1000.0)
             _send_short_press(self.output, note=RECORD_BUTTON_NOTE,
                               channel_1based=CONTROL_CHANNEL_1BASED, press_ms=self.press_ms)
             self._event("continue_session_stop_sent", track_index=self.target_track_index)
         except Exception as exc:  # recorded, not raised: the run's evidence must survive a send failure
             self.error = str(exc)
             self._event("continue_session_error", detail=self.error)
+
+    def _continue_burst_plan(self) -> int:
+        """How many of the burst's notes fit in the hold before the stop press has to go out.
+
+        The first note costs its own on-time (`press_ms`); each further note also costs the note-on spacing.
+        A hold too short for even one note plans zero notes: the stop's timing is the property under test, so
+        the burst gives way to it in every case, never the other way round.
+        """
+        gap_ms = max(self.continue_note_spacing_ms - self.press_ms, 0.0)
+        fitted = 0
+        for notes in range(1, self.CONTINUE_BURST_NOTES + 1):
+            if notes * self.press_ms + (notes - 1) * gap_ms <= self.continue_hold_ms:
+                fitted = notes
+        return fitted
+
+    def _play_continue_note_burst(self) -> float:
+        """Play the ascending note burst inside the hold; return how much of the hold it consumed (ms).
+
+        Plain content notes on the track's own channel, from `CONTINUE_BURST_FIRST_NOTE` upward, so the
+        destination session's rows name them by number alone. One event per burst, not per note: `notes_sent`
+        below `CONTINUE_BURST_NOTES` is the truncation, and first/last stay `None` when nothing fitted.
+        """
+        if self.continue_midi_channel is None:
+            return 0.0
+        gap_ms = max(self.continue_note_spacing_ms - self.press_ms, 0.0)
+        notes_sent = self._continue_burst_plan()
+        channel = self.continue_midi_channel - 1
+        for index in range(notes_sent):
+            if index:
+                time.sleep(gap_ms / 1000.0)
+            _send_note(self.output, channel=channel, note=self.CONTINUE_BURST_FIRST_NOTE + index,
+                       gate_ms=self.press_ms, velocity=self.CONTINUE_NOTE_VELOCITY)
+        self._event("continue_note_burst_sent", channel_1based=self.continue_midi_channel,
+                    notes_sent=notes_sent, requested_notes=self.CONTINUE_BURST_NOTES,
+                    first_note=(self.CONTINUE_BURST_FIRST_NOTE if notes_sent else None),
+                    last_note=(self.CONTINUE_BURST_FIRST_NOTE + notes_sent - 1 if notes_sent else None),
+                    spacing_ms=self.continue_note_spacing_ms,
+                    truncated=notes_sent < self.CONTINUE_BURST_NOTES)
+        return notes_sent * self.press_ms + (notes_sent - 1) * gap_ms
+
+
+def _send_note(out_port, *, channel: int, note: int, gate_ms: float, velocity: int) -> None:
+    """One short content note, in the baseline's own shape: `note_on`, the gate, then `note_off`.
+
+    Deliberately not `hitl.midi_io._send_short_press`: that helper records a *control-surface* press in the
+    shared ledger, and the burst is content on a track's channel, not a button.
+    """
+    out_port.send(mido.Message("note_on", channel=channel, note=note, velocity=velocity))
+    time.sleep(max(gate_ms, 1) / 1000.0)
+    out_port.send(mido.Message("note_off", channel=channel, note=note, velocity=0))
+
+
+def resolve_continue_midi_channel(config) -> int | None:
+    """Where the continuation's note burst plays: the named channel, else the switch track's own.
+
+    Track N listens on channel N in this instrument (the s15 legs run `--track-number 5 --midi-channel 5`),
+    so the track the switch selected is the default place for its session's content. An explicit
+    `--continue-midi-channel` wins; a same-track switch (`--switch-track-number` absent) resolves to no
+    channel, i.e. to no burst rather than to a guess about which track the press landed on.
+    """
+    if config.continue_midi_channel is not None:
+        return config.continue_midi_channel
+    return config.switch_track_number
 
 
 def run_fixture() -> None:
@@ -180,6 +267,16 @@ def run_fixture() -> None:
     parser.add_argument("--continue-hold-ms", type=int, default=4000,
                         help="How long the continuation session stays open (the hold between its start press "
                              "and its stop press) in ms; only used with --continue-on-switched-track.")
+    parser.add_argument("--continue-midi-channel", type=int, default=None, choices=range(1, 17),
+                        help="Play the continuation's note burst on this MIDI channel (1-based, like the rest "
+                             "of the tooling) so the destination session captures real content instead of "
+                             "silence. Only used with --continue-on-switched-track; omitted, it defaults to "
+                             "the --switch-track-number value (track N listens on channel N), and with no "
+                             "channel to play on there is no burst.")
+    parser.add_argument("--continue-note-spacing-ms", type=float, default=150.0,
+                        help="Spacing between the burst's note-ons. The burst is 8 ascending notes from 60, "
+                             "and it is truncated -- never the hold extended -- when --continue-hold-ms is "
+                             "too short for it.")
     parser.add_argument("--out-dir", type=pathlib.Path, required=True)
     parser.add_argument("--intervention-delay-ms", type=float, default=305.0,
                         help="Delay from the overdub-stop button release to the switch press.")
@@ -208,6 +305,12 @@ def run_fixture() -> None:
     for token in str(config.switch_loop_slot).split(','):
         if token.strip() and not (1 <= int(token) <= 8):
             parser.error("--switch-loop-slot entries must be 1..8")
+    if config.continue_midi_channel is not None and not config.continue_on_switched_track:
+        parser.error("--continue-midi-channel needs --continue-on-switched-track")
+    # Track N listens on channel N in this instrument, so the track the switch selected is where the session's
+    # content belongs; the switch track is the default, an explicit channel wins, and a same-track switch
+    # resolves to no channel at all -- i.e. to no burst rather than a guess about where the press landed.
+    continue_midi_channel = resolve_continue_midi_channel(config)
 
     out = config.out_dir.resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -250,7 +353,9 @@ def run_fixture() -> None:
             preplay_source_track_index=(config.track_number - 1
                                         if config.preplay_track_number is not None else None),
             continue_on_switched_track=config.continue_on_switched_track,
-            continue_hold_ms=config.continue_hold_ms)
+            continue_hold_ms=config.continue_hold_ms,
+            continue_midi_channel=continue_midi_channel,
+            continue_note_spacing_ms=config.continue_note_spacing_ms)
         if config.preplay_track_number is not None and not any(x.preplay_done for x in interventions):
             wrapped.preplay_done = True
             wrapped._preplay_destination_track()
