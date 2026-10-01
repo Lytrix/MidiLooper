@@ -2287,11 +2287,32 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       *commit* half remains S4b.8's leg. What is still owed: the `S4 gates` half, whose own line closes only with
       S4.5's P3/S4f acceptance. So this line stays `[~]`: the timing gates are measured on the aimed run, the gate
       is not closed.
-- [ ] S4c.0 Record the existing publication/consumer inventory and shared work contract as input to F.
+- [x] S4c.0 Record the existing publication/consumer inventory and shared work contract as input to F.
+      **DONE 2026-10-01:** [`S4C0-PUBLICATION-INVENTORY.md`](S4C0-PUBLICATION-INVENTORY.md) records the publication
+      unit and its owners (`publishedSnapshot()` / `playbackRevision` / `publishedSnapshotIsCurrent()` /
+      `hasPendingSnapshotPublish()` / `unpublishedSnapshot()` / the three `storePublishedSnapshot` call sites with
+      their coverage outcomes), the six consumer groups with the entry point each uses, the resumable machinery the
+      sibling must reuse (`StorageLoopIoBodyFormatV1`'s sliced body, `armLoopPersistTailWriteResume`,
+      `PersistenceSyncDrainBudget`'s shared drain budget, and the two rules this session's device work added: a
+      diagnostic may not evict the evidence, and a row an acceptance surface fences on may not depend on
+      bulk-retention policy for its delivery), and the decided rules it must preserve (one pass late, no allocation
+      or blocking on a timing-critical edge, reuse before invention). It also hands the sibling four named open
+      questions and states what this change must not touch (the publication unit, and no removed playback-root
+      dependency). Every symbol it cites was checked to exist at the named location on the day of writing.
 - [ ] S4c.1 Specify interval/window readiness and immutable currency acceptance for the sibling;
       **do not change the publication unit in this change**.
-- [ ] S4c.2 Record the existing resumable publication machinery the sibling must reuse.
-- [ ] S4c.3 Preserve the decided one-pass-late rule as the sibling's missed-deadline requirement.
+- [x] S4c.2 Record the existing resumable publication machinery the sibling must reuse.
+      **DONE 2026-10-01 as §2 of the inventory:** [`S4C0-PUBLICATION-INVENTORY.md`](S4C0-PUBLICATION-INVENTORY.md) —
+      `StorageLoopIoBodyFormatV1`'s bounded, resumable body write/parse; `armLoopPersistTailWriteResume` with its named
+      stage (`DeferredLoopWriteStage::LoopSnapshotTail`); `PersistenceSyncDrainBudget`'s single drain budget charged by
+      both restore and persistence work (so a large publish cannot starve a save); plus the two delivery rules this
+      session's device work produced (`Utils/TelemetryCadence.h`; a receipt row an acceptance surface fences on must
+      not depend on bulk-retention policy).
+- [x] S4c.3 Preserve the decided one-pass-late rule as the sibling's missed-deadline requirement.
+      **DONE 2026-10-01 as §3 of the inventory** (decided rule `design.md` row 12, with rows 16 and 28 recorded
+      beside it): a missed deadline keeps the **previous version** authoritative for that pass — never torn, never
+      held, never timing-deferred — and the sibling inherits the no-allocation/no-blocking-on-a-timing-critical-edge
+      and reuse-before-invention rules with it.
 - [ ] S4c.4 Specify undo/save checkpoint parity for F; **do not remove playback root dependencies here**.
 - [ ] S4c.5 Record required immutable-window/content-parity fixtures for F. Their implementation and
       length-independent root-residency gate belong to the sibling once its contract is approved.
