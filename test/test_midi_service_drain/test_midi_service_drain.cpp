@@ -2,6 +2,7 @@
 #include <initializer_list>
 
 #include "Utils/MidiServiceDrain.h"
+#include "Utils/SlotProvisionHold.h"
 
 void test_canonical_prework_prioritizes_runnable_visual_work() {
   using MidiServiceDrain::canonicalPreparationHasPriorityWork;
@@ -316,6 +317,27 @@ void test_slot_provision_turn_work_is_the_pending_switch_itself() {
       MidiServiceDrain::DeferredIdleOwner::SlotProvision));
 }
 
+void test_slot_provision_hold_age_is_bounded_and_wrap_safe() {
+  // S4b.7: the hold's age test. The bound is a duration in ticks, so it must be measured as a *difference*
+  // (the tick domain wraps) and must never fire for a switch that has no queued tick at all.
+  constexpr uint32_t kBound = 4 * 768;
+  TEST_ASSERT_FALSE_MESSAGE(SlotProvisionHold::holdExceeded(5000, UINT32_MAX, kBound),
+                            "a switch with no queued tick has no age to exceed");
+  TEST_ASSERT_FALSE(SlotProvisionHold::holdExceeded(2000, 1000, kBound));
+  TEST_ASSERT_FALSE_MESSAGE(SlotProvisionHold::holdExceeded(1000 + kBound - 1, 1000, kBound),
+                            "one tick short of the bound is not the bound");
+  TEST_ASSERT_TRUE_MESSAGE(SlotProvisionHold::holdExceeded(1000 + kBound, 1000, kBound),
+                           "the bound is inclusive: at it, the hold is reported");
+  TEST_ASSERT_TRUE(SlotProvisionHold::holdExceeded(1000 + kBound + 1, 1000, kBound));
+  // Wrap: a switch queued just before the tick domain rolls over is still measured correctly -- 16 ticks of
+  // age for a queued tick five ticks below the top, and past the bound once the domain wraps.
+  TEST_ASSERT_FALSE(SlotProvisionHold::holdExceeded(10, UINT32_MAX - 5, kBound));
+  TEST_ASSERT_TRUE(SlotProvisionHold::holdExceeded(kBound, UINT32_MAX - 5, kBound));
+  // A zero bound means "unbounded", not "immediately": the caller opts out by passing zero.
+  TEST_ASSERT_FALSE(SlotProvisionHold::holdExceeded(UINT32_MAX - 1, 0, 0));
+  TEST_ASSERT_EQUAL_UINT32(kBound, SlotProvisionHold::boundTicksFor(768));
+}
+
 void test_live_record_snapshot_starts_after_first_bar() {
   TEST_ASSERT_TRUE(MidiServiceDrain::allowLiveRecordSnapshotStart(false, 0, 768));
   TEST_ASSERT_FALSE(MidiServiceDrain::allowLiveRecordSnapshotStart(true, 0, 768));
@@ -524,6 +546,7 @@ int main() {
   // S4b.7: the `SlotProvision` turn's eligibility is the pending switch itself, and it does not depend on
   // the visual cache -- a switch must still be provisioned while a wrap append is pending.
   RUN_TEST(test_slot_provision_turn_work_is_the_pending_switch_itself);
+  RUN_TEST(test_slot_provision_hold_age_is_bounded_and_wrap_safe);
   RUN_TEST(test_select_deferred_idle_owner_session_exit_drain_extra_snapshot);
   RUN_TEST(test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap);
   RUN_TEST(test_live_record_snapshot_starts_after_first_bar);

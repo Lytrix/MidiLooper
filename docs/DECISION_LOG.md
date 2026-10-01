@@ -105,7 +105,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest last). Next ID: DEC-103 -->
+<!-- Append new entries below (newest last). Next ID: DEC-104 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -5975,3 +5975,59 @@ RAM1: `code 391,288 / padding 1,928 / locals 34,880` (floor 840) — ITCM return
 new turn is `FLASHMEM`, and FLASH code grows by 120 B. Record:
 `openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4b.7 — the provisioning turn the
 contract named".
+
+## DEC-104 — The long-loop pending hold is bounded, and its terminal is a report rather than a decision
+
+**Date:** 2026-10-01
+**Owner:** `runtime-working-set-ownership` S4b.7, third slice: `include/Utils/SlotProvisionHold.h`,
+`TrackManager::servicePendingSlotProvision` (`src/TrackManager/TrackManagerSlotMatrix.cpp`).
+**Status:** Accepted
+
+### Problem
+The contract line for the provisioning owner ends "the long-loop pending hold is satisfied by that turn and
+**carries an age/bound**", and the first slices implemented only the first half. Measured, that left a real hole:
+a **demoted** target (above `kMaxDetailedWindowBars`, 16 bars) whose merged window can never become ready — the
+window is gathered from the loop's published snapshot root, and the gather holds it empty when no root supplies
+the events (`GatherMissHoldEmpty`) — sat with its switch pending and its occupancy taken, with **no report and no
+age**: the review's "silent dead switch" on that shape, which S4b.6 could only record as owed. A wait with no
+bound and no terminal is indistinguishable to an operator from a press that was never taken.
+
+### Decision
+* **The hold is bounded in bars, not in milliseconds.** `SlotProvisionHold::kBoundBars = 4` (converted with
+  `Config::TICKS_PER_BAR`), because firmware, fixtures and device already share one tick domain and the two
+  legitimate waits this covers are tempo-relative (a predecessor's finalization window, and one off-clock
+  merged-window build). Four bars is ~8 s at 120 BPM and comfortably longer than the ~1.2 s measured
+  finalization.
+* **The age comes from the pending switch's own queued tick.** The state machine already stamps
+  `pendingQueuedAtTick` when a switch is requested (`SlotStateMachine::getPendingQueuedAtTick`), so the bound
+  needs **no new timestamp** and cannot drift from the switch it describes.
+* **The terminal is a report, not a decision.** `SlotProvisionHold::kTerminalName = "slot_switch_hold_exceeded"`;
+  the row names the track, the target slot and the age. **Nothing moves**: the pending switch, the
+  accepted-interaction latch, the enabled-set replacement and any retained record start stay exactly as they
+  were, so a later turn can still satisfy the switch — DEC-078 item 1's "the user never re-issues" is preserved
+  rather than traded away for a bound.
+* **Once per episode**, not once per turn and not once per boot: one packed bit per track
+  (`slotSwitchHoldReportedMask_`), cleared when that track has no pending switch, so a later switch reports on
+  its own account.
+* **The check runs on the off-clock turn and regardless of whether that turn could make progress.** The case the
+  bound exists for is precisely a switch whose occupancy *was* taken and which still cannot commit, so gating the
+  check on "provisioning needed" would have missed it.
+* **Wrap-safe by construction:** the age is a `uint32_t` difference, and the state machine's `UINT32_MAX`
+  "no request" sentinel never exceeds anything (`holdExceeded`).
+
+### Consequences
+The demoted shape now has both halves of the contract line, and both are asserted: with a published root the
+turn's build makes the window ready and the switch **commits**
+(`test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn`); without one the switch is
+**reported once at the bound and retained**
+(`test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound`). The published-root fixture also
+discharges the previously unprovable coverage gap: removing the turn's `ensurePlaybackMergedEventsForSlot` now
+fails it, where before all 36 fixtures stayed green. Red-proved three times, each restored byte-identically (the
+published root, the turn's build, the age test). Focused suite 38/38; `test_midi_service_drain` 37/37; full
+native 2,655 cases / 2,648 succeeded / 7 skipped / 0 failed; `teensy41-capture-serial` SUCCESS with RAM1
+`variables 96,192 / code 391,288 + padding 1,928 / locals 34,880` (floor 840) — the mask fits the class's
+existing padding, so the whole slice costs **no RAM1 variable**. **Recorded, not claimed:** the terminal has no
+device observation yet (no HITL leg drives a demoted target's switch, and nothing under `scripts/` parses this
+row), and the bound is chosen from the two known waits rather than from a device measurement of the hold's
+distribution. Record: `openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4b.7 — the
+demoted target, the published root, and the bounded hold".

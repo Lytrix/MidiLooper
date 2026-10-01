@@ -155,14 +155,16 @@ fixture. So the next native work is:
    window, dispatched before the all-stopped guard so it is reachable in exactly the states a retained switch sits
    in. Eligibility is the **pending switch itself** (`slotProvisionNeeded`), so there is no request record and no
    new state. Two fixtures plus the drain suite's re-pinned owner cycle; red-proved (the occupancy term; the
-   binding; the turn's provisioning — three fixtures). **Owed here, and it is one root cause with two faces:**
-   (a) the *demoted* target (> `kMaxDetailedWindowBars` bars) does not commit even after provisioning, and
-   (b) the turn's `ensurePlaybackMergedEventsForSlot` half is **not** red-provable at all (removing it leaves all
-   36 fixtures passing). Both come from the merged window being gathered out of the loop's **published snapshot
-   root**, which a hand-committed fixture slot has none of (`GatherMissHoldEmpty`). Discharge: one published-root
-   fixture on the windowed publication lane (S4c/F) — and, per the same contract line, the **age/bound** on the
-   long-loop hold, which would turn a still-pending switch into a report rather than a wait. `tasks.md`
-   S4b.6/S4b.7 carry the record.
+   binding; the turn's provisioning — three fixtures). **DONE (2026-10-01, third slice; DEC-104) — both faces of
+   the owed root cause.** The published-root fixture exists (`publishBarSpacedRootForSlot` through
+   `Loop::storePublishedSnapshotForTest`), and on it a **demoted** 24-bar target goes all the way to **commit**;
+   so (a) is discharged and (b) is closed too — removing the turn's `ensurePlaybackMergedEventsForSlot` now fails
+   that fixture, where before all 36 stayed green. The **age/bound** landed with it (`SlotProvisionHold`,
+   four bars, wrap-safe, age from the switch's own queued tick, **one report per episode**, terminal
+   `slot_switch_hold_exceeded`) and is a **report, not a decision**: the demoted-without-root fixture asserts the
+   switch is retained and reported once, and that a fresh episode reports again. Measured while writing it: the
+   windowed gather reads the snapshot's **event** membership (a notes-only root gathers nothing) and its window is
+   two bars centred on the playhead (root events must be spread). `tasks.md` S4b.6/S4b.7 carry the record.
 3. **S4b.2 / S4b.3 / S4b.5** as written, then S4b.4's inbound-role fixture. S4b.2 now has a concrete immediate
    question: the `SlotProvision` turn is dispatched from the deferred-idle lane `main.cpp` gates, but the
    **ordering** it inherits is "provision *after* the predecessor's finalization retires" (the deferred frame
