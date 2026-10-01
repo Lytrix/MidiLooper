@@ -1807,6 +1807,28 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       cold half of it".
 - [ ] S4b.4 Native fixture: switch roles across tracks/slots while playing and assert the inbound holder
       serves record/overdub/passes/undo/redo/display with no stop and no allocation at the switch.
+      **PARTIAL (coverage attributed 2026-10-01; no new fixture, and why).** The entry's matrix is an
+      **integration** claim over six services, and this suite already owns four of them -- so the honest move is
+      attribution rather than a fixture that re-asserts them under a new name. **Covered, by fixture:**
+      *record* -- `test_a_cross_track_successor_starts_while_the_predecessor_finalizes` and
+      `test_a_cleared_successor_is_a_record_target_while_the_predecessor_finalizes` (the successor starts on its
+      own slot while the predecessor still finalizes); *overdub* --
+      `test_a_populated_successor_overdubs_on_its_own_phase_while_the_predecessor_finalizes` (the inbound
+      overlays on **its own** phase, which is what "holds the role" means for an overdub); *passes* --
+      `test_the_successor_take_commits_with_content_after_a_transport_stop` (the inbound's take commits with
+      content); and the two clauses the entry adds on top -- **no stop** and **no allocation at the switch** --
+      are S4b.1's lane fixture (the predecessor keeps finalizing, the transport never stops, nothing is stolen),
+      S4b.6/S4b.7's fixtures (neither the MIDI edge nor the clock path allocates) and S4b.2's ordering fixture
+      (the inbound role exists before the outbound is released). **Open, and named rather than folded in:** (a)
+      *undo/redo* -- what this suite asserts is the **route** (`test_s4b_5_a_direct_write_cancels_the_queued_
+      switch_without_a_stale_replacement` drives the undo side effect's own write, and the guard's route fixture
+      covers the interaction case); an **undo-entry round trip** on the slot a switch just moved to is not
+      covered here, and its natural home is the undo suites, which do not switch the active slot mid-sequence --
+      so the integration claim "the inbound holder *serves* undo/redo" remains unproven end to end; and (b)
+      *display* -- this harness has no assertion surface for it (`invalidateForSlotChange` is a fail-closed or
+      observable boundary here, with no recorded request), so "the inbound holder serves display" belongs to the
+      display suites, which do not run a slot switch. Both are owed, and this record says so instead of implying
+      the matrix is closed.
 - [x] S4b.5 **One active-slot write authority (B4).** Route undo/redo-driven active-slot changes
       (`TrackUndo.cpp:558/582`) through the occupancy/pending-switch path and convert the **three** direct
       `Track::setActiveLoopIndex` writes (`TrackManagerSlotMatrix.cpp:240`, `TrackManagerCaptureQueue.cpp:281,335`)
