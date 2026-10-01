@@ -105,7 +105,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-102 -->
+<!-- Append new entries below (newest last). Next ID: DEC-103 -->
 
 ## DEC-083 — The restored-library inventory is a bounded on-demand observation, separate from the settled census
 
@@ -5920,3 +5920,58 @@ the provisioning ordering "after the predecessor's finalization retires" is the 
 unchanged here. Focused suite 36/36; full native 2,651 cases / 2,644 succeeded / 7 skipped / 0 failed. Record:
 `openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4b.6/S4b.7 — the occupancy the switch
 binds to, and who provides it".
+
+## DEC-103 — The switch's provisioning vehicle is the contract's `SlotProvision` turn, not a reuse of the deferred prewarm request
+
+**Date:** 2026-10-01
+**Owner:** `runtime-working-set-ownership` S4b.7, second slice (firmware: `MidiServiceDrain`, `TrackManager`,
+`main.cpp`'s deferred-idle dispatch).
+**Status:** Accepted (supersedes DEC-102's *vehicle*; DEC-102's contract is unchanged)
+
+### Problem
+DEC-102 recorded the *contract* correctly — a switch's inbound occupancy has one off-clock owner, and the commit
+binds to it without taking it — but chose the wrong **vehicle** for the turn: it reused the existing deferred
+prewarm request (`requestDeferredPlaybackPrewarm`), which is a *slot restore's* request (S1.3/S2b.3's census
+checkpoint waits on it), and it left `requestSlotSwitch` marking that shared slot. The change's own binding
+corrections had already named the vehicle (Rev 20.3/21.7, Rev 22 §6): a **`SlotProvision` turn kind** in
+`MidiServiceDrain::DeferredIdleOwner`, with "a pending switch makes its track eligible", the turn running **both**
+`provisionSlotForSwitch` **and** `ensurePlaybackMergedEventsForSlot(targetSlot)`, exempt from the all-stopped
+guard, `kDeferredIdleOwnerCount` bumped to 6 and the cursor/cycle tests updated. Reusing the prewarm request also
+had a real defect beyond shape: one shared `(track, slot)` record meant a restore's prewarm and a switch's
+provisioning could consume each other's request, and the switch's provisioning was reachable only through the
+restore lane's gating (`!timingCriticalTrackActive`, and the deferred frame's early return while a deferred
+overdub stop is outstanding) rather than through the switch's own need.
+
+### Decision
+* **The turn kind is the vehicle.** `DeferredIdleOwner::SlotProvision = 5`, `kDeferredIdleOwnerCount = 6`; the
+  turn body is `TrackManager::servicePendingSlotProvision()`, dispatched from `runDeferredIdleMaintenance`
+  **before** the all-stopped guard (which is the exemption Rev 22 §6 asked for, now structural: the turn returns
+  before the guard is reached).
+* **The eligibility is the pending switch itself** — `MidiServiceDrain::slotProvisionNeeded(hasPendingSlotSwitch,
+  inboundOccupancyPresent)` — so there is no shared request record left to consume, and `requestSlotSwitch` no
+  longer marks anything. This is the smallest possible state: none.
+* **The turn does both halves the contract names:** `provisionSlotForSwitch` (idempotent, its own refusal report)
+  and then `ensurePlaybackMergedEventsForSlot(targetSlot)`, which is the merged-window build that releases the
+  long-loop pending hold.
+* **The restore lane keeps its own provisioning call** (`prewarmPlaybackMergedEventsForSlot` →
+  `provisionSlotForSwitch`): that is the *restore's* occupancy need at the slot-restore boundary, not a switch's,
+  and it is the behavior `ensurePlaybackMergedEventsForSlot` used to provide implicitly.
+
+### Consequences
+A switch's provisioning now happens on the switch's own eligibility, in its own turn, once per six-turn cycle,
+with no request state and no interference with a restore. Measured: the focused suite is 36/36 and the
+deferred-idle-owner suite 36/36 (the cycle arrays, the interleaved session-exit and backlog sequences and the
+per-period turn tallies are all re-pinned for six owners, plus a new pin for `slotProvisionNeeded` and for
+`SlotProvision` not depending on the visual cache). **Red-proved:** removing the turn's provisioning fails three
+fixtures (_"the retained switch must commit once the predecessor retires"_ and both S4b.6 provisioning
+assertions), restored byte-identically. **Recorded as a coverage gap, measured rather than assumed:** removing the
+turn's `ensurePlaybackMergedEventsForSlot(targetSlot)` call leaves all 36 fixtures passing, because the merged
+window is gathered from the loop's **published snapshot root** and a hand-committed slot has none (the gather
+misses and the window stays empty). The S4b.6 fixture therefore pins that harness fact as a tripwire and names the
+discharge path — the published-root fixture owed for the demoted-target hold (S4c/F's windowed publication lane).
+**Still owed:** the age/bound the contract gives that long-loop hold ("satisfied by that turn and carries an
+age/bound") is not implemented; a still-pending switch after provisioning is not yet reported with an age.
+RAM1: `code 391,288 / padding 1,928 / locals 34,880` (floor 840) — ITCM returns to the pre-slice value because the
+new turn is `FLASHMEM`, and FLASH code grows by 120 B. Record:
+`openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md` § "S4b.7 — the provisioning turn the
+contract named".

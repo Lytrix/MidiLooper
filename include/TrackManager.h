@@ -192,12 +192,19 @@ public:
                           uint8_t slotIndex,
                           SlotQuantization quantization,
                           uint32_t queuedAtTick);
-  /// S4b.6 (b) / S4b.7: the **off-clock** provisioning owner for a switch's inbound occupancy. A slot
-  /// switch may not take its runtime on the MIDI edge that requests it (`requestSlotSwitch`) nor on the
-  /// clock path that commits it (`updateAllTracks`), so `requestSlotSwitch` marks the request through the
-  /// existing deferred owner and the deferred lane calls this. Idempotent; a refusal is reported with its
-  /// own operation kind (`slot_switch`) and leaves the switch pending rather than silently dead.
+  /// S4b.6 (b) / S4b.7 (Rev 20.3/21.7): the **off-clock** provisioning owner for a switch's inbound
+  /// occupancy. A slot switch may not take its runtime on the MIDI edge that requests it
+  /// (`requestSlotSwitch`) nor on the clock path that commits it (`updateAllTracks`), so the
+  /// `SlotProvision` deferred-idle turn calls this. Idempotent; a refusal is reported with its own
+  /// operation kind (`slot_switch`) and leaves the switch pending rather than silently dead.
   bool provisionSlotForSwitch(uint8_t trackIndex, uint8_t slotIndex);
+  /// S4b.7 (Rev 20.3/21.7): the body of one `MidiServiceDrain::DeferredIdleOwner::SlotProvision` turn — the
+  /// off-clock owner of a pending switch's inbound occupancy. It serves the **first** track whose pending
+  /// switch needs provisioning (`MidiServiceDrain::slotProvisionNeeded`), provisions that target and then
+  /// runs `ensurePlaybackMergedEventsForSlot` on it, which is the merged-window build that releases the
+  /// long-loop pending hold. Returns whether the turn did work; a refusal reports and leaves the switch
+  /// pending for a later turn.
+  bool servicePendingSlotProvision();
   /// Piano roll + loop LEDs when preview launch is queued or split focus is reaffirmed.
   void refreshPreviewSlotFocus(uint8_t trackIndex, uint8_t slotIndex);
   /// Bar/16th phase slot: playing slot while transport runs, preview slot when stopped.
