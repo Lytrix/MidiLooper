@@ -609,6 +609,27 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)` on a single **`RING,shed,1`** — the diagnostic-eviction trap at
       24-bar volume on a grown library — so the finding rests on the device's own rows, which carry it, and the shed
       is why a long-take leg needs its rows read directly (relevant to the S4/S4b device acceptance).
+- [ ] **BLOCKER (2026-10-01, found while resolving S1.5) — a 24-bar take faults the device at boot, inside the
+      snapshot change-set vector.** The 24-bar leg's take crashes the device at its **overdub wrap commit**
+      (`captures/s15-24bar-01`: `Overdubbing wrap committed @ tick 18432` → reconnect → `boot_reset,crash=1`), and
+      the persisted body then **crash-loops every boot** (~14 s cycles with the USB CDC dropping each time) while its
+      restore runs — every cycle's last activity is `RRQ,4,0,…running`, i.e. **track 5 Loop 1**, exactly where the
+      take was recorded. **The fault, decoded:** `CrashReport` reports **DACCVIOL — accessed address `0xB000`**, code
+      at `0x600928B6`, which resolves to `std::vector<SnapshotEventChange>::_M_realloc_insert`; and
+      `0xB000` = 45,056 = **512 × 88**, i.e. a vector with **512 elements and a null `data()`**. The body-load path
+      builds precisely such a vector — `StorageLoopIoBodyFormatV1.cpp:478-500` pushes one `SnapshotEventChange` per
+      gathered event into `LoopSnapshotChangeSet::events` before constructing the snapshot. **Contained and
+      reversible:** the firmware's own `!QUARANTINE_WORKSPACE` moved `/MidiLooper/current` →
+      `/MidiLooper/current.bad.5202` (the **slot library lives under `current/slots`**, so the library is set aside
+      with it); the device is then stable (a 25 s passive read: zero `boot_reset` rows, no `CrashReport`, steady
+      `live=1782 KB`, `refused=0/0B`) but boots with an **empty library**. `!RESTORE_WORKSPACE` restores it and
+      re-introduces the loop **until this is fixed or the offending body is dropped**. **Not caused by this
+      session's firmware changes** — none of them touches that path (telemetry cadence, ring resynchronisation, the
+      direct persistence receipt, the `drain_progress` wrapper) — and it is the **third** instance of the
+      "a vector reallocation faults on large content" class already recorded in this repo (`captures/task23-undo-crash`,
+      and the `vector<DisplayNote>` reallocation in the 24-bar heap runs). **It blocks any further device acceptance
+      that loads large content, including restoring the library.** Evidence:
+      [`evidence/2026-10-01-boot-crash-loop-24bar-take/FINDING.md`](evidence/2026-10-01-boot-crash-loop-24bar-take/FINDING.md).
 - [x] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
       the slope and failure point in this file as numbers.
       **CLOSED 2026-10-01.** Every clause this gate carries is satisfied and cited: full native
