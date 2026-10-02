@@ -912,6 +912,67 @@ bool Track::isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const {
          !runtime->mergedMidiEvents.mergedEvents.empty();
 }
 
+TRACK_COLD_MEM Track::PlaybackWindowReadiness Track::playbackWindowReadinessForSlot(
+    uint8_t slotIndex) const {
+  // AC-3 / task 3.5: readiness is the **completed publication**, and its failure names its holder. This is the
+  // publication answer; the red-first body it replaced (readiness read from the legacy merged buffer) is the mutation
+  // recorded in the slice's evidence.
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return PlaybackWindowReadiness::NoRuntime;
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+    return PlaybackWindowReadiness::NotServable;
+  }
+  if (playbackRuntime.slotIfAllocated(slotIndex) == nullptr) {
+    return PlaybackWindowReadiness::NoRuntime;
+  }
+  // AC-3: the answer is the **window this change published** -- never the live merged buffer -- so an interval that
+  // legitimately holds no events is still ready. Currency (DEC-108 item 5) is `playbackRevision` and exactly it; the
+  // one-pass-late allowance that would accept an older revision is task 3.6's rule.
+  PlaybackWindowIdentity published{};
+  if (!publishedPlaybackWindowIdentityForSlot(slotIndex, published)) {
+    // Nothing is published. **Who owes it** turns on whether a build could succeed at all: the enumeration needs a
+    // *current* published root (`requestPlaybackWindow` refuses `SourceUnavailable` / `SourceNotCurrent`), so a
+    // rootless or not-current slot owes the **source**, and only a sourced one owes the window-build owner.
+    return loop.publishedSnapshotIsCurrent() ? PlaybackWindowReadiness::OwesBuild
+                                            : PlaybackWindowReadiness::OwesSource;
+  }
+  if (published.playbackRevision != loop.playbackRevision) {
+    return PlaybackWindowReadiness::OwesCurrency;
+  }
+  // A complete, current window is ready; readiness does not count its events.
+  return PlaybackWindowReadiness::Ready;
+}
+
+TRACK_COLD_MEM const char* Track::playbackWindowReadinessHolder(PlaybackWindowReadiness readiness) {
+  // No name table and no `switch`: either is `.data` on this target, and a few `.data` bytes can snap the following
+  // `ALIGN(1024)` and cost 4 KB of DTCM (the RAM1 rule's finding, measured for slice 3.1). The literals below are also
+  // **not** free: this script places `.rodata` in DTCM, and the ~100 B they add crossed the `_VectorsRam`/periodic-table
+  // alignment edge and cost 4 KB of the local allowance (`variables` 96,192 -> 100,288 with `code` byte-identical).
+  // Slice 3.5's fix is the pattern the script already uses for the other two TUs that hit this: this TU's string
+  // literals are routed to memory-mapped FLASH. So the names cost no DTCM here, and the whole TU's rows benefit.
+  if (readiness == PlaybackWindowReadiness::Ready) {
+    return "ready";
+  }
+  if (readiness == PlaybackWindowReadiness::OwesBuild) {
+    return "window_build_owner";
+  }
+  if (readiness == PlaybackWindowReadiness::OwesSource) {
+    return "published_source";
+  }
+  if (readiness == PlaybackWindowReadiness::OwesCurrency) {
+    return "window_rebuild";
+  }
+  if (readiness == PlaybackWindowReadiness::NotServable) {
+    return "not_servable";
+  }
+  if (readiness == PlaybackWindowReadiness::NoRuntime) {
+    return "slot_occupancy_owner";
+  }
+  return "unknown";
+}
+
 TRACK_COLD_MEM void Track::releasePlaybackMergedMidiEventsMemory() {
   releaseEligiblePlaybackRuntimeSlots(false);
 }
