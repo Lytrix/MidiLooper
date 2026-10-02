@@ -296,6 +296,10 @@ plus the specified mixed R→OD sequence. Response-confirmed scoped preparation 
 attempts; no reboot or global Stop in an acceptance window. Preserve every failed run
 and reset consecutive counts on failure. Missing natural overlap is NOT_EXERCISED;
 required evidence loss is non-PASS, not a reason to enlarge timeouts blindly.
+Every counted pass carries the natural overlap on its own device rows (DEC-111 — a serialized acceptance run is
+NOT_EXERCISED): a run whose successor is admitted after the predecessor released is preserved as operational
+evidence, never a pass, and it **breaks** the streak rather than being absorbed into it. Only the arrangement may
+change to produce the overlap; no timeout, window or budget is widened to accommodate a serialized run.
 
 Require exact content, one undo unit with correct geometry, persisted content, bounded
 acceptance→execution latency, existing MIDI timing gates and clean independent shutdown.

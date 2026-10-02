@@ -2,7 +2,7 @@
 
 **Status:** specification only. This change **does not** change the publication unit, the publication path or any
 root/window behaviour (`IMPLEMENTATION_CONTRACT.md` §"… retains S4c only as contract/acceptance definition"; the
-sibling `windowed-playback-generation` is planned and uncreated). S4c.0
+sibling `windowed-playback-generation` was created 2026-10-02 as planning artifacts only). S4c.0
 ([`S4C0-PUBLICATION-INVENTORY.md`](S4C0-PUBLICATION-INVENTORY.md)) records the machinery this specification is
 about; this file states what the sibling must **accept**.
 

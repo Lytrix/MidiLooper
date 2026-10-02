@@ -811,8 +811,37 @@ descriptors only and reserves no canonical-copy capacity.
 
 **S2.9 is extracted** to a sibling change, `windowed-playback-generation`, carrying its own DEC and reassessment
 for the interval publication unit, per-window currency, the five gather call sites, LSV1 root authority and undo
-root pinning. The sibling is **planned but not created**. This change keeps S4c as contract-only work, not publication/root implementation; **S2.3's N stays provisional** and may not be
+root pinning. The sibling was **CREATED 2026-10-02 as planning artifacts only**
+([`../windowed-playback-generation/proposal.md`](../windowed-playback-generation/proposal.md)); its own **DEC-108** and
+the sibling's `ARCHITECTURE-REASSESSMENT.md` landed 2026-10-02 (its capacity, scheduling and retention bounds stay
+unproven), and no implementation of it exists or
+may be applied from here — this change keeps S4c as contract-only work, not publication/root implementation; **S2.3's N stays provisional** and may not be
 claimed as the memory law until that sibling lands.
+
+### End-to-end continuity ownership (2026-10-02)
+
+The spec's [Continuous runtime operation has one end-to-end acceptance contract](specs/runtime-working-set-ownership/spec.md#requirement-continuous-runtime-operation-has-one-end-to-end-acceptance-contract)
+is the single definition of the supported workload and MIDI/action timing acceptance. This runtime change owns
+the combined proof, not just a memory or interaction-acceptance claim. DEC-109 — continuity acceptance ownership
+records the split; it changes no firmware owner and withdraws no existing fault-containment policy.
+
+- **Runtime integration:** existing `Track`/`TrackManager` capture, finalization and interaction owners plus
+  `MidiHandler` routing must close their service, replenishment and output-throughput dependencies. In particular,
+  the existing `StopAdmissionContract` in `ExecutionBounds.md` can enter STOPPED recovery on breach: preserving
+  capture in recovery is not evidence of uninterrupted operation. Such a breach fails normal acceptance.
+- **Windowed dependency:** the sibling owns prepared playback handoffs and the narrow `TrackUndo` playback-refresh
+  integration (task 3.14 — undo/redo audible handoff), reusing selective cross-generation reconciliation rather
+  than blanket slot silence. Root pinning/checkpoint semantic ownership is not moved by that integration.
+- **Proof order:** S7.5a — envelope/timing oracle fixes justified limits before qualification; the sibling budgets
+  and verifies its work against them; S7.5b — dependency closure collects that evidence with capture/finalization,
+  every reachable undo/redo route and physical MIDI-output evidence; S7.5 — combined continuity acceptance runs
+  the full concurrent workload. No circular gate requires the combined runtime run before local window tests.
+
+The numerical envelope and timing limits are still owed, not filled with guessed microsecond values. Native
+production-path tests establish ordering and exact MIDI events; hardware establishes physical timing and sustained
+contention. Neither a passing content inventory nor a completed windowed change establishes the combined guarantee.
+Existing role-transfer/readiness continuity statements are interpreted through this acceptance contract; fault
+injection is a separate safety test, never permission to pass an in-envelope silence or involuntary stop.
 
 ### 4. New invariants (32–36, binding)
 

@@ -6174,3 +6174,360 @@ DTCM array (`sizeof(Track) == 384`), so a by-value member there costs 8x. The pe
 **Not established (recorded, not glossed).** *Why* a build was still in flight when the record stopped. That the
 interval had left `TRACK_RECORDING` (it sat in `TRACK_OVERDUBBING`) is what makes the wait un-advanceable and is
 observed; the reason the build had not completed inside the take is inferred, not proven, and is the next question.
+
+---
+
+## DEC-108 — Windowed playback generation: one publication owner, window-sized reservation, pinned-source retention, and readiness as completed publication
+
+**Date:** 2026-10-02
+**Status:** **Accepted as this change's implementation contract — NOT implemented.** No firmware, no native fixture, no build and no device evidence exist for any item below. `openspec/changes/windowed-playback-generation/tasks.md` §1–§6 is the plan, and every bound here is **owner-supplied and unproven** until its own gate passes.
+**Owner (target):** `Track::stepPlaybackViewMaintenance`, the window-build/publication owner declared by [ExecutionBounds.md](Authority/Architecture/ExecutionBounds.md) rows 27–29, using the existing `CoverageServiceContract` struct and `TrackPlaybackRuntime::beginCoverageBuild`. `TrackManager::servicePendingSlotProvision` (`DeferredIdleOwner::SlotProvision`) keeps requesting preparation and reading readiness; it does not become a competing steady-state publisher.
+**Follows:** DEC-076 points 1–4 (role-owned, window-sized working sets; immutable readiness per affected tick with a one-pass-late allowance; **the published root is the checkpoint authority, not the playback authority**); DEC-073 (coverage decides currency, and `committedPassRevision()` is `playbackRevision`'s alias); DEC-058 (runtime view storage); DEC-102/DEC-103/DEC-104 (the switch's inbound occupancy, the `SlotProvision` vehicle, the bounded long-loop hold); DEC-107 (the runtime size pin re-based `6,352 -> 6,360`).
+
+**Report.** `runtime-working-set-ownership` extracted the interval publication unit to the sibling change `windowed-playback-generation` (`design.md:812`, Revision 18 §3) and required that sibling to carry **its own DEC and architecture reassessment before Apply**. Read-only G0 discovery established the current implementation and surfaced five conflicts: the owner its first draft named (`SlotProvision`) is not the owner `ExecutionBounds.md` declares; an immutable windowed publication is unavailable for demoted loops under the present reservation policy (`fullTakePlaybackViewAdmissible()` false ⇒ no bridges, bases or prepared pair); previous-version retention exists for the prepared pair (`PreparedPairConsumeDecision::held`) but **not** for the merged window, which clears and re-attempts; the freshness identity in code (`PlaybackViewSourceIdentity{revision, trackGeneration, snapshotIdentity}` plus `PlaybackCoverageInterval`) is wider than `(slot, revision, interval)`; and a **non-empty** readiness term makes a legitimately prepared **empty** interval un-ready.
+
+**Decisions.**
+
+1. **One window-build/publication owner: `Track::stepPlaybackViewMaintenance`**, carried by the existing post-MIDI deferred machinery and implementing the declared `CoverageServiceContract` — fixed work quantum, persistent build cursor, bounded denied turns and a demonstrated handoff margin. `SlotProvision` requests preparation and reads readiness; publishing in the steady state is not its job.
+2. **Unify the consumption contract, not every representation.** Prepared-pair and fixed-view playback stay for admissible loops; immutable **interval** publication is introduced for demoted/windowed loops; a whole-loop view is treated as coverage that happens to span the whole loop. The live mutable merged-window build is removed **once its replacement is verified**, with a cold reference path retained for parity testing.
+3. **Reservation: extend the existing view set with window-sized publication; do not restore whole-take reservations for demoted slots.** Reuse the view set's bounded storage, lease and publication mechanisms; budget current, ready and building windows including reader retention, staging and transition overlap; verify that the three rolling views' lifetimes suffice before adding buffers.
+4. **Previous-version retention means a retained immutable source revision, not the last window buffer.** For an affected interval whose deadline is missed: serve that interval's previous revision for that traversal, never replace its content mid-consumption, publish the replacement before the following eligible traversal, and **do not reset the lag allowance when another edit arrives**. Later windows must stay constructible from the pinned old source revision **without a resident whole-loop playback root**, and that source-retention cost is charged to the envelope. A **second** missed traversal is a named contract breach, not successful one-pass-late operation — reporting it does not make the requirement pass.
+5. **Identity separates content currency from lifetime safety:** `(slot, playbackGeneration, playbackRevision, interval)`. `playbackRevision` is the sole content-currency authority; `playbackGeneration` guards ownership changes and stale deferred completions; `interval` carries the loop geometry needed to interpret coverage; snapshot identity is provenance/lifetime protection, **not** a second definition of "current". An overlay must pin its actual source dependencies — a null snapshot identity is not sufficient protection.
+6. **Readiness is completed publication with matching identity and sufficient coverage, not non-empty events.** A successfully prepared empty interval is valid silence, and the completion state is not a second revision counter. (Today `Track::isPlaybackMergedMidiEventsReadyForSlot` requires `!mergedEvents.empty()`; its only consumer is the switch-commit binding in `TrackManager::updateAllTracks`.)
+7. **The deadline follows tempo, quantisation, phase advance and service availability.** The **16–31 ms** figure is the cited **120 BPM** example (1/32–1/16 beat). The reachable playback clock range is the one `ClockManager::setBpmFloat` enforces — **20–300 BPM** (`src/ClockManager.cpp:107-112`); the `TEMPO_MIN_BPM`/`TEMPO_MAX_BPM` = 60/187 pair (`include/Utils/TempoMapping.h:23-24`) is the **CC102 fader mapping**, not the clock. Across 20–300 BPM the 1/32–1/16-beat window is **6.25–187.5 ms**, and external-clock pulses advance playback directly (`onMidiClockPulse` → `currentTick += Config::TICKS_PER_CLOCK`), so batched pulses compress the effective deadline: the proof runs against **actual clock advancement**, never a nominal tempo. *(Corrected 2026-10-02 from a G2 review finding; this entry originally said 60–187 BPM and 10.0–62.5 ms.)*
+8. **Provisional limits:** keep the existing **2,048-event** ceiling as an explicitly provisional per-window capacity and a **two-bar** span as the initial comparison configuration, evaluate smaller spans (quarter-bar, one-bar), and **prepare ahead of the playhead** — "centred on the playhead" is a present implementation detail, not the scheduling contract. A smaller window does not solve unbounded same-tick density, and accepted content is **never truncated** to fit.
+9. **Envelope:** preserve today's **eight** sounding roles, **target 16 next**, and measure 32/48/64 **without promising** them. Support is derived from the complete memory **and** service budgets (capture, finalization, interaction, source retention, overlap, reserve), and a target counts as supported only when both the memory and the deadline tests pass.
+10. **Demoted-target hold:** keep prepared-before-bind but replace "whole root ready" with "**required window and source lifetime ready**". Accept the switch immediately, retain it pending, keep the outgoing slot sounding while the target prepares off-clock, and bind at a valid boundary with no second gesture. Neither an unprepared switch nor permanent whole-root residency is acceptable.
+11. **Evidence owed (no claim until it exists):** correct the documented size baselines to **6,368 B** (`LoopPlaybackRuntime`) and **984 B** (`Loop`) and measure RAM1 on a fresh target build; production-path fixtures for empty intervals, stale deferred completions, missed deadlines, repeated edits, boundary note closures and root-demoted playback; a dedicated windowed HITL profile through the existing content-verification pipeline with canonical stimuli preserved; and sweeps over loop length, density, tempo, window span and competing deferred work.
+
+12. **G2 review resolutions (2026-10-02).** Five blockers raised by a read-only implementation-contract review are decided, each **reusing existing machinery**: **(a) retention** pins the affected revision's **pass identity** — `PassReclaim::pinPassesFromLoopPasses` into a playback-owned `SlotPassReferences` so `reclaimDisabledCapturePass`/`releaseChunkRefs` cannot destroy it — one pinned revision per slot, released when the revision advances with no referencing window, charged as pinned canonical bytes, and **named as a term in `Track::noLiveOwnerForSlot`**; **(b) enumeration** is interval-bounded and resumable through `CommittedEventRange::inWindow` / `appendWindowBudgeted` with a `WindowTraversalCursor` (skipping non-intersecting chunks, so it needs **no published root**), and where only a flat source exists its complete scan is **accounted in admission** rather than implied window-bounded; **(c) overflow** is made **unreachable at admission** — the 2,048-event capacity becomes explicitly an **admission limit** for accepted events per interval, so "every accepted event is served" holds by construction and capacity pressure is refused before acceptance, never absorbed after it; **(d) the clock basis** is corrected to the enforced 20–300 BPM with batched external pulses (item 7 above); **(e) NOTE_EDIT preview** keeps its own **preview-source contract** with its own identity and invalidation and **never masquerades as committed currency**. The review's three tightening items — deferred-service fairness, the shared-view/cancellation transition table, and post-breach behaviour with cross-generation ledger reconciliation — are **carried as required contents of the first execution packet** that touches their path. **These resolutions remain unproven** until their fixtures run.
+*(Second G2 pass, 2026-10-02: item 12's sub-points **(a)** and **(b)** are **corrected** — a pass-ID list does not hold a
+revision (the veto is rebuilt from the undo stack and the direct reset path bypasses it), and `appendWindowBudgeted`
+bounds **appended events, not inspected chunks**. `design.md` §"Recorded resolutions" restates both as requirements on
+the mechanism. The three choices the second pass left OPEN were then decided by the owner: **OPEN-1** — the retained
+source is **pinned bodies plus reconstruction through the effective-content resolver** (not a frozen per-interval copy);
+**OPEN-2** — the admission limit is enforced on the **capture interval at acceptance**, counted in **effective** events,
+plus a **reserved note-off/generated-closure capacity counted inside the limit**, with the window's storage capacity
+**exactly the limit** under the **sliding window-span invariant** (**item 14**; the earlier "two adjacent partitions"
+sizing is **withdrawn** there); **OPEN-3** — NOTE_EDIT preview moves to **immutable deferred publication** with source
+freezing, cancellation and committed-content handoff, so the removal of the live mutable fallback is not narrowed on
+preview's account. Nothing here is closed until those fixtures pass.)*
+
+*(Third G2 pass, 2026-10-02: three implementation choices were raised and are **decided in item 14** — the capacity
+accounting, the legacy dense-content path, and the retained-source resolver/index. Its two tightening items are
+**applied**: superseded clauses are replaced in place (one release predicate everywhere, "emits no new events" for empty
+coverage, continuity subject to the approved exception), and the slice ladder is declared explicitly — fixture
+established → behaviour implemented and verified → production path enabled → old path removed.)*
+13. **Lifecycle and recovery policies (2026-10-02, owner-approved).** **(a) Revision handoff and "pass":** an interval's version is fixed once its traversal begins; a new edit updates the desired revision and never modifies a published window or a builder's frozen source; superseded **preparation requests** are coalesced (never accepted content), useful preparation is not cancelled for newer edits, and a later edit never resets an earlier interval's allowance. **Pass = one traversal of the affected interval in the playback projection** — a wrap advances it, a transport stop pauses it without forgiving a miss, and MIDI Start/seek/geometry changes invalidate positional deadlines and require revalidation without erasing obligations or fault history. "One retained revision per slot" is replaced by explicit **serving / candidate / retiring** source roles (shared bodies where possible, bounded by role admission, never discarding a still-needed source to satisfy a count). **(b) Fairness:** a recurring bounded service opportunity on the existing deferred machinery; round-robin across eligible holders; earliest outstanding playback deadline first within a holder; the selection cursor advances even when a holder cannot progress; capture finalization and persistence keep their own opportunities (no starvation); one declared grain per admitted turn; the proof covers **all admitted holders**, and the envelope is derived from grain costs and the worst permitted service gap — no invented microsecond budget. **(c) Clock revalidation:** admission is revalidated before publication/handoff when tempo, clock source, projection or observed advancement invalidates the earlier assumptions; a changed clock invalidates the *promise* to finish in time, not the content — the request is retained, the valid audible source continues, the miss is reported, and an inline rebuild is never used to compensate. **(d) Shared views:** published/current views are read-only, only the owning builder writes its candidate, a ready view is immutable until adopted or retired, and storage is reusable only after every owner releases it — with the transition rules for new edit, slot switch, selected-track change, record/overdub stop with successor start, transport stop, clear/load and late completion, and **generation-qualified identity** so returning to a slot cannot revive an earlier operation. **(e) Second miss:** the second miss latches a **named deadline-contract fault**; playback continues the last coherent revision wherever valid coverage remains through an admitted bounded path; preparation keeps progressing; recovery happens at an eligible boundary; the lag is never silently reset, no partial content is published and the clock is never blocked — deliberately separating **fault containment** from the one-pass-late guarantee. **(f) Approved exception:** when no valid coverage remains at all, the last resort is **targeted note closure plus affected-slot silence**, never a global transport stop and never an unbounded rebuild. **(g) Closures:** unchanged sounding notes are preserved without retriggering; notes removed or invalidated are closed at handoff; obsolete closures are suppressed; note-offs precede replacement note-ons; closure obligations outlive view retirement; and an **event-empty window means "no new events"**, never silence for a sustained note. **Verification split:** native tests force these interleavings on the real request→worker→publication→consumption path with controlled ticks (no sleeps, no copied state machines); hardware proves grain duration, maximum service gaps, sustained multi-track contention, external clock and memory high-water marks — and the exact A→B→A race need not be reproduced on hardware once native tests establish the ownership ordering.
+**(c) Retained-source resolver/index — extend the effective-content owner, the selected `LoopSnapshot`.** *(Corrected 2026-10-02 — **F-1** of the change's `DECISION_REVIEW.md`: this item named `LoopContentResolution` as the owner. `NAMING.md`, which ranks **above OpenSpec** and therefore above this change's artifacts, states that `LoopContentResolution` is a **historical DEC-037 prototype name that new docs do not use** and that committed effective state is the selected **`LoopSnapshot`**, and DEC-037 keeps it a **parallel prototype whose three caller gates never passed** (`Architecture/DerivedViews.md`: retained only as a snapshot-based compatibility adapter). **No decision changes here — only the name of the owner this item names**; every behavioural clause below is unchanged.)* The **effective-content owner** is the selected **`LoopSnapshot`** and the query path over it — the published-snapshot window gather (`Loop::tryGatherPublishedSnapshotEventsInWindow`) plus the new interval index. `Track::stepPlaybackViewMaintenance` owns preparation and publication scheduling and invokes that resolver against a **generation-qualified immutable retained source**.
+
+**Not decided / not claimed.** The capacity, scheduling and retention bounds are **unproven**: `N`, the product limit beyond the provisional 2,048-event window capacity, the exact admission-accounting granularity and its worst-case work, the paged legacy path's deadline margin outside its declared envelope, the index's **resident-memory bound**, and any supported-density claim stay open until measured. This entry does not claim the reservation change is admissible, does not authorise removing the live merged-window build, and moves no ownership in code — each is gated by the change's own fixtures, build and device legs. Companion reassessment: [`openspec/changes/windowed-playback-generation/ARCHITECTURE-REASSESSMENT.md`](../openspec/changes/windowed-playback-generation/ARCHITECTURE-REASSESSMENT.md).
+
+## DEC-109 — Continuity acceptance belongs to the runtime; windowed playback owns its handoff obligations
+
+**Date:** 2026-10-02
+**Owner:** Runtime integration contract; existing Track/TrackManager, TrackUndo, MidiHandler and playback publication owners unchanged
+**Status:** Accepted as documentation/task scope; NOT implemented or timing-proven
+
+### Problem
+Windowed publication correctness cannot establish continuous play/record/overdub/undo/redo alone.
+`refreshPlaybackAfterCapturePassStateChange` currently calls `silenceSlotMidiOutput`, closing all active
+ledger keys. Checkpoint parity does not prevent that interruption. MIDI throughput and capture/finalization
+dependencies also extend beyond the window owner; existing fault recovery is not normal continuity success.
+
+### Decision
+The runtime OpenSpec owns the single requirement *Continuous runtime operation has one end-to-end acceptance
+contract*. The windowed sibling references it and owns its publication/service/closure contribution, including
+the narrow undo/redo playback-refresh integration. Runtime acceptance fixes a justified workload and numeric
+input/output timing oracle before qualification, separates action-to-audible latency from interaction acceptance
+and publication lag, closes cross-owner dependencies, and requires combined native/hardware evidence.
+
+### Rationale
+One system-level authority prevents conflicting promises; explicit subsystem obligations prevent local task
+completion from bypassing a reachable interruption. Physical serialization is accounted, not treated as zero
+latency. No timing numbers, supported density or unconditional unlimited-operation guarantee are asserted.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Goal only in runtime | Windowed local completion could retain blanket undo silence while claiming handoff parity. |
+| Goal only in windowed playback | Capture/finalization and physical output timing are outside that subsystem's proof. |
+| Duplicate full guarantees | Independent envelopes/thresholds could disagree while both changes claim success. |
+
+### Affected modules
+Planning artifacts in both active changes; future integration extends existing owners, with no new scheduler
+or transfer of undo/checkpoint authority. No firmware change is made by this decision.
+
+### Constraints created
+Runtime tasks S7.5a — envelope/timing oracle and S7.5b — dependency closure gate S7.5 — combined continuity
+acceptance. Windowed task 3.14 — undo/redo audible handoff gates normal windowed undo/redo and mutable-fallback
+removal; task 6.8 — continuity evidence handoff supplies runtime acceptance. In-envelope refusal, unintended
+note interruption, missed MIDI deadlines or involuntary STOPPED recovery fail normal acceptance even if recovery
+is safe. DEC-108 — windowed publication's fault/last-resort policies and the existing StopAdmissionContract
+remain intact and are tested separately; this is not a new firmware failure policy.
+
+### Related OpenSpec
+- [Runtime continuity requirement](../openspec/changes/runtime-working-set-ownership/specs/runtime-working-set-ownership/spec.md#requirement-continuous-runtime-operation-has-one-end-to-end-acceptance-contract)
+- [Windowed contribution and undo/redo requirements](../openspec/changes/windowed-playback-generation/specs/windowed-playback-generation/spec.md#requirement-windowed-publication-contributes-to-the-runtime-continuity-contract)
+
+### Migration notes
+Documentation-only integration authorized by the user. Implementation tasks remain open and existing
+implementation-scope/readiness gates still apply. No released spec sync, firmware build, native run or hardware
+qualification is implied. Numeric limits and runtime evidence remain owed.
+
+## DEC-110 — A slot with no content keeps no persisted payload: the explicit CLEAR removes it, and the save never re-creates it
+
+**Date:** 2026-10-02
+**Owner:** `StorageManager` owns the card representation (`removeLoopSlotPayload`, the payload mirror); `MidiButtonActions::CLEAR_TRACK_FOR_SLOT` / `handleClearTrack` own the gesture; the workspace save's per-slot stage owns the write/skip decision.
+**Status:** Accepted by the owner (explicit choice of this option over the observation-only and no-change alternatives); implemented; focused native verified (red-proved); capture build verified; device leg verified at the lifecycle level with content parity still owed.
+
+### Problem
+On device, a cleared slot keeps an **empty persisted body** on the card: after a fresh boot the restore for
+track 8 slot 5 reported `RRQ,7,4 … terminal,none,committed` while the library observation still read
+`p=3,k=0,kp=0,kr=0,l=0,v=0`. The observation maps a verified payload (*presence*) to populated, so the slot
+counted as occupied; and the clear gesture could not fix it, because `CLEAR_TRACK_FOR_SLOT` returns before
+`handleClearTrack()` unless `Track::hasDataInSlot(slot)` — `Loop::hasData()` is RAM only
+(`hasCommittedPasses() || loopLengthTicks > 0 || !capture.store.empty()`). Measured: the long press left only
+`Loop 5 hold released`, no clear/refusal row. Every one of the 64 slots carried a verified payload, so no
+slot on the board was "empty" for the SD-aware precondition, and the accepted-sequence record/overdub
+legs could not be prepared at all.
+
+### Decision
+1. A slot that holds **no content** (no committed passes, zero length, empty capture) and has **no live
+   capture** (not recording, not overdubbing, not armed, no queued record) must have **no persisted payload**.
+2. The explicit CLEAR of a slot whose content exists **only on the card** removes that payload through the
+   persistence owner: the gesture treats payload presence as content (`StorageManager::loopSlotHasPayloadOnSd`),
+   `handleClearTrack()`'s no-RAM-data branch removes the card body
+   (`StorageManager::removeLoopSlotPayload`, final + temp file + seal journal) and reports it as
+   `MIDI: Clear removed persisted slot N payload (absent|still present)`, and an in-flight restore for that
+   slot is superseded first (`advanceRestoreRequestGeneration`) so a stale parse cannot repopulate it.
+3. The workspace save never writes a payload for a contentless slot and removes a stale one instead
+   (`shouldWriteCurrentSetLoopSlot` / `currentSetSlotHoldsNoContent` / the per-slot decision in
+   `stepDeferredSaveJobCurrentSetLoopSlot`), so a save cannot resurrect the empty body the clear removed.
+
+### Rationale
+The persisted body is the *only* representation the observation can see for an unloaded slot, so "presence"
+and "content" must not disagree. Extending the existing owner (`StorageManager`, the payload mirror and the
+slot path helpers) needs no new owner, no new queue and no new state: the removal is one bounded
+`SD.remove` pair plus a mirror update on a stopped-only, explicit user gesture (the same class as the
+blocking persistence drain the clear already performs). The alternative — refining the library observation to
+report an empty body as empty — was rejected by the owner because it leaves the user unable to remove a
+card-backed slot at all; the no-change alternative was rejected because it makes the SD-aware emptiness
+precondition unsatisfiable on device.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Extend the observation with an empty-body fact only | Leaves the card body in place: the user still cannot clear a slot whose content is only on the card, and the census keeps counting it as populated. |
+| Leave the semantics and use another scratch target | Measured: **no** census-empty slot exists on the board (all 64 carry a verified payload, 21 with nothing loaded), so the precondition would still be unreachable. |
+| Load the body first, then clear | The load *is* the failed step (`terminal,none,committed` with `k=0`), so it cannot be used as the precondition for its own removal. |
+
+### Affected modules
+`StorageManager` (`removeLoopSlotPayload`, payload mirror), `MidiButtonActions` (clear gesture),
+`WorkspaceSave`/`DeferredSaveJobStages` (per-slot write/skip decision), `CurrentSetStorage` (pure policy).
+No ownership transfer, no new scheduler, no timing-path work: the removal is bounded SD I/O on an explicit
+stopped-only user gesture and on the existing save stage.
+
+### Constraints created
+An empty slot must not acquire a persisted payload again — the save's skip/remove rule is part of the
+invariant, not an optimisation. A live capture is never "no content", so recording/overdub/armed/queued
+guards the removal. Destructive scope is **one explicitly cleared slot**; no bulk or set-level deletion.
+Debug/HITL evidence: `MIDI: Clear removed persisted slot N payload (…)`.
+
+### Related OpenSpec
+S4.5 — accepted-sequence acceptance (`runtime-working-set-ownership`); evidence and the remaining
+content-parity item: [`evidence/2026-10-02-s45-preparation/FIX.md`](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-02-s45-preparation/FIX.md).
+
+### Migration notes
+No format change: the payload file simply becomes absent for contentless slots, and a slot that has content
+keeps its body exactly as before. The next boot's probe (`SD.exists` + token) reports the empty slot as
+`p=1`, which the library observation already classifies as empty. Verification: `test_current_set_storage`
+(policy red-proved), the capture build with an unchanged RAM1 line, and device run
+`captures/s45-clearfix-20261002-160609-rec3` (preparation now reads `ALREADY_EMPTY` for that slot and the
+record leg drives end-to-end).
+
+## DEC-111 — A serialized acceptance run is NOT_EXERCISED: the overlap link is required in every counted pass
+
+**Date:** 2026-10-02
+**Status:** **Accepted — owner ruling on the Phase 1d wording question (user: "1d then 2").** It clarifies the
+evidence rule for S4.5 — P3 acceptance; it changes no requirement, no firmware behaviour and no budget.
+**Owner:** the accepted-sequence oracle (`scripts/hitl/accepted_sequence_probe.py`) and the S4.5 — P3 campaign
+bookkeeping.
+
+**Why.** Phase 1d asked how a run whose successor is admitted *after* the predecessor released must be recorded:
+as a weaker pass, as an operational-evidence run whose acceptance some other run supplies, or not at all. The
+answer is now measurable rather than argued, because the bench *can* produce the overlap: in
+`captures/s45-odleg1a-20261002-163640-od`, A's window `reentry_window_open,3,1770,2304` opens at 48 012 769 us,
+B's admission `reentry,admit,2015,4,4,1` lands at 48 649 488 us — **0.637 s into a 1.523 s window** — and A retires
+at 49 535 980 us. A serialized run is therefore an arrangement outcome, not a device limit that forces the
+requirement down.
+
+**Decision.**
+
+1. The acceptance link "the successor started while the predecessor still finalized" is required **in every counted
+   pass**, ordered by device timestamps, for both the overdub (`od`) and mixed legs. S4.5 — P3's three consecutive
+   passes each carry it; the link is never satisfied by another run's evidence.
+2. A run whose successor start is *after* the predecessor's release edge is **NOT_EXERCISED**: `SETUP_INCOMPLETE`
+   in the setup class, preserved as operational evidence, **never** a pass, and it **resets** the consecutive count
+   (the rule `S4F-CLOSURE-PLAN` §5 already states for failures). It is not a chain violation and is never
+   attributed to the firmware.
+3. Nothing is weakened to accommodate a serialized run: no timeout, window or budget is widened, and the
+   arrangement must aim at the overlap. A missed window names itself instead of shrinking the gate.
+4. Where an arrangement genuinely cannot produce the overlap, that is a finding against the arrangement (the
+   `s4f22-dec096-od-01` precedent: the successor started 136 ms after release), never a reason to accept a
+   serialized run as one of the passes.
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| One overlapping run suffices; other campaign runs may serialize | It makes the acceptance's own link optional in exactly the passes the campaign counts — the gate-weakening the "no involuntary stop, no second press" requirement is protected from. |
+| A serialized run counts as a pass on its retention links | L1–L4, L6 and L7 are *retention* links; the acceptance is the overlap (invariant 31, design Revision 18). Counting it would report acceptance where the acceptance was never exercised. |
+| Treat a serialized run as a chain violation (FAIL) | Measured: the device accepts and executes both intervals correctly and only the *arrangement* missed the window, so a violation verdict would invent a firmware defect. |
+
+### Affected modules
+Evidence rule only. `scripts/hitl/accepted_sequence_probe.py` already implements it (L5 classifies a
+post-release successor as `setup` NOT_EXERCISED for `od`/`mixed`); the closure plan's §5 wording and the S4.5 — P3
+bookkeeping now state it explicitly. No firmware, no ownership transfer, no timing-path change.
+
+### Constraints created
+Every pass of the three-consecutive-pass campaign must show the overlap on its own rows; a serialized attempt
+breaks the streak and is preserved, not absorbed. No pass may be inferred from retention links alone.
+
+### Related OpenSpec
+S4.5 — accepted-sequence acceptance and S4f.22 — HITL integration gates
+(`runtime-working-set-ownership`); evidence
+[`evidence/2026-10-02-s45-preparation/FIX.md`](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-02-s45-preparation/FIX.md).
+
+### Migration notes
+None. The oracle's classification already behaved this way (pinned by `test_start_after_release_does_not_prove_overlap`
+and the od leg's NOT_EXERCISED branch); this entry records the ruling so the rule is not re-litigated on the day a
+run is graded.
+
+## DEC-112 — A resolved Hide/Shorten is a validated positive pass, and the reproducer must be clock/response-driven
+
+**Date:** 2026-10-02
+**Status:** **Accepted — owner ruling on the two gate questions the od leg's second attempt raised** (owner's words:
+"it needs to validate the hidden notes deduction as a positive pass, not a non-pass as this is a logical outcome";
+"don't rely on raw midi timings in the run, but use midi clock or valid responses from the serial"). It changes the
+**content** gate's reading and the **arrangement**'s timing source; it changes no requirement, no firmware behaviour
+and no budget. DEC-111 stands as written.
+**Owner:** the mixed-leg content owner (`hitl.content_deduction` + `hitl.mixed_content_report`) and the
+accepted-sequence flow's phase timing (`hitl.flows.accepted_sequence`).
+
+**Why.** The od leg's second attempt (`captures/s45-fixcamp-20261002-181255-od2`, image `8989f934…`) passed the boot
+link and failed content parity. Its own dump names the reason: `record#0=31, overdub#0=32, effective#0=61`, and the
+effective view is missing exactly `(1238, On, 71)` and `(1250, Off, 71)` from `record#0`, which the overdub's own
+`(1225, On, 71)`/`(1241, Off, 71)` covers. `classifyEditSessionInteraction` + `resolveConstrainedGeometry` resolve
+that cover to a **Hide** (`src/EditManager/*`), so `effective` is storage with the *committed* overlay applied
+(`LoopPasses::materializeToEventVector` -> `applyActiveEditPasses`) and storage keeps both producers' rows. The guide
+states its count invariant "for this procedure's material" (`docs/Guides/HITL_CONTENT_VERIFICATION.md:84-87`), so the
+probe's raw `storage == effective` was calling a logical outcome a failure. The same attempt shows why the run's
+*shape* varies: the seeded loop length differed from the sealed pass (1536 vs 2304 ticks) and A's window collapsed to
+192 ms with a 0-event release (`canonical_release,3,0,1536,8`) although the host pressed the switch at the same offset
+in both (172 ms into the window) — i.e. the run leans on raw MIDI timing rather than on the clock.
+
+**Decision.**
+
+1. **The content gate validates the deduction and passes it, naming every part.** `effective` is compared against the
+   storage rows **with the committed overlay applied**: every effective row must be a storage row, or a storage row
+   whose NoteOff moved to a coverer's NoteOn tick minus one; every storage row missing from the effective view must be
+   covered by a **later producer's** same-channel/same-pitch row that is sounding there — a **Hide** needs the covered
+   NoteOn at or after the covering NoteOn, a **Shorten** needs the covering NoteOn inside the covered note's sounding
+   (wrap-aware; a note with no stored NoteOff sounds a full loop from its own NoteOn). `accounted` is the verdict, and
+   every deduction is named in the report's `deductions`.
+2. **Nothing is waived.** A slot with no covering row still needs identical views, and a difference that no coverer
+   explains still fails, named in `unexplained_manifest_differences` (a dropped row with no coverer, an effective row
+   in no storage group, or a "coverer" from the same group, which is not a later producer). The raw comparison stays
+   reported beside it (`storage_matches_effective` next to `resolved_storage_match`), so a reader can see which
+   reading held.
+3. **The reproducer must not depend on raw MIDI timings.** The accepted-sequence flow's phases and gestures are driven
+   by the MIDI clock or by valid device responses, not by host-scheduled fixed timings: the switch gesture waits for
+   the device to name the predecessor's finalization window on its own leg interval (`DIAG,reentry_window_open`) and
+   starts the successor inside it, and take/seed lengths follow the clock rather than sleeps. A shape that varies with
+   host scheduling is an arrangement defect, never an acceptance result — and it must not be "fixed" by widening a
+   window or a timeout.
+4. **No firmware change is implied.** The deduction is validatable from the rows the dump already carries. Should a
+   case appear that the coverer rule cannot account for, the follow-up is the device naming the overlay in its own
+   dump (recorded as the next option, not taken now).
+
+### Alternatives considered
+| Alternative | Rejected because |
+|---|---|
+| Keep raw equality and record a resolved Hide as a named setup-level non-pass | The owner ruled the deduction a logical outcome to be *validated*; keeping it a non-pass makes the gate depend on host timing and hides a correct device behaviour behind a refusal. |
+| Make the reproducer dodge Hides so raw equality always holds | The Hide is legitimate device behaviour and must be graded, not avoided; and a dodged shape would leave the frozen-cover semantics unverified on device. |
+| Have the firmware expose the overlay rows now | Not needed for this case: the coverer rule accounts for the observed difference from the dump's own rows. Held as the next option if an unexplained case appears. |
+
+### Constraints created
+Every pass of the three-consecutive-pass campaign shows a content verdict that is either identical or a fully named
+deduction, and the flow's phases are clock/response-driven. A raw-equality mismatch without a coverer, a deduction
+with an unexplained remainder, or a shape that only the host's sleeps produce, each fails and is named.
+
+### Verification
+`scripts/test_content_deduction.py` **15/15** (bench shape hidden and named; Shorten; no-coverer drop; effective row in
+no storage group; same-group "coverer"; identical views; no effective rows; held coverer across the boundary; the dump
+wiring; the report verdict's pass/fail directions), red-proved in both halves (an `accounted = True` mutation fails
+three validator tests, a `slot_passes -> True` mutation fails three verdict tests) with byte-identical restores
+(`sha256 90d340fd…` / `223487f0…`). On the live device, re-reading the failed attempt's own slots yields
+`pass: true` with `deductions: ["slot 4: record#0 note 71 (On 1238, Off 1250) hidden by overdub#0 On 1225"]` and an
+empty `unexplained` list, and that attempt's re-grade beside its original report now reads `content_parity: ok` with
+the boot link `ok`; its only remaining non-pass reason is the serialized successor (DEC-111). Neighbouring suites
+green: `test_retention_probe` **43/43**, accepted-sequence **185/185**, scenario **40/40**, corpus **3/3**,
+`test_hitl_device_time` **18/18**, `test_interaction_latency` **19/19**.
+
+### Related OpenSpec
+S4.5 — accepted-sequence acceptance (`runtime-working-set-ownership`); the guide's expected-residual list gains the
+resolved Hide/Shorten class. Evidence
+[`evidence/2026-10-02-s45-preparation/FIX.md`](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-02-s45-preparation/FIX.md).
+
+### Migration notes
+None for the device. Host readers that consume the mixed report see one new field (`deductions`) and keep the old ones;
+a consumer that insists on raw equality can read `storage_matches_effective`, which still reports the raw comparison.
+
+### Addendum (2026-10-02, same session) — ruling 2 measured: the timing source was **not** the defect
+
+Ruling 2 was implemented literally (the successor's start waits for the device to name the predecessor's finalization
+window and presses on it) and measured on the bench; the measurement sent the work back to the device.
+`captures/s45-flow-20261002-191802-od1`: the device **did** open the window
+(`#CAP,4060262832,DIAG,reentry_window_open,3,1752,2304`, device **4060.262832 s**) and closed it 1.194 s later
+(`canonical_release,3,32,2304,8`, device **4061.457090 s**, 32 events) -- but the window row is **ring-buffered**: it
+reached the capture file ~1,240 lines *after* the switch's own directly printed row
+(`[4060.431] [INFO] Loop 5: Switch gesture from slot 4`) and only in a later flush, after the window had closed. A
+press placed on that row therefore cannot be inside a 1.2 s window, let alone a 192 ms one, so the flow keeps the
+press it already makes immediately after the switch's acknowledgement (the earliest the arrangement can make) and the
+blocking wait was reverted; two tests pin the measurement (a run with no window row in the capture still drives; a
+stale seed window row places nothing). The failed attempt's serialization is thus **device-shaped**: its window was
+192 ms with a **0-event** release while the device's own admission followed its switch gesture by ~600 ms. The next
+step this ruling points to is a **device investigation of the short, 0-event predecessor window**, not further host
+pacing -- if that shape recurs, the overlap link cannot be satisfied by any arrangement.
+
+### Addendum 2 (2026-10-02) — the anomaly is root-caused and reproduced; the fix is not host pacing
+
+The short, 0-event predecessor window was traced to the **mid-interval loop-end wrap**: it calls
+`CaptureAdmissionStaging::reset()` and reseeds `captureGeneration = playbackGeneration`
+(`src/Track/TrackOverdubWrap.cpp:145-147`), and `playbackGeneration` is 0 until a merged-MIDI invalidation bumps it
+(`include/Track.h:667`, `src/Track/TrackPlaybackWindowBuild.cpp:566`). A leg that crosses its loop end therefore
+leaves an **empty** staging and a **0** generation, so its stop has nothing owed, the finalization window collapses to
+the next idle turn (~200 ms) and the successor's admission -- ~600 ms behind its own switch gesture -- lands after the
+release. `TrackPlaybackRuntime.h:150` declares 0 as "no admitted interval" and nothing enforces it. Reproduced on
+device (`captures/s45-clock-20261002-194915-od1`: `Overdub wrap committed @ tick 1536` before the switch, a
+0-generation release, a 204 ms window, L5 serialized) against two healthy runs that never wrap inside the leg
+(generation 32, windows 1.194-1.581 s). The host change this session made -- `seed_take` pacing the take's length on
+the device's clock (192-clock span, 120.0 BPM, jitter 0.53 ms, a named refusal without a clock) -- is verified on
+device but **not sufficient**: a 3840-tick paced span still produced 1536/768-tick loops, so the loop's length is set
+by an owner other than the host's pacing. That is the sharpened next question: which owner assigns `loopLengthTicks`
+for these takes, and should the take be shaped by a device-named length instead.
+
+### Addendum 3 (2026-10-02) — the wrap is a **phase** effect, and the od leg's campaign is closed
+
+The tick rate is **192 ticks per beat** on this device, not 480 (two independent readings: 1,626 ticks in 4.236 s and
+859 ticks in 2.266 s, both ~384 ticks/s at 120 BPM), so the clock-paced seed was in fact **exactly its intended two
+bars** and the earlier "the pacing is not sufficient" reading was an arithmetic error, corrected in the evidence file.
+What decides the wrap is the leg's own **phase**: a leg needs ~6 beats (4 of burst plus the host's measured ~2-beat
+overhead) and the room left at its start tick was 8.5 beats in the two healthy runs against 4.5 in the two that
+wrapped. `_run_plan` now sizes the burst from the device's own numbers (the loop length from its `RECS,stopToStopped`
+row, the leg's `@ tick` phase from its start row, `bars` to convert ticks to clocks) and refuses **by name**
+(`NO_ROOM_IN_PREDECESSOR_LOOP`) rather than sending a burst into a wrap. **Result:** three consecutive
+`ACCEPTED_SEQUENCE_PASS` on one boot, each replay-verified --
+`captures/s45-camp4-20261002-200100-od1` (fresh boot), `-od2` and `-od3` (both anchored to pass 1), with non-zero
+release generations (20/20/18) and `L5_successor_started` reading "0 after A's release edge" in all three. The record
+leg's own campaign and S4f.11's cold-root route remain open, so S4.5 keeps no checkoff.

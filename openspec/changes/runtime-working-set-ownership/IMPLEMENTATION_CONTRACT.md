@@ -127,8 +127,10 @@ report the fault, never publish empty content or recycle the entry.
 
 ## 4. Playback dependency boundary
 
-`windowed-playback-generation` is a **planned, uncreated sibling**, not an available implementation
-contract. This change retains S4c only as contract/acceptance definition. Changing publication units,
+`windowed-playback-generation` existed only as a **planned** sibling until 2026-10-02, when its planning artifacts
+were created (that change is still **not an available implementation** — its `DEC-108` and reassessment now exist, and
+its capacity, scheduling and retention bounds remain unproven).
+This change retains S4c only as contract/acceptance definition. Changing publication units,
 window currency, playback root consumers or LSV1 checkpoint authority requires that sibling's
 proposal/design/spec/tasks, DEC/reassessment and validation before Apply. No placeholder implementation.
 
@@ -139,7 +141,12 @@ Charge it honestly; do not claim length independence from cold demotion alone. S
 compatibility ends when F replaces the consumers and its parity gates pass.
 
 S6 retains its independent canonical-residency gate. Final S7 scaling/continuity and archive require
-both S6 and the sibling playback gate; early slices have their own narrower gates.
+both S6 and the sibling playback gate, plus the spec's
+[Continuous runtime operation has one end-to-end acceptance contract](specs/runtime-working-set-ownership/spec.md#requirement-continuous-runtime-operation-has-one-end-to-end-acceptance-contract).
+S7.5a — envelope/timing oracle precedes qualification; the sibling's task 3.14 — undo/redo audible handoff
+and task 6.8 — continuity evidence handoff feed S7.5b — dependency closure, then S7.5 — combined continuity
+acceptance. Early slices retain their narrower gates. Local publication/parity success cannot certify the
+runtime goal, and no new numeric timing guarantee or change to fault recovery is implied.
 
 ## 4a. Transport timing validity (architect decision 2026-09-23, `design.md` Revision 24)
 

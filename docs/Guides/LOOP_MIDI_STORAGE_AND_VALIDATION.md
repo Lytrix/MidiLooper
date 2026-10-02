@@ -6,6 +6,17 @@ For overdub overlap candidate / classify / resolve / seal, see [`OVERDUB_OVERLAP
 
 ---
 
+## Record-stop scratch reuse
+
+`Track::beginDeferredRecordStopForSlot` discards retired frozen order/canonical-order rewrite bindings
+after its admission predicates prove no live finalizer owns the slot, before sealing and binding the new
+record interval. This uses the same reset boundary as overdub admission. A reused runtime must not enter
+`ReservedClosure` with a prior stop's rewrite owner/generation; the closure worker correctly rejects that
+identity, but would otherwise leave the new job permanently pending. No new capacity or whole-take work is
+introduced. The same-slot record → retire → clear → record fixture pins retirement and second-take content.
+Native/build verification and the still-open HITL qualification are recorded in
+[the reuse-fix evidence](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-02-s45-preparation/FIX.md).
+
 ## Record tail-repair preparation prerequisite
 
 The incremental `LoopStopFinalize::TailRepairCursor` implements the existing

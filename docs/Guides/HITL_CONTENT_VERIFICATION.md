@@ -86,6 +86,22 @@ procedure's material. Storage → effective is lossless here; minimum-length pai
 removal already happened at capture time, so it does **not** appear as an
 effective/played difference.
 
+The invariant holds *while no absorbing overlay is active*. Where a later
+producer's note covers an earlier note of the same pitch, the committed edit
+pass **Hides** that note (or **Shortens** it) instead of rewriting storage, so
+the two views legitimately differ and the count relation does not hold. That
+deduction is validated and **named**, never waved through:
+`hitl.content_deduction.validate_deduction` requires every effective row to be a
+storage row (or a storage row whose NoteOff moved to a coverer's NoteOn − 1) and
+every missing storage row to be covered by a *later producer's* same-pitch row
+that is sounding there — a Hide needs the covered NoteOn at or after the
+covering NoteOn, a Shorten needs the covering NoteOn inside the covered note's
+sounding (wrap-aware; a note with no stored NoteOff sounds a full loop from its
+own NoteOn). See DEC-112. Anything else is reported as unexplained and fails, so
+a real difference is never absorbed by the deduction. `!CAPTURE_CONTENT` reports
+both readings: `resolved_storage_match` (identical or fully accounted) beside
+`storage_matches_effective` (the raw comparison).
+
 ## `content-review.json`
 
 The playback verifier captures several loop cycles from the MIDI output

@@ -1,7 +1,8 @@
 > **Implementation handoff corrected 2026-09-23 (DEC-079).**
 > [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) defines executable slices and dependencies.
-> The first gate proves boot reservation removal, not the final memory law. Playback decoupling remains
-> a planned, uncreated sibling; S7/archive waits for that gate and S6.
+> The first gate proves boot reservation removal, not the final memory law. Playback decoupling is owned
+> by `windowed-playback-generation` (planning contract recorded, not implemented); S7/archive waits for
+> that gate, S6 and the combined continuity acceptance below.
 
 ## Why
 
@@ -109,6 +110,17 @@ comment states the consequence: *"A later stop request is admitted once the pred
 the defect this change removes (see `FALSIFICATION.md` F3). The architectural work below is what makes acceptance
 unconditional: role-owned, window-sized, pre-provisioned working sets are what let an *accepted* interaction be
 scheduled and executed instead of refused.
+
+### End-to-end continuity acceptance
+
+This change owns [Continuous runtime operation has one end-to-end acceptance contract](specs/runtime-working-set-ownership/spec.md#requirement-continuous-runtime-operation-has-one-end-to-end-acceptance-contract):
+continuous play/record/overdub/undo/redo within a declared, verified workload, with explicit MIDI input/output
+deadlines and no involuntary stop or unintended note interruption. Immediate interaction acceptance, audible-action
+latency and publication freshness are separate claims. Physical MIDI serialization is accounted, not promised away.
+The windowed sibling owns its publication and undo/redo handoff obligations and supplies evidence; this runtime
+change owns capture/finalization and output-path dependency closure plus combined acceptance. Admission refusal
+and fault recovery are not successful continuity outcomes. The envelope and numeric timing limits remain owed;
+neither existing sequence/content passes nor completing the sibling alone proves the full goal.
 
 ## What Changes
 
