@@ -231,6 +231,12 @@ public:
     Admitted,
     NoRuntime,
     BuildInFlight,
+    /// A window is already published for this slot. **Replacement is not a second start**: the successor lane
+    /// publishes a *ready* window and swaps it in with the lifecycle's atomic handoff (`handoffReadyCoverage`),
+    /// which is task 3.4/3.5's sequencing. Refusing here keeps the published window immutable by construction
+    /// until that lane exists -- measured 2026-10-02: a second `begin` against a slot whose window was already
+    /// published surfaced the *new* source identity in the published view before its build had completed.
+    WindowAlreadyPublished,
     ContractUndeclared,
     CannotCompleteBeforeHandoff,
     AdmissionRefused,
@@ -244,6 +250,12 @@ public:
       uint32_t currentPhase, uint32_t handoffPhase);
   bool hasPendingPlaybackViewMaintenance() const;
   PlaybackViewTurnResult stepPlaybackViewMaintenance();
+  /// DEC-108 item 1 / task 3.2: the **interval window the owner published** for a slot -- its identity and the
+  /// coverage interval it serves -- or `false` when none is authoritative. Read-only, and deliberately read by
+  /// no production consumer yet: adoption is 3.4 (identity on the consumers), 3.5 (readiness predicate) and 3.7
+  /// (the consumer switch), so this slice publishes without changing what any existing consumer reads.
+  bool publishedPlaybackWindowForSlot(uint8_t slotIndex, PlaybackViewSourceIdentity& identityOut,
+                                      PlaybackCoverageInterval& coverageOut) const;
   /// The declared `CoverageServiceContract` this owner is admitted under. Single-sourced: the declaration,
   /// its derivation and the measurement still owed are recorded where it is defined, and the grain quanta
   /// below are the sizes its declared grain counts come from.
@@ -854,6 +866,9 @@ private:
   /// the row itself. Private because the owner's surface is the three calls above; nothing else may advance a
   /// grain or report one.
   PlaybackViewTurnResult finishPlaybackViewGrain(uint8_t slotIndex, RuntimePlaybackViewBuildGrain grain);
+  /// DEC-108 item 1: install a completed build as this slot's current interval window (atomic). False when
+  /// there is nothing completed to publish, which is a refusal rather than an error.
+  bool publishCompletedPlaybackWindow(uint8_t slotIndex);
   void reportPlaybackViewMaintenanceRow(uint8_t slotIndex, Loop& loop, const char* path);
   /// S4.5: finish any stop descriptor the retirement path left un-rearmed and re-arm it, one bounded
   /// grain per idle turn. The ring advances at retirement *before* the source release finishes, so a

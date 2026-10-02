@@ -344,6 +344,16 @@ struct RuntimePlaybackViewLifecycle {
   bool publishCompletedBuildAsReady(
       std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views,
       PlaybackViewHandoffMode mode = PlaybackViewHandoffMode::Audible);
+  /// DEC-108 item 1 (windowed-playback task 3.2): install a **completed build** as the current **interval
+  /// window** when no authoritative window exists yet -- the demoted slot's first window, whose only
+  /// representation is windowed, so `publishCompletedBuildAsReady`'s retained/idle successor requirement can
+  /// never be met. The invariant that matters is kept and checked: **only a complete view is ever installed**,
+  /// exactly as `handoff` requires of its ready view. The swap is the same atomic pair `handoff` performs -- the
+  /// retired window becomes the next build buffer, so a consumer that read it before the call saw complete
+  /// content and no read straddles the replacement. It refuses only when `retained` is the view that would be
+  /// recycled, because a retained view must stay readable for its own lane.
+  bool publishCompletedBuildAsCurrentWindow(
+      std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views);
   bool buildIsPending() const { return build != kNoView; }
   bool hasReadySuccessor() const { return ready != kNoView; }
 };

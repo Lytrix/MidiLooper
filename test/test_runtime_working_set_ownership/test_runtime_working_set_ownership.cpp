@@ -3739,6 +3739,72 @@ void test_window_owner_serves_one_grain_per_turn_and_publishes_nothing() {
                     static_cast<int>(track.stepPlaybackViewMaintenance()));
 }
 
+/// 3.2: publication is **atomic** and the published window carries the identity and the coverage interval the
+/// request named. The replacement case is the one that matters: the window being replaced stays readable right
+/// up to the turn that swaps it, and no turn publishes an incomplete build.
+void test_window_owner_publishes_the_interval_window_atomically() {
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+  TEST_ASSERT_FALSE_MESSAGE(loop.fullTakePlaybackViewAdmissible(),
+                            "the fixture needs a demoted slot: windowed is its only representation");
+
+  constexpr size_t kEvents = 100;
+  MidiEvent source[kEvents];
+  const size_t count = buildWindowOwnerSource(source, kEvents);
+  const PlaybackViewSourceIdentity firstIdentity{loop.playbackRevision, 3, nullptr};
+  const PlaybackCoverageInterval firstCoverage{0, 2 * 768, kWindowOwnerLoopTicks};
+  PlaybackViewSourceIdentity identityOut{};
+  PlaybackCoverageInterval coverageOut{};
+
+  TEST_ASSERT_FALSE_MESSAGE(track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut),
+                            "nothing is published before a request");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackViewMaintenance(
+                        0, source, count, firstIdentity, firstCoverage, {}, {}, 0,
+                        kWindowOwnerExpectedRequiredLead)));
+  const size_t expectedTurns =
+      (count + Track::kPlaybackViewFillQuantum - 1) / Track::kPlaybackViewFillQuantum +
+      (count + Track::kPlaybackViewOrderQuantum - 1) / Track::kPlaybackViewOrderQuantum;
+  for (size_t turn = 1; turn <= expectedTurns; ++turn) {
+    const Track::PlaybackViewTurnResult result = track.stepPlaybackViewMaintenance();
+    const bool publishedNow = track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut);
+    if (turn < expectedTurns) {
+      TEST_ASSERT_FALSE_MESSAGE(publishedNow,
+                                "an incomplete build must never become the published window");
+    } else {
+      TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewTurnResult::BuildComplete),
+                                static_cast<int>(result), "the last grain completes the build");
+      TEST_ASSERT_TRUE_MESSAGE(publishedNow, "the completed build must be published in that same turn");
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(firstIdentity == identityOut, "the window carries the identity it was built from");
+  TEST_ASSERT_EQUAL_UINT32(firstCoverage.startPhase, coverageOut.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(firstCoverage.lengthTicks, coverageOut.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(firstCoverage.loopLengthTicks, coverageOut.loopLengthTicks);
+
+  // **A second window is refused while one is published**, and the published window is then byte-for-byte what
+  // it was: replacement is the successor lane's (a *ready* window swapped in by the lifecycle's atomic handoff),
+  // which is task 3.4/3.5's sequencing -- not a second start against a live window.
+  const PlaybackViewSourceIdentity secondIdentity{loop.playbackRevision, 4, nullptr};
+  const PlaybackCoverageInterval secondCoverage{768, 2 * 768, kWindowOwnerLoopTicks};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::WindowAlreadyPublished),
+                    static_cast<int>(track.requestPlaybackViewMaintenance(
+                        0, source, count, secondIdentity, secondCoverage, {}, {}, 768,
+                        static_cast<uint32_t>(768 + kWindowOwnerExpectedRequiredLead))));
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut),
+                           "the refused request must leave the published window readable");
+  TEST_ASSERT_TRUE_MESSAGE(firstIdentity == identityOut,
+                           "and unchanged: a refused request must not touch the published window");
+  TEST_ASSERT_EQUAL_UINT32(firstCoverage.startPhase, coverageOut.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(firstCoverage.lengthTicks, coverageOut.lengthTicks);
+  // Nothing is owed afterwards, and another owner turn changes nothing (the refusal is not a hidden request).
+  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+                    static_cast<int>(track.stepPlaybackViewMaintenance()));
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut));
+  TEST_ASSERT_TRUE(firstIdentity == identityOut);
+}
+
 /// W-4: a refusal is named and **non-destructive** -- the obligation it found stays exactly as it was.
 void test_window_owner_refusals_are_named_and_non_destructive() {
   // No runtime: the owner never allocates one, so the request is refused and nothing is owed.
@@ -3846,5 +3912,7 @@ int main() {
   RUN_TEST(test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle);
   RUN_TEST(test_window_owner_serves_one_grain_per_turn_and_publishes_nothing);
   RUN_TEST(test_window_owner_refusals_are_named_and_non_destructive);
+  // windowed-playback-generation slice 3.2: the owner's atomic interval-window publication.
+  RUN_TEST(test_window_owner_publishes_the_interval_window_atomically);
   return UNITY_END();
 }
