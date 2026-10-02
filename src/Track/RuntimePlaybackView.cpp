@@ -715,6 +715,24 @@ bool RuntimePlaybackViewLifecycle::publishCompletedBuildAsCurrentWindow(
   return true;
 }
 
+bool RuntimePlaybackViewLifecycle::publishCompletedBuildAsReadySuccessor(
+    std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views) {
+  if (build >= views.size() || !views[build].complete) {
+    return false;
+  }
+  // One *real* successor at a time: an incomplete shell in the ready role is not one.
+  if (ready < views.size() && views[ready].complete) {
+    return false;
+  }
+  const uint8_t shell = ready;
+  ready = build;
+  build = (shell < views.size() && shell != ready) ? shell : kNoView;
+  if (build != kNoView) {
+    views[build].resetMetadata();
+  }
+  return true;
+}
+
 bool RuntimePlaybackViewLifecycle::installPreparedCurrent(
     std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views) {
   if (current >= views.size() || ready >= views.size() || current == ready ||

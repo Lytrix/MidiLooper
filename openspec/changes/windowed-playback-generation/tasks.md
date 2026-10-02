@@ -67,7 +67,7 @@ is therefore *not* a blanket pre-gate on unrelated work and is **not** required 
 implements it exists: 2.1–2.8 are established with their slices, while 2.9–2.12 each sit with the slice named beside
 them. Nothing in this section may stand in for production behaviour with a stub that returns success.
 
-- [ ] 2.1 Land **F-1** (window identity and immutability) — verify the fixture asserts
+- [x] 2.1 Land **F-1** (window identity and immutability) — verify the fixture asserts
   `(slot, playbackGeneration, playbackRevision, interval)` identity, that a consumer read cannot straddle a
   replacement, and that a consumer cannot mutate the window
 - [ ] 2.2 Land **F-2** (readiness per affected tick inside the deadline) — verify the oracle is the **derived** deadline
@@ -93,7 +93,7 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   and reclaim passes, run the direct reset/replacement path (IDs reused), attempt slot release and load, then resume:
   assert exact old-version **effective** content, no stale aliasing, protection on both the reclamation consumer and the
   reset path, and eventual release. *(G2 pass 2, row 7)*
-- [ ] 2.10 **Inspected-work bound fixture** — *slice §3.2*. Keep the requested window identical while adding
+- [x] 2.10 **Inspected-work bound fixture** — *slice §3.2; landed with it*. Keep the requested window identical while adding
   non-intersecting chunks across progressively longer loops, including a window that intersects nothing: assert inspected
   work per grain is bounded (rejected chunks and lookup included) and total preparation cost does not grow with unrelated
   content. *(G2 pass 2, row 6 — a chunk quantum alone is not the oracle)*
@@ -133,7 +133,7 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   "only a complete view is ever installed" invariant and performs `handoff`'s atomic swap — a demoted slot's
   *first* window had no publication path before it), the window carries its identity and coverage,
   `Track::publishedPlaybackWindowForSlot` reads it, and a second window is refused by name
-  (`WindowAlreadyPublished`) with the published window unchanged. **A whole-loop interval is coverage spanning the
+  (`WindowAlreadyPublished`; **renamed `SuccessorAlreadyPrepared` by 3.4** — see the superseding note at the end of this record) with the published window unchanged. **A whole-loop interval is coverage spanning the
   loop**: `Track::playbackWindowInterval` resolves it for a loop the whole-take view serves, and the two-bar
   window at the playhead for a demoted one (one policy, shared with the live build). **Enumeration goes through
   the effective-content resolver**: `Track::requestPlaybackWindow(slot, phase, scratch)` enumerates the selected
@@ -152,6 +152,12 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   **unmeasured** per-turn phase advance (task 6.3's measurement is what makes it admissible), and *replacement*
   sequencing is 3.4/3.5's successor lane (per the measured finding in
   [`evidence/2026-10-02-s32-interval-publication/EVIDENCE.md`](evidence/2026-10-02-s32-interval-publication/EVIDENCE.md)).
+  *Superseded 2026-10-02 (slice 3.4, F-1):* the refusal this record names was a **placeholder for the successor lane**,
+  and the lane now exists. `WindowAlreadyPublished` is renamed **`SuccessorAlreadyPrepared`** — a window merely
+  *being served* is not a bound, because preparing its replacement **is** the successor lane; what is bounded is a
+  second *prepared* successor. The measured finding above is therefore **resolved, not worked around**: the
+  completed build routes to the `ready` successor and the served window is untouched until one atomic
+  `handoffReadyCoverage`. Detail: [`evidence/2026-10-02-s34-window-identity/EVIDENCE.md`](evidence/2026-10-02-s34-window-identity/EVIDENCE.md).
 - [x] 3.3 Budget the representation — verify current, ready and building windows (with reader retention, staging and
   transition overlap) are accounted, that the three rolling views' lifetimes are shown to suffice **before** any buffer
   is added, and that `test_playback_prewarm` stays green unchanged
@@ -165,8 +171,34 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   holder's cost is the pre-existing "three views + two stagings" (333,824 B ≈ 326 KiB on the target ABI, from the
   same 35/29 B-per-event figures RWO's `S2C1` derived). `test_playback_prewarm` is **190/190 unchanged** and is
   cited, not restated: no new fixture duplicates the capacity arithmetic that suite already pins.
-- [ ] 3.4 Carry the identity `(slot, playbackGeneration, playbackRevision, interval)` on the published window — verify
+- [x] 3.4 Carry the identity `(slot, playbackGeneration, playbackRevision, interval)` on the published window — verify
   F-1 passes and that the generation guards ownership changes rather than becoming a second currency
+  *Landed 2026-10-02; F-1's three clauses are asserted, and 2.1 is checked with it.* `PlaybackWindowIdentity` carries
+  `{slot, playbackGeneration, playbackRevision, interval}` with equality over exactly those fields (the snapshot
+  identity stays provenance *inside* `PlaybackViewSourceIdentity`), `Track::publishedPlaybackWindowIdentityForSlot`
+  is the const, copy-returning consumer accessor, and `Track::adoptPreparedPlaybackWindow` is the consumer-facing
+  adoption (one atomic `handoffReadyCoverage(Preparation)`), **not yet called by production** (3.7 owns the eligible
+  boundary). Replacement became the **successor lane**: `RuntimePlaybackViewLifecycle::publishCompletedBuildAsReadySuccessor`
+  accepts the *incomplete* prewarmed shell at `ready` — `publishCompletedBuildAsReady` refuses it, so a lane without a
+  record-return shell could never publish a replacement — while keeping "one **real** successor at a time" and "only a
+  complete view is ever installed", and the completed build **routes** by what it replaces (no window → `current`;
+  a window being served → the `ready` successor, leaving the served window untouched). The request bound changed with
+  it: `WindowAlreadyPublished` → **`SuccessorAlreadyPrepared`**, because a window merely *being served* is not a bound
+  while a second *prepared* successor is. **The generation guards ownership, not currency:** a second request at the
+  same revision and the same ownership but a **different interval** leaves generation *and* revision unchanged while
+  the interval moves (DEC-108 item 5's separation, asserted). **3.2's measured finding is resolved, not worked
+  around:** the fixture asserts the served window identical field-for-field before every preparation turn, that a
+  prepared successor does not become the served window until it is adopted, and that the adoption swaps it atomically;
+  reverting the routing reproduces the old symptom.
+  *Verification:* this suite **50/50**, `test_midi_service_drain` 38/38, `test_playback_prewarm` **190/190** (unchanged;
+  cited, not restated), full native **2681 / 2674 succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial`
+  **SUCCESS** on a **clean rebuild** (every TU recompiled) with RAM1 `variables 96,192` **unchanged** / `code 392,200 +
+  padding 1,016` / locals 34,880 (floor 840) and **no re-base**; two mutations red-proved with byte-identical restores
+  (sha256 verified).
+  *Named, not claimed:* the adoption edge is **not wired into production** (3.7), readiness is still **3.5**'s
+  predicate, nothing a consumer reads changed, and no device evidence exists. Detail:
+  [`evidence/2026-10-02-s34-window-identity/EVIDENCE.md`](evidence/2026-10-02-s34-window-identity/EVIDENCE.md) and
+  [`G2-EXECUTION-PACKET.md`](G2-EXECUTION-PACKET.md) § Slice 3.4.
 - [ ] 3.5 Make readiness the completed-publication predicate with a named holder — verify the empty-interval fixture and
   the AC-3 fixture pass, and that **RWO's two demoted-target fixtures are re-pointed** rather than left depending on
   empty ⇒ not-ready

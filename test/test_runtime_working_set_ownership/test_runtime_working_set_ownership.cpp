@@ -3614,6 +3614,8 @@ Track& prepareWindowOwnerSlot(uint8_t trackIndex) {
   LoopEventStore::initPool();
   Track& track = trackManager.getTrack(trackIndex);
   track.ensureLoopsAllocated();
+  // Committed content, so the slot's revision is a real one (a window carries the revision it was built from).
+  commitRecordPassIntoTrackSlot(track, 0);
   track.getLoop(0).loopLengthTicks = kWindowOwnerLoopTicks;
   TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true),
                            "the slot must prewarm a runtime for the owner to owe anything");
@@ -3790,6 +3792,35 @@ void test_window_owner_resolves_the_interval_through_the_published_snapshot() {
   TEST_ASSERT_EQUAL_PTR_MESSAGE(loop.publishedSnapshotIdentity(), identityOut.snapshotIdentity,
                                 "and the published root it read it from");
 
+  // F-1: the identity tuple, and the generation as an **ownership** guard rather than a second currency.
+  PlaybackWindowIdentity first{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, first));
+  TEST_ASSERT_TRUE_MESSAGE(first.isValid(), "a published window carries a valid identity");
+  TEST_ASSERT_EQUAL_UINT8(0, first.slot);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(loop.playbackRevision, first.playbackRevision,
+                                   "content currency is the loop's revision, and the window carries it");
+  TEST_ASSERT_EQUAL_UINT32(interval.startPhase, first.interval.startPhase);
+  // A **different interval at the same revision and the same ownership**: the successor lane prepares it, the
+  // served identity does not move while it is prepared, and the adoption swaps it in with the generation intact.
+  const uint32_t secondPlayhead = playhead + 3u * 768u;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, secondPlayhead, scratch)));
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  PlaybackWindowIdentity stillServed{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, stillServed));
+  TEST_ASSERT_TRUE_MESSAGE(first == stillServed,
+                           "preparing a successor must leave the served identity untouched");
+  TEST_ASSERT_TRUE(track.adoptPreparedPlaybackWindow(0));
+  PlaybackWindowIdentity second{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, second));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(first.playbackGeneration, second.playbackGeneration,
+                                   "the generation guards ownership: a new interval does not move it");
+  TEST_ASSERT_EQUAL_UINT32(first.playbackRevision, second.playbackRevision);
+  TEST_ASSERT_TRUE_MESSAGE(first.interval.startPhase != second.interval.startPhase,
+                           "while the interval *did* change -- the interval is not currency");
+
   // A rootless slot is refused by name, not served through a compatibility path.
   Track& rootless = trackManager.getTrack(1);
   rootless.ensureLoopsAllocated();
@@ -3886,27 +3917,48 @@ void test_window_owner_publishes_the_interval_window_atomically() {
   TEST_ASSERT_EQUAL_UINT32(firstCoverage.lengthTicks, coverageOut.lengthTicks);
   TEST_ASSERT_EQUAL_UINT32(firstCoverage.loopLengthTicks, coverageOut.loopLengthTicks);
 
-  // **A second window is refused while one is published**, and the published window is then byte-for-byte what
-  // it was: replacement is the successor lane's (a *ready* window swapped in by the lifecycle's atomic handoff),
-  // which is task 3.4/3.5's sequencing -- not a second start against a live window.
+  // **F-1 (task 3.4): a replacement is a ready successor, not a second start.** While the successor is
+  // prepared, the served window is byte-for-byte what it was -- no consumer read can straddle the replacement --
+  // and the adoption is the single atomic swap.
+  PlaybackWindowIdentity firstWindow{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, firstWindow));
+  TEST_ASSERT_TRUE_MESSAGE(firstWindow.isValid(), "a published window carries a valid identity");
+  TEST_ASSERT_EQUAL_UINT8(0, firstWindow.slot);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(loop.playbackRevision, firstWindow.playbackRevision,
+                                   "the window's currency is the loop's revision");
   const PlaybackViewSourceIdentity secondIdentity{loop.playbackRevision, 4, nullptr};
   const PlaybackCoverageInterval secondCoverage{768, 2 * 768, kWindowOwnerLoopTicks};
-  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::WindowAlreadyPublished),
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                     static_cast<int>(track.requestPlaybackViewMaintenance(
                         0, source, count, secondIdentity, secondCoverage, {}, {}, 768,
                         static_cast<uint32_t>(768 + kWindowOwnerExpectedRequiredLead))));
-  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut),
-                           "the refused request must leave the published window readable");
-  TEST_ASSERT_TRUE_MESSAGE(firstIdentity == identityOut,
-                           "and unchanged: a refused request must not touch the published window");
-  TEST_ASSERT_EQUAL_UINT32(firstCoverage.startPhase, coverageOut.startPhase);
-  TEST_ASSERT_EQUAL_UINT32(firstCoverage.lengthTicks, coverageOut.lengthTicks);
-  // Nothing is owed afterwards, and another owner turn changes nothing (the refusal is not a hidden request).
-  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
-  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::Idle),
-                    static_cast<int>(track.stepPlaybackViewMaintenance()));
-  TEST_ASSERT_TRUE(track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut));
-  TEST_ASSERT_TRUE(firstIdentity == identityOut);
+  for (size_t turn = 1; turn <= expectedTurns; ++turn) {
+    PlaybackViewSourceIdentity duringIdentity{};
+    PlaybackCoverageInterval duringCoverage{};
+    PlaybackWindowIdentity during{};
+    TEST_ASSERT_TRUE(track.publishedPlaybackWindowForSlot(0, duringIdentity, duringCoverage));
+    TEST_ASSERT_TRUE_MESSAGE(firstIdentity == duringIdentity,
+                             "the served window must not change while its successor is prepared");
+    TEST_ASSERT_EQUAL_UINT32(firstCoverage.startPhase, duringCoverage.startPhase);
+    TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, during));
+    TEST_ASSERT_TRUE_MESSAGE(firstWindow == during, "and its identity must be identical, field for field");
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  // The successor is prepared but **not adopted**: the served window is still the first one. That is the whole
+  // point of the ready role -- the last coherent revision stays readable to the last moment.
+  PlaybackWindowIdentity prepared{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, prepared));
+  TEST_ASSERT_TRUE_MESSAGE(firstWindow == prepared,
+                           "a prepared successor must not become the served window until it is adopted");
+  // Adoption is the atomic swap, and only then does the window change.
+  TEST_ASSERT_TRUE(track.adoptPreparedPlaybackWindow(0));
+  PlaybackWindowIdentity adopted{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, adopted));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(secondCoverage.startPhase, adopted.interval.startPhase,
+                                   "after adoption the window is the successor's interval");
+  TEST_ASSERT_EQUAL_UINT32(secondCoverage.lengthTicks, adopted.interval.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(secondIdentity.sourceGeneration, adopted.playbackGeneration,
+                                   "and it carries the successor's own generation");
 }
 
 /// W-4: a refusal is named and **non-destructive** -- the obligation it found stays exactly as it was.

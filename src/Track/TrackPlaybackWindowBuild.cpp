@@ -1092,10 +1092,13 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
     return PlaybackViewRequestResult::BuildInFlight;
   }
   {
-    PlaybackViewSourceIdentity publishedIdentity{};
-    PlaybackCoverageInterval publishedCoverage{};
-    if (publishedPlaybackWindowForSlot(slotIndex, publishedIdentity, publishedCoverage)) {
-      return PlaybackViewRequestResult::WindowAlreadyPublished;
+    // One **prepared successor** at a time: a completed successor already waiting has to be adopted (or its
+    // build role freed) before another can be prepared, so a third window cannot silently displace it. A window
+    // merely *being served* is not a bound -- preparing its replacement is exactly the successor lane.
+    const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+    if (set != nullptr && set->lifecycle.ready < RuntimePlaybackViewConfig::kViewCount &&
+        set->views[set->lifecycle.ready].complete) {
+      return PlaybackViewRequestResult::SuccessorAlreadyPrepared;
     }
   }
   const CoverageServiceContract contract = playbackViewCoverageContract();
@@ -1224,6 +1227,35 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackWindow(uin
                                        phase, coverage.startPhase);
 }
 
+TRACK_COLD_MEM bool Track::publishedPlaybackWindowIdentityForSlot(uint8_t slotIndex,
+                                                                  PlaybackWindowIdentity& out) const {
+  PlaybackViewSourceIdentity sourceIdentity{};
+  PlaybackCoverageInterval coverage{};
+  if (!publishedPlaybackWindowForSlot(slotIndex, sourceIdentity, coverage)) {
+    return false;
+  }
+  out.slot = slotIndex;
+  out.playbackGeneration = sourceIdentity.sourceGeneration;
+  out.playbackRevision = sourceIdentity.playbackRevision;
+  out.interval = coverage;
+  return true;
+}
+
+TRACK_COLD_MEM bool Track::adoptPreparedPlaybackWindow(uint8_t slotIndex) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return false;
+  }
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (set == nullptr) {
+    return false;
+  }
+  // The successor lane's adoption: one atomic handoff (`RuntimePlaybackViewLifecycle::handoff`), prepared-mode
+  // because a window carries no audible-launch semantics of its own. It refuses unless a **complete** successor
+  // is waiting, so a caller can poll it safely.
+  return set->handoffReadyCoverage(PlaybackViewHandoffMode::Preparation);
+}
+
 TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   if (runtime == nullptr) {
@@ -1232,6 +1264,13 @@ TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
   RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
   if (set == nullptr) {
     return false;
+  }
+  PlaybackWindowIdentity published{};
+  if (publishedPlaybackWindowIdentityForSlot(slotIndex, published)) {
+    // A window is being served: this completed build becomes its **ready successor**, and the served window is
+    // left exactly as it was -- the replacement's swap is `adoptPreparedPlaybackWindow`'s single handoff, at an
+    // eligible boundary (task 3.7). That is F-1's "a consumer read cannot straddle a replacement".
+    return set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views);
   }
   return set->lifecycle.publishCompletedBuildAsCurrentWindow(set->views);
 }

@@ -64,6 +64,29 @@ struct PlaybackCoverageInterval {
   bool isValid() const { return loopLengthTicks > 0 && lengthTicks > 0 && lengthTicks <= loopLengthTicks; }
 };
 
+/// DEC-108 item 5 / task 3.4: the identity a published window carries, and the only currency a consumer may
+/// compare. `playbackRevision` is the sole **content-currency** authority (`Loop::committedPassRevision()` is
+/// its alias), `playbackGeneration` guards **ownership** changes and stale deferred completions (never a second
+/// currency), `interval` carries the loop geometry, and the slot says whose window this is. The snapshot identity
+/// stays provenance/lifetime protection inside `PlaybackViewSourceIdentity`, never another definition of
+/// "current".
+struct PlaybackWindowIdentity {
+  uint8_t slot = UINT8_MAX;
+  uint32_t playbackGeneration = 0;
+  uint32_t playbackRevision = 0;
+  PlaybackCoverageInterval interval{};
+
+  bool operator==(const PlaybackWindowIdentity& other) const {
+    return slot == other.slot && playbackGeneration == other.playbackGeneration &&
+           playbackRevision == other.playbackRevision &&
+           interval.startPhase == other.interval.startPhase &&
+           interval.lengthTicks == other.interval.lengthTicks &&
+           interval.loopLengthTicks == other.interval.loopLengthTicks;
+  }
+  bool operator!=(const PlaybackWindowIdentity& other) const { return !(*this == other); }
+  bool isValid() const { return slot != UINT8_MAX && playbackRevision != 0 && interval.isValid(); }
+};
+
 struct LedgerBoundarySummary {
   std::array<ActiveNoteLedger::Entry, ActiveNoteLedger::kMaxOpenNotes> openNotes{};
   uint16_t count = 0;
@@ -353,6 +376,14 @@ struct RuntimePlaybackViewLifecycle {
   /// content and no read straddles the replacement. It refuses only when `retained` is the view that would be
   /// recycled, because a retained view must stay readable for its own lane.
   bool publishCompletedBuildAsCurrentWindow(
+      std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views);
+  /// DEC-108 item 5 / task 3.4 (the windowed lane's successor): install a completed build as the **ready
+  /// successor** while a window is being served. `publishCompletedBuildAsReady` treats the prewarmed shell at
+  /// `ready` as an existing successor and refuses; a shell is not a successor -- it is not complete, so `handoff`
+  /// can never adopt it -- and this variant accepts it while keeping the rule that matters: **one real successor
+  /// at a time**, and only a **complete** view is ever installed. The served `current` window is not touched, so
+  /// a consumer read cannot straddle the replacement; the swap happens later, in `handoffReadyCoverage`.
+  bool publishCompletedBuildAsReadySuccessor(
       std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views);
   bool buildIsPending() const { return build != kNoView; }
   bool hasReadySuccessor() const { return ready != kNoView; }
