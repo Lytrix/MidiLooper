@@ -27,6 +27,7 @@
 #include <cstdlib>
 
 #include "../test_support/firmware/Arduino.h"
+#include "WindowPagedStream.h"
 #include "../test_support/firmware/SD.h"
 
 SDClass SD;
@@ -4651,6 +4652,81 @@ void test_window_admission_limit_accounts_effective_events_and_the_closure_reser
   TEST_ASSERT_EQUAL_UINT32(256u, static_cast<uint32_t>(WindowAdmissionAccounting::conservativeBoundForBars(4, 64)));
 }
 
+/// 3.12b (DEC-108 §14): the **bounded legacy compatibility path** — content beyond one page served through
+/// fixed-capacity pages that return to a bounded ring, with a resumable cursor giving ordering and **exactly-once**
+/// emission across page boundaries, and a generation-qualified cursor that cannot resume another revision's stream.
+void test_paged_window_stream_serves_more_than_one_page_exactly_once_across_the_ring() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  constexpr uint32_t kLoopTicks = 4 * 768;
+  constexpr size_t kEvents = 700;  // > 3 pages (the ring's 384) at 128 events each, so pages must be reused
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  Loop& loop = track.getActiveLoop();
+  loop.loopLengthTicks = kLoopTicks;
+  loop.beginCapture(CapturePhase::Record);
+  for (size_t i = 0; i < kEvents; ++i) {
+    TEST_ASSERT_TRUE_MESSAGE(loop.appendCaptureEvent(MidiEvent::NoteOn(static_cast<uint32_t>(i * 4), 1, 48, 100)),
+                             "the fixture needs a dense committed pass");
+  }
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(kLoopTicks, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  const CommittedChunkIdList* lists[1] = {&loop.passes.recordPass.committedChunkIds};
+
+  WindowPagedStream stream;
+  stream.reset(loop.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, stream.sourceRevision());
+  WindowPageCursor cursor{};
+  MidiEvent emitted[kEvents];
+  size_t emittedCount = 0;
+  size_t produced = 0;
+  size_t pageHighWater = 0;
+  // Interleave production and consumption the way a bounded worker would: fill the ring while there is room, then let
+  // the consumer drain, so the ring bound is exercised and no page is ever needed twice.
+  for (size_t guard = 0; guard < 64 && emittedCount < kEvents; ++guard) {
+    while (stream.pagesPublished() < kWindowPageCount) {
+      const WindowPagedStream::ProduceOutcome outcome =
+          stream.produce(lists, 1, kLoopTicks, 0, kLoopTicks, stream.sourceRevision());
+      if (outcome == WindowPagedStream::ProduceOutcome::SourceComplete) {
+        break;
+      }
+      TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(WindowPagedStream::ProduceOutcome::Produced),
+                                static_cast<int>(outcome), "a page must be produced while the ring has room");
+      ++produced;
+      pageHighWater = stream.pagesPublished() > pageHighWater ? stream.pagesPublished() : pageHighWater;
+    }
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(kWindowPageCount),
+                                             static_cast<uint32_t>(stream.pagesPublished()),
+                                             "the ring bound holds: memory is bounded, content is not");
+    size_t chunk = 0;
+    const WindowPagedStream::ConsumeOutcome consumeOutcome =
+        stream.consume(cursor, emitted + emittedCount, kEvents - emittedCount, chunk);
+    TEST_ASSERT_TRUE_MESSAGE(
+        consumeOutcome == WindowPagedStream::ConsumeOutcome::Emitted ||
+            consumeOutcome == WindowPagedStream::ConsumeOutcome::Exhausted,
+        "a consumer never waits for preparation: it asks for a page");
+    emittedCount += chunk;
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(kEvents), static_cast<uint32_t>(emittedCount),
+                                   "every accepted event is served: nothing is truncated");
+  TEST_ASSERT_TRUE_MESSAGE(produced >= 3, "the interval needed more than one page");
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(kWindowPageCount), static_cast<uint32_t>(pageHighWater),
+                                           "the high-water mark is the ring, not the content");
+  // Ordered across the boundaries: the source's ticks were strictly increasing, and so are the emitted ones.
+  for (size_t i = 1; i < emittedCount; ++i) {
+    TEST_ASSERT_TRUE_MESSAGE(emitted[i].tick > emitted[i - 1].tick, "ordering survives the page boundaries");
+  }
+  // The cursor is generation-qualified: another revision's cursor cannot consume or produce here.
+  WindowPageCursor stale{};
+  stale.sourceRevision = stream.sourceRevision() + 1;
+  size_t ignored = 0;
+  TEST_ASSERT_EQUAL(static_cast<int>(WindowPagedStream::ConsumeOutcome::StaleRevision),
+                    static_cast<int>(stream.consume(stale, emitted, 1, ignored)));
+  TEST_ASSERT_EQUAL(static_cast<int>(WindowPagedStream::ProduceOutcome::StaleRevision),
+                    static_cast<int>(stream.produce(lists, 1, kLoopTicks, 0, kLoopTicks,
+                                                    stream.sourceRevision() + 1)));
+}
+
 int main() {
 
 
@@ -4746,5 +4822,7 @@ int main() {
   RUN_TEST(test_shared_view_transitions_state_the_ownership_rules_and_a_late_completion_publishes_nothing);
   // windowed-playback-generation slice 3.12a: the admission limit on the decided accounting unit (DEC-108 §14).
   RUN_TEST(test_window_admission_limit_accounts_effective_events_and_the_closure_reserve_inside_l);
+  // windowed-playback-generation slice 3.12b: the bounded legacy paged path (pages + resumable cursor).
+  RUN_TEST(test_paged_window_stream_serves_more_than_one_page_exactly_once_across_the_ring);
   return UNITY_END();
 }

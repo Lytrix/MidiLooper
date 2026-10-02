@@ -394,6 +394,25 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   (c) the **MIDI-edge wiring** of the limit into capture acceptance, without which "capacity pressure is refused before
   acceptance" is a property of the unit rather than of the running system. Detail:
   [`evidence/2026-10-02-s312a-admission-limit/EVIDENCE.md`](evidence/2026-10-02-s312a-admission-limit/EVIDENCE.md).
+  *Increment 3.12b landed 2026-10-02 — clause (b), the **bounded legacy paged path**; the **task stays open** for the
+  MIDI-edge wiring.* `include/WindowPagedStream.h` serves content beyond `L` (and any interval that outgrows one page)
+  through a **ring of three fixed-capacity immutable 128-event pages** with a **resumable cursor** `(sourceRevision,
+  nextSequence, offsetInPage)`: `produce(...)` takes one bounded slice per call through the **existing**
+  `CommittedEventRange::appendWindowBudgeted` + `WindowTraversalCursor` (reuse, not a second enumerator, per 3.8) and
+  `consume(...)` continues exactly where it left off, so ordering and **exactly-once** emission hold across page
+  boundaries from positions alone; a drained page returns to the ring, so **memory stays bounded while content is
+  not**. There is deliberately **no blocking state** — an unpublished next sequence answers `NeedsPage`, never a wait —
+  and a foreign revision is refused by name (`StaleRevision`) on **both** sides, the same generation-qualified rule as
+  the shared-view identity. *Verification:* focused **57/57**, full native **2688 / 2681 succeeded / 7 skipped / 0
+  failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192` **unchanged** / `code
+  391,928 + padding 1,288` (448 B headroom) and **no re-base** (the header has no production caller), the S3.0 pin
+  untouched. Two mutations red-proved with byte-identical restores; the **first M15 attempt did not discriminate** (a
+  300-event fixture filled exactly the ring, so reuse was never required), so the fixture now commits **700** events,
+  and that test defect is recorded rather than skipped. **OWED in this task:** (c) the **MIDI-edge wiring** of the limit
+  into capture acceptance (no resolver, no allocation on the edge; no stop/switch/undo request ever refused), and
+  fixture **5.5**'s timing envelope with the over-capacity same-tick, wrap and cross-page-closure cases — so the ring
+  size (3x128) and the closure reserve (128) remain **declared, unmeasured** choices for task 6.3's sweeps. Detail:
+  [`evidence/2026-10-02-s312b-paged-path/EVIDENCE.md`](evidence/2026-10-02-s312b-paged-path/EVIDENCE.md).
 - [ ] 3.13 **Implement the preview contract — immutable deferred publication** — publish preview through the same
   immutable deferred discipline as committed content, defining **source freezing** (the preview revision a build works
   from), **cancellation** (session mutation, track re-focus, undo, exit between build grains) and **committed-content
