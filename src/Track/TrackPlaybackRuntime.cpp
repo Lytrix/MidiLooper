@@ -2247,10 +2247,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // retiring) — two entries, each an identity, descriptor pins and its own store references, so a retained revision
 // survives both the pass-level reclamation consumer and `Loop::resetPassTimeline`. DEC-108 item 4 charges that cost
 // to the envelope, and it is one deliberate re-base, recorded, exactly as DEC-107 recorded 6,352 -> 6,360.
-// The pin is **per ABI**: the pin lists are pointer-sized, so the target (32-bit) holds +96 B and the host +176 B.
+// The pins are **per ABI**: the holder's pin lists are pointer-sized, so the target (32-bit) holds +120 B over the
+// pre-slice figure (6,368 -> 6,488: +96 B retained sources, +24 B lag accounting) while the host holds +176 B
+// (6,544) because the lag state fits in its existing padding. The **target** figure is the one charged.
 #if defined(__IMXRT1062__)
-static_assert(sizeof(LoopPlaybackRuntime) == 6464,
-              "S3.0/3.6: LoopPlaybackRuntime is the per-slot working set (6,464 B extmem: +96 B retained sources)");
+static_assert(sizeof(LoopPlaybackRuntime) == 6488,
+              "S3.0/3.6: LoopPlaybackRuntime is the per-slot working set (6,488 B extmem: +96 B sources, +24 B lag)");
 #else
 static_assert(sizeof(LoopPlaybackRuntime) == 6544,
               "S3.0/3.6: LoopPlaybackRuntime host-ABI size (6,544 B: +176 B retained sources)");

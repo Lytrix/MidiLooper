@@ -391,6 +391,23 @@ public:
   /// cannot free a retained revision's descriptors (a pin held only alongside undo references is not sufficient
   /// protection, and the direct reset path is covered by the retained *ownership* rather than by a veto).
   bool mergeRetainedPlaybackPinsInto(uint8_t slotIndex, SlotPassReferences& into) const;
+  /// Task 3.6b (AC-5/F-3): the **lag rule** as one pure resolution -- so a fixture can pin the decision without any
+  /// state, and so the rule has exactly one implementation. `servedIsCurrent` is readiness (3.5) seen at the interval's
+  /// traversal boundary; `replacementReady` is a complete current window published for that boundary. The result is
+  /// **total**: `Current`, `PreviousOnePass`, or the named `BreachSecondMiss` -- never a wait, so a consumer can never
+  /// be blocked by a missed deadline.
+  static PlaybackLagDecision resolvePlaybackLag(bool servedIsCurrent, bool replacementReady,
+                                                uint8_t missedTraversals);
+  /// Task 3.6b: the **traversal boundary**. Counts the miss when the interval's replacement is not ready, returns the
+  /// decision, and reports the breach **once per episode** (the episode ends at a served traversal or an interval
+  /// change). A further edit moves the desired revision and **never resets the allowance** (AC-5). Off-clock only.
+  PlaybackLagDecision advancePlaybackLagTraversal(uint8_t slotIndex, uint32_t intervalStart,
+                                                  uint32_t intervalLength, uint32_t desiredRevision,
+                                                  bool replacementReady);
+  PlaybackLagDecision playbackLagDecisionForSlot(uint8_t slotIndex) const;
+  uint8_t playbackLagMissedTraversalsForSlot(uint8_t slotIndex) const;
+  uint8_t playbackLagBreachReportsForSlot(uint8_t slotIndex) const;
+  bool playbackLagBreachReportedForSlot(uint8_t slotIndex) const;
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
   void releasePlaybackMergedMidiEventsMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.

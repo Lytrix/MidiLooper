@@ -87,6 +87,46 @@ struct PlaybackWindowIdentity {
   bool isValid() const { return slot != UINT8_MAX && playbackRevision != 0 && interval.isValid(); }
 };
 
+/// AC-5 / F-3 (task 3.6b): the **lag decision** for one traversal of an affected interval. The rule is total -- every
+/// input yields one of these three, so there is **no waiting outcome** and a consumer can never be blocked by a missed
+/// deadline. `PreviousOnePass` means the previous revision stays authoritative for *that* traversal; the swap happens
+/// at a later eligible boundary, never mid-consumption.
+enum class PlaybackLagDecision : uint8_t {
+  /// The traversal may be served at the loop's current revision: either the served window already carries it, or a
+  /// complete current window is published for the boundary (which adopts it).
+  Current,
+  /// A first miss: the previous revision remains authoritative for this traversal, and `missedTraversals == 1`.
+  PreviousOnePass,
+  /// A second (or later) consecutive miss: the **named** contract breach. The previous revision is still served --
+  /// containment is deliberate, and the lag is never silently reset (DEC-108 item 13(e)).
+  BreachSecondMiss,
+};
+
+/// The per-interval accounting behind the lag rule: which interval is being traversed, the revisions involved, how many
+/// consecutive traversals missed, and whether this episode's breach has been reported (once per episode).
+struct PlaybackLagState {
+  uint32_t intervalStart = 0;
+  uint32_t intervalLength = 0;
+  uint32_t servedRevision = 0;
+  uint32_t desiredRevision = 0;
+  uint8_t missedTraversals = 0;
+  uint8_t breachReports = 0;
+  bool breachReported = false;
+
+  /// The episode ends when a traversal is served at the current revision, or when the interval changes: the allowance
+  /// is per pass **and per interval**, never a slot-wide counter a later edit could inherit.
+  void resetEpisode(uint32_t start, uint32_t length) {
+    intervalStart = start;
+    intervalLength = length;
+    missedTraversals = 0;
+    breachReports = 0;
+    breachReported = false;
+  }
+  bool coversInterval(uint32_t start, uint32_t length) const {
+    return intervalStart == start && intervalLength == length;
+  }
+};
+
 struct LedgerBoundarySummary {
   std::array<ActiveNoteLedger::Entry, ActiveNoteLedger::kMaxOpenNotes> openNotes{};
   uint16_t count = 0;

@@ -447,3 +447,64 @@ and the reclamation consumer's merge; and the retention term in `Track::noLiveOw
   inspected-work budgeting) and the **lag rule / F-3** (one pass late and only that, the named second-miss breach, the
   allowance not reset by a further edit, the consumer never blocked) are the next increment. This one builds their
   precondition: a revision can be held, protected against both destruction paths, and released by one predicate.
+
+### Increment 3.6b — the lag rule (F-3, AC-5): one pass late, and only that (2026-10-02)
+
+**Scope.** The **lag rule** only: a missed deadline keeps the **previous** revision of the affected interval
+authoritative for **that traversal**; a **second** consecutive miss is a **named** contract breach; the consumer is
+never blocked; and a further edit does **not** reset the allowance. It is the decision core of F-3/AC-5, riding on
+3.5's readiness predicate (a miss *is* readiness that is not `Ready` when the playhead returns to the interval) and on
+3.6a's retained source (the previous revision is *held*, which is what makes "keeps the previous version
+authoritative" true rather than aspirational).
+
+**Non-goals, named rather than implied.** (1) The **interval index over pinned bodies** remains the next increment of
+3.6 — nothing here claims interval-directed lookup. (2) The **consumer switch** stays 3.7's: the traversal boundary
+has no production caller yet, exactly as the window lane and the adoption edge do not. (3) This slice does not adopt
+a replacement at the boundary; it decides what the boundary may serve, and `Current` means "the boundary may serve the
+current revision" (either it already is, or a complete current window is published and the boundary adopts it).
+
+**The rule, as one resolution plus per-interval accounting.** A `PlaybackLagState` per slot records the interval
+being traversed (its coverage geometry), the served and desired revisions, the consecutive missed traversals, and
+whether the breach has been reported. The resolution is total — **there is no waiting outcome**, so the consumer can
+never be blocked — and reports the breach **once per episode**: the episode ends when a traversal is served at the
+current revision or the interval changes.
+
+| # | Case | Discriminating assertion | Mutation that must fail it |
+|---|---|---|---|
+| W-20 | the served window already carries the desired revision | `Current`; nothing is owed and no miss is counted | counting a miss when served is desired |
+| W-21 | a complete current window is published for the boundary (the successor the boundary adopts) | `Current` — the replacement is published *before* the following eligible traversal | treating "not yet the served window" as a miss |
+| W-22 | the first traversal with no replacement ready | `PreviousOnePass`: the previous revision stays authoritative for **that traversal**, and the published window is **byte-for-byte unchanged** (no tear, no hold, no defer) | replacing or clearing the served window on a miss; a fourth "waiting" outcome |
+| W-23 | a **second** consecutive miss, and a further edit in between | `BreachSecondMiss`, reported **once per episode** (a third miss keeps breaching without re-reporting), and the further edit does **not** reset the miss count | resetting the allowance when the desired revision changes (the AC-5 rule) |
+| W-24 | a replacement becomes ready, or the interval changes | the next boundary is `Current` and the episode resets (misses and the breach flag cleared) | never resetting, so one breach poisons the slot forever |
+
+**Verification recipe.** Focused `test_runtime_working_set_ownership` + the full native suite + the
+`teensy41-capture-serial` build with the RAM1 guard (this increment adds per-slot state, so the S3.0 pin is re-based
+again **per ABI**, with the target figure charged). Detail:
+[`evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md`](evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md).
+
+### Increment 3.6b — the lag rule (F-3, AC-5): one pass late, and only that (2026-10-02)
+
+**What landed:** `PlaybackLagDecision { Current, PreviousOnePass, BreachSecondMiss }` — **total by construction**, with
+no waiting outcome, so a consumer can never be blocked — `PlaybackLagState` (the traversed interval, served and desired
+revisions, consecutive misses, the once-per-episode breach) on the per-slot runtime, and
+`Track::resolvePlaybackLag` / `advancePlaybackLagTraversal` / `playbackLagDecisionForSlot` with the miss and breach
+reads. Detail and raw numbers:
+[`evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md`](evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md).
+
+- Oracle/contract unchanged: **YES** — AC-5 / F-3 and DEC-108 item 13(e), with W-20…W-24 as tabulated above.
+- Fixture implemented and discriminating assertion demonstrated: **YES** —
+  `test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second_miss`.
+- Native verification: **GREEN** — focused **53/53** (was 52), full native **2684 / 2677 succeeded / 7 skipped /
+  0 failed**.
+- Build/RAM1 verification: **GREEN** on a **clean rebuild** — `variables 96,192` **unchanged** / `code 391,928 +
+  padding 1,288` / locals 34,880, floor 840, **448 B headroom**. **No re-base.** The S3.0 pin moved per ABI again
+  (target 6,464 → 6,488; the host stayed 6,544 because the state fitted its existing padding), measured by a
+  temporary compile-time probe after the naive guess failed — the probe is recorded in the slice evidence.
+- Red-proofs: **three**, each restored byte-identically (sha256 verified): the AC-5 allowance reset by a further edit;
+  a published replacement ignored; the once-per-episode breach guard dropped. The first attempt at the AC-5 mutation
+  was a **no-op** (placed after the assignment it compared) and was re-placed before red-proving — recorded, because a
+  mutation that cannot trigger is not evidence.
+- Device verification: **NOT APPLICABLE** — the traversal boundary is a seam; the consumer switch is 3.7's.
+- **Task 3.6 still stays OPEN:** the **interval index over pinned bodies** (later intervals constructible from the
+  retained revision with no resident whole-loop root; both affected ranges; atomic publication with the source
+  revision; inspected-work budgeting) is the remaining clause, and nothing here claims interval-directed lookup.
