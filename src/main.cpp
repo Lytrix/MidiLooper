@@ -454,6 +454,22 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     (void)trackManager.servicePendingSlotProvision();
     return;
   }
+  // DEC-108 item 1 / `ExecutionBounds.md` rows 27-29: the window-build owner's turn. Served here, **before**
+  // the stopped/playing split, for the same reason `SlotProvision` is: an owed window must be reachable in
+  // the states a pending window sits in -- playing, recording, stopped, and beside a queued switch -- while
+  // the stopped path below routes its work through `processDeferredIdleMaintenance`, which is not this owner.
+  // One declared grain per admitted turn: the loop stops at the first track that had one. Nothing is
+  // published yet, so no consumer's behaviour depends on this turn.
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance) {
+    const uint8_t windowTrackCount = trackManager.getTrackCount();
+    for (uint8_t i = 0; i < windowTrackCount; ++i) {
+      if (trackManager.getTrack(i).stepPlaybackViewMaintenance() !=
+          Track::PlaybackViewTurnResult::Idle) {
+        break;
+      }
+    }
+    return;
+  }
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Persistence ||
       deferredOwner == MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay) {
     return;

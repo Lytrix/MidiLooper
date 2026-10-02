@@ -67,6 +67,16 @@ symbols snapped). Shortening the same tags to `DIAG,reentry_window_open` / `DIAG
 restored the allowance exactly. So when a change adds capture tags, read `free for local
 variables` in the build output and try a shorter tag before moving any global.
 
+**A `switch` over an enum costs the same way.** `windowed-playback-generation` slice 3.1
+(2026-10-02) added three small switches to a `Track` TU whose functions are already
+`FLASHMEM`: their 16–24 B `CSWTCH` jump tables landed in `.data`, `.data` went
+77,504 -> 78,528 and `variables` went +4,096 with **no per-object `.data`/`.bss` change at
+all** (only `.text` symbols differed). Replacing the switches with an `if`/`else` chain and
+dropping a `const char*` name array (also `.data`) restored `variables` to 96,192 exactly.
+So: when a change adds a small branch table anywhere, read `free for local variables`
+before blaming a new global, and prefer a branch chain or a literal at the reporting site
+over a table.
+
 ## Verify
 
 ```bash

@@ -109,11 +109,20 @@ them. Nothing in this section may stand in for production behaviour with a stub 
 
 ## 3. The window authority (owner first)
 
-- [ ] 3.1 Land the owner `Track::stepPlaybackViewMaintenance` with the declared `CoverageServiceContract` — verify its
+- [x] 3.1 Land the owner `Track::stepPlaybackViewMaintenance` with the declared `CoverageServiceContract` — verify its
   quantum, persistent build cursor, bounded consecutive denied turns and demonstrated handoff margin are implemented and
   asserted, that it is reachable in the states a pending window sits in, and that no new scheduling owner is introduced.
   **No behaviour changes behind it in this task** (`ExecutionBounds.md` rows 27–29 exclude active windowed playback from
   admission until these caps are proven)
+  *Landed 2026-10-02. The owner, its declared contract and its eight-case oracle are in place (predicate truth table +
+  owner-rotation control in `test_midi_service_drain`, three fixtures in `test_runtime_working_set_ownership`), four
+  mutations are red-proved with byte-identical restores, the host is green (**38/38, 48/48, 190/190**, full native
+  **2679 / 2672 succeeded / 7 skipped / 0 failed**) and `teensy41-capture-serial` builds through the RAM1 guard with the
+  **approved line unchanged** (`variables 96,192`, padding 1,208, floor 840). Read "bounded consecutive denied turns" as
+  the **declared allowance the admission reserves** (`canCompleteBeforeHandoff`'s `grains * (denied + 1)`): the owner's
+  own turn cannot produce a repeatable denial run today, because a denied grain is terminal in the current build API —
+  a repeatable run needs a request that survives a terminal denial, which is 3.2's. See
+  [`evidence/2026-10-02-s31-window-owner/EVIDENCE.md`](evidence/2026-10-02-s31-window-owner/EVIDENCE.md)*
 - [ ] 3.2 Publish **immutable interval windows** out of the owner — verify publication is atomic, that a whole-loop
   coverage interval is treated as coverage spanning the loop, that enumeration goes through the effective-content
   resolver over the selected `LoopSnapshot` (the published-snapshot window gather) against the generation-qualified

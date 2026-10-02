@@ -21,6 +21,12 @@ enum class DeferredIdleOwner : uint8_t {
   /// this turn does both halves the contract names: the provisioning and the target's merged-window build.
   /// Its work is state-driven (`slotProvisionNeeded`), so a pending switch needs no separate request state.
   SlotProvision = 5,
+  /// DEC-108 item 1 / `ExecutionBounds.md` rows 27-29: the **window-build/publication owner**
+  /// (`Track::stepPlaybackViewMaintenance`). It serves **one declared grain** of an owed window per admitted
+  /// turn, off-clock, and reaches no consumer in this slice. Its work is state-driven -- an owed window *is*
+  /// the obligation -- so no separate request record is involved, exactly as a pending switch *is* the
+  /// `SlotProvision` turn's work.
+  PlaybackViewMaintenance = 6,
 };
 
 // Overdub paint dirtiness cannot prioritize reconstruction that is disabled
@@ -105,8 +111,7 @@ struct ActiveLoadDisplayContinuation {
 
   bool hasPendingChild() const { return pendingChild != ActiveLoadDisplayChild::None; }
 };
-
-constexpr uint8_t kDeferredIdleOwnerCount = 6;
+constexpr uint8_t kDeferredIdleOwnerCount = 7;
 
 /// Snapshot idle admits two construction units per turn (DEC-053). Each unit
 /// remains one row-21 step or one journal-capped fragment start.
@@ -211,6 +216,14 @@ inline bool slotProvisionNeeded(bool hasPendingSlotSwitch, bool inboundOccupancy
   return hasPendingSlotSwitch && !inboundOccupancyPresent;
 }
 
+
+/// DEC-108 item 1: does the `PlaybackViewMaintenance` turn have work? An **owed window**: a build that is
+/// begun and still unfinished. State-driven on purpose, the `slotProvisionNeeded` shape -- the unfinished
+/// build *is* the obligation, so nothing else has to be tracked and a slot with no build owes nothing. The
+/// runtime's presence is the caller's answer, because the runtime's owner is the caller that owns it.
+inline bool playbackViewMaintenanceNeeded(bool runtimePresent, bool buildUnfinished) {
+  return runtimePresent && buildUnfinished;
+}
 inline bool aroundIdleMaintenance(bool postOverdubPlayingDrain, bool overdubStopping = false) {
   return postOverdubPlayingDrain || overdubStopping;
 }

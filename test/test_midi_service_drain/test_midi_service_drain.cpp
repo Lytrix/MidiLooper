@@ -170,6 +170,7 @@ void test_deferred_idle_owner_rotates_unconditionally() {
       MidiServiceDrain::DeferredIdleOwner::Persistence,
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
       MidiServiceDrain::DeferredIdleOwner::SlotProvision,
+      MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
   };
   for (const MidiServiceDrain::DeferredIdleOwner next : expected) {
@@ -178,8 +179,10 @@ void test_deferred_idle_owner_rotates_unconditionally() {
   }
 }
 
-void test_select_deferred_idle_owner_absent_matches_six_owner_cycle() {
+void test_select_deferred_idle_owner_absent_matches_seven_owner_cycle() {
   MidiServiceDrain::DeferredIdleOwnerCursor cursor;
+  // With no backlog and no session-exit drain the cursor is the plain owner cycle: the six original owners
+  // plus the window-build owner the deferred enumeration gained (DEC-108 item 1).
   const MidiServiceDrain::DeferredIdleOwner expected[] = {
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
       MidiServiceDrain::DeferredIdleOwner::VisualCache,
@@ -187,12 +190,14 @@ void test_select_deferred_idle_owner_absent_matches_six_owner_cycle() {
       MidiServiceDrain::DeferredIdleOwner::Persistence,
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
       MidiServiceDrain::DeferredIdleOwner::SlotProvision,
+      MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
       MidiServiceDrain::DeferredIdleOwner::VisualCache,
       MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
       MidiServiceDrain::DeferredIdleOwner::Persistence,
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
       MidiServiceDrain::DeferredIdleOwner::SlotProvision,
+      MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance,
   };
   for (const MidiServiceDrain::DeferredIdleOwner next : expected) {
     TEST_ASSERT_EQUAL(static_cast<int>(next),
@@ -214,6 +219,10 @@ void test_select_deferred_idle_owner_session_exit_drain_extra_snapshot() {
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
       MidiServiceDrain::DeferredIdleOwner::SlotProvision,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      // The session-exit drain inserts its extra Snapshot after *every* non-Snapshot owner, so the window-build
+      // owner the enumeration gained (DEC-108 item 1) takes its own place in the cycle with an extra after it.
+      MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance,
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
   };
   for (const MidiServiceDrain::DeferredIdleOwner next : expected) {
     TEST_ASSERT_EQUAL(static_cast<int>(next),
@@ -221,7 +230,7 @@ void test_select_deferred_idle_owner_session_exit_drain_extra_snapshot() {
   }
 }
 
-void test_select_deferred_idle_owner_backlog_snapshot_two_of_seven() {
+void test_select_deferred_idle_owner_backlog_snapshot_two_of_eight() {
   MidiServiceDrain::DeferredIdleOwnerCursor cursor;
   const MidiServiceDrain::DeferredIdleOwner expected[] = {
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
@@ -231,6 +240,7 @@ void test_select_deferred_idle_owner_backlog_snapshot_two_of_seven() {
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
       MidiServiceDrain::DeferredIdleOwner::SlotProvision,
+      MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
       MidiServiceDrain::DeferredIdleOwner::VisualCache,
       MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
@@ -238,6 +248,7 @@ void test_select_deferred_idle_owner_backlog_snapshot_two_of_seven() {
       MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
       MidiServiceDrain::DeferredIdleOwner::Snapshot,
       MidiServiceDrain::DeferredIdleOwner::SlotProvision,
+      MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance,
   };
   uint8_t snapshotTurns = 0;
   uint8_t visualCacheTurns = 0;
@@ -245,7 +256,8 @@ void test_select_deferred_idle_owner_backlog_snapshot_two_of_seven() {
   uint8_t persistenceTurns = 0;
   uint8_t loadTurns = 0;
   uint8_t slotProvisionTurns = 0;
-  for (uint8_t i = 0; i < 14; ++i) {
+  uint8_t playbackViewMaintenanceTurns = 0;
+  for (uint8_t i = 0; i < 16; ++i) {
     const MidiServiceDrain::DeferredIdleOwner selected =
         MidiServiceDrain::selectDeferredIdleOwner(cursor, true);
     TEST_ASSERT_EQUAL(static_cast<int>(expected[i]), static_cast<int>(selected));
@@ -268,20 +280,29 @@ void test_select_deferred_idle_owner_backlog_snapshot_two_of_seven() {
       case MidiServiceDrain::DeferredIdleOwner::SlotProvision:
         ++slotProvisionTurns;
         break;
+      case MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance:
+        ++playbackViewMaintenanceTurns;
+        break;
     }
-    if ((i + 1) % 7 == 0) {
+    // One cycle is now **eight** turns: the six original owners, the extra Snapshot the backlog inserts
+    // after LoadAndDisplay, and the window-build owner the deferred enumeration gained (DEC-108 item 1).
+    // Every owner but Snapshot gets exactly one turn per cycle -- this is the control that the new turn
+    // neither displaces nor starves any of the others.
+    if ((i + 1) % 8 == 0) {
       TEST_ASSERT_EQUAL_UINT8(2, snapshotTurns);
       TEST_ASSERT_EQUAL_UINT8(1, visualCacheTurns);
       TEST_ASSERT_EQUAL_UINT8(1, wrapAppendTurns);
       TEST_ASSERT_EQUAL_UINT8(1, persistenceTurns);
       TEST_ASSERT_EQUAL_UINT8(1, loadTurns);
       TEST_ASSERT_EQUAL_UINT8(1, slotProvisionTurns);
+      TEST_ASSERT_EQUAL_UINT8(1, playbackViewMaintenanceTurns);
       snapshotTurns = 0;
       visualCacheTurns = 0;
       wrapAppendTurns = 0;
       persistenceTurns = 0;
       loadTurns = 0;
       slotProvisionTurns = 0;
+      playbackViewMaintenanceTurns = 0;
     }
   }
 }
@@ -315,6 +336,29 @@ void test_slot_provision_turn_work_is_the_pending_switch_itself() {
       MidiServiceDrain::DeferredIdleOwner::SlotProvision, true));
   TEST_ASSERT_FALSE(MidiServiceDrain::deferredIdleOwnerDependsOnVisualCacheWrap(
       MidiServiceDrain::DeferredIdleOwner::SlotProvision));
+}
+
+// DEC-108 item 1: the window-build owner's turn has work exactly while an owed window exists -- a build
+// that is begun and unfinished. State-driven like `slotProvisionNeeded`: nothing else is tracked, and an
+// absent runtime owes nothing (the runtime's owner is the provisioning path).
+void test_playback_view_maintenance_turn_work_is_an_unfinished_build() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::playbackViewMaintenanceNeeded(true, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::playbackViewMaintenanceNeeded(true, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::playbackViewMaintenanceNeeded(false, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::playbackViewMaintenanceNeeded(false, false));
+  // Reachability, pure half: the turn is *not* a visual-cache dependent, so a pending wrap append (which
+  // skips VisualCache and LoadAndDisplay) cannot skip the window owner. The dispatch placement itself lives
+  // in `src/main.cpp`, which is not native-linkable -- see the slice's execution packet.
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowDeferredIdleOwner(
+      MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowDeferredIdleOwner(
+      MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::deferredIdleOwnerDependsOnVisualCacheWrap(
+      MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance));
+  // The new value is the **last** one, so the enumeration count and the enum agree and no existing owner
+  // index silently starts naming a different owner.
+  TEST_ASSERT_EQUAL_UINT8(MidiServiceDrain::kDeferredIdleOwnerCount,
+                          static_cast<uint8_t>(MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance) + 1);
 }
 
 void test_slot_provision_hold_age_is_bounded_and_wrap_safe() {
@@ -541,11 +585,14 @@ int main() {
   RUN_TEST(test_after_display_keeps_capture_and_adds_post_overdub);
   RUN_TEST(test_around_load_frame_only_when_post_overdub_playing_drain);
   RUN_TEST(test_deferred_idle_owner_rotates_unconditionally);
-  RUN_TEST(test_select_deferred_idle_owner_absent_matches_six_owner_cycle);
-  RUN_TEST(test_select_deferred_idle_owner_backlog_snapshot_two_of_seven);
+  RUN_TEST(test_select_deferred_idle_owner_absent_matches_seven_owner_cycle);
+  RUN_TEST(test_select_deferred_idle_owner_backlog_snapshot_two_of_eight);
   // S4b.7: the `SlotProvision` turn's eligibility is the pending switch itself, and it does not depend on
   // the visual cache -- a switch must still be provisioned while a wrap append is pending.
   RUN_TEST(test_slot_provision_turn_work_is_the_pending_switch_itself);
+  // DEC-108 item 1: the window-build owner's eligibility, and the proof that the deferred enumeration it
+  // joined keeps every owner's turn (see the rotation fixtures above).
+  RUN_TEST(test_playback_view_maintenance_turn_work_is_an_unfinished_build);
   RUN_TEST(test_slot_provision_hold_age_is_bounded_and_wrap_safe);
   RUN_TEST(test_select_deferred_idle_owner_session_exit_drain_extra_snapshot);
   RUN_TEST(test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap);
