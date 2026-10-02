@@ -197,6 +197,28 @@ the host and through the firmware gate**. Full detail and the raw numbers: [`evi
   reachable in the states a pending window sits in; and no new scheduling owner was introduced). Task 2.4's "nothing
   allocates or blocks on the edge" and task 2.8's red-proof are satisfied *for this slice* by W-6/W-8.
 
+## Slice 3.2 (part) — the owner's atomic interval-window publication (2026-10-02)
+
+Landed and verified: `RuntimePlaybackViewLifecycle::publishCompletedBuildAsCurrentWindow` (a demoted slot's first
+window had **no** publication path — `publishCompletedBuildAsReady` needs a retained/idle successor it cannot
+have), the owner publishing inside the completing turn, `Track::publishedPlaybackWindowForSlot`, and the named
+`PlaybackViewRequestResult::WindowAlreadyPublished` refusal for a second window. **Readiness, identity on
+consumers and the consumer switch are untouched** (3.5/3.4/3.7).
+
+- Fixture: `test_window_owner_publishes_the_interval_window_atomically` — nothing published before a request; an
+  incomplete build is never published (checked per turn); publication lands in the completing turn; the window
+  carries its own identity and coverage; the slot is demoted; the second window is refused by name and the
+  published window is unchanged by that refusal.
+- Red-proofs: removing the publication call → *"the completed build must be published in that same turn"*;
+  removing the `WindowAlreadyPublished` guard → *Expected 3 Was 0*. Both restored byte-identically.
+- Green: this suite **49/49**, `test_midi_service_drain` 38/38, `test_playback_prewarm` 190/190, full native
+  **2680 / 2673 succeeded / 7 skipped / 0 failed**, and `teensy41-capture-serial` **SUCCESS** with `variables
+  96,192` (the approved line) and padding 1,080 ≥ the 840 floor.
+- **Open:** the enumeration clause and fixture 2.10; and the measured finding that a second `begin` on a slot with
+  a published window surfaced the new identity before its build completed — **unattributed**, and made moot for
+  this slice by the refusal; the successor lane (3.4/3.5) must sequence replacement through
+  `handoffReadyCoverage`. Detail: [`evidence/2026-10-02-s32-interval-publication/EVIDENCE.md`](evidence/2026-10-02-s32-interval-publication/EVIDENCE.md).
+
 **Carried tightening items, explicitly not claimed here** (DEC-108 §12: "required contents of the first execution
 packet that touches their path"): deferred-service **fairness** across tracks and competing owners lands with slice
 **3.10**; the **shared-view and cancellation transition table** with slice **3.11**; **second-miss post-breach

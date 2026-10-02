@@ -694,6 +694,27 @@ bool RuntimePlaybackViewLifecycle::retainCurrent(
   return true;
 }
 
+bool RuntimePlaybackViewLifecycle::publishCompletedBuildAsCurrentWindow(
+    std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views) {
+  if (build >= views.size() || !views[build].complete) {
+    return false;
+  }
+  // Replacement uses the same atomic swap `handoff` uses: the retired window becomes the next build buffer, so
+  // a consumer that read it before this call saw complete content, and no read can straddle the swap. Only a
+  // **retained** view is never recycled -- it must stay readable for its own lane.
+  const uint8_t retiredCurrent = current;
+  if (retiredCurrent < views.size() && retained == retiredCurrent) {
+    return false;
+  }
+  current = build;
+  views[current].published = true;
+  build = retiredCurrent < views.size() ? retiredCurrent : kNoView;
+  if (build != kNoView) {
+    views[build].resetMetadata();
+  }
+  return true;
+}
+
 bool RuntimePlaybackViewLifecycle::installPreparedCurrent(
     std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views) {
   if (current >= views.size() || ready >= views.size() || current == ready ||

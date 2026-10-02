@@ -1091,6 +1091,13 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   if (runtime->coverageBuildNeedsService()) {
     return PlaybackViewRequestResult::BuildInFlight;
   }
+  {
+    PlaybackViewSourceIdentity publishedIdentity{};
+    PlaybackCoverageInterval publishedCoverage{};
+    if (publishedPlaybackWindowForSlot(slotIndex, publishedIdentity, publishedCoverage)) {
+      return PlaybackViewRequestResult::WindowAlreadyPublished;
+    }
+  }
   const CoverageServiceContract contract = playbackViewCoverageContract();
   if (!contract.isDeclared()) {
     return PlaybackViewRequestResult::ContractUndeclared;
@@ -1129,17 +1136,63 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     // order entries (the build contract's own rule), and the build's persistent cursor carries the progress
     // to the next turn.
     const RuntimePlaybackViewBuildGrain grain = runtime->nextCoverageBuildGrain();
+    RuntimePlaybackViewBuildGrain result = RuntimePlaybackViewBuildGrain::Denied;
     if (grain == RuntimePlaybackViewBuildGrain::Fill) {
-      return finishPlaybackViewGrain(slot, runtime->stepCoverageBuildFill(kPlaybackViewFillQuantum));
+      result = runtime->stepCoverageBuildFill(kPlaybackViewFillQuantum);
+    } else if (grain == RuntimePlaybackViewBuildGrain::Order) {
+      result = runtime->stepCoverageBuildOrder(kPlaybackViewOrderQuantum);
+    } else {
+      // `coverageBuildNeedsService()` is `viewBuild.active()`, which is Fill or Order only -- Complete and
+      // Denied are both terminal and owe nothing.
+      return PlaybackViewTurnResult::Idle;
     }
-    if (grain == RuntimePlaybackViewBuildGrain::Order) {
-      return finishPlaybackViewGrain(slot, runtime->stepCoverageBuildOrder(kPlaybackViewOrderQuantum));
+    if (result == RuntimePlaybackViewBuildGrain::Complete) {
+      // **Publication is atomic** (DEC-108 item 1): the completed build becomes this slot's current interval
+      // window inside this turn-step, and the window it replaced stays readable until this call. Nothing a
+      // consumer reads changes yet -- 3.4 carries the identity to the consumers, 3.5 makes readiness out of it
+      // and 3.7 switches the consumer -- so an existing consumer's view of this slot is untouched.
+      (void)publishCompletedPlaybackWindow(slot);
     }
-    // `coverageBuildNeedsService()` is `viewBuild.active()`, which is Fill or Order only -- Complete and
-    // Denied are both terminal and owe nothing.
-    return PlaybackViewTurnResult::Idle;
+    return finishPlaybackViewGrain(slot, result);
   }
   return PlaybackViewTurnResult::Idle;
+}
+
+TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return false;
+  }
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (set == nullptr) {
+    return false;
+  }
+  return set->lifecycle.publishCompletedBuildAsCurrentWindow(set->views);
+}
+
+TRACK_COLD_MEM bool Track::publishedPlaybackWindowForSlot(uint8_t slotIndex,
+                                                         PlaybackViewSourceIdentity& identityOut,
+                                                         PlaybackCoverageInterval& coverageOut) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return false;
+  }
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (set == nullptr) {
+    return false;
+  }
+  const uint8_t current = set->lifecycle.current;
+  if (current >= RuntimePlaybackViewConfig::kViewCount) {
+    return false;
+  }
+  const RuntimePlaybackView& view = set->views[current];
+  // Only a **completed, published** window with a valid interval is an answer: a shell view is not a window.
+  if (!view.complete || !view.published || !view.coverage.isValid()) {
+    return false;
+  }
+  identityOut = view.source;
+  coverageOut = view.coverage;
+  return true;
 }
 
 TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::finishPlaybackViewGrain(
