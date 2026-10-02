@@ -28,6 +28,8 @@ from hitl.device_time import (  # noqa: E402
     filter_live_lines,
     is_drained_history,
     newest_device_us,
+    cap_row_clock_us,
+    current_boot_last_clock_us,
     newest_row_clock_us,
 )
 
@@ -149,6 +151,32 @@ class ArmTimeTransportTests(unittest.TestCase):
 
         self.assertEqual(1857780000, human_line_device_us("[1857.780] [INFO] Transport stopped"))
         self.assertIsNone(human_line_device_us("#CAP,1857780000,ST,Track,STOPPED,STOPPED"))
+
+    def test_only_cap_rows_carry_the_device_clock_a_boot_link_reads(self) -> None:
+        """`#DMA_XFER` and the other families stamp a base of their own, so a boot link must not read them.
+
+        Measured: a repeat capture opened with `#DMA_XFER,119333,…` while its live window ran to 169 430 425 us.
+        """
+        self.assertEqual(12000000, cap_row_clock_us("#CAP,12000000,DIAG,tracks,0,0"))
+        self.assertIsNone(cap_row_clock_us("#DMA_XFER,119333,init=1,degraded=0"))
+        self.assertIsNone(cap_row_clock_us("[11.000] [INFO] later"))
+
+    def test_the_close_clock_comes_from_the_segment_after_the_last_restart(self) -> None:
+        """A drained prefix can hold the *previous* boot's tail, whose stamps exceed the new boot's own window.
+
+        Measured on the bench: an anchor capture's prefix reached 194 649 907 us while the capture's own boot ended
+        at 104 510 708 us, so a maximum over every row would place the run on a boot it does not belong to.
+        """
+        lines = ["#CAP,189529858,DFRAME,15,22265,3240,7732,631,37",
+                 "#CAP,194649907,DFRAME,15,22322,3330,77",
+                 "#CAP,2167003,DIAG,boot_reset,crash=0",
+                 "BOOT,load,start",
+                 "#CAP,12988020,DIAG,clk,0,0",
+                 "#CAP,104510708,DFRAME,15,22300,3300,80"]
+        self.assertEqual(104510708, current_boot_last_clock_us(lines))
+        # With no restart row the capture is one boot, so every row counts.
+        self.assertEqual(194649907, current_boot_last_clock_us(lines[:2]))
+        self.assertIsNone(current_boot_last_clock_us(["#DMA_XFER,119333,init=1", "no stamps here"]))
 
     def test_a_drained_playing_row_does_not_override_a_later_stop(self) -> None:
         from hitl import legacy_record_baseline as baseline

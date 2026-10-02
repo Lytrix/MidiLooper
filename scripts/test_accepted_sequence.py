@@ -12,6 +12,8 @@ Two things are pinned here without a device:
 Run: .venv/bin/python scripts/test_accepted_sequence.py
 """
 import hashlib
+import os
+import tempfile
 import json
 import sys
 import unittest
@@ -23,14 +25,19 @@ from hitl.flows.accepted_sequence import (  # noqa: E402
     DEFAULT_CENSUS_ATTEMPTS,
     DEFAULT_SEED_PRESS_ATTEMPTS,
     DEFAULT_TAP_WINDOW_S,
+    MIDI_CLOCKS_PER_BEAT,
     Gesture,
-    _latest_disp_slot,
     _await_slot_disp,
+    _latest_disp_slot,
+    _leg_note_budget,
+    _leg_start_tick,
+    _loop_length_ticks,
     _Ctx,
     _emit,
     _PressSpacing,
     _run_census,
     _run_plan,
+    _send_clock_timed_notes,
     _switch_pending,
     leg_gestures,
     to_firmware_slot,
@@ -51,11 +58,14 @@ def _patch_target(name: str) -> str:
     return "hitl.accepted_sequence_run." + name
 from hitl.accepted_sequence_probe import (  # noqa: E402
     Analysis,
+    BootAnchor,
     Check,
     _run_window,
     analyse,
+    load_boot_anchor,
     verdict_bundle,
 )
+from hitl.device_time import current_boot_last_clock_us  # noqa: E402
 from hitl.control_constants import (  # noqa: E402
     GLOBAL_TRANSPORT_NOTE,
     LOOP_SELECT_NOTE_BASE,
@@ -88,7 +98,7 @@ class FakePort:
 class FakeClockReader:
     """Phase-locked enough for accepted-sequence unit tests: notes can only advance through wait_pulse."""
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         self.index = 0.0
         self.waits: list[float] = []
 
@@ -109,6 +119,45 @@ class FakeClockReader:
     def stats(self):
         return {"phase_index": self.index, "pulses": len(self.waits)}
 
+
+#: Every run-level test in this suite drives the run through its **own** construction path, where the real
+#: `MidiClockReader` would see no clock at all (and its `mido.open_input` call throws on a machine with no Teensy
+#: input port). DEC-112 ruling 2 paces the seed's take length on the device's MIDI clock, so a run without one is a
+#: **named** refusal -- a property to assert, not to trip over. This fixture gives every such run a fake input port
+#: and a fake clock; tests that assert clock behaviour pass their own reader (or `clock_reader=False`) and are
+#: unaffected, and `ClockPacedTakeLengthTests` covers the pacing and its refusals.
+_CLOCK_FIXTURE = None
+_CLOCK_FIXTURE = None
+_INPUT_FIXTURE = None
+
+
+def setUpModule():  # noqa: N802 (unittest's own fixture name)
+    global _CLOCK_FIXTURE, _INPUT_FIXTURE
+    from unittest import mock
+    _CLOCK_FIXTURE = mock.patch("hitl.accepted_sequence_run.MidiClockReader", FakeClockReader)
+    _CLOCK_FIXTURE.start()
+    _INPUT_FIXTURE = mock.patch("hitl.accepted_sequence_run.mido.open_input",
+                                lambda *args, **kwargs: object())
+    _INPUT_FIXTURE.start()
+
+
+def tearDownModule():  # noqa: N802 (unittest's own fixture name)
+    for fixture in (_INPUT_FIXTURE, _CLOCK_FIXTURE):
+        if fixture is not None:
+            fixture.stop()
+
+
+def tearDownModule():  # noqa: N802 (unittest's own fixture name)
+    if _CLOCK_FIXTURE is not None:
+        _CLOCK_FIXTURE.stop()
+    from unittest import mock
+    _CLOCK_FIXTURE = mock.patch("hitl.accepted_sequence_run.MidiClockReader", FakeClockReader)
+    _CLOCK_FIXTURE.start()
+
+
+def tearDownModule():  # noqa: N802 (unittest's own fixture name)
+    if _CLOCK_FIXTURE is not None:
+        _CLOCK_FIXTURE.stop()
 
 def emit_all(gestures, *, press_ms=120):
     port = FakePort()
@@ -280,12 +329,15 @@ def od_chain_log(*, a_start: bool = True, a_bindings: int = 1, a_binding_interva
                  b_start: bool = True, b_start_after_a_release: bool = False, b_terminals: int = 1,
                  a_release: bool = True, b_release: bool = True, a_requests: int = 1, b_requests: int = 1,
                  seed_records: bool = True, fallback: bool = False, b_interval: int = 4,
+                 seed_finalization: bool = False, a_window: bool = True,
                  family_rows: tuple[str, ...] = ()) -> str:
     """A synthetic **overdub**-leg log: each keyword removes or duplicates exactly one identity link.
 
     Written against the wire forms the owners emit. Firmware rows are 0-based, so A = slot 4 = 3 and B = slot
     5 = 4. The seeds' `RECA`/`RECS` rows are present by default, because those are exactly what must **not** be
     read as the leg's own overdub evidence (the record leg's vocabulary does not describe an overdub interval).
+    `seed_finalization` adds the *seed's own* window and release -- the shape a slot-wide first match reads as
+    the leg's (`captures/s45-odleg1a-20261002-163640-od`) -- and `a_window` removes the leg interval's window.
     """
     lines = [BOOT]
     if seed_records:
@@ -293,11 +345,17 @@ def od_chain_log(*, a_start: bool = True, a_bindings: int = 1, a_binding_interva
                   "#CAP,150000,RECS,stopToStopped,3,140000,0,140000,1536,0",
                   "#CAP,200000,RECA,4,0",
                   "#CAP,250000,RECS,stopToStopped,4,240000,0,240000,1536,0"]
+    if seed_finalization:
+        # A record stop opens a finalization window and retires exactly like the overdub interval the leg then
+        # runs, and both rows precede the leg's own interval on the same slot.
+        lines += ["#CAP,400000,DIAG,reentry_window_open,3,140,1536",
+                  "#CAP,450000,DIAG,canonical_release,3,2,1536,8"]
     if a_start:
         lines.append("#CAP,1000000,DIAG,reentry,admit,100,3,3,0")
     for i in range(a_bindings):
         lines.append(f"#CAP,{2000000 + i},DIAG,reentry,bound,200,{a_binding_interval or 3},3,0")
-    lines.append("#CAP,2000100,DIAG,reentry_window_open,3,200,1536")
+    if a_window:
+        lines.append("#CAP,2000100,DIAG,reentry_window_open,3,200,1536")
     if fallback:
         lines.append("[26.900] [WARN] [TRACK] Overdub stop retarget: companion path stalled; raw pass only")
     if b_start:
@@ -433,13 +491,17 @@ class SwitchRepeatGuardTests(unittest.TestCase):
                     f.write("Overdubbing started @ tick 10\n")
                 elif gesture.step == "b_switch":
                     f.write("Loop 5: Switch gesture from slot 4\n")
+        # `clock_reader`: production supplies the device's own clock (`accepted_sequence_run.MidiClockReader`),
+        # and the content is paced on it. A missing clock is a named failure, never a blind send that the
+        # note-length policy would drop and leave the interval empty.
         port = FakePort()
+        clock = FakeClockReader()
         events = []
         with patch(_patch_target("_emit"), side_effect=emit), \
              patch(_patch_target("time.sleep")):
             result = _run_plan(port, log, leg_gestures("od", track=8, a=4, b=5),
                                slot_b=5, press_ms=120, phase_timeout_s=0.01, events=events,
-                               note_channel=7, overdub_notes=2)
+                               note_channel=7, overdub_notes=2, clock_reader=clock)
         self.assertEqual("DROVE_LEG", result)
         self.assertEqual(["select_track", "a_overdub_start", "b_switch",
                           "b_overdub_start", "b_stop_request"], emitted)
@@ -843,7 +905,10 @@ class CensusPreparationTests(unittest.TestCase):
                 mock("mido.open_output", return_value=FakePort())
                 mock("_find_midi_port", return_value="fake")
                 mock("slots.press_track")
-                select = mock("slots.press_slot_record", side_effect=answering_presses(log))
+                # A *selection* press on a filled target answers with the slot's own state row and does not arm
+                # anything (`Loop N: Toggle Play/Stop`): `ARMED`/`RECORDING` belong to a record press, and a
+                # fixture that answered a selection with them would be asserting a target that must be refused.
+                select = mock("slots.press_slot_record", side_effect=answering_presses(log, states=("STOPPED",)))
                 mock("stopped_preparation.clear_slot", return_value=cleared)
                 # Both targets are filled: neither may be long-pressed before it is selected.
                 mock("observation_window", return_value=({(7, 3): True, (7, 4): True}, True))
@@ -1120,7 +1185,7 @@ class EvidenceGateTests(unittest.TestCase):
 
     def _drive(self, argv, *, census=None, press=None, clear=None, log_lines=(),
                census_readable=True, run_plan="DROVE_LEG", real_ensure_transport=False,
-               crash_expected=False, leg_rows=None, final_stop_row=None):
+               crash_expected=False, leg_rows=None, final_stop_row=None, await_markers=None):
         """Run `main` against a fake managed capture; returns the report plus what the wire saw.
 
         `press(log, slot_number, attempt)` models the device's answer to a loop-button press: the driver's
@@ -1195,7 +1260,8 @@ class EvidenceGateTests(unittest.TestCase):
 
         if not real_ensure_transport:
             mock("_ensure_transport", side_effect=ensure_transport)
-        mock("_wait_for", return_value=True); mock("_await_markers", return_value=True)
+        mock("_wait_for", return_value=True)
+        mock("_await_markers", return_value=True, side_effect=await_markers)
         if leg_rows is None:
             mock("_run_plan", return_value=run_plan)
         else:
@@ -1238,6 +1304,42 @@ class EvidenceGateTests(unittest.TestCase):
         self.assertEqual(DEFAULT_CENSUS_ATTEMPTS - 1, fixture.events.count("census_retry"))
         self.assertNotIn(GLOBAL_TRANSPORT_NOTE, fixture.port.note_sequence())
 
+    def test_clear_emptiness_callback_inverts_occupancy_and_preserves_unknown(self):
+        """A populated census row must never authorize ALREADY_EMPTY (device od-150603)."""
+        from unittest.mock import patch
+
+        fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4",
+                               "--slot-b", "5", "--notes", "1", "--arm-timeout-s", "0.0"])
+        callback = fixture.clear.call_args.kwargs["emptiness_reader"]
+        for occupancy, expected in ((True, False), (False, True), (None, None)):
+            with self.subTest(occupancy=occupancy), patch(
+                    "hitl.flows.accepted_sequence._run_census", return_value={(7, 4): occupancy}):
+                self.assertIs(callback(), expected)
+        with patch("hitl.flows.accepted_sequence._run_census", return_value=None):
+            self.assertIsNone(callback())
+
+    def test_missing_seed_release_aborts_before_preparing_next_target(self):
+        """A committed seed whose finalizer has not released is not ready for another target."""
+        def press(log, slot_number, attempt):
+            with log.open("a") as handle:
+                handle.write(disp_row(slot_number, "ARMED", stamp_us=attempt * 1000000) + "\n")
+                handle.write(disp_row(slot_number, "RECORDING", stamp_us=attempt * 1000000 + 1) + "\n")
+
+        def markers(_log, _mark, tokens, *_args, **_kwargs):
+            return not any("canonical_release_interval" in token for token in tokens)
+
+        fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4",
+                               "--slot-b", "5", "--notes", "1", "--arm-timeout-s", "0.0"],
+                              census={(7, 3): False, (7, 4): False}, press=press,
+                              await_markers=markers)
+        self.assertEqual(3, fixture.rc)
+        self.assertEqual("PREPARATION_FAILED", fixture.report["result"])
+        self.assertIn("slot 5 seed finalization release unconfirmed", fixture.report["preparation_error"])
+        self.assertNotIn("prepare_slot_a", fixture.events)
+        self.assertNotIn("leg_start_transport_start", fixture.events)
+        self.assertEqual([5], [slot for slot, _ in fixture.presses])
+        self.assertEqual("complete", fixture.report["shutdown"]["status"])
+
     def test_a_swallowed_selection_press_is_named_and_clear_probe_decides(self):
         """A silent selection is not accepted, but scoped clear evidence may still decide the authorized target."""
         fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1",
@@ -1250,6 +1352,46 @@ class EvidenceGateTests(unittest.TestCase):
         self.assertIn("slot 5 never armed", fixture.report["preparation_error"])
         self.assertIn("left no receipt", fixture.report["preparation_error"])
         self.assertNotIn(GLOBAL_TRANSPORT_NOTE, fixture.port.note_sequence())
+
+    def test_a_scoped_clear_ends_the_arm_the_selection_press_started(self):
+        """`153058-rec`: the clear's own `DISP,4,STOPPED` row is the device releasing the arm.
+
+        The device answered the selection press with `Loop 5: Start Recording` + `DISP,4,ARMED`, then
+        cleared the slot and wrote `#CAP,23489715,DISP,4,STOPPED,0,…`. A readiness read that collected
+        only the arming rows still answered `armed` and refused a target the device had already released.
+        """
+        import tempfile
+
+        from hitl.flows.accepted_sequence import _slot_ready_state
+
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "session.log"
+            log.write_text("\n".join([
+                disp_row(5, "STOPPED", stamp_us=10_369_829),
+                "[22.327] [INFO] Loop 5: Start Recording",
+                disp_row(5, "ARMED", stamp_us=22_334_958),
+                "[23.488] [INFO] MIDI: Clear selected slot 5",
+                disp_row(5, "STOPPED", stamp_us=23_489_715),
+            ]) + "\n")
+            self.assertIsNone(_slot_ready_state(log, 0, 4, 5),
+                              "the clear's own STOPPED row must end the arm it started")
+
+    def test_a_late_flushed_arm_row_cannot_outrank_the_clear(self):
+        """The ring flushes in batches: an older `ARMED` row can appear *after* the row that ended it."""
+        import tempfile
+
+        from hitl.flows.accepted_sequence import _slot_ready_state
+
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "session.log"
+            log.write_text("\n".join([
+                "[22.327] [INFO] Loop 5: Start Recording",
+                "[23.488] [INFO] MIDI: Clear selected slot 5",
+                disp_row(5, "STOPPED", stamp_us=23_489_715),
+                disp_row(5, "ARMED", stamp_us=22_334_958),   # flushed late, stamped earlier
+            ]) + "\n")
+            self.assertIsNone(_slot_ready_state(log, 0, 4, 5),
+                              "device clock decides, not the flush position")
 
     def test_a_swallowed_seed_press_never_starts_the_transport(self):
         """The mixed leg's seed press was swallowed; the old fallback started the transport anyway."""
@@ -1763,6 +1905,212 @@ class OverdubIdentityOracleTests(unittest.TestCase):
                         metadata=METADATA, base_report=BASE_REPORT)
         self.assertNotEqual(0, wrong.exit_code)
         self.assertEqual("unknown", by_name(wrong)["overdub_interval_identity"].status)
+
+    def test_a_seeded_legs_window_and_release_are_its_own_not_the_seeds(self):
+        """The preparation seeds A with a record, whose stop opens a window and retires in its own right.
+
+        Measured (`captures/s45-odleg1a-20261002-163640-od`): the seed A take's `reentry_window_open,3,1994`
+        (35.452 s) and `canonical_release,3,2` (42.839 s) precede the leg's own `reentry_window_open,3,1770`
+        (48.013 s) and `canonical_release,3,32` (49.536 s). Selecting them by *first* match credits the leg with
+        an acceptance it never exercised and then bounds the successor's ordering against the seed's release --
+        which read the overlap this leg did produce (B admitted 48.649 s, inside A's window) as "the successor
+        began after the predecessor finished" (SETUP_INCOMPLETE). L3/L4/L5 therefore read the rows of A's own
+        leg interval, floored by its start admission.
+        """
+        result = run_od(od_chain_log(seed_finalization=True))
+        self.assertEqual("ok", by_name(result)["L3_a_finalization_window"].status)
+        self.assertIn("reentry_window_open,3,200,1536", by_name(result)["L3_a_finalization_window"].detail)
+        self.assertEqual("ok", by_name(result)["L4_a_capacity_released"].status)
+        self.assertIn("canonical_release,3,40,1536,8", by_name(result)["L4_a_capacity_released"].detail)
+        self.assertEqual("ok", by_name(result)["L5_successor_started"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+    def test_a_leg_without_its_own_window_is_never_credited_with_the_seeds(self):
+        """The seed's window is not the leg's: absence stays the staging failure it already was."""
+        result = run_od(od_chain_log(seed_finalization=True, a_window=False))
+        detail = by_name(result)["L3_a_finalization_window"].detail
+        self.assertEqual("fail", by_name(result)["L3_a_finalization_window"].status)
+        self.assertIn("precede its leg interval", detail)
+        self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+    def test_a_seeded_leg_without_its_own_release_does_not_borrow_the_seeds(self):
+        """L4 on this leg is the leg interval's retirement; the slot-wide list is not a fallback for it."""
+        result = run_od(od_chain_log(seed_finalization=True, a_release=False))
+        self.assertEqual("fail", by_name(result)["L4_a_capacity_released"].status)
+        self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+
+class BootAnchorTests(unittest.TestCase):
+    """A **repeat** on one boot (`S4F-CLOSURE-PLAN` §5): no second banner by design, so the gate needs a link.
+
+    The campaign's rule is one boot for three consecutive passes and "do not solve repeat qualification by resetting
+    per attempt", so a repeat cannot be graded on a banner it must not produce. It is graded instead on an explicit,
+    checkable link to the boot it continues: the anchor's own banner, the same firmware image, no device restart in
+    this capture, and a device clock whose advance matches the wall time the two captures closed apart. Each part is
+    pinned on its own here, because a link that accepts any one of them while another fails would be a weaker gate
+    than the banner it replaces.
+    """
+
+    #: The od leg's own chain, minus its boot banner: this is what a same-boot repeat looks like.
+    REPEAT = od_chain_log().replace(BOOT + "\n", "", 1)
+    #: The repeat fixture's own close stamp, from `#CAP` rows only: other families stamp a base of their own.
+    CLOSE_US = current_boot_last_clock_us(REPEAT.splitlines())
+    #: The host epoch the anchor's capture closed at; a graded attempt's own file is stamped relative to it.
+    ANCHOR_WALL_S = 1_700_000_000.0
+
+    def anchor(self, *, fresh_banner: bool = True, image: str = METADATA["firmware_hex_sha256"],
+               close_clock_us: int | None = None, close_wall_s: float | None = ANCHOR_WALL_S) -> BootAnchor:
+        """An anchor whose clock is **unreadable** unless a placement is given -- `linked_anchor` gives the default."""
+        return BootAnchor(source="captures/anchor/session_20261002_160000.log", fresh_banner=fresh_banner,
+                          image=image, close_clock_us=close_clock_us, close_wall_s=close_wall_s)
+
+    def linked_anchor(self, *, device_delta_us: int = 1_000_000, **over: object) -> BootAnchor:
+        """The default link: the anchor closed 1 s of device clock before this fixture's own close stamp."""
+        return self.anchor(close_clock_us=self.CLOSE_US - device_delta_us, **over)
+
+    def grade(self, text: str = "", *, boot_anchor: BootAnchor | None = None, wall_delta_s: float = 1.0,
+              attempt_log: bool = True):
+        """Grade the repeat with this attempt's capture close time under control.
+
+        `wall_delta_s` is how long after the anchor's close the attempt's own capture closed: the oracle reads
+        `Path.stat().st_mtime`, so the graded attempt is a real file with a real stamp. The default matches the
+        fixture's own device-clock advance, which is what one boot looks like; a *larger* wall delta than the
+        device advance is what a reset in between looks like.
+        """
+        text = text or self.REPEAT
+        path: Path | None = None
+        if attempt_log:
+            handle = tempfile.NamedTemporaryFile("w", suffix=".log", delete=False)
+            handle.write(text)
+            handle.close()
+            anchor_wall = (boot_anchor.close_wall_s if boot_anchor is not None
+                           and boot_anchor.close_wall_s is not None else self.ANCHOR_WALL_S)
+            os.utime(handle.name, (anchor_wall + wall_delta_s, anchor_wall + wall_delta_s))
+            path = Path(handle.name)
+            self.addCleanup(os.unlink, handle.name)
+        return analyse(text, leg="od", slot_a=4, slot_b=5, metadata=METADATA,
+                       base_report=BASE_REPORT, inputs=SUPPLIED_EVIDENCE, boot_anchor=boot_anchor,
+                       attempt_log=path)
+
+    def test_a_repeat_is_verdict_grade_only_through_an_explicit_link(self):
+        result = self.grade(boot_anchor=self.linked_anchor())
+        detail = by_name(result)["fresh_boot"].detail
+        self.assertEqual("ok", by_name(result)["fresh_boot"].status)
+        self.assertIn("linked to the boot in captures/anchor/", detail)
+        self.assertIn("no device restart", detail)
+        self.assertIn("clock continues", detail)
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+    def test_the_link_records_the_anchor_image_and_both_clocks(self):
+        result = self.grade(boot_anchor=self.linked_anchor())
+        entry = result.evidence["boot_anchor"][0]
+        self.assertIn("image f00dbabe", entry)
+        self.assertIn(f"anchor close {self.CLOSE_US - 1_000_000} us at 1700000000.000 host time", entry)
+        self.assertIn(f"attempt close {self.CLOSE_US} us at 1700000001.000", entry)
+        self.assertIn("device advance 1000000 us against wall 1000000 us", entry)
+
+    def test_a_counter_that_wrapped_still_reads_as_a_continuation(self):
+        """`micros()` is 32-bit: an anchor near the top of the range and an attempt near the bottom is an advance."""
+        from hitl.accepted_sequence_probe import MICROS_MODULO
+        result = self.grade(boot_anchor=self.linked_anchor(device_delta_us=-(MICROS_MODULO - 1_000_000)))
+        self.assertEqual("ok", by_name(result)["fresh_boot"].status)
+        self.assertIn("device advance 1000000 us", result.evidence["boot_anchor"][0])
+
+    def test_a_capture_that_leads_with_drained_rows_is_placed_by_its_close_clock(self):
+        """A repeat opens with rows the ring was still holding -- measured, 119 333 us ahead of a live window that
+        ran to 169 430 425 us -- so those rows cannot place it. The close clock and the wall time do.
+
+        The earlier rule refused every such capture, which refused a legitimate repeat on the fixed image; a reset is
+        still excluded, because it cannot keep the device clock and the wall clock in step (the reset tests below).
+        """
+        result = self.grade("#CAP,10,DIAG,tracks,0,0\n" + self.REPEAT, boot_anchor=self.linked_anchor())
+        self.assertEqual("ok", by_name(result)["fresh_boot"].status)
+
+    def test_a_repeat_whose_device_clock_does_not_continue_is_not_linked(self):
+        """A reset restarts `micros()`, so 1 s of device clock against 200 s of wall time is the restart case."""
+        result = self.grade(boot_anchor=self.linked_anchor(device_delta_us=1_000_000), wall_delta_s=200.0)
+        detail = by_name(result)["fresh_boot"].detail
+        self.assertEqual("fail", by_name(result)["fresh_boot"].status)
+        self.assertIn("device clock did not continue", detail)
+        self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+    def test_a_repeat_that_closes_before_the_anchor_reads_as_a_restart(self):
+        result = self.grade(boot_anchor=self.linked_anchor(device_delta_us=-5_000_000), wall_delta_s=5.0)
+        detail = by_name(result)["fresh_boot"].detail
+        self.assertEqual("fail", by_name(result)["fresh_boot"].status)
+        self.assertIn("reads as a restart", detail)
+
+    def test_a_repeat_without_its_own_close_time_cannot_be_linked(self):
+        result = self.grade(boot_anchor=self.linked_anchor(), attempt_log=False)
+        self.assertEqual("fail", by_name(result)["fresh_boot"].status)
+        self.assertIn("close times are unavailable", by_name(result)["fresh_boot"].detail)
+
+    def test_a_repeat_with_a_device_restart_is_not_linked(self):
+        restarted = self.REPEAT.replace("#CAP,100000,RECA,3,0",
+                                        "#CAP,100000,DIAG,boot_reset,1\n#CAP,100000,RECA,3,0")
+        result = self.grade(restarted, boot_anchor=self.linked_anchor())
+        detail = by_name(result)["fresh_boot"].detail
+        self.assertEqual("fail", by_name(result)["fresh_boot"].status)
+        self.assertIn("device restart row", detail)
+        self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+
+    def test_a_repeat_on_a_different_image_is_not_linked(self):
+        result = self.grade(boot_anchor=self.linked_anchor(image="deadbeefdeadbeef"))
+        detail = by_name(result)["fresh_boot"].detail
+        self.assertEqual("fail", by_name(result)["fresh_boot"].status)
+        self.assertIn("image differs", detail)
+
+    def test_an_anchor_without_its_own_banner_is_not_a_link(self):
+        result = self.grade(boot_anchor=self.linked_anchor(fresh_banner=False))
+        detail = by_name(result)["fresh_boot"].detail
+        self.assertEqual("fail", by_name(result)["fresh_boot"].status)
+        self.assertIn("not itself a fresh boot", detail)
+
+    def test_an_anchor_whose_clock_is_unreadable_is_not_a_link(self):
+        result = self.grade(boot_anchor=self.anchor())
+        self.assertEqual("fail", by_name(result)["fresh_boot"].status)
+        self.assertIn("continuity cannot be shown", by_name(result)["fresh_boot"].detail)
+
+    def test_an_anchor_without_a_close_time_is_not_a_link(self):
+        result = self.grade(boot_anchor=self.linked_anchor(close_wall_s=None))
+        self.assertEqual("fail", by_name(result)["fresh_boot"].status)
+        self.assertIn("close times are unavailable", by_name(result)["fresh_boot"].detail)
+
+    def test_without_an_anchor_the_old_rule_still_fails_a_repeat(self):
+        result = self.grade()
+        self.assertEqual("fail", by_name(result)["fresh_boot"].status)
+        self.assertIn("passes `--boot-anchor`", by_name(result)["fresh_boot"].detail)
+
+    def test_an_anchor_is_read_from_a_capture_or_its_run_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            log = run_dir / "session_20261002_160000.log"
+            log.write_text(BOOT + "\n#CAP,50000,DIAG,tracks,0,0\n", encoding="utf-8")
+            (run_dir / "metadata.json").write_text(
+                json.dumps({"git_commit": "abc", "firmware_hex_sha256": "f00dbabe"}), encoding="utf-8")
+            from_dir = load_boot_anchor(run_dir)
+            from_file = load_boot_anchor(log)
+            mtime = log.stat().st_mtime
+        self.assertTrue(from_dir.fresh_banner)
+        self.assertEqual("f00dbabe", from_dir.image)
+        self.assertEqual(50_000, from_dir.close_clock_us)
+        self.assertEqual(mtime, from_dir.close_wall_s)
+        self.assertEqual(from_dir, from_file)
+
+    def test_the_anchor_is_placed_on_its_own_boot_not_a_drained_prefix(self):
+        """Regression, measured on the bench: the anchor led with the previous boot's tail (194 649 907 us) while
+        the capture's own boot ended at 104 510 708 us. Reading the prefix refused a legitimate repeat."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            (run_dir / "session_20261002_160000.log").write_text(
+                BOOT + "\n"
+                + "#CAP,189529858,DFRAME,15,22265,3240,7732,631,37\n"
+                + "#CAP,194649907,DFRAME,15,22322,3330,77\n"
+                + "#CAP,2167003,DIAG,boot_reset,crash=0\n"
+                + "#CAP,104510708,DFRAME,15,22300,3300,80\n", encoding="utf-8")
+            anchor = load_boot_anchor(run_dir)
+        self.assertEqual(104_510_708, anchor.close_clock_us)
+
 
 
 class FamilyAccountingGateTests(unittest.TestCase):
@@ -2329,6 +2677,8 @@ class RecordRecipeRouteTests(unittest.TestCase):
                 self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
             elif gesture.step == "b_switch_start":
                 self.write("Loop 5: Switch gesture from slot 4")
+                # DEC-112: the device names its own finalization window, and the successor's press follows that row.
+                self.write("#CAP,89000000,DIAG,reentry_window_open,3,1753,2304")
 
         result, _events, _port, _clock = self.drive(only_the_gesture)
         self.assertEqual("SWITCH_NOT_CARRIED", result)
@@ -2408,6 +2758,58 @@ class RecordStartRouteOracleTests(unittest.TestCase):
                          metadata=METADATA, base_report=BASE_REPORT)
         self.assertNotEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
 
+class RecordOnePressOracleTests(unittest.TestCase):
+    """The record leg's one-press-per-stop clause: the driver's report is the input, the device is the witness.
+
+    An execution count cannot prove the absence of a retry (a retried press collapses into one execution), so
+    the driver's own emitted gestures are the required evidence and the device's rows bind each of them.
+    """
+
+    @staticmethod
+    def report(*gestures, leg="rec", slot_a=4, slot_b=5):
+        return {"leg": leg, "slot_a": slot_a, "slot_b": slot_b,
+                "events": [{"event": f"gesture:{name}", "line": line} for name, line in gestures]}
+
+    def check(self, *, driver, text=None, window=None):
+        log = text if text is not None else chain_log()
+        return by_name(analyse(log, leg="rec", slot_a=4, slot_b=5, metadata=METADATA,
+                               base_report=BASE_REPORT, driver=driver,
+                               window=(0, len(log.splitlines())) if window is None else window)
+                       )["L7_one_press_per_stop"]
+
+    def test_one_emitted_press_per_stop_with_device_witnesses_passes(self):
+        text = chain_log() + ("Loop 5: Record start carried on the switch\n"
+                             "MIDI Button A: Stop Recording\n")
+        check = self.check(driver=self.report(("b_switch_start", 1), ("b_stop", 2)), text=text)
+        self.assertEqual("ok", check.status, check.detail)
+
+    def test_a_missing_driver_report_is_an_evidence_gap(self):
+        check = self.check(driver=None)
+        self.assertEqual("unknown", check.status, check.detail)
+
+    def test_a_duplicated_emitted_press_fails(self):
+        text = chain_log() + ("Loop 5: Record start carried on the switch\n"
+                             "MIDI Button A: Stop Recording\n")
+        check = self.check(driver=self.report(("b_switch_start", 1), ("b_switch_start", 1), ("b_stop", 2)),
+                           text=text)
+        self.assertEqual("fail", check.status, check.detail)
+
+    def test_a_press_outside_the_measured_window_is_not_this_runs_evidence(self):
+        text = chain_log() + ("Loop 5: Record start carried on the switch\n"
+                             "MIDI Button A: Stop Recording\n")
+        check = self.check(driver=self.report(("b_switch_start", 1), ("b_stop", 2)), text=text,
+                           window=(40, 60))
+        self.assertEqual("unknown", check.status, check.detail)
+
+    def test_a_press_without_a_device_witness_is_an_evidence_gap(self):
+        check = self.check(driver=self.report(("b_switch_start", 1), ("b_stop", 2)))
+        self.assertEqual("unknown", check.status, check.detail)
+
+    def test_a_report_for_another_target_is_not_this_evidence(self):
+        check = self.check(driver=self.report(("b_switch_start", 1), ("b_stop", 2), slot_b=6))
+        self.assertEqual("unknown", check.status, check.detail)
+
+
 class OverdubRecipeRouteTests(unittest.TestCase):
     """Task 4.3: the overdub leg's three invariants, driven against the device's own rows.
 
@@ -2429,10 +2831,11 @@ class OverdubRecipeRouteTests(unittest.TestCase):
             for row in rows:
                 handle.write(row + "\n")
 
-    def drive(self, answer, *, plan=None, timeout_s=0.01):
+    def drive(self, answer, *, plan=None, timeout_s=0.01, clock_reader=None):
         from unittest.mock import patch
         events: list[dict] = []
         port = FakePort()
+        clock = FakeClockReader() if clock_reader is None else clock_reader
 
         def emit(_port, gesture, **kw):
             answer(self.log, gesture)
@@ -2442,8 +2845,9 @@ class OverdubRecipeRouteTests(unittest.TestCase):
              patch(_patch_target("time.sleep")):
             result = _run_plan(port, self.log, plan or leg_gestures("od", track=8, a=4, b=5),
                                slot_b=5, slot_a=4, press_ms=120, phase_timeout_s=timeout_s,
-                               events=events, note_channel=7, overdub_notes=2)
-        return result, events, port
+                               events=events, note_channel=7, overdub_notes=2, clock_reader=clock)
+        return result, events, port, clock
+
 
     def answering(self, *, switch="Loop 5: Switch gesture from slot 4"):
         def answer(log, gesture):
@@ -2451,6 +2855,11 @@ class OverdubRecipeRouteTests(unittest.TestCase):
                 self.write("Overdubbing started @ tick 10")
             elif gesture.step == "b_switch":
                 self.write(switch)
+                # The device names the finalization window its own switch press opened, and DEC-112 places the
+                # successor's start on that row rather than after a host delay. This is **not** the release edge
+                # (`canonical_release`) the "no retirement wait" clause below forbids waiting for: the window opens
+                # before it, and a leg that waited for the release would still stop inside its bound.
+                self.write("#CAP,89000000,DIAG,reentry_window_open,3,1753,2304")
         return answer
 
     def test_the_overdub_recipe_drives_without_a_predecessor_retirement(self):
@@ -2461,21 +2870,177 @@ class OverdubRecipeRouteTests(unittest.TestCase):
         named failure inside this bound instead of driving -- so `DROVE_LEG` here *is* the "no retirement wait"
         evidence.
         """
-        result, events, _port = self.drive(self.answering())
+        result, events, _port, _clock = self.drive(self.answering())
         self.assertEqual("DROVE_LEG", result, events)
         names = [e.get("event") for e in events]
         self.assertIn("b_switch", names)
         self.assertEqual([True], [e["confirmed"] for e in events if e.get("event") == "b_switch"])
         self.assertNotIn("leg_aborted_pending_switch", names)
 
+    def test_the_successor_is_pressed_on_the_switchs_own_acknowledgement(self):
+        """The successor's press follows the switch's **directly printed** row, and waits for no ring row.
+
+        Measured (`captures/s45-flow-20261002-191802-od1`): the device *does* open the window
+        (`DIAG,reentry_window_open,3,1752,2304` at 4060.262832 us) but that row is ring-buffered -- it reached the
+        file ~1,240 lines *after* the switch's own print (`[4060.431] [INFO] Loop 5: Switch gesture from slot 4`,
+        written straight to `Serial`) and only in a later flush, after the window had already closed (the release,
+        `canonical_release,3,32,2304,8`, lands 1.194 s later). A press placed on the ring row therefore cannot be
+        inside the window; the press this flow makes -- immediately after the switch's acknowledgement -- is the
+        earliest the arrangement can make, which is why a run without any window row in the capture still drives.
+        """
+        def answer(log, gesture):
+            if gesture.step in ("a_overdub_start", "b_overdub_start"):
+                self.write("Overdubbing started @ tick 10")
+            elif gesture.step == "b_switch":
+                self.write("Loop 5: Switch gesture from slot 4")     # the acknowledgement only; no ring row
+            elif gesture.step == "b_stop_request":
+                self.write("Loop 5: Stop Overdub")
+
+        result, events, _port, _clock = self.drive(answer)
+        self.assertEqual("DROVE_LEG", result, events)
+        pressed = [e["event"].split(":", 1)[1] for e in events
+                   if str(e.get("event", "")).startswith("gesture:")]
+        self.assertEqual(["select_track", "a_overdub_start", "b_switch", "b_overdub_start", "b_stop_request"],
+                         pressed)
+
+    def test_a_seed_window_row_before_the_switch_places_nothing(self):
+        """A row the device emitted for an earlier interval never stands in for this leg's own window.
+
+        The same interval-qualification the oracle needed (`s45-odleg1a-20261002-163640-od`, where a slot-wide first
+        match credited the seed): a stale row is not evidence about this press.
+        """
+        def answer(log, gesture):
+            if gesture.step in ("a_overdub_start", "b_overdub_start"):
+                self.write("Overdubbing started @ tick 10")
+            elif gesture.step == "b_switch":
+                self.write("Loop 5: Switch gesture from slot 4")
+            elif gesture.step == "b_stop_request":
+                self.write("Loop 5: Stop Overdub")
+            if gesture.step in ("a_overdub_start", "b_overdub_start"):
+                self.write("Overdubbing started @ tick 10")
+            elif gesture.step == "b_switch":
+                self.write("Loop 5: Switch gesture from slot 4")
+            elif gesture.step == "b_stop_request":
+                self.write("Loop 5: Stop Overdub")
+
+
+
     def test_a_playback_reaffirmation_at_the_switch_is_a_named_wrong_route(self):
         """Task 4.3's "no playback re-affirmation": the press must reach the capture-switch, not the queue."""
-        result, events, _port = self.drive(self.answering(switch="Loop 5: Reaffirmed playback switch"))
+        result, events, _port, _clock = self.drive(self.answering(switch="Loop 5: Reaffirmed playback switch"))
         self.assertEqual("PLAYBACK_REAFFIRMED_INSTEAD_OF_SWITCH", result, events)
         pressed = [e["event"].split(":", 1)[1] for e in events
                    if str(e.get("event", "")).startswith("gesture:")]
         self.assertEqual(["select_track", "a_overdub_start", "b_switch"], pressed,
                          "the leg stops at the wrong route instead of pressing on")
+
+    def test_the_overdub_content_is_clock_timed_or_named(self):
+        """Content must survive the capture policy, so it is clock-paced and named when it cannot be.
+
+        Measured (`captures/s45-odleg-20261002-161512-od`): a blind 20 ms pair is 7.7 ticks at 120 BPM against
+        `DEFAULT_NOTE_MIN_LENGTH_TICKS = 8` with removal enabled, so the hot stop dropped it, A's overdub closed
+        with `events=0`, no finalization window opened and the successor had nothing to overlap. The emission the
+        record leg uses is 2 MIDI clocks (16 ticks) and survives.
+        """
+        result, events, port, clock = self.drive(self.answering())
+        self.assertEqual("DROVE_LEG", result, events)
+        content = [e for e in events if str(e.get("event", "")).endswith("_notes")]
+        self.assertTrue(content, events)
+        for entry in content:
+            self.assertEqual("device_clock", entry.get("clock_source"), entry)
+            self.assertGreaterEqual(entry.get("gate_clocks", 0), 2, entry)
+            self.assertTrue(entry.get("confirmed"), entry)
+        self.assertTrue(clock.waits, "the content is paced by the device clock, not a fixed sleep")
+        self.assertIn(60, port.note_sequence())
+        # No clock is a **named** failure, never silent content on a take that would finalize empty.
+        result, events, _port, _clock = self.drive(self.answering(), clock_reader=False)
+        self.assertEqual("OVERDUB_CONTENT_UNCONFIRMED", result, events)
+
+
+
+class ClockPacedTakeLengthTests(unittest.TestCase):
+    """A take's length is a **clock span**, not a wall-clock guess (DEC-112 ruling 2).
+
+    Measured before this: the same `--bars 2` produced 1536 and 2304 ticks, and when a leg's own note burst outlived
+    that loop the leg crossed its end -- `Track::commitOverdubWrap` resets the capture staging and reseeds
+    `captureGeneration` from a `playbackGeneration` of 0, so the leg's stop armed a 0-generation marker with an empty
+    post-wrap staging and its finalization window collapsed to ~200 ms, below the device's own admission latency
+    (`captures/s45-fixcamp-20261002-181255-od2`). These tests pin the pacing and both refusal shapes.
+    """
+
+    def test_the_take_waits_to_its_own_span_boundary(self):
+        """The last wait lands on `origin + 1 + notes*step + hold`, so the caller's stop is a clock boundary."""
+        clock = FakeClockReader()
+        report = _send_clock_timed_notes(FakePort(), clock, count=2, note_base=60, note_channel=7,
+                                        timeout_s=1.0, hold_clocks=10)
+        step_clocks = max(1, MIDI_CLOCKS_PER_BEAT // 4)
+        self.assertTrue(report["confirmed"], report)
+        self.assertEqual(10, report["hold_clocks"])
+        self.assertEqual(0.0 + 1 + 2 * step_clocks + 10, clock.waits[-1],
+                         "the take's length ends at the span's own clock boundary")
+
+    def test_a_clock_that_stops_answering_is_named_never_guessed(self):
+        class Reluctant(FakeClockReader):
+            def wait_pulse(self, target, *, timeout_s, abort=None):
+                self.waits.append(target)
+                return False
+
+        report = _send_clock_timed_notes(FakePort(), Reluctant(), count=4, note_base=60, note_channel=7,
+                                         timeout_s=1.0)
+        self.assertFalse(report["confirmed"])
+        self.assertEqual("device_clock", report["clock_source"])
+        self.assertIn("target_pulse", report)
+
+    def test_no_clock_at_all_is_named_missing(self):
+        report = _send_clock_timed_notes(FakePort(), None, count=4, note_base=60, note_channel=7, timeout_s=1.0)
+        self.assertFalse(report["confirmed"])
+        self.assertEqual("missing", report["clock_source"])
+
+    def test_the_burst_is_sized_to_the_rooms_the_device_reported(self):
+        """The measured pair: a 3-bar loop with 8.5 beats of room fits the full burst, a 2-bar one does not.
+
+        `…-181057-od1` (loop 2304, leg start tick 671) never wrapped; `…-181255-od2` (loop 1536, start 650) and
+        `…-clock-20261002-194915-od1` (loop 1536, start 677) both did. At the device's own 192 ticks per beat
+        (`bars = 2` over a 1536-tick loop) the second case has 886 ticks of room and needs 432 for one note plus the
+        host's overhead, so the burst shrinks to ten notes -- which fits, where the old fixed sixteen did not.
+        """
+        healthy, reason = _leg_note_budget(loop_ticks=2304, start_tick=671, bars=2, requested=16, step_clocks=6)
+        self.assertEqual("", reason)
+        self.assertEqual(14, healthy)
+        tight, reason = _leg_note_budget(loop_ticks=1536, start_tick=650, bars=2, requested=16, step_clocks=6)
+        self.assertEqual("", reason)
+        self.assertEqual(10, tight)
+        self.assertLess(tight, 16, "the burst is shortened rather than sent into a wrap")
+
+    def test_a_phase_with_no_room_is_refused_by_name_and_never_pressed(self):
+        """A leg starting just before its loop's end has no room: that is a named refusal, not a wrap."""
+        notes, reason = _leg_note_budget(loop_ticks=1536, start_tick=1500, bars=2, requested=16, step_clocks=6)
+        self.assertEqual(0, notes)
+        self.assertIn("no room for a leg at this phase", reason)
+        self.assertIn("room=36 ticks", reason)
+
+    def test_a_phase_past_the_loop_wraps_to_its_own_room(self):
+        notes, reason = _leg_note_budget(loop_ticks=1536, start_tick=1600, bars=2, requested=16, step_clocks=6)
+        self.assertEqual("", reason)
+        self.assertEqual(16, notes, "the phase is read modulo the loop, and this one has a full loop of room")
+
+    def test_the_loop_length_comes_from_the_devices_own_stop_row(self):
+        """`RECS,(stop|stopToStopped),<slot>,<tick>,<start>,<raw>,<final>,<align>`: `final` is the loop's length."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "session.log"
+            log.write_text(
+                "#CAP,1000,RECS,stopToStopped,4,900,0,900,768,0\n"
+                "#CAP,2000,RECS,stopToStopped,3,1974,0,1974,2304,0\n"
+                "#CAP,3000,RECS,stop,3,2500,0,600,1536,0\n"
+                "[86.758] [DEBUG] [TRACK] Overdubbing started @ tick 671\n", encoding="utf-8")
+            self.assertEqual(1536, _loop_length_ticks(log, 3), "the latest stop row for that slot wins")
+            self.assertEqual(768, _loop_length_ticks(log, 4))
+            self.assertIsNone(_loop_length_ticks(log, 5))
+            self.assertEqual(671, _leg_start_tick(log, 0))
+            self.assertIsNone(_leg_start_tick(log, 4), "the search is bounded by the caller's mark")
+
+
 
 
 class OverdubRecipeOracleTests(unittest.TestCase):
@@ -2642,6 +3207,8 @@ class MixedLegTests(unittest.TestCase):
                 self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
             elif gesture.step == "b_switch":
                 self.write("Loop 5: Switch gesture from slot 4")
+                # DEC-112: the device names its own finalization window, and the successor's press follows that row.
+                self.write("#CAP,89000000,DIAG,reentry_window_open,3,1753,2304")
             elif gesture.step == "b_overdub_start":
                 self.write("Overdubbing started @ tick 10")
             elif gesture.step == "b_stop_request":
@@ -2668,6 +3235,8 @@ class MixedLegTests(unittest.TestCase):
                 self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
             elif gesture.step == "b_switch":
                 self.write("Loop 5: Switch gesture from slot 4")
+                # DEC-112: the device names its own finalization window, and the successor's press follows that row.
+                self.write("#CAP,89000000,DIAG,reentry_window_open,3,1753,2304")
             elif gesture.step == "b_overdub_start":
                 self.write("Overdubbing started @ tick 10")
             elif gesture.step == "b_stop_request":

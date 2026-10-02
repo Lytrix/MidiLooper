@@ -68,6 +68,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from hitl.content_deduction import validate_deduction
 from hitl.lease_release import WS_RELEASE_RE
 
 CAP_RE = re.compile(r"^#CAP,(\d+),(.*)$")
@@ -289,6 +290,14 @@ def analyse_content_dump(text: str, *, slot_c: int, expected_notes: tuple[int, .
     # merged playback order. Compare canonical event tuples, not producer order.
     out["storage_effective_match"] = (
         sorted(storage_rows) == sorted(effective_rows)
+    ) if effective_rows else None
+    # A committed overlap-resolve **Hides** a covered note (or shortens it) instead of rewriting storage, so the two
+    # views legitimately differ where a later producer covers an earlier note of the same pitch. That deduction is
+    # validated and named (`hitl.content_deduction`), never waved through: `resolved_storage_match` is True only when
+    # every difference is accounted for by a covering row.
+    out["deduction"] = validate_deduction(per_kind=per_kind, loop_length=out["length"] or 0)
+    out["resolved_storage_match"] = (
+        out["deduction"]["accounted"] and out["deduction"]["checked"]
     ) if effective_rows else None
     # A dump is only usable if it is a COMPLETE block and its declared per-group counts match what parsed.
     out["complete"] = "CAPTURE_CONTENT,end" in text

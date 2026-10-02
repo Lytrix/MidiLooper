@@ -69,11 +69,73 @@ for _entry in (str(Path(__file__).resolve().parent),):
         sys.path.remove(_entry)
 sys.path.insert(0, str(ROOT / "scripts"))
 
+#: `micros()` is a 32-bit microsecond counter on this device, so it wraps every ~71.6 minutes. A repeat attempt
+#: measured after a wrap is still a continuation, which is why the boot-link arithmetic below is modulo this.
+MICROS_MODULO = 2 ** 32
+
+#: The two captures' host close times (`Path.stat().st_mtime`, within a second of their last row) must agree with
+#: their device-clock advance within this. Measured on the bench over a repeat: 65.348 s of wall time against
+#: 64.920 s of device clock -- 0.43 s apart. A reset moves the device side by the whole boot uptime, hundreds of
+#: seconds in a campaign, so this bound separates the two cases without widening anything.
+CLOCK_WALL_TOLERANCE_US = 10_000_000
+
 from hitl import acceptance_evidence  # noqa: E402
-from hitl.device_time import device_stamp_us, human_line_device_us
+from hitl.device_time import (  # noqa: E402
+    current_boot_last_clock_us,
+    device_stamp_us,
+    human_line_device_us,
+    is_boot_restart_row,
+)
 from hitl.reporting import build_report_bundle, write_report_bundle  # noqa: E402
 
 OK, FAIL, UNKNOWN = "ok", "fail", "unknown"
+
+
+
+@dataclass(frozen=True)
+class BootAnchor:
+    """The fresh boot a repeat attempt **continues**, as this oracle can check it from the device's own rows.
+
+    The campaign's rule (`S4F-CLOSURE-PLAN` §5) is one boot for three consecutive passes, and repeat qualification
+    must not be *solved* by resetting per attempt. A repeat therefore cannot show a second banner, so it is granted
+    the fresh-boot gate by an explicit link to the boot it continues -- naming that link rather than inferring it,
+    and checking it on evidence the device produced:
+
+      * the anchor capture carries the boot banner (it *is* the fresh boot);
+      * the anchor and this attempt name the **same firmware image**;
+      * this attempt carries **no** device restart row (`device_time.is_boot_restart_row`);
+      * the device clock **continues**: the advance between the two captures' closing `#CAP` stamps has to match
+        the wall time that elapsed between them, which a reset -- restarting `micros()` at zero -- cannot satisfy.
+
+    `close_clock_us` is read from the anchor's **own boot** (`device_time.current_boot_last_clock_us`), because a
+    drained prefix can still hold the previous boot's tail, whose stamps exceed every stamp of the new boot.
+    """
+
+    source: str
+    fresh_banner: bool
+    image: Optional[str]
+    close_clock_us: Optional[int]
+    close_wall_s: Optional[float]
+
+
+def load_boot_anchor(path: Path) -> BootAnchor:
+    """Read a `BootAnchor` from a capture file or the run directory that holds it (plus its `metadata.json`)."""
+    log = path
+    if path.is_dir():
+        logs = sorted(path.glob("session_*.log"))
+        if not logs:
+            raise FileNotFoundError(f"{path} holds no session_*.log to anchor on")
+        log = logs[-1]
+    text = log.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    metadata = log.parent / "metadata.json"
+    image = None
+    if metadata.is_file():
+        image = json.loads(metadata.read_text(encoding="utf-8")).get("firmware_hex_sha256")
+    return BootAnchor(source=str(log), fresh_banner=any("BOOT,usb" in line for line in lines[:200]),
+                      image=image, close_clock_us=current_boot_last_clock_us(lines),
+                      close_wall_s=log.stat().st_mtime)
+
 
 CAP_RE = re.compile(r"^#CAP,(\d+),(.*)$")
 # Exactly the successful stop kinds the firmware emits, not an open `stop*` pattern.
@@ -223,6 +285,20 @@ def _overdub_identity(entries: list[Entry], slot: int) -> dict:
     }
 
 
+def _placed_after_floor(line: str, floor_us: Optional[int]) -> bool:
+    """Whether a **human** row can be placed at or after `floor_us` on the device's own clock.
+
+    A directly printed row carries no stamp of its own, so it can only be placed in the device's order when the
+    capture stamps it (`hitl.device_time.human_line_device_us`). Without a floor every row is admissible (the
+    existing reading); with one, an untimed row cannot be *shown* to belong to the later interval, so it is
+    refused instead of being credited to the interval under test.
+    """
+    if floor_us is None:
+        return True
+    stamp = human_line_device_us(line)
+    return stamp is not None and stamp >= floor_us
+
+
 def _overdub_stop_requests(lines: list[str], slots_1based: tuple[int, ...]) -> dict[int, int]:
     """Per-interval stop *requests* from the device's own `Loop N:` rows (1-based slot numbers).
 
@@ -239,9 +315,59 @@ def _overdub_stop_requests(lines: list[str], slots_1based: tuple[int, ...]) -> d
     return counts
 
 
+#: The device rows that witness one press of the record leg's two stops. The driver's gesture report says what
+#: was **sent**; these rows are the device answering that press -- the specific request it understood first,
+#: then its generic press recognition as the weaker witness. A capture holding neither cannot say which press a
+#: stop belongs to, and that is an evidence gap, never a pass.
+_RECORD_PRESS_WITNESSES = (
+    ("b_switch_start", ("Record start carried on the switch", "switch and record start retained",
+                        "Switch gesture from slot", ": Start Recording", "Button press:")),
+    ("b_stop", ("MIDI Button A: Stop Recording", ": Stop Recording", ": Stop Overdub", "Button press:")),
+)
+
+
+def _driver_gestures(driver: Optional[dict], *, leg: str, slot_a: int, slot_b: int):
+    """The driver's own emitted gestures as `(name, line_mark)`, or None when the report cannot answer.
+
+    The report is the **input** side of the acceptance (the one-press-per-stop clause): only the driver knows
+    how many presses it sent, and a run's executions cannot prove the absence of a retry. A report naming
+    another leg, another target pair, or carrying no `gesture:` event is unavailable evidence -- never a
+    blended one.
+    """
+    if not isinstance(driver, dict):
+        return None
+    if driver.get("leg") not in (None, leg):
+        return None
+    if driver.get("slot_a") not in (None, slot_a) or driver.get("slot_b") not in (None, slot_b):
+        return None
+    gestures: list[tuple[str, int]] = []
+    for event in driver.get("events") or []:
+        if not isinstance(event, dict):
+            continue
+        name = str(event.get("event", ""))
+        line = event.get("line")
+        if name.startswith("gesture:") and isinstance(line, int):
+            gestures.append((name[len("gesture:"):], line))
+    return gestures or None
+
+
+def _press_witness(lines: list[str], after_line: int, vocabulary: tuple[str, ...]):
+    """The first device row after `after_line` naming the interpreted press, or None."""
+    for index, line in enumerate(lines):
+        if index <= after_line:
+            continue
+        if any(marker in line for marker in vocabulary):
+            return line.strip()[:120]
+    return None
+
+
 def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
             metadata: Optional[dict] = None, base_report: Optional[dict] = None,
-            window: Optional[tuple[int, int]] = None, inputs: Optional[dict] = None) -> Analysis:
+            window: Optional[tuple[int, int]] = None, inputs: Optional[dict] = None,
+            driver: Optional[dict] = None, boot_anchor: Optional[BootAnchor] = None,
+            attempt_log: Optional[Path] = None) -> Analysis:
+    # `attempt_log` is this attempt's own capture, read only for its close time: a boot link compares the device
+    # clock's advance against the wall time that elapsed between the two captures (see `BootAnchor`).
     # The **mixed** leg (a record predecessor, a seeded overdub successor) is graded by its own mix of the two
     # modes' vocabularies rather than by either one: A's side reads the record families (`RECS` for its stop,
     # `reentry_window_open`/`canonical_release` for its window and retirement) and B's side the overdub families
@@ -267,10 +393,68 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
     add("telemetry_present", OK, f"{len(entries)} #CAP records", "setup")
 
     fresh = any("BOOT,usb" in l for l in lines[:200])
-    add("fresh_boot", OK if fresh else FAIL,
-        "boot banner in the bounded settle prefix" if fresh else
-        "no boot banner: the device did not reset, so this session inherits the ring and clock of an earlier "
-        "one and is not verdict-grade", "setup")
+    if fresh:
+        add("fresh_boot", OK, "boot banner in the bounded settle prefix", "setup")
+    elif boot_anchor is not None:
+        # A **repeat** on one boot (`S4F-CLOSURE-PLAN` §5): no second banner by design, so the gate is satisfied by
+        # an explicit link to the boot this attempt continues, and only when every part of that link is checkable.
+        problems: list[str] = []
+        if not boot_anchor.fresh_banner:
+            problems.append("the anchor capture carries no boot banner, so it is not itself a fresh boot")
+        image = (metadata or {}).get("firmware_hex_sha256")
+        if not image or not boot_anchor.image or image != boot_anchor.image:
+            problems.append(f"the image differs between anchor ({boot_anchor.image}) and this attempt ({image})")
+        restarts = [line.strip()[:80] for line in lines if is_boot_restart_row(line)]
+        if restarts:
+            problems.append(f"this capture contains a device restart row: {restarts[0]}")
+        # Both clocks settle the link, because neither alone can. The attempt's own leading rows cannot place it: a
+        # capture leads with rows the ring was still holding (measured: 119 333 us at the head of a repeat whose live
+        # window ran to 169 430 425 us), so a drained prefix says nothing about *when* the attempt ran. And a clock
+        # that merely increased cannot exclude a reset either, since that same prefix can carry a larger stamp from
+        # the boot before. What a reset cannot do is keep the device clock in step with the wall clock, so the
+        # advance between the two captures' closing stamps has to match the host time that elapsed between them.
+        close_us = current_boot_last_clock_us(lines)
+        attempt_wall_s: Optional[float] = None
+        if attempt_log is not None and attempt_log.is_file():
+            attempt_wall_s = attempt_log.stat().st_mtime
+        if close_us is None:
+            problems.append("this capture carries no #CAP device clock to place it on the anchor's boot")
+        elif boot_anchor.close_clock_us is None:
+            problems.append("the anchor's device clock is unreadable, so continuity cannot be shown")
+        elif boot_anchor.close_wall_s is None or attempt_wall_s is None:
+            problems.append("the two captures' close times are unavailable (pass this attempt's session log as "
+                            "`attempt_log`), so continuity cannot be shown")
+        else:
+            # `micros()` is 32-bit: the advance is the difference **modulo** the counter, so a repeat measured after
+            # a wrap still reads as a continuation. A reset restarts the counter at zero, and that cannot stay in
+            # step with the elapsed wall time -- the one comparison a reboot cannot satisfy.
+            gap_us = (close_us - boot_anchor.close_clock_us) % MICROS_MODULO
+            wall_us = int(round((attempt_wall_s - boot_anchor.close_wall_s) * 1_000_000))
+            if gap_us >= MICROS_MODULO // 2:
+                problems.append(f"the device clock reads as a restart: this capture closes at {close_us} us against "
+                                f"the anchor's {boot_anchor.close_clock_us} us (a reset restarts micros())")
+            elif abs(gap_us - wall_us) > CLOCK_WALL_TOLERANCE_US:
+                problems.append(f"the device clock did not continue: it advanced {gap_us} us between the two "
+                                f"captures while {wall_us} us of wall time elapsed (tolerance "
+                                f"{CLOCK_WALL_TOLERANCE_US} us), which is what a reset in between looks like -- a "
+                                f"reset restarts micros() and cannot keep the two clocks in step")
+        if problems:
+            add("fresh_boot", FAIL,
+                f"not linked to the anchor boot ({boot_anchor.source}): " + "; ".join(problems), "setup")
+        else:
+            add("fresh_boot", OK,
+                f"linked to the boot in {boot_anchor.source}: that capture carries the banner and image "
+                f"{boot_anchor.image[:12]}…, this one holds no device restart and its clock continues "
+                f"(closed {gap_us} us after the anchor on the device clock against {wall_us} us of wall time, "
+                f"tolerance {CLOCK_WALL_TOLERANCE_US} us)", "setup")
+            evidence.setdefault("boot_anchor", []).append(
+                f"{boot_anchor.source}: image {boot_anchor.image}; anchor close {boot_anchor.close_clock_us} us at "
+                f"{boot_anchor.close_wall_s:.3f} host time; attempt close {close_us} us at {attempt_wall_s:.3f}; "
+                f"device advance {gap_us} us against wall {wall_us} us")
+    else:
+        add("fresh_boot", FAIL,
+            "no boot banner: the device did not reset, so this session inherits the ring and clock of an earlier "
+            "one and is not verdict-grade (a repeat on one boot passes `--boot-anchor` instead)", "setup")
 
     if metadata:
         pinned = bool(metadata.get("git_commit")) and bool(metadata.get("firmware_hex_sha256"))
@@ -490,12 +674,26 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
             "retention", "L2")
 
     # ---------------- L3: A's finalization window ----------------
-    windows = [(e.us, e.body) for e in entries
-               if (m := WINDOW_OPEN_RE.match(e.body)) and int(m.group(1)) == a0]
+    # The window must be the one **A's own leg interval** opened. The overdub leg's preparation *seeds* A and B
+    # with records before the leg drives (`captures/s45-odleg1a-20261002-163640-od`: `reentry_window_open,3,1994`
+    # at 35.452 s belongs to the seed A take, `reentry_window_open,3,1770` at 48.013 s to the leg's own overdub),
+    # and a record stop opens a window -- and a release -- of its own. A slot-wide *first* match therefore reads
+    # the seed's window, credits the leg with an acceptance it never exercised, and then bounds the successor's
+    # ordering against the seed's release. The floor is A's interval start admission (`DIAG,reentry,admit` is the
+    # overdub lifecycle's own row, so the record seed carries none), with its accepted-stop binding as fallback.
+    a_interval_floor_us: Optional[int] = None
+    if leg == "od" and od_a is not None:
+        a_interval_floor_us = min((us for us, _iv, _body in od_a["starts"] + od_a["bindings"]), default=None)
+    all_windows = [(e.us, e.body) for e in entries
+                   if (m := WINDOW_OPEN_RE.match(e.body)) and int(m.group(1)) == a0]
+    windows = [row for row in all_windows
+               if a_interval_floor_us is None or row[0] >= a_interval_floor_us]
     human_windows = [(i, l.strip()) for i, l in enumerate(lines)
-                     if (m := HUMAN_WINDOW_RE.search(l)) and int(m.group(1)) == a0]
-    for us, body in windows:
-        evidence["window_open"].append(f"{us}: {body}")
+                     if (m := HUMAN_WINDOW_RE.search(l)) and int(m.group(1)) == a0
+                     and _placed_after_floor(l, a_interval_floor_us)]
+    for us, body in all_windows:
+        evidence["window_open"].append(
+            f"{us}: {body}" + ("" if (us, body) in windows else "  (before A's leg interval: the seed)"))
     if windows:
         add("L3_a_finalization_window", OK, f"{windows[0][1]} at {windows[0][0]} us", "retention", "L3")
     elif human_windows:
@@ -517,13 +715,28 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
         # asks for exactly this window, and its absence is the same staging outcome rather than a device defect.
         add("L3_a_finalization_window", FAIL,
             f"no `reentry_window_open` and no `Reentry window open slot={a0}` row: A never froze into a "
-            "deferred finalization, so this sequence did not exercise the acceptance", "setup", "L3")
+            "deferred finalization, so this sequence did not exercise the acceptance"
+            + (f" -- the capture's window row(s) for A precede its leg interval ({a_interval_floor_us} us): "
+               f"{all_windows[0][1][:120]}" if all_windows else ""), "setup", "L3")
 
-    releases = [(e.us, e.body) for e in entries
-                if (m := CANONICAL_RELEASE_RE.match(e.body)) and int(m.group(1)) == a0]
-    for us, body in releases:
-        evidence["releases"].append(f"{us}: {body}")
-    human_releases = [l for l in lines if re.search(rf"Reentry released slot={a0}(?:\s|$)", l)]
+    # L4 -- A's release is the one its **leg interval** retired on: the interval-qualified
+    # `canonical_release_interval` the firmware emits for it, or the overdub owner's floor-based plain read when
+    # that legacy row is all there is. The slot-wide list is deliberately not a fallback on this leg -- its first
+    # row is the seed's release, which would credit the leg with a retirement it did not produce.
+    if leg == "od" and od_a is not None:
+        releases = list(od_a["releases"])
+    else:
+        releases = [(e.us, e.body) for e in entries
+                    if (m := CANONICAL_RELEASE_RE.match(e.body)) and int(m.group(1)) == a0]
+    all_releases = [(e.us, e.body) for e in entries
+                    if (m := (CANONICAL_RELEASE_RE.match(e.body)
+                              or CANONICAL_RELEASE_INTERVAL_RE.match(e.body))) is not None
+                    and int(m.group(1)) == a0]
+    for us, body in all_releases:
+        evidence["releases"].append(
+            f"{us}: {body}" + ("" if (us, body) in releases else "  (not this interval's retirement)"))
+    human_releases = [l for l in lines if re.search(rf"Reentry released slot={a0}(?:\s|$)", l)
+                      and _placed_after_floor(l, a_interval_floor_us)]
     l4_released = bool(releases) or bool(human_releases)
     # A release missing next to a missing window is the same staging outcome, not a second violation
     # (`test_window_open_is_not_release` still fails L4 when the window is present without a release).
@@ -618,8 +831,12 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
         return m.group(2) if m else line
 
     if leg == "rec":
-        # The record route is decided between A's accepted stop and B's record start, and its rows are emitted
-        # inside that span (the switch press carries the start, so the carrier lands at A's stop).
+        # The record route is decided between A's accepted stop and B's record start, and its rows belong to
+        # that span by **device clock**, not by file position: the ring flushes in batches, so the switch's own
+        # carrier row can land thousands of lines before the delayed stop row it follows. Measured
+        # (`captures/s45-hitl-20261002-150151-rec`): carrier 102.841 s at line 3508, A's `RECS,stopToStopped`
+        # at 102.374 s on line 11075, B's `RECA` at 103.433 s on line 11659 -- so a positional slice excluded
+        # the route the device had actually named and reported an evidence gap for a working switch.
         stop_edge = "record stop"
         route_name = "a carried record start"
         started = [i for i, l in enumerate(lines)
@@ -627,8 +844,35 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
         span_start = [i for i, l in enumerate(lines)
                       if (m := RECS_STOP_RE.match(_row_body(l))) and int(m.group(1)) == a0]
         span = lines[span_start[0]:(started[0] + 1 if started else len(lines))] if span_start else []
-        production = [l.strip()[:120] for l in span if any(r in l for r in RECORD_START_CARRIED_ROWS)]
-        wrong = [l.strip()[:120] for l in span if any(r in l for r in WRONG_MODE_ROUTE_ROWS)]
+        a_stop_us = next((stamp for line in lines[:span_start[0] + 1]
+                          if RECS_STOP_RE.match(_row_body(line)) and
+                          int(RECS_STOP_RE.match(_row_body(line)).group(1)) == a0 and
+                          (stamp := _line_device_us(line)) is not None), None) if span_start else None
+        b_start_us = next((stamp for index in started[:1]
+                           if (stamp := _line_device_us(lines[index])) is not None), None)
+        route_rows: list[tuple[int, str]] = []
+        if a_stop_us is not None and b_start_us is not None:
+            for line in lines:
+                stamp = _line_device_us(line)
+                if stamp is None or not (a_stop_us <= stamp <= b_start_us):
+                    continue
+                body = _row_body(line)
+                if any(marker in body for marker in
+                       RECORD_START_CARRIED_ROWS + WRONG_MODE_ROUTE_ROWS):
+                    route_rows.append((stamp, line.strip()[:120]))
+        # A row carrying **no** device clock cannot be placed by time, so it keeps the established positional
+        # reading (synthetic fixtures carry no clock at all, and dropping their carrier would lose the route
+        # they do name).
+        for line in span:
+            if _line_device_us(line) is not None:
+                continue
+            if any(marker in line for marker in RECORD_START_CARRIED_ROWS + WRONG_MODE_ROUTE_ROWS):
+                route_rows.append((0, line.strip()[:120]))
+        route_rows.sort(key=lambda item: item[0])
+        production = [row for _stamp, row in route_rows
+                      if any(marker in row for marker in RECORD_START_CARRIED_ROWS)]
+        wrong = [row for _stamp, row in route_rows
+                 if any(marker in row for marker in WRONG_MODE_ROUTE_ROWS)]
     elif leg == "mixed":
         # The mixed leg's route decision spans A's **record** stop to B's **overdub** admission, and the
         # production route is the capture-switch itself: B has committed passes, so the S4f.6 carrier does not
@@ -729,14 +973,52 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
                 f"one execution for B", "retention", "L7")
     else:
         # A second press would show as a *second* stop request for the same interval, which L1/L6 already count;
-        # this link states the user-facing consequence explicitly.
-        # Successful executions do not count button requests: retries may collapse
-        # into one execution. The driver gesture report is a separate required input.
+        # this link states the user-facing consequence explicitly. Executions alone cannot prove the absence of a
+        # retry, so the **driver's own gesture report** is the required input: it names how many presses were
+        # sent, and the device's own witness rows then bind each of them to the press it understood.
         second_press = (len(stops_a) > 1) or (len(stops_b) > 1)
-        add("L7_one_press_per_stop", FAIL if second_press else UNKNOWN,
-            "a second stop request exists for an interval, so a press was required twice" if second_press else
-            "stop executions alone cannot prove one input press; correlate the driver's gesture report",
-            "retention", "L7")
+        gestures = _driver_gestures(driver, leg=leg, slot_a=slot_a, slot_b=slot_b)
+        if second_press:
+            add("L7_one_press_per_stop", FAIL,
+                "a second stop request exists for an interval, so a press was required twice",
+                "retention", "L7")
+        elif gestures is None:
+            add("L7_one_press_per_stop", UNKNOWN,
+                "stop executions alone cannot prove one input press; this capture carries no driver gesture "
+                "report, so the press count is not established", "evidence", "L7")
+        else:
+            emitted, missing = [], []
+            outside = []
+            for name, vocabulary in _RECORD_PRESS_WITNESSES:
+                marks = [line for gesture, line in gestures if gesture == name]
+                if len(marks) != 1:
+                    emitted.append(f"{len(marks)} `{name}` press(es)")
+                    continue
+                if window and not (window[0] <= marks[0] <= window[1]):
+                    outside.append(f"`{name}` at line {marks[0]} is outside the measured window {window}")
+                    continue
+                witness = _press_witness(lines, marks[0], vocabulary)
+                (missing if witness is None else emitted).append(
+                    f"`{name}`: {witness}" if witness else f"`{name}` at line {marks[0]}")
+            evidence["stop_requests"] = emitted + missing
+            if any(item.endswith("press(es)") for item in emitted):
+                add("L7_one_press_per_stop", FAIL,
+                    "the driver emitted a duplicated stop press: " + ", ".join(emitted),
+                    "retention", "L7")
+            elif outside:
+                add("L7_one_press_per_stop", UNKNOWN,
+                    "the report's press marks do not describe this run's window: " + "; ".join(outside),
+                    "evidence", "L7")
+            elif missing:
+                add("L7_one_press_per_stop", UNKNOWN,
+                    "the driver emitted one press per stop, but the device's own row for "
+                    + ", ".join(missing) + " is not in this capture, so the binding is not established",
+                    "evidence", "L7")
+            else:
+                add("L7_one_press_per_stop", OK,
+                    "the driver emitted exactly one press per stop, and the device answered each of them: "
+                    + "; ".join(emitted), "retention", "L7")
+
 
     if leg in ("od", "mixed"):
         # `overdub_interval_identity`: is the leg's own identity chain established for **both** intervals --
@@ -1011,6 +1293,13 @@ def main(argv: list[str] | None = None) -> int:
                         "otherwise complete acceptance, and its absence is an evidence gap")
     p.add_argument("--emit-bundle", type=Path, default=None,
                    help="seal this verdict as a run bundle (default: none; needs --run-report for a pass)")
+    p.add_argument("--boot-anchor", type=Path, default=None,
+                   help="a **repeat** attempt on one boot: the fresh-boot capture it continues (its session log or "
+                        "the run directory holding it, with its metadata.json). The campaign's rule is one boot for "
+                        "three consecutive passes, so a repeat shows no banner; the gate is then satisfied only by a "
+                        "checkable link -- the anchor's own banner, the same firmware image, no device restart in "
+                        "this capture, and a device clock whose advance matches the wall time the two captures "
+                        "closed apart")
     args = p.parse_args(argv)
 
     text = args.session_log.read_text(encoding="utf-8", errors="replace")
@@ -1026,7 +1315,10 @@ def main(argv: list[str] | None = None) -> int:
         "shutdown": (run_report or {}).get("shutdown"),
     }
     analysis = analyse(text, leg=args.leg, slot_a=args.slot_a, slot_b=args.slot_b,
-                       metadata=meta, base_report=base, window=_run_window(run_report), inputs=inputs)
+                       metadata=meta, base_report=base, window=_run_window(run_report), inputs=inputs,
+                       driver=run_report,
+                       boot_anchor=load_boot_anchor(args.boot_anchor) if args.boot_anchor is not None else None,
+                       attempt_log=args.session_log)
     identity = {k: (meta or {}).get(k) for k in ("git_commit", "firmware_hex_sha256")} if meta else {}
     payload = report_dict(analysis, identity)
     out = args.out or (args.session_log.parent / "accepted-sequence-review.json")

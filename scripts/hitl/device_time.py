@@ -146,3 +146,38 @@ def newest_row_clock_us(lines: Sequence[str], *, upto_index: Optional[int] = Non
         if newest is None or stamp > newest:
             newest = stamp
     return newest
+
+
+#: The capture ring's own family. Only these rows carry the main `micros()` clock: `#DMA_XFER` and the other
+#: `#<FAMILY>,<n>,` rows stamp a subsystem base of their own (measured: `#DMA_XFER,119333,…` inside a capture
+#: whose live window read 112 486 131 us), so a maximum over *every* stamped row places a run at the wrong clock.
+_CAP_ROW_STAMP_RE = re.compile(r"^#CAP,(\d+),")
+
+
+def cap_row_clock_us(line: str) -> Optional[int]:
+    """The `micros()` stamp of a `#CAP` row, or None when this row carries another family's stamp."""
+    match = _CAP_ROW_STAMP_RE.match(line)
+    return int(match.group(1)) if match else None
+
+
+def current_boot_last_clock_us(lines: Sequence[str]) -> Optional[int]:
+    """The newest `#CAP` stamp in the segment **after** the last row that can only come from a restart.
+
+    A capture leads with rows the ring was still holding, and that ring survives a soft reset, so after a
+    `--boot-reset` reset the drained prefix holds the *previous* boot's tail. Measured on the bench: an anchor
+    capture's prefix reached 194 649 907 us while the capture's own boot ended at 104 510 708 us, and a repeat's
+    prefix opened at 119 333 us while its live window ran to 169 430 425 us. A maximum over all rows would
+    therefore place a run on a boot it does not belong to; the segment after the last restart row does not. With
+    no restart row the capture is one boot, so every row counts.
+    """
+    last_restart: Optional[int] = None
+    for index, line in enumerate(lines):
+        if is_boot_restart_row(line):
+            last_restart = index
+    window = lines if last_restart is None else lines[last_restart + 1:]
+    newest: Optional[int] = None
+    for line in window:
+        stamp = cap_row_clock_us(line)
+        if stamp is not None and (newest is None or stamp > newest):
+            newest = stamp
+    return newest
