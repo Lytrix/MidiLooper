@@ -70,6 +70,31 @@ struct WindowAdmissionAccounting {
     acceptedEffectiveEvents += effectiveEvents;
     return Outcome::Admitted;
   }
+  /// A **new note-on** occupies **two** units inside `L` -- its own row and the closing row it will owe -- which is
+  /// what "the reserved capacity for note-off and generated closures counted inside `L`" means at the edge; every
+  /// other accepted event occupies one.
+  static constexpr size_t kUnitsForNoteOn = 2;
+  static constexpr size_t kUnitsForPlainEvent = 1;
+
+  /// The MIDI edge's **one** decision, as a pure function of the accounting: may one *new* event of this kind still
+  /// be accepted? A `false` is capacity pressure reported **before** acceptance -- never a truncation and never a
+  /// deadline fault. It is a function of the value rather than of stored state, so the refusal can be named and
+  /// tested without reaching a log.
+  bool admitsNewEvent(bool isNoteOn) const {
+    return fits(isNoteOn ? kUnitsForNoteOn : kUnitsForPlainEvent);
+  }
+
+  /// Close an admitted note-on. This moves one unit **already inside `L`** from owed to accepted, so `committed()`
+  /// is unchanged and the closure is always admissible: that is the "an accepted note's closure remains guaranteed
+  /// even when further input is refused" clause as arithmetic, and it is why a closure is the one thing the edge
+  /// never refuses. There is deliberately **no** mutator for a new event: the edge derives this value from the
+  /// capture it describes, so the accounting can never drift away from that capture.
+  void closeReservation() {
+    if (outstandingReservations > 0) {
+      --outstandingReservations;
+    }
+    ++acceptedEffectiveEvents;
+  }
 
   /// A conservative bound for an interval whose exact count is not available at acceptance: the per-bar ceiling times
   /// the bars the interval intersects, **clamped by `L`** -- the task's "per-bar counts only as a conservative bound

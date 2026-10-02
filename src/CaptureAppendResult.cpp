@@ -17,6 +17,8 @@ const char* captureAppendDenyReasonLabel(CaptureAppendDenyReason reason) {
       return "pool_alloc";
     case CaptureAppendDenyReason::StoreOther:
       return "store_other";
+    case CaptureAppendDenyReason::WindowAdmission:
+      return "window_admission";
   }
   return "store_other";
 }
