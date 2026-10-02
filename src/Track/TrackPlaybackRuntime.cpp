@@ -2247,12 +2247,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // retiring) — two entries, each an identity, descriptor pins and its own store references, so a retained revision
 // survives both the pass-level reclamation consumer and `Loop::resetPassTimeline`. DEC-108 item 4 charges that cost
 // to the envelope, and it is one deliberate re-base, recorded, exactly as DEC-107 recorded 6,352 -> 6,360.
-// The pins are **per ABI**: the holder's pin lists are pointer-sized, so the target (32-bit) holds +120 B over the
-// pre-slice figure (6,368 -> 6,488: +96 B retained sources, +24 B lag accounting) while the host holds +176 B
-// (6,544) because the lag state fits in its existing padding. The **target** figure is the one charged.
+// The pins are **per ABI**: the holders' pin lists are pointer-sized, so the target (32-bit) holds +144 B over the
+// pre-slice figure (6,368 -> 6,512: +96 B retained sources, +24 B lag accounting, +24 B interval index) while the host
+// holds +176 B (6,544), its larger slack absorbing the later members. The **target** figure is the one charged.
 #if defined(__IMXRT1062__)
-static_assert(sizeof(LoopPlaybackRuntime) == 6488,
-              "S3.0/3.6: LoopPlaybackRuntime is the per-slot working set (6,488 B extmem: +96 B sources, +24 B lag)");
+static_assert(sizeof(LoopPlaybackRuntime) == 6512,
+              "S3.0/3.6: LoopPlaybackRuntime is the per-slot working set (6,512 B extmem: +96 sources, +24 lag, +24 index)");
 #else
 static_assert(sizeof(LoopPlaybackRuntime) == 6544,
               "S3.0/3.6: LoopPlaybackRuntime host-ABI size (6,544 B: +176 B retained sources)");
@@ -2262,3 +2262,4 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
               "per-track authority may hide here");
 #endif
+// (the temporary compile-time size probe that measured the figure above has been removed)

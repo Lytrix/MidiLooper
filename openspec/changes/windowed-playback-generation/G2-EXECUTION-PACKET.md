@@ -508,3 +508,59 @@ reads. Detail and raw numbers:
 - **Task 3.6 still stays OPEN:** the **interval index over pinned bodies** (later intervals constructible from the
   retained revision with no resident whole-loop root; both affected ranges; atomic publication with the source
   revision; inspected-work budgeting) is the remaining clause, and nothing here claims interval-directed lookup.
+
+### Increment 3.6c — the interval index over pinned bodies (2026-10-02)
+
+**Scope.** The last clause of 3.6: later intervals must stay constructible from the retained revision **through an
+index over pinned bodies, with no resident whole-loop root**, whose lookup is **interval-directed** (total work does not
+grow with unrelated loop content), **includes edit-moved events at their effective destinations**, publishes **atomically
+with the source revision** and never modifies an index a reader holds, and whose representation change, ownership,
+**resident-memory bound** and construction/update lifetime are stated explicitly.
+
+**The representation, stated rather than implied.** One **bit per bar** says whether any pinned body carries content in
+that bar (`RetainedIntervalIndex`). It is a **descriptor**, not an event copy — `TickIndex`'s whole-history copy storage
+is deliberately not inherited, and `CommittedEventRange` stays the body-reading primitive. Resident bound: the bar
+ceiling `kRetainedIndexMaxBars` (512 bars = 16 words per bitmap), **refused by name** beyond it, because an index that
+answered only part of a loop would present the complete scan as window-bounded. Ownership: the slot's retained source.
+Lifetime: the revision the index was built for. Update strategy: a **full rebuild per admitted revision**, published
+with a single assignment, so both the old and the new affected ranges are covered by construction and no reader ever
+holds a mutated index.
+
+| # | Case | Discriminating assertion | Mutation that must fail it |
+|---|---|---|---|
+| W-25 | an interval over a bar whose pinned bodies carry content | `Indexed` with every bar of the interval covered and none skipped | counting a covered bar as skipped |
+| W-26 | an interval whose bars carry no pinned bodies | `Indexed` with **0 covered and every bar skipped** — the interval-directed answer, at no chunk-inspection cost | marking every bar of the interval covered (the scan the index exists to avoid) |
+| W-27 | an **active edit** whose destination is an otherwise-empty bar | that bar is **covered, not skipped** — the index covers the edited destination, while applying the edit stays the resolver's | not folding the edit destinations (the "lookup includes edit-moved events" clause) |
+| W-28 | a query for a revision the index was not built for; a loop beyond the bar ceiling | `RevisionMismatch` (named, never a stale answer) and `BarsUnsupported` for the build **and** the query, with **no index left behind** to answer partially | answering from the index regardless of its revision; indexing part of an over-ceiling loop |
+
+**Verification recipe.** Focused `test_runtime_working_set_ownership` + the full native suite + the
+`teensy41-capture-serial` build with the RAM1 guard (the index adds per-slot state again, so the S3.0 pin is re-based
+per ABI with the **target** figure charged). Detail:
+[`evidence/2026-10-02-s36c-interval-index/EVIDENCE.md`](evidence/2026-10-02-s36c-interval-index/EVIDENCE.md).
+
+### Increment 3.6c — the interval index, and **task 3.6 checked** (2026-10-02)
+
+**What landed:** `RetainedIntervalIndex` (one **bit per bar**, revision-stamped, bounded by `kRetainedIndexMaxBars`),
+`buildRetainedIntervalIndexForSlot` and `queryRetainedIntervalForSlot`, and the build wired into
+`retainPlaybackSourceForSlot` so the index is **published with the source revision**. Detail and raw numbers:
+[`evidence/2026-10-02-s36c-interval-index/EVIDENCE.md`](evidence/2026-10-02-s36c-interval-index/EVIDENCE.md).
+
+- Oracle/contract unchanged: **YES** — DEC-108 item 14(c) and the spec's index paragraph, with W-25…W-28 as tabulated
+  above. The representation decisions the spec demands (descriptor not a copy; ownership; resident bound; lifetime;
+  update strategy) are stated in the evidence rather than left implicit.
+- Fixture implemented and discriminating assertion demonstrated: **YES** —
+  `test_retained_interval_index_is_interval_directed_and_refuses_stale_revisions`, including an interval built from the
+  **pinned chunk lists alone** (no published root), which is the "no resident whole-loop root" clause demonstrated.
+- Native verification: **GREEN** — focused **54/54** (was 53), full native **2685 / 2678 succeeded / 7 skipped /
+  0 failed**.
+- Build/RAM1 verification: **GREEN** on a **clean rebuild** — `variables 96,192` **unchanged** / `code 391,928 +
+  padding 1,288` / locals 34,880, floor 840, **448 B headroom**. **No re-base.** The S3.0 pin moved per ABI again
+  (target 6,488 → 6,512), measured by the same temporary probe discipline as 3.6b, removed before the commit.
+- Red-proofs: **three**, each restored byte-identically (sha256 verified): the edit destinations not folded; the
+  revision guard dropped; every bar reported covered.
+- Device verification: **NOT APPLICABLE** — no consumer-visible behaviour changes; the lane still has no requester.
+- **Task 3.6 is checked.** Its four clauses are green — retained source with one release predicate (3.6a), protection at
+  both destruction paths, the interval index over pinned bodies (3.6c) and the lag rule with the named second miss
+  (3.6b) — with two limits recorded in the evidence and in `tasks.md`: the **consumer path stays 3.7's** (no production
+  requester yet, so the fixture drives the halves directly) and the **envelope roll-up** of the per-slot figures into
+  RWO's budget artifact belongs to that change's own terms.

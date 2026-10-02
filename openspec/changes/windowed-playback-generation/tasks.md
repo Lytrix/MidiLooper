@@ -227,7 +227,7 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   the **one-pass-late** allowance is 3.6's, so 3.5's currency is exact; `isPlaybackMergedMidiEventsReadyForSlot` remains
   the switch commit's term until 3.7; no retention, index or adoption wiring; no device evidence. Detail:
   [`evidence/2026-10-02-s35-readiness-holder/EVIDENCE.md`](evidence/2026-10-02-s35-readiness-holder/EVIDENCE.md).
-- [ ] 3.6 Implement **pinned-source retention**, the **interval index over the selected `LoopSnapshot`** and the lag rule — verify F-3
+- [x] 3.6 Implement **pinned-source retention**, the **interval index over the selected `LoopSnapshot`** and the lag rule — verify F-3
   passes, that later intervals are constructible from the pinned revision through the index over **pinned bodies** with no
   resident whole-loop root, that index updates cover both affected ranges and publish atomically with the source revision
   (§14), and that the retention and index cost is charged
@@ -268,6 +268,28 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   pin moved per ABI again (target 6,464 → **6,488**; the host stayed 6,544 because the state fitted existing padding).
   **OWED for this task:** the **interval index over pinned bodies**. Detail:
   [`evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md`](evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md).
+  *Increment 3.6c landed 2026-10-02 — the **interval index over pinned bodies**; **task 3.6 is checked**.*
+  `RetainedIntervalIndex` is one **bit per bar** ("any pinned body carries content here"): a **descriptor**, never an
+  event copy (`TickIndex`'s whole-history storage is not inherited; `CommittedEventRange` stays the body-reading
+  primitive). Its lookup is **interval-directed** — a query reports how many bars of the interval the pinned bodies
+  cover and how many are **skipped without touching a chunk** — and it folds the **edit destinations** in (`EditPass`
+  carries no chunk bodies, but its `[startTick, endTick]` span is where the effective content will be, so a bar whose
+  only content is a moved note is not skipped). It publishes **atomically with the source revision** (a candidate
+  built and swapped by one assignment, revision stamped inside it), its **update strategy is a full rebuild per
+  admitted revision** (so both the old and the new affected ranges are covered by construction and no reader holds a
+  mutated index), its **resident bound** is `kRetainedIndexMaxBars = 512` bars (16 words) with a **named refusal**
+  beyond it — because an index that answered part of a loop would present the complete scan as window-bounded — and its
+  **lifetime** is the revision it describes (a query for another revision is `RevisionMismatch`, never a stale answer).
+  The fixture also builds an interval from the **pinned chunk lists alone**, so "no resident whole-loop root" is
+  demonstrated rather than asserted. *Verification:* focused **54/54**, full native **2685 / 2678 succeeded / 7 skipped
+  / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192` **unchanged** /
+  `code 391,928 + padding 1,288` (448 B headroom) and **no re-base**; three mutations red-proved with byte-identical
+  restores (edit destinations not folded; the revision guard dropped; every bar reported covered). The S3.0 pin moved
+  per ABI again (target 6,488 → **6,512**: +96 B sources, +24 B lag, +24 B index; host unchanged at 6,544).
+  *Limits recorded, not smoothed over:* the **consumer path is 3.7's** — nothing in production requests a window yet,
+  so the fixture drives the index and the body enumeration directly rather than through a production caller — and the
+  **envelope roll-up** of these per-slot figures into RWO's budget artifact belongs to that change's own terms.
+  Detail: [`evidence/2026-10-02-s36c-interval-index/EVIDENCE.md`](evidence/2026-10-02-s36c-interval-index/EVIDENCE.md).
 - [ ] 3.7 Remove the live mutable merged-window build — **the last step of the ladder, stage (4)**, and only after **every**
   dependency is implemented and verified: committed interval publication (3.2), readiness and retention (3.5/3.6), the
   bounded legacy compatibility path (3.12), preview publication (3.13), shared-view ownership (3.11), fault recovery

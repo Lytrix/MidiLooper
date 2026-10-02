@@ -408,6 +408,30 @@ public:
   uint8_t playbackLagMissedTraversalsForSlot(uint8_t slotIndex) const;
   uint8_t playbackLagBreachReportsForSlot(uint8_t slotIndex) const;
   bool playbackLagBreachReportedForSlot(uint8_t slotIndex) const;
+  /// Task 3.6c (DEC-108 item 14(c)): build the **interval index over pinned bodies** for a retained source and publish
+  /// it atomically with that source revision. A full rebuild per admitted revision is the update strategy -- it covers
+  /// both the old and the new affected ranges by construction and never modifies an index a reader holds.
+  enum class RetainedIndexBuildResult : uint8_t {
+    Published,
+    NoRuntime,
+    /// Nothing is retained for this slot, so there are no pinned bodies to index.
+    NoRetainedSource,
+    /// The loop has no committed content or no usable length.
+    NotServable,
+    /// The loop's bar count exceeds `kRetainedIndexMaxBars`: refused **by name**, because an index that answered only
+    /// part of the loop would present a complete scan as window-bounded. The caller accounts the full scan instead.
+    BarsUnsupported,
+  };
+  RetainedIndexBuildResult buildRetainedIntervalIndexForSlot(uint8_t slotIndex);
+  /// Task 3.6c: the **interval query** the index exists for. Answers how many bars of the interval the pinned bodies
+  /// cover and how many are skipped **without touching a chunk**, and refuses by name rather than answering from a
+  /// stale index (`RevisionMismatch`) or claiming a partial answer (`BarsUnsupported`). The caller enumerates the
+  /// covered bars' events through the existing budgeted body primitive.
+  enum class RetainedIntervalQueryResult : uint8_t { Indexed, NoIndex, RevisionMismatch, BarsUnsupported };
+  RetainedIntervalQueryResult queryRetainedIntervalForSlot(uint8_t slotIndex, uint32_t startPhase,
+                                                           uint32_t lengthTicks, uint32_t expectedRevision,
+                                                           uint32_t& indexedBarsOut,
+                                                           uint32_t& skippedBarsOut) const;
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
   void releasePlaybackMergedMidiEventsMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.
