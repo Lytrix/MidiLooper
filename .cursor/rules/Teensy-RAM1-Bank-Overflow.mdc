@@ -77,6 +77,20 @@ So: when a change adds a small branch table anywhere, read `free for local varia
 before blaming a new global, and prefer a branch chain or a literal at the reporting site
 over a table.
 
+**A readiness-holder name costs the same as a capture tag.** `windowed-playback-generation` slice 3.5
+(2026-10-02) added six holder-name literals (`"window_build_owner"` and friends, ~100 B) to
+`TrackPlaybackWindowBuild.cpp`. `.rodata` is DTCM in this script, so `variables` went 96,192 -> 100,288
+(+4 KB, locals 34,880 -> 30,784) with `code` **byte-identical** — the align-edge mechanism above,
+triggered from a *readiness* slice rather than a capture one. The natural first fix is rejected by the
+compiler and is worth knowing before spending a build on it: `TRACK_COLD_MEM` on the literals fails with
+*"'kReadinessUnknownName' causes a section type conflict with 'ProjectionContext
+makePlaybackContext(const Track&, const Loop&, uint32_t)'"*, because that TU's functions already occupy
+`.flashmem` as **code** (`*(.flashmem*)` sits inside `.text.code`) and one section cannot hold text and
+rodata. The fix that works is the carve-out this script already carries for the TUs whose tags crossed
+the same edge: add `*TrackPlaybackWindowBuild.cpp.o(.rodata.str* .rodata.*.str*)` to `.text.progmem`
+(> FLASH), which restored `variables` to 96,192 exactly with no re-base. So when a cold TU's *strings*
+cross the edge, route them through `.text.progmem` in the script — `.flashmem` is code there.
+
 ## Verify
 
 ```bash

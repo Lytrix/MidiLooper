@@ -2818,6 +2818,13 @@ void assert_s4b_6_a_switch_provisions_off_clock(uint32_t lengthTicks) {
   // owed under S4b.6's demoted-target item (the windowed publication lane, S4c/F).
   TEST_ASSERT_FALSE_MESSAGE(track.isPlaybackMergedMidiEventsReadyForSlot(kTarget),
                             "a hand-committed slot has no published root, so the merged window stays empty");
+  // Task 3.5 re-point: readiness no longer reads that buffer. No window was published for this slot, and with no
+  // published root no build could have gathered one -- so readiness names the **source** as the holder rather than
+  // relying on "the merged window is empty".
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::OwesSource),
+                    static_cast<int>(track.playbackWindowReadinessForSlot(kTarget)));
+  TEST_ASSERT_EQUAL_STRING("published_source", Track::playbackWindowReadinessHolder(
+                                                   track.playbackWindowReadinessForSlot(kTarget)));
   for (int round = 0; round < 4 && TrackCaptureStopTestAccess::activeLoopIndex(track) != kTarget;
        ++round) {
     const uint32_t base = clockManager.getCurrentTick();
@@ -2980,8 +2987,18 @@ void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot) {
   TEST_ASSERT_TRUE_MESSAGE(trackManager.servicePendingSlotProvision(),
                            "the turn must take the demoted switch as its work");
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget));
+  // The **legacy** merged-buffer term is what the switch commit still holds on here, so it keeps its own assertion.
   TEST_ASSERT_EQUAL_MESSAGE(withRoot, track.isPlaybackMergedMidiEventsReadyForSlot(kTarget),
                             "the turn's build is only ready when the slot has a published root");
+  // Task 3.5 re-point: readiness is the window this change **published**, and this slot has none -- the
+  // `SlotProvision` turn built the *live merged* window, and no production caller requests a window yet (that
+  // requester is 3.7's). So readiness is not Ready for either shape, and it names who owes the window instead of
+  // leaving the caller to infer it from an empty buffer: with a root the **window-build owner** owes a window it
+  // could gather, and without one the **source** owes the root no build can supply.
+  TEST_ASSERT_EQUAL_MESSAGE(withRoot ? static_cast<int>(Track::PlaybackWindowReadiness::OwesBuild)
+                                     : static_cast<int>(Track::PlaybackWindowReadiness::OwesSource),
+                            static_cast<int>(track.playbackWindowReadinessForSlot(kTarget)),
+                            "readiness names who owes the window");
 
   const uint32_t holdBoundTicks = SlotProvisionHold::boundTicksFor(768);
   if (withRoot) {
@@ -3961,6 +3978,102 @@ void test_window_owner_publishes_the_interval_window_atomically() {
                                    "and it carries the successor's own generation");
 }
 
+/// 3.5 (AC-3): **readiness is a predicate, and its failure names its holder.** Readiness is the window this change
+/// **published** -- not the live merged buffer -- so a published, complete, current window is ready *even when its
+/// interval legitimately holds no events*, and every non-ready answer names who owes the window.
+void test_window_readiness_names_its_holder_and_an_empty_interval_is_ready() {
+  // (W-9) A current published root and a prewarmed runtime, but **no window published**: the window-build owner owes
+  // one. The debt is the build owner's and not the source's -- a build *could* gather here.
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+  publishBarSpacedRootForSlot(loop, 2);  // content in bars 0-1 of a 64-bar loop, so the empty interval has a source
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::OwesBuild),
+                    static_cast<int>(track.playbackWindowReadinessForSlot(0)));
+  TEST_ASSERT_EQUAL_STRING("window_build_owner", Track::playbackWindowReadinessHolder(
+                                                    track.playbackWindowReadinessForSlot(0)));
+
+  // (W-11) The interval under test is **legitimately empty**: two bars deep in the loop, where the root carries
+  // nothing. The request goes through the production resolver, so the emptiness is the resolver's own answer rather
+  // than the fixture's claim about it.
+  constexpr uint32_t kEmptyPlayhead = 40 * 768;
+  SessionMidiEventVec scratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, kEmptyPlayhead, scratch)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(scratch.size()),
+                                   "the window under test must hold no events at all");
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  PlaybackWindowIdentity emptyWindow{};
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, emptyWindow),
+                           "an empty interval is still a window, and it is published");
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, emptyWindow.playbackRevision);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::Ready),
+                    static_cast<int>(track.playbackWindowReadinessForSlot(0)));
+  TEST_ASSERT_EQUAL_STRING("ready",
+                           Track::playbackWindowReadinessHolder(track.playbackWindowReadinessForSlot(0)));
+  // The rule task 3.5 removes from readiness, held side by side: the legacy merged buffer still demands a non-empty
+  // window, and readiness no longer does.
+  TEST_ASSERT_FALSE_MESSAGE(track.isPlaybackMergedMidiEventsReadyForSlot(0),
+                            "the legacy merged term still requires content; readiness does not");
+
+  // (W-12) Currency is `playbackRevision` **and exactly it**: a window stamped one revision behind the loop owes a
+  // rebuild, by name. Whether *one pass late* is accepted is task 3.6's allowance, deliberately not assumed here.
+  Track& lagging = prepareWindowOwnerSlot(1);
+  Loop& laggingLoop = lagging.getLoop(0);
+  TEST_ASSERT_TRUE_MESSAGE(laggingLoop.playbackRevision >= 1, "the fixture needs a revision to lag behind");
+  const uint32_t staleRevision = laggingLoop.playbackRevision - 1;
+  MidiEvent laggingSource[8];
+  const size_t laggingCount = buildWindowOwnerSource(laggingSource, 8);
+  const PlaybackCoverageInterval laggingCoverage{0, 2 * 768, kWindowOwnerLoopTicks};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(lagging.requestPlaybackViewMaintenance(
+                        0, laggingSource, laggingCount,
+                        PlaybackViewSourceIdentity{staleRevision, 5, nullptr}, laggingCoverage, {}, {}, 0,
+                        kWindowOwnerExpectedRequiredLead)));
+  for (size_t turn = 0; turn < 8 && lagging.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)lagging.stepPlaybackViewMaintenance();
+  }
+  PlaybackWindowIdentity staleWindow{};
+  TEST_ASSERT_TRUE(lagging.publishedPlaybackWindowIdentityForSlot(0, staleWindow));
+  TEST_ASSERT_EQUAL_UINT32(staleRevision, staleWindow.playbackRevision);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::OwesCurrency),
+                    static_cast<int>(lagging.playbackWindowReadinessForSlot(0)));
+  TEST_ASSERT_EQUAL_STRING("window_rebuild", Track::playbackWindowReadinessHolder(
+                                                 lagging.playbackWindowReadinessForSlot(0)));
+  // ...and the **generation is not currency**: the same slot carrying the current revision but a different
+  // generation is ready, because the generation guards ownership (task 3.4) rather than dating the content.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(lagging.requestPlaybackViewMaintenance(
+                        0, laggingSource, laggingCount,
+                        PlaybackViewSourceIdentity{laggingLoop.playbackRevision, 6, nullptr}, laggingCoverage, {}, {},
+                        0, kWindowOwnerExpectedRequiredLead)));
+  for (size_t turn = 0; turn < 8 && lagging.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)lagging.stepPlaybackViewMaintenance();
+  }
+  TEST_ASSERT_TRUE_MESSAGE(lagging.adoptPreparedPlaybackWindow(0),
+                           "a complete successor must be adoptable for the generation case");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::Ready),
+                    static_cast<int>(lagging.playbackWindowReadinessForSlot(0)));
+
+  // (W-10) No published root: no build could gather at all, so the **source** owes the root -- a different holder
+  // from the build owner, which is the whole point of naming it.
+  Track& rootless = prepareWindowOwnerSlot(2);
+  TEST_ASSERT_FALSE(rootless.getLoop(0).publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::OwesSource),
+                    static_cast<int>(rootless.playbackWindowReadinessForSlot(0)));
+  TEST_ASSERT_EQUAL_STRING("published_source", Track::playbackWindowReadinessHolder(
+                                                   rootless.playbackWindowReadinessForSlot(0)));
+
+  // A slot with no committed content has no interval to be ready about at all.
+  LoopEventStore::initPool();
+  Track& bare = trackManager.getTrack(3);
+  bare.ensureLoopsAllocated();
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::NotServable),
+                    static_cast<int>(bare.playbackWindowReadinessForSlot(0)));
+}
+
 /// W-4: a refusal is named and **non-destructive** -- the obligation it found stays exactly as it was.
 void test_window_owner_refusals_are_named_and_non_destructive() {
   // No runtime: the owner never allocates one, so the request is refused and nothing is owed.
@@ -4071,5 +4184,6 @@ int main() {
   // windowed-playback-generation slice 3.2: the owner's atomic interval-window publication.
   RUN_TEST(test_window_owner_publishes_the_interval_window_atomically);
   RUN_TEST(test_window_owner_resolves_the_interval_through_the_published_snapshot);
+  RUN_TEST(test_window_readiness_names_its_holder_and_an_empty_interval_is_ready);
   return UNITY_END();
 }

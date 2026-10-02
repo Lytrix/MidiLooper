@@ -326,7 +326,40 @@ public:
   static void resetPlaybackOrderHotRebuildCount();
   static uint32_t playbackOrderHotRebuildCount();
   /// True when primary playback window matches current loop revision (safe LoopEnd activate).
+  /// This is the **legacy merged-buffer term**: readiness answered from the live mutable merged window, which
+  /// requires that window to be non-empty. Readiness is `playbackWindowReadinessForSlot` (task 3.5); this term
+  /// survives only as the switch commit's hold until task 3.7 removes the live build.
   bool isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const;
+  /// AC-3 / task 3.5: **readiness is a predicate, and its failure names its holder.** The question is exactly
+  /// AC-3's -- *does the window for this slot exist, is it complete, and is it current?* -- and the answer is the
+  /// window this change **published** (3.2/3.4), never the live merged buffer: a published, complete, current
+  /// window is ready **even when its interval legitimately holds no events**, so "empty" is no longer a readiness
+  /// term. Each non-ready value names *who owes it* (the build owner, the source, a rebuild, the occupancy owner),
+  /// exactly as `hasPendingSnapshotPublish`, the restore-request vocabulary and the S4b.7 hold terminal do; the
+  /// holder is rendered by `playbackWindowReadinessHolder` where a row is reported.
+  /// Currency (DEC-108 item 5) is `playbackRevision` and nothing else: an older published revision is
+  /// `OwesCurrency`, and the **one-pass-late** allowance that would accept it is task 3.6's rule, deliberately not
+  /// assumed here. Read-only; callable from a consumer, and answered without allocating.
+  enum class PlaybackWindowReadiness : uint8_t {
+    /// A complete window is published for this slot and carries the loop's current revision.
+    Ready,
+    /// No window is published, and a **current published root** exists: the window-build owner owes one
+    /// (`requestPlaybackWindow` + the deferred `stepPlaybackViewMaintenance` turns).
+    OwesBuild,
+    /// No window is published and no **current** published root exists, so no build could gather: the source owes
+    /// the root. This is the holder for a rootless or not-current slot.
+    OwesSource,
+    /// A window is published but lags the current revision: a rebuild is owed (the one-pass-late allowance is 3.6's).
+    OwesCurrency,
+    /// No committed content or no usable loop length: there is no interval to be ready about.
+    NotServable,
+    /// No playback runtime for this slot: the occupancy owner owes it (a read-side misuse otherwise).
+    NoRuntime,
+  };
+  PlaybackWindowReadiness playbackWindowReadinessForSlot(uint8_t slotIndex) const;
+  /// The **holder's name** for a readiness answer, rendered where a row is reported (no name table: an if/else
+  /// chain in FLASH, never a `switch` or a `const char*` array in `.data`, per the owner's own RAM1 rule).
+  static const char* playbackWindowReadinessHolder(PlaybackWindowReadiness readiness);
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
   void releasePlaybackMergedMidiEventsMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.

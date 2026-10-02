@@ -97,6 +97,13 @@ SECTIONS
 		   mutable state and non-string capture lookup data retain their placement. */
 		*TrackCaptureInput.cpp.o(.rodata.str* .rodata.*.str*)
 		*TrackOverdubLifecycle.cpp.o(.rodata.str* .rodata.*.str*)
+		/* windowed-playback-generation slice 3.5: the readiness-holder names are the
+		   same shape as the two entries above -- their ~100 B crossed the
+		   _VectorsRam/periodictable align edge and cost 4 KB of RAM1 locals
+		   (variables 96,192 -> 100,288 with ITCM code byte-identical). Only the
+		   string literals move, so the row strings this TU already carries travel
+		   with them; all of them are read-only. */
+		*TrackPlaybackWindowBuild.cpp.o(.rodata.str* .rodata.*.str*)
 		. = ALIGN(4);
 	} > FLASH
 

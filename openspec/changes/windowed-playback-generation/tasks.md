@@ -199,9 +199,34 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   predicate, nothing a consumer reads changed, and no device evidence exists. Detail:
   [`evidence/2026-10-02-s34-window-identity/EVIDENCE.md`](evidence/2026-10-02-s34-window-identity/EVIDENCE.md) and
   [`G2-EXECUTION-PACKET.md`](G2-EXECUTION-PACKET.md) § Slice 3.4.
-- [ ] 3.5 Make readiness the completed-publication predicate with a named holder — verify the empty-interval fixture and
+- [x] 3.5 Make readiness the completed-publication predicate with a named holder — verify the empty-interval fixture and
   the AC-3 fixture pass, and that **RWO's two demoted-target fixtures are re-pointed** rather than left depending on
   empty ⇒ not-ready
+  *Landed 2026-10-02.* `Track::playbackWindowReadinessForSlot` answers AC-3's question from the **published** window:
+  `Ready` when a complete window is published at the loop's current `playbackRevision` — **with no event-count term**, so
+  a legitimately empty interval is ready — and otherwise a value that **names the holder**: `OwesBuild` (a current
+  published root exists, so the window-build owner owes one), `OwesSource` (no current root: the source owes it),
+  `OwesCurrency` (published but lagging: a rebuild is owed), `NotServable`, `NoRuntime`; `playbackWindowReadinessHolder`
+  renders the name in an if/else chain (no table, no `switch`). The generation stays an **ownership guard**, not a
+  currency: a window carrying the current revision but a different generation is `Ready`. **RWO's two demoted-target
+  fixtures are re-pointed** to ask this predicate and name the holder (`published_source` in the S4b.6 helper;
+  `OwesBuild`/`OwesSource` per shape in the S4b.7 helper) instead of reading "the merged window is empty" — while their
+  *commit* expectations stay on the **legacy** term, because **nothing in production requests a window yet**: red-proof
+  (b) measures that flipping the commit's hold term now leaves the root-backed demoted switch pending forever, so the
+  requester and the flip are 3.7's.
+  *Verification:* fixture suite **51/51**, `test_midi_service_drain` 38/38, `test_playback_prewarm` **190/190**
+  (unchanged; cited), full native **2682 / 2675 succeeded / 7 skipped / 0 failed** (baseline +1), `teensy41-capture-serial`
+  **SUCCESS** on a **clean rebuild** with RAM1 `variables 96,192` **unchanged** / `code 392,200 + padding 1,016` /
+  locals 34,880 (floor 840) and **no re-base**. Two mutations red-proved with byte-identical restores (sha256 verified).
+  *RAM1, named and fixed:* the first build failed the guard (`variables 100,288`, +4 KB, `code` byte-identical) because
+  this script places `.rodata` in DTCM and the six holder names crossed the `_VectorsRam`/periodictable `ALIGN(1024)`
+  edge; marking them `TRACK_COLD_MEM` is rejected by the compiler (`.flashmem` is *code* in this TU), so the fix is the
+  script's existing carve-out — `*TrackPlaybackWindowBuild.cpp.o(.rodata.str* .rodata.*.str*)` in `.text.progmem`. The
+  RAM1 rule file carries the instance.
+  *Named, not claimed:* F-2/task 2.2's deadline (readiness per affected tick, before the playhead returns) stays open;
+  the **one-pass-late** allowance is 3.6's, so 3.5's currency is exact; `isPlaybackMergedMidiEventsReadyForSlot` remains
+  the switch commit's term until 3.7; no retention, index or adoption wiring; no device evidence. Detail:
+  [`evidence/2026-10-02-s35-readiness-holder/EVIDENCE.md`](evidence/2026-10-02-s35-readiness-holder/EVIDENCE.md).
 - [ ] 3.6 Implement **pinned-source retention**, the **interval index over the selected `LoopSnapshot`** and the lag rule — verify F-3
   passes, that later intervals are constructible from the pinned revision through the index over **pinned bodies** with no
   resident whole-loop root, that index updates cover both affected ranges and publish atomically with the source revision

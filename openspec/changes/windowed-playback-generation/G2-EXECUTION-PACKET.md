@@ -296,3 +296,62 @@ for now exists. Detail and raw numbers: [`evidence/2026-10-02-s34-window-identit
   than becoming a second currency) and **2.1** (F-1's three clauses). **2.10** was checked off on 3.2's record.
 - **Still open, named rather than claimed:** the adoption edge is **not wired into production** (3.7 owns when a
   boundary is eligible) and **readiness is still 3.5**'s predicate — nothing a consumer reads changed here.
+
+## Slice 3.5 — readiness is the completed publication, and its failure names its holder (2026-10-02)
+
+**Scope.** AC-3's **readiness predicate** over the window this change publishes (3.2/3.4), its **named holder**, and
+the removal of "empty ⇒ not ready" from readiness. Readiness answers *does the window for this slot exist, is it
+complete, and is it current?* — the published window, never the live merged buffer.
+
+**Non-goals, named rather than implied.** (1) The **consumer switch** does not happen here: the switch commit's
+hold term (`TrackManagerTransportTick` → `isPlaybackMergedMidiEventsReadyForSlot`) keeps the legacy merged-buffer
+term, because **nothing in production requests a window yet** — `requestPlaybackWindow` has no production caller —
+so flipping the consumer now would leave every demoted target's switch pending forever. That request and the flip
+are 3.7's, and the measurement that establishes it is red-proof (b) below. (2) The **one-pass-late** allowance
+(AC-5) is 3.6's: 3.5's currency is exact, and an older published revision is `OwesCurrency`. (3) No retention, no
+interval index, no adoption wiring.
+
+**Transition oracle** — W-9…W-12 are the predicate's own cases (AC-3's "the predicate's own fixtures, including the
+'missing ⇒ named owner' case"), W-13 is the commit path. Each names the mutation that must fail it.
+
+| # | Transition | Discriminating assertion | Mutation that must fail it |
+|---|---|---|---|
+| W-9 | A current published root, a prewarmed runtime, **no window published** | `OwesBuild` + holder `window_build_owner` — the window-build owner owes it | answering from the live merged buffer (red-proof (a)) |
+| W-10 | The same slot with **no published root** (rootless), and a not-current root | `OwesSource` + holder `published_source` — the *source* owes the root, and that is not the build owner's debt | folding `OwesSource` into `OwesBuild` |
+| W-11 | A window published for an interval that **holds no events at all**, at the loop's current revision | `Ready` — and the same slot read through the legacy merged term is *not* ready, so "empty ⇒ not ready" is gone from readiness | answering from the live merged buffer (red-proof (a)); a readiness clause counting events |
+| W-12 | A window published, then the loop's revision advances (a later pass commits) | `OwesCurrency` + holder `window_rebuild` — currency is `playbackRevision`, and exactly it | comparing the generation instead of the revision; accepting any published window as current |
+| W-13 | The demoted target through the production switch path (RWO's two fixtures, re-pointed) | the switch's commit is still served by the **legacy** term, while the new predicate names the holder for both shapes: `OwesBuild` with a root (no window was ever published — the requester is 3.7's), `OwesSource` without one | **red-proof (b):** flipping the commit's hold term to the new predicate leaves the root-backed demoted target's switch pending (the measurement behind the sequencing above) |
+
+**What lands.** The predicate, its typed outcomes and the holder names (a FLASH if/else chain — no `switch`, no
+name table, per this owner's RAM1 rule), the empty-interval and named-holder fixtures, and RWO's two demoted-target
+fixtures re-pointed to ask the new predicate instead of `empty ⇒ not-ready`. The first body of the predicate is
+deliberately **today's** answer (the legacy merged buffer) so the fixtures can compile against the API and be shown
+to fail for the right reason; that body *is* red-proof (a), and it is replaced by the publication answer in this
+same slice.
+
+**Verification recipe.** `pio test -e native` focused on `test_runtime_working_set_ownership` (the two re-pointed
+RWO fixtures included) + `test_midi_service_drain` + `test_playback_prewarm` (cited, unchanged) + the full native
+suite + the `teensy41-capture-serial` build with the RAM1 guard, then the record and the durable docs. Detail and
+raw numbers: [`evidence/2026-10-02-s35-readiness-holder/EVIDENCE.md`](evidence/2026-10-02-s35-readiness-holder/EVIDENCE.md).
+
+### Completion record (2026-10-02)
+
+- Oracle/contract unchanged: **YES** — AC-3 and AC-4, with every W-case above; nothing was weakened to make a fixture pass.
+- Fixture implemented and discriminating assertion demonstrated: **YES** — `test_window_readiness_names_its_holder_and_an_empty_interval_is_ready`
+  (W-9…W-12 plus the `NotServable` boundary) and **RWO's two demoted-target fixtures re-pointed** (W-13).
+- Native verification: **GREEN** — focused **51/51** (was 50), `test_midi_service_drain` **38/38**,
+  `test_playback_prewarm` **190/190** (unchanged, cited), full native **2682 / 2675 succeeded / 7 skipped / 0 failed**.
+- Build/RAM1 verification: **GREEN** on a **clean rebuild** with the approved line **byte-identical**
+  (`variables 96,192` / `code 392,200 + padding 1,016` / locals 34,880, floor 840). The first build of the slice
+  **failed** the guard (`variables 100,288`); the cause (this script places `.rodata` in DTCM, and the holder names
+  crossed the `_VectorsRam`/periodictable `ALIGN(1024)` edge) and the fix (`.text.progmem` carve-out, after
+  `TRACK_COLD_MEM` was rejected by a section-type conflict) are recorded in the slice evidence and in
+  [`Teensy-RAM1-Bank-Overflow.mdc`](../../../.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc). **No re-base** was made.
+- Red-proofs: **two**, each restored byte-identically (sha256 verified): readiness answered from the legacy merged
+  buffer (**5 failures**, one per designed reason); the commit's hold term flipped to the new predicate (the
+  root-backed demoted switch stops committing — the measurement behind keeping the flip in 3.7).
+- Device verification: **NOT APPLICABLE** — no consumer-visible behaviour changes in this slice.
+- Required reviews and durable docs: **task 1.2 landed** (`DECISION_REVIEW.md`, F-1 resolved as path A); `CURRENT_WORK.md`,
+  `PROJECT_STATE.md` and `ExecutionBounds.md` row 27 are updated at checkoff.
+- Task IDs eligible for checkoff: **3.5**. Task **2.2** (F-2's per-affected-tick deadline) is **not** claimed: this slice
+  makes readiness the completed publication and names its holder; the deadline stays its own requirement.
