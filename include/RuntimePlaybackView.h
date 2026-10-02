@@ -141,15 +141,28 @@ struct EmissionCursor {
   }
 };
 
+/// DEC-108 item 5 / task 3.13: which **source contract** a view's content came from. Live NOTE_EDIT preview keeps a
+/// preview source of its own, so a consumer that requires committed currency can refuse it on this field alone --
+/// "preview never masquerades as committed currency" stated at the identity level rather than left to a comment.
+enum class PlaybackWindowOrigin : uint8_t {
+  /// Committed content: the loop's committed passes at the loop's own revision.
+  Committed = 0,
+  /// Live preview content from the edit session, carrying the session's **preview revision** as its currency.
+  Preview = 1,
+};
+
 struct PlaybackViewSourceIdentity {
   uint32_t playbackRevision = 0;
   uint32_t sourceGeneration = 0;
   const void* snapshotIdentity = nullptr;
+  /// Task 3.13: the source contract this content came from. It is part of equality, so a preview source can never
+  /// compare equal to a committed one at the same revision and generation.
+  PlaybackWindowOrigin origin = PlaybackWindowOrigin::Committed;
 
   bool operator==(const PlaybackViewSourceIdentity& other) const {
     return playbackRevision == other.playbackRevision &&
            sourceGeneration == other.sourceGeneration &&
-           snapshotIdentity == other.snapshotIdentity;
+           snapshotIdentity == other.snapshotIdentity && origin == other.origin;
   }
 };
 
@@ -174,10 +187,15 @@ struct PlaybackWindowIdentity {
   uint32_t playbackGeneration = 0;
   uint32_t playbackRevision = 0;
   PlaybackCoverageInterval interval{};
+  /// Task 3.13: the **origin** is part of the window's identity. A preview window at the same slot, generation,
+  /// revision and interval is therefore *not equal* to the committed window it stands in front of -- which is the
+  /// spec's "preview is identified as preview rather than as a committed window", and what lets a consumer that
+  /// requires committed currency refuse it without inspecting anything else.
+  PlaybackWindowOrigin origin = PlaybackWindowOrigin::Committed;
 
   bool operator==(const PlaybackWindowIdentity& other) const {
     return slot == other.slot && playbackGeneration == other.playbackGeneration &&
-           playbackRevision == other.playbackRevision &&
+           playbackRevision == other.playbackRevision && origin == other.origin &&
            interval.startPhase == other.interval.startPhase &&
            interval.lengthTicks == other.interval.lengthTicks &&
            interval.loopLengthTicks == other.interval.loopLengthTicks;

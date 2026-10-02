@@ -2250,9 +2250,15 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // The pins are **per ABI**: the holders' pin lists are pointer-sized, so the target (32-bit) holds +144 B over the
 // pre-slice figure (6,368 -> 6,512: +96 B retained sources, +24 B lag accounting, +24 B interval index) while the host
 // holds +176 B (6,544), its larger slack absorbing the later members. The **target** figure is the one charged.
+// Slice 3.13 re-based the **target** pin again, and the reason is recorded here as the rule requires: the preview lane's
+// three fields (`previewSourceRevision`, `previewSourceActive`, `previewHandoffOwed`) are only 8 B of payload, but they
+// land before members whose alignment then moves -- 6,512 -> **6,624** (**+112 B**, measured with the temporary
+// compile-time probe, which was removed again). The **host** figure is unchanged at 6,544 (its slack absorbed them), and
+// this state is extmem per-slot storage: it costs no RAM1 `variables` and no DTCM. The delta is a deliberate, recorded
+// re-base, exactly as DEC-107 recorded 6,352 -> 6,360 and slice 3.6 recorded the one above.
 #if defined(__IMXRT1062__)
-static_assert(sizeof(LoopPlaybackRuntime) == 6512,
-              "S3.0/3.6: LoopPlaybackRuntime is the per-slot working set (6,512 B extmem: +96 sources, +24 lag, +24 index)");
+static_assert(sizeof(LoopPlaybackRuntime) == 6624,
+              "S3.0/3.13: LoopPlaybackRuntime is the per-slot working set (6,624 B extmem: +112 B preview-source lane)");
 #else
 static_assert(sizeof(LoopPlaybackRuntime) == 6544,
               "S3.0/3.6: LoopPlaybackRuntime host-ABI size (6,544 B: +176 B retained sources)");

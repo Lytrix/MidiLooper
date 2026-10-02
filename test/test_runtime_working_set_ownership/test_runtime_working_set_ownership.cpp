@@ -4893,6 +4893,146 @@ void test_capture_admission_refusal_on_the_overdub_path_gives_back_its_staging_r
   set->views[current].storage.eventCount = 0;
 }
 
+/// 3.13 (DEC-108 item 5): the **preview source contract** -- preview is published through the same immutable deferred
+/// discipline as committed content, carries its own currency (the session's preview revision) and is identified as
+/// preview rather than as a committed window at the same revision, generation and interval (fixture 2.12's identity
+/// clause).
+void test_preview_window_is_a_distinct_source_and_never_committed_currency() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = kWindowOwnerLoopTicks;
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  // The frozen preview projection and the session revision it belongs to: the session's own revision is the lane's
+  // freeze token and its currency, never the loop's committed revision.
+  SessionMidiEventVec preview;
+  preview.push_back(MidiEvent::NoteOn(0, 0, 60, 100));
+  preview.push_back(MidiEvent::NoteOff(96, 0, 60, 0));
+  constexpr uint32_t kPreviewRevision = 7;
+  constexpr uint32_t kPlayhead = 500;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPreviewWindow(0, kPreviewRevision, preview.data(),
+                                                                preview.size(), kPlayhead)));
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  PlaybackWindowIdentity previewWindow{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, previewWindow));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PlaybackWindowOrigin::Preview),
+                                  static_cast<uint8_t>(previewWindow.origin),
+                                  "the published window is identified as preview");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kPreviewRevision, previewWindow.playbackRevision,
+                                   "preview currency is the session's preview revision");
+  TEST_ASSERT_TRUE(track.servedPlaybackWindowIsPreviewForSlot(0));
+  TEST_ASSERT_TRUE_MESSAGE(loop.loopLengthTicks == previewWindow.interval.loopLengthTicks,
+                           "a preview covers the whole loop: a session is not an interval");
+  TEST_ASSERT_EQUAL_UINT32(0u, previewWindow.interval.startPhase);
+  // The spec's scenario: a window for the same slot, generation, revision and interval -- but committed -- is **not**
+  // equal to the preview window, so a consumer that requires committed currency refuses it on identity alone.
+  PlaybackWindowIdentity committedSide = previewWindow;
+  committedSide.origin = PlaybackWindowOrigin::Committed;
+  TEST_ASSERT_FALSE_MESSAGE(committedSide == previewWindow,
+                            "a committed window is not the preview window at the same revision and interval");
+  TEST_ASSERT_TRUE(committedSide != previewWindow);
+  // ... and a preview with no content is refused rather than published as an empty window over edited content.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::NotServable),
+                    static_cast<int>(track.requestPreviewWindow(0, kPreviewRevision + 1, nullptr, 0, kPlayhead)));
+}
+
+/// 3.13: the preview lane's **lifecycle** -- an in-flight preview build is cancelled by a mutated or re-focused source
+/// with nothing stale published, and a session exit hands off to committed content at the adoption boundary rather than
+/// through a gap (fixture 2.12's cancellation and committed-handoff clauses).
+void test_preview_window_is_cancelled_by_its_lifecycle_and_hands_off_to_committed() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = kWindowOwnerLoopTicks;
+  publishBarSpacedRootForSlot(loop, 64);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  SessionMidiEventVec preview;
+  preview.push_back(MidiEvent::NoteOn(0, 0, 60, 100));
+  preview.push_back(MidiEvent::NoteOff(96, 0, 60, 0));
+  constexpr uint32_t kPlayhead = 500;
+  // A cancellation with nothing of the lane's own is named as such: it must not cancel a committed build.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PreviewCancelOutcome::NothingToCancel),
+                    static_cast<int>(track.cancelPreviewWindowForSlot(
+                        0, Track::PreviewWindowCancelReason::SourceMutated)));
+  // A preview window is published and served, then the session exits.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPreviewWindow(0, 11, preview.data(), preview.size(), kPlayhead)));
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  PlaybackWindowIdentity servedPreview{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, servedPreview));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PlaybackWindowOrigin::Preview),
+                          static_cast<uint8_t>(servedPreview.origin));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PreviewCancelOutcome::HandoffOwed),
+                    static_cast<int>(track.cancelPreviewWindowForSlot(
+                        0, Track::PreviewWindowCancelReason::SessionExited)));
+  TEST_ASSERT_TRUE(track.previewWindowHandoffOwedForSlot(0));
+  TEST_ASSERT_TRUE_MESSAGE(track.servedPlaybackWindowIsPreviewForSlot(0),
+                           "the preview window keeps serving across the handoff boundary -- never a gap");
+  PlaybackWindowIdentity atHandoff{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, atHandoff));
+  TEST_ASSERT_TRUE_MESSAGE(atHandoff == servedPreview,
+                           "and it is untouched field-for-field by the handoff");
+  // A repeated exit is **named** rather than treated as a second handoff.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PreviewCancelOutcome::AlreadyHandedOff),
+                    static_cast<int>(track.cancelPreviewWindowForSlot(
+                        0, Track::PreviewWindowCancelReason::SessionExited)));
+  // The committed successor: requested through the committed lane, published as the **ready successor** while the
+  // preview window still serves, and swapped in at the adoption boundary.
+  SessionMidiEventVec scratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, kPlayhead, scratch)));
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  PlaybackWindowIdentity beforeAdopt{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, beforeAdopt));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PlaybackWindowOrigin::Preview),
+                                  static_cast<uint8_t>(beforeAdopt.origin),
+                                  "the committed successor is prepared, not yet serving");
+  TEST_ASSERT_TRUE(track.previewWindowHandoffOwedForSlot(0));
+  TEST_ASSERT_TRUE(track.adoptPreparedPlaybackWindow(0));
+  PlaybackWindowIdentity afterAdopt{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, afterAdopt));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PlaybackWindowOrigin::Committed),
+                                  static_cast<uint8_t>(afterAdopt.origin),
+                                  "the committed successor serves once it is adopted");
+  TEST_ASSERT_FALSE_MESSAGE(track.previewWindowHandoffOwedForSlot(0),
+                            "and the handoff is discharged at that boundary");
+  TEST_ASSERT_FALSE(track.servedPlaybackWindowIsPreviewForSlot(0));
+  // A mutated source cancels the **in-flight** preview build and invalidates its identity, so a stale completion can
+  // never publish. Track 1 is used so that "nothing was published" is observable: no window is served there.
+  Track& other = trackManager.getTrack(1);
+  other.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(other, 0);
+  commitRecordPassIntoTrackSlot(other, 0);
+  Loop& otherLoop = other.getLoop(0);
+  otherLoop.loopLengthTicks = kWindowOwnerLoopTicks;
+  TEST_ASSERT_TRUE(other.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(other.requestPreviewWindow(0, 21, preview.data(), preview.size(), kPlayhead)));
+  TEST_ASSERT_TRUE_MESSAGE(other.hasPendingPlaybackViewMaintenance(),
+                           "the preview build is in flight when the source mutates");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PreviewCancelOutcome::BuildCancelled),
+                    static_cast<int>(other.cancelPreviewWindowForSlot(
+                        0, Track::PreviewWindowCancelReason::SourceMutated)));
+  TEST_ASSERT_FALSE_MESSAGE(other.hasPendingPlaybackViewMaintenance(),
+                            "the cancelled build owes nothing further");
+  PlaybackWindowIdentity neverPublished{};
+  TEST_ASSERT_FALSE_MESSAGE(other.publishedPlaybackWindowIdentityForSlot(0, neverPublished),
+                            "a cancelled preview build publishes no stale window");
+  TEST_ASSERT_FALSE(other.previewWindowHandoffOwedForSlot(0));
+}
+
 int main() {
 
 
@@ -4995,5 +5135,9 @@ int main() {
   // windowed-playback-generation slice 3.12c: the refusal's cleanup, and the window-seeded boundary on the lane the
   // window actually serves (DEC-108 §14).
   RUN_TEST(test_capture_admission_refusal_on_the_overdub_path_gives_back_its_staging_reservation);
+  // windowed-playback-generation slice 3.13: the preview source contract -- identity and never committed currency.
+  RUN_TEST(test_preview_window_is_a_distinct_source_and_never_committed_currency);
+  // windowed-playback-generation slice 3.13: the preview lane's cancellation and the committed-content handoff.
+  RUN_TEST(test_preview_window_is_cancelled_by_its_lifecycle_and_hands_off_to_committed);
   return UNITY_END();
 }
