@@ -4268,6 +4268,103 @@ void test_retained_source_is_admitted_with_roles_and_survives_both_destruction_p
                            "once a newer window is served, the older source is released");
   TEST_ASSERT_FALSE(windowTrack.hasRetainedPlaybackSourceForSlot(0));
 }
+
+/// 3.6b (AC-5 / F-3): the **lag rule** -- a missed deadline keeps the previous revision authoritative for *that*
+/// traversal, a second consecutive miss is a named breach reported once, a further edit never resets the allowance,
+/// and the resolution is total (so a consumer is never blocked).
+void test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second_miss() {
+  // The rule first, as one pure resolution: totality is visible here, and there is no "wait" outcome to fall into.
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::Current),
+                    static_cast<int>(Track::resolvePlaybackLag(true, false, 0)));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackLagDecision::Current),
+                            static_cast<int>(Track::resolvePlaybackLag(false, true, 0)),
+                            "a published replacement makes the boundary servable at the current revision");
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::PreviousOnePass),
+                    static_cast<int>(Track::resolvePlaybackLag(false, false, 0)));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::BreachSecondMiss),
+                    static_cast<int>(Track::resolvePlaybackLag(false, false, 1)));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackLagDecision::BreachSecondMiss),
+                            static_cast<int>(Track::resolvePlaybackLag(false, false, 250)),
+                            "a longer lag is the same named breach, never a silent fallback");
+
+  // Through the seam, on a slot whose window is published and being served.
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+  publishBarSpacedRootForSlot(loop, 2);
+  SessionMidiEventVec scratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, kWindowOwnerExpectedRequiredLead, scratch)));
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  PlaybackWindowIdentity served{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, served));
+  const PlaybackCoverageInterval interval = served.interval;
+  const uint32_t servedRevision = served.playbackRevision;
+
+  // (W-20) The served window carries the desired revision: Current, and nothing is counted.
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::Current),
+                    static_cast<int>(track.advancePlaybackLagTraversal(
+                        0, interval.startPhase, interval.lengthTicks, servedRevision, false)));
+  TEST_ASSERT_EQUAL_UINT8(0, track.playbackLagMissedTraversalsForSlot(0));
+  TEST_ASSERT_EQUAL_UINT8(0, track.playbackLagBreachReportsForSlot(0));
+
+  // An edit advances the desired revision, and nothing is published for it.
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(loop.playbackRevision > servedRevision);
+
+  // (W-22) The first miss keeps the **previous** revision authoritative for this traversal, and the window it is
+  // served from is byte-for-byte untouched: no tear, no hold, no defer.
+  PlaybackWindowIdentity beforeMiss{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, beforeMiss));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::PreviousOnePass),
+                    static_cast<int>(track.advancePlaybackLagTraversal(
+                        0, interval.startPhase, interval.lengthTicks, loop.playbackRevision, false)));
+  TEST_ASSERT_EQUAL_UINT8(1, track.playbackLagMissedTraversalsForSlot(0));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::PreviousOnePass),
+                    static_cast<int>(track.playbackLagDecisionForSlot(0)));
+  PlaybackWindowIdentity afterMiss{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, afterMiss));
+  TEST_ASSERT_TRUE_MESSAGE(beforeMiss == afterMiss, "a missed traversal must not tear the served window");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(servedRevision, afterMiss.playbackRevision,
+                                   "the previous revision is still what is served");
+
+  // (W-23) A **further edit** must not forgive the outstanding miss, and the second consecutive miss is the named
+  // breach -- reported once, with the previous revision still served.
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(loop.playbackRevision > afterMiss.playbackRevision);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackLagDecision::BreachSecondMiss),
+                            static_cast<int>(track.advancePlaybackLagTraversal(
+                                0, interval.startPhase, interval.lengthTicks, loop.playbackRevision, false)),
+                            "a second consecutive miss is the named breach, not a second allowance");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, track.playbackLagMissedTraversalsForSlot(0),
+                                  "and the further edit did not reset the allowance");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagBreachReportsForSlot(0),
+                                  "the breach is reported once per episode");
+  TEST_ASSERT_TRUE(track.playbackLagBreachReportedForSlot(0));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::BreachSecondMiss),
+                    static_cast<int>(track.advancePlaybackLagTraversal(
+                        0, interval.startPhase, interval.lengthTicks, loop.playbackRevision, false)));
+  TEST_ASSERT_EQUAL_UINT8(3, track.playbackLagMissedTraversalsForSlot(0));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagBreachReportsForSlot(0),
+                                  "a third miss keeps breaching without re-reporting");
+
+  // (W-21 through the seam, W-24) A replacement published before this traversal makes the boundary Current and ends
+  // the episode; a *different* interval then starts a clean one.
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::Current),
+                    static_cast<int>(track.advancePlaybackLagTraversal(
+                        0, interval.startPhase, interval.lengthTicks, loop.playbackRevision, true)));
+  TEST_ASSERT_EQUAL_UINT8(0, track.playbackLagMissedTraversalsForSlot(0));
+  TEST_ASSERT_FALSE(track.playbackLagBreachReportedForSlot(0));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::Current),
+                    static_cast<int>(track.playbackLagDecisionForSlot(0)));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::PreviousOnePass),
+                    static_cast<int>(track.advancePlaybackLagTraversal(
+                        0, interval.startPhase + 768, interval.lengthTicks, loop.playbackRevision, false)));
+  TEST_ASSERT_EQUAL_UINT8(1, track.playbackLagMissedTraversalsForSlot(0));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, track.playbackLagBreachReportsForSlot(0),
+                                  "the new interval's episode starts unreported");
+}
 int main() {
 
 
@@ -4353,5 +4450,7 @@ int main() {
   // windowed-playback-generation slice 3.6a: the retained source revision, its roles, and the two destruction paths
   // it must survive (the pass-level reclamation consumer and the direct pass-timeline reset).
   RUN_TEST(test_retained_source_is_admitted_with_roles_and_survives_both_destruction_paths);
+  // windowed-playback-generation slice 3.6b: the lag rule -- one pass late and only that, the second miss named once.
+  RUN_TEST(test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second_miss);
   return UNITY_END();
 }

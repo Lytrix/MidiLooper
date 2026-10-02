@@ -346,6 +346,10 @@ struct LoopPlaybackRuntime {
     }
     return nullptr;
   }
+  /// Task 3.6b (AC-5/F-3): the **lag rule's** per-interval accounting for this slot -- which interval is being
+  /// traversed, the served and desired revisions, the consecutive missed traversals and the once-per-episode breach
+  /// report. Small and per slot; the decision itself is a pure resolution so no consumer ever waits on it.
+  PlaybackLagState lagState;
   uint32_t cachedLoopRevision = 0;
   uint32_t cachedTrackGeneration = 0;
   ActiveNoteLedger ledger;

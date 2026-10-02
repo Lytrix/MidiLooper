@@ -253,6 +253,21 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   with the source revision; inspected-work budgeting) and the **lag rule** (F-3: one pass late and only that, the named
   second-miss breach, the allowance not reset by a further edit, the consumer never blocked). Detail:
   [`evidence/2026-10-02-s36a-retained-source/EVIDENCE.md`](evidence/2026-10-02-s36a-retained-source/EVIDENCE.md).
+  *Increment 3.6b landed 2026-10-02 — the **lag rule** (F-3/AC-5); the task **still stays open** for the interval
+  index.* `PlaybackLagDecision { Current, PreviousOnePass, BreachSecondMiss }` is a **total** resolution — no waiting
+  outcome, so a consumer is never blocked by a missed deadline — and `PlaybackLagState` keeps the per-interval
+  accounting (the traversed interval, the served and desired revisions, the consecutive misses, the
+  once-per-episode breach). At a traversal boundary a miss leaves the **previous** revision authoritative for that
+  traversal with the served window **byte-for-byte unchanged**, the **second** consecutive miss is the **named**
+  breach reported **once per episode** (`lag_breach` through the existing row emitter), a **further edit does not
+  reset the allowance** (AC-5), and either a published replacement or a changed interval ends the episode cleanly.
+  *Verification:* focused **53/53**, full native **2684 / 2677 succeeded / 7 skipped / 0 failed**,
+  `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192` **unchanged** /
+  `code 391,928 + padding 1,288` (448 B headroom) and **no re-base**; three mutations red-proved with byte-identical
+  restores (the AC-5 allowance reset; a published replacement ignored; the once-per-episode guard dropped). The S3.0
+  pin moved per ABI again (target 6,464 → **6,488**; the host stayed 6,544 because the state fitted existing padding).
+  **OWED for this task:** the **interval index over pinned bodies**. Detail:
+  [`evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md`](evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md).
 - [ ] 3.7 Remove the live mutable merged-window build — **the last step of the ladder, stage (4)**, and only after **every**
   dependency is implemented and verified: committed interval publication (3.2), readiness and retention (3.5/3.6), the
   bounded legacy compatibility path (3.12), preview publication (3.13), shared-view ownership (3.11), fault recovery

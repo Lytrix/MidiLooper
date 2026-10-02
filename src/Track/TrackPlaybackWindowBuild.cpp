@@ -1128,6 +1128,91 @@ TRACK_COLD_MEM bool Track::mergeRetainedPlaybackPinsInto(uint8_t slotIndex, Slot
 }
 
 
+TRACK_COLD_MEM PlaybackLagDecision Track::resolvePlaybackLag(bool servedIsCurrent, bool replacementReady,
+                                                            uint8_t missedTraversals) {
+  // The whole rule, and it is **total**: no branch waits, defers or blocks, which is what "a consumer is never blocked
+  // by a missed deadline" means operationally.
+  if (servedIsCurrent) {
+    return PlaybackLagDecision::Current;
+  }
+  if (replacementReady) {
+    // The replacement was published before this (following, eligible) traversal, so the boundary may serve it.
+    return PlaybackLagDecision::Current;
+  }
+  // `missedTraversals` is the count *before* this traversal's miss: the first miss is the one-pass-late allowance, and
+  // any later one is the named breach. Note what is deliberately absent: no branch resets the count because the
+  // desired revision changed -- a further edit must not forgive an outstanding miss (AC-5).
+  return missedTraversals >= 1 ? PlaybackLagDecision::BreachSecondMiss : PlaybackLagDecision::PreviousOnePass;
+}
+
+TRACK_COLD_MEM PlaybackLagDecision Track::advancePlaybackLagTraversal(uint8_t slotIndex, uint32_t intervalStart,
+                                                                     uint32_t intervalLength,
+                                                                     uint32_t desiredRevision,
+                                                                     bool replacementReady) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return PlaybackLagDecision::Current;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return PlaybackLagDecision::Current;
+  }
+  PlaybackLagState& lag = runtime->lagState;
+  if (!lag.coversInterval(intervalStart, intervalLength)) {
+    // A different interval is a different episode: the allowance is per interval **and** per pass.
+    lag.resetEpisode(intervalStart, intervalLength);
+  }
+  PlaybackWindowIdentity published{};
+  const bool hasPublished = publishedPlaybackWindowIdentityForSlot(slotIndex, published);
+  const bool servedIsCurrent = hasPublished && published.playbackRevision == desiredRevision;
+  const PlaybackLagDecision decision = resolvePlaybackLag(servedIsCurrent, replacementReady, lag.missedTraversals);
+  lag.servedRevision = hasPublished ? published.playbackRevision : 0;
+  lag.desiredRevision = desiredRevision;
+  if (decision == PlaybackLagDecision::Current) {
+    // The boundary may serve the current revision, so the episode is over and the next one starts clean.
+    lag.missedTraversals = 0;
+    lag.breachReported = false;
+    return decision;
+  }
+  if (lag.missedTraversals < UINT8_MAX) {
+    ++lag.missedTraversals;
+  }
+  if (decision == PlaybackLagDecision::BreachSecondMiss && !lag.breachReported) {
+    // A **report**, not a decision (the S4b.7 hold terminal's shape): the breach is named once per episode, the
+    // previous revision keeps being served, and no partial content is published.
+    lag.breachReported = true;
+    ++lag.breachReports;
+    reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex), "lag_breach");
+  }
+  return decision;
+}
+
+TRACK_COLD_MEM PlaybackLagDecision Track::playbackLagDecisionForSlot(uint8_t slotIndex) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return PlaybackLagDecision::Current;
+  }
+  const uint8_t missed = runtime->lagState.missedTraversals;
+  if (missed >= 2) {
+    return PlaybackLagDecision::BreachSecondMiss;
+  }
+  return missed == 1 ? PlaybackLagDecision::PreviousOnePass : PlaybackLagDecision::Current;
+}
+
+TRACK_COLD_MEM uint8_t Track::playbackLagMissedTraversalsForSlot(uint8_t slotIndex) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  return runtime == nullptr ? 0 : runtime->lagState.missedTraversals;
+}
+
+TRACK_COLD_MEM uint8_t Track::playbackLagBreachReportsForSlot(uint8_t slotIndex) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  return runtime == nullptr ? 0 : runtime->lagState.breachReports;
+}
+
+TRACK_COLD_MEM bool Track::playbackLagBreachReportedForSlot(uint8_t slotIndex) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  return runtime != nullptr && runtime->lagState.breachReported;
+}
+
 TRACK_COLD_MEM void Track::releasePlaybackMergedMidiEventsMemory() {
   releaseEligiblePlaybackRuntimeSlots(false);
 }
