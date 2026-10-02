@@ -1028,6 +1028,10 @@ TRACK_COLD_MEM Track::PlaybackSourceRetainResult Track::retainPlaybackSourceForS
       other.role = RetainedSourceRole::Retiring;
     }
   }
+  // Task 3.6c: the **index is published with the source revision** -- a rebuild per admitted revision covers both the
+  // old and the new affected ranges by construction and never modifies an index a reader holds. A refusal here is not
+  // fatal: the retention is the source of truth, and a caller that needs an interval answer gets a named result.
+  (void)buildRetainedIntervalIndexForSlot(slotIndex);
   return PlaybackSourceRetainResult::Admitted;
 }
 
@@ -1211,6 +1215,136 @@ TRACK_COLD_MEM uint8_t Track::playbackLagBreachReportsForSlot(uint8_t slotIndex)
 TRACK_COLD_MEM bool Track::playbackLagBreachReportedForSlot(uint8_t slotIndex) const {
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   return runtime != nullptr && runtime->lagState.breachReported;
+}
+
+TRACK_COLD_MEM Track::RetainedIndexBuildResult Track::buildRetainedIntervalIndexForSlot(uint8_t slotIndex) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return RetainedIndexBuildResult::NoRuntime;
+  }
+  Loop& loop = loopForSlot(slotIndex);
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+    return RetainedIndexBuildResult::NotServable;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return RetainedIndexBuildResult::NoRuntime;
+  }
+  const RetainedPlaybackSource* source = nullptr;
+  for (const RetainedPlaybackSource& entry : runtime->retainedSources) {
+    if (entry.isRetained()) {
+      source = &entry;
+      break;
+    }
+  }
+  if (source == nullptr) {
+    // No pinned bodies, so nothing to describe -- and no index is left behind from an earlier revision.
+    runtime->retainedIndex.clear();
+    return RetainedIndexBuildResult::NoRetainedSource;
+  }
+  const uint32_t bars = (loop.loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+  if (bars == 0 || bars > kRetainedIndexMaxBars) {
+    // Refused **by name**: an index that answered only part of the loop would present the complete scan as
+    // window-bounded, which the spec forbids. The caller accounts the full scan instead.
+    runtime->retainedIndex.clear();
+    return RetainedIndexBuildResult::BarsUnsupported;
+  }
+  // Build a **candidate** and publish it with a single assignment: nothing a reader already holds is modified, and the
+  // revision is stamped inside the candidate, so no reader can see one revision's bits under another's stamp.
+  RetainedIntervalIndex candidate;
+  candidate.bodyWords.assign((bars + 31u) / 32u, 0u);
+  uint16_t spans = 0;
+  const auto foldChunks = [&](const CommittedChunkIdList& chunks) {
+    for (uint16_t id : chunks) {
+      uint32_t firstTick = 0;
+      uint32_t lastTick = 0;
+      if (!LoopEventStore::chunkTickSpan(id, firstTick, lastTick)) {
+        continue;
+      }
+      ++spans;
+      const uint32_t firstBar = (firstTick / Config::TICKS_PER_BAR) % bars;
+      uint32_t lastBar = (lastTick / Config::TICKS_PER_BAR) % bars;
+      if (lastBar < firstBar) {
+        lastBar = bars - 1;  // a span that wraps ends at the loop's last bar
+      }
+      for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+        candidate.bodyWords[bar / 32u] |= (1u << (bar % 32u));
+      }
+    }
+  };
+  if (loop.passes.hasRecordPass()) {
+    foldChunks(loop.passes.recordPass.committedChunkIds);
+  }
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    foldChunks(pass.committedChunkIds);
+  }
+  // The **edit** passes' bodies are where moved events live, so they are folded in as well: the index covers the edited
+  // destinations, and applying them (ordering, effective content) stays the effective-content resolver's job.
+  // An **edit** pass carries no chunk bodies -- a moved note's events still live in the capture bodies -- but its
+  // *destination* ticks are where the effective content will be. Folding them is what stops the index skipping a bar
+  // whose only effective content is a moved note: "lookup SHALL include edit-moved events at their effective
+  // destinations". Over-marking is the safe direction here (it costs inspection, never a missed event).
+  for (const EditPass& pass : loop.passes.editPasses) {
+    if (pass.state != EditPassState::Active) {
+      continue;
+    }
+    const uint32_t firstBar = (pass.startTick / Config::TICKS_PER_BAR) % bars;
+    const uint32_t endBar = (pass.endTick / Config::TICKS_PER_BAR) % bars;
+    uint32_t lastBar = firstBar;
+    if (pass.endTick > pass.startTick) {
+      lastBar = endBar < firstBar ? bars - 1 : endBar;
+    }
+    for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+      candidate.bodyWords[bar / 32u] |= (1u << (bar % 32u));
+    }
+    ++spans;
+  }
+  candidate.generation = source->generation;
+  candidate.bars = bars;
+  candidate.spansIndexed = spans;
+  candidate.revision = source->revision;
+  candidate.published = true;
+  runtime->retainedIndex = std::move(candidate);
+  return RetainedIndexBuildResult::Published;
+}
+
+TRACK_COLD_MEM Track::RetainedIntervalQueryResult Track::queryRetainedIntervalForSlot(
+    uint8_t slotIndex, uint32_t startPhase, uint32_t lengthTicks, uint32_t expectedRevision,
+    uint32_t& indexedBarsOut, uint32_t& skippedBarsOut) const {
+  indexedBarsOut = 0;
+  skippedBarsOut = 0;
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return RetainedIntervalQueryResult::NoIndex;
+  }
+  const RetainedIntervalIndex& index = runtime->retainedIndex;
+  if (!index.published || index.bars == 0) {
+    return RetainedIntervalQueryResult::NoIndex;
+  }
+  if (index.revision != expectedRevision) {
+    // A named refusal, never a silently stale answer: the index belongs to the revision it was built for.
+    return RetainedIntervalQueryResult::RevisionMismatch;
+  }
+  const uint32_t loopLength = loopForSlot(slotIndex).loopLengthTicks;
+  if (loopLength == 0 || lengthTicks == 0) {
+    return RetainedIntervalQueryResult::NoIndex;
+  }
+  const uint32_t start = startPhase % loopLength;
+  const uint32_t spanEnd = start + lengthTicks;
+  const uint32_t end = spanEnd <= loopLength ? spanEnd : loopLength;  // half-open, clamped into the loop
+  const uint32_t firstBar = start / Config::TICKS_PER_BAR;
+  const uint32_t lastBar = (end - 1) / Config::TICKS_PER_BAR;
+  if (lastBar >= index.bars) {
+    // A bar outside the indexed range: the honest answer is "not covered", counted as a refusal rather than skipped.
+    return RetainedIntervalQueryResult::BarsUnsupported;
+  }
+  for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+    if (index.coversBar(bar)) {
+      ++indexedBarsOut;  // the caller enumerates this bar's bodies
+    } else {
+      ++skippedBarsOut;  // and this one costs no chunk inspection at all
+    }
+  }
+  return RetainedIntervalQueryResult::Indexed;
 }
 
 TRACK_COLD_MEM void Track::releasePlaybackMergedMidiEventsMemory() {

@@ -4365,6 +4365,93 @@ void test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, track.playbackLagBreachReportsForSlot(0),
                                   "the new interval's episode starts unreported");
 }
+
+/// 3.6c (DEC-108 item 14(c)): the **interval index over pinned bodies** lets an interval query skip the bars (and so
+/// the chunks) that cannot intersect, folds in **edit destinations**, and refuses -- by name -- a stale revision or a
+/// partial answer rather than presenting a complete scan as window-bounded.
+void test_retained_interval_index_is_interval_directed_and_refuses_stale_revisions() {
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+  const uint32_t retainedRevision = loop.playbackRevision;
+  const uint32_t indexedBars = (loop.loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+  TEST_ASSERT_EQUAL_UINT32(64u, indexedBars);
+
+  // Admitting the source publishes the index **with** the revision (the retention's own admission does it).
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, retainedRevision, 41)));
+  uint32_t covered = 0;
+  uint32_t skipped = 0;
+
+  // The committed pass lives in bar 0: an interval over it is covered, and nothing is skipped.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedIntervalQueryResult::Indexed),
+                    static_cast<int>(track.queryRetainedIntervalForSlot(0, 0, Config::TICKS_PER_BAR,
+                                                                        retainedRevision, covered, skipped)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, covered, "the bar carrying the committed bodies is indexed");
+  TEST_ASSERT_EQUAL_UINT32(0u, skipped);
+
+  // An interval two bars deep in the loop, where the pinned bodies carry nothing: **both** bars are skipped without
+  // touching a chunk -- the interval-directed answer that makes lookup cost independent of unrelated content.
+  constexpr uint32_t kDeepPlayhead = 40 * 768;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedIntervalQueryResult::Indexed),
+                    static_cast<int>(track.queryRetainedIntervalForSlot(0, kDeepPlayhead, 2 * Config::TICKS_PER_BAR,
+                                                                        retainedRevision, covered, skipped)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, covered, "no pinned body covers this interval");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, skipped, "so both bars are skipped, at no chunk-inspection cost");
+
+  // The index directs; the **bodies** answer. An interval is built from the chunk lists the retained revision pins, with
+  // **no published root consulted at all** -- which is the "no resident whole-loop root" clause -- and the deep interval
+  // is empty from those bodies alone, so the skip the index reported is the truth rather than an assumption.
+  const CommittedChunkIdList* pinnedLists[1] = {&loop.passes.recordPass.committedChunkIds};
+  CommittedEventRange pinnedRange = CommittedEventRange::full(pinnedLists, 1, loop.loopLengthTicks);
+  SessionMidiEventVec builtEvents;
+  pinnedRange.appendTo(builtEvents);
+  TEST_ASSERT_FALSE_MESSAGE(builtEvents.empty(), "the pinned bodies carry the revision's events");
+  CommittedEventRange deepRange =
+      CommittedEventRange::inWindow(pinnedLists, 1, loop.loopLengthTicks, kDeepPlayhead, Config::TICKS_PER_BAR);
+  SessionMidiEventVec deepEvents;
+  deepRange.appendTo(deepEvents);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(deepEvents.size()),
+                                   "and the deep interval is empty from the pinned bodies alone");
+
+  // An edit whose **destination** is that otherwise-empty bar: the index must not skip it, which is the "lookup
+  // includes edit-moved events at their effective destinations" clause. The edit carries no chunk bodies of its own, so
+  // folding its destination span is the only thing that keeps the bar visible.
+  EditPass move{};
+  move.id = 77;
+  move.state = EditPassState::Active;
+  move.startTick = kDeepPlayhead;
+  move.endTick = kDeepPlayhead + 48;
+  loop.passes.editPasses.push_back(move);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedIndexBuildResult::Published),
+                    static_cast<int>(track.buildRetainedIntervalIndexForSlot(0)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedIntervalQueryResult::Indexed),
+                    static_cast<int>(track.queryRetainedIntervalForSlot(0, kDeepPlayhead, Config::TICKS_PER_BAR,
+                                                                        retainedRevision, covered, skipped)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, covered, "the edit's destination bar is indexed, not skipped");
+  TEST_ASSERT_EQUAL_UINT32(0u, skipped);
+
+  // A query for a revision the index was not built for is refused **by name**, never answered from stale bits.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedIntervalQueryResult::RevisionMismatch),
+                    static_cast<int>(track.queryRetainedIntervalForSlot(0, 0, Config::TICKS_PER_BAR,
+                                                                        retainedRevision + 1, covered, skipped)));
+  TEST_ASSERT_EQUAL_UINT32(0u, covered);
+  TEST_ASSERT_EQUAL_UINT32(0u, skipped);
+
+  // A loop beyond the indexed ceiling is refused by name too -- the complete scan must be accounted in admission, not
+  // presented as window-bounded -- and no index is left behind to answer partially.
+  Track& longTrack = trackManager.getTrack(1);
+  longTrack.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlotOfLength(longTrack, 0, 513 * 768u);
+  TEST_ASSERT_TRUE(longTrack.prewarmPlaybackForSlot(0, true));
+  Loop& longLoop = longTrack.getLoop(0);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(longTrack.retainPlaybackSourceForSlot(0, longLoop.playbackRevision, 42)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedIndexBuildResult::BarsUnsupported),
+                    static_cast<int>(longTrack.buildRetainedIntervalIndexForSlot(0)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedIntervalQueryResult::NoIndex),
+                    static_cast<int>(longTrack.queryRetainedIntervalForSlot(0, 0, Config::TICKS_PER_BAR,
+                                                                            longLoop.playbackRevision, covered, skipped)));
+}
 int main() {
 
 
@@ -4452,5 +4539,8 @@ int main() {
   RUN_TEST(test_retained_source_is_admitted_with_roles_and_survives_both_destruction_paths);
   // windowed-playback-generation slice 3.6b: the lag rule -- one pass late and only that, the second miss named once.
   RUN_TEST(test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second_miss);
+  // windowed-playback-generation slice 3.6c: the interval index over pinned bodies -- interval-directed skipping,
+  // edit destinations folded in, and named refusals instead of stale or partial answers.
+  RUN_TEST(test_retained_interval_index_is_interval_directed_and_refuses_stale_revisions);
   return UNITY_END();
 }

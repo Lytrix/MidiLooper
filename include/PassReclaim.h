@@ -137,3 +137,40 @@ class GlobalUndoStackTrimCursor {
   size_t units_ = 0;
   uint8_t phase_ = 0;
 };
+
+/// Task 3.6c (DEC-108 item 14(c)): the **interval index over pinned bodies**. One bit per bar records whether any
+/// pinned body carries content in that bar, so an interval query can **skip** the bars -- and therefore the chunks --
+/// that cannot intersect. That skip is the whole point: it is what makes lookup interval-directed instead of a scan
+/// whose cost grows with unrelated loop content.
+///
+/// It is a **descriptor**, never an event copy: `TickIndex`'s whole-history copy storage is deliberately **not**
+/// inherited, and `CommittedEventRange` stays the body-reading primitive. Its ownership is the retained source's
+/// (built at admission, replaced by a single assignment, refused when its revision is not the one asked for), its
+/// resident memory is bounded by `kRetainedIndexMaxBars` (the bar ceiling; beyond it the index **refuses by name**, so
+/// the caller must account the complete scan in admission rather than present it as window-bounded), and its lifetime
+/// is the source revision it was built for. Updates are a **rebuild per admitted revision**, not a dual-range patch:
+/// that covers both the old and the new affected ranges by construction and can never modify an index a reader holds.
+constexpr uint32_t kRetainedIndexMaxBars = 512;
+constexpr size_t kRetainedIndexMaxWords = kRetainedIndexMaxBars / 32;
+
+struct RetainedIntervalIndex {
+  uint32_t revision = 0;
+  uint32_t generation = 0;
+  uint32_t bars = 0;          ///< bars indexed at build time (the loop's bar count then)
+  uint16_t spansIndexed = 0;  ///< pinned body spans folded in -- reported, not guessed
+  bool published = false;     ///< false until a build has published one
+  std::vector<uint32_t, InternalHeapFirstAllocator<uint32_t>> bodyWords;
+
+  bool coversBar(uint32_t bar) const {
+    const size_t word = bar / 32u;
+    return word < bodyWords.size() && ((bodyWords[word] >> (bar % 32u)) & 1u) != 0;
+  }
+  void clear() {
+    revision = 0;
+    generation = 0;
+    bars = 0;
+    spansIndexed = 0;
+    published = false;
+    bodyWords.clear();
+  }
+};
