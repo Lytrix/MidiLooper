@@ -297,9 +297,30 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   Verify F-7 still passes on the cold path, that no demoted slot
   reaches the removed path (`playMidiEventsForSlot`'s fallback), and that `ExecutionBounds.md` row 2 is re-classed only
   with evidence
-- [ ] 3.8 Confirm reuse before invention — verify a review note names the existing resumable entry points used (the
+  *Not started 2026-10-02, and the reason is this task's own gate rather than a judgement call:* it requires **3.11**
+  (shared-view ownership and the cancellation transition table), **3.12** (the bounded legacy compatibility path),
+  **3.13** (preview publication), **3.14** (undo/redo audible handoff) and **4.5** (fault recovery) to be implemented
+  and verified first, and **none of them exists yet**. The ladder's stage (4) is therefore not reachable, and the next
+  slices are those dependencies — **3.11 first**, since the shared-view transition table is what the removal's
+  correctness rests on. Recorded here so the gate is visible where the task is read, not only in a session log.
+- [x] 3.8 Confirm reuse before invention — verify a review note names the existing resumable entry points used (the
   declared build contract, bounded body-format write/parse, resume arming, the single persistence drain budget) and that
   no second publication scheduler exists
+  *Checked off 2026-10-02 as [`REUSE-BEFORE-INVENTION.md`](REUSE-BEFORE-INVENTION.md):* the note names, by path and
+  symbol, the four entry points the contract names — the declared build contract (`CoverageServiceContract` +
+  `Track::playbackViewCoverageContract`, the same struct the lane declares); the body format's bounded write/parse
+  (`StorageIo`'s `write`/`read`/`peek` and the bounded batch accessor `getLastPersistedCapturePassWriteMaxBatchEvents`);
+  the **resume-arming** cursor pattern (`PersistedLoopSnapshotReleaseCursor::begin`/`step(maximumUnits)`/`complete`); and
+  the single persistence drain budget (`SyncDrainBudget` + `buildSyncDrainBudget(input, sliceBudgetUs)`), which this
+  change neither consumes nor shares. Its two **INTERPRETATION** rows are marked as mappings a reader can dispute
+  without the citation being wrong. **The audit the task asks for is recorded too:** one deferred-service enumeration
+  (`DeferredIdleOwner`, `include/Utils/MidiServiceDrain.h:13`) — this change added a *value* (`PlaybackViewMaintenance`,
+  task 3.1, on the `SlotProvision` precedent), the dispatch rides the existing frame (`src/main.cpp:463`), eligibility
+  is state-driven (`playbackViewMaintenanceNeeded`), and the lane has no queue, timer, thread or request record of its
+  own — i.e. **no second publication scheduler** exists. *No code changed*, so the verification is the last
+  full-suite/build state (focused 54/54, full native 2685 / 2678 succeeded / 7 skipped / 0 failed,
+  `teensy41-capture-serial` SUCCESS) and no red-proof applies to a note; the behavioural half — fair service among
+  holders, no starvation — stays **task 3.10's**.
 - [ ] 3.9 Deliver readiness receipts by the two delivery rules — verify a receipt produced under transport reaches the
   evidence stream and that diagnostic cadence cannot evict it
 

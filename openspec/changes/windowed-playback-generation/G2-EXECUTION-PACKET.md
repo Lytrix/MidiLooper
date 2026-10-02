@@ -564,3 +564,32 @@ per ABI with the **target** figure charged). Detail:
   (3.6b) — with two limits recorded in the evidence and in `tasks.md`: the **consumer path stays 3.7's** (no production
   requester yet, so the fixture drives the halves directly) and the **envelope roll-up** of the per-slot figures into
   RWO's budget artifact belongs to that change's own terms.
+
+### Slice 3.8 — reuse before invention (2026-10-02, documentation only)
+
+`REUSE-BEFORE-INVENTION.md` answers AC-7: it names the four entry points the contract names — the declared build
+contract (`CoverageServiceContract` + `Track::playbackViewCoverageContract`), the body format's bounded write/parse
+(`StorageIo`'s `write`/`read`/`peek` + `getLastPersistedCapturePassWriteMaxBatchEvents()`), the **resume-arming** cursor
+pattern (`PersistedLoopSnapshotReleaseCursor::begin`/`step(maximumUnits)`/`complete`) and the single persistence drain
+budget (`SyncDrainBudget` + `buildSyncDrainBudget(input, sliceBudgetUs)`) — marking its two **INTERPRETATION** rows as
+mappings a reader may dispute, and records the audit the task asks for: **one** deferred-service enumeration
+(`DeferredIdleOwner`), to which this change added a *value* (task 3.1, on the `SlotProvision` precedent), with dispatch
+on the existing frame and state-driven eligibility — **no second publication scheduler**.
+
+- Oracle/contract unchanged: **YES** — AC-7 as written; nothing weakened.
+- Fixture: **NOT APPLICABLE** — a review note is the artifact AC-7 asks for; the behavioural half (fair service among
+  holders, no starvation) is task 3.10's and is not claimed here.
+- Verification: **no code changed**, so the record is the last full-suite/build state (focused 54/54, full native
+  2685 / 2678 succeeded / 7 skipped / 0 failed, `teensy41-capture-serial` SUCCESS on a clean rebuild with
+  `variables 96,192` / `code 391,928 + padding 1,288`), exactly as slice 3.3's documentation-only record did.
+- Red-proof: **NOT APPLICABLE** to a note.
+- Task IDs eligible for checkoff: **3.8**.
+
+### Slice 3.7 — not started, and its own gate is the reason (2026-10-02)
+
+3.7 requires **3.11** (shared-view ownership and the cancellation transition table), **3.12** (the bounded legacy
+compatibility path), **3.13** (preview publication), **3.14** (undo/redo audible handoff) and **4.5** (fault recovery)
+to be implemented and verified **before** it removes the live mutable merged-window build, and none of them exists
+yet. The ladder's stage (4) is therefore not reachable, and the next slices are those dependencies — **3.11 first**,
+since the shared-view transition table is what the removal's correctness rests on. Recorded here and in `tasks.md`
+under 3.7 so the gate is visible where the task is read.
