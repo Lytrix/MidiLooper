@@ -223,6 +223,9 @@ void quarantineLegacyMonolithStorageFile();
 bool closeDeferredMetaTempForLoopWrites();
 bool reopenDeferredMetaTempForAppend();
 bool shouldWriteCurrentSetLoopSlot(uint8_t trackIndex, uint8_t slotIndex);
+/// True when the slot has no content and no live capture attached, i.e. its persisted body must be absent
+/// (DEC-110 — an empty body reads as populated to the library observation and refuses the slot as a target).
+bool currentSetSlotHoldsNoContent(uint8_t trackIndex, uint8_t slotIndex);
 bool trackHasCurrentSetDirtyLoopSlot(uint8_t trackIndex);
 
 bool deferredSaveBlockedByActiveSlotLoadSd();

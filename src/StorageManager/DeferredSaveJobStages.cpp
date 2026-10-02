@@ -196,6 +196,16 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobCurrentSetLoopSlot() {
 
             const uint8_t trackIndex = storageSession.currentWorkspaceSave.trackCursor;
             const uint8_t slotIndex = storageSession.currentWorkspaceSave.poolCursor;
+            // A slot with **no content** must not keep (or re-create) a card body: an empty payload reads as
+            // populated to the library observation, which then refuses the slot as a record target (DEC-110).
+            // The removal runs on the per-slot decision the save already owns, so a save cannot resurrect an
+            // empty body the explicit CLEAR removed; a live capture never reaches it (`…HoldsNoContent`).
+            if (!deferredLoopSlotFinalizeInProgress() &&
+                CurrentSetStorage::shouldRemoveLoopSlotPayloadForSlot(
+                    currentSetSlotHoldsNoContent(trackIndex, slotIndex),
+                    StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex))) {
+                (void)StorageManager::removeLoopSlotPayload(trackIndex, slotIndex);
+            }
             if (!deferredLoopSlotFinalizeInProgress() &&
                 !shouldWriteCurrentSetLoopSlot(trackIndex, slotIndex)) {
                 ++storageSession.currentWorkspaceSave.loopSlotsSkipped;

@@ -124,6 +124,13 @@ bool shouldWriteLoopPayloadForSlot(bool forceCurrentSetFullLoopWrite, bool slotD
   return forceCurrentSetFullLoopWrite || slotDirty;
 }
 
+// DEC-110: a slot with **no content** must not keep a persisted payload. An empty body reads as populated to
+// the library observation, which then refuses the slot as a record target, so the explicit CLEAR removes it and
+// the save must not re-create it. Pure policy: the caller supplies both facts it owns.
+bool shouldRemoveLoopSlotPayloadForSlot(bool slotHoldsNoContent, bool payloadPresentOnSd) {
+  return slotHoldsNoContent && payloadPresentOnSd;
+}
+
 LoopSlotPayloadWriteCounts countLoopSlotPayloadWrites(
     bool forceFullRewrite,
     const bool slotDirty[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK]) {

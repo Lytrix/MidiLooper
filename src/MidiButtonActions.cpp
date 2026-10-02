@@ -306,8 +306,11 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                     return;
                 }
 
-                // slot == selectedSlot => clear (only when it is actually filled)
-                if (!slotHasData) {
+                // slot == selectedSlot => clear, when the slot holds content **either way**: its RAM rows or
+                // only a persisted body. A cleared slot keeps an empty payload on the card, and the library
+                // observation counts a verified payload as populated, so a slot whose content lives only on the
+                // card is not "empty" for the user -- the same gesture must be able to remove it (DEC-110).
+                if (!slotHasData && !StorageManager::loopSlotHasPayloadOnSd(tidx, slot)) {
                     if (track.isRecording() || track.isOverdubbing()) {
                         trackManager.cancelSlotSelectionHold(tidx);
                     }
@@ -830,6 +833,26 @@ STORAGE_PERSIST_MEM void MidiButtonActions::handleClearTrack() {
     }
 
     if (!track.hasDataInSlot(slot)) {
+        // No RAM content. If a persisted payload exists it **is** this slot's content, so the explicit clear
+        // removes it through the persistence owner: the slot then reports as genuinely empty (payload absent)
+        // instead of carrying an empty body that the observation can only read as populated. Bounded and
+        // stopped-only, like the drain above; nothing is inferred from a probe failure.
+        if (StorageManager::loopSlotHasPayloadOnSd(tidx, slot)) {
+            trackManager.clearPendingSlotSwitch(tidx);
+            trackManager.cancelSlotSelectionHold(tidx);
+            trackManager.clearQueuedRecordingTrack(tidx, slot);
+            // Supersede any in-flight restore for this slot before its representation is removed, so a stale
+            // parse cannot repopulate what the user just cleared (same rule as the content clear below).
+            StorageManagerInternal::advanceRestoreRequestGeneration(tidx, slot);
+            const bool absent = StorageManager::removeLoopSlotPayload(tidx, slot);
+            logger.info("MIDI: Clear removed persisted slot %u payload (%s)",
+                        static_cast<unsigned>(slot) + 1u, absent ? "absent" : "still present");
+            if (!track.hasAnySlotData() && !track.isEmpty()) {
+                track.setState(TRACK_EMPTY);
+            }
+            restorePlaybackAfterSlotClear(tidx, track, now);
+            return;
+        }
         if (!track.hasAnySlotData()) {
             if (!track.isEmpty()) {
                 track.setState(TRACK_EMPTY);
@@ -840,7 +863,7 @@ STORAGE_PERSIST_MEM void MidiButtonActions::handleClearTrack() {
             }
         } else {
             logger.debug("Clear ignored — selected slot is empty (track %u slot %u)",
-                             static_cast<unsigned>(tidx), static_cast<unsigned>(slot));
+                         static_cast<unsigned>(tidx), static_cast<unsigned>(slot));
         }
         return;
     }
