@@ -3739,6 +3739,110 @@ void test_window_owner_serves_one_grain_per_turn_and_publishes_nothing() {
                     static_cast<int>(track.stepPlaybackViewMaintenance()));
 }
 
+/// 3.2 — the **enumeration** clause: the interval policy, the resolution through the selected `LoopSnapshot`,
+/// and the inspected-work bound (fixture **2.10**).
+void test_window_owner_resolves_the_interval_through_the_published_snapshot() {
+  // (A) The policy, purely: whole-loop coverage where the whole-take view is admissible, else the two-bar window
+  // at the playhead, clamped into the loop. The same function the resolver uses.
+  PlaybackCoverageInterval interval{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(4 * 768u, false, 500u, interval));
+  TEST_ASSERT_EQUAL_UINT32(0u, interval.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(4 * 768u, interval.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(4 * 768u, interval.loopLengthTicks);
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(kWindowOwnerLoopTicks, true, 5000u, interval));
+  TEST_ASSERT_EQUAL_UINT32(5000u - 768u, interval.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(2 * 768u, interval.lengthTicks);
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(kWindowOwnerLoopTicks, true, 100u, interval));
+  TEST_ASSERT_EQUAL_UINT32(0u, interval.startPhase);
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(kWindowOwnerLoopTicks, true, kWindowOwnerLoopTicks - 200u,
+                                                 interval));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kWindowOwnerLoopTicks - 2 * 768u, interval.startPhase,
+                                   "the window is clamped into the loop, never past its end");
+  TEST_ASSERT_FALSE(Track::playbackWindowInterval(0u, true, 0u, interval));
+
+  // (B) The resolver: it names the interval, enumerates the **current** published root and stamps the identity.
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = kWindowOwnerLoopTicks;
+  publishBarSpacedRootForSlot(loop, 64);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  SessionMidiEventVec scratch;
+  const uint32_t playhead = 5000u;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, playhead, scratch)));
+  TEST_ASSERT_TRUE_MESSAGE(scratch.size() > 0, "the window's content comes from the published root");
+  PlaybackViewSourceIdentity identityOut{};
+  PlaybackCoverageInterval coverageOut{};
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut));
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(kWindowOwnerLoopTicks, true, playhead, interval));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(interval.startPhase, coverageOut.startPhase,
+                                   "the published window serves the interval the policy resolved");
+  TEST_ASSERT_EQUAL_UINT32(interval.lengthTicks, coverageOut.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(loop.playbackRevision, identityOut.playbackRevision,
+                                   "the identity is the revision the enumeration read");
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(loop.publishedSnapshotIdentity(), identityOut.snapshotIdentity,
+                                "and the published root it read it from");
+
+  // A rootless slot is refused by name, not served through a compatibility path.
+  Track& rootless = trackManager.getTrack(1);
+  rootless.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(rootless, 0);
+  rootless.getLoop(0).loopLengthTicks = kWindowOwnerLoopTicks;
+  SessionMidiEventVec rootlessScratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::SourceUnavailable),
+                    static_cast<int>(rootless.requestPlaybackWindow(0, 0u, rootlessScratch)));
+
+  // (C) Fixture 2.10 -- the **inspected-work bound**. The same requested window on a short loop and on a long
+  // loop whose unrelated content is 32x larger: the walk may only touch the window's own bars, and it counts the
+  // references it *rejects* as well as the ones it appends.
+  LoopEventStore::initPool();
+  Track& shortTrack = trackManager.getTrack(2);
+  shortTrack.ensureLoopsAllocated();
+  Loop& shortLoop = shortTrack.getLoop(0);
+  shortLoop.loopLengthTicks = 4 * 768u;
+  publishBarSpacedRootForSlot(shortLoop, 2);
+  Track& longTrack = trackManager.getTrack(3);
+  longTrack.ensureLoopsAllocated();
+  Loop& longLoop = longTrack.getLoop(0);
+  longLoop.loopLengthTicks = kWindowOwnerLoopTicks;
+  publishBarSpacedRootForSlot(longLoop, 64);
+  SessionMidiEventVec shortScratch;
+  SessionMidiEventVec longScratch;
+  Loop::SnapshotWindowGatherPath shortPath = Loop::SnapshotWindowGatherPath::None;
+  Loop::SnapshotWindowGatherPath longPath = Loop::SnapshotWindowGatherPath::None;
+  uint32_t shortInspected = 0;
+  uint32_t longInspected = 0;
+  TEST_ASSERT_TRUE(shortLoop.tryGatherPublishedSnapshotEventsInWindow(shortScratch, 0, 2 * 768u, &shortPath,
+                                                                     &shortInspected));
+  TEST_ASSERT_TRUE(longLoop.tryGatherPublishedSnapshotEventsInWindow(longScratch, 0, 2 * 768u, &longPath,
+                                                                    &longInspected));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Snapshot),
+                    static_cast<int>(shortPath));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Snapshot), static_cast<int>(longPath));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(shortInspected, longInspected,
+                                   "the same window must cost the same inspected work however long the loop is");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(shortScratch.size()),
+                                   static_cast<uint32_t>(longScratch.size()),
+                                   "and it must gather the same events");
+  TEST_ASSERT_TRUE_MESSAGE(shortInspected > 0, "the short loop's window has content, so the walk is non-empty");
+
+  // A window that intersects nothing: its bars carry no membership at all, so nothing is inspected and nothing
+  // is gathered -- the walk skips a missing bar rather than scanning the loop.
+  SessionMidiEventVec emptyScratch;
+  uint32_t emptyInspected = 0;
+  TEST_ASSERT_TRUE(shortLoop.tryGatherPublishedSnapshotEventsInWindow(emptyScratch, 2 * 768u, 2 * 768u, nullptr,
+                                                                     &emptyInspected));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, emptyInspected, "an empty window inspects nothing");
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(emptyScratch.size()));
+}
+
 /// 3.2: publication is **atomic** and the published window carries the identity and the coverage interval the
 /// request named. The replacement case is the one that matters: the window being replaced stays readable right
 /// up to the turn that swaps it, and no turn publishes an incomplete build.
@@ -3914,5 +4018,6 @@ int main() {
   RUN_TEST(test_window_owner_refusals_are_named_and_non_destructive);
   // windowed-playback-generation slice 3.2: the owner's atomic interval-window publication.
   RUN_TEST(test_window_owner_publishes_the_interval_window_atomically);
+  RUN_TEST(test_window_owner_resolves_the_interval_through_the_published_snapshot);
   return UNITY_END();
 }

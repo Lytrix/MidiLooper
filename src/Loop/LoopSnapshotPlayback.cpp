@@ -114,7 +114,11 @@ LOOP_COLD_MEM __attribute__((noinline)) bool gatherDestinationIsWritable(
 #endif
 
 void gatherPublishedSnapshotMembership(const LoopSnapshot& snapshot, SessionMidiEventVec& out,
-                                       uint32_t windowStart, uint32_t windowLength) {
+                                       uint32_t windowStart, uint32_t windowLength,
+                                       uint32_t* inspectedEntriesOut) {
+  if (inspectedEntriesOut != nullptr) {
+    *inspectedEntriesOut = 0;
+  }
   const uint32_t loopLength = snapshot.loopLengthTicks();
   if (loopLength == 0 || windowLength == 0) {
     out.clear();
@@ -131,6 +135,7 @@ void gatherPublishedSnapshotMembership(const LoopSnapshot& snapshot, SessionMidi
   const uint32_t lastBar = lastTick / Config::TICKS_PER_BAR;
 
   std::vector<OrderedSnapshotEvent> collected;
+  uint32_t inspected = 0;
   for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
     const auto membership = snapshot.eventMembership(bar);
     if (!membership) {
@@ -138,10 +143,13 @@ void gatherPublishedSnapshotMembership(const LoopSnapshot& snapshot, SessionMidi
     }
     forEachSnapshotMembershipReference(
         membership.get(),
-        [&collected, windowStart, windowEnd](const LoopSnapshotEventRef& reference) {
+        [&collected, &inspected, windowStart, windowEnd](const LoopSnapshotEventRef& reference) {
           if (!reference) {
             return;
           }
+          // Every reference this walk *looks at* is inspected work, including the ones the window rejects:
+          // W-2.10's bound is about the scan, not about what it appends.
+          ++inspected;
           const uint32_t tick = reference->value.tick;
           if (tick < windowStart || tick >= windowEnd) {
             return;
@@ -164,13 +172,16 @@ void gatherPublishedSnapshotMembership(const LoopSnapshot& snapshot, SessionMidi
   for (const OrderedSnapshotEvent& event : collected) {
     out.push_back(event.value);
   }
+  if (inspectedEntriesOut != nullptr) {
+    *inspectedEntriesOut = inspected;
+  }
 }
 
 }  // namespace
 
 LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength,
-    SnapshotWindowGatherPath* pathOut) const {
+    SnapshotWindowGatherPath* pathOut, uint32_t* inspectedEntriesOut) const {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   if (!gatherDestinationIsWritable(this, out, "snapshot_window")) {
     if (pathOut != nullptr) {
@@ -184,10 +195,13 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     if (pathOut != nullptr) {
       *pathOut = SnapshotWindowGatherPath::None;
     }
+    if (inspectedEntriesOut != nullptr) {
+      *inspectedEntriesOut = 0;
+    }
     return false;
   }
 
-  gatherPublishedSnapshotMembership(*snapshot, out, windowStart, windowLength);
+  gatherPublishedSnapshotMembership(*snapshot, out, windowStart, windowLength, inspectedEntriesOut);
   if (publishedSnapshotIsCurrent()) {
     if (pathOut != nullptr) {
       *pathOut = SnapshotWindowGatherPath::Snapshot;
