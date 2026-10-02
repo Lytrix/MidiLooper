@@ -117,3 +117,16 @@ higher than the projection because the library's chunk content is resident too).
 * **The product limit** (S2.1 §5) and **`I`'s byte figure** are the other two inputs this report cannot supply.
 * **No red-proof applies** (no code changed), and the class separation itself is already pinned where it lives:
   the lease's role vocabulary and its fixtures (S3.1, S4.4's named-holder case), cited rather than duplicated.
+
+## Measured against the owner's requirement (2026-10-02)
+
+The owner's target — **all 64 slots, 64 bars, 3 notes per 16th** — was measured against this budget rather than
+argued: **393,216 events** (6,144 per slot), **1,536 chunks against `POOL_CHUNK_COUNT = 512` (3.0x, a structural
+limit)**, raw committed payload **7,698 KiB = 94% of the pool and 1,455 KiB over post-boot free**, and a snapshot
+representation that duplicates the committed events at **2.5-9x the pool**. The total is **56,338 KiB against an
+8,192 KiB pool** (over by 48,146), and dropping *every* view and snapshot term still leaves ~11,900 KiB. The
+conclusion above — "cannot fit at any N" — therefore holds for this density, and four levers are needed together;
+the only single one of the right order is the removal of the snapshot's duplication of committed events
+(-23,040..-73,920). Full arithmetic, citations and the levers:
+[`evidence/2026-10-02-64x64x48-capacity/ANALYSIS.md`](evidence/2026-10-02-64x64x48-capacity/ANALYSIS.md);
+task **S2.11**.
