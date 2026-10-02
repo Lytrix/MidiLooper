@@ -919,12 +919,34 @@ RT_FLASHMEM_FN void recordStopGrain(uint8_t track, uint8_t slot, uint8_t phase,
   // the span, so only a bounded sample of grains is needed: the first grain of each phase (its
   // arrival), one in `kStopGrainEmitStride`, and the phase's terminal grain. `sample.calls` is
   // the per-phase grain counter, so a phase change resets the stride by construction.
+  // A phase that never advances is bounded too: `kStopGrainMaxRowsPerPhase` rows are allowed, and the
+  // first grain past that budget emits the per-phase aggregate once — naming the stalled phase with
+  // its call count, max duration and crossed count — after which the stride drops to
+  // `kStopGrainStalledStride`. A frozen `ReservedClosure` phase whose job keeps being offered
+  // deferred turns (the deferral is read from `#STOP_STATUS`; the job itself is serviced every turn
+  // exactly as before) therefore costs ~48 rows plus one row per 4096 grains, not ~8 rows/s
+  // forever, and it can no longer flood the ring that carries the response it is meant to explain.
   // The `teensy41-capture-serial-no-grain` build sets `SESSION_CAPTURE_GRAIN=0` and drops the
   // family entirely for acceptance runs whose evidence is the snapshot/publication rows.
 #if SESSION_CAPTURE_GRAIN
   constexpr uint32_t kStopGrainEmitStride = 16;
+  constexpr uint32_t kStopGrainMaxRowsPerPhase = 48;
+  constexpr uint32_t kStopGrainStalledStride = 4096;
+  // Row 1 is the arrival and each completed stride adds one, so `1 + calls / kStopGrainEmitStride`
+  // rows span `calls` and the first grain past the budget is `kStopGrainMaxRowsPerPhase * stride`.
+  constexpr uint32_t kStopGrainFirstStalledCall =
+      kStopGrainMaxRowsPerPhase * kStopGrainEmitStride;
   const bool firstGrainOfPhase = sample.calls == 1;
-  const bool sampled = firstGrainOfPhase || (sample.calls % kStopGrainEmitStride) == 0;
+  const bool withinRowBudget = sample.calls < kStopGrainFirstStalledCall;
+  const bool sampled = firstGrainOfPhase ||
+      (withinRowBudget ? (sample.calls % kStopGrainEmitStride) == 0
+                       : (sample.calls % kStopGrainStalledStride) == 0);
+  if (sample.calls == kStopGrainFirstStalledCall && !finishedPhase) {
+    // The one-shot aggregate for this phase: a phase that has not advanced is named here instead
+    // of by a row per stride. A phase that finishes on this grain is summarized by the terminal
+    // `emitStopPhase` below, not twice.
+    emitStopPhase(track, sample);
+  }
   if (sampled || finishedPhase) {
     DebugSessionCapture::stopGrainTiming(track, slot, phase, generation, epoch, destination,
         boundary.sequence, startUs, endUs, boundary.actualUs, boundary.dueUs,
