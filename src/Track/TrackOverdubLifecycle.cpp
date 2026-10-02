@@ -24,6 +24,13 @@
 
 namespace {
 
+// S4.5 device diagnostic: the predicate that refused the last Record-stop admission. A refusal latches the
+// stop as an accepted obligation (DEC-067), so without a name the board reports only `accepted_wait`
+// (`captures/s45-campaign3-20261002-173113-od2`). One slot of state, not one per Track: the stop edge runs on
+// the single tick thread and the caller reads the name in the same turn, so no per-track copy is needed -- and
+// `Track` is the eight-way DTCM array whose size floor is asserted, so a by-value member would cost 8x.
+const char* g_recordStopDenyReason = nullptr;
+
 constexpr uint16_t kDeferredStopOrderQuantum = 32;
 constexpr StopAdmissionContract kDeferredStopContract{
     PendingStopAdmission::kMaximumClosureGrains,
@@ -417,7 +424,8 @@ TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs() {
 }
 
 TRACK_COLD_MEM bool Track::retireJobCaptureSourceGrain(CaptureStopJob& job, Loop& loop,
-                                                       bool closeCapture) {  if (!job.ownsRawRange) {
+                                                       bool closeCapture) {
+  if (!job.ownsRawRange) {
     // Legacy producer path: this job never took ownership of a sealed extent.
     return loop.retireCopiedCaptureSourceGrain(closeCapture);
   }
@@ -429,12 +437,52 @@ TRACK_COLD_MEM bool Track::retireJobCaptureSourceGrain(CaptureStopJob& job, Loop
   job.ownsRawRange = false;
   // Re-arm this descriptor's reserved destination directory for a future
   // admission. Bounded cold work in a deferred turn (one pool chunk plus the
-  // retained directory); if it fails, the next admission denies explicitly
-  // instead of reserving at the action edge.
-  (void)job.rawRange.reserveTail();
+  // retained directory); if it fails, the admission denies explicitly instead of reserving at the
+  // action edge -- and `serviceCaptureStopDescriptorReservations` owns finishing that denied re-arm,
+  // because the ring advances here *before* this call returns and nothing else revisits the descriptor.
+  if (!job.rawRange.reserveTail()) {
+    SC_ODUB_STOP_STAGE("descriptor_rearm", 0, 0, UINT32_MAX, UINT32_MAX, job.rawRange.generation(), 0,
+                       "deny_at_retire", resolveTrackIndexForPersistence(*this));
+  }
   if (closeCapture) loop.closeProducerCapturePhase();
   return true;
 }
+
+TRACK_COLD_MEM bool Track::serviceCaptureStopDescriptorReservations() {
+  if (!captureStopJobs_) {
+    return true;  // the cold path owns admission until the ring exists
+  }
+  bool allReady = true;
+  for (size_t index = 0; index < CaptureStopJobs::kCapacity; ++index) {
+    auto& range = captureStopJobs_->entries[index].rawRange;
+    // Healthy descriptors owe nothing: a sealed extent belongs to the job that sealed it, and a
+    // reserved-empty directory is exactly what the next admission needs. Only the third state --
+    // released (or never reserved) but not re-armed -- is this service's business. Without the
+    // distinction the loop re-reserved a healthy descriptor every turn (measured: 48,737
+    // `descriptor_rearm` rows in `captures/s45-fixed-20261002-180416-od2`).
+    if (range.ready() || range.reservedEmpty()) {
+      continue;
+    }
+    // Finish the release first: `reserveTail()` is refused while an extent is still owned, so a
+    // descriptor released across two or more grains needs this turn to top it up. One grain per turn
+    // keeps an idle turn as cheap as the retirement path's own bound.
+    if (range.needsSourceRelease() && !range.releaseGrain(1)) {
+      allReady = false;
+      continue;
+    }
+    if (range.reserveTail()) {
+      SC_ODUB_STOP_STAGE("descriptor_rearm", 0, 0, UINT32_MAX, UINT32_MAX, static_cast<uint32_t>(index), 0,
+                         "ready", resolveTrackIndexForPersistence(*this));
+      continue;
+    }
+    // Named, not silent: this is the row that says which half failed on the board.
+    allReady = false;
+    SC_ODUB_STOP_STAGE("descriptor_rearm", 0, 0, UINT32_MAX, UINT32_MAX, static_cast<uint32_t>(index), 0,
+                       "deny", resolveTrackIndexForPersistence(*this));
+  }
+  return allReady;
+}
+
 
 TRACK_COLD_MEM bool Track::supersedeDeferredStopJob(CaptureStopJob& job) {
   if (!captureStopJobs_) return false;
@@ -635,31 +683,53 @@ TRACK_COLD_MEM void Track::takeHeldNotesInto(CaptureStopJob& job) {
   job.pendingNotes.swap(pendingNotes);
 }
 
+// S4.5 device diagnostic: the name the last Record-stop refusal recorded (nullptr once one is admitted).
+const char* Track::recordStopDenyReason() const { return g_recordStopDenyReason; }
+
 TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination destination,
                                                           uint32_t currentTick, uint8_t slot,
                                                           uint64_t interval) {
   // S4f.17 Record admission. Same ring, same interval-identity rule, same owner as the
   // overdub form; the resources it needs are the Record chain's, not the overdub staging's.
-  if (!captureStopJobs_ || hasPendingDeferredOverdubStop()) {
+  //
+  // S4.5 device diagnostic (`captures/s45-campaign3-20261002-173113-od2`): every refusal here
+  // latches the stop as an accepted obligation, so the user-visible row was only
+  // `RECS,stage,finalize,…,accepted_wait` -- the interval kept recording and the board named
+  // no predicate. Each refusal now names itself, and the caller logs it on that same edge.
+  g_recordStopDenyReason = nullptr;
+  auto deny = [](const char* reason) {
+    g_recordStopDenyReason = reason;
     return false;
+  };
+  if (!captureStopJobs_) {
+    return deny("no_stop_job_ring");
+  }
+  if (hasPendingDeferredOverdubStop()) {
+    return deny("overdub_stop_pending");
   }
   if (slot >= Config::MAX_LOOPS_PER_TRACK || interval != captureInterval_) {
-    return false;  // a superseded request is not a refusal of a user interaction
+    return deny("superseded_or_bad_slot");  // a superseded request is not a refusal of a user interaction
   }
   if (!loopsAllocated()) {
-    return false;
+    return deny("loops_unallocated");
   }
   Loop& loop = getLoop(slot);
   if (loop.capture.phase != CapturePhase::Record) {
-    return false;  // the named interval is not the live Record capture
+    return deny("not_live_record_capture");  // the named interval is not the live Record capture
   }
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
-  if (runtime == nullptr || runtime->captureStopOwner != nullptr) {
-    return false;  // no runtime, or the slot's finalizer is busy
+  if (runtime == nullptr) {
+    return deny("no_playback_runtime");
+  }
+  if (runtime->captureStopOwner != nullptr) {
+    return deny("finalizer_owner_held");  // the slot's finalizer is still busy
   }
   CaptureStopJob* admission = captureStopJobTail();
-  if (admission == nullptr || !admission->pendingNotes.empty()) {
-    return false;
+  if (admission == nullptr) {
+    return deny("no_free_stop_job");
+  }
+  if (!admission->pendingNotes.empty()) {
+    return deny("held_notes_pending");
   }
   CaptureStopJob& job = *admission;
   // Final geometry from the maintained summary: the stop edge performs no store walk.
@@ -670,17 +740,23 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   // and stays on the producer path.
   const bool hasRawExtent = !loop.capture.store.empty();
   if (hasRawExtent && !loop.capture.store.canSealCaptureRange(job.rawRange)) {
-    return false;
+    return deny("raw_range_unsealable");
   }
   // The private prepared output is reserved at the record start; admission only checks it,
   // so no allocation happens at the stop edge.
   if (!runtime->canonicalCaptureOutputAdmitted()) {
-    return false;
+    return deny("canonical_output_not_admitted");
   }
   // Pure predicate, resolved before the seal so no fallible step follows the transfer.
   if (!isValidStateTransition(TRACK_STOPPED_RECORDING)) {
-    return false;
+    return deny("invalid_state_transition");
   }
+  // Admission proved that no finalizer owns this slot. As on the overdub route,
+  // discard the retired interval's order/rewrite binding before the new worker
+  // uses it. A reused Record runtime otherwise enters ReservedClosure with the
+  // previous stop's sourceOwner/generation and can never advance.
+  runtime->discardFrozenCaptureOrder();
+  runtime->discardFrozenCaptureCanonicalOrder();
   // The interval's final geometry is a scalar the caller continuations read at the stop
   // edge (the inline route stamped it here too). It is the same value the worker publishes.
   loop.loopLengthTicks = finalLength;
@@ -700,7 +776,7 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   if (hasRawExtent) {
     if (!loop.capture.store.sealCaptureRange(job.rawRange) ||
         !loop.borrowSealedCaptureRange(job.rawRange, &job.admission)) {
-      return false;
+      return deny("raw_transfer_failed");
     }
     job.ownsRawRange = true;
   }
@@ -1873,7 +1949,31 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
   job.owner = nullptr;
   job.loopId = kInvalidLoopId;
   job.mode = CapturePhase::None;
-  job.ownsRawRange = false;
+  // S4.5: the sealed source extent must return to the pool **and** the descriptor must be re-armed for
+  // the next interval. Clearing `ownsRawRange` alone dropped the release obligation with the job: the
+  // extent stayed sealed and referenced, and the descriptor could never be sealed again -- so the next
+  // Record stop in that slot denied `raw_range_unsealable` while the take kept recording
+  // (`captures/s45-deny-20261002-174528-od2`). One grain is released here; a release that needs more
+  // grains, or a re-reservation that fails this instant, is completed by
+  // `serviceCaptureStopDescriptorReservations` on the following idle turns, and both are named.
+  if (job.ownsRawRange) {
+    if (job.rawRange.releaseGrain(1)) {
+      job.ownsRawRange = false;
+      (void)loop.releaseSealedCaptureRangeBorrow(&job.admission);
+      if (!job.rawRange.reserveTail()) {
+        SC_ODUB_STOP_STAGE("descriptor_rearm", 0, 0, UINT32_MAX, UINT32_MAX, job.rawRange.generation(), 0,
+                           "deny_at_record_retire", resolveTrackIndexForPersistence(*this));
+      }
+    } else {
+      // The descriptor keeps the owned extent, which is exactly what the idle service scans for.
+      job.ownsRawRange = false;
+      SC_ODUB_STOP_STAGE("descriptor_rearm", 0, 0, UINT32_MAX, UINT32_MAX, job.rawRange.generation(), 0,
+                         "deferred_to_service", resolveTrackIndexForPersistence(*this));
+    }
+  } else if (!job.rawRange.reserveTail()) {
+    SC_ODUB_STOP_STAGE("descriptor_rearm", 0, 0, UINT32_MAX, UINT32_MAX, job.rawRange.generation(), 0,
+                       "deny_at_record_retire", resolveTrackIndexForPersistence(*this));
+  }
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;
   --captureStopJobs_->count;
   stop.reset();

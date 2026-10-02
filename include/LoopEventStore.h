@@ -575,8 +575,23 @@ class LoopEventStore::CaptureRange {
   CaptureRange(const CaptureRange&) = delete;
   CaptureRange& operator=(const CaptureRange&) = delete;
   bool reserveTail();  // cold, after all prior consumers and releases finish
+  /// True while this range still owns sealed chunks that must be released grain by grain before the
+  /// descriptor can be re-armed for a future admission (`releaseGrain`, then `reserveTail`). A range
+  /// that is merely *reserved* is not one: releasing it would destroy the reservation.
+  bool needsSourceRelease() const { return sealed_ || releasing_; }
+  /// True when this range is the **reserved-empty successor directory** a stop admission needs: one
+  /// empty chunk, the full directory capacity, this pool's lifetime. This is `canSealCaptureRange`'s
+  /// destination half, expressed so a caller can tell "nothing owed" from "needs re-arming" -- without
+  /// it a re-arm loop cannot distinguish a healthy descriptor from a released one and re-reserves on
+  /// every turn (measured: 48,737 `descriptor_rearm` rows in `captures/s45-fixed-20261002-180416-od2`).
   bool ready() const;
   size_t size() const { return ready() ? eventCount_ : 0; }
+  bool reservedEmpty() const {
+    return !sealed_ && !releasing_ && poolReady_ && storage_.poolReady_ &&
+        storage_.capturePoolLifetime_ == poolLifetime_ && storage_.chunkIds_.size() == 1 &&
+        storage_.eventCount_ == 0 &&
+        storage_.chunkIds_.capacity() >= LoopEventStoreConfig::POOL_CHUNK_COUNT;
+  }
   size_t chunkCount() const { return ready() ? storage_.chunkIds_.size() : 0; }
   uint64_t generation() const { return generation_; }
   /// One chunk row read, bounded by the captured end rather than a live extent.
