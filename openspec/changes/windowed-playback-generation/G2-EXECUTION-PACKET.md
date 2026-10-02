@@ -233,6 +233,27 @@ consumers and the consumer switch are untouched** (3.5/3.4/3.7).
   this slice by the refusal; the successor lane (3.4/3.5) must sequence replacement through
   `handoffReadyCoverage`. Detail: [`evidence/2026-10-02-s32-interval-publication/EVIDENCE.md`](evidence/2026-10-02-s32-interval-publication/EVIDENCE.md).
 
+## Slice 3.3 — the representation is budgeted (2026-10-02)
+
+Measurement/accounting only: **no firmware, test or build change**, so the verification below is *reused* from the
+identical code state (the only edits are the artifact and the docs).
+
+- **Five role names, three buffers:** `current`, `build`, `ready`, `retained`, `idle` — and `retained` always
+  aliases `current` or `build` (`retainCurrent`, `handoff`, the set's `resetMetadataPreserveRetained`), while
+  `idle` is a sentinel. The publisher this change added uses `current + build` only, and refuses to recycle the
+  retained view, which is that invariant enforced where a buffer changes hands.
+- **No buffer added, and no retention buffer needed:** DEC-108 item 4 makes the retained form a **pinned source**
+  (3.6's term), so the one-pass-late content is not a fourth window; the windowed lane reserves no bridge/base and
+  therefore has no transition overlap to budget; staging is the holder's existing two capture stagings. The pins
+  prove the "no new state" claim rather than asserting it: `sizeof(LoopPlaybackRuntime) == 6368`,
+  `sizeof(Track) == 384` and RAM1 `variables 96,192` all unchanged.
+- **The account:** the windowed holder is "three views + two stagings" = 215,040 + 118,784 = **333,824 B (326.0
+  KiB)** on the target ABI, from RWO S2C1's already-verified 35/29 B-per-event (cited, not re-derived).
+- **`test_playback_prewarm` unchanged (190/190)** and cited rather than restated — it already pins the per-view
+  capacity, the whole-take reservation's presence/absence and `fixedExternalBytes()` shrinking without it. **No new
+  fixture**, deliberately.
+- Detail: [`S33-REPRESENTATION-BUDGET.md`](S33-REPRESENTATION-BUDGET.md).
+
 **Carried tightening items, explicitly not claimed here** (DEC-108 §12: "required contents of the first execution
 packet that touches their path"): deferred-service **fairness** across tracks and competing owners lands with slice
 **3.10**; the **shared-view and cancellation transition table** with slice **3.11**; **second-miss post-breach

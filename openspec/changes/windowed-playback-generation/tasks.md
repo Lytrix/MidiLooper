@@ -152,9 +152,19 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   **unmeasured** per-turn phase advance (task 6.3's measurement is what makes it admissible), and *replacement*
   sequencing is 3.4/3.5's successor lane (per the measured finding in
   [`evidence/2026-10-02-s32-interval-publication/EVIDENCE.md`](evidence/2026-10-02-s32-interval-publication/EVIDENCE.md)).
-- [ ] 3.3 Budget the representation — verify current, ready and building windows (with reader retention, staging and
+- [x] 3.3 Budget the representation — verify current, ready and building windows (with reader retention, staging and
   transition overlap) are accounted, that the three rolling views' lifetimes are shown to suffice **before** any buffer
   is added, and that `test_playback_prewarm` stays green unchanged
+  *Landed 2026-10-02 as [`S33-REPRESENTATION-BUDGET.md`](S33-REPRESENTATION-BUDGET.md).* The account: the lifecycle's
+  five role names map onto **three** buffers, because `retained` always aliases `current` or `build` (`retainCurrent`,
+  `handoff`, the set's `resetMetadataPreserveRetained`) and `idle` is a sentinel — and this change's publisher uses
+  only `current + build`, refusing outright to recycle the retained view. **No buffer is added:** retention is the
+  DEC-108 item 4 **pinned source** (3.6's term), not a fourth window; the windowed lane reserves no bridge and no
+  whole-take base, so it has no transition overlap to budget; and the pins (`sizeof(LoopPlaybackRuntime) == 6368`,
+  `sizeof(Track) == 384`) plus the RAM1 line (`variables 96,192`) are all unchanged — measured, not asserted. The
+  holder's cost is the pre-existing "three views + two stagings" (333,824 B ≈ 326 KiB on the target ABI, from the
+  same 35/29 B-per-event figures RWO's `S2C1` derived). `test_playback_prewarm` is **190/190 unchanged** and is
+  cited, not restated: no new fixture duplicates the capacity arithmetic that suite already pins.
 - [ ] 3.4 Carry the identity `(slot, playbackGeneration, playbackRevision, interval)` on the published window — verify
   F-1 passes and that the generation guards ownership changes rather than becoming a second currency
 - [ ] 3.5 Make readiness the completed-publication predicate with a named holder — verify the empty-interval fixture and
