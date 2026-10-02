@@ -235,6 +235,10 @@ public:
     static void refreshLoopSlotPayloadOnSdInRam(uint8_t trackIndex, uint8_t slotIndex);
     /// Set RAM mirror after persist finalize or load without probing SD.
     static void setLoopSlotPayloadOnSdInRam(uint8_t trackIndex, uint8_t slotIndex, bool hasPayload);
+    /// Remove one slot's persisted payload from the card (explicit user CLEAR of that slot only, DEC-110).
+    /// Returns true when the slot no longer has a verified payload afterwards. Cold path: the CLEAR gesture
+    /// is stopped-only and already performs blocking persistence work.
+    static bool removeLoopSlotPayload(uint8_t trackIndex, uint8_t slotIndex);
     /// Before undo: finish deferred undo snapshot hydration when still pending.
     static void restoreDeferredUndoSnapshotsBeforeUse();
     /// Observation-only remainder DIAG: active LoadLoopJob identity. 255 = none.

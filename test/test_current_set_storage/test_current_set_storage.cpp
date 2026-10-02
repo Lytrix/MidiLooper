@@ -251,6 +251,17 @@ void test_load_set_policy_applies_loaded_anchor_fields() {
   TEST_ASSERT_EQUAL_UINT32(0, anchor.lastMaterialChangeUnix);
 }
 
+void test_slot_payload_removal_policy_needs_both_an_empty_slot_and_a_payload() {
+  // DEC-110: only a slot with no content that *has* a persisted payload may have that payload removed. Either
+  // term alone must leave the card alone -- a live slot still owns its body, and an empty slot with no payload
+  // has nothing to remove. The card effect itself is device-only (`verifySaveFileTokenAtPath` and its `File`
+  // dependency are compiled for the device), so this pins the decision, not the I/O.
+  TEST_ASSERT_TRUE(CurrentSetStorage::shouldRemoveLoopSlotPayloadForSlot(true, true));
+  TEST_ASSERT_FALSE(CurrentSetStorage::shouldRemoveLoopSlotPayloadForSlot(false, true));
+  TEST_ASSERT_FALSE(CurrentSetStorage::shouldRemoveLoopSlotPayloadForSlot(true, false));
+  TEST_ASSERT_FALSE(CurrentSetStorage::shouldRemoveLoopSlotPayloadForSlot(false, false));
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -268,5 +279,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_count_loop_slot_payload_writes_all_when_full_rewrite_forced);
   RUN_TEST(test_load_set_policy_autosaves_only_when_current_set_dirty);
   RUN_TEST(test_load_set_policy_applies_loaded_anchor_fields);
+  RUN_TEST(test_slot_payload_removal_policy_needs_both_an_empty_slot_and_a_payload);
   return UNITY_END();
 }

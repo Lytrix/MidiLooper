@@ -72,6 +72,10 @@ bool writeSaveFileToken(const StorageIo& io);
 bool verifySaveFileTokenAtEnd(const uint8_t* fileBytes, size_t fileSize);
 
 bool shouldWriteLoopPayloadForSlot(bool forceCurrentSetFullLoopWrite, bool slotDirty);
+/// DEC-110: a slot with no content must not keep a persisted payload (an empty body reads as populated to the
+/// library observation, which then refuses the slot as a record target). Pure policy over the two facts the
+/// caller owns: the slot has no content, and a verified payload exists on the card.
+bool shouldRemoveLoopSlotPayloadForSlot(bool slotHoldsNoContent, bool payloadPresentOnSd);
 
 struct LoopSlotPayloadWriteCounts {
   uint16_t writes = 0;

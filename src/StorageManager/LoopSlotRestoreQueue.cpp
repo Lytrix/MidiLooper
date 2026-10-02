@@ -410,6 +410,31 @@ void STORAGE_PERSIST_MEM StorageManager::refreshLoopSlotPayloadOnSdInRam(uint8_t
     StorageManagerInternal::refreshLoopSlotPayloadOnSdInRamEntry(trackIndex, slotIndex);
 }
 
+// A3.5: one slot's persisted payload is removed only by an explicit user CLEAR of that slot (DEC-110).
+// The owner is the persistence layer because the card file is its representation: the gesture asks, it acts
+// and mirrors the outcome, so the library observation reports the slot as genuinely empty afterwards.
+bool STORAGE_PERSIST_MEM StorageManager::removeLoopSlotPayload(uint8_t trackIndex, uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return false;
+    }
+    char finalPath[64];
+    char tempPath[64];
+    const bool haveFinal = CurrentSetStorage::formatLoopSlotPath(finalPath, sizeof(finalPath),
+                                                                trackIndex, slotIndex);
+    const bool haveTemp = CurrentSetStorage::formatLoopSlotTempPath(tempPath, sizeof(tempPath),
+                                                                   trackIndex, slotIndex);
+    if (haveFinal) {
+        (void)SD.remove(finalPath);
+    }
+    if (haveTemp) {
+        (void)SD.remove(tempPath);
+    }
+    (void)CurrentSetStorage::removeLoopSlotSealJournal(trackIndex, slotIndex);
+    const bool absent = !StorageManager::loopSlotHasPayloadOnSd(trackIndex, slotIndex);
+    StorageManager::setLoopSlotPayloadOnSdInRam(trackIndex, slotIndex, !absent);
+    return absent;
+}
+
 void STORAGE_PERSIST_MEM StorageManager::processDeferredLoopSlotRestore() {
     const uint32_t budgetUs = LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
         false, StorageManager::isFocusedLoopSlotRestoreWork(), false);

@@ -324,9 +324,28 @@ STORAGE_PERSIST_MEM bool stepFinalizeDeferredLoopSlotTemp(uint8_t trackIndex, ui
     return false;
 }
 
+/// True when this slot holds **no content at all** and no live capture is attached to it. Only then may its
+/// persisted body be absent: an empty body reads as populated to the library observation, which then refuses
+/// the slot as a record target (DEC-110). A live capture is never "no content", so recording, overdubbing, an
+/// armed slot and a queued record all answer false.
+STORAGE_PERSIST_MEM bool currentSetSlotHoldsNoContent(uint8_t trackIndex, uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return false;
+    }
+    Track& track = trackManager.getTrack(trackIndex);
+    if (track.isRecording() || track.isOverdubbing() || track.isArmed() ||
+        trackManager.isRecordingQueued(trackIndex, slotIndex)) {
+        return false;
+    }
+    return !track.getLoop(slotIndex).hasData();
+}
+
 STORAGE_PERSIST_MEM bool shouldWriteCurrentSetLoopSlot(uint8_t trackIndex, uint8_t slotIndex) {
     if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return true;
+    }
+    if (currentSetSlotHoldsNoContent(trackIndex, slotIndex)) {
+        return false;
     }
     return CurrentSetStorage::shouldWriteLoopPayloadForSlot(
         forceCurrentSetFullLoopWrite, currentSetLoopSlotDirty[trackIndex][slotIndex]);
