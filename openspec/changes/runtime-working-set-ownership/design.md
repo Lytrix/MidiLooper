@@ -1327,3 +1327,61 @@ sibling keeps the overlap oracle for both modes and adds the existing mixed reco
 overdub-B shape. This revision supersedes the temporary proposal to separate weaker oracles.
 Production fixtures and identity/length prerequisites are verified; shared deferred record
 finalization and device proof remain open. See [execution evidence](S4F17-EXECUTION.md).
+
+## Revision 26 — the owner's envelope measured against the pool, and two diagnostic corrections (2026-10-02)
+
+Revision 20's target ("~60 recorded slots at up to 64 bars", `proposal.md:8`) was **measured against the pool**
+rather than argued, at the owner's stated density: **64 slots x 64 bars x 3 notes per 16th = 6,144 events per slot,
+393,216 events**. It does not fit, by 6-7x, and three blockers each kill it alone:
+
+1. **the committed chunk-id ceiling** - 393,216 events needs 1,536 chunks against `POOL_CHUNK_COUNT = 512`
+   (`include/LoopEventStore.h:18`), a factor of 3.0. This is a **structural** limit: no byte budget re-base moves it;
+2. **the raw committed payload alone** - 1,536 chunks x 5,132 B = **7,698 KiB = 94% of the 8,192 KiB pool**, and
+   1,455 KiB over the 6,243 KiB free after boot (`live` 1,801 KiB empty / 1,949 settled, device rows);
+3. **the snapshot representation** - `LoopSnapshotEvent` carries a **full `MidiEvent`** (`include/LoopSnapshot.h:117-122`)
+   and the publisher creates two event nodes per note (`src/Loop/LoopSnapshotPublish.cpp:390-434`), so the term is
+   2.5-9x the pool by itself.
+
+The total is **56,338 KiB against 8,192** (over by 48,146), and dropping *every* view and snapshot term still leaves
+~11,900 KiB. So this is not the budget discipline S2C23 is about; **the data must get smaller**.
+
+**What this change does and does not reduce.** It removes the 8-chunk-per-committed-slot canonical-copy reservation
+and boot staging (`src/Track/TrackPlaybackWindowBuild.cpp:620-640`), makes chunk backing lazy, and *derives* the
+windowed P (331 -> 28.6 KiB, `S2C1-PLAYBACK-WINDOW-LEASE.md`). It does **not** reduce the committed event bodies -
+S2C23's `canonical` term, "all resident event bodies until S6", *is* the 7,698 KiB term - nor the chunk-id ceiling,
+nor whole-loop roots (~325 KB per loop until phase F). And the term that would make per-slot cost
+length-independent, **windowed publication, is extracted to a sibling change that does not exist yet**:
+`design.md:812` - *"S2.9 is extracted to a sibling change, `windowed-playback-generation`"*. `kEventsPerView = 2048`
+is still a hard `constexpr` (`include/RuntimePlaybackView.h:20`).
+
+**Levers, with deltas** from 56,338 KiB: windowed publication **-19,397**; dropping the `MidiEvent` SysEx pointer
+(20 -> 16 B committed, 35 -> 31 B/event views) **-5,632**; **stopping the snapshot's duplication of committed events
+-23,040 .. -73,920 (the only single lever of the right order)**; a compact committed format with derived note-offs
+**-6,153**. All four together reach **7,543 KiB** with a 649 KiB margin - the envelope is reachable **only with all
+four**. The repo's own residency claim (~28 sixty-four-bar loops at the observed ~4,600-event density,
+`design.md:267`) is **~21 slots** at this density, against a target of 64; the only affirmative "64 slots at 64
+bars" statement in the repo is a 1 B/bar **visual mask** (`design.md:492-494`), which is metadata. Full arithmetic
+and citations: [`evidence/2026-10-02-64x64x48-capacity/ANALYSIS.md`](evidence/2026-10-02-64x64x48-capacity/ANALYSIS.md);
+task **S2.11**. The direction - land/absorb the windowed-publication sibling, or restate a defended supported
+density - is the owner's decision and is **not** taken here.
+
+**Diagnostic correction 1: the per-grain family is now bounded per phase.** A record stop job was observed serviced
+~166,005 grains with its phase frozen at `ReservedClosure` and `#STOP_STATUS` identical 18 s apart. Because the gate
+was cadence-only (1-in-16), a phase that never ends flooded the capture ring until a `!STOP_STATUS` response no
+longer came back - the diagnostic evicted the evidence it was meant to explain, the failure the block's own comment
+already recorded for an earlier fixture (4,062 rows, 71% of `#CAP` bytes). The family is now bounded
+(`src/Utils/RuntimeTimingTelemetry.cpp`): at most `kStopGrainMaxRowsPerPhase = 48` stride-16 rows, then exactly one
+reused `emitStopPhase` aggregate naming the stalled phase, then a 1-in-4096 heartbeat - 89 rows instead of 10,376 for
+the same grains. **Nothing about the job is touched** (no phase, admission, retirement or obligation), because
+`spec.md`'s park-terminal scenario forbids cancelling an accepted interaction. What remains open is the **root**
+wedge: which guard keeps returning `Denied` was not identified, so the job is now survivable and visible rather than
+diagnosed.
+
+**Diagnostic correction 2: a denial names its track.** The `ODUB,stop,admission` family carried **neither slot nor
+track**, so on a multi-track run a denial could not be attributed - observed directly when two tracks both used
+Loop 1 and the refused slot index was ambiguous. `track` is now appended as a trailing `,track=%u` field (appended
+so a positional reader that stops at `outcome` is unaffected), `0xFF` meaning not supplied, and the
+`SC_ODUB_STOP_STAGE` macro became variadic so the 34 existing call sites needed no change; the attribution-critical
+admission sites and both human refusal rows pass `resolveTrackIndexForPersistence(*this)`. Verified in use:
+`…,canonical_output_busy,track=4` and `…,accepted_stop_finalizer_wait,track=4`. RAM1 is byte-identical.
+
