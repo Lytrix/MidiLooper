@@ -2,7 +2,7 @@
 
 **Status:** records the *existing* machinery. This change keeps S4c as **contract only**: it changes no publication
 unit and ships no windowed publication (`IMPLEMENTATION_CONTRACT.md` §"… retains S4c only as contract/acceptance
-definition"; `design.md` §"the sibling is planned but not created").
+definition"; `design.md` §3 records the sibling's creation on 2026-10-02 as planning artifacts only).
 **Consumes:** `design.md` rows 12, 16, 28 (the decided rules), and the code cited below. **Feeds:** S4c.1, S4c.2,
 S4c.3, S4c.4, S4c.5 and the S4c gate.
 

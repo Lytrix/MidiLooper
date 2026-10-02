@@ -2,9 +2,71 @@
 
 Implementation staging: the final requirements below are umbrella acceptance, not every early slice's
 exit gate. Boot admission uses `IMPLEMENTATION_CONTRACT.md` §1. Immutable window publication and
-playback-root decoupling depend on the planned, uncreated `windowed-playback-generation` sibling;
+playback-root decoupling depend on the sibling `windowed-playback-generation` (created 2026-10-02 as
+planning artifacts only; its own DEC + architecture reassessment is the gate its `tasks.md` §1 holds, and
+nothing of it is applied here);
 canonical eviction depends on S6. Until those gates land, report retained roots/canonical bodies and
 make no whole-law or 60-long-slot claim. Final archive requires both dependencies.
+
+### Requirement: Continuous runtime operation has one end-to-end acceptance contract
+
+Within the declared and verified workload envelope, the runtime SHALL support continuous playback, recording,
+overdubbing, undo and redo, including overlapping finalization and track/slot switching, without involuntary
+transport stops, unintended note interruption, MIDI-content refusal or capture loss. User-requested stops and
+musical changes intentionally removing notes are not interruptions. This requirement is the single end-to-end
+continuity authority for this change and its `windowed-playback-generation` dependency; subsystem completion
+SHALL NOT by itself establish this guarantee.
+
+The envelope SHALL declare simultaneous sounding/capture/finalization/interaction holders, loop lengths,
+effective event density and same-tick bursts aggregated per physical route, sustained input/output rates,
+window span, tempo and clock-source/advancement assumptions, resource headroom and capture replenishment,
+and competing persistence/display/load work. It SHALL cover the intended supported topology rather than
+silently reducing concurrency to obtain a pass. Unsupported combinations and unproven targets SHALL be named.
+
+"Without MIDI timing delay" SHALL mean meeting explicit input-service, capture-timestamp and output-deadline
+limits, not zero physical transmission time. Acceptance SHALL fix numeric limits, units, measurement points
+and clock correlation before qualifying runs: maximum MIDI input service gap, capture timestamp error,
+per-route output lateness/jitter and queue residence, and bounded deferred-owner service denial. Physical
+serialization/USB scheduling and burst throughput SHALL be accounted separately from firmware lateness;
+moving an event to a later musical tick to hide a missed deadline SHALL NOT pass. Limits SHALL be justified
+against musical deadlines and transport capacity, not chosen after a run to fit its observations.
+
+Interaction acceptance, scheduled execution, action-to-audible latency and publication freshness SHALL be
+reported separately. The existing one-pass-late allowance may preserve timely playback of the previous
+revision; it SHALL NOT be reported as an immediately audible edit. Accepted actions SHALL complete without
+re-pressing within their declared action-to-audible bounds, subject to existing explicit supersession rules.
+
+Capacity refusal and named deadline-fault recovery remain safety policies under their existing authorities,
+not successful continuity outcomes. Any such refusal, missed MIDI deadline, unintended slot silence or
+involuntary STOPPED recovery during an in-envelope run SHALL fail this acceptance; reporting or recovering
+from it SHALL NOT convert that run into a pass. This requirement does not remove the existing fault policies.
+
+#### Scenario: Concurrent musical work stays continuous
+- **WHEN** the supported active set plays while record/overdub intervals start, finalize and restart, undo/redo
+  executes, slots/tracks switch, and the declared persistence/display/load contention is present
+- **THEN** intended content and closures are emitted exactly once within the declared route-specific deadlines
+- **AND** capture has no loss or timestamp-bound violation, unchanged sustained notes remain sounding, and
+  no involuntary stop, unintended silence or in-envelope MIDI-content refusal occurs
+
+#### Scenario: Immediate acceptance is not immediate audible execution
+- **WHEN** an accepted undo/redo or other interaction waits for its valid prepared boundary
+- **THEN** the current audible source continues within its MIDI deadlines
+- **AND** acceptance, execution, audible handoff and any one-pass-late publication are measured separately
+- **AND** exceeding the declared action-to-audible bound fails acceptance even if the interaction was retained
+
+#### Scenario: Fault recovery cannot qualify normal operation
+- **WHEN** an in-envelope run reaches admission refusal, a deadline-contract fault or involuntary silence/STOPPED recovery
+- **THEN** the continuity verdict fails with the responsible owner and operation identified
+- **AND** separate fault-injection evidence may prove safe recovery but cannot satisfy normal continuity acceptance
+
+#### Scenario: Combined evidence is required before the guarantee is claimed
+- **WHEN** end-to-end continuity is accepted
+- **THEN** production-path native tests establish transition/content correctness, including controlled stale completions
+  and undo/redo while unaffected notes sustain
+- **AND** hardware evidence establishes physical input/output timing, service gaps and memory high-water marks under
+  sustained simultaneous operations across the declared envelope, with measurement resolution and uncertainty recorded
+- **AND** capture/finalization, undo/redo, output routing and windowed-publication dependencies are all verified;
+  content parity, overflow-free logs or a passing windowed change alone are insufficient
 
 ### Requirement: Inactive recorded slots retain only canonical descriptors and bounded metadata
 A recorded slot that is not in an active role SHALL retain only canonical pass identities/descriptors

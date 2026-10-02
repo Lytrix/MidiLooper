@@ -209,7 +209,7 @@ the next begins:
 | **C** | S4d, S4e, S2.6 quantisation | playback standby/fine-window work depends on F; display work has its own cap gate |
 | **D** | S6 | persistence-backed canonical residency + dirty-generation pinning (own DEC amendment) |
 | **E** | S7 | large-library scaling and continuity acceptance |
-| **F** | planned, uncreated sibling **`windowed-playback-generation`** | own artifacts + DEC/reassessment before Apply; final S7/archive depends on F and S6 |
+| **F** | sibling **`windowed-playback-generation`** — planning artifacts plus DEC-108 and reassessment recorded; nothing implemented | its own execution gates before Apply; final S7/archive depends on F, S6 and combined continuity acceptance |
 
 **Standby is optional.** The base 60-slot requirement must be satisfied by the law alone; standby excerpts and
 visual detail windows are bounded optimisations on top, never a precondition for usability.
@@ -847,7 +847,15 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       (**2,667 cases / 7 skipped / 2,660 succeeded / 0 failed**). What this gate does **not** claim: a proved `N`
       (`N x P` is not the memory law until phase F lands).
 
-- [ ] S2.9 **EXTRACTED (2026-09-19, Revision 18 § 3) — not a task of this change.** The decoupling of active
+- [ ] S2.9 **EXTRACTED (2026-09-19, Revision 18 § 3) — not a task of this change; the sibling was CREATED 2026-10-02.** The decoupling of active
+      playback from whole-loop snapshot residency is owned by **`windowed-playback-generation`**, whose planning
+      artifacts (`proposal.md`, `design.md`, `tasks.md`, and a new-capability delta) were created 2026-10-02 and
+      validate strict. It takes over the acceptance criteria this change wrote for it (`S4C1` AC-1…AC-9 and `S4C45`
+      F-1…F-8), inherits the four interfaces S2.1 needs, and now carries **its own DEC-108 and
+      `ARCHITECTURE-REASSESSMENT.md` (landed 2026-10-02)** — the gate this change's `IMPLEMENTATION_CONTRACT.md` §4 sets
+      for it. **Nothing is implemented and no phase-F implementation may be applied here**, and DEC-108's capacity,
+      scheduling and retention bounds are recorded as **unproven** — `S2.3`'s `N` stays provisional until that change's
+      gates pass.
 - [ ] **S2.11 The 64-slot / 64-bar / 3-notes-per-16th capacity claim cannot be met by this change (measured
       2026-10-02).** The owner's requirement — every one of the 64 slots minimally able to hold 64 bars at 3 notes
       per 16th — needs **393,216 events** (6,144/slot), and the answer is **no, by 6-7x**, with **three independent
@@ -873,7 +881,10 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       unit, per-window currency, the five gather call sites, LSV1 root authority and undo root pinning. Its
       requirements are retained here as a dependency contract (the immutable `PlaybackWindowGeneration` authority; `publishedSnapshot` narrowed to the
       checkpoint authority for undo/save; no whole-loop root merely because a slot sounds; the one-pass-late rule
-      via S4c.3; separate measurement of snapshot-root bytes). The sibling is **not yet created**; do not apply its implementation here. **S2.3's N stays
+      via S4c.3; separate measurement of snapshot-root bytes). The sibling is **CREATED 2026-10-02 as planning
+      artifacts only** ([`../windowed-playback-generation/proposal.md`](../windowed-playback-generation/proposal.md));
+      nothing of it exists in code and nothing may be applied from here. **S2.3's N stays provisional until its own
+      gates pass**.
       provisional until it lands**.
 
 > **Contract corrections binding on the stages below (`design.md` Revisions 18–22).** Each line names the task
@@ -1953,8 +1964,119 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       **VOCABULARY PIN LANDED 2026-10-02 (native, test-only):** `test_s4_5_finalization_busy_owner_vocabulary_is_tier_a` now asserts the production `ODUB,stop,admission` vocabulary (`accepted_stop_finalizer_wait`, `finalizer_busy`, `transfer_denied`, `canonical_output_busy`, `queue_full`) is Tier-A. The existing classifier intentionally treats the whole `ODUB,stop,` family as Tier-A, so no unknown-outcome negative case is claimed. Focused `pio test -e native -f test_capture_line_tier`: **18/18 passed**. The joined S4.5 lifecycle fixture and device latency evidence remain open.
       **JOINED FIXTURE LANDED 2026-10-02 (native, test-only):** `test_s4_5_joined_finalization_wait_and_successor_lease` drives A's deferred finalization, B's live recording, A's retirement, and B's exactly-once stop/commit through the production path. Focused `pio test -e native -f test_continuous_capture`: **107/107 passed**. Device latency by interaction class and the hardware S4.5/P3 leg remain open.
       **DEVICE ATTEMPTED 2026-10-02 (authorized track 8, slots 4/5; current image `2ab2f7d1`, firmware `eb2a6212…`):** uploaded successfully and captured fresh-boot mixed-leg attempts `s4f13-mixed-20261002-02..04`, plus the scoped slot-4 clear `s4f13-clear-slot4-20261002-01`. The first attempt stopped before gestures because slot 4 selection was not identity-confirmed; the scoped clear then succeeded (`Track cleared`, `refused=0/0B`). The next mixed attempt cleared/prepared both targets and reached the record-start gesture, but the host receipt timed out despite device rows showing `RECA,3`, `RID,start`, `ST … RECORDING`, and repeated `DISP,3,RECORDING`; it ended `A_RECORD_START_UNCONFIRMED` with clean shutdown. A bounded `--arm-timeout-s 12` retry stopped again at preparation after the partial run repopulated slot 4. A further registered fresh-boot retry, `captures/s4f13-mixed-20261002-06`, reached census but failed before any leg gesture: the slot-5 preparation press produced `Loop 5: Toggle Play/Stop` / `Playback started` instead of a slot-selection `DISP` receipt, so the host refused to continue; shutdown was clean. Measured from retained rows only: record-start to `RECA` ≈ **440 ms** (mixed leg) and ≈ **463 ms** (clear-helper control). No complete overlap, S4.5/P3 acceptance, or five-class S4f.11 latency matrix is claimed; S4.5 remains open.
+      **2026-10-02 follow-up — same-slot record reuse fixed; acceptance still open.** A real record → retire →
+      clear → record fixture reproduced the second job stuck in ReservedClosure with the retired rewrite
+      binding. Record admission now discards that scratch after the no-live-owner predicates, matching overdub
+      admission. Shared-finalization native **58/58**, focused host preparation **26/26**, capture build/upload
+      successful with RAM1 padding **1,272 B** (image `0a7c89f9…`). Host preparation also fixes occupied→empty
+      inversion and aborts on unconfirmed seed release. On-device reruns remain preparation-blocked by the
+      empty-RAM/present-SD state and armed-target evidence; no firmware HITL qualification or task checkoff.
+      Earlier record run `s45-hitl-20261002-150151-rec` has stored/effective parity and clean sparse timing
+      gates but still lacks oracle L5b — route attribution and L7 — one-press correlation. Full suites skipped
+      at user request. [Evidence and remaining blockers](evidence/2026-10-02-s45-preparation/FIX.md).
+      **2026-10-02 part 2 — the three blockers are root-caused; two fixed host-side, the third is a device-state
+      decision.** (A) `require_idle` read only the arming rows, so a target the device had cleared stayed `armed`
+      host-side (device rows: `DISP,4,ARMED` 22.335 s → the clear's `DISP,4,STOPPED` 23.490 s in
+      `captures/s45-reusefix-20261002-153058-rec`); `_slot_ready_state` now consumes the slot-scoped `DISP` state
+      family, ordered by device clock with unclocked rows ranked live-by-construction and position only as
+      tie-break. (D) The record oracle's L5b sliced the route decision by file position — missing the timestamped
+      carrier behind the delayed stop row — and L7 had no passing branch and never read the driver's gesture
+      report; both fixed, and the existing record capture re-grades **`ACCEPTED_SEQUENCE_PASS`**. (B) On device the
+      authorized target's card body is *empty* content (`RRQ,7,4 → terminal,none,committed` with `k=0,a=0,l=0`
+      after a fresh boot), the census maps payload presence to populated, and the clear gesture's RAM-only
+      predicate makes the long press a silent no-op; all 64 slots carry a verified payload and no per-slot body
+      delete exists, so no census-empty target is available on this board. Verification: accepted-sequence suite
+      **166/166**, scenario suite **40/40**, `git diff --check` clean. Still open: the owner's choice for (B), the
+      fresh-boot legs, `accepted_stop_finalizer_wait`/busy-owner evidence, S4f.11 latency numbers, the three-pass
+      campaign. No task checkoff.
+      **2026-10-02 part 3 — Phase 1a/1b closed; the overlap wording is explicit (DEC-111 — a serialized acceptance run
+      is NOT_EXERCISED).** The overdub leg is verdict-grade and **passes**: `captures/s45-odleg1a-20261002-163640-od`
+      (image `ae591d95…`) drove through the registered scenario with `--boot-reset`, both-slot content parity
+      (slot 4 = 32 record + 32 overdub rows, slot 5 = 32 + 2, storage ⇄ effective equal), timing clean, teardown
+      complete, and `ACCEPTED_SEQUENCE_PASS` with a sealed, replay-verified bundle — A's window
+      `reentry_window_open,3,1770,2304` at 48 012 769 us, B admitted `reentry,admit,2015,4,4,1` at 48 649 488 us
+      (**0.637 s inside** the window), A released `canonical_release,3,32,2304,8` at 49 535 980 us. The earlier "B
+      after A's release" reading was the oracle: L3/L4/L5 took the *seed's* slot-wide first match, so they now select
+      A's own leg interval (floored by its start admission, L4 interval-qualified with no slot-wide fallback),
+      red-proved and restored byte-identically. **Overlap rule:** the link is required in **every counted pass**; a run
+      whose successor is admitted after the predecessor released is NOT_EXERCISED (`SETUP_INCOMPLETE`, setup class) —
+      preserved, never a pass, and it breaks the three-pass streak; the bench demonstrably produces the overlap, so a
+      serialized run is an arrangement finding and no timeout/window/budget is widened for it. Verification:
+      accepted-sequence **170/170**, corpus **3/3**, scenario **40/40**, nine neighbouring suites **194/194**.
+      Still open: S4f.11 — interaction latency by class, and the three-pass campaign.
+      **2026-10-02 part 4 — the record-stop stall is fixed on device; the campaign's evidence method was the next
+      defect (DEC-111 still governs).** *Fix:* same-boot repeats failed at "slot 5 seed commit unconfirmed"
+      (`RECS,stage,record_stop,…,entered` → `finalize,…,accepted_wait`, the slot still `DISP,4,RECORDING`) because
+      `Track::stepDeferredRecordRetirement` cleared `job.ownsRawRange` **without** releasing the sealed extent or
+      re-arming the descriptor; a new named refusal `RECS,stage,deny_reason,<name>` put the device's own word on it
+      (`raw_range_unsealable`, from `canRecord`/`canSealCaptureRange`). The retirement now releases one grain and
+      re-reserves (`reserveTail`), and `Track::serviceCaptureStopDescriptorReservations` (bounded, one grain per idle
+      turn, `descriptor_rearm,ready|deny`) is the safety net — it skips the two healthy states
+      (`ready()`, `CaptureRange::reservedEmpty()`) after a healthy descriptor was re-reserved every turn
+      (48,737 rows, `captures/s45-fixed-20261002-180416-od2`). Native fixture
+      `test_a_record_retirement_returns_its_extent_and_rearms_the_descriptor` red-proves the leak, suite **60/60**,
+      native trio 185/185, capture build SUCCESS with RAM1 unchanged (`variables 96,192`, `code 392,008`, padding
+      1,208), uploaded. On device: **three consecutive `DROVE_LEG` on one boot** (`s45-c4-…-180740-od1b`,
+      `-180856-od2`, `-180957-od3`), every stop's `finalize` reading `deferred` and **zero** `descriptor_rearm` rows
+      in the steady state. *Campaign:* `captures/s45-fixcamp-20261002-181057-od1` is a sealed fresh-boot
+      `ACCEPTED_SEQUENCE_PASS` (parity, timing, bundle); the next attempt was refused by our **boot link**, whose
+      anchor time base was a maximum over *every* row — pass 1's drained prefix holds the previous boot's tail
+      (194 649 907 us) while its own boot ended at 104 510 708 us — and whose attempt side read the first stamp of a
+      drained `#DMA_XFER` row (119 333 us). Fixed host-side: `device_time.current_boot_last_clock_us` +
+      `cap_row_clock_us` place the anchor on the boot it ended on, and a repeat must match the anchor's close clock
+      against the elapsed wall time (`CLOCK_WALL_TOLERANCE_US = 10 s`); `first_row_clock_us` removed. Red-proved and
+      restored byte-identically; re-grading the refused attempt now links it (`fresh_boot: ok`, device advance
+      64 919 717 us against 65 348 073 us of wall time), so the interleaved parity read is exonerated. *Still open on
+      that attempt (both its own evidence, both gate questions rather than tooling):* (a) its successor was
+      **serialized** (`canonical_release,3,0,1536,8` — the released interval held 0 events, so the window was 192 ms
+      and B was admitted 563 ms after the release) → DEC-111 NOT_EXERCISED, non-pass, streak resets; (b) content
+      parity is a **resolved Hide** (effective 61 vs storage 63: the overdub's `(1225,On,71)` covers the record's
+      `(1238,On,71)`), which the guide's count invariant scopes to "this procedure's material"
+      (`docs/Guides/HITL_CONTENT_VERIFICATION.md:84-87`), while the probe compares raw `storage == effective`
+      (`scripts/hitl/mixed_content_report.py:66`) and the dump does not expose the overlay. **(b) is now decided and
+      implemented — DEC-112:** the deduction is validated as a **positive pass** (`hitl.content_deduction`; every
+      effective row a storage row or a shortened one, every missing row covered by a later producer's same-pitch row,
+      unexplained remainders still failing and named), the live device re-read of that attempt's slots reads
+      `pass: true` with `slot 4: record#0 note 71 (On 1238, Off 1250) hidden by overdub#0 On 1225`, and its re-grade
+      beside the original now reads `content_parity: ok` + boot link `ok`. **Ruling 2 was implemented and then
+      measured on the bench (`captures/s45-flow-20261002-191802-od1`): the predecessor's window row is
+      ring-buffered — it reached the capture file ~1,240 lines after the switch's directly printed row and only
+      after the 1.194 s window had closed — so a press placed on it cannot be inside a window; the flow keeps its
+      immediate post-switch press (the earliest possible), the blocking wait was reverted with two tests pinning the
+      measurement, and the failed attempt's serialization is **device-shaped** (192 ms window with a 0-event release
+      against ~600 ms of the device's own admission latency).** Owed: the **device investigation of that short,
+      0-event predecessor window**, the od leg's three consecutive passes, the record leg's own campaign (1 of 3), and
+      S4f.11's cold-root undo/redo route. **Root cause found, fixed and closed: the wrap is a phase effect.** The
+      device runs at **192 ticks per beat**, so the clock-paced seed was its intended two bars and the leg's own
+      **phase** decides whether it crosses its loop end (a leg needs ~6 beats; the room at its start tick was 8.5
+      beats in the healthy runs against 4.5 in the two that wrapped). `_run_plan` sizes the burst from the device's
+      own numbers (loop length from `RECS,stopToStopped`, the leg's `@ tick`, `bars` for the tick/clock conversion)
+      and refuses by name (`NO_ROOM_IN_PREDECESSOR_LOOP`). **Result: three consecutive `ACCEPTED_SEQUENCE_PASS` on
+      one boot** — `captures/s45-camp4-20261002-200100-od1` (fresh boot), `-od2` and `-od3` (anchored to pass 1),
+      each with an empty non-ok list, content parity 52/52, 52/52, 50/50, non-zero release generations 20/20/18, and
+      a replay-verified sealed bundle (`hitl_report_replay` rc 0 on all three). Verification: accepted-sequence
+      **194/194**, `git diff --check` clean. **Still open:** the record leg's own campaign and S4f.11's cold-root
+      undo/redo route — so S4.5 keeps **no** checkoff.
       A-releases / B-stops-and-takes-the-lease, and for a stop arriving while A still finalizes — accepted with no
       partial stop, B still recording/overdubbing, and the accepted stop executing once the role
+      **2026-10-02 — both acceptance campaigns are closed on the current image (three consecutive passes each, one
+      boot each).** *Overdub leg:* `captures/s45-camp4-20261002-200100-od1` (fresh boot), `-od2` and `-od3` (both
+      anchored to pass 1) — every non-ok check list empty, content parity 52/52, 52/52, 50/50, non-zero release
+      generations 20/20/18, `L5_successor_started` "0 after A's release edge" in all three, each bundle replay rc 0.
+      *Record leg:* `captures/s45-camp5-rec-1` (fresh boot), `-2` and `-3` (anchored to pass 1) — same recipe and same
+      result: all checks ok (fresh boot / boot link, content parity, timing `no issue`), `canonical_release,3,1,768,8`
+      then `,3,3,768,8` and `,3,5,768,8`, `L5` reading `RECA,4,29952` "0 after A's release edge" in all three, each
+      bundle replay rc 0. The od leg's blockers (the wrap -> 0-generation -> collapsed-window chain) were root-caused
+      and fixed by sizing the leg's note burst from the **device's own** loop length and start tick; the room it needs
+      is ~6 beats and a phase with none is refused by name. **S4f.11's two open classes are now answered as findings,
+      not gaps:** (a) the queued *playback* switch is already exercised by registered scenarios
+      (`Loop 4: Queued playback switch (filled slot)` in `captures/s45-hitl-20261002-150603-od` and three more), so its
+      number is a small measurement-owner extension rather than a new route; (b) **cold-root undo/redo is gated by
+      S5.** Revision 4 defines a cold root as "slot left the active set" and compacts hot entries "on demotion", and no
+      slot-demotion mechanism exists in the firmware (`demote*` symbols are the *load job* handoff), so every undo root
+      today is hot and the declared ~1-2 s cold figure has nothing to measure until S5.1/S5.2a land. S4f.11 therefore
+      cannot close before S5, and by the S4 gate's own chain neither can S4.5 — recorded for the owner rather than
+      worked around.
       frees (the other single-instance resources are re-checked then too). Emit
       `accepted_stop_finalizer_wait`. Assert the **busy-owner state names** as the evidence (`finalizer_busy`,
       `transfer_denied`, `canonical_output_busy`, session-exit handoff as the ordinary states, and `queue_full` as
@@ -3376,6 +3498,25 @@ and captures/s13-slope-evidence/extended-slope.json. -->
 - [ ] S4f.11 Measure acceptance -> execution latency **per interaction class** on device against the declared
       budgets (design Revision 17) and record the numbers: stop overdub, record/overdub start, slot/track switch,
       cold undo/redo, load loop. Exceeding a budget is a reported event, not a silent wait.
+      **2026-10-02 — measured on device for four of the six classes; two gaps named (no checkoff).** The measurement
+      owner is `hitl.interaction_latency` (module) with `scripts/hitl_interaction_latency.py` as its CLI: both ends of
+      every pair are **device** rows, a family's own event time is used where it carries one (`stop_state`'s `at_us`,
+      never the ring's flush prefix — measured 169.5 ms apart on this leg), pairs are bounded by their own interaction,
+      and a class the capture does not exercise is a named gap rather than a number. Measured from
+      `captures/s45-odleg1a-20261002-163640-od` (fresh boot, image `ae591d95…`) plus `captures/s4f20-odundo-10-3`:
+      **stop overdub 106 µs / 87 µs** (within "microseconds", the same service turn); **record/overdub start
+      103 µs** (informational: Revision 17 declares no numeric arm deadline); **switch route recognition 177.7 ms**
+      and **capture handoff 645.2 ms** (both exceed S4b's 16–31 ms forward target and sit inside today's bar-scale
+      2,000 ms unit); **undo/redo 47 ms / 52 ms on a warm root** (far inside the ~1–2 s figure, which is declared for
+      a *cold* root); **load loop 1.554 s dispatch / 1.673 s complete** for the leg's own slot (the 64-slot boot
+      restore's 51.5 s maximum is the restore queue, not one load). Three exceedances are reported as events with
+      their owner named (S4b for the switch, the restore queue for load) and no budget was adjusted. **Open:**
+      cold-root undo/redo has no device number, because no registered scenario drives a cold reconstruction (the
+      recorded undo runs immediately after the interaction that created its root), and the switch class's
+      Revision-17 subject is the *queued playback* switch, which the accepted-sequence leg does not drive. Both need
+      their own registered route before this task can close. Evidence:
+      [LATENCY.md](evidence/2026-10-02-s45-preparation/LATENCY.md). Verification: `test_interaction_latency`
+      **19/19**.
 - [ ] S4f.12 **DEFERRED -- progress presentation.** Show that an accepted interaction is being executed when it
       cannot meet its budget, instead of leaving the user to infer failure. **Gate: S4f.11 measured AND a
       mitigation review shows the budget cannot be met by scheduling, prewarm or windowing.** Rules when taken: it
@@ -4462,10 +4603,29 @@ has not run to completion.
       finalizing, switch slot; require the switch to be accepted, the stop to bind to the interval's slot, and no
       `activeLoopIndex` move before admission; assert the pre-switch slot finalizes exactly once and the successor
       slot is untouched.
-- [ ] S7.5 **Continuity acceptance**: with transport playing, switch track and slot repeatedly while up to
-      today's supported topology (8 tracks x one sounding slot) sound, start record/overdub, and run undo/redo --
-      the transport never stops and
-      the MIDI-boundary timing verifier reports no degradation on any switch.
+- [ ] S7.5 **Combined continuity acceptance** — satisfy the spec's *Continuous runtime operation has one
+      end-to-end acceptance contract*, using the envelope/limits fixed by S7.5a and dependencies closed by
+      S7.5b. Under sustained simultaneous playback, record/overdub start/stop/restart, undo/redo and track/slot
+      switching, with persistence/display/load contention, require zero unintended NoteOff/retrigger,
+      capture loss, MIDI-content refusal, MIDI-deadline violation, coverage fault or involuntary stop.
+      Exercise today's supported topology (8 tracks x one sounding slot), short/long loops, boundary density,
+      same-tick bursts, window spans, internal/external clocks and clock transitions. Record physical MIDI
+      output timing per enabled route plus input gaps/timestamp accuracy, queue residence, owner service gaps
+      and memory high-water marks; content parity or overflow-free logs alone do not pass. Native forces
+      production-path interleavings; hardware proves timing/load, not the exact native race ordering.
+- [ ] S7.5a **Pin the continuity envelope and timing oracle before qualification** — record numeric limits,
+      units, measurement points, clock correlation/uncertainty, musical justification and route throughput
+      for the spec's input/output metrics; record action-to-audible bounds separately from acceptance and
+      one-pass-late publication. Budget every simultaneous holder, resource reserve/replenishment and
+      competitor. Derive limits before qualifying runs, never fit them after observing a run. State
+      unsupported combinations and unproven targets without silently shrinking required concurrency.
+- [ ] S7.5b **Close continuity dependencies** — record evidence for capture admission/replenishment and
+      record/overdub finalization (including the existing StopAdmissionContract), all reachable undo/redo
+      refresh routes, per-route MIDI emission/queues and the sibling's task 3.14 — undo/redo audible handoff
+      and task 6.8 — continuity evidence handoff. Map each unresolved path to its owning implementation
+      slice before qualification; existing stage checkoffs are not end-to-end timing proof. Verify no
+      normal in-envelope path needs blanket slot silence or STOPPED recovery. Keep fault-injection/recovery
+      evidence separate; preserve safety policies rather than disabling them to obtain a pass.
 - [ ] S7.6 **Mandatory continuous device session (owner, Rev 23.6).** One session, in order: load ~60 recorded
       slots → PLAY several existing slots → ARM empty slot A → record long A → STOP A → immediately switch to B →
       START overdub B → STOP B **once** while A still finalizes → continue transport → B stops exactly once →
@@ -4476,7 +4636,9 @@ has not run to completion.
       directly to track 5 → record/overdub on track 5 (S4f.14). This single session is the acceptance evidence for
       the whole change; the staged per-leg reproducers are S4f.13 (stop → slot switch → stop), S4f.14 (stop → track
       switch → stop), S4b.8 (slot switch under finalization) and S4b.9 (track switch under finalization).
-- [ ] S7 gates: S6 and phase F implemented/validated, then all prior applicable gates plus S7.1-S7.4 recorded with numbers, and S7.6's session recorded as evidence.
+- [ ] S7 gates: S6 and phase F implemented/validated, then all prior applicable gates plus S7.1-S7.4 recorded
+      with numbers, S7.5a — continuity envelope/oracle and S7.5b — dependency closure complete,
+      S7.5 — combined continuity acceptance passing, and S7.6's session recorded as evidence.
 
 ## Safeguards (valuable, not the strategy)
 
