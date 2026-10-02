@@ -526,15 +526,20 @@ TRACK_COLD_MEM const Track::CaptureStopJob& Track::captureStopJob() const {
 }
 
 #if defined(SESSION_CAPTURE)
-TRACK_COLD_MEM void Track::printStoppedCaptureContentForHitl() {
+TRACK_COLD_MEM void Track::printStoppedCaptureContentForHitl(uint8_t requestedSlot) {
   if (clockManager.isTransportRunning() || hasPendingDeferredOverdubStop() ||
       !loopsAllocated() || isRecording() || isOverdubbing()) {
     Serial.println("CAPTURE_CONTENT,denied");
     return;
   }
-  const auto& loop = getActiveLoop();
+  const uint8_t slot = requestedSlot == 0xFF ? activeLoopIndex : requestedSlot;
+  if (slot >= Config::MAX_LOOPS_PER_TRACK) {
+    Serial.println("CAPTURE_CONTENT,denied,invalid_slot");
+    return;
+  }
+  const auto& loop = getLoop(slot);
   Serial.printf("CAPTURE_CONTENT,begin,track=%u,slot=%u,length=%lu\r\n",
-      midiChannel, activeLoopIndex, static_cast<unsigned long>(loop.loopLengthTicks));
+      midiChannel, slot, static_cast<unsigned long>(loop.loopLengthTicks));
   SessionMidiEventVec rows;
   auto printRows = [&rows](const char* kind, unsigned pass) {
     Serial.printf("CAPTURE_CONTENT,rows,%s,%u,%u\r\n", kind, pass,
@@ -553,6 +558,7 @@ TRACK_COLD_MEM void Track::printStoppedCaptureContentForHitl() {
     LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses[i].committedChunkIds, rows);
     printRows("overdub", static_cast<unsigned>(i));
   }
+  rows.clear();
   loop.passes.materializeToEventVector(rows, loop.loopLengthTicks);
   printRows("effective", 0);
   Serial.println("CAPTURE_CONTENT,end");
@@ -732,6 +738,15 @@ TRACK_COLD_MEM bool Track::beginDeferredRecordStopForSlot(PendingStopDestination
   // edge runs here: every admission route (the live stop and the accepted-stop drive) gets the
   // same destination behaviour from this one place.
   completeAdmittedRecordStop(destination, currentTick, slot, rawLength);
+  // The record stop owns the same deferred successor window as the overdub stop. Keep the
+  // evidence at this admission boundary so mixed acceptance can attribute A's frozen
+  // predecessor before B's successor starts; this is diagnostic only and does not alter
+  // admission or deferred-work state.
+  logger.log(CAT_TRACK, LOG_INFO, "Reentry window open slot=%u",
+             static_cast<unsigned>(slot));
+#if defined(SESSION_CAPTURE)
+  DebugSessionCapture::successorStartWindowOpen(slot, currentTick, loop.loopLengthTicks);
+#endif
   return true;
 }
 
@@ -1845,9 +1860,16 @@ TRACK_COLD_MEM LoopEventStoreRewriteResult Track::stepDeferredRecordRetirement(
   }
   if (runtime != nullptr) runtime->releaseFrozenRecordWindow();
   // Bounded: one raw-extent grain per call until the frozen source is gone.
-  if (!retireJobCaptureSourceGrain(job, loop, false))
-    return LoopEventStoreRewriteResult::Pending;
-  if (runtime) (void)runtime->clearCaptureStopOwner(stop, stop.frozenGeneration);
+  if (runtime != nullptr) {
+    // Record retirement has the same release edge as overdub retirement. Keep the
+    // interval's identity before clearing its owner so the stopped maintenance turn
+    // can attribute slot reuse without changing runtime behavior.
+    runtime->canonicalReleaseMarkerArmed = true;
+    runtime->canonicalReleaseMarkerGeneration = stop.frozenGeneration;
+    runtime->canonicalReleaseMarkerInterval = stop.intervalToken();
+    (void)runtime->clearCaptureStopOwner(stop, stop.frozenGeneration);
+  }
+  // The marker is diagnostic-only; the job retirement and slot ownership remain unchanged.
   job.owner = nullptr;
   job.loopId = kInvalidLoopId;
   job.mode = CapturePhase::None;

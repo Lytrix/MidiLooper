@@ -280,12 +280,16 @@ def analyse_content_dump(text: str, *, slot_c: int, expected_notes: tuple[int, .
     # content pipeline's review compares a one-loop dump against the *whole* audible output, which cannot hold
     # when other slots or tracks are enabled (measured: the playback carried dozens of unrelated notes while
     # the successor's dump declared exactly one).
-    storage_rows = [e for k, rows in per_kind.items() if k.startswith(("record#", "overdub#")) for e in rows]
+    storage_rows = [e for k, rows in per_kind.items()
+                    if k.startswith(("record#", "overdub#")) for e in rows]
     effective_rows = per_kind.get("effective#0", [])
     out["storage_note_ons"] = sorted({n for (_t, ty, _c, n, _v) in storage_rows if ty == 144})
     out["effective_note_ons"] = sorted({n for (_t, ty, _c, n, _v) in effective_rows if ty == 144})
-    # Compare the complete MIDI fields (tick, type, channel, note, velocity), not just (tick, type, pitch).
-    out["storage_effective_match"] = (storage_rows == effective_rows) if effective_rows else None
+    # Storage is emitted pass-grouped, while effective content is emitted in the
+    # merged playback order. Compare canonical event tuples, not producer order.
+    out["storage_effective_match"] = (
+        sorted(storage_rows) == sorted(effective_rows)
+    ) if effective_rows else None
     # A dump is only usable if it is a COMPLETE block and its declared per-group counts match what parsed.
     out["complete"] = "CAPTURE_CONTENT,end" in text
     parsed_counts = {k: len(v) for k, v in per_kind.items()}

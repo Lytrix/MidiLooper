@@ -222,6 +222,7 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
   // finalization resources are back; the maintenance turn reports that edge.
   runtime.canonicalReleaseMarkerArmed = true;
   runtime.canonicalReleaseMarkerGeneration = stop.frozenGeneration;
+  runtime.canonicalReleaseMarkerInterval = stop.intervalToken();
   stop.reset();
   return true;
 }

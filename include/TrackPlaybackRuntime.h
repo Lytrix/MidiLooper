@@ -454,6 +454,10 @@ struct LoopPlaybackRuntime {
   // `clearCaptureStopOwner` zeroes `captureStopOwnerGeneration`, so by the maintenance turn the identity is
   // otherwise gone. Externally allocated, so this costs the DTCM budget nothing -- only the struct pin.
   uint32_t canonicalReleaseMarkerGeneration = 0;
+  // Diagnostic-only interval identity for slot reuse attribution. Unlike the generation, this is the
+  // capture interval stamped by `reentry,admit` and lets stopped logs distinguish a seeded predecessor
+  // from the mixed leg's successor on the same firmware slot.
+  uint64_t canonicalReleaseMarkerInterval = 0;
   // Diagnostics only: why the last first-record bar-1 preparation was denied.
   const char* firstRecordingBarDenial_ = "none";
   enum class CanonicalPrefixPhase : uint8_t { Idle, Preparing, Ready, Denied };

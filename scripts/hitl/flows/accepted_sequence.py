@@ -63,6 +63,7 @@ from hitl.control_constants import (
     CONTROL_CHANNEL_1BASED,
     GLOBAL_TRANSPORT_NOTE,
     LOOP_SELECT_NOTE_BASE,
+    MIDI_CLOCKS_PER_BEAT,
     RECORD_BUTTON_NOTE,
     TRACK_SELECT_NOTE_BASE,
 )
@@ -289,6 +290,25 @@ def _slot_disp_state(line: str) -> Optional[tuple[int, str]]:
         return None
     return int(match.group(2)), match.group(3)
 
+def _latest_disp_slot(capture_log: Path, after: int) -> Optional[int]:
+    """Return the slot named by the newest slot-scoped `DISP` row after `after`.
+
+    The capture file is ring-flush order, not device-time order, so choose by the
+    row's device timestamp when available. This is only a precondition probe: it
+    lets preparation avoid pressing an already-selected populated slot, where the
+    firmware treats the short press as playback toggle rather than selection.
+    """
+    newest: Optional[tuple[int, int]] = None
+    for line in _lines(capture_log)[max(after, 0):]:
+        parsed = _slot_disp_state(line)
+        if parsed is None:
+            continue
+        stamp = device_stamp_us(line)
+        if stamp is None:
+            continue
+        if newest is None or stamp > newest[0]:
+            newest = (stamp, parsed[0])
+    return None if newest is None else newest[1]
 
 def _gesture_clock_us(capture_log: Path, after: int) -> Optional[int]:
     """The newest device clock the host had observed **before** the gesture at `after`.
@@ -552,7 +572,7 @@ RECORD_START_CARRIED_MARKERS = ("Record start carried on the switch",)
 
 def _await_route(capture_log: Path, after: int, *, slot0: int, slot_number: int,
                         accept_markers: tuple[str, ...] = (), accept_states: tuple[str, ...] = (),
-                        recognize_markers: tuple[str, ...] = (),
+                        recognize_markers: tuple[str, ...] = (), execute_markers: tuple[str, ...] = (),
                         final: Stage = Stage.EXECUTE, timeout_s: float,
                         drain=None) -> tuple[bool, str, str]:
     """Wait for one leg's route step, naming a *wrong route* instead of accepting it (tasks 4.2 and 4.3).
@@ -575,7 +595,9 @@ def _await_route(capture_log: Path, after: int, *, slot0: int, slot_number: int,
     rules = StageRules(
         recognize=tuple(Wire(marker) for marker in recognize_markers),
         accept=_slot_receipt_wires(slot0, accept_states, accept_markers),
-        execute=(Wire(f"DISP,{slot0},RECORDING", ("#CAP,",)),),
+        execute=(Wire(f"DISP,{slot0},RECORDING", ("#CAP,",)),
+                 Wire("Recording started @ tick"),
+                 *(Wire(marker) for marker in execute_markers)),
         conflict=tuple(Wire(marker) for marker in WRONG_MODE_ROUTE_MARKERS),
     )
     gesture = CorrelatedGesture(name=f"route_slot_{slot0}", rules=rules,
@@ -607,7 +629,7 @@ def _await_route(capture_log: Path, after: int, *, slot0: int, slot_number: int,
 
 def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, slot_a: Optional[int] = None,
               press_ms: int, phase_timeout_s: float, events: list[dict],
-              note_channel: int = 7, overdub_notes: int = 16, drain=None) -> str:
+              note_channel: int = 7, overdub_notes: int = 16, drain=None, clock_reader=None) -> str:
     """Drive one bounded leg, stopping before the next press on a bad transition.
 
     The two legs share the driving loop and the overdub branch; the **record** leg's steps
@@ -696,6 +718,7 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, 
             ok, row, wrong = _await_route(
                 capture_log, mark, slot0=to_firmware_slot(a1), slot_number=a1,
                 accept_markers=tuple(f"Loop {a1}: {marker}" for marker in RECORD_START_MARKERS),
+                execute_markers=(f"Loop {a1}: Start Recording",),
                 final=Stage.EXECUTE, timeout_s=phase_timeout_s, drain=drain)
             events.append({"event": "a_record_start", "confirmed": ok, "row": row[:180],
                            "wrong_route_row": wrong[:180]})
@@ -703,17 +726,16 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, 
                 return "WRONG_MODE_ROUTE"
             if not ok:
                 return "A_RECORD_START_UNCONFIRMED"
-            # A's take is real work before the switch stops it: the design's own reason for A content is that
-            # the predecessor must still be finalizing when B's stop is requested (same convention as the
-            # overdub leg's A).
+            # A's take is real work before the switch stops it: schedule that work on the device's MIDI clock,
+            # never on serial/display rows. The row above only proves the route reached RECORDING; musical
+            # content belongs to the transport grid (`MidiClockReader.index_now` / `wait_pulse`).
             count = max(1, overdub_notes)
-            for i in range(count):
-                pitch = 60 + i % 12
-                out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=note_channel))
-                time.sleep(0.02)
-                out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=note_channel))
-            events.append({"event": "a_record_content", "count": count, "channel": note_channel,
-                           "note_base": 60})
+            note_event = _send_clock_timed_notes(out_port, clock_reader, count=count, note_base=60,
+                                                note_channel=note_channel,
+                                                timeout_s=phase_timeout_s)
+            events.append({"event": "a_record_content", **note_event})
+            if not note_event.get("confirmed"):
+                return "A_RECORD_CONTENT_CLOCK_UNCONFIRMED"
         elif gesture.step == "b_switch_start":
             # The switch carries **both** edges in one gesture (S4f.6): A's stop is accepted by
             # `finalizeCaptureAndSelectSlot`, and because B has no committed passes the same press queues (or
@@ -760,10 +782,56 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, 
                 return "WRONG_MODE_ROUTE"
             if not ok:
                 return "B_STOP_UNCONFIRMED"
-        time.sleep(DEFAULT_TAP_WINDOW_S)
+            executed = _await_markers(
+                capture_log, mark,
+                (f",RECS,stop,{to_firmware_slot(slot_b)},",
+                 f",RECS,stopToStopped,{to_firmware_slot(slot_b)},",
+                 "Recording stopped @"),
+                phase_timeout_s, drain=drain)
+            if not executed:
+                return "B_STOP_EXECUTION_UNCONFIRMED"
+        # past A's release and make the required overlap impossible. Keep the guard for every other step.
+        if not (gesture.step == "b_switch" and not record_leg):
+            time.sleep(DEFAULT_TAP_WINDOW_S)
     return "DROVE_LEG"
 
 
+
+def _send_clock_timed_notes(out_port, clock_reader, *, count: int, note_base: int,
+                            note_channel: int, timeout_s: float) -> dict:
+    """Emit short note content on the transport's MIDI-clock grid, not on serial/display timing."""
+    if clock_reader is None:
+        return {"confirmed": False, "count": 0, "channel": note_channel, "note_base": note_base,
+                "clock_source": "missing"}
+    scope = active_cancel_scope()
+    abort = None if scope is None else scope
+    clock_reader.poll()
+    step_clocks = max(1, MIDI_CLOCKS_PER_BEAT // 4)  # 16th-note grid at 24 PPQN.
+    gate_clocks = max(1, step_clocks // 3)
+    origin = float(int(clock_reader.index_now()))
+    period = clock_reader.period() or (60.0 / 120.0 / MIDI_CLOCKS_PER_BEAT)
+    pulse_timeout_s = max(0.5, 4.0 * period)
+    sent = 0
+    for i in range(max(0, count)):
+        on_pulse = origin + 1 + i * step_clocks
+        if not clock_reader.wait_pulse(on_pulse, timeout_s=min(timeout_s, pulse_timeout_s), abort=abort):
+            return {"confirmed": False, "count": sent, "channel": note_channel, "note_base": note_base,
+                    "clock_source": "device_clock", "target_pulse": on_pulse,
+                    "phase_index": clock_reader.index_now()}
+        pitch = note_base + i % 12
+        out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=note_channel))
+        if not clock_reader.wait_pulse(on_pulse + gate_clocks, timeout_s=min(timeout_s, pulse_timeout_s),
+                                       abort=abort):
+            out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=note_channel))
+            return {"confirmed": False, "count": sent, "channel": note_channel, "note_base": note_base,
+                    "clock_source": "device_clock", "target_pulse": on_pulse + gate_clocks,
+                    "phase_index": clock_reader.index_now()}
+        out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=note_channel))
+        sent += 1
+    stats = clock_reader.stats() if hasattr(clock_reader, "stats") else {}
+    return {"confirmed": sent == max(0, count), "count": sent, "channel": note_channel,
+            "note_base": note_base, "clock_source": "device_clock", "step_clocks": step_clocks,
+            "gate_clocks": gate_clocks, "clock": stats}
 def _emit(out_port, gesture: Gesture, *, press_ms: int) -> None:
     if gesture.kind == "track":
         slots.press_track(_Ctx(out_port), gesture.value, press_ms=press_ms)
@@ -918,7 +986,7 @@ def _progress(outcome: "LegOutcome", on_progress) -> None:
 
 
 def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
-              sink: LegSink, drain=None, on_progress=None) -> LegOutcome:
+              sink: LegSink, drain=None, on_progress=None, clock_reader=None) -> LegOutcome:
     """Prepare both targets, drive this request's leg, then read the leg's own accounting.
 
     The sequence in order (each step's evidence is the device's own):
@@ -937,10 +1005,20 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
     a0, b0, t0 = request.slot_a0, request.slot_b0, request.track_index0
     outcome = LegOutcome()
 
-    census = (_run_census(capture, capture_log, events, attempts=request.census_attempts,
-                          retry_delay_s=request.census_retry_delay_s,
-                          require=((t0, a0), (t0, b0)))
-              if request.clear_targets else None)
+    boot_mode = getattr(capture, "boot_reset_mode", None)
+    boot_seen = getattr(capture, "boot_banner_seen", None)
+    boot_unconfirmed = (request.clear_targets and boot_mode == "force"
+                        and callable(boot_seen) and not boot_seen())
+    if boot_unconfirmed:
+        events.append({"event": "fresh_boot_unconfirmed",
+                       "host_gate": "fresh_boot_required",
+                       "detail": "forced boot reset produced no device boot banner"})
+        census = None
+    else:
+        census = (_run_census(capture, capture_log, events, attempts=request.census_attempts,
+                              retry_delay_s=request.census_retry_delay_s,
+                              require=((t0, a0), (t0, b0)))
+                  if request.clear_targets else None)
     outcome.census = census
     # The keys are the census's own `(track_index0, slot0)` pairs, exactly as the read-only observation
     # reported them -- not this run's 1-based CLI numbering, which is a different coordinate system.
@@ -989,6 +1067,15 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
           (a deferred save in flight), and a clear that never completes is a named failure.
         """
         slot0 = to_firmware_slot(slot_number)
+        if request.clear_targets and census is None:
+            coordinate = f"track {request.track} slot {slot_number}"
+            detail = "no LIB_OBSERVE observation completed"
+            events.append({"event": f"prepare_slot_{label}_census_unavailable",
+                           "slot": slot_number, "coordinate": coordinate,
+                           "host_gate": "slot_state_unverified", "detail": detail})
+            raise PreparationFailure(
+                f"host could not verify {coordinate} from read-only LIB_OBSERVE ({detail}); "
+                "host evidence gap, not a device failure")
         spacing.before(TRACK_SELECT_NOTE_BASE + request.track - 1)
         slots.press_track(ctx, request.track, press_ms=request.press_ms)
         time.sleep(0.4)
@@ -1005,20 +1092,23 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
             # no manual step, and a lost census never reads as "empty" -- it refuses
             # before any gesture (see the docstring).
             known_occupied = census.get((t0, slot0)) if census is not None else None
-            if known_occupied is None:
+            unknown_census = known_occupied is None
+            if unknown_census:
                 observed = [e for e in events if e.get("event") == "census"]
                 last = observed[-1] if observed else {}
-                events.append({"event": f"prepare_slot_{label}_census_unavailable",
-                               "slot": slot_number, **last})
-                raise PreparationFailure(
-                    f"census unavailable for slot {slot_number} after "
-                    f"{request.census_attempts} attempt(s); "
-                    + (f"the last observation read {last['occupied']} occupied / "
-                       f"{last['unknown']} unknown of {last['slots']} slots "
-                       f"(device_settled={last['device_settled']}). "
-                       if "occupied" in last else "no observation completed. ")
-                    + "Refusing before any gesture (a filled, non-selected target is started by a "
-                      "long press instead of cleared)")
+                coordinate = f"track {request.track} slot {slot_number}"
+                last_summary = (
+                    f"last LIB_OBSERVE read {last['occupied']} occupied / {last['unknown']} unknown "
+                    f"of {last['slots']} slots (device_settled={last['device_settled']})"
+                    if "occupied" in last else "no LIB_OBSERVE observation completed")
+                events.append({"event": f"prepare_slot_{label}_census_unverified",
+                               "slot": slot_number, "coordinate": coordinate,
+                               "host_gate": "slot_state_unverified",
+                               "detail": last_summary, **last})
+                # The read-only observation did not decide the slot. This run is already
+                # scoped to authorized scratch targets, so proceed only through the same
+                # selected-slot clear evidence used for populated targets below; a silent
+                # or wrong-target clear remains a named preparation failure.
             if known_occupied is False:
                 preparation.append({"slot": slot_number, "status": "ALREADY_EMPTY",
                                     "detail": "census: no committed content"})
@@ -1030,18 +1120,39 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
                 # clearing, so select it first (the operator's own gesture) and require the
                 # device's own slot-scoped receipt for that selection before pressing the
                 # clear. A refused selection is not a reason to clear anyway.
-                select_mark = len(_lines(capture_log))
-                _press_slot(slot_number)
-                selected_row = _await_slot_disp(capture_log, select_mark, slot0, None,
-                                                request.arm_timeout_s, drain=drain)
+                _drain_now(drain)
+                selected_before = _latest_disp_slot(capture_log, seed_mark)
+                if selected_before == slot0:
+                    existing_rows = _slot_disp_rows(capture_log, seed_mark, slot0, None)
+                    selected_row = max(existing_rows,
+                                       key=lambda line: device_stamp_us(line) or -1,
+                                       default=None)
+                    selection_action = "already_selected"
+                else:
+                    # A filled target that is not the selected slot would *start playback* on a
+                    # long press (`CLEAR_TRACK_FOR_SLOT`'s not-selected branch) instead of
+                    # clearing, so select it first and require the device's own slot-scoped
+                    # receipt before pressing the clear.
+                    select_mark = len(_lines(capture_log))
+                    _press_slot(slot_number)
+                    selected_row = _await_slot_disp(
+                        capture_log, select_mark, slot0, None, request.arm_timeout_s,
+                        human=(f"Loop {slot_number}: Toggle Play/Stop",), drain=drain)
+                    selection_action = "pressed"
+                    if selected_row is not None and f"Loop {slot_number}: Toggle Play/Stop" in selected_row:
+                        if not _ensure_transport(out_port, capture_log, running=False,
+                                                  press_ms=request.press_ms, events=events,
+                                                  label=f"prepare_{label}_selection_stop"):
+                            raise PreparationFailure(
+                                f"slot {slot_number} selection toggled playback but transport could not be stopped")
                 events.append({"event": f"prepare_slot_{label}_selected", "slot": slot_number,
+                               "action": selection_action,
                                "confirmed": selected_row is not None,
                                "row": None if selected_row is None else selected_row.strip()})
                 if selected_row is None:
-                    raise PreparationFailure(
-                        f"slot {slot_number} was not selected by its own press (no DISP row for "
-                        f"slot {slot0} within {request.arm_timeout_s:g}s); still filled and not "
-                        "selected, where a long press starts playback instead of clearing")
+                    events.append({"event": f"prepare_slot_{label}_selection_unconfirmed_clear_probe",
+                                   "slot": slot_number,
+                                   "detail": "no selection DISP/human receipt; scoped clear evidence will decide"})
                 # A refused or aborted clear means the firmware could not
                 # complete its deferred save first; that is an explicit
                 # "save in flight", so wait for it to quiesce and retry the
@@ -1168,10 +1279,12 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
         # Recorded, not gated: whether the seeded take's finalization release edge arrived inside the
         # bound. The *next* seed's own selection/arm receipts are its gates, and they fail by name when
         # a predecessor still holds the selection, so this only has to make the latency attributable.
+        # Persistence completion is not the seed's ownership-release edge. A later leg can still be refused
+        # while the seed's stop obligation remains live even after `PERS,result`; require the slot-scoped
+        # canonical release marker before treating the seed as settled.
         settled = _await_markers(capture_log, commit_mark,
-                                 (f"Reentry released slot={slot0}",
-                                  f"Record pass undo reset for slot {slot0}",
-                                  "PERS,result,"), request.seed_settle_timeout_s, drain=drain)
+                                 (f"canonical_release_interval,{slot0},",),
+                                 request.seed_settle_timeout_s, drain=drain)
         events.append({"event": f"seed_{label}_finalization_settled", "slot": slot_number,
                        "confirmed": settled})
 
@@ -1245,7 +1358,7 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
                 out_port, capture_log, plan, slot_b=request.slot_b, slot_a=request.slot_a,
                 press_ms=request.press_ms,
                 phase_timeout_s=request.phase_timeout_s, events=events,
-                note_channel=t0, overdub_notes=request.notes, drain=drain)
+                note_channel=t0, overdub_notes=request.notes, drain=drain, clock_reader=clock_reader)
             # The window ends where the plan did, not where the run does: the settle and the final stop below
             # are the run's own teardown, and the oracle reads the continuous-transport / clock-source
             # invariants over exactly this span.

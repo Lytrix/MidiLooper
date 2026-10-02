@@ -110,6 +110,7 @@ inline bool isTierALine(const char* line) {
   // (that one reports the retiring occupancy). Without it the lease release is only inferable.
   if (strncmp(tag, "DIAG,reentry", strlen("DIAG,reentry")) == 0 ||
       strncmp(tag, "DIAG,canonical_release,", strlen("DIAG,canonical_release,")) == 0 ||
+      strncmp(tag, "DIAG,canonical_release_interval,", strlen("DIAG,canonical_release_interval,")) == 0 ||
       strncmp(tag, "DIAG,ws_release,", strlen("DIAG,ws_release,")) == 0) {
     return true;
   }

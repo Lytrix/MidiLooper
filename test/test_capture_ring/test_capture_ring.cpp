@@ -30,6 +30,7 @@ using namespace DebugSessionCapture;
 static uint8_t backing[1024];
 void setUp() {
   sCaptureRing = {};
+  sCriticalJournal = CriticalJournal{};
   sCaptureRing.data = backing;
   sCaptureRing.capacity = sizeof(backing);
   sFlushInProgress = false;
@@ -346,6 +347,20 @@ void test_the_save_completion_receipt_is_emitted_directly() {
   TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
 }
 
+void test_rejected_critical_rows_are_replayed_at_stopped_flush() {
+  sCaptureRing.capacity = 1;
+  recStop("stop", 3, 800, 0, 800, 768, false);
+  TEST_ASSERT_EQUAL_UINT32(1, sCriticalJournal.count);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  flushCaptureBuffer(8);
+  TEST_ASSERT_TRUE(captureSerial.output.empty());
+  flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE(captureSerial.output.find("EVIDENCE,critical_journal_begin") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find("RECS,stop,3") != std::string::npos);
+  TEST_ASSERT_TRUE(captureSerial.output.find("EVIDENCE,critical_journal_end") != std::string::npos);
+  TEST_ASSERT_EQUAL_UINT32(0, sCriticalJournal.count);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_real_emitters_are_accounted_and_drained);
@@ -362,5 +377,6 @@ int main() {
   RUN_TEST(test_a_corrupt_head_prefix_drops_only_the_prefix_and_keeps_the_records);
   RUN_TEST(test_a_head_with_no_boundary_anywhere_still_wipes);
   RUN_TEST(test_the_save_completion_receipt_is_emitted_directly);
+  RUN_TEST(test_rejected_critical_rows_are_replayed_at_stopped_flush);
   return UNITY_END();
 }

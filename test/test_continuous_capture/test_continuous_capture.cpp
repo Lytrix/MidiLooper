@@ -1249,6 +1249,47 @@ void test_deferred_predecessor_completion_leaves_successor_interval_untouched() 
   TEST_ASSERT_EQUAL(reservationsBefore, TrackCaptureStopTestAccess::liveReservations(track));
 }
 
+/// S4.5/P3 joined lifecycle: A finalizes while B records, then B's stop is admitted after A
+/// releases the shared finalization role. The same production path also proves a stop accepted
+/// while A is still busy executes exactly once after the role frees.
+void test_s4_5_joined_finalization_wait_and_successor_lease() {
+  Track& track = preparePlayingTrack();
+
+  // A owns the deferred finalization role.
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+
+  // B records while A is still finalizing.
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  inputNote(64, 193, 216);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  const uint64_t bInterval = TrackCaptureStopTestAccess::interval(track);
+
+  // A retires without forcing a transition on B.
+  for (unsigned turn = 0; turn < 20000 && track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+
+  // B now takes the released role through the normal stop path and retires exactly once.
+  clockManager.assignCurrentTickSilently(288);
+  track.stopOverdubbing();
+  TEST_ASSERT_FALSE(track.isOverdubbing());
+  TEST_ASSERT_EQUAL_UINT64(bInterval, TrackCaptureStopTestAccess::jobInterval(track));
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  for (unsigned turn = 0; turn < 20000 && track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE(track.getActiveLoop().hasCommittedPasses());
+}
+
 /// The deferred stop records the published source it succeeded, and pins that
 /// source's root, at admission. A later grain must never re-resolve it against a
 /// source a successor published in the meantime.
@@ -5637,6 +5678,7 @@ int main() {
   RUN_TEST(test_successor_start_keeps_the_predecessors_frozen_builders);
   RUN_TEST(test_successor_stop_is_denied_when_the_canonical_copy_target_is_busy);
   RUN_TEST(test_deferred_predecessor_completion_leaves_successor_interval_untouched);
+  RUN_TEST(test_s4_5_joined_finalization_wait_and_successor_lease);
   RUN_TEST(test_transport_stop_retarget_retires_a_midflight_playing_job);
   RUN_TEST(test_transport_stop_while_successor_is_live_keeps_its_rows_and_root);
   RUN_TEST(test_successor_wrap_defers_its_pass_commit_while_a_stop_job_is_pending);

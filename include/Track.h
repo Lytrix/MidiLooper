@@ -143,7 +143,7 @@ public:
   void stopOverdubbingToStopped();  // Stop overdub, end in STOPPED (for MIDI Stop)
 #if defined(SESSION_CAPTURE)
   void printStoppedServiceStatusForHitl();
-  void printStoppedCaptureContentForHitl();
+  void printStoppedCaptureContentForHitl(uint8_t slotIndex = 0xFF);
 #endif
   /// Arm gated PLAYING MIDI polls after overdub→PLAYING. Not all PLAYING.
   void armPlayingMidiDrainAfterOverdubStop();

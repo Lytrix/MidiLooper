@@ -1,0 +1,10 @@
+---
+description: Always respond to the user in English
+alwaysApply: true
+---
+
+# Response Language
+
+- Respond to the user in English in every message.
+- Do not respond in Dutch, Chinese, or another language unless the user explicitly asks for a translation or a different response language.
+- Keep code, identifiers, quoted logs, and user-provided text unchanged when necessary; explanatory prose remains English.

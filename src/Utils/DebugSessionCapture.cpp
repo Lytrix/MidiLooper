@@ -25,6 +25,13 @@ extern "C" void extmem_free(void* ptr);
 #else
 #define SC_FMT(literal) literal
 #endif
+#if defined(__IMXRT1062__)
+#define SC_JOURNAL_MEM_ATTR DMAMEM
+#define SC_JOURNAL_COLD_ATTR FLASHMEM __attribute__((noinline))
+#else
+#define SC_JOURNAL_MEM_ATTR
+#define SC_JOURNAL_COLD_ATTR
+#endif
 
 namespace DebugSessionCapture {
 
@@ -58,11 +65,20 @@ struct CaptureRecordHeader {
 // `RING,overflow`: at 512 KiB the eviction shed the `snapshot_unit` publication rows a playback
 // regression needs, so the run could not be explained from serial at all. The ring lives in
 // PSRAM (see `ensureCaptureRingAllocated`), so the extra budget costs no RAM1/RAM2.
+constexpr size_t kMaxCaptureTextBytes = 192;
+constexpr size_t kCriticalJournalCapacity = 32;
+
+struct CriticalJournal {
+  uint32_t count = 0;
+  uint32_t dumpIndex = 0;
+  uint32_t dropped = 0;
+  bool dumpStarted = false;
+  char lines[kCriticalJournalCapacity][kMaxCaptureTextBytes] = {};
+};
 constexpr size_t kCaptureRingBytes = 1024 * 1024;
 /// How far the head may scan forward for a record boundary after an unreadable head (see `headResyncDropBytes`).
 constexpr size_t kHeadResyncScanBytes = 256;
 constexpr size_t kCaptureRingPressureBytes = (kCaptureRingBytes * 3) / 4;
-constexpr size_t kMaxCaptureTextBytes = 192;
 // Ring slice only Record rows may consume. A take's start/stop/stage/identity rows are at most a
 // few kilobytes, so 32 KiB holds them many times over while costing ordinary traffic 3% of the ring.
 constexpr size_t kRecordReserveBytes = 32 * 1024;
@@ -192,6 +208,7 @@ struct CaptureRing {
   uint32_t identityLastTakeId = 0;
 };
 
+SC_JOURNAL_MEM_ATTR CriticalJournal sCriticalJournal{};
 CaptureRing sCaptureRing;
 
 /// True while `flushCaptureBuffer` is walking the ring. `Serial` output can re-enter this module
@@ -213,6 +230,61 @@ SC_MEM_ATTR RecordFamilyStats* recordFamilyStats(const char* line) {
 bool readHeaderAt(size_t index, CaptureRecordHeader& headerOut);
 void readBytesAt(size_t index, void* dest, size_t len);
 bool serialWriteRoom(size_t bytesNeeded);
+SC_JOURNAL_COLD_ATTR void journalCriticalLine(const char* line) {
+  if (line == nullptr) return;
+  if (sCriticalJournal.count >= kCriticalJournalCapacity) {
+    incrementSaturated(sCriticalJournal.dropped);
+    return;
+  }
+  const size_t len = strnlen(line, kMaxCaptureTextBytes - 1);
+  memcpy(sCriticalJournal.lines[sCriticalJournal.count], line, len);
+  sCriticalJournal.lines[sCriticalJournal.count][len] = '\0';
+  ++sCriticalJournal.count;
+}
+
+SC_JOURNAL_COLD_ATTR void journalCriticalHeadRecord() {
+  if (sCriticalJournal.count >= kCriticalJournalCapacity) {
+    incrementSaturated(sCriticalJournal.dropped);
+    return;
+  }
+  CaptureRecordHeader header{};
+  if (!readHeaderAt(sCaptureRing.head, header) ||
+      header.type != static_cast<uint8_t>(CaptureRecordType::Text) || header.payloadLen == 0) {
+    incrementSaturated(sCriticalJournal.dropped);
+    return;
+  }
+  const size_t index = sCriticalJournal.count;
+  const size_t copyLen = std::min<size_t>(header.payloadLen, kMaxCaptureTextBytes - 1);
+  readBytesAt(sCaptureRing.head + sizeof(header), sCriticalJournal.lines[index], copyLen);
+  sCriticalJournal.lines[index][copyLen] = '\0';
+  ++sCriticalJournal.count;
+}
+
+SC_JOURNAL_COLD_ATTR void emitCriticalJournal() {
+  if (sCriticalJournal.dumpIndex == 0 && sCriticalJournal.count == 0 &&
+      sCriticalJournal.dropped == 0) {
+    return;
+  }
+  if (!sCriticalJournal.dumpStarted) {
+    if (!serialWriteRoom(112)) return;
+    Serial.printf_P(SC_FMT("#CAP,%lu,EVIDENCE,critical_journal_begin,count=%u,dropped=%u\r\n"),
+                    static_cast<unsigned long>(micros()),
+                    static_cast<unsigned>(sCriticalJournal.count),
+                    static_cast<unsigned>(sCriticalJournal.dropped));
+    sCriticalJournal.dumpStarted = true;
+  }
+  while (sCriticalJournal.dumpIndex < sCriticalJournal.count) {
+    const char* line = sCriticalJournal.lines[sCriticalJournal.dumpIndex];
+    const size_t bytes = strnlen(line, kMaxCaptureTextBytes - 1) + 2;
+    if (!serialWriteRoom(bytes)) return;
+    Serial.println(line);
+    ++sCriticalJournal.dumpIndex;
+  }
+  if (!serialWriteRoom(96)) return;
+  Serial.printf_P(SC_FMT("#CAP,%lu,EVIDENCE,critical_journal_end\r\n"),
+                  static_cast<unsigned long>(micros()));
+  sCriticalJournal = CriticalJournal{};
+}
 
 SC_MEM_ATTR bool isTierATextLine(const char* line) {
   return CaptureLineTier::isTierALine(line);
@@ -627,6 +699,7 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
     if (family != nullptr) incrementSaturated(family->rejected);
     if (incomingIdentity) ++sCaptureRing.identityEmitRejected;
     if (incomingCritical) {
+      journalCriticalLine(text);
       if (sCaptureRing.criticalRejectedPending == 0)
         sCaptureRing.criticalFirstRejectedUs = micros();
       incrementSaturated(sCaptureRing.criticalRejectedPending);
@@ -668,6 +741,7 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
     if (CaptureLineTier::tagStartsWith(head, "RID,")) ++sCaptureRing.identityEvicted;
     if (auto* evictedFamily = recordFamilyStats(head)) incrementSaturated(evictedFamily->evicted);
     const size_t usedBefore = sCaptureRing.used;
+    if (headCritical) journalCriticalHeadRecord();
     discardOldestRecord(CaptureLineTier::evictionKindFor(headTierA, headCritical));
     if (sCaptureRing.used == usedBefore) return reject();
   }
@@ -1292,6 +1366,16 @@ SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t ge
                 (unsigned long)loopLengthTicks, (unsigned long)availableChunks);
 }
 
+SC_MEM_ATTR void canonicalFinalizationCapacityReleasedForInterval(
+    uint8_t slot, uint64_t interval, uint32_t generation, uint32_t loopLengthTicks,
+    size_t availableChunks) {
+  emitCapPrintf("#CAP,%lu,DIAG,canonical_release_interval,%u,%llu,%lu,%lu,%lu\r\n",
+                (unsigned long)micros(), static_cast<unsigned>(slot),
+                static_cast<unsigned long long>(interval),
+                (unsigned long)generation, (unsigned long)loopLengthTicks,
+                (unsigned long)availableChunks);
+}
+
 SC_MEM_ATTR void workingSetLeaseReleased(uint8_t slot, uint16_t generation, const char* outcome) {
   emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,ws_release,%u,%u,%s\r\n"), (unsigned long)micros(),
                 static_cast<unsigned>(slot), static_cast<unsigned>(generation),
@@ -1640,6 +1724,7 @@ void flushCaptureBuffer(size_t maxRecords) {
   checkHeadPlausible(2);
   // Never emit capture notices via USB Serial under timing-critical budgets.
   if (maxRecords > 8) {
+    emitCriticalJournal();
     emitCriticalRejectedNotice();
     emitOverflowNotice();
     emitTierADegradedNotice();

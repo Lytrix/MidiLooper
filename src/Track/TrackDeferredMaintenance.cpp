@@ -951,16 +951,21 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       if (runtime == nullptr || !runtime->canonicalReleaseMarkerArmed) continue;
       if (runtime->captureStopOwner != nullptr || !runtime->canonicalCaptureOutputAdmitted()) continue;
       const uint32_t generation = runtime->canonicalReleaseMarkerGeneration;
+      const uint64_t interval = runtime->canonicalReleaseMarkerInterval;
       runtime->canonicalReleaseMarkerArmed = false;
       runtime->canonicalReleaseMarkerGeneration = 0;
+      runtime->canonicalReleaseMarkerInterval = 0;
       // Human log line first: the HITL probe paces an admitted stop from this edge; the `#CAP` tiers queue
-      // behind the deferred stop's flood and arrive seconds late. Slot *and* identity are named so the edge
-      // is attributable to the owner that retired.
-      logger.info("Reentry released slot=%u generation=%lu", static_cast<unsigned>(slot),
-                  static_cast<unsigned long>(generation));
+      // behind the deferred stop's flood and arrive seconds late. Slot, identity and interval are named so
+      // the edge is attributable even when the firmware slot is reused by a seeded predecessor.
+      logger.info("Reentry released slot=%u generation=%lu interval=%llu", static_cast<unsigned>(slot),
+                  static_cast<unsigned long>(generation), static_cast<unsigned long long>(interval));
 #if defined(SESSION_CAPTURE)
       DebugSessionCapture::canonicalFinalizationCapacityReleased(
           slot, generation, getLoop(slot).loopLengthTicks,
+          runtime->canonicalCaptureChunks.availableChunks());
+      DebugSessionCapture::canonicalFinalizationCapacityReleasedForInterval(
+          slot, interval, generation, getLoop(slot).loopLengthTicks,
           runtime->canonicalCaptureChunks.availableChunks());
 #endif
     }

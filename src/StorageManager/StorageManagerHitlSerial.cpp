@@ -700,6 +700,22 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                     for (uint8_t i = 0; i < page.count; ++i) Serial.printf_P(PSTR("%02x"), page.bytes[i]);
                     Serial.println();
                 }
+            } else if (std::strncmp(sHitlSerialLineBuffer, "!CAPTURE_CONTENT_SLOT ", 22) == 0 &&
+                       !clockManager.isTransportRunning()) {
+                unsigned slot = 0;
+                const char* slotText = sHitlSerialLineBuffer + 22;
+                bool validSlot = *slotText != '\0';
+                while (validSlot && *slotText >= '0' && *slotText <= '9') {
+                    slot = slot * 10u + static_cast<unsigned>(*slotText - '0');
+                    ++slotText;
+                }
+                validSlot = validSlot && *slotText == '\0';
+                if (!validSlot || slot >= Config::MAX_LOOPS_PER_TRACK) {
+                    Serial.println("CAPTURE_CONTENT,denied,invalid_slot");
+                } else {
+                    trackManager.getTrack(trackManager.getSelectedTrackIndex())
+                        .printStoppedCaptureContentForHitl(static_cast<uint8_t>(slot));
+                }
             } else if (std::strcmp(sHitlSerialLineBuffer, "!CAPTURE_CONTENT") == 0 &&
                        !clockManager.isTransportRunning()) {
                 trackManager.getTrack(trackManager.getSelectedTrackIndex())
