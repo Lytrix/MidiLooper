@@ -498,6 +498,21 @@ public:
   /// Returns false when capture admission rejects the event before Loop state mutates.
   bool recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2,
                         uint32_t currentTick);
+  /// DEC-108 §14 / task 3.12c: the window's own committed content for a slot -- the **current published window's**
+  /// event count -- or 0 when no window serves the slot yet. O(1): no allocation, no scan and no resolver, so it is
+  /// usable at the MIDI edge. It is the term that makes `L` the capacity of the window that actually serves the
+  /// slot rather than a guess about its content.
+  /// True when a **window serves** this slot: a completed, published window with a valid interval. The admission limit
+  /// is what a window must hold, so this is the presence question its gate asks -- and it is not the same as a
+  /// non-zero event count, because an empty interval is a legitimately ready window.
+  bool playbackWindowServesSlot(uint8_t slotIndex) const;
+  size_t playbackWindowEventCountForSlot(uint8_t slotIndex) const;
+  /// The window admission accounting for a slot's **live capture interval**: the window's content, plus the rows
+  /// accepted in this interval, plus the closures they owe, plus the closure reserve -- all inside `L`. Pure
+  /// arithmetic over state that already exists, which is what "preallocated, bounded accounting that includes
+  /// outstanding reservations" means at the edge: nothing allocates, nothing is scanned, and the effective-content
+  /// resolver is never invoked.
+  RuntimePlaybackViewConfig::WindowAdmissionAccounting captureIntervalAdmissionForSlot(uint8_t slotIndex) const;
   /// Advance committed playback. `emitMidiOutput` sends on this track's MIDI channel
   /// and output ports; cursor and ledger always run.
   void playMidiEvents(uint32_t currentTick, bool emitMidiOutput);

@@ -4727,6 +4727,172 @@ void test_paged_window_stream_serves_more_than_one_page_exactly_once_across_the_
                                                     stream.sourceRevision() + 1)));
 }
 
+/// 3.12c (DEC-108 §14): the **MIDI-edge wiring** of the admission limit. Capacity pressure is refused before
+/// acceptance -- the interval accepts exactly what `L` minus the closure reserve can hold, and the refusal leaves no
+/// half-state behind -- the window serving the slot is part of the accounting, an accepted note's closure is never
+/// refused because it is a move inside `L` rather than a growth, and no stop request is refused by a limit that holds
+/// no representation for one. Every event travels the production edge (`Track::recordMidiEvents`, which is what
+/// `MidiHandler` calls, and `Track::noteOn`/`Track::noteOff` for notes).
+void test_capture_admission_refuses_at_the_edge_and_never_a_closure_or_a_stop() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  track.forceSetState(TRACK_STOPPED);
+  track.startRecording(1000);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track), "the take is admitted");
+
+  // The gate is consulted exactly where a **window serves** the slot. With none, the take is not window-bounded -- its
+  // playback storage is the whole-take view -- so it accepts rows without asking a window's capacity at all.
+  TEST_ASSERT_FALSE_MESSAGE(track.playbackWindowServesSlot(0),
+                            "a fresh record take is not served by a window, so it is not window-bounded");
+  track.noteOn(0, 60, 100, 1000);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(loop.capture.store.size()),
+                                   "the note-on row is accepted through the edge");
+  const WindowAdmissionAccounting atOpen = track.captureIntervalAdmissionForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(atOpen.acceptedEffectiveEvents));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(atOpen.outstandingReservations),
+                                   "the accepted note owes exactly one closure");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(1 + 1 + RuntimePlaybackViewConfig::kWindowClosureReserve),
+                           static_cast<uint32_t>(atOpen.committed()));
+
+  // Now publish the window that serves this slot, holding `L - reserve - 3` rows: with the accepted row and the owed
+  // closure that leaves room for exactly one more plain event and none for a note-on. (The window lane has no
+  // production requester yet -- that is task 3.7's -- so the fixture supplies the state the lane will publish, and the
+  // accessor is asserted on its own first.)
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL_MESSAGE(runtime, "the record entry prewarms the slot's runtime");
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL_MESSAGE(set, "and its view set");
+  const uint8_t current = set->lifecycle.current;
+  TEST_ASSERT_LESS_THAN_UINT8(static_cast<uint8_t>(RuntimePlaybackViewConfig::kViewCount), current);
+  const size_t windowRows =
+      RuntimePlaybackViewConfig::kWindowAdmissionLimit - RuntimePlaybackViewConfig::kWindowClosureReserve - 3;
+  set->views[current].storage.eventCount = windowRows;
+  set->views[current].coverage = PlaybackCoverageInterval{0, 768, 768};
+  set->views[current].complete = true;
+  set->views[current].published = true;
+  TEST_ASSERT_TRUE_MESSAGE(track.playbackWindowServesSlot(0), "a completed, published window now serves the slot");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(windowRows),
+                                   static_cast<uint32_t>(track.playbackWindowEventCountForSlot(0)),
+                                   "a completed, published window with a valid interval is the inherited term");
+  const WindowAdmissionAccounting atLimit = track.captureIntervalAdmissionForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit - 1),
+      static_cast<uint32_t>(atLimit.committed()),
+      "the window's content, the accepted row, the owed closure and the reserve are one total");
+  TEST_ASSERT_TRUE_MESSAGE(atLimit.admitsNewEvent(false), "one plain event still fits inside L");
+  TEST_ASSERT_FALSE_MESSAGE(atLimit.admitsNewEvent(true), "a note-on needs its closing row as well");
+
+  // The one plain event that still fits is accepted, and the next is refused exactly at L.
+  TEST_ASSERT_TRUE(track.recordMidiEvents(midi::ControlChange, 0, 1, 64, 1100));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit),
+                                   static_cast<uint32_t>(track.captureIntervalAdmissionForSlot(0).committed()),
+                                   "capacity pressure is reached exactly at L, never after it");
+  TEST_ASSERT_FALSE_MESSAGE(track.recordMidiEvents(midi::ControlChange, 0, 1, 64, 1200),
+                            "and the next plain event is refused by the limit");
+
+  // A refused note-on leaves **no** half-state: no row, and no dangling reservation.
+  const uint32_t rowsAtLimit = static_cast<uint32_t>(loop.capture.store.size());
+  track.noteOn(0, 62, 100, 2000);
+  TEST_ASSERT_EQUAL_UINT32(rowsAtLimit, static_cast<uint32_t>(loop.capture.store.size()));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      1u, static_cast<uint32_t>(track.captureIntervalAdmissionForSlot(0).outstandingReservations),
+      "the refused note-on did not join the owed set");
+
+  // The closure of an accepted note is refused by nothing: it moves a unit from owed to accepted, inside L.
+  track.noteOff(0, 60, 0, 3000);
+  const WindowAdmissionAccounting afterClosure = track.captureIntervalAdmissionForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit),
+                                   static_cast<uint32_t>(afterClosure.committed()),
+                                   "the closure moved a unit inside L instead of adding one");
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(afterClosure.outstandingReservations));
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("window_admission",
+                                   captureAppendDenyReasonLabel(CaptureAppendDenyReason::WindowAdmission),
+                                   "the refusal is named, in the same vocabulary as every other capture denial");
+
+  // An unpublished view is not a window: no inherited term, so the gate is not consulted at all.
+  set->views[current].published = false;
+  TEST_ASSERT_FALSE(track.playbackWindowServesSlot(0));
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(track.playbackWindowEventCountForSlot(0)));
+  TEST_ASSERT_TRUE_MESSAGE(track.recordMidiEvents(midi::ControlChange, 0, 1, 64, 4000),
+                           "with no window serving the slot, the take is not window-bounded");
+  // Leave the slot's view set as the fixture found it.
+  set->views[current].coverage = PlaybackCoverageInterval{};
+  set->views[current].storage.eventCount = 0;
+  set->views[current].complete = false;
+
+  // Interaction acceptance is untouched: the stop request still takes the take out of RECORDING while the interval sits
+  // at the limit, because a limit over MIDI **content** holds no representation for an interaction request.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::isRecording(track));
+  track.stopRecordingToStopped(5000);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::isRecording(track),
+                            "a stop request is never refused by the MIDI-content limit");
+}
+
+/// 3.12c (DEC-108 §14): the refusal's **cleanup** where the edge has already taken a staging reservation it must give
+/// back -- the overdub path, whose admission reserves before the canonical append -- and the one plain event that still
+/// fits inside a window one row short of the limit.
+void test_capture_admission_refusal_on_the_overdub_path_gives_back_its_staging_reservation() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  // A committed take and then a live overdub interval: the capture path whose admission holds staging reservations.
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasCommittedPasses(), "the slot has content to overdub over");
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true), "the slot's working set is admitted first");
+  track.startOverdubbing(96);
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(), "the overdub interval is open");
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  CaptureAdmissionStaging* staging = runtime->liveCaptureStagingIfPrewarmed();
+  TEST_ASSERT_NOT_NULL_MESSAGE(staging, "the overdub interval owns a prewarmed ingress staging");
+
+  // Publish the window that serves the slot with `L - reserve - 1` rows: one plain event still fits, a note-on does not.
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL_MESSAGE(set, "the slot's view set is prewarmed");
+  const uint8_t current = set->lifecycle.current;
+  TEST_ASSERT_LESS_THAN_UINT8(static_cast<uint8_t>(RuntimePlaybackViewConfig::kViewCount), current);
+  set->views[current].storage.eventCount =
+      RuntimePlaybackViewConfig::kWindowAdmissionLimit - RuntimePlaybackViewConfig::kWindowClosureReserve - 1;
+  set->views[current].coverage = PlaybackCoverageInterval{0, 768, 768};
+  set->views[current].complete = true;
+  set->views[current].published = true;
+  const WindowAdmissionAccounting admission = track.captureIntervalAdmissionForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit - 1),
+                           static_cast<uint32_t>(admission.committed()));
+  TEST_ASSERT_TRUE_MESSAGE(admission.admitsNewEvent(false), "one plain event still fits inside L");
+  TEST_ASSERT_FALSE_MESSAGE(admission.admitsNewEvent(true), "a note-on needs its closing row as well");
+
+  // The note-on is refused, and the reservation `noteOn` took before the edge must not outlive the refusal.
+  const NoteId reservedId = loop.peekNextNoteId();
+  track.noteOn(0, 64, 100, 200);
+  TEST_ASSERT_NULL_MESSAGE(staging->matchingOpenReservation(reservedId, 0, 64),
+                           "a refused note-on gives its staging reservation back");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(loop.capture.store.size()), "and accepts no row");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      0u, static_cast<uint32_t>(track.captureIntervalAdmissionForSlot(0).outstandingReservations),
+      "and leaves nothing owed");
+
+  // The one plain event that still fits is accepted, and the next is refused exactly at L.
+  TEST_ASSERT_TRUE_MESSAGE(track.recordMidiEvents(midi::ControlChange, 0, 1, 64, 300),
+                           "the one plain event that still fits is accepted");
+  TEST_ASSERT_FALSE_MESSAGE(track.recordMidiEvents(midi::ControlChange, 0, 1, 64, 400),
+                            "and the next one is refused exactly at L");
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(loop.capture.store.size()));
+
+  // Leave the slot's view set as the fixture found it.
+  set->views[current].published = false;
+  set->views[current].complete = false;
+  set->views[current].coverage = PlaybackCoverageInterval{};
+  set->views[current].storage.eventCount = 0;
+}
+
 int main() {
 
 
@@ -4824,5 +4990,10 @@ int main() {
   RUN_TEST(test_window_admission_limit_accounts_effective_events_and_the_closure_reserve_inside_l);
   // windowed-playback-generation slice 3.12b: the bounded legacy paged path (pages + resumable cursor).
   RUN_TEST(test_paged_window_stream_serves_more_than_one_page_exactly_once_across_the_ring);
+  // windowed-playback-generation slice 3.12c: the MIDI-edge wiring of the admission limit (DEC-108 §14).
+  RUN_TEST(test_capture_admission_refuses_at_the_edge_and_never_a_closure_or_a_stop);
+  // windowed-playback-generation slice 3.12c: the refusal's cleanup, and the window-seeded boundary on the lane the
+  // window actually serves (DEC-108 §14).
+  RUN_TEST(test_capture_admission_refusal_on_the_overdub_path_gives_back_its_staging_reservation);
   return UNITY_END();
 }

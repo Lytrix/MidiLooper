@@ -727,6 +727,61 @@ TRACK_CAPTURE_ADMISSION_MEM void Track::finalizePendingNotes(uint32_t offAbsTick
   invalidateCaches();
 }
 
+// DEC-108 §14 / task 3.12c -- the admission limit's reads at the edge. All are O(1) and derive their terms from the
+// single sources of truth rather than mirroring them into a second copy, which is what keeps the accounting from
+// drifting away from the capture it describes.
+
+namespace {
+/// The view a **completed, published** window with a valid interval occupies for the slot, or `nullptr` when no window
+/// serves it -- exactly the test `publishedPlaybackWindowForSlot` applies, because a shell view is not a window. Its
+/// purpose here is the *presence* question: an empty interval is a legitimately Ready window, so an absent window and
+/// an empty one must not be confused.
+const RuntimePlaybackView* servedPlaybackWindowView(const LoopPlaybackRuntime* runtime) {
+  if (runtime == nullptr) {
+    return nullptr;
+  }
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (set == nullptr) {
+    return nullptr;
+  }
+  const uint8_t current = set->lifecycle.current;
+  if (current >= RuntimePlaybackViewConfig::kViewCount) {
+    return nullptr;
+  }
+  const RuntimePlaybackView& view = set->views[current];
+  if (!view.complete || !view.published || !view.coverage.isValid()) {
+    return nullptr;
+  }
+  return &view;
+}
+}  // namespace
+
+TRACK_CAPTURE_ADMISSION_MEM bool Track::playbackWindowServesSlot(uint8_t slotIndex) const {
+  return servedPlaybackWindowView(playbackRuntime.slotIfAllocated(slotIndex)) != nullptr;
+}
+
+TRACK_CAPTURE_ADMISSION_MEM size_t Track::playbackWindowEventCountForSlot(uint8_t slotIndex) const {
+  const RuntimePlaybackView* window = servedPlaybackWindowView(playbackRuntime.slotIfAllocated(slotIndex));
+  return window != nullptr ? window->storage.eventCount : 0;
+}
+
+TRACK_CAPTURE_ADMISSION_MEM RuntimePlaybackViewConfig::WindowAdmissionAccounting
+Track::captureIntervalAdmissionForSlot(uint8_t slotIndex) const {
+  RuntimePlaybackViewConfig::WindowAdmissionAccounting accounting;
+  // What the window serving this slot already holds: the interval's inherited content.
+  accounting.acceptedEffectiveEvents = playbackWindowEventCountForSlot(slotIndex);
+  if (slotIndex < Config::MAX_LOOPS_PER_TRACK) {
+    const Loop& loop = loopForSlot(slotIndex);
+    if (loop.captureActive()) {
+      // ... plus what this live interval has accepted so far.
+      accounting.acceptedEffectiveEvents += loop.capture.store.size();
+    }
+  }
+  // ... plus the closures those accepted notes still owe. The pending-note set **is** the owed set: a note enters it
+  // when its NoteOn is opened and leaves it when its closure lands, so no second counter can disagree with it.
+  accounting.outstandingReservations = pendingNotes.size();
+  return accounting;
+}
 TRACK_CAPTURE_ADMISSION_MEM __attribute__((noinline)) bool Track::recordMidiEvents(
     midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
   if ((isRecording() && !isPlaying()) || isOverdubbing()) {
@@ -865,6 +920,51 @@ TRACK_CAPTURE_ADMISSION_MEM __attribute__((noinline)) bool Track::recordMidiEven
       }
     }
 
+    // DEC-108 §14 / task 3.12c -- the window admission limit at the MIDI edge. Capacity pressure is refused **before
+    // the event is accepted**: nothing is appended, no accepted row is dropped, truncated or reordered, and no
+    // partial row ever exists. The accounting is arithmetic over state that already exists (the serving window's
+    // content, this interval's accepted rows, the closures they owe and the reserve): nothing allocates, nothing is
+    // scanned, and the effective-content resolver is never invoked on this edge.
+    //
+    // A **closure** is the one thing this limit may never refuse. An admitted note-on's closing row is already one of
+    // the units counted inside `L`, so appending it moves a unit from owed to accepted and leaves the total
+    // unchanged -- `WindowAdmissionAccounting::closeReservation` is that arithmetic. Refusing it would truncate a
+    // guaranteed event, which is exactly what "an accepted note's closure remains guaranteed even when further input
+    // is refused" forbids. The limit governs MIDI **content** only: it holds no representation for a stop, switch or
+    // undo request, whose acceptance stays unconditional (DEC-078).
+    //
+    // **Scope:** the limit is what a *window* must hold, so it is consulted exactly where a window serves the slot. A
+    // whole-take record take is not served by the 2048-event window -- its playback storage is the whole-take view --
+    // and is therefore deliberately not capped here: the invariant is "a window holds the intervals it serves", never
+    // "a take may not exceed one window".
+    if (type != midi::NoteOff && playbackWindowServesSlot(activeLoopIndex)) {
+      const RuntimePlaybackViewConfig::WindowAdmissionAccounting admission =
+          captureIntervalAdmissionForSlot(activeLoopIndex);
+      if (!admission.admitsNewEvent(type == midi::NoteOn)) {
+        // Refuse by name, and leave no half-state behind: the NoteOn's staging reservation is closed and an
+        // independent event's row released exactly as the append-deny path below does. Deliberately **not**
+        // `MemoryMonitor::notifyCaptureAppendFailed` -- over-capacity is a supported compatibility case, not a memory
+        // fault, and reporting it as one would be a false signal.
+        if (type == midi::NoteOn && staging != nullptr && reservation != nullptr) {
+          staging->close(*reservation);
+        }
+        if (independentEventReservation && staging != nullptr) {
+          staging->releaseIndependentEvent();
+        }
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "Capture admission refused (%s) committed=%u L=%u ch=%u note=%u",
+                   captureAppendDenyReasonLabel(CaptureAppendDenyReason::WindowAdmission),
+                   static_cast<unsigned>(admission.committed()),
+                   static_cast<unsigned>(RuntimePlaybackViewConfig::kWindowAdmissionLimit),
+                   static_cast<unsigned>(channel), static_cast<unsigned>(data1));
+#if defined(SESSION_CAPTURE)
+        CaptureAppendResult admissionRefusal;
+        admissionRefusal.reason = CaptureAppendDenyReason::WindowAdmission;
+        logCaptureAppendDeny(loop, admissionRefusal, channel, data1, newEvt.tick);
+#endif
+        return false;
+      }
+    }
 #if RUNTIME_TIMING_ENABLED
     const uint32_t appendStartUs = micros();
 #endif

@@ -413,6 +413,29 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   fixture **5.5**'s timing envelope with the over-capacity same-tick, wrap and cross-page-closure cases — so the ring
   size (3x128) and the closure reserve (128) remain **declared, unmeasured** choices for task 6.3's sweeps. Detail:
   [`evidence/2026-10-02-s312b-paged-path/EVIDENCE.md`](evidence/2026-10-02-s312b-paged-path/EVIDENCE.md).
+  *Increment 3.12c landed 2026-10-02 — clause (c), the **MIDI-edge wiring**; the **task stays open** for fixture 5.5's
+  timing envelope.* The gate sits in `Track::recordMidiEvents` (the edge `MidiHandler` and `noteOn`/`noteOff` use),
+  **before** the canonical append, and its accounting is a **derived value** (`Track::captureIntervalAdmissionForSlot`:
+  the serving window's content + this interval's accepted rows + the closures they owe + the reserve) — arithmetic over
+  existing state, so **nothing is stored, nothing allocates, nothing is scanned, the resolver is never invoked**, and no
+  size pin moves. `WindowAdmissionAccounting::admitsNewEvent` is the one decision (`kUnitsForNoteOn` = 2, because a new
+  note-on also owes its closing row; one for every other event), a **closure is never refused** (its row is already
+  inside `L`, so it moves a unit rather than adding one — the "closure guaranteed even when further input is refused"
+  clause), and a refusal is **named** (`CaptureAppendDenyReason::WindowAdmission` / `"window_admission"`), gives a
+  staged reservation back, and leaves no row and nothing owed. **The scope was decided by the first full-suite run, not
+  by preference:** `L` is what a **window must hold**, so the gate is consulted exactly where a window serves the slot —
+  the first wiring bounded every interval and broke the sibling suite's
+  `test_record_normalization_preserves_take_larger_than_overdub_staging`, because a whole-take record take is not served
+  by the 2048-event window and is therefore not window-bounded. Interaction acceptance stays outside by construction (the
+  counters hold content only) and the fixture drives a stop through the same at-limit state. *Verification:* focused
+  **59/59**, the sibling suite **60/60** (the over-reach oracle, green again), full native **2690 / 2683 succeeded / 7
+  skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192` **unchanged** /
+  `code 392,072 + padding 1,144` (304 B headroom) and **no re-base**; five mutations red-proved with byte-identical
+  restores. **Not claimed:** with no production window lane (3.7's requester) the gate is inert in today's running
+  system, and the plain-event reservation release on refusal is executed but not asserted. **OWED in this task:** fixture
+  **5.5**'s timing envelope with the over-capacity same-tick, wrap and cross-page-closure cases, and the paged path's
+  production consumer. Detail:
+  [`evidence/2026-10-02-s312c-midi-edge-admission/EVIDENCE.md`](evidence/2026-10-02-s312c-midi-edge-admission/EVIDENCE.md).
 - [ ] 3.13 **Implement the preview contract — immutable deferred publication** — publish preview through the same
   immutable deferred discipline as committed content, defining **source freezing** (the preview revision a build works
   from), **cancellation** (session mutation, track re-focus, undo, exit between build grains) and **committed-content
