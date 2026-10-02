@@ -432,6 +432,22 @@ public:
                                                            uint32_t lengthTicks, uint32_t expectedRevision,
                                                            uint32_t& indexedBarsOut,
                                                            uint32_t& skippedBarsOut) const;
+  /// Task 3.11 (DEC-108 §13d): apply a **lifecycle transition** to this slot's shared view state, through the one table
+  /// `resolvePlaybackViewTransition` states. It cancels the in-flight candidate and/or retires a prepared successor
+  /// when the row says so, invalidates the operation identity when the row says so (so a returning slot revives
+  /// nothing), and leaves the served window readable in every row -- no transition may tear it. The frozen source's
+  /// hold is the retained source's own business (task 3.6a) and is released only by its one predicate. Off-clock.
+  void applyPlaybackViewTransition(uint8_t slotIndex, PlaybackViewTransition transition);
+  /// Task 3.11: the slot's **shared-view role state**, as a fixture -- and a later slice -- asserts it: whether the
+  /// served window is still readable, whether a prepared successor is waiting, whether a build is owed, and the
+  /// operation generation the current work was started under.
+  struct PlaybackViewRoleState {
+    bool servedWindowReadable = false;
+    bool preparedSuccessorWaiting = false;
+    bool buildOwed = false;
+    uint32_t operationGeneration = 0;
+  };
+  PlaybackViewRoleState playbackViewRoleStateForSlot(uint8_t slotIndex) const;
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
   void releasePlaybackMergedMidiEventsMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.

@@ -593,3 +593,64 @@ to be implemented and verified **before** it removes the live mutable merged-win
 yet. The ladder's stage (4) is therefore not reachable, and the next slices are those dependencies — **3.11 first**,
 since the shared-view transition table is what the removal's correctness rests on. Recorded here and in `tasks.md`
 under 3.7 so the gate is visible where the task is read.
+
+### Slice 3.11 — shared-view ownership and the transition table (DEC-108 §13d) (2026-10-02)
+
+**Scope.** The ownership rules the spec states (*Published views are read-only and ownership survives transitions*) as
+**one table plus the operations it names**: which element of the shared view state each lifecycle transition keeps,
+releases or invalidates, the publication guard that makes a **late completion publish nothing**, and the
+generation-qualified identity that stops a returning slot reviving an earlier operation. This is also **3.7's first
+declared dependency** (`tasks.md` 3.7 requires 3.11 before the live mutable merged-window build is removed).
+
+**The table, stated as the spec's own transition list.** `PlaybackViewTransitionEffect` has one field per element the
+spec names, and `resolvePlaybackViewTransition` is the **pure** resolution so the table has one implementation and a
+fixture can pin every row:
+
+| Transition | operation continues | candidate released | prepared successor retired | identity invalidated | served window readable | frozen source held |
+|---|---|---|---|---|---|---|
+| `NewEdit` | **yes** (the frozen source is retained and the successor coalesced) | no | no | no | yes | yes |
+| `SlotSwitch` | **yes** (inbound coverage is prepared before binding; outbound is retained until readers and closures finish) | no | no | no | yes | yes |
+| `SelectedTrackChange` | **yes** (an existing worker is never retargeted) | no | no | no | yes | yes |
+| `StopWithSuccessorStart` | **yes** (the predecessor's frozen ownership is preserved; the successor uses its own buffers) | no | no | no | yes | yes |
+| `TransportStop` | no — obsolete **lookahead** is cancelled | **yes** | **yes** | no (accepted content and finalization survive) | yes | yes |
+| `ClearOrLoad` | no | **yes** | **yes** | **yes** (the old operation's identity is invalidated) | yes | yes (until cancellation and readers finish) |
+| `LateCompletion` | no — it is rejected for publication | **yes** (it releases only what it owns) | no | yes (it is late *because* the identity moved) | yes | no (it holds nothing new) |
+
+**What the slice adds beyond the table:** the application (`Track::applyPlaybackViewTransition`), the **publication
+guard** (a completing build whose generation is no longer current is refused, and only its own candidate is released),
+and a read the fixture — and later slices — can assert role state with.
+
+| # | Case | Discriminating assertion | Mutation that must fail it |
+|---|---|---|---|
+| W-29 | every row of the table | the pure resolution's six fields per transition, including that no lifecycle transition can make the **served window unreadable** | flipping "served window readable" for any row |
+| W-30 | a new edit / selected-track change / stop-with-successor / slot switch on an in-flight build | the operation **continues**: the build is still owed, its identity (generation and revision) is unchanged, and the served window is untouched — "an existing worker is never retargeted" | cancelling the build (or bumping its identity) on those rows |
+| W-31 | transport stop, then clear/load | transport stop cancels the **lookahead** (nothing owed, and the retired successor cannot be adopted) while the served window stays byte-for-byte readable; clear/load additionally **invalidates the generation**, so a completion carrying the old generation cannot publish | not invalidating the identity (measured: *"clear/load invalidates the old operation's identity"* fails). **Corrected 2026-10-02:** the mutation that empties the explicit *prepared-successor retirement* branch does **not** discriminate — `RuntimePlaybackViewBuild::discard()` clears its own destination's `complete`, and after a successor publication that destination is the very view the `ready` role holds, so the cancel already retires the lookahead. That branch covers a `ready` view the current builder is *not* pointing at, which this fixture does not construct: a named gap, not a covered case |
+| W-32 | a completion that arrives **after** the identity moved | it **publishes nothing** (the served window is byte-for-byte what it was, and a later request still sees the current revision), and only its own candidate is released | removing the publication guard |
+| W-33 | storage reuse | a view whose storage a reader still needs is **not** reused, and the roles become available again only after the served window is replaced and the retained source is released (the next request is admitted) | recycling the view that a reader holds |
+
+**Verification recipe.** Focused `test_runtime_working_set_ownership` + `test_midi_service_drain` + the full native
+suite + the `teensy41-capture-serial` build with the RAM1 guard. Detail:
+[`evidence/2026-10-02-s311-shared-view-transitions/EVIDENCE.md`](evidence/2026-10-02-s311-shared-view-transitions/EVIDENCE.md).
+
+### Completion record — slice 3.11 (2026-10-02)
+
+- Oracle/contract unchanged: **YES** — DEC-108 §13d and the spec's four scenarios, with W-29…W-33 as tabulated above
+  (and one mutation cell **corrected** rather than left overstated).
+- Fixture implemented and discriminating assertion demonstrated: **YES** —
+  `test_shared_view_transitions_state_the_ownership_rules_and_a_late_completion_publishes_nothing`.
+- Native verification: **GREEN** — focused **55/55** (was 54), full native **2686 / 2679 succeeded / 7 skipped /
+  0 failed**.
+- Build/RAM1 verification: **GREEN** on a **clean rebuild** — `variables 96,192` **unchanged** / `code 391,928 +
+  padding 1,288` / locals 34,880, floor 840, **448 B headroom**. **No re-base**, and the S3.0 pin is unchanged: the
+  4-byte operation-generation field fitted existing padding on both ABIs.
+- Red-proofs: **three**, each restored byte-identically (sha256 verified): the publication guard dropped; the identity
+  not invalidated on clear/load; the table's continuing rows made to cancel the candidate. **One attempted mutation
+  did not discriminate and is recorded as such** (the explicit prepared-successor retirement branch, because
+  `discard()` already clears the view that the successor publication leaves in `ready`) — the cell above says so, and
+  the uncovered case (a `ready` view the current builder is not pointing at) is named as a gap deferred to 3.7.
+- Device verification: **NOT APPLICABLE** — the lane still has no production requester.
+- Task IDs eligible for checkoff: **3.11** — the shared-view ownership rules, the seven-transition table, the late
+  completion's refusal and the generation-qualified identity, each with its own assertion.
+- **Consequence for 3.7:** its first dependency is now green. Remaining before the live build may be removed: **3.12**
+  (admission limit + bounded legacy path), **3.13** (preview), **3.14** (undo/redo audible handoff) and **4.5** (fault
+  recovery).
