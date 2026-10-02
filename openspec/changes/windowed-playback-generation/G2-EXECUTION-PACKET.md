@@ -654,3 +654,14 @@ suite + the `teensy41-capture-serial` build with the RAM1 guard. Detail:
 - **Consequence for 3.7:** its first dependency is now green. Remaining before the live build may be removed: **3.12**
   (admission limit + bounded legacy path), **3.13** (preview), **3.14** (undo/redo audible handoff) and **4.5** (fault
   recovery).
+
+### Increment 3.12a — the admission limit on the decided accounting unit (2026-10-02; task 3.12 stays open)
+
+- What landed: `WindowAdmissionAccounting` in `RuntimePlaybackViewConfig` — one capture interval's **effective** events plus its open reservations plus the closure reserve **inside** L, with `fits(...)` as the one predicate, `admit(...)` carrying a **named** `Outcome` and never half-accepting, and per-bar/span bounds conservative and **clamped by L**.
+- Pinned invariants (`static_assert`): `kWindowAdmissionLimit == kEventsPerView` (L **is** the storage capacity, no partition multiplier) and `kWindowClosureReserve < L` — 128 being a declared **provisional** value, not a measurement.
+- Fixture: `test_window_admission_limit_accounts_effective_events_and_the_closure_reserve_inside_l` (one below / at / above the limit; same-tick events across four passes; a reservation occupying the window until it closes; the clamped span bound, a wrap-crossing interval included).
+- Native verification: **GREEN** — focused **56/56** (was 55), full native **2687 / 2680 succeeded / 7 skipped / 0 failed**.
+- Build/RAM1 verification: **GREEN** on a clean rebuild — `variables 96,192` unchanged / `code 391,928 + padding 1,288` (448 B headroom); the S3.0 pin unchanged, the type being header-only with no per-slot state.
+- Red-proofs: **two**, each restored byte-identically — the reserve moved outside L (`Expected 128 Was 0`); the per-bar bound not clamped (`Expected 2048 Was 8192`).
+- **Task 3.12 stays OPEN**: (b) the bounded legacy paged path (fixture 5.5) and (c) the MIDI-edge wiring of the limit into capture acceptance are not done.
+- Detail: [`evidence/2026-10-02-s312a-admission-limit/EVIDENCE.md`](evidence/2026-10-02-s312a-admission-limit/EVIDENCE.md).

@@ -377,6 +377,23 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   **MIDI-content admission stays distinct from interaction acceptance (DEC-078)** — verify the spec's "Accepted content is
   never truncated to fit a window" and "Legacy dense content is served through bounded pages" requirements, fixtures 2.11
   and 5.5, and that no stop/switch/undo request is ever refused by this limit
+  *Increment 3.12a landed 2026-10-02 — the **task stays open**; the legacy paged path and the MIDI-edge wiring remain.*
+  `WindowAdmissionAccounting` (in `RuntimePlaybackViewConfig`) accounts the capture interval's **effective** events plus
+  **outstanding reservations** plus the **closure reserve inside `L`**, with one predicate (`fits`), an `admit` that
+  returns a **named** `Outcome` and never half-accepts, and per-bar/span bounds that are **conservative and clamped by
+  `L`**. Two invariants are pinned by `static_assert` where they cannot drift: `kWindowAdmissionLimit == kEventsPerView`
+  (**`L` is the window's storage capacity** — no partition multiplier) and `kWindowClosureReserve < L` (the reserve is
+  *inside* the limit; its value 128 is a **declared provisional** figure, not a measurement). Interaction acceptance is
+  structurally outside the limit: the counters hold content only, so a stop/switch/undo request has no representation
+  here to be refused by (DEC-078's separation upheld by construction). *Verification:* focused **56/56**, full native
+  **2687 / 2680 succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with
+  `variables 96,192` **unchanged** / `code 391,928 + padding 1,288` (448 B headroom) and **no re-base** (header-only
+  type, no per-slot state). Two mutations red-proved with byte-identical restores (the reserve moved outside `L`; the
+  per-bar bound not clamped by `L`). **OWED in this task:** (b) the **bounded legacy paged path** — fixed-capacity
+  immutable pages with a resumable cursor preserving revision, ordering and exactly-once emission (fixture 5.5) — and
+  (c) the **MIDI-edge wiring** of the limit into capture acceptance, without which "capacity pressure is refused before
+  acceptance" is a property of the unit rather than of the running system. Detail:
+  [`evidence/2026-10-02-s312a-admission-limit/EVIDENCE.md`](evidence/2026-10-02-s312a-admission-limit/EVIDENCE.md).
 - [ ] 3.13 **Implement the preview contract — immutable deferred publication** — publish preview through the same
   immutable deferred discipline as committed content, defining **source freezing** (the preview revision a build works
   from), **cancellation** (session mutation, track re-focus, undo, exit between build grains) and **committed-content

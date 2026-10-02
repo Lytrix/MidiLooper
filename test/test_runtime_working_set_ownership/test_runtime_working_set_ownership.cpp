@@ -4591,6 +4591,66 @@ void test_shared_view_transitions_state_the_ownership_rules_and_a_late_completio
   TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, afterStopIdentity),
                            "and the published window is still the reader's, not recycled into the new candidate");
 }
+using WindowAdmissionAccounting = RuntimePlaybackViewConfig::WindowAdmissionAccounting;
+
+/// 3.12a (DEC-108 §14): the **admission limit** on the decided accounting unit -- the capture interval's effective
+/// events plus outstanding reservations and the reserved closure capacity, all **inside** L, refused **by name** before
+/// acceptance (never truncated, never a deadline fault), with the per-bar bound conservative and the span bound
+/// independent of where a `W`-wide interval sits.
+void test_window_admission_limit_accounts_effective_events_and_the_closure_reserve_inside_l() {
+  // The invariant first: L **is** the window's storage capacity, so there is no partition multiplier to drift out of step.
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(RuntimePlaybackViewConfig::kEventsPerView),
+                           static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit));
+  const size_t limit = RuntimePlaybackViewConfig::kWindowAdmissionLimit;
+  const size_t reserve = RuntimePlaybackViewConfig::kWindowClosureReserve;
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(static_cast<uint32_t>(limit), static_cast<uint32_t>(reserve),
+                                       "the closure reserve lives inside L, not on top of it");
+
+  WindowAdmissionAccounting accounting{};
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(reserve), static_cast<uint32_t>(accounting.committed()),
+                                   "the reserve alone is committed before anything is accepted");
+  // One event below the limit fits; the limit itself fits exactly; one above it does not.
+  TEST_ASSERT_TRUE(accounting.fits(limit - reserve - 1));
+  TEST_ASSERT_TRUE(accounting.fits(limit - reserve));
+  TEST_ASSERT_FALSE_MESSAGE(accounting.fits(limit - reserve + 1), "capacity pressure is visible before acceptance");
+
+  // At the limit: admitted, and the counter moves by exactly what was admitted.
+  TEST_ASSERT_EQUAL(static_cast<int>(WindowAdmissionAccounting::Outcome::Admitted),
+                    static_cast<int>(accounting.admit(limit - reserve)));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(limit), static_cast<uint32_t>(accounting.committed()));
+  // Above it: refused **by name**, and nothing is half-accepted.
+  TEST_ASSERT_EQUAL(static_cast<int>(WindowAdmissionAccounting::Outcome::OverCapacity),
+                    static_cast<int>(accounting.admit(1)));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(limit), static_cast<uint32_t>(accounting.committed()));
+
+  // Same-tick events accumulated across passes are just more effective events in one window; an outstanding reservation
+  // (an accepted note-on whose closure is still owed) occupies it as well, and closing it returns the room.
+  WindowAdmissionAccounting acrossPasses{};
+  for (int pass = 0; pass < 4; ++pass) {
+    TEST_ASSERT_EQUAL(static_cast<int>(WindowAdmissionAccounting::Outcome::Admitted),
+                      static_cast<int>(acrossPasses.admit(256)));
+  }
+  TEST_ASSERT_EQUAL_UINT32(1024u, static_cast<uint32_t>(acrossPasses.acceptedEffectiveEvents));
+  acrossPasses.outstandingReservations = limit - acrossPasses.acceptedEffectiveEvents - reserve;
+  TEST_ASSERT_TRUE(acrossPasses.fits(0));
+  TEST_ASSERT_FALSE_MESSAGE(acrossPasses.fits(1), "an outstanding reservation occupies the window until it closes");
+  acrossPasses.outstandingReservations -= 1;
+  TEST_ASSERT_TRUE(acrossPasses.fits(1));
+
+  // The per-bar bound is **conservative and clamped by L**, and a `W`-wide interval's bound does not depend on where it
+  // sits -- a wrap-crossing interval has the same width, so the sliding window-span invariant is arithmetic rather than
+  // a promise: for the two-bar comparison span at the design's 4,096 refs-per-bar ceiling the bound is L itself, i.e.
+  // the window sets the shape and L sets what may be accepted.
+  constexpr size_t kPerBarCeiling = 4096;
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(limit),
+                           static_cast<uint32_t>(WindowAdmissionAccounting::boundForSpan(2, kPerBarCeiling)));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(limit),
+                           static_cast<uint32_t>(WindowAdmissionAccounting::boundForSpan(1, kPerBarCeiling)));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(limit),
+                           static_cast<uint32_t>(WindowAdmissionAccounting::conservativeBoundForBars(64, kPerBarCeiling)));
+  TEST_ASSERT_EQUAL_UINT32(256u, static_cast<uint32_t>(WindowAdmissionAccounting::conservativeBoundForBars(4, 64)));
+}
+
 int main() {
 
 
@@ -4684,5 +4744,7 @@ int main() {
   // windowed-playback-generation slice 3.11: the shared-view ownership rules as one transition table, an operation
   // that is never retargeted, a late completion that publishes nothing, and storage reuse by the last owner.
   RUN_TEST(test_shared_view_transitions_state_the_ownership_rules_and_a_late_completion_publishes_nothing);
+  // windowed-playback-generation slice 3.12a: the admission limit on the decided accounting unit (DEC-108 §14).
+  RUN_TEST(test_window_admission_limit_accounts_effective_events_and_the_closure_reserve_inside_l);
   return UNITY_END();
 }
