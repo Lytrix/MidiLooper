@@ -970,6 +970,10 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
 #endif
     }
   }
+  // S4.5: a descriptor the retirement path left un-rearmed is finished here (one bounded grain).
+  // It sits above the lower-priority idle owners so a lost re-arm cannot starve behind them, and
+  // below the stop and accepted-interaction obligations so a live stop always keeps the turn.
+  (void)serviceCaptureStopDescriptorReservations();
   // One physical-credit refill is one VisualCache owner turn. A full pool
   // leaves other maintenance eligible; it must not create a busy retry loop.
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache && loopsAllocated() &&

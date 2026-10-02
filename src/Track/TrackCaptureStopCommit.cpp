@@ -480,6 +480,12 @@ void Track::stopRecording(uint32_t currentTick) {
     // its rows, pending notes and reservations intact, and the deferred drive admits the retained
     // obligation exactly once when the finalization owner frees. The user never presses twice.
     latchAcceptedStop(PendingStopDestination::Playing, recordedSlotIndex, interval);
+    // S4.5: the refusal is a latched obligation, so the caller names the predicate that refused it
+    // rather than leaving the board with `accepted_wait` alone (`s45-campaign3-20261002-173113-od2`).
+    logRecordStopStage(loop, stopPathStartUs, "deny_reason", 0,
+                       DebugSessionCapture::kUnsampledHeapBytes,
+                       DebugSessionCapture::kUnsampledHeapBytes,
+                       recordStopDenyReason() == nullptr ? "unnamed" : recordStopDenyReason());
     logRecordStopStage(loop, stopPathStartUs, "finalize", micros() - stopPathStartUs,
                        DebugSessionCapture::kUnsampledHeapBytes,
                        DebugSessionCapture::kUnsampledHeapBytes, "accepted_wait");
@@ -524,6 +530,10 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   if (!beginDeferredRecordStopForSlot(PendingStopDestination::Stopped, currentTick,
                                       recordedSlotIndex, interval)) {
     latchAcceptedStop(PendingStopDestination::Stopped, recordedSlotIndex, interval);
+    logRecordStopStage(loop, stopPathStartUs, "deny_reason", 0,
+                       DebugSessionCapture::kUnsampledHeapBytes,
+                       DebugSessionCapture::kUnsampledHeapBytes,
+                       recordStopDenyReason() == nullptr ? "unnamed" : recordStopDenyReason());
     logRecordStopStage(loop, stopPathStartUs, "finalize", micros() - stopPathStartUs,
                        DebugSessionCapture::kUnsampledHeapBytes,
                        DebugSessionCapture::kUnsampledHeapBytes, "accepted_wait");

@@ -417,6 +417,10 @@ public:
   /// prepared PLAYING window. It remains an admission barrier until its
   /// companion metadata and bridge publication have completed.
   bool hasPendingDeferredOverdubStop() const;
+  /// S4.5 device diagnostic: the predicate that refused the last Record-stop admission, or nullptr
+  /// when it was admitted. A refused stop is latched as an accepted obligation (DEC-067), so the
+  /// caller reports this name on the `RECS,stage,deny_reason` row instead of leaving the board silent.
+  const char* recordStopDenyReason() const;
   /// S4f.5: true while an interaction is accepted and not yet executed. Consumers that mean
   /// "a stop is in flight" must consult this alongside `hasPendingDeferredOverdubStop`,
   /// because the accepted request exists before any job does.
@@ -805,6 +809,13 @@ private:
   };
   std::unique_ptr<CaptureStopJobs, CaptureStopJobsDeleter> captureStopJobs_;
   bool prewarmCaptureStopJobs();
+  /// S4.5: finish any stop descriptor the retirement path left un-rearmed and re-arm it, one bounded
+  /// grain per idle turn. The ring advances at retirement *before* the source release finishes, so a
+  /// release that needs another grain (or a re-reservation that fails that instant) leaves the
+  /// descriptor not-`ready` with no later attempt -- and the next admission then denies
+  /// `raw_range_unsealable` forever (measured: `captures/s45-deny-20261002-174528-od2`). This owns that
+  /// lost obligation without new state: the descriptor's own un-ready range *is* the obligation.
+  bool serviceCaptureStopDescriptorReservations();
   /// S2b.2: the reserve set a slot needs at its own overdub start once boot/load stops prewarming a
   /// committed-but-inactive slot. FLASH-resident cold path.
   bool admitOverdubStartWorkingSet();

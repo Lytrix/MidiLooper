@@ -85,6 +85,16 @@ struct TrackCaptureStopTestAccess {
   static bool deferredRevtsPending(const Track& t) {
     return t.deferredRecordRevtsSlot != Config::INVALID_LOOP_SLOT;
   }
+  /// S4.5: whether a stop descriptor still owns a sealed extent it has not returned to the pool. The
+  /// record retirement used to drop its job with this true, which both leaked the extent and left the
+  /// descriptor un-sealable for every later interval in that slot.
+  static bool descriptorNeedsSourceRelease(Track& t, size_t index) {
+    return t.captureStopJobs_->entries[index].rawRange.needsSourceRelease();
+  }
+  static bool serviceDescriptorReservations(Track& t) {
+    return t.serviceCaptureStopDescriptorReservations();
+  }
+  static size_t descriptorCount() { return Track::captureStopQueueCapacity(); }
   static uint8_t deferredRevtsSlot(const Track& t) { return t.deferredRecordRevtsSlot; }
   static void serviceDeferredRevts(Track& t) { t.processDeferredRecordRevts(64); }
   /// The slice the idle owner runs while a loop is audible: bounded chunk walk only.
@@ -2264,6 +2274,115 @@ void test_slot_clear_during_a_record_finalization_does_not_republish() {
                                    "the cleared geometry must survive the retired job");
 }
 
+// Same-boot HITL shape: a slot completed a Record, was cleared, then seeded again.
+// Both intervals must retire through the real closure/preparation/publication worker.
+void test_record_clear_record_reuses_finalization_scratch() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  start(t, 0, false, 0, 60);
+  stop(t, false, 768);
+  driveStopToRetirement(t);
+  assertContent(t, 0, false, 60);
+
+  t.clear();
+  prepareSlot(t, 0, false);
+  start(t, 0, false, 1536, 62);
+  stop(t, false, 2304);
+  const auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  const auto& nextStop = TrackCaptureStopTestAccess::head(t).admission;
+  TEST_ASSERT_TRUE_MESSAGE(runtime.frozenCaptureRewriteOwner == nullptr ||
+      (runtime.frozenCaptureRewrite.sourceOwner == &nextStop &&
+       runtime.frozenCaptureRewrite.sourceGeneration == nextStop.frozenGeneration),
+      "a new record stop must not inherit the retired interval's rewrite binding");
+  driveStopToRetirement(t);
+  assertContent(t, 0, false, 62);
+}
+
+// S4.5 root cause, native: the Record retirement used to drop its job while the descriptor still owned
+// the sealed source extent, so the extent never returned to the pool and that descriptor could never be
+// sealed again. On hardware the second preparation of a boot then denied `raw_range_unsealable`
+// (`captures/s45-deny-20261002-174528-od2`) while the take kept recording. This pins the leak directly
+// and the two-cycle behaviour that depends on it.
+void test_a_record_retirement_returns_its_extent_and_rearms_the_descriptor() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+
+  start(t, 0, false, 0, 60);
+  stop(t, false, 768);
+  driveStopToRetirement(t);
+  // The leak, pinned *before* any recovery runs: a retired record job must not leave its descriptor
+  // holding an extent. This is the half the retirement itself owns, so the service below cannot mask it.
+  for (size_t index = 0; index < TrackCaptureStopTestAccess::descriptorCount(); ++index) {
+    TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::descriptorNeedsSourceRelease(t, index),
+                              "a retired record interval must return its sealed extent to the pool");
+  }
+  // And the recovery half: whatever a route leaves behind converges in bounded idle turns.
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::serviceDescriptorReservations(t),
+                           "no descriptor may be left un-rearmed once the service has run");
+
+  // Cycle 2 in the same slot: the second preparation of a boot, admitted rather than latched.
+  t.clear();
+  prepareSlot(t, 0, false);
+  start(t, 0, false, 1536, 62);
+  stop(t, false, 2304);
+  TEST_ASSERT_FALSE_MESSAGE(t.hasAcceptedUnexecutedInteraction(),
+                            "the second record stop must be admitted, not latched as accepted_wait");
+  driveStopToRetirement(t);
+  assertContent(t, 0, false, 62);
+}
+
+// S4.5 HITL shape: the **second** preparation of one slot on one boot. The device run
+// `captures/s45-campaign3-20261002-173113-od2` showed the second cycle's Record stop denied admission
+// (`RECS,stage,finalize,…,accepted_wait`) with the interval left recording, while the first cycle on that same boot
+// committed and retired normally. The denial path consults nine predicates and logs none of them, so this fixture
+// pins **every precondition** `beginDeferredRecordStopForSlot` evaluates: a denial here then names its own guard,
+// and if all of them hold, the device's denial has to come from state this harness cannot express -- a pending
+// persistence bundle holding one of those resources -- which is what the board-side named denial is for.
+void test_second_record_cycle_is_admitted_with_every_guard_precondition_pinned() {
+  Track& t = trackManager.getTrack(0);
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+
+  // Cycle 1: the preparation that works on hardware.
+  start(t, 0, false, 0, 60);
+  stop(t, false, 768);
+  driveStopToRetirement(t);
+  assertContent(t, 0, false, 60);
+
+  {
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    TEST_ASSERT_FALSE_MESSAGE(runtime.ownsLiveFinalization(),
+                              "cycle 1 must release the slot's finalizer ownership");
+    TEST_ASSERT_TRUE_MESSAGE(runtime.canonicalCaptureOutputAdmitted(),
+                             "cycle 1 must leave the canonical capture output admitted");
+  }
+  TEST_ASSERT_FALSE_MESSAGE(t.hasPendingDeferredOverdubStop(),
+                            "cycle 1 must leave no overdub stop obligation pending");
+  TEST_ASSERT_TRUE_MESSAGE(t.loopsAllocated(), "the loop pool must still be allocated");
+
+  // Cycle 2: clear, then record the same slot again -- the device's second preparation.
+  t.clear();
+  prepareSlot(t, 0, false);
+  start(t, 0, false, 1536, 62);
+  {
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    TEST_ASSERT_EQUAL(CapturePhase::Record, t.getLoop(0).capture.phase);
+    TEST_ASSERT_TRUE_MESSAGE(runtime.canonicalCaptureOutputAdmitted(),
+                             "cycle 2's Record start must admit the canonical output again");
+    TEST_ASSERT_FALSE_MESSAGE(runtime.ownsLiveFinalization(),
+                              "cycle 2 must start with no finalizer owning the slot");
+  }
+
+  // The production stop edge, exactly as the device's commit press reaches it.
+  stop(t, false, 2304);
+  TEST_ASSERT_FALSE_MESSAGE(t.hasAcceptedUnexecutedInteraction(),
+                            "the second cycle's Record stop must be admitted, not latched as accepted_wait");
+  driveStopToRetirement(t);
+  assertContent(t, 0, false, 62);
+}
+
 // S4f.21 / DEC-078 item 3: the accepted-stop drive re-derives the destination from **live**
 // transport state rather than the destination the retained request carried. That is the route the
 // clock source reaches this path through (`isTransportRunning()` is false both for a stopped
@@ -2625,6 +2744,9 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_record_stop_playback_reset_preserves_playing_destination);
   RUN_TEST(test_transport_retarget_of_a_record_job_resolves_stopped);
   RUN_TEST(test_replaced_loop_during_a_record_finalization_retires_the_job);
+  RUN_TEST(test_record_clear_record_reuses_finalization_scratch);
+  RUN_TEST(test_second_record_cycle_is_admitted_with_every_guard_precondition_pinned);
+  RUN_TEST(test_a_record_retirement_returns_its_extent_and_rearms_the_descriptor);
   RUN_TEST(test_slot_clear_during_a_record_finalization_does_not_republish);
   RUN_TEST(test_retained_record_stop_admits_stopped_once_the_transport_is_not_running);
   RUN_TEST(test_two_tracks_each_serve_their_own_deferred_window);
