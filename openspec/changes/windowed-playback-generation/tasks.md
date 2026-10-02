@@ -331,7 +331,7 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   keeps an early holder blocked while later holders need preparation and capture/persistence work is pending, asserting a
   progress bound for **every admitted holder** (including inbound switch preparation and overlapping finalization), and
   derive the supported envelope from grain costs and the worst permitted service gap — invent no microsecond budget
-- [ ] 3.11 **Implement the shared-view ownership rules and transitions** (*DEC-108 §13d*) — published/current views
+- [x] 3.11 **Implement the shared-view ownership rules and transitions** (*DEC-108 §13d*) — published/current views
   read-only, only the owning builder writes its candidate, a ready view immutable until adopted or retired, storage
   reusable only after every owner releases it; then the transitions: new edit (retain the frozen source, coalesce the
   successor), slot switch (inbound coverage before binding; retain outbound until readers and closures finish),
@@ -340,6 +340,27 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   for publication; releases only what it owns). Verify each production grain can be paused, the transitions injected, and
   ownership, **generation-qualified identity** (returning to a slot revives nothing), no premature reuse, no lost
   requests and eventual cleanup asserted
+  *Checked off 2026-10-02 with [`evidence/2026-10-02-s311-shared-view-transitions/EVIDENCE.md`](evidence/2026-10-02-s311-shared-view-transitions/EVIDENCE.md).*
+  The ownership rules are stated as **one table** (`PlaybackViewTransition` → `PlaybackViewTransitionEffect` →
+  `resolvePlaybackViewTransition`, the pure resolution) covering all seven transitions, plus the operations it names:
+  `Track::applyPlaybackViewTransition` (cancels the candidate and/or retires the prepared successor per row, invalidates
+  the operation identity per row, and never touches the served window — the invariant asserted for **every** row),
+  `Track::playbackViewRoleStateForSlot` (the role state a fixture asserts with), and the **publication guard**: the
+  build records its operation generation where it begins, so a completion arriving after that identity moved is refused
+  and releases **only its own candidate** (a late completion publishes nothing). Generation-qualified identity is now
+  load-bearing: clear/load bumps it, so returning to a slot revives nothing. *Verification:* focused **55/55**, full
+  native **2686 / 2679 succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with
+  RAM1 `variables 96,192` **unchanged** / `code 391,928 + padding 1,288` (448 B headroom) and **no re-base** — the
+  S3.0 pin is **unchanged** at 6,512, since the 4-byte field fitted existing padding. Three mutations red-proved with
+  byte-identical restores (the publication guard dropped; the identity not invalidated; the table's continuing rows made
+  to cancel the candidate). *One attempted mutation did **not** discriminate and is recorded rather than dropped:* the
+  explicit prepared-successor **retirement** branch, because `RuntimePlaybackViewBuild::discard()` clears its own
+  destination's `complete` and after a successor publication that destination *is* the view the `ready` role holds — so
+  the cancel already retires the lookahead for this lane's sequencing. That branch covers a `ready` view the current
+  builder is **not** pointing at, which this fixture does not construct: a **named gap**, deferred to 3.7 where the
+  successor lane gains a production caller. *Named, not claimed:* the worker-side "only the owning builder writes its
+  candidate" rule is asserted through the roles' behaviour rather than by a concurrent writer; no timing/deadline claim
+  (F-2 stays open); no envelope claim beyond the per-slot figure; no device evidence.
 
 - [ ] 3.12 **Implement the admission limit on the decided accounting unit, and the bounded legacy compatibility path**
   (*DEC-108 §14*) — enforce the **sliding window-span invariant**: for the configured span `W`, every `W`-wide interval,

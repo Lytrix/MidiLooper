@@ -4452,6 +4452,145 @@ void test_retained_interval_index_is_interval_directed_and_refuses_stale_revisio
                     static_cast<int>(longTrack.queryRetainedIntervalForSlot(0, 0, Config::TICKS_PER_BAR,
                                                                             longLoop.playbackRevision, covered, skipped)));
 }
+
+/// 3.11 (DEC-108 §13d): the **shared-view ownership rules** as one transition table, applied through the seam, with the
+/// four scenarios the spec names: a builder keeps its own work, a late completion publishes nothing, returning to a
+/// slot revives nothing, and storage is reusable only after the last owner releases it.
+void test_shared_view_transitions_state_the_ownership_rules_and_a_late_completion_publishes_nothing() {
+  // (W-29) The table itself, row by row, as the one pure resolution the code applies.
+  const PlaybackViewTransitionEffect newEdit = resolvePlaybackViewTransition(PlaybackViewTransition::NewEdit);
+  TEST_ASSERT_TRUE_MESSAGE(newEdit.operationContinues, "a new edit retains the frozen source and coalesces the successor");
+  TEST_ASSERT_FALSE(newEdit.candidateReleased);
+  TEST_ASSERT_TRUE(newEdit.frozenSourceHeld);
+  const PlaybackViewTransitionEffect slotSwitch = resolvePlaybackViewTransition(PlaybackViewTransition::SlotSwitch);
+  TEST_ASSERT_TRUE(slotSwitch.operationContinues);
+  TEST_ASSERT_TRUE(slotSwitch.frozenSourceHeld);
+  const PlaybackViewTransitionEffect trackChange =
+      resolvePlaybackViewTransition(PlaybackViewTransition::SelectedTrackChange);
+  TEST_ASSERT_TRUE_MESSAGE(trackChange.operationContinues, "an existing worker is never retargeted");
+  TEST_ASSERT_FALSE(trackChange.identityInvalidated);
+  const PlaybackViewTransitionEffect stopWithStart =
+      resolvePlaybackViewTransition(PlaybackViewTransition::StopWithSuccessorStart);
+  TEST_ASSERT_TRUE(stopWithStart.operationContinues);
+  TEST_ASSERT_TRUE(stopWithStart.frozenSourceHeld);
+  const PlaybackViewTransitionEffect transportStop = resolvePlaybackViewTransition(PlaybackViewTransition::TransportStop);
+  TEST_ASSERT_FALSE(transportStop.operationContinues);
+  TEST_ASSERT_TRUE(transportStop.candidateReleased);
+  TEST_ASSERT_TRUE_MESSAGE(transportStop.preparedSuccessorRetired, "obsolete lookahead is cancelled");
+  TEST_ASSERT_FALSE_MESSAGE(transportStop.identityInvalidated,
+                            "a transport stop preserves accepted content and finalization");
+  const PlaybackViewTransitionEffect clearOrLoad = resolvePlaybackViewTransition(PlaybackViewTransition::ClearOrLoad);
+  TEST_ASSERT_TRUE(clearOrLoad.candidateReleased);
+  TEST_ASSERT_TRUE(clearOrLoad.preparedSuccessorRetired);
+  TEST_ASSERT_TRUE_MESSAGE(clearOrLoad.identityInvalidated, "clear/load invalidates the old operation's identity");
+  const PlaybackViewTransitionEffect late = resolvePlaybackViewTransition(PlaybackViewTransition::LateCompletion);
+  TEST_ASSERT_FALSE(late.operationContinues);
+  TEST_ASSERT_TRUE_MESSAGE(late.candidateReleased, "it releases only the resources it owns");
+  TEST_ASSERT_FALSE_MESSAGE(late.frozenSourceHeld, "and it holds nothing new");
+  // The invariant **every** row carries, asserted for all seven rather than assumed:
+  const PlaybackViewTransition allTransitions[] = {
+      PlaybackViewTransition::NewEdit,       PlaybackViewTransition::SlotSwitch,
+      PlaybackViewTransition::SelectedTrackChange, PlaybackViewTransition::StopWithSuccessorStart,
+      PlaybackViewTransition::TransportStop, PlaybackViewTransition::ClearOrLoad,
+      PlaybackViewTransition::LateCompletion};
+  for (PlaybackViewTransition transition : allTransitions) {
+    TEST_ASSERT_TRUE_MESSAGE(resolvePlaybackViewTransition(transition).servedWindowStaysReadable,
+                             "no lifecycle transition may tear the served window");
+  }
+
+  // Through the seam: a slot with a published window of its own, and a build in flight.
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+  publishBarSpacedRootForSlot(loop, 2);
+  SessionMidiEventVec scratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, kWindowOwnerExpectedRequiredLead, scratch)));
+  const uint32_t firstRevision = loop.playbackRevision;
+  // (W-30) A track change, a new edit, a slot switch and a stop-with-successor must all leave the worker alone. The
+  // build is **in flight** right here -- no grain served yet -- so these transitions act on a live worker rather than
+  // on work that already finished.
+  const uint32_t operationGeneration = track.playbackViewRoleStateForSlot(0).operationGeneration;
+  TEST_ASSERT_TRUE_MESSAGE(track.playbackViewRoleStateForSlot(0).buildOwed,
+                           "the fixture needs a build in flight (nothing served yet)");
+  const uint32_t generationBefore = track.getPlaybackGeneration();
+  for (PlaybackViewTransition transition :
+       {PlaybackViewTransition::SelectedTrackChange, PlaybackViewTransition::NewEdit, PlaybackViewTransition::SlotSwitch,
+        PlaybackViewTransition::StopWithSuccessorStart}) {
+    track.applyPlaybackViewTransition(0, transition);
+    TEST_ASSERT_TRUE_MESSAGE(track.playbackViewRoleStateForSlot(0).buildOwed,
+                             "these transitions never retarget an existing worker");
+    TEST_ASSERT_EQUAL_UINT32(operationGeneration, track.playbackViewRoleStateForSlot(0).operationGeneration);
+    TEST_ASSERT_EQUAL_UINT32(generationBefore, track.getPlaybackGeneration());
+  }
+  // That same build now completes normally and publishes: the identity was never disturbed.
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  PlaybackWindowIdentity served{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, served));
+  TEST_ASSERT_EQUAL_UINT32(firstRevision, served.playbackRevision);
+  TEST_ASSERT_FALSE(track.playbackViewRoleStateForSlot(0).buildOwed);
+
+  // (W-32) A **late completion**: the operation's identity moves while a build is in flight (this is what a clear/load
+  // does, and what a generation bump stands in for), so the completion must publish nothing.
+  LoopEventStore::initPool();
+  Track& lateTrack = prepareWindowOwnerSlot(1);
+  Loop& lateLoop = lateTrack.getLoop(0);
+  publishBarSpacedRootForSlot(lateLoop, 2);
+  SessionMidiEventVec lateScratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(lateTrack.requestPlaybackWindow(0, kWindowOwnerExpectedRequiredLead, lateScratch)));
+  const uint32_t lateGeneration = lateTrack.getPlaybackGeneration();
+  lateTrack.bumpPlaybackGeneration();
+  TEST_ASSERT_EQUAL_UINT32(lateGeneration + 1, lateTrack.getPlaybackGeneration());
+  for (size_t turn = 0; turn < 8 && lateTrack.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)lateTrack.stepPlaybackViewMaintenance();
+  }
+  PlaybackViewSourceIdentity lateSourceIdentity{};
+  PlaybackCoverageInterval lateCoverage{};
+  TEST_ASSERT_FALSE_MESSAGE(lateTrack.publishedPlaybackWindowForSlot(0, lateSourceIdentity, lateCoverage),
+                            "a late completion publishes nothing");
+  TEST_ASSERT_FALSE_MESSAGE(lateTrack.playbackViewRoleStateForSlot(0).buildOwed,
+                            "and it releases its own candidate: nothing is owed afterwards");
+
+  // (W-31) Transport stop cancels obsolete lookahead and retires a *prepared* successor, while the served window stays
+  // exactly what it was; clear/load additionally invalidates the generation.
+  MidiEvent successorSource[8];
+  const size_t successorCount = buildWindowOwnerSource(successorSource, 8);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackViewMaintenance(
+                        0, successorSource, successorCount,
+                        PlaybackViewSourceIdentity{firstRevision, 7, nullptr},
+                        PlaybackCoverageInterval{0, 2 * 768, kWindowOwnerLoopTicks}, {}, {}, 0,
+                        kWindowOwnerExpectedRequiredLead)));
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  TEST_ASSERT_TRUE_MESSAGE(track.playbackViewRoleStateForSlot(0).preparedSuccessorWaiting,
+                           "the fixture needs a prepared successor waiting (not adopted)");
+  track.applyPlaybackViewTransition(0, PlaybackViewTransition::TransportStop);
+  Track::PlaybackViewRoleState afterStop = track.playbackViewRoleStateForSlot(0);
+  TEST_ASSERT_FALSE_MESSAGE(afterStop.preparedSuccessorWaiting, "transport stop retires the prepared lookahead");
+  TEST_ASSERT_FALSE_MESSAGE(track.adoptPreparedPlaybackWindow(0),
+                            "and the retired lookahead cannot be adopted afterwards");
+  TEST_ASSERT_FALSE(afterStop.buildOwed);
+  PlaybackWindowIdentity afterStopIdentity{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, afterStopIdentity));
+  TEST_ASSERT_TRUE_MESSAGE(served == afterStopIdentity, "and the served window is untouched: nothing may tear it");
+  track.applyPlaybackViewTransition(0, PlaybackViewTransition::ClearOrLoad);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(generationBefore + 1, track.getPlaybackGeneration(),
+                                   "clear/load invalidates the old operation's identity");
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, afterStopIdentity),
+                           "the served window is still readable while its readers finish");
+  // (W-33) Storage reuse: the released roles take a new operation under the new identity, while the served window's
+  // storage is still not reused because a reader is holding it.
+  SessionMidiEventVec newScratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, kWindowOwnerExpectedRequiredLead, newScratch)));
+  TEST_ASSERT_TRUE(track.playbackViewRoleStateForSlot(0).buildOwed);
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, afterStopIdentity),
+                           "and the published window is still the reader's, not recycled into the new candidate");
+}
 int main() {
 
 
@@ -4542,5 +4681,8 @@ int main() {
   // windowed-playback-generation slice 3.6c: the interval index over pinned bodies -- interval-directed skipping,
   // edit destinations folded in, and named refusals instead of stale or partial answers.
   RUN_TEST(test_retained_interval_index_is_interval_directed_and_refuses_stale_revisions);
+  // windowed-playback-generation slice 3.11: the shared-view ownership rules as one transition table, an operation
+  // that is never retargeted, a late completion that publishes nothing, and storage reuse by the last owner.
+  RUN_TEST(test_shared_view_transitions_state_the_ownership_rules_and_a_late_completion_publishes_nothing);
   return UNITY_END();
 }

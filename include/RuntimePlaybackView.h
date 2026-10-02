@@ -127,6 +127,78 @@ struct PlaybackLagState {
   }
 };
 
+/// DEC-108 §13d / task 3.11: the **lifecycle transitions** whose shared-view ownership rules the spec states. Each row
+/// says what happens to the in-flight operation, the prepared successor, the operation's identity, the served window
+/// and the frozen source -- one place, so "ownership survives transitions" is checkable rather than implied.
+enum class PlaybackViewTransition : uint8_t {
+  /// A new edit: the frozen builder source is retained and the successor is coalesced (one prepared successor at a time).
+  NewEdit,
+  /// A slot switch: inbound coverage is prepared before binding, and outbound resources are retained until their readers
+  /// and closures finish.
+  SlotSwitch,
+  /// Selecting another track: an existing worker is **never retargeted** -- it keeps its slot, its identity and its work.
+  SelectedTrackChange,
+  /// A record/overdub stop with a successor start: the predecessor's frozen ownership is preserved and the successor
+  /// never borrows its buffers.
+  StopWithSuccessorStart,
+  /// Transport stop: obsolete **lookahead** is cancelled, while accepted content and finalization are preserved.
+  TransportStop,
+  /// Clear or load: the old operation's **identity is invalidated** and its source is retained until cancellation and
+  /// readers finish.
+  ClearOrLoad,
+  /// A completion that arrives after its operation was invalidated or its resources retired: it is **rejected for
+  /// publication** and releases only what it still owns.
+  LateCompletion,
+};
+
+/// What a transition does to each element of the shared view state. One field per clause of the spec's requirement, so a
+/// reader can check the table against the sentence rather than against the code's control flow.
+struct PlaybackViewTransitionEffect {
+  /// The operation keeps its identity and may still publish (false means its lookahead is cancelled or it is late).
+  bool operationContinues = true;
+  /// The in-flight candidate's resources are released (never published).
+  bool candidateReleased = false;
+  /// A prepared successor must not be adopted and its storage returns to the free roles.
+  bool preparedSuccessorRetired = false;
+  /// A new operation identity: an earlier operation can never match again (a returning slot revives nothing).
+  bool identityInvalidated = false;
+  /// The served window stays readable throughout: **no** transition may tear it.
+  bool servedWindowStaysReadable = true;
+  /// The frozen source stays pinned and owned until its readers and closure obligations finish.
+  bool frozenSourceHeld = true;
+};
+
+/// The table itself, as one **pure** resolution: every lifecycle transition (and any future one) has exactly one row,
+/// and the served window's readability is not a parameter -- it is the invariant the spec demands of all of them.
+inline PlaybackViewTransitionEffect resolvePlaybackViewTransition(PlaybackViewTransition transition) {
+  PlaybackViewTransitionEffect effect{};
+  if (transition == PlaybackViewTransition::TransportStop) {
+    // Obsolete lookahead goes, accepted content and finalization stay.
+    effect.operationContinues = false;
+    effect.candidateReleased = true;
+    effect.preparedSuccessorRetired = true;
+    return effect;
+  }
+  if (transition == PlaybackViewTransition::ClearOrLoad) {
+    effect.operationContinues = false;
+    effect.candidateReleased = true;
+    effect.preparedSuccessorRetired = true;
+    effect.identityInvalidated = true;
+    return effect;
+  }
+  if (transition == PlaybackViewTransition::LateCompletion) {
+    // It is late because the identity already moved; it holds nothing new.
+    effect.operationContinues = false;
+    effect.candidateReleased = true;
+    effect.identityInvalidated = true;
+    effect.frozenSourceHeld = false;
+    return effect;
+  }
+  // NewEdit, SlotSwitch, SelectedTrackChange, StopWithSuccessorStart: the operation continues with its identity, the
+  // frozen source is held, and the successor -- if any -- is coalesced rather than retired.
+  return effect;
+}
+
 struct LedgerBoundarySummary {
   std::array<ActiveNoteLedger::Entry, ActiveNoteLedger::kMaxOpenNotes> openNotes{};
   uint16_t count = 0;

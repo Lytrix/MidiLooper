@@ -414,6 +414,11 @@ struct LoopPlaybackRuntime {
   /// the lifecycle's build view; current and ready coverage are never passed
   /// to it.
   RuntimePlaybackViewBuild viewBuild;
+  /// Task 3.11 (DEC-108 §13d): the **operation generation** the in-flight build was started under. A completion whose
+  /// generation is no longer current is a **late completion**: it publishes nothing and releases only its own candidate.
+  /// (The identity the caller stamps into the source is free-form, so the operation's own generation is recorded here
+  /// where the build begins rather than inferred from it.)
+  uint32_t viewBuildOperationGeneration = 0;
   /// S4f.19 continuity gate, bounded in DEC-070's shape: grains spent in the `RecordPublished`
   /// retirement wait with an unchanged frozen-window build phase, and that phase. A phase change
   /// is progress and resets the count, so a build its writers are still feeding is never cut; a

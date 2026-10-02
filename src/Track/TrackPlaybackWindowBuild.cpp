@@ -1347,6 +1347,55 @@ TRACK_COLD_MEM Track::RetainedIntervalQueryResult Track::queryRetainedIntervalFo
   return RetainedIntervalQueryResult::Indexed;
 }
 
+TRACK_COLD_MEM void Track::applyPlaybackViewTransition(uint8_t slotIndex, PlaybackViewTransition transition) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return;
+  }
+  const PlaybackViewTransitionEffect effect = resolvePlaybackViewTransition(transition);
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (effect.candidateReleased) {
+    // The candidate's resources are released here, and **only** its own: the served window and the retained source
+    // belong to other owners and are untouched by this.
+    runtime->viewBuild.discard();
+    runtime->viewBuildOperationGeneration = 0;
+  }
+  if (set != nullptr && effect.preparedSuccessorRetired &&
+      set->lifecycle.ready < RuntimePlaybackViewConfig::kViewCount) {
+    // A prepared successor must not be adopted: its content is dropped and its storage returns to the free roles.
+    set->views[set->lifecycle.ready].resetMetadata();
+  }
+  if (effect.identityInvalidated) {
+    // Generation-qualified identity (DEC-108 item 5 / §13d): a returning slot finds a *new* operation identity, so no
+    // earlier operation can be revived or adopted, and a completion carrying the old generation is late by definition.
+    bumpPlaybackGeneration();
+  }
+  // `servedWindowStaysReadable` is the invariant every row carries: this function never touches the served window. The
+  // frozen source's hold is the retained source's business, released only by its one predicate (task 3.6a).
+}
+
+TRACK_COLD_MEM Track::PlaybackViewRoleState Track::playbackViewRoleStateForSlot(uint8_t slotIndex) const {
+  PlaybackViewRoleState state{};
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return state;
+  }
+  PlaybackViewSourceIdentity identity{};
+  PlaybackCoverageInterval coverage{};
+  state.servedWindowReadable = publishedPlaybackWindowForSlot(slotIndex, identity, coverage);
+  state.buildOwed = runtime->coverageBuildNeedsService();
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (set != nullptr) {
+    const uint8_t ready = set->lifecycle.ready;
+    state.preparedSuccessorWaiting = ready < RuntimePlaybackViewConfig::kViewCount && set->views[ready].complete;
+  }
+  state.operationGeneration = runtime->viewBuildOperationGeneration;
+  return state;
+}
+
 TRACK_COLD_MEM void Track::releasePlaybackMergedMidiEventsMemory() {
   releaseEligiblePlaybackRuntimeSlots(false);
 }
@@ -1554,6 +1603,9 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
                                    coverage, cursorAnchor, ledgerBoundary)) {
     return PlaybackViewRequestResult::AdmissionRefused;
   }
+  // Task 3.11: this build's **operation identity**, recorded where the build begins: a completion that arrives after
+  // the generation has moved is late, and the publication guard refuses it.
+  runtime->viewBuildOperationGeneration = playbackGeneration;
   return PlaybackViewRequestResult::Admitted;
 }
 
@@ -1703,6 +1755,17 @@ TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
   }
   RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
   if (set == nullptr) {
+    return false;
+  }
+  // Task 3.11 (DEC-108 §13d): a **late completion publishes nothing**. The build carries the operation generation it
+  // was started under, so a completion arriving after that identity moved is refused here -- and it releases only its
+  // own candidate: the served window, the prepared-successor role and the retained source are other owners' state.
+  const uint8_t completedBuildRole = set->lifecycle.build;
+  if (completedBuildRole < RuntimePlaybackViewConfig::kViewCount &&
+      runtime->viewBuildOperationGeneration != playbackGeneration) {
+    runtime->viewBuild.discard();
+    set->views[completedBuildRole].resetMetadata();
+    runtime->viewBuildOperationGeneration = 0;
     return false;
   }
   PlaybackWindowIdentity published{};
