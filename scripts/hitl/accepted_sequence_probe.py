@@ -70,6 +70,7 @@ for _entry in (str(Path(__file__).resolve().parent),):
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from hitl import acceptance_evidence  # noqa: E402
+from hitl.device_time import device_stamp_us, human_line_device_us
 from hitl.reporting import build_report_bundle, write_report_bundle  # noqa: E402
 
 OK, FAIL, UNKNOWN = "ok", "fail", "unknown"
@@ -80,6 +81,9 @@ RECS_STOP_RE = re.compile(r"^RECS,(?:stop|stopToStopped),(\d+),")
 RECA_RE = re.compile(r"^RECA,(\d+),")
 WINDOW_OPEN_RE = re.compile(r"^DIAG,reentry_window_open,(\d+),")
 CANONICAL_RELEASE_RE = re.compile(r"^DIAG,canonical_release,(\d+),")
+CANONICAL_RELEASE_INTERVAL_RE = re.compile(
+    r"^DIAG,canonical_release_interval,(\d+),(\d+),(\d+),(\d+),(\d+)$"
+)
 REENTRY_RE = re.compile(r"^DIAG,reentry,([a-z_]+),")
 # The **overdub** leg's own identity chain (`response-driven-hitl-acceptance` task 2.2). `RECA`/`RECS` above
 # describe the *record* lifecycle; an overdub interval's start, accepted stop, execution and retirement are
@@ -87,8 +91,6 @@ REENTRY_RE = re.compile(r"^DIAG,reentry,([a-z_]+),")
 #   start      `DIAG,reentry,admit,<tick>,<interval>,<slot>,<depth>`      the start admission
 #   accepted   `DIAG,reentry,bound,<tick>,<interval>,<slot>,<depth>`      the S4f.3 binding edge ("so a denied
 #              request and its later binding can be correlated instead of inferred", its own comment)
-#   executed   `DIAG,stop_state,<track>,<slot>,6,7,...` and `...,7,5|1,...`  the stop entry and terminal
-#   retired    `DIAG,canonical_release,<slot>,<generation>,<len>,<chunks>`   (`CANONICAL_RELEASE_RE`)
 # All four families are Tier-A, so an evicted row is already the `overflow_free` setup gate rather than a
 # silent gap. Per-interval stop *requests* are the button action's own `Loop N:` rows (1-based, like the other
 # human rows).
@@ -105,6 +107,7 @@ CAP_CS_RE = re.compile(r"^#CAP,\d+,CS,[A-Z]+,[A-Z]+\s*$")
 #  The leg's own *stop* requests, for the fallback window when no run marks are supplied. Deliberately no
 #  `Start Recording` row: the seeds arm and record too, so that row cannot separate the leg from preparation.
 HUMAN_STOP_RECORDING_RE = re.compile(r"Loop \d+: Stop Recording")
+HUMAN_RECORDING_STOP_RE = re.compile(r"Recording stopped @ tick")
 # The per-family counters, as the stopped-only read-back reports them: `RING,record_stats,<family>,entered=…,
 # enq=…,rej=…,tx=…,evict=…`. A family tag may itself carry a comma (`DIAG,latch`), so the name is matched as
 # one or two identifier parts, never as "everything up to the next comma". `enq` counts appends that reached
@@ -191,13 +194,31 @@ def _overdub_identity(entries: list[Entry], slot: int) -> dict:
     stop_rows = [(e.us, int(m.group(3)), int(m.group(4)), e.body) for e in entries
                  if (m := STOP_STATE_RE.match(e.body)) and int(m.group(2)) == slot]
     intervals = {iv for _, iv, _ in starts} | {iv for _, iv, _ in bindings}
+    interval_releases = [(e.us, e.body) for e in entries
+                         if (m := CANONICAL_RELEASE_INTERVAL_RE.match(e.body))
+                         and int(m.group(1)) == slot
+                         and (not intervals or int(m.group(2)) in intervals)]
+    if interval_releases:
+        releases = interval_releases
+    else:
+        # Legacy firmware has no interval-qualified release row. A reused firmware slot can therefore
+        # contain an older retirement with the same slot (and even the same interval counter value).
+        # Attribute the fallback only after this interval's own execution edge; otherwise a seed release
+        # is incorrectly reported as a second retirement for B.
+        stop_edge_us = max((us for us, _from, _to, _body in stop_rows
+                            if _from == 7 and _to in (5, 1)), default=None)
+        interval_start_us = max((us for us, _iv, _body in starts + bindings), default=None)
+        release_floor_us = stop_edge_us if stop_edge_us is not None else interval_start_us
+        releases = [(e.us, e.body) for e in entries
+                    if (m := CANONICAL_RELEASE_RE.match(e.body))
+                    and int(m.group(1)) == slot
+                    and (release_floor_us is None or e.us > release_floor_us)]
     return {
         "starts": starts,
         "bindings": bindings,
         "stop_entries": [r for r in stop_rows if r[1] == 6 and r[2] == 7],
         "stop_terminals": [r for r in stop_rows if r[1] == 7 and r[2] in (5, 1)],
-        "releases": [(e.us, e.body) for e in entries
-                     if (m := CANONICAL_RELEASE_RE.match(e.body)) and int(m.group(1)) == slot],
+        "releases": releases,
         "interval": next(iter(intervals)) if len(intervals) == 1 else None,
     }
 
@@ -245,9 +266,9 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
         return Analysis("SETUP_INCOMPLETE", checks, evidence, limitations)
     add("telemetry_present", OK, f"{len(entries)} #CAP records", "setup")
 
-    fresh = any("BOOT,usb" in l for l in lines[:80])
+    fresh = any("BOOT,usb" in l for l in lines[:200])
     add("fresh_boot", OK if fresh else FAIL,
-        "boot banner in the first 80 lines" if fresh else
+        "boot banner in the bounded settle prefix" if fresh else
         "no boot banner: the device did not reset, so this session inherits the ring and clock of an earlier "
         "one and is not verdict-grade", "setup")
 
@@ -370,6 +391,16 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
     stops_b = ([] if leg != "rec" else
                [(e.us, e.body) for e in entries
                 if (m := RECS_STOP_RE.match(e.body)) and int(m.group(1)) == b0])
+    if leg == "rec" and not stops_b:
+        direct_starts = [human_line_device_us(line) for line in lines
+                         if HUMAN_START_RE.search(line) and human_line_device_us(line) is not None]
+        start_floor = max(direct_starts, default=-1)
+        direct_stops = [(human_line_device_us(line), line.strip()) for line in lines
+                        if HUMAN_RECORDING_STOP_RE.search(line)
+                        and human_line_device_us(line) is not None
+                        and human_line_device_us(line) > start_floor]
+        if direct_stops:
+            stops_b = direct_stops
     for us, body in stops_a + stops_b:
         evidence["stop_requests"].append(f"{us}: {body}")
 
@@ -577,8 +608,12 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
     # as a wrong route, which is why the endpoint is the successor's own start row rather than the end of the log.
     # A wrong route only *fails* when the successor actually started through it (a capture that never got that far
     # is the existing L5 gap); absence of both vocabularies is an evidence gap, never a pass.
+    def _line_device_us(line: str) -> Optional[int]:
+        """The shared device-clock value for either a ring row or direct logger row."""
+        return device_stamp_us(line.strip()) or human_line_device_us(line.strip())
+
     def _row_body(line: str) -> str:
-        """The `#CAP` body of a raw line, or the line itself for the directly printed rows."""
+        """The `#CAP` body of a raw line, or the line itself for directly printed rows."""
         m = CAP_RE.match(line.strip())
         return m.group(2) if m else line
 
@@ -600,14 +635,38 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
         # apply and the switch's own row is what proves the route A's stop was accepted through.
         stop_edge = "record stop"
         route_name = "the capture-switch gesture"
-        started = [i for i, l in enumerate(lines)
-                   if (m := ODUB_START_RE.match(_row_body(l))) and int(m.group(3)) == b0]
+        started = [(us, body, iv) for us, body, iv in
+                   ((us, body, iv) for us, iv, body in od_b["starts"])]
+        a_stop_us = stops_a[0][0] if stops_a else None
+        b_start_us = min((us for us, _body, _iv in started), default=None)
+        timed_route_rows = []
+        if a_stop_us is not None and b_start_us is not None:
+            for line in lines:
+                stamp = _line_device_us(line)
+                if stamp is None or not (a_stop_us <= stamp <= b_start_us):
+                    continue
+                body = _row_body(line)
+                if f"Loop {slot_b}: Switch gesture from slot " in line or any(
+                        marker in body for marker in WRONG_MODE_ROUTE_ROWS):
+                    timed_route_rows.append((stamp, line.strip()[:120]))
+        timed_route_rows.sort(key=lambda item: item[0])
         span_start = [i for i, l in enumerate(lines)
                       if (m := RECS_STOP_RE.match(_row_body(l))) and int(m.group(1)) == a0]
-        span = lines[span_start[0]:(started[0] + 1 if started else len(lines))] if span_start else []
-        production = [l.strip()[:120] for l in span
-                      if f"Loop {slot_b}: Switch gesture from slot " in l]
-        wrong = [l.strip()[:120] for l in span if any(r in l for r in WRONG_MODE_ROUTE_ROWS)]
+        production = [row for _stamp, row in timed_route_rows
+                      if f"Loop {slot_b}: Switch gesture from slot " in row]
+        wrong = [row for _stamp, row in timed_route_rows
+                 if any(marker in row for marker in WRONG_MODE_ROUTE_ROWS)]
+        if not timed_route_rows and span_start and b_start_us is not None:
+            # Synthetic fixtures may omit direct logger timestamps. Preserve their
+            # established line-order oracle; real device logs use the branch above.
+            span = lines[span_start[0]:(next((i for i, l in enumerate(lines)
+                                              if ODUB_START_RE.match(_row_body(l)) and
+                                              int(ODUB_START_RE.match(_row_body(l)).group(3)) == b0),
+                                             len(lines)) + 1)]
+            production = [l.strip()[:120] for l in span
+                          if f"Loop {slot_b}: Switch gesture from slot " in l]
+            wrong = [l.strip()[:120] for l in span
+                     if any(marker in l for marker in WRONG_MODE_ROUTE_ROWS)]
     else:
         # The overdub leg's route rows are the **press** rows themselves and are mutually exclusive at the press:
         # `Loop B: Switch gesture from slot A` is the capture-switch, `Queued`/`Reaffirmed playback switch` is the

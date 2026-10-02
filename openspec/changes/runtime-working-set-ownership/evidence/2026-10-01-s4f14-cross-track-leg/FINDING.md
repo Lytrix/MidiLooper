@@ -302,3 +302,31 @@ premise. Either a moderate source that still fits the bound (the 2-bar case meas
 to measure) or the owed-stop route is needed — and a route that aborts must be run knowing it can leave a livelocked
 stop job behind.
 
+## S4f.14 accepted: the four discriminators, and which run evidences each (2026-10-01)
+
+The premise is met by **`-05` and `-07`** (8-bar source): the source's window is 6.911 s and 3.732 s respectively, and
+the continuation's whole session falls inside it. `-07` is confirmed from two independent sources — the device rows
+(`Reentry window open slot=0` 107.826 -> `Reentry released slot=0 generation=97` 111.558, with `Overdubbing started`
+109.518 and `Stop Overdub` 110.917 between them) and the harness's own state timeline
+(`OVERDUBBING 109.754 -> 110.964` inside `OVERDUB_STOPPING` 107.827 -> the next `PLAYING` at 110.964).
+
+| S4f.14's discriminator | evidence |
+|---|---|
+| track 5's stop executes with **no** `accepted_stop_finalizer_wait` attributable to track 4's job, while track 4 finalizes concurrently | The only latch edges in `-05` and `-07` are track **4's own** `accept`/`wait`/`consume` (`DIAG,latch,wait,4,0,1,0,waiting`), and there is **no latch wait on track 5** in either run — while the concurrency above holds. Repeatable across both. |
+| track 4's job retires exactly once with its content exact; track 5's interval is untouched | Each interval of the source's slot released once with **its own** geometry — `canonical_release,0,97,6144,8` (the 8-bar 1,536->6,144 case) and `,0,1,6912,8` / `,0,97,6912,8` in `-07` — and the destination released separately with **its** 18,432. The source's own passes stayed its own: track 4 Loop 1 reads `a=2, h=2, l=6912` with **no burst notes**, while the destination grew only by the burst. |
+| `noLiveOwnerForSlot(track 4, slot)` stays false while its job is live | Observable through the same identity-qualified release marker: the source's owner was live from its stop edge to `Reentry released slot=0 generation=97 interval=416611838899`, and the destination's stop was admitted inside that window rather than waiting on it. |
+| per-track counters independent; no lost capture; no wrong-track publication; `overflow_free`/`call_site_gate_ok`; transport never stops | Timing gates **True/True** in both runs (`assertions.serial_verification.midi_boundary_timing`). No `#CAPTURE_RECONNECT` in any run. Content check: destination `t=4,s=0` went `a=3 -> a=5` and `!CAPTURE_CONTENT` reads `record 1148 + overdub 454 + 114 + 8 + 4 = effective 1728` (the last two being the burst) while the source grew only its own take. The one `Transport stopped` in each run sits inside the source leg's own recipe, before the switch. |
+
+**Accepted, with these qualifications recorded rather than smoothed over:**
+- The window **varies with content** (0.37 s at 2 bars; 3.73 s and 6.91 s at 8 bars) — 2.5x apart between two 8-bar runs —
+  so the leg's concurrency is real but not tightly bounded; a run that lands unluckily short would not overlap.
+- The harness's **baseline content oracle still fails** (`overall_ok: False`; `overdub_out_of_range_notes`,
+  `overdub_unmatched_open_notes`, and in `-05` also `record_unmatched_open_notes` / `record_stored_revt_missing`).
+  These are **not** S4f.14's clauses, and `overdub_out_of_range_notes` is attributed above to the record pattern
+  bleeding into the overdub window on the same channel; the rest stay unattributed. They do not gate this leg.
+- The destination slot reads `kr=0, kc=0` after the runs — its **published root lags its committed content** (the
+  one-pass-late readiness territory, S4c.1), recorded as an observation, not as a defect here.
+- Repeating the leg **accumulates content on the destination** (one pass per continuation), and the device reached its
+  **memory ceiling** during the aborted 24-bar attempt (`heap_free=16 KB`, PSRAM `live=8131 KB`, a
+  `snapshot_reserve` denial after 128 s) — so this leg has a finite repeat budget.
+

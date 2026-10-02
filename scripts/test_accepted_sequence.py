@@ -24,6 +24,7 @@ from hitl.flows.accepted_sequence import (  # noqa: E402
     DEFAULT_SEED_PRESS_ATTEMPTS,
     DEFAULT_TAP_WINDOW_S,
     Gesture,
+    _latest_disp_slot,
     _await_slot_disp,
     _Ctx,
     _emit,
@@ -82,6 +83,31 @@ class FakePort:
 
     def note_sequence(self):
         return [n for (t, n, _c) in self.sent if t == "note_on"]
+
+
+class FakeClockReader:
+    """Phase-locked enough for accepted-sequence unit tests: notes can only advance through wait_pulse."""
+
+    def __init__(self):
+        self.index = 0.0
+        self.waits: list[float] = []
+
+    def poll(self):
+        return 1
+
+    def index_now(self):
+        return self.index
+
+    def period(self):
+        return 60.0 / 120.0 / 24.0
+
+    def wait_pulse(self, target, *, timeout_s, abort=None):
+        self.waits.append(target)
+        self.index = max(self.index, float(target))
+        return True
+
+    def stats(self):
+        return {"phase_index": self.index, "pulses": len(self.waits)}
 
 
 def emit_all(gestures, *, press_ms=120):
@@ -458,6 +484,12 @@ class StoppedPreparationTests(unittest.TestCase):
         self.assertEqual(ClearStatus.WRONG_TARGET, other_track.status)
         self.assertEqual(ClearStatus.WRONG_TARGET, other_slot.status)
 
+    def test_latest_slot_receipt_uses_device_time_not_ring_flush_order(self):
+        self.log.write_text(
+            "#CAP,200,DISP,2,STOPPED,0\n"
+            "#CAP,100,DISP,3,PLAYING,0\n")
+        self.assertEqual(2, _latest_disp_slot(self.log, 0))
+
     def test_refusal_and_abort_are_distinct_non_successes(self):
         refused = self._classify(
             ["Clear refused: deferred save temporarily blocked by writer; slot left untouched"])
@@ -824,6 +856,51 @@ class CensusPreparationTests(unittest.TestCase):
             self.assertEqual(0, rc)
             self.assertGreaterEqual(select.call_count, 1)
 
+    def test_a_selection_press_that_toggles_playback_is_stopped_before_clear(self):
+        import contextlib, tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from hitl_accepted_sequence import main
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); log = root / "session.log"; log.write_text("")
+            capture = SimpleNamespace(
+                session_log=log,
+                send_command=lambda *a, **k: (True, "queued"),
+                drain_capture_ring=lambda: None,
+                library_observation=lambda *a, **k: SimpleNamespace(closed=True, rows=[]))
+            shutdown = SimpleNamespace(result=SimpleNamespace(ok=True, as_dict=lambda: {"status": "complete"}))
+            @contextlib.contextmanager
+            def managed(**kw): yield capture
+            @contextlib.contextmanager
+            def device(**kw): yield shutdown
+            cleared = stopped_preparation.ClearOutcome(0, ClearStatus.CLEARED, "ok")
+            presses = {"n": 0}
+            def toggle_playback(_ctx, slot_number, press_ms=None):
+                presses["n"] += 1
+                with log.open("a", encoding="utf-8") as handle:
+                    handle.write(f"[{presses['n']}.000] [INFO] Loop {slot_number}: Toggle Play/Stop\n")
+            with contextlib.ExitStack() as stack:
+                def mock(name, **kw): return stack.enter_context(patch(_patch_target(name), **kw))
+                mock("ManagedCaptureSession", side_effect=managed)
+                mock("DeviceSession", side_effect=device)
+                mock("mido.open_output", return_value=FakePort())
+                mock("_find_midi_port", return_value="fake")
+                mock("slots.press_track")
+                mock("slots.press_slot_record", side_effect=toggle_playback)
+                mock("stopped_preparation.clear_slot", return_value=cleared)
+                mock("observation_window", return_value=({(7, 3): True, (7, 4): True}, True))
+                ensure = mock("_ensure_transport", return_value=True)
+                mock("_wait_for", return_value=True); mock("_await_markers", return_value=True)
+                mock("_run_plan", return_value="DROVE_LEG"); mock("time.sleep")
+                stack.enter_context(patch("builtins.print"))
+                out = root / "run"
+                rc = main(["--leg", "rec", "--track", "8", "--slot-a", "4", "--slot-b", "5",
+                           "--notes", "1", "--no-upload", "--out-dir", str(out)])
+        self.assertEqual(0, rc)
+        labels = [call.kwargs.get("label") for call in ensure.call_args_list]
+        self.assertIn("prepare_b_selection_stop", labels)
+        self.assertIn("prepare_a_selection_stop", labels)
+
 
 class ManagedRunTests(unittest.TestCase):
     def test_aborted_leg_writes_report_after_shutdown_and_seeds_b_before_a(self):
@@ -1153,25 +1230,25 @@ class EvidenceGateTests(unittest.TestCase):
         self.assertEqual("PREPARATION_FAILED", fixture.report["result"])
         self.assertIsNone(fixture.report["census"])
         self.assertEqual([], fixture.report["preparation"])
-        self.assertIn("census unavailable for slot 5", fixture.report["preparation_error"])
-        self.assertIn("Refusing before any gesture", fixture.report["preparation_error"])
-        self.assertIn("no observation completed", fixture.report["preparation_error"])
+        self.assertIn("host could not verify track 8 slot 5", fixture.report["preparation_error"])
+        self.assertIn("host evidence gap, not a device failure", fixture.report["preparation_error"])
+        self.assertIn("no LIB_OBSERVE observation completed", fixture.report["preparation_error"])
         self.assertIn("prepare_slot_b_census_unavailable", fixture.events)
         # One retry per remaining attempt, and the transport is never touched.
         self.assertEqual(DEFAULT_CENSUS_ATTEMPTS - 1, fixture.events.count("census_retry"))
         self.assertNotIn(GLOBAL_TRANSPORT_NOTE, fixture.port.note_sequence())
 
-    def test_a_swallowed_selection_press_is_named_and_never_pressed_again(self):
-        """`mixed-01`: a predecessor's in-flight stop holds the selection, so the press leaves no row."""
+    def test_a_swallowed_selection_press_is_named_and_clear_probe_decides(self):
+        """A silent selection is not accepted, but scoped clear evidence may still decide the authorized target."""
         fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4", "--slot-b", "5", "--notes", "1",
                                "--arm-timeout-s", "0.0"], press=None)
-        self.assertEqual(1, len(fixture.presses), "a silent selection is not a reason to press again")
-        self.assertEqual(0, fixture.clear.call_count,
-                         "a long press on a filled, non-selected slot starts playback, not a clear")
+        self.assertEqual(1, fixture.clear.call_count,
+                         "the authorized target may proceed only through scoped clear evidence")
+        self.assertIn("prepare_slot_b_selection_unconfirmed_clear_probe", fixture.events)
         self.assertEqual(3, fixture.rc)
         self.assertEqual("PREPARATION_FAILED", fixture.report["result"])
-        self.assertIn("prepare_slot_b_selected", fixture.events)
-        self.assertIn("was not selected by its own press", fixture.report["preparation_error"])
+        self.assertIn("slot 5 never armed", fixture.report["preparation_error"])
+        self.assertIn("left no receipt", fixture.report["preparation_error"])
         self.assertNotIn(GLOBAL_TRANSPORT_NOTE, fixture.port.note_sequence())
 
     def test_a_swallowed_seed_press_never_starts_the_transport(self):
@@ -2092,14 +2169,7 @@ class SealedVerdictTests(unittest.TestCase):
         self.assertEqual(authorization, with_record)
         self.assertIsNone(without_record, "a run that recorded no authorization says so")
 class RecordRecipeRouteTests(unittest.TestCase):
-    """Task 4.2: the record recipe's *route* is checked, and a wrong route is named rather than substituted.
-
-    Each test drives `_run_plan` over a log the fake port writes into -- the press is the emission, the device's
-    answer is the row -- so the four conditions task 4.2 names are pinned without a device: production dispatch,
-    a **delayed** observation, a **premature retirement**, and a **wrong-mode route** (plus the two halves of
-    "the switch did not carry the start"). The oracle reads the same vocabulary from a capture in
-    `RecordStartRouteOracleTests` below.
-    """
+    """The record leg drives only the production route, and sends A content on MIDI clock timing."""
 
     def setUp(self):
         import tempfile
@@ -2114,10 +2184,10 @@ class RecordRecipeRouteTests(unittest.TestCase):
                 handle.write(row + "\n")
 
     def drive(self, answer, *, plan=None, sleeps=None, timeout_s=0.01):
-        """Run the record plan; `answer(log, gesture)` is the device, `sleeps` may defer a row to a later poll."""
         from unittest.mock import patch
         events: list[dict] = []
         port = FakePort()
+        clock = FakeClockReader()
 
         def emit(_port, gesture, **kw):
             answer(self.log, gesture)
@@ -2131,8 +2201,9 @@ class RecordRecipeRouteTests(unittest.TestCase):
              patch(_patch_target("time.sleep"), side_effect=sleep):
             result = _run_plan(port, self.log, plan or leg_gestures("rec", track=8, a=4, b=5),
                                slot_b=5, slot_a=4, press_ms=120, phase_timeout_s=timeout_s,
-                               events=events, note_channel=7, overdub_notes=1)
-        return result, events, port
+                               events=events, note_channel=7, overdub_notes=1,
+                               clock_reader=clock)
+        return result, events, port, clock
 
     def event_names(self, events):
         return [e.get("event") for e in events]
@@ -2146,18 +2217,19 @@ class RecordRecipeRouteTests(unittest.TestCase):
                            "Loop 5: Record start carried on the switch",
                            disp_row(5, "RECORDING", stamp_us=20_000_000))
             elif gesture.step == "b_stop":
-                self.write("MIDI Button A: Stop Recording")
+                self.write("MIDI Button A: Stop Recording", "#CAP,21000000,RECS,stopToStopped,4,2304,2200,100,768,0", "[21.000] [DEBUG] [TRACK] Recording stopped @ tick 30000")
 
-        result, events, port = self.drive(answer)
+        result, events, port, clock = self.drive(answer)
         self.assertEqual("DROVE_LEG", result, events)
         self.assertEqual(["a_record_start", "a_record_content", "b_switch_start", "b_record_content", "b_stop"],
                          [n for n in self.event_names(events) if n in (
                              "a_record_start", "a_record_content", "b_switch_start", "b_record_content", "b_stop")])
         self.assertTrue(all(e.get("confirmed") for e in events
                             if e.get("event") in ("a_record_start", "b_switch_start", "b_stop")))
-        # B's content goes out only after B's take is actually running, and A's take got real work first.
         notes = port.note_sequence()
         self.assertEqual([60, 79], [n for n in notes if n in (60, 79)])
+        self.assertEqual([1.0, 3.0], clock.waits[:2],
+                         "A record content is scheduled from MIDI clock pulses")
 
     def test_a_quantized_start_is_observed_through_its_execution(self):
         """The device may queue the start on the loop-phase boundary: the accept row is not the execution."""
@@ -2169,25 +2241,35 @@ class RecordRecipeRouteTests(unittest.TestCase):
                            "Loop 5: Record start carried on the switch",
                            disp_row(5, "RECORDING", stamp_us=20_000_000))
             elif gesture.step == "b_stop":
-                self.write("MIDI Button A: Stop Recording")
+                self.write("MIDI Button A: Stop Recording", "#CAP,21000000,RECS,stopToStopped,4,2304,2200,100,768,0", "[21.000] [DEBUG] [TRACK] Recording stopped @ tick 30000")
 
         def sleeps(log, seconds):
-            # The execution row arrives late -- on the third poll -- as a drained ring row does on device.
             sleeps.n += 1
             if sleeps.n == 3:
                 self.write(disp_row(4, "RECORDING", stamp_us=15_000_000))
 
         sleeps.n = 0
-        result, events, _port = self.drive(answer, sleeps=sleeps)
+        result, events, _port, _clock = self.drive(answer, sleeps=sleeps)
         self.assertEqual("DROVE_LEG", result, events)
         self.assertEqual([True], [e["confirmed"] for e in events if e.get("event") == "a_record_start"])
 
-    def test_a_retained_carrier_still_drives_the_leg(self):
-        """The retained form is the *same* route: the start is queued and dispatched on its own boundary.
+    def test_b_record_start_accepts_direct_serial_execution_when_disp_is_delayed(self):
+        """The direct recording edge must not wait for a delayed capture-ring DISP row."""
+        def answer(log, gesture):
+            if gesture.step == "a_record_start":
+                self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
+            elif gesture.step == "b_switch_start":
+                self.write("Loop 5: Switch gesture from slot 4",
+                           "Loop 5: Record start carried on the switch",
+                           "[20.100] [DEBUG] [TRACK] Recording started @ tick 29952")
+            elif gesture.step == "b_stop":
+                self.write("MIDI Button A: Stop Recording", "#CAP,21000000,RECS,stopToStopped,4,2304,2200,100,768,0", "[21.000] [DEBUG] [TRACK] Recording stopped @ tick 30000")
 
-        This is also the pin for the recorded-leg guard's scope: `UNEXPECTED_RETAINED_SWITCH` belongs to the
-        overdub leg's plan, and a record leg that aborted on its own legitimate accept would never drive.
-        """
+        result, events, _port, _clock = self.drive(answer)
+        self.assertEqual("DROVE_LEG", result, events)
+        self.assertTrue(next(e for e in events if e.get("event") == "b_switch_start")["confirmed"])
+
+    def test_a_retained_carrier_still_drives_the_leg(self):
         def answer(log, gesture):
             if gesture.step == "a_record_start":
                 self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
@@ -2196,20 +2278,13 @@ class RecordRecipeRouteTests(unittest.TestCase):
                            "Track 7 loop 5: switch and record start retained (stop not yet admitted)",
                            disp_row(5, "RECORDING", stamp_us=20_000_000))
             elif gesture.step == "b_stop":
-                self.write("MIDI Button A: Stop Recording")
+                self.write("MIDI Button A: Stop Recording", "#CAP,21000000,RECS,stopToStopped,4,2304,2200,100,768,0", "[21.000] [DEBUG] [TRACK] Recording stopped @ tick 30000")
 
-        result, events, _port = self.drive(answer)
+        result, events, _port, _clock = self.drive(answer)
         self.assertEqual("DROVE_LEG", result, events)
         self.assertNotIn("leg_aborted_retained_switch", self.event_names(events))
 
     def test_an_early_predecessor_retirement_does_not_stop_the_leg(self):
-        """Design decision 5: critical-window waits must not wait for the predecessor's retirement.
-
-        A retires while B is still being driven (the run's own `Reentry released slot=3` /
-        `canonical_release` rows), and the leg still reaches every step: the flow's waits are bounded by the
-        device's *next causal response*, never by the release edge -- which is the oracle's business, not the
-        driver's.
-        """
         def answer(log, gesture):
             if gesture.step == "a_record_start":
                 self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000),
@@ -2220,13 +2295,12 @@ class RecordRecipeRouteTests(unittest.TestCase):
                            "Loop 5: Record start carried on the switch",
                            disp_row(5, "RECORDING", stamp_us=20_000_000))
             elif gesture.step == "b_stop":
-                self.write("MIDI Button A: Stop Recording")
+                self.write("MIDI Button A: Stop Recording", "#CAP,21000000,RECS,stopToStopped,4,2304,2200,100,768,0", "[21.000] [DEBUG] [TRACK] Recording stopped @ tick 30000")
 
-        result, events, _port = self.drive(answer)
+        result, events, _port, _clock = self.drive(answer)
         self.assertEqual("DROVE_LEG", result, events)
 
     def test_a_playback_route_is_named_and_no_second_press_is_sent(self):
-        """The wrong-mode route: a filled target answers playback, and the design refuses the substitute."""
         presses = []
 
         def answer(log, gesture):
@@ -2234,7 +2308,7 @@ class RecordRecipeRouteTests(unittest.TestCase):
             if gesture.step == "a_record_start":
                 self.write("Loop 4: Queued playback switch (filled slot)")
 
-        result, events, _port = self.drive(answer)
+        result, events, _port, _clock = self.drive(answer)
         self.assertEqual("WRONG_MODE_ROUTE", result, events)
         self.assertEqual("a_record_start", presses[-1], "the leg stops at the wrong route")
         self.assertNotIn("b_switch_start", presses)
@@ -2246,7 +2320,7 @@ class RecordRecipeRouteTests(unittest.TestCase):
             if gesture.step == "a_record_start":
                 self.write("MIDI Button A: Live Overdub", "Overdubbing started @ tick 10")
 
-        result, _events, _port = self.drive(answer)
+        result, _events, _port, _clock = self.drive(answer)
         self.assertEqual("WRONG_MODE_ROUTE", result)
 
     def test_a_switch_that_is_not_carried_is_named_apart_from_a_start_that_never_came(self):
@@ -2256,7 +2330,7 @@ class RecordRecipeRouteTests(unittest.TestCase):
             elif gesture.step == "b_switch_start":
                 self.write("Loop 5: Switch gesture from slot 4")
 
-        result, _events, _port = self.drive(only_the_gesture)
+        result, _events, _port, _clock = self.drive(only_the_gesture)
         self.assertEqual("SWITCH_NOT_CARRIED", result)
 
         def carried_but_never_started(log, gesture):
@@ -2266,10 +2340,8 @@ class RecordRecipeRouteTests(unittest.TestCase):
                 self.write("Loop 5: Switch gesture from slot 4",
                            "Loop 5: Record start carried on the switch")
 
-        result, _events, _port = self.drive(carried_but_never_started)
+        result, _events, _port, _clock = self.drive(carried_but_never_started)
         self.assertEqual("B_RECORD_START_UNCONFIRMED", result)
-
-
 def rec_route_log(*, carrier="Loop 5: Record start carried on the switch", wrong=None,
                   wrong_after_start=False, b_start=True) -> str:
     """A record-leg chain whose route row(s) sit around B's start row.
@@ -2518,43 +2590,8 @@ class VetoTests(unittest.TestCase):
         self.assertIs(True, record["ok"], "the owner's verdict travels with its record")
         result = self.analyse_with(shutdown=record)
         self.assertEqual("ok", by_name(result)["teardown"].status)
-        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
-        # And the sealed bundle's own rule reads the same record as a pass condition.
-        bundle = verdict_bundle(result, leg="od", identity=METADATA,
-                                run_id="run-1", run_report={"shutdown": record, "result": "DROVE_LEG"})
-        from hitl.reporting import derive_verdict
-        passed, failures = derive_verdict(bundle)
-        self.assertTrue(passed, failures)
-        legacy = {"status": COMPLETE, "drains": 2, "detail": "quiet after 2 drain(s)"}
-        self.assertFalse(derive_verdict({**bundle, "teardown": legacy})[0],
-                         "the pre-fix record shape is what the rule used to refuse")
-
-    def test_the_adapters_read_each_owners_own_report(self):
-        """The three adapters are readers, not re-implementations: each names what its owner decided."""
-        from hitl import acceptance_evidence
-        ok, detail = acceptance_evidence.content_parity(SUPPLIED_EVIDENCE["content_parity"])
-        self.assertTrue(ok)
-        self.assertIn("no unexplained difference", detail)
-        ok, detail = acceptance_evidence.timing_gates(SUPPLIED_EVIDENCE["timing"])
-        self.assertTrue(ok)
-        ok, detail = acceptance_evidence.teardown(SUPPLIED_EVIDENCE["shutdown"])
-        self.assertTrue(ok)
-        self.assertIn("complete", detail)
-        # Not supplied is None at every adapter -- never False (which would read as a failed verifier).
-        for adapter in (acceptance_evidence.content_parity, acceptance_evidence.timing_gates,
-                        acceptance_evidence.teardown):
-            self.assertIsNone(adapter(None)[0])
-
-
 class MixedLegTests(unittest.TestCase):
-    """The spec's *Mixed record predecessor and overdub successor* scenario: a record A, a seeded overdub B.
-
-    The leg composes the two recipes rather than inventing a third: A's start is the **record** capture of task
-    4.2 (with its own empty, idle target) and B's successor is the **overdub** of task 4.3 (a seeded target, its
-    own record-control start, one loop-button stop). Its grading is *not* implemented yet and the oracle refuses
-    it by name -- grading it with either existing mode would fail a conforming run -- so these tests pin the
-    flow: the plan as data, and the driven sequence against the device's own rows.
-    """
+    """The spec's mixed scenario: record A, seeded overdub B, with A content on MIDI clock timing."""
 
     def setUp(self):
         import tempfile
@@ -2572,6 +2609,7 @@ class MixedLegTests(unittest.TestCase):
         from unittest.mock import patch
         events: list[dict] = []
         port = FakePort()
+        clock = FakeClockReader()
 
         def emit(_port, gesture, **kw):
             answer(self.log, gesture)
@@ -2581,11 +2619,11 @@ class MixedLegTests(unittest.TestCase):
              patch(_patch_target("time.sleep")):
             result = _run_plan(port, self.log, leg_gestures("mixed", track=8, a=4, b=5),
                                slot_b=5, slot_a=4, press_ms=120, phase_timeout_s=timeout_s,
-                               events=events, note_channel=7, overdub_notes=2)
-        return result, events, port
+                               events=events, note_channel=7, overdub_notes=2,
+                               clock_reader=clock)
+        return result, events, port, clock
 
     def test_the_mixed_plan_is_the_specs_sequence(self):
-        """A records, ONE slot gesture stops A and selects B, then B's own start and ONE stop."""
         plan = leg_gestures("mixed", track=8, a=4, b=5)
         self.assertEqual(["select_track", "a_record_start", "b_switch", "b_overdub_start", "b_stop_request"],
                          [g.step for g in plan])
@@ -2599,7 +2637,6 @@ class MixedLegTests(unittest.TestCase):
         self.assertEqual(2, notes.count(RECORD_BUTTON_NOTE), "A's record start, then B's overdub start")
 
     def test_the_mixed_plan_is_driven_against_the_devices_own_rows(self):
-        """A's record start, the capture-switch, B's overdub start and B's stop, each on its own receipt."""
         def answer(log, gesture):
             if gesture.step == "a_record_start":
                 self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
@@ -2610,25 +2647,55 @@ class MixedLegTests(unittest.TestCase):
             elif gesture.step == "b_stop_request":
                 self.write("Loop 5: Stop Overdub")
 
-        result, events, port = self.drive(answer)
+        result, events, port, clock = self.drive(answer)
         self.assertEqual("DROVE_LEG", result, events)
         self.assertEqual([True], [e["confirmed"] for e in events if e.get("event") == "a_record_start"])
         self.assertEqual([True], [e["confirmed"] for e in events if e.get("event") == "b_switch"])
         self.assertIn("b_overdub_start_notes", [e.get("event") for e in events])
         self.assertIn(79, port.note_sequence(), "B's content goes into its overdub")
+        self.assertEqual([1.0, 3.0, 7.0, 9.0], clock.waits[:4],
+                         "mixed A-record content is scheduled from MIDI clock pulses")
+    def test_mixed_switch_skips_slot_tap_delay_before_b_overdub_admission(self):
+        """The switch is followed by a record press, so pacing must not miss A's finalization window."""
+        from unittest.mock import patch
+        events: list[dict] = []
+        port = FakePort()
+        clock = FakeClockReader()
+        sleeps: list[float] = []
+
+        def answer(log, gesture):
+            if gesture.step == "a_record_start":
+                self.write("Loop 4: Start Recording", disp_row(4, "RECORDING", stamp_us=10_000_000))
+            elif gesture.step == "b_switch":
+                self.write("Loop 5: Switch gesture from slot 4")
+            elif gesture.step == "b_overdub_start":
+                self.write("Overdubbing started @ tick 10")
+            elif gesture.step == "b_stop_request":
+                self.write("Loop 5: Stop Overdub")
+
+        with patch(_patch_target("_emit"), side_effect=lambda _port, gesture, **kw: answer(self.log, gesture)), \
+             patch(_patch_target("_ensure_transport"), return_value=True), \
+             patch(_patch_target("time.sleep"), side_effect=sleeps.append):
+            result = _run_plan(port, self.log, leg_gestures("mixed", track=8, a=4, b=5),
+                               slot_b=5, slot_a=4, press_ms=120, phase_timeout_s=0.01,
+                               events=events, note_channel=7, overdub_notes=1,
+                               clock_reader=clock)
+
+        self.assertEqual("DROVE_LEG", result, events)
+        tap_delays = [seconds for seconds in sleeps if abs(seconds - DEFAULT_TAP_WINDOW_S) < 1e-9]
+        self.assertEqual(4, len(tap_delays),
+                         "mixed b_switch must not add a slot-tap delay before B overdub admission")
+
 
     def test_a_mixed_record_start_on_a_populated_a_is_a_named_wrong_route(self):
-        """A's side is a *record* capture: a populated A answers playback or overdub, not a substitute."""
         for wrong_row in ("Loop 4: Queued playback switch (filled slot)", "MIDI Button A: Live Overdub"):
             with self.subTest(row=wrong_row):
                 def answer(log, gesture, row=wrong_row):
                     if gesture.step == "a_record_start":
                         self.write(row)
 
-                result, _events, _port = self.drive(answer)
+                result, _events, _port, _clock = self.drive(answer)
                 self.assertEqual("WRONG_MODE_ROUTE", result)
-
-
 def mixed_chain_log(*, a_stops=1, window=True, switch=True, playback=False, b_start=True, b_exec=True,
                     b_release=True, a_release=True) -> str:
     """A synthetic **mixed** chain: A is a *record* interval (slot 4), B a seeded *overdub* interval (slot 5).
@@ -2681,6 +2748,23 @@ class MixedLegOracleTests(unittest.TestCase):
         self.assertEqual("ok", checks["L5b_b_start_route"].status)
         self.assertEqual("ok", checks["overdub_interval_identity"].status)
         self.assertIn("A is this leg's *record* interval", checks["overdub_interval_identity"].detail)
+    def test_interval_qualified_release_ignores_seed_release_on_reused_slot(self):
+        text = mixed_chain_log().replace(
+            "#CAP,8000000,DIAG,canonical_release,4,0,1536,8",
+            "#CAP,2500000,DIAG,canonical_release,4,0,1536,8\n"
+            "#CAP,8000000,DIAG,canonical_release_interval,4,4,0,1536,8")
+        result = self.run_mixed(text)
+        self.assertEqual("ok", by_name(result)["L6_b_stop_executes_once"].status)
+        self.assertEqual("ok", by_name(result)["L7_one_press_per_stop"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
+    def test_legacy_release_fallback_uses_b_stop_edge_on_reused_slot(self):
+        text = mixed_chain_log().replace(
+            "#CAP,8000000,DIAG,canonical_release,4,0,1536,8",
+            "#CAP,2500000,DIAG,canonical_release,4,0,1536,8\n"
+            "#CAP,8500000,DIAG,canonical_release,4,0,1536,8")
+        result = self.run_mixed(text)
+        self.assertEqual("ok", by_name(result)["L6_b_stop_executes_once"].status)
+        self.assertEqual("ACCEPTED_SEQUENCE_PASS", result.verdict)
 
     def test_a_second_a_stop_fails_the_one_stop_link_on_the_record_side(self):
         result = self.run_mixed(mixed_chain_log(a_stops=2))

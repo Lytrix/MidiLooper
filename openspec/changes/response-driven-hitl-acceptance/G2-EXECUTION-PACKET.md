@@ -1,4 +1,5 @@
 # G2 execution packet — response-driven-hitl-acceptance (task 1.1)
+> **2026-10-02 evidence-repair slice:** A record-retirement release-marker arming, device-time mixed-route ordering, bounded fresh-boot recognition, and the slot-scoped mixed content-report owner are implemented. Host mixed oracle **7/7** and full native **2,664/2,671 with 7 skipped** pass; strict OpenSpec validation passes. The capture firmware build is blocked by the existing RAM1 guard (`code 407,448`, `padding 18,536`, free locals `-26,560`), so upload/device evidence and any 6.3/S4.5 checkoff remain blocked.
 
 Authority: [IMPLEMENTATION_READINESS.md §G2](../../../docs/Authority/IMPLEMENTATION_READINESS.md) and its
 [template](../../../docs/Templates/EXECUTION_PACKET.md). This is the change-level packet: it pins the fields

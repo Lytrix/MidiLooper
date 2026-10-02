@@ -286,6 +286,12 @@ SC_MEM_ATTR void successorStartWindowOpen(uint8_t slot, uint32_t stopTick, uint3
 SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t generation,
                                                       uint32_t loopLengthTicks,
                                                       size_t availableChunks);
+/** Identity-qualified companion for `canonical_release`, used to distinguish slot reuse in stopped logs.
+ *  Wire form: DIAG,canonical_release_interval,<slot>,<interval>,<generation>,<loopLengthTicks>,<availableChunks>.
+ *  Diagnostic-only; it does not change admission or retirement behavior. */
+SC_MEM_ATTR void canonicalFinalizationCapacityReleasedForInterval(
+    uint8_t slot, uint64_t interval, uint32_t generation, uint32_t loopLengthTicks,
+    size_t availableChunks);
 /** First-record return window selected as the audible source:
  *  DIAG,first_record_adopt,<loopLengthTicks>,<retainedEvents> (Tier-A). One line
  *  per adoption; the retained count shows how much of bar 1 the window held. */

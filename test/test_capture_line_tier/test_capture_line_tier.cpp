@@ -447,6 +447,7 @@ void test_deferred_stop_identity_edges_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701454,DIAG,reentry_window_open,7,12345,4096"));
   // The retiring owner's slot + generation.
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701459,DIAG,canonical_release,7,3,4096,448"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701459,DIAG,canonical_release_interval,7,4096,3,4096,448"));
   // Long micros field must not shift the tag parse.
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,39819493,DIAG,canonical_release,7,3,4096,448"));
   // The working-set LEASE release, which `canonical_release` does not report (that row is the retiring
@@ -454,6 +455,20 @@ void test_deferred_stop_identity_edges_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701459,DIAG,ws_release,7,3,released"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701459,DIAG,ws_release,7,3,refused_busy"));
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,ws_release_partial,1"));
+}
+
+// S4.5 vocabulary: ordinary finalization waits and exceptional queue exhaustion remain distinct.
+void test_s4_5_finalization_busy_owner_vocabulary_is_tier_a() {
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,6701459,ODUB,stop,admission,0,0,4294967295,4294967295,1,1,accepted_stop_finalizer_wait"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,6701459,ODUB,stop,admission,0,0,4294967295,4294967295,1,1,finalizer_busy"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,6701459,ODUB,stop,admission,0,0,4294967295,4294967295,1,1,transfer_denied"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,6701459,ODUB,stop,admission,0,0,4294967295,4294967295,1,1,canonical_output_busy"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,6701459,ODUB,stop,admission,0,0,4294967295,4294967295,1,1,queue_full"));
 }
 
 // The comparison is bounded by strlen of its literal. Passing a literal's length *including* its NUL makes
@@ -483,6 +498,7 @@ int main() {
   RUN_TEST(test_note_and_display_traffic_is_not_tier_a);
   RUN_TEST(test_other_diag_subtags_are_not_tier_a);
   RUN_TEST(test_deferred_stop_identity_edges_are_tier_a);
+  RUN_TEST(test_s4_5_finalization_busy_owner_vocabulary_is_tier_a);
   RUN_TEST(test_deferred_stop_identity_match_has_no_length_boundary_gap);
   RUN_TEST(test_tag_parse_survives_a_wide_micros_field);
   RUN_TEST(test_tag_starts_with_matches_led_mo_diag);

@@ -2241,8 +2241,10 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // -- that is the pinned eight-way DTCM array (`sizeof(Track) == 384`), so a by-value member costs
 // 8x there -- and the wait must be bounded: a build no writer can advance otherwise parks the job,
 // its raw range and the capture-stop owner, and refuses every later stop on the track.
-static_assert(sizeof(LoopPlaybackRuntime) == 6360,
-              "S3.0: LoopPlaybackRuntime is the per-slot working set (6,360 B extmem)");
+// The interval-qualified canonical-release diagnostic adds one externally allocated 8-byte identity
+// field to the per-slot runtime; keep the target-ABI pin explicit.
+static_assert(sizeof(LoopPlaybackRuntime) == 6368,
+              "S3.0: LoopPlaybackRuntime is the per-slot working set (6,368 B extmem)");
 static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "

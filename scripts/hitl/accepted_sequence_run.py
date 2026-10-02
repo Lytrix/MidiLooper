@@ -47,6 +47,7 @@ from hitl.flows.accepted_sequence import (
 )
 from hitl.managed_capture import ManagedCaptureSession
 from hitl.midi_io import _find_midi_port
+from hitl.midi_clock import MidiClockReader
 from hitl.stimuli.authorization import AuthorizationRefused, authorize_targets
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -226,7 +227,13 @@ def run_accepted_sequence(request: RunRequest) -> int:
         if capture_log is None:
             raise RuntimeError("managed capture did not publish a session log")
         report["anchor_row"] = len(_lines(capture_log))
-
+        # The capture ring holds rows until its owner is asked to flush them, so a receipt wait drains too.
+        drain = getattr(capture, "drain_capture_ring", None)
+        clock_reader = None
+        try:
+            clock_reader = MidiClockReader(mido.open_input(_find_midi_port("Teensy", is_input=True)))
+        except Exception as exc:  # noqa: BLE001 - tests may use fake ports; the flow names a missing clock if needed.
+            events.append({"event": "clock_reader_unavailable", "detail": f"{type(exc).__name__}: {exc}"})
         # The run's own scope and its guarded output. Every test edge goes through the guard, so a cancelled
         # run cannot press again; `guard.run()` below absorbs the cancellation, releases whatever was held,
         # and unregisters the run, while the shutdown inside it still stops the transport and drains.
@@ -234,8 +241,6 @@ def run_accepted_sequence(request: RunRequest) -> int:
         out_port = GuardedMidiOut(mido.open_output(_find_midi_port("Teensy", is_input=False)), scope=scene)
         ctx = _Ctx(out_port, press_ms=request.press_ms)
 
-        # The capture ring holds rows until its owner is asked to flush them, so a receipt wait drains too.
-        drain = getattr(capture, "drain_capture_ring", None)
         sink = LegSink(events=events, preparation=preparation)
         leg = LegRequest(
             leg=request.leg, track=request.track, slot_a=request.slot_a, slot_b=request.slot_b,
@@ -268,7 +273,8 @@ def run_accepted_sequence(request: RunRequest) -> int:
 
             write_report()
             outcome = drive_leg(leg, ctx=ctx, capture=capture, capture_log=capture_log,
-                                out_port=out_port, sink=sink, drain=drain, on_progress=on_progress)
+                                out_port=out_port, sink=sink, drain=drain, on_progress=on_progress,
+                                clock_reader=clock_reader)
             report["census"] = outcome.census_state
             report["plan"] = list(outcome.plan)
             report["identity_stats_rows"] = len(outcome.identity_stats_rows or [])
