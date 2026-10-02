@@ -313,6 +313,13 @@ manager-owned pending state, including the gap where no interval is live.
 - **THEN** the waits are counted and reported as scheduling latencies, attributed to the holding owner
 - **AND** no capacity-driven user-visible denial exists in the diagnostic vocabulary
 
+#### Scenario: A denial or deferral names the identity it applies to
+- **WHEN** a stop, admission or deferral outcome is reported for an interval
+- **THEN** the row carries the **track** and slot that interval belongs to, so a multi-track run can attribute
+  it without inferring from position
+- **AND** a family that cannot carry that identity is not used as the evidence for attribution, because a
+  slot index alone is ambiguous when two tracks use the same slot
+
 #### Scenario: Latency is measured against a declared per-action budget
 - **WHEN** an interaction class is characterized
 - **THEN** its acceptance-to-execution latency is measured against a declared expectation (stop ~microseconds,
@@ -594,6 +601,26 @@ assertion before implementing the target behaviour.
 - **THEN** the instrumentation reports the slot, role and owner kind
 - **AND** the condition is testable without a device run
 
+#### Scenario: The envelope claim is measured against the pool and the id space
+- **WHEN** a resident-envelope claim is made (for example all eight tracks by eight slots each holding
+  sixty-four bars at three notes per sixteenth note)
+- **THEN** the claim is stated as a count of events and tested against **both** the external pool and the
+  committed chunk-id ceiling, and a blocker in either is reported as a blocker
+- **AND** a density that exceeds the committed chunk-id ceiling is reported as a **structural** limit, not as
+  a byte budget to be re-based
+
+#### Scenario: The current layout is characterized as failing the stated envelope
+- **WHEN** a stated envelope is compared against the current data layout
+- **THEN** the failing characterization is recorded with its arithmetic and its **independent** blockers, each
+  of which is fatal on its own
+- **AND** the levers that would close the gap are named with measured deltas, so the gap is a decision rather
+  than an open question
+
+#### Scenario: A representation that duplicates committed content is charged for it
+- **WHEN** a derived representation stores a copy of a committed event rather than a reference to it
+- **THEN** that duplication is charged in the per-event budget
+- **AND** removing it is treated as a first-class capacity lever rather than an optimization
+
 ### Requirement: Residency evidence distinguishes physical pool accounting from heap admission
 Wrapped external-pool live payload accounting SHALL exclude internal fallback allocations,
 retain the allocation's original tag until retirement, and reuse available shadow entries.
@@ -628,6 +655,29 @@ inspection from measured free space. Live telemetry SHALL continue using bookkee
 - **THEN** total free space and largest free extent are reported separately per allocator
 - **AND** unused internal arena tail and allocator top chunk are reported separately
 - **AND** no single observation is reported as proof of a leak
+
+### Requirement: A diagnostic is bounded so it cannot evict the evidence it explains
+A capture diagnostic that a repeating owner can emit SHALL be bounded, in cadence **and** in total per episode,
+so that a condition which does not advance cannot flood the capture ring and displace the rows the run is read
+for. A bounded family SHALL still name the condition it bounds, at least once, using the identity available at
+that point. Bounding the diagnostic SHALL NOT bound, shorten, retire or cancel the work it reports.
+
+#### Scenario: A stalled episode is bounded per phase
+- **WHEN** a phase or job keeps being serviced without advancing
+- **THEN** its per-grain rows stop after a bounded number for that phase and fall to a slow heartbeat
+- **AND** the ring still carries the rows the run is read for, instead of a per-grain flood
+- **AND** the serviced work is unchanged: the bounded diagnostics never cancel, retire or shorten what the
+  episode owes
+
+#### Scenario: A stalled episode names itself
+- **WHEN** a phase's row budget is exhausted and the phase still has not advanced
+- **THEN** exactly one aggregate row is emitted naming that phase, with its call count and its span
+- **AND** the condition is attributable without needing a second run
+
+#### Scenario: Dropping a diagnostic family is a build option
+- **WHEN** an acceptance run's evidence is carried by other rows
+- **THEN** the per-grain family can be dropped entirely by configuration
+- **AND** dropping it changes only the diagnostics, never the serviced work
 
 ### Requirement: Released view reservations retire owned side arrays
 When an unselected whole-take playback reservation is released, the implementation SHALL release its origin and canonical-rank arrays along with event storage and SHALL permit later re-admission. Selected authoritative bridges SHALL prevent release without mutation.
