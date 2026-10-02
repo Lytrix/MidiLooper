@@ -4103,6 +4103,171 @@ void test_window_owner_refusals_are_named_and_non_destructive() {
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
                     static_cast<int>(track.stepPlaybackViewMaintenance()));
 }
+
+/// 3.6a (DEC-108 items 4, 12(a), 13(a)): a **retained source revision** is admitted in a named role carrying **both**
+/// protections -- the descriptor pins the reclamation consumer reads, and the store references that make the direct
+/// reset path safe without a veto -- is bounded by the role set, and is dropped only by the one release predicate.
+void test_retained_source_is_admitted_with_roles_and_survives_both_destruction_paths() {
+  // ---- W-14: admission, identity, roles, and both protections -------------------------------------------------
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  const uint32_t retainedRevision = loop.playbackRevision;
+
+  RetainedPlaybackSource retained{};
+  TEST_ASSERT_FALSE_MESSAGE(track.hasRetainedPlaybackSourceForSlot(0),
+                            "nothing is retained before an admission");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, retainedRevision, 7)));
+  TEST_ASSERT_TRUE(track.hasRetainedPlaybackSourceForSlot(0));
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(track.retainedPlaybackSourceCountForSlot(0)));
+  TEST_ASSERT_TRUE(track.retainedPlaybackSourceForSlot(0, retained));
+  TEST_ASSERT_EQUAL_UINT32(retainedRevision, retained.revision);
+  TEST_ASSERT_EQUAL_UINT32(7u, retained.generation);
+  TEST_ASSERT_EQUAL(static_cast<int>(RetainedSourceRole::Serving), static_cast<int>(retained.role));
+  TEST_ASSERT_FALSE_MESSAGE(retained.pins.capturePassIds.empty(),
+                            "the retained revision's pass is pinned for the reclamation consumer");
+  TEST_ASSERT_FALSE_MESSAGE(retained.ownedChunks.empty(), "and its bodies are owned, not merely named");
+
+  // Re-admission of the same revision refreshes the role and the generation, and never re-owns the bodies.
+  const uint32_t ownedBefore = static_cast<uint32_t>(retained.ownedChunks.size());
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::AlreadyRetained),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, retainedRevision, 9)));
+  TEST_ASSERT_TRUE(track.retainedPlaybackSourceForSlot(0, retained));
+  TEST_ASSERT_EQUAL_UINT32(9u, retained.generation);
+  TEST_ASSERT_EQUAL_UINT32(ownedBefore, static_cast<uint32_t>(retained.ownedChunks.size()));
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(track.retainedPlaybackSourceCountForSlot(0)));
+  // (W-16, first clause) While the retained revision is still the loop's current one, nothing is released.
+  TEST_ASSERT_FALSE_MESSAGE(track.tryReleaseRetainedPlaybackSource(0),
+                            "a retained source that is still the current revision is not released");
+
+  // ---- W-19: the role set is bounded, and exceeding it refuses by name rather than discarding what is needed -----
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, retainedRevision + 1, 10)));
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(track.retainedPlaybackSourceCountForSlot(0)));
+  TEST_ASSERT_TRUE(track.retainedPlaybackSourceForSlot(0, retained));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(RetainedSourceRole::Retiring), static_cast<int>(retained.role),
+                            "the older source stops serving, and is not dropped to make room");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackSourceRetainResult::RoleCapacityReached),
+                            static_cast<int>(track.retainPlaybackSourceForSlot(0, retainedRevision + 2, 11)),
+                            "a third source is refused by name");
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(track.retainedPlaybackSourceCountForSlot(0)));
+
+  // ---- W-15: the pass-level reclamation consumer reads the pins ------------------------------------------------
+  LoopEventStore::initPool();
+  Track& retainedTrack = trackManager.getTrack(1);
+  Track& controlTrack = trackManager.getTrack(2);
+  retainedTrack.ensureLoopsAllocated();
+  controlTrack.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(retainedTrack, 0);
+  commitRecordPassIntoTrackSlot(controlTrack, 0);
+  Loop& retainedLoop = retainedTrack.getLoop(0);
+  Loop& controlLoop = controlTrack.getLoop(0);
+  TEST_ASSERT_TRUE(retainedTrack.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_TRUE(controlTrack.prewarmPlaybackForSlot(0, true));
+  const PassId retainedPass = retainedLoop.passes.recordPass.id;
+  const PassId controlPass = controlLoop.passes.recordPass.id;
+  TEST_ASSERT_NOT_EQUAL(kInvalidPassId, retainedPass);
+  TEST_ASSERT_NOT_EQUAL(kInvalidPassId, controlPass);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(retainedTrack.retainPlaybackSourceForSlot(0, retainedLoop.playbackRevision, 21)));
+  // Both passes are **disabled** -- superseded by a later revision -- which is exactly what the reclaim pass acts on.
+  TEST_ASSERT_TRUE(retainedLoop.setCapturePassState(retainedPass, CapturePassState::Disabled));
+  TEST_ASSERT_TRUE(controlLoop.setCapturePassState(controlPass, CapturePassState::Disabled));
+  SlotPassReferences retainedRefs{};
+  SlotPassReferences controlRefs{};
+  (void)retainedTrack.mergeRetainedPlaybackPinsInto(0, retainedRefs);
+  (void)controlTrack.mergeRetainedPlaybackPinsInto(0, controlRefs);
+  TEST_ASSERT_TRUE_MESSAGE(retainedRefs.referencesCapturePass(retainedPass),
+                           "the consumer's set carries the retained pins");
+  TEST_ASSERT_FALSE_MESSAGE(controlRefs.referencesCapturePass(controlPass),
+                            "the control slot's set carries nothing: it is the negative control");
+  // The **set the consumer reads** is what decides: the same shape is reclaimed with an unreferenced set, and is not
+  // reclaimed with the retained revision's pins in it.
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, retainedLoop.reclaimUnreferencedDisabledCapturePasses(retainedRefs),
+                                   "a retained revision's pass is not reclaimed underneath it");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1u, controlLoop.reclaimUnreferencedDisabledCapturePasses(controlRefs),
+                                   "the same shape, unreferenced, is reclaimable");
+  TEST_ASSERT_TRUE_MESSAGE(retainedLoop.passes.hasRecordPass() &&
+                               retainedLoop.passes.recordPass.id == retainedPass,
+                           "the retained pass is still there");
+  TEST_ASSERT_FALSE_MESSAGE(controlLoop.passes.hasRecordPass(), "and the control's pass is gone");
+  // The production pass over every track and slot must not reclaim it either. What this shows *and does not* show is
+  // worth naming: `setCapturePassState(Disabled)` is an undo-recorded action, so this pass is also referenced by that
+  // track's undo stack -- which is why removing the **merge** alone does not change the outcome here. The merge is
+  // what covers a pass disabled *without* an undo reference; the assertions above pin the set that actually decides.
+  trackManager.reclaimUnreferencedDisabledPasses(nullptr, false);
+  TEST_ASSERT_TRUE_MESSAGE(retainedLoop.passes.hasRecordPass(),
+                           "the manager's own pass does not reclaim a retained revision either");
+
+  // ---- W-16/W-17: the one release predicate, and the ownership that protects the direct reset path --------------
+  TEST_ASSERT_FALSE_MESSAGE(retainedTrack.noLiveOwnerForSlot(0),
+                            "a retained source keeps the slot owned, by name");
+  // `setCapturePassState` above advanced this loop's revision past the retained one, so the predicate's first clause
+  // already holds here; the refusal-while-current case is asserted at admission, where the revision really is current.
+  // What is still missing is the content the source describes, and the reset below removes it.
+  const uint16_t usedBeforeReset = LoopEventStore::usedChunkCount();
+  retainedLoop.resetPassTimeline();
+  TEST_ASSERT_FALSE_MESSAGE(retainedLoop.hasCommittedPasses(),
+                            "the reset is not vetoed: the gesture still works");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(usedBeforeReset, LoopEventStore::usedChunkCount(),
+                                   "and the retained bodies survive it, because the source owns them");
+  const uint16_t usedAfterReset = LoopEventStore::usedChunkCount();
+  TEST_ASSERT_TRUE_MESSAGE(retainedTrack.tryReleaseRetainedPlaybackSource(0),
+                           "a retained revision whose content is gone is released by the one predicate");
+  TEST_ASSERT_FALSE(retainedTrack.hasRetainedPlaybackSourceForSlot(0));
+  TEST_ASSERT_LESS_THAN_UINT16_MESSAGE(usedAfterReset, LoopEventStore::usedChunkCount(),
+                                       "and only then are its bodies returned to the store");
+  TEST_ASSERT_TRUE_MESSAGE(retainedTrack.noLiveOwnerForSlot(0),
+                           "the retention term is gone once the source is released");
+
+  // ---- W-16 (second clause): a served window keeps its source retained even after the revision advanced ---------
+  Track& windowTrack = prepareWindowOwnerSlot(3);
+  Loop& windowLoop = windowTrack.getLoop(0);
+  publishBarSpacedRootForSlot(windowLoop, 2);
+  const uint32_t windowRevision = windowLoop.playbackRevision;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(windowTrack.retainPlaybackSourceForSlot(0, windowRevision, 31)));
+  SessionMidiEventVec windowScratch;
+  // The phase must leave the declared contract room to finish before the handoff (the 3.2 fixtures' own rule), so the
+  // request names the first phase whose window can still be completed before the playhead returns to it.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(windowTrack.requestPlaybackWindow(
+                        0, kWindowOwnerExpectedRequiredLead, windowScratch)));
+  for (size_t turn = 0; turn < 8 && windowTrack.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)windowTrack.stepPlaybackViewMaintenance();
+  }
+  PlaybackWindowIdentity served{};
+  TEST_ASSERT_TRUE(windowTrack.publishedPlaybackWindowIdentityForSlot(0, served));
+  TEST_ASSERT_EQUAL_UINT32(windowRevision, served.playbackRevision);
+  // The loop advances past the retained revision, but the window that is being served still reconstructs from it.
+  commitRecordPassIntoTrackSlot(windowTrack, 0);
+  TEST_ASSERT_TRUE(windowLoop.playbackRevision > windowRevision);
+  TEST_ASSERT_FALSE_MESSAGE(windowTrack.tryReleaseRetainedPlaybackSource(0),
+                            "a served window keeps its source retained");
+  // A newer window becomes the served one, atomically, and only then is the older source unneeded.
+  MidiEvent successorSource[8];
+  const size_t successorCount = buildWindowOwnerSource(successorSource, 8);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(windowTrack.requestPlaybackViewMaintenance(
+                        0, successorSource, successorCount,
+                        PlaybackViewSourceIdentity{windowLoop.playbackRevision, 9, nullptr},
+                        PlaybackCoverageInterval{0, 2 * 768, kWindowOwnerLoopTicks}, {}, {}, 0,
+                        kWindowOwnerExpectedRequiredLead)));
+  for (size_t turn = 0; turn < 8 && windowTrack.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)windowTrack.stepPlaybackViewMaintenance();
+  }
+  TEST_ASSERT_TRUE(windowTrack.adoptPreparedPlaybackWindow(0));
+  PlaybackWindowIdentity adopted{};
+  TEST_ASSERT_TRUE(windowTrack.publishedPlaybackWindowIdentityForSlot(0, adopted));
+  TEST_ASSERT_EQUAL_UINT32(windowLoop.playbackRevision, adopted.playbackRevision);
+  TEST_ASSERT_TRUE_MESSAGE(windowTrack.tryReleaseRetainedPlaybackSource(0),
+                           "once a newer window is served, the older source is released");
+  TEST_ASSERT_FALSE(windowTrack.hasRetainedPlaybackSourceForSlot(0));
+}
 int main() {
 
 
@@ -4185,5 +4350,8 @@ int main() {
   RUN_TEST(test_window_owner_publishes_the_interval_window_atomically);
   RUN_TEST(test_window_owner_resolves_the_interval_through_the_published_snapshot);
   RUN_TEST(test_window_readiness_names_its_holder_and_an_empty_interval_is_ready);
+  // windowed-playback-generation slice 3.6a: the retained source revision, its roles, and the two destruction paths
+  // it must survive (the pass-level reclamation consumer and the direct pass-timeline reset).
+  RUN_TEST(test_retained_source_is_admitted_with_roles_and_survives_both_destruction_paths);
   return UNITY_END();
 }

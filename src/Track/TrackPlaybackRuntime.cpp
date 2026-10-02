@@ -2243,8 +2243,18 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // its raw range and the capture-stop owner, and refuses every later stop on the track.
 // The interval-qualified canonical-release diagnostic adds one externally allocated 8-byte identity
 // field to the per-slot runtime; keep the target-ABI pin explicit.
-static_assert(sizeof(LoopPlaybackRuntime) == 6368,
-              "S3.0: LoopPlaybackRuntime is the per-slot working set (6,368 B extmem)");
+// Slice 3.6 re-based this pin: the slot now holds its **retained sources** in explicit roles (serving / candidate /
+// retiring) — two entries, each an identity, descriptor pins and its own store references, so a retained revision
+// survives both the pass-level reclamation consumer and `Loop::resetPassTimeline`. DEC-108 item 4 charges that cost
+// to the envelope, and it is one deliberate re-base, recorded, exactly as DEC-107 recorded 6,352 -> 6,360.
+// The pin is **per ABI**: the pin lists are pointer-sized, so the target (32-bit) holds +96 B and the host +176 B.
+#if defined(__IMXRT1062__)
+static_assert(sizeof(LoopPlaybackRuntime) == 6464,
+              "S3.0/3.6: LoopPlaybackRuntime is the per-slot working set (6,464 B extmem: +96 B retained sources)");
+#else
+static_assert(sizeof(LoopPlaybackRuntime) == 6544,
+              "S3.0/3.6: LoopPlaybackRuntime host-ABI size (6,544 B: +176 B retained sources)");
+#endif
 static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "

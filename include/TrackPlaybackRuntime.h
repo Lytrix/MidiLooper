@@ -8,6 +8,7 @@
 #include "Globals.h"
 #include "LoopEventStore.h"
 #include "LoopPasses.h"
+#include "PassReclaim.h"  // task 3.6: RetainedPlaybackSource + the source-role vocabulary
 #include "PlaybackMergedMidiEvents.h"
 #include "RuntimePlaybackView.h"
 #include "RuntimePlaybackViewBuild.h"
@@ -311,6 +312,40 @@ struct LoopPlaybackRuntime {
 
   /// S3.1 lease bookkeeping for this slot (roles + generation). No resource ownership.
   WorkingSetLeaseSlot lease_;
+  // --- Task 3.6 (DEC-108 items 4, 12(a), 13(a)): the retained source revisions ------------------------------
+  /// The slot's retained sources, in explicit **roles** (serving / candidate / retiring) rather than as "one
+  /// revision per slot". Each holds descriptor pins the pass-level reclamation consumer reads **and** its own
+  /// store references, so neither the reclamation path nor `Loop::resetPassTimeline` can free the bodies a retained
+  /// window still reconstructs from. Admission is bounded (`kMaxRetainedPlaybackSources`) and refuses by name
+  /// rather than discarding a source that is still needed. Charged to the envelope: two entries, each two vectors
+  /// plus one chunk-id list, on the per-slot working set (DEC-108 item 4's source-retention term).
+  std::array<RetainedPlaybackSource, kMaxRetainedPlaybackSources> retainedSources{};
+  /// True when any role holds a source. The release side is `Track::tryReleaseRetainedPlaybackSource`, and the
+  /// retention is a named term of `Track::noLiveOwnerForSlot`.
+  bool hasRetainedPlaybackSource() const {
+    for (const RetainedPlaybackSource& entry : retainedSources) {
+      if (entry.isRetained()) {
+        return true;
+      }
+    }
+    return false;
+  }
+  RetainedPlaybackSource* retainedSourceForRevision(uint32_t revision) {
+    for (RetainedPlaybackSource& entry : retainedSources) {
+      if (entry.isRetained() && entry.revision == revision) {
+        return &entry;
+      }
+    }
+    return nullptr;
+  }
+  RetainedPlaybackSource* freeRetainedSourceSlot() {
+    for (RetainedPlaybackSource& entry : retainedSources) {
+      if (!entry.isRetained()) {
+        return &entry;
+      }
+    }
+    return nullptr;
+  }
   uint32_t cachedLoopRevision = 0;
   uint32_t cachedTrackGeneration = 0;
   ActiveNoteLedger ledger;
