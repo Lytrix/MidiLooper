@@ -419,6 +419,16 @@ struct LoopPlaybackRuntime {
   /// (The identity the caller stamps into the source is free-form, so the operation's own generation is recorded here
   /// where the build begins rather than inferred from it.)
   uint32_t viewBuildOperationGeneration = 0;
+  /// DEC-108 item 5 / task 3.13: the **preview source contract** for this slot. `previewSourceActive` says the
+  /// in-flight or served window belongs to the preview lane, and `previewSourceRevision` is the session revision it
+  /// was frozen at -- the lane's own freeze token, never a second committed currency. The flag is how the lane
+  /// recognises **its own** work: a cancellation must never cancel a committed build, and the committed lane must
+  /// never publish preview content as its own. `previewHandoffOwed` is the exit handoff: the preview source has
+  /// yielded, the committed successor is owed, and the preview window keeps serving until that successor is adopted
+  /// (the handoff is a boundary, never a gap).
+  uint32_t previewSourceRevision = 0;
+  bool previewSourceActive = false;
+  bool previewHandoffOwed = false;
   /// S4f.19 continuity gate, bounded in DEC-070's shape: grains spent in the `RecordPublished`
   /// retirement wait with an unchanged frozen-window build phase, and that phase. A phase change
   /// is progress and resets the count, so a build its writers are still feeding is never cut; a

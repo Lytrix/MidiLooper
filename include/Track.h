@@ -506,6 +506,43 @@ public:
   /// is what a window must hold, so this is the presence question its gate asks -- and it is not the same as a
   /// non-zero event count, because an empty interval is a legitimately ready window.
   bool playbackWindowServesSlot(uint8_t slotIndex) const;
+  /// DEC-108 item 5 / task 3.13: why the preview lane is being cancelled. The spec's four lifecycle events are three
+  /// reasons because an in-session undo/redo is a **session mutation** whose result is a new preview revision.
+  enum class PreviewWindowCancelReason : uint8_t {
+    /// The session's content advanced (an edit, or an in-session undo/redo): the frozen preview revision is gone.
+    SourceMutated,
+    /// Another track became the previewed one, so this slot no longer has a live preview source.
+    SelectedTrackChanged,
+    /// The session ended: the preview source **yields**, and the committed successor becomes owed (the handoff).
+    SessionExited,
+  };
+  /// What a preview cancellation actually did -- named, so "there was nothing to cancel" is distinguishable from
+  /// "the build was cancelled" and from "the exit handoff is now owed".
+  enum class PreviewCancelOutcome : uint8_t {
+    NothingToCancel,
+    BuildCancelled,
+    HandoffOwed,
+    BuildCancelledAndHandoffOwed,
+    /// The session had already exited: the handoff was owed before this call and is not re-requested.
+    AlreadyHandedOff,
+  };
+  /// DEC-108 item 5 / task 3.13: request **preview** publication through the same immutable deferred discipline as
+  /// committed content. The caller supplies the frozen preview projection and the session revision it belongs to:
+  /// `previewRevision` is the lane's **freeze token** and its currency, never the loop's committed revision. The
+  /// published window's identity carries `origin == Preview`, so a consumer that requires committed currency refuses
+  /// it without inspecting anything else.
+  PlaybackViewRequestResult requestPreviewWindow(uint8_t slotIndex, uint32_t previewRevision,
+                                                 const MidiEvent* source, size_t sourceCount,
+                                                 uint32_t currentPhase);
+  /// The preview lane's cancellation. A mutated or removed source cancels the in-flight preview build and invalidates
+  /// its operation identity, so a stale completion publishes nothing; a session exit additionally makes the
+  /// **committed successor owed** (the handoff). The served window is never torn: at an exit the preview window keeps
+  /// serving until the committed successor is adopted.
+  PreviewCancelOutcome cancelPreviewWindowForSlot(uint8_t slotIndex, PreviewWindowCancelReason reason);
+  /// True when the served window for a slot came from the **preview** source contract (task 3.13).
+  bool servedPlaybackWindowIsPreviewForSlot(uint8_t slotIndex) const;
+  /// True when the exit handoff is owed for a slot: the preview source has yielded and a committed window is required.
+  bool previewWindowHandoffOwedForSlot(uint8_t slotIndex) const;
   size_t playbackWindowEventCountForSlot(uint8_t slotIndex) const;
   /// The window admission accounting for a slot's **live capture interval**: the window's content, plus the rows
   /// accepted in this interval, plus the closures they owe, plus the closure reserve -- all inside `L`. Pure

@@ -441,6 +441,30 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   from), **cancellation** (session mutation, track re-focus, undo, exit between build grains) and **committed-content
   handoff** at session exit. Verify fixture 2.12 passes: no mixed or stale preview publication, preview is never accepted
   as committed currency, and the live mutable fallback's removal is not narrowed on preview's account
+  *Increment 3.13 landed 2026-10-02 — the **preview source contract**; the **task stays open** for fixture 2.12's
+  integration half and the production callers.* `PlaybackWindowOrigin { Committed, Preview }` is carried in **both**
+  `PlaybackViewSourceIdentity` and `PlaybackWindowIdentity`, each **part of equality**, so a preview window for the same
+  slot, generation, revision and interval is **not equal** to the committed one it stands in front of — the spec's
+  "identified as preview rather than as a committed window" as an answer a consumer can act on. Preview is published
+  through the **same deferred lane** as committed content (`Track::requestPreviewWindow`: whole-loop coverage, the
+  session's preview revision as the lane's **freeze token** and its currency, `origin == Preview` in the identity), so
+  the live mutable fallback's removal is **not narrowed on preview's account**. Cancellation
+  (`Track::cancelPreviewWindowForSlot`, reasons `SourceMutated` / `SelectedTrackChanged` / `SessionExited`) answers a
+  **named** `PreviewCancelOutcome` and reuses the shared-view `ClearOrLoad` row — candidate released, prepared successor
+  retired, operation identity invalidated — so the served window is never torn, a mutated source leaves a served preview
+  stale **by its own revision**, and a cancellation can never cancel a committed build (the lane marks its own work).
+  The **committed-content handoff** is a boundary rather than a gap: at exit the preview window keeps serving, the
+  committed successor is owed, and the obligation is discharged at the **adoption** boundary, with a repeated exit
+  answering `AlreadyHandedOff`. *Verification:* focused **61/61**, full native **2692 / 2685 succeeded / 7 skipped / 0
+  failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192` **unchanged** / `code
+  392,328 + padding 888` (48 B above the floor) and the **target size pin re-based with measurement and its reason at
+  the assert** (6,512 -> **6,624**: +112 B, 8 B of payload and the rest alignment; the host stayed 6,544). Five mutations
+  red-proved with byte-identical restores. **OWED in this task:** fixture **2.12**'s integration half (edit while
+  playing on a long loop, cross window boundaries, in-session undo/redo, switch the selected track, mutate/exit between
+  build grains, then save — needing a suite that links **both** the window lane and the real edit stack) and the
+  production **callers** (the preview requester and the `EditManager` lifecycle hooks), which belong to the same stage
+  that admits the committed requester (3.7). Detail:
+  [`evidence/2026-10-02-s313-preview-contract/EVIDENCE.md`](evidence/2026-10-02-s313-preview-contract/EVIDENCE.md).
 
 - [ ] 3.14 **Integrate undo/redo audible handoff** — establish a production-path fixture before changing
   `refreshPlaybackAfterCapturePassStateChange` and its capture/overdub undo/redo callers. Extend the existing

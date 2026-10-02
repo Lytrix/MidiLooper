@@ -1719,6 +1719,101 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackWindow(uin
                                        phase, coverage.startPhase);
 }
 
+TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPreviewWindow(uint8_t slotIndex,
+                                                                           uint32_t previewRevision,
+                                                                           const MidiEvent* source,
+                                                                           size_t sourceCount,
+                                                                           uint32_t currentPhase) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return PlaybackViewRequestResult::NoRuntime;
+  }
+  ensureLoopsAllocated();
+  if (source == nullptr || sourceCount == 0) {
+    // A preview with no content is not a preview: publishing emptiness as preview would replace a served preview with
+    // a window that claims "no events" for content the session is editing.
+    return PlaybackViewRequestResult::NotServable;
+  }
+  Loop& loop = loopForSlot(slotIndex);
+  if (loop.loopLengthTicks == 0) {
+    return PlaybackViewRequestResult::NotServable;
+  }
+  // Preview covers the **whole loop**: the session's projection is the loop's edited state, and a session is not an
+  // interval. `playbackWindowInterval` states that shape once (whole-loop coverage), so the preview lane does not
+  // invent a second geometry rule.
+  PlaybackCoverageInterval coverage{};
+  if (!playbackWindowInterval(loop.loopLengthTicks, false, 0, coverage)) {
+    return PlaybackViewRequestResult::NotServable;
+  }
+  // The **frozen source**: preview currency is the session's preview revision, and the origin marks the contract. The
+  // snapshot identity is deliberately null -- this content has no published committed root, and the origin field is
+  // what stops it from passing as committed currency.
+  const PlaybackViewSourceIdentity identity{previewRevision, playbackGeneration, nullptr,
+                                            PlaybackWindowOrigin::Preview};
+  const uint32_t phase = currentPhase % loop.loopLengthTicks;
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  const PlaybackViewRequestResult result = requestPlaybackViewMaintenance(
+      slotIndex, source, sourceCount, identity, coverage, {}, {}, phase, coverage.startPhase);
+  if (result == PlaybackViewRequestResult::Admitted && runtime != nullptr) {
+    // The lane owns this build from here: the revision is its freeze token, and the flag is how a cancellation tells
+    // the lane's own work from a committed build's.
+    runtime->previewSourceRevision = previewRevision;
+    runtime->previewSourceActive = true;
+    runtime->previewHandoffOwed = false;
+  }
+  return result;
+}
+
+TRACK_COLD_MEM Track::PreviewCancelOutcome Track::cancelPreviewWindowForSlot(
+    uint8_t slotIndex, PreviewWindowCancelReason reason) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return PreviewCancelOutcome::NothingToCancel;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return PreviewCancelOutcome::NothingToCancel;
+  }
+  if (!runtime->previewSourceActive) {
+    // Nothing of the lane's own. A **repeated exit** is named rather than treated as a second handoff, so a caller
+    // cannot make the committed lane re-request by repeating itself.
+    if (reason == PreviewWindowCancelReason::SessionExited && runtime->previewHandoffOwed) {
+      return PreviewCancelOutcome::AlreadyHandedOff;
+    }
+    return PreviewCancelOutcome::NothingToCancel;
+  }
+  // Only the preview lane's own in-flight build is cancelled, and only through the shared-view row that states the
+  // shape: `ClearOrLoad` releases **only** the candidate's resources, retires a prepared successor and invalidates the
+  // operation identity, while the served window stays readable (the invariant every row carries).
+  const bool laneOwnsInFlightBuild = runtime->coverageBuildNeedsService();
+  if (laneOwnsInFlightBuild) {
+    applyPlaybackViewTransition(slotIndex, PlaybackViewTransition::ClearOrLoad);
+  }
+  runtime->previewSourceActive = false;
+  runtime->previewSourceRevision = 0;
+  if (reason == PreviewWindowCancelReason::SessionExited) {
+    // The exit handoff: the preview source yields and the committed successor is owed. The preview window that is
+    // serving right now keeps serving -- the handoff is a boundary, not a gap -- until a committed successor is
+    // adopted.
+    runtime->previewHandoffOwed = true;
+    return laneOwnsInFlightBuild ? PreviewCancelOutcome::BuildCancelledAndHandoffOwed
+                                 : PreviewCancelOutcome::HandoffOwed;
+  }
+  // A mutated or re-focused preview source: the in-flight build is cancelled above, and the served preview window is
+  // left untouched -- it is stale **by its own revision**, which is what makes "stale preview is not served as current"
+  // a currency answer rather than a teardown.
+  return laneOwnsInFlightBuild ? PreviewCancelOutcome::BuildCancelled
+                               : PreviewCancelOutcome::NothingToCancel;
+}
+
+TRACK_COLD_MEM bool Track::servedPlaybackWindowIsPreviewForSlot(uint8_t slotIndex) const {
+  PlaybackWindowIdentity identity{};
+  return publishedPlaybackWindowIdentityForSlot(slotIndex, identity) &&
+         identity.origin == PlaybackWindowOrigin::Preview;
+}
+
+TRACK_COLD_MEM bool Track::previewWindowHandoffOwedForSlot(uint8_t slotIndex) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  return runtime != nullptr && runtime->previewHandoffOwed;
+}
 TRACK_COLD_MEM bool Track::publishedPlaybackWindowIdentityForSlot(uint8_t slotIndex,
                                                                   PlaybackWindowIdentity& out) const {
   PlaybackViewSourceIdentity sourceIdentity{};
@@ -1730,6 +1825,9 @@ TRACK_COLD_MEM bool Track::publishedPlaybackWindowIdentityForSlot(uint8_t slotIn
   out.playbackGeneration = sourceIdentity.sourceGeneration;
   out.playbackRevision = sourceIdentity.playbackRevision;
   out.interval = coverage;
+  // Task 3.13: the window's origin comes from the **source identity** it was built from, so a preview window is
+  // identified as preview by construction rather than by a flag a caller has to remember to set.
+  out.origin = sourceIdentity.origin;
   return true;
 }
 
@@ -1745,7 +1843,19 @@ TRACK_COLD_MEM bool Track::adoptPreparedPlaybackWindow(uint8_t slotIndex) {
   // The successor lane's adoption: one atomic handoff (`RuntimePlaybackViewLifecycle::handoff`), prepared-mode
   // because a window carries no audible-launch semantics of its own. It refuses unless a **complete** successor
   // is waiting, so a caller can poll it safely.
-  return set->handoffReadyCoverage(PlaybackViewHandoffMode::Preparation);
+  if (!set->handoffReadyCoverage(PlaybackViewHandoffMode::Preparation)) {
+    return false;
+  }
+  // Task 3.13: the handoff completes **here**, at the adoption boundary -- the preview window served up to this point
+  // and the committed successor serves from it. Only a committed successor discharges the obligation; adopting another
+  // preview window (a re-focus back into a session) leaves it owed.
+  {
+    const RuntimePlaybackView& served = set->views[set->lifecycle.current];
+    if (served.source.origin == PlaybackWindowOrigin::Committed) {
+      runtime->previewHandoffOwed = false;
+    }
+  }
+  return true;
 }
 
 TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
@@ -1774,6 +1884,12 @@ TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
     // left exactly as it was -- the replacement's swap is `adoptPreparedPlaybackWindow`'s single handoff, at an
     // eligible boundary (task 3.7). That is F-1's "a consumer read cannot straddle a replacement".
     return set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views);
+  }
+  if (!runtime->previewSourceActive) {
+    // Task 3.13: with **no** window being served, this committed publication becomes the served window itself, so the
+    // preview exit handoff is discharged here. (When a preview window *is* served, the discharge belongs to the
+    // adoption boundary instead: the preview window keeps serving until the committed successor replaces it.)
+    runtime->previewHandoffOwed = false;
   }
   return set->lifecycle.publishCompletedBuildAsCurrentWindow(set->views);
 }
