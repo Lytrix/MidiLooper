@@ -100,3 +100,17 @@ pio run -e teensy41-capture-serial   # expect: free for local variables >= 0
 Confirm the math: `(16 - itcm_banks) * 32768 - variables == reported free`.
 
 Related: [`docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](../../docs/Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md) (heap tiers — a different axis: malloc RAM2 vs PSRAM, not the DTCM/ITCM linker split).
+
+**The size pin itself can be ABI-dependent, and check the cold TU whose pass you enlarged.**
+`windowed-playback-generation` slice 3.6a (2026-10-02) added a holder with pointer-sized members
+(`std::vector` pin lists) to the per-slot runtime. The S3.0 `static_assert(sizeof(LoopPlaybackRuntime) ==
+6,368)` then failed **on the target only** — **+96 B on 32-bit ARM** against +176 B on the x86-64 host —
+while the native suite stayed green, because one literal cannot pin both ABIs. The pin is now
+`#if defined(__IMXRT1062__)` with the **target** figure (6,464) charged to the envelope, the pattern
+`include/Utils/TrackMem.h` already uses for attributes. The first target build *after* that then grew
+ITCM by 336 B (`padding 1,016 -> 680`, under the 840 floor) with `variables` **unchanged**: the enlarged
+cold pass (`TrackManager::reclaimUnreferencedDisabledPasses`) was ITCM-resident, and its TU already
+carried a `FLASHMEM` macro — applying it moved the pass to FLASH and the clean rebuild reported
+`code 391,864 + padding 1,352`, i.e. **336 B less ITCM code than before the slice**. Two habits: when a
+new member makes the pin fail on one ABI only, look for a pointer-sized field before re-basing; and when
+`variables` is unchanged but `padding` dropped, check the cold function you added code to, not the data.
