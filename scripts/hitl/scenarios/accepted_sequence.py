@@ -88,7 +88,8 @@ _RUNNER_VALUE_FLAGS: tuple[str, ...] = (
 #: takes them. Without them a route would silently report a *weaker* verdict than the oracle on the same log
 #: (the identity and capture-integrity predicates would be unknown), which would break the one thing 4.4
 #: asks of the two entry points -- that they agree.
-_EVIDENCE_VALUE_FLAGS: tuple[str, ...] = ("--metadata", "--base-report", "--content-report", "--timing-report")
+_EVIDENCE_VALUE_FLAGS: tuple[str, ...] = ("--metadata", "--base-report", "--content-report", "--timing-report",
+                                          "--boot-anchor")
 
 
 class UnsupportedCombination(ValueError):
@@ -286,7 +287,7 @@ def verify_accepted_sequence(lines: list[str], args: object) -> dict[str, object
     failing link named, so the runner's exit code carries the oracle's own distinction instead of a
     boolean that hides `SETUP_INCOMPLETE` behind `INSUFFICIENT_EVIDENCE`.
     """
-    from hitl.accepted_sequence_probe import OK, analyse
+    from hitl.accepted_sequence_probe import OK, _run_window, analyse, load_boot_anchor
 
     scenario_id = str(getattr(args, "active_scenario_id", "") or "")
     try:
@@ -294,9 +295,17 @@ def verify_accepted_sequence(lines: list[str], args: object) -> dict[str, object
     except UnsupportedCombination as exc:
         return {"ok": False, "verdict": "UNSUPPORTED_COMBINATION", "issues": [str(exc)],
                 "scenario_id": scenario_id}
-    metadata, base_report, inputs = _oracle_evidence(args)
+    metadata, base_report, inputs, run_report = _oracle_evidence(args)
+    # A **repeat** on one boot: `--boot-anchor` names the fresh-boot capture this attempt continues, so the runner
+    # route reaches the same verdict as the standalone oracle over the same log (task 4.4). The link is completed by
+    # the replay's own log path, which is where its close time comes from -- a replayed *copy* therefore reads as
+    # "the close times are unavailable" and is refused rather than credited (conservative, and named in the detail).
+    anchor_value = _flag_value([str(token) for token in getattr(args, "legacy_args", []) or []], "--boot-anchor")
+    boot_anchor = load_boot_anchor(Path(anchor_value)) if anchor_value else None
     analysis = analyse("\n".join(lines), leg=leg, slot_a=slot_a, slot_b=slot_b,
-                       metadata=metadata, base_report=base_report, inputs=inputs)
+                       metadata=metadata, base_report=base_report, inputs=inputs,
+                       window=_run_window(run_report), driver=run_report, boot_anchor=boot_anchor,
+                       attempt_log=getattr(args, "verify_serial_log", None))
     failures = [f"{check.name}: {check.detail}" for check in analysis.checks if check.status != OK]
     return {
         "ok": analysis.verdict == "ACCEPTED_SEQUENCE_PASS",
@@ -310,8 +319,8 @@ def verify_accepted_sequence(lines: list[str], args: object) -> dict[str, object
     }
 
 
-def _oracle_evidence(args: object) -> tuple[Optional[dict], Optional[dict], dict]:
-    """`(metadata, base_report, inputs)` from the runner's arguments, as the standalone oracle reads them.
+def _oracle_evidence(args: object) -> tuple[Optional[dict], Optional[dict], dict, Optional[dict]]:
+    """`(metadata, base_report, inputs, run_report)` from the runner's arguments, as the CLI route reads them.
 
     A path that is absent or unreadable yields None, which the oracle already treats as "this evidence was
     not supplied" -- it does not invent a verdict from it. `inputs` is the conjunction's external halves: the
@@ -332,9 +341,10 @@ def _oracle_evidence(args: object) -> tuple[Optional[dict], Optional[dict], dict
             return None
         return json.loads(path.read_text(encoding="utf-8"))
 
+    run_report = load("--run-report")
     inputs = {
         "content_parity": load("--content-report"),
         "timing": load("--timing-report"),
-        "shutdown": (load("--run-report") or {}).get("shutdown"),
+        "shutdown": (run_report or {}).get("shutdown"),
     }
-    return load("--metadata"), load("--base-report"), inputs
+    return load("--metadata"), load("--base-report"), inputs, run_report

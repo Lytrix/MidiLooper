@@ -12,6 +12,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any, Mapping
 
 # Running this file directly places scripts/hitl on sys.path[0], where the local
 # hitl/serial package shadows pyserial. Remove that entry before importing the
@@ -43,6 +44,43 @@ def _read_dump(dev: serial.Serial, *, slot0: int, timeout_s: float) -> str:
     return "\n".join(lines)
 
 
+def slot_passes(item: Mapping[str, Any]) -> bool:
+    """True when one slot's dump is usable **and** its storage -> effective relation is accounted for.
+
+    Accounted means either the views are identical, or every dropped/moved row is explained by a covering row
+    (`hitl.content_deduction`): a committed Hide/Shorten is a logical outcome of a covered note, not loss, so it is a
+    pass -- while an unexplained remainder fails here and is named in the report.
+    """
+    return bool(item["complete"] and item["dump_slot"] == item["firmware_slot"]
+                and item["declared_counts_match"]
+                and (item["storage_matches_effective"] is True
+                     or item["resolved_storage_match"] is True))
+
+
+def verdict_from_slots(slot_reports: list[dict]) -> dict:
+    """The report shape the accepted-sequence oracle reads, from two slots' own dump reports."""
+    unexplained = [f"slot {item['slot']}: {reason}"
+                   for item in slot_reports for reason in ((item.get("deduction") or {}).get("unexplained") or [])]
+    if not unexplained and not all(slot_passes(item) for item in slot_reports):
+        unexplained = ["mixed slot dump parity failed"]
+    passed = bool(slot_reports) and all(slot_passes(item) for item in slot_reports)
+    return {
+        "pass": passed,
+        "verdict": "pass" if passed else "fail",
+        "inventory_equal": passed,
+        "storage_matches_effective": passed,
+        "deductions": [f"slot {item['slot']}: {name}"
+                       for item in slot_reports
+                       for group in ("hidden", "shortened")
+                       for name in ((item.get("deduction") or {}).get(group) or [])],
+        "slots": slot_reports,
+        "unexplained_manifest_differences": [] if passed else unexplained,
+        "unexplained_lifecycle_differences": [],
+        "count_differences": {},
+        "owner": "mixed_content_report",
+    }
+
+
 def build_report(*, port: str, slots: tuple[int, int], timeout_s: float, baud: int) -> dict:
     slot_reports: list[dict] = []
     with serial.Serial(port, baud, timeout=0.05) as dev:
@@ -50,6 +88,7 @@ def build_report(*, port: str, slots: tuple[int, int], timeout_s: float, baud: i
         for slot in slots:
             dump = _read_dump(dev, slot0=slot - 1, timeout_s=timeout_s)
             parsed = analyse_content_dump(dump, slot_c=slot - 1, expected_notes=())
+            deduction = parsed.get("deduction") or {}
             slot_reports.append({
                 "slot": slot,
                 "firmware_slot": slot - 1,
@@ -57,26 +96,13 @@ def build_report(*, port: str, slots: tuple[int, int], timeout_s: float, baud: i
                 "dump_slot": parsed["slot"],
                 "declared_counts_match": bool(parsed["declared_counts_match"]),
                 "storage_matches_effective": parsed["storage_effective_match"],
+                "resolved_storage_match": parsed["resolved_storage_match"],
+                "deduction": deduction,
                 "storage_rows": parsed.get("declared_counts", {}),
                 "storage_note_ons": parsed.get("storage_note_ons", []),
                 "effective_note_ons": parsed.get("effective_note_ons", []),
             })
-    passed = all(
-        item["complete"] and item["dump_slot"] == item["firmware_slot"] and
-        item["declared_counts_match"] and item["storage_matches_effective"] is True
-        for item in slot_reports
-    )
-    return {
-        "pass": passed,
-        "verdict": "pass" if passed else "fail",
-        "inventory_equal": passed,
-        "storage_matches_effective": passed,
-        "slots": slot_reports,
-        "unexplained_manifest_differences": [] if passed else ["mixed slot dump parity failed"],
-        "unexplained_lifecycle_differences": [],
-        "count_differences": {},
-        "owner": "mixed_content_report",
-    }
+    return verdict_from_slots(slot_reports)
 
 
 def main() -> int:

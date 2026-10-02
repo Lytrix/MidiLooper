@@ -99,8 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Bound for the device to name a gesture's effect with its own slot-scoped DISP "
                         "row (a selection change or an arm); a swallowed press never names one")
     p.add_argument("--seed-settle-timeout-s", type=float, default=DEFAULT_SEED_SETTLE_TIMEOUT_S,
-                   help="Bound for a seeded take's finalization receipt after its commit stop (recorded, "
-                        "not a gate)")
+                   help="Bound for the seeded take's slot-scoped finalization release after its commit stop; "
+                        "missing release aborts preparation before the next target")
     p.add_argument("--predecessor-publication-timeout-s", type=float,
                    default=DEFAULT_PREDECESSOR_PUBLICATION_TIMEOUT_S,
                    help="Bound for the seeded take's *publication* (the stop obligation the device makes a "

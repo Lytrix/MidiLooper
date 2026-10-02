@@ -146,15 +146,6 @@ def leg_gestures(leg: str, *, track: int, a: int, b: int) -> list[Gesture]:
             Gesture("b_overdub_start", "record", 0),      # start B's overdub on the seeded target
             Gesture("b_stop_request", "slot_record", b),  # ONE press: B's stop, denied inside A's window
         ]
-    if leg == "od":
-        # The switch IS A's stop. A separate stop first leaves PLAYING and routes B's
-        # button through the SD-aware playback queue instead of the capture-switch.
-        # Reuse the device-proven retention prefix; C is a separate record successor
-        # and is deliberately not substituted for the populated overdub target B.
-        from hitl_retention_handoff import critical_window_gestures
-        return [Gesture(g.step, g.kind, g.value) for g in
-                critical_window_gestures(track=track, a=a, b=b, c=8)
-                if g.step != "c_switch_request"]
     raise ValueError(f"unknown leg {leg!r}")
 
 
@@ -419,24 +410,44 @@ def _slot_receipt_wires(slot0: int, states: Optional[tuple[str, ...]],
 def _slot_ready_state(capture_log: Path, after: int, slot0: int, slot_number: int) -> Optional[str]:
     """The device's *current* readiness for `slot0` as of `after`: `"recording"`, `"armed"` or None.
 
-    Read from the rows the firmware writes **straight to `Serial`** (`Loop N: Start Recording`,
-    `Recording started @ tick`), so the answer does not wait on the capture ring: the ring can hold a take's
-    rows for the whole take (`captures/s4f22-dec096-od-10`). `Recording started` is only trusted when the
-    slot-scoped arm row for **this** slot came first, since that row names no slot. This is a *state read*, not
-    a gesture wait, so it applies the freshness floor itself (`_is_news`) rather than a gesture's.
+    Both wire families are read, and the **latest** one wins, because a state read has to consume the device's
+    own *transitions* rather than only the arming ones:
+      * the slot-scoped `DISP` state rows (`#CAP,<us>,DISP,<slot0>,<STATE>,…`) are the device's current per-slot
+        state, so `ARMED`/`RECORDING` mean ready and any other state (`STOPPED`, …) is the device saying it is no
+        longer armed. Measured (`captures/s45-reusefix-20261002-153058-rec`): the scoped clear ended an arm with
+        `#CAP,23489715,DISP,4,STOPPED,0,…`, and a read that collected only the arming rows still answered
+        `armed`, refusing a target the device had already released;
+      * the firmware's own printed rows (`Loop N: Start Recording`, `Recording started @ tick`) are written
+        straight to `Serial`, so they are live even when the ring has not flushed. `Recording started` is only
+        trusted when this slot's arm row came first, since it names no slot.
+    This is a *state read*, not a gesture wait, so it applies the freshness floor itself (`_is_news`).
     """
     floor = _gesture_clock_us(capture_log, after)
-    rows = [line for line in _slot_disp_rows(capture_log, after, slot0, None,
-                                             (f"Loop {slot_number}: Start Recording",
-                                              "Recording started @ tick"))
-            if _is_news(line, floor)]
-    state: Optional[str] = None
-    for line in rows:
+    disp_states = {"ARMED": "armed", "RECORDING": "recording"}
+    observed: list[tuple[int, int, int, str]] = []  # (rank, device_us, index, state)
+    for index, line in enumerate(_lines(capture_log)[max(after, 0):], start=max(after, 0)):
+        if not _is_news(line, floor):
+            continue
+        parsed = _slot_disp_state(line)
+        if parsed is not None and parsed[0] == slot0:
+            stamp = device_stamp_us(line)
+            observed.append((0 if stamp is not None else 1, stamp or 0, index,
+                             disp_states.get(parsed[1], "idle")))
+            continue
         if f"Loop {slot_number}: Start Recording" in line:
-            state = "armed"
-        elif state == "armed" and "Recording started @ tick" in line:
-            state = "recording"
-    return state
+            stamp = human_line_device_us(line)
+            observed.append((0 if stamp is not None else 1, stamp or 0, index, "armed"))
+        elif "Recording started @ tick" in line:
+            stamp = human_line_device_us(line)
+            observed.append((0 if stamp is not None else 1, stamp or 0, index, "recording"))
+    if not observed:
+        return None
+    # Rank first: a row with **no** clock cannot be placed by time, and the printed family is live by
+    # construction (written straight to `Serial`), so treating such a row as *oldest* would let an earlier ring
+    # row outrank a state the device has already reported. Within a rank the device clock decides, and file
+    # position is only the tie-break -- the ring flushes in batches, so position alone is not an order.
+    state = max(observed, key=lambda row: (row[0], row[1], row[2]))[3]
+    return None if state == "idle" else state
 
 
 def _await_slot_disp(capture_log: Path, after: int, slot0: int,
@@ -526,8 +537,8 @@ DEFAULT_ARM_TIMEOUT_S = 6.0
 #: A target the run has *already* armed (the clear's own selection press does that on an empty slot) is not
 #: pressed at all: that press is a toggle (`captures/s4f22-dec096-od-10`).
 DEFAULT_SEED_PRESS_ATTEMPTS = 3
-#: Bound for the seeded take's finalization receipt after its commit stop. Informational: the seed's own
-#: selection/arm receipts are the gates, and this only records whether the release edge arrived.
+#: Bound for the seeded take's finalization release after its commit stop. A missing release is a
+#: preparation failure: the next slot's controls must not run against a still-owned seed.
 DEFAULT_SEED_SETTLE_TIMEOUT_S = 10.0
 
 
@@ -537,15 +548,72 @@ DEFAULT_SEED_SETTLE_TIMEOUT_S = 10.0
 #: (`captures/s4f22-dec096-od-12`) slot 3's publication landed 40 s after its stop, which is what
 #: `record admission deferred while a stop obligation is live for slot 3` was waiting for.
 DEFAULT_PREDECESSOR_PUBLICATION_TIMEOUT_S = 75.0
-
-
 def _leg_deferral_row(capture_log: Path, after: int) -> str:
     """The device's own row explaining why it deferred a record admission after `after`, or ""."""
     return next((line.strip() for line in _lines(capture_log)[max(after, 0):]
                  if "record admission deferred" in line or "Overdub start rejected" in line), "")
 
-#: The firmware's own rows showing that a press was read as a **record start** for that slot
-#: (`MidiButtonActions::handleToggleRecordForSlot`): an immediate start, a start quantized to the loop
+
+#: The host's own overhead inside a leg (its start row to the switch press) beyond the note burst: measured ~2 beats
+#: (`captures/s45-fixcamp-20261002-181255-od2`: 2.336 s from the leg's start to its wrap against a 4-beat burst), so
+#: the burst is sized with this much room left over. It is a *host* cost and is therefore expressed in clocks, which
+#: the device's own tempo times.
+LEG_OVERHEAD_CLOCKS = 48
+
+
+def _loop_length_ticks(capture_log: Path, slot0: int, after: int = 0) -> Optional[int]:
+    """The length in ticks of `slot0`'s loop, from the device's own stop row for its committed take.
+
+    `RECS,(stop|stopToStopped),<slot>,<tick>,<start>,<raw>,<final>,<align>` -- `final` is the take's length after
+    alignment (`src/Track/TrackCaptureStopCommit.cpp:422`), i.e. the loop the next take on that slot runs in. Reading
+    the device's number keeps the host from assuming a tick rate: `bars` turns it into ticks per beat.
+    """
+    pattern = re.compile(r"RECS,(?:stop|stopToStopped),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\s*$")
+    found: Optional[int] = None
+    for line in _lines(capture_log)[max(after, 0):]:
+        match = pattern.search(line)
+        if match and int(match.group(1)) == slot0:
+            found = int(match.group(5))
+    return found
+
+
+def _leg_start_tick(capture_log: Path, after: int) -> Optional[int]:
+    """This leg's own phase, from the device's directly printed `Overdubbing started @ tick N` row."""
+    pattern = re.compile(r"Overdubbing started @ tick (\d+)")
+    for line in _lines(capture_log)[max(after, 0):]:
+        match = pattern.search(line)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _leg_note_budget(*, loop_ticks: int, start_tick: int, bars: int, requested: int,
+                     step_clocks: int) -> tuple[int, str]:
+    """How many notes a leg may send so that it does **not** cross its loop end (DEC-112 ruling 2).
+
+    A leg that crosses its loop end wraps, and the wrap (`src/Track/TrackOverdubWrap.cpp:145-147`) leaves an empty
+    capture staging with a 0 generation, which collapses its finalization window to ~200 ms and serializes the
+    successor (DEC-111) -- `captures/s45-fixcamp-20261002-181255-od2` and `captures/s45-clock-20261002-194915-od1`
+    both wrapped; the two healthy runs did not. So the burst is sized to the room the **device** names: the loop's own
+    length from its stop row, this leg's `@ tick` phase from its start row, and the run's own `bars` to turn the
+    device's ticks into clocks. Measured: the healthy runs had 8.5 beats of room and the failing ones 4.5, against a
+    leg that needs ~6 (4 of burst + the ~2-beat host overhead above).
+
+    Returns `(notes, "")`, or `(0, reason)` when the room cannot hold even one note plus that overhead.
+    """
+    beats = max(1, bars) * 4
+    ticks_per_clock = max(1.0, loop_ticks / float(beats * MIDI_CLOCKS_PER_BEAT))
+    room = int((loop_ticks - (start_tick % max(1, loop_ticks))) % max(1, loop_ticks))
+    need_ticks = (LEG_OVERHEAD_CLOCKS + step_clocks) * ticks_per_clock
+    if room < need_ticks:
+        return 0, (f"the predecessor's loop has no room for a leg at this phase: room={room} ticks, "
+                   f"need={int(need_ticks)} (loop {loop_ticks} ticks, start tick {start_tick}, "
+                   f"{bars} bar(s), {ticks_per_clock:.2f} ticks per clock)")
+    notes = int((room - LEG_OVERHEAD_CLOCKS * ticks_per_clock) // (step_clocks * ticks_per_clock))
+    return max(1, min(max(1, requested), notes)), ""
+
+
+
 #: phase/bar (`Queued recording …`, which the device then dispatches on its own boundary), or an immediate
 #: punch-in of an already-queued request.
 RECORD_START_MARKERS = ("Start Recording", "Queued recording (loop phase or bar)", "Immediate punch-in")
@@ -628,7 +696,7 @@ def _await_route(capture_log: Path, after: int, *, slot0: int, slot_number: int,
     return True, gesture.evidence.get(final, ""), ""
 
 def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, slot_a: Optional[int] = None,
-              press_ms: int, phase_timeout_s: float, events: list[dict],
+              press_ms: int, phase_timeout_s: float, events: list[dict], bars: int = 2,
               note_channel: int = 7, overdub_notes: int = 16, drain=None, clock_reader=None) -> str:
     """Drive one bounded leg, stopping before the next press on a bad transition.
 
@@ -677,17 +745,43 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, 
                 events.append({"event": "leg_aborted_start_unconfirmed", "gesture": gesture.step,
                                "device_row": device_row[:180]})
                 return "OVERDUB_START_DEFERRED" if device_row else "OVERDUB_START_UNCONFIRMED"
-            # An empty overdub retires too quickly to stage the successor. Give
-            # A real work, and B a distinct note for the subsequent content check.
+            # An empty overdub retires **inline**, so it opens no finalization window for the successor to
+            # overlap (`captures/s45-odleg-20261002-161512-od`: `Overdubbing stopped … events=0` at 170.607 s,
+            # no `reentry_window_open`). The content therefore has to survive the capture policy: a blind 20 ms
+            # pair is 7.7 ticks at 120 BPM against `DEFAULT_NOTE_MIN_LENGTH_TICKS = 8` with removal enabled, so
+            # it is dropped on the hot stop and the session stays empty. Send it on the device clock after the
+            # device names its own start -- the same emission the record leg uses (16-tick gate) -- and name a
+            # take whose content never arrived instead of letting it look like an empty interval.
             count = max(1, overdub_notes) if gesture.step == "a_overdub_start" else 1
             base = 60 if gesture.step == "a_overdub_start" else 79
-            for i in range(count):
-                pitch = base + i % 12
-                out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=note_channel))
-                time.sleep(0.02)
-                out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=note_channel))
-            events.append({"event": f"{gesture.step}_notes", "count": count,
-                           "channel": note_channel, "note_base": base})
+            if gesture.step == "a_overdub_start" and slot_a is not None:
+                # DEC-112 ruling 2: the burst is sized to the **room the device names**, so this leg does not cross
+                # its loop end. A crossing wraps, and the wrap leaves an empty staging with a 0 generation, which
+                # collapses this leg's finalization window and serializes the successor (DEC-111) -- measured in
+                # `captures/s45-fixcamp-20261002-181255-od2` and `captures/s45-clock-20261002-194915-od1`, while the
+                # two healthy runs had room to spare. The loop's own length and this leg's phase are the device's
+                # numbers; `bars` is the run's own request. A leg with no room is refused **by name** rather than
+                # sent into a wrap, and an unreadable pair is recorded, never silently assumed.
+                loop_ticks = _loop_length_ticks(capture_log, to_firmware_slot(slot_a))
+                start_tick = _leg_start_tick(capture_log, mark)
+                if loop_ticks is None or start_tick is None:
+                    events.append({"event": "leg_note_budget_unavailable", "loop_ticks": loop_ticks,
+                                   "start_tick": start_tick, "requested": count})
+                else:
+                    count, reason = _leg_note_budget(
+                        loop_ticks=loop_ticks, start_tick=start_tick, bars=bars, requested=count,
+                        step_clocks=max(1, MIDI_CLOCKS_PER_BEAT // 4))
+                    events.append({"event": "leg_note_budget", "loop_ticks": loop_ticks,
+                                   "start_tick": start_tick, "bars": bars, "notes": count, "reason": reason})
+                    if count <= 0:
+                        events.append({"event": "leg_aborted_no_room_in_predecessor_loop", "detail": reason})
+                        return "NO_ROOM_IN_PREDECESSOR_LOOP"
+            content = _send_clock_timed_notes(out_port, clock_reader, count=count, note_base=base,
+                                              note_channel=note_channel, timeout_s=phase_timeout_s)
+            events.append({"event": f"{gesture.step}_notes", "channel": note_channel, "note_base": base,
+                           **content})
+            if not content.get("confirmed"):
+                return "OVERDUB_CONTENT_UNCONFIRMED"
         elif gesture.step == "b_switch":
             # Task 4.3: the *proven* single capture-switch gesture, and nothing else. The production route is the
             # capture-switch, which names itself (`Loop B: Switch gesture from slot A`); a press that lands on the
@@ -759,13 +853,28 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, 
                               for marker in ("Record start carried on the switch",
                                              "switch and record start retained"))
                 return "B_RECORD_START_UNCONFIRMED" if carried else "SWITCH_NOT_CARRIED"
-            # "Send B content" (design decision 5): B's take must contain something for the content check and
-            # for B's own stop to be a stop of a real interval.
-            out_port.send(mido.Message("note_on", note=79, velocity=100, channel=note_channel))
-            time.sleep(0.02)
-            out_port.send(mido.Message("note_off", note=79, velocity=0, channel=note_channel))
-            events.append({"event": "b_record_content", "count": 1, "channel": note_channel,
-                           "note_base": 79})
+            # "Send B content": B's take must contain something for the content check and for B's own stop to be
+            # a stop of a real interval -- and the content must belong to the **take**, so it is sent on the
+            # device clock *after* the device names B's recording start, exactly as A's content is. Measured
+            # (`captures/s45-clearfix-20261002-160609-rec3`): a blind 20 ms send right after the switch press
+            # landed before `Recording started @ tick 29952` (105.347 s against a press at 104.42-104.94 s), no
+            # `MI` row for that note exists at all, B's take finalized **empty** (`record#0: 0`,
+            # `effective#0: 0`) and storage-to-effective parity became unprovable. A take that never starts is
+            # named here instead of silently producing empty content.
+            started = _await_slot_disp(capture_log, mark, to_firmware_slot(slot_b), ("RECORDING",),
+                                       phase_timeout_s,
+                                       human=(f"RECA,{to_firmware_slot(slot_b)},", "Recording started @ tick"),
+                                       drain=drain)
+            if started is None:
+                events.append({"event": "b_record_content", "start_confirmed": False, "count": 0,
+                               "channel": note_channel, "note_base": 79})
+                return "B_RECORDING_NOT_CONFIRMED"
+            content = _send_clock_timed_notes(out_port, clock_reader, count=1, note_base=79,
+                                              note_channel=note_channel, timeout_s=phase_timeout_s)
+            events.append({"event": "b_record_content", "start_confirmed": True, "channel": note_channel,
+                           "note_base": 79, **content})
+            if not content.get("confirmed"):
+                return "B_RECORD_CONTENT_UNCONFIRMED"
         elif gesture.step == "b_stop":
             # ONE press for B's interval. The accept is the device naming that it read a **stop**: the record
             # button's own row (`MIDI Button A: Stop Recording`, which names no slot -- so it is accepted as the
@@ -798,9 +907,17 @@ def _run_plan(out_port, capture_log: Path, plan: list[Gesture], *, slot_b: int, 
 
 
 def _send_clock_timed_notes(out_port, clock_reader, *, count: int, note_base: int,
-                            note_channel: int, timeout_s: float) -> dict:
-    """Emit short note content on the transport's MIDI-clock grid, not on serial/display timing."""
-    if clock_reader is None:
+                            note_channel: int, timeout_s: float, hold_clocks: int = 0) -> dict:
+    """Emit short note content on the transport's MIDI-clock grid, not on serial/display timing.
+
+    `hold_clocks` keeps the take open for that many further clock pulses after the last note, so a caller can make
+    the take's **length** an exact number of clocks (DEC-112 ruling 2) instead of a wall-clock span: a wall-paced
+    seed landed at whatever the host's sleeps produced -- 1536 and 2304 ticks for the same `--bars 2` -- and a leg
+    whose note burst then outlived that loop crossed its end, which reseeds the capture staging from a
+    `playbackGeneration` of 0 and collapses the leg's finalization window
+    (`captures/s45-fixcamp-20261002-181255-od2` against the sealed pass).
+    """
+    if not clock_reader:
         return {"confirmed": False, "count": 0, "channel": note_channel, "note_base": note_base,
                 "clock_source": "missing"}
     scope = active_cancel_scope()
@@ -828,10 +945,19 @@ def _send_clock_timed_notes(out_port, clock_reader, *, count: int, note_base: in
                     "phase_index": clock_reader.index_now()}
         out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=note_channel))
         sent += 1
+    # The take's length: one wait to the span's own end, so the caller's stop lands on a clock boundary. The bound
+    # covers the remaining pulses at this transport's own period, never a fixed wall-clock assumption.
+    span_pulse = origin + 1 + max(0, count) * step_clocks + max(0, hold_clocks)
+    remaining = max(0, int(span_pulse - clock_reader.index_now()))
+    span_timeout_s = min(timeout_s, max(pulse_timeout_s, (remaining + 2) * period * 2.0))
+    if not clock_reader.wait_pulse(span_pulse, timeout_s=span_timeout_s, abort=abort):
+        return {"confirmed": False, "count": sent, "channel": note_channel, "note_base": note_base,
+                "clock_source": "device_clock", "target_pulse": span_pulse,
+                "phase_index": clock_reader.index_now()}
     stats = clock_reader.stats() if hasattr(clock_reader, "stats") else {}
     return {"confirmed": sent == max(0, count), "count": sent, "channel": note_channel,
             "note_base": note_base, "clock_source": "device_clock", "step_clocks": step_clocks,
-            "gate_clocks": gate_clocks, "clock": stats}
+            "gate_clocks": gate_clocks, "hold_clocks": max(0, hold_clocks), "clock": stats}
 def _emit(out_port, gesture: Gesture, *, press_ms: int) -> None:
     if gesture.kind == "track":
         slots.press_track(_Ctx(out_port), gesture.value, press_ms=press_ms)
@@ -1173,7 +1299,8 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
                                         require=((t0, slot0),))
                     if fresh is None:
                         return None
-                    return fresh.get((t0, slot0))
+                    occupied = fresh.get((t0, slot0))
+                    return None if occupied is None else not occupied
 
                 for attempt in range(attempts):
                     spacing.before(LOOP_SELECT_NOTE_BASE + slot_number - 1)
@@ -1254,14 +1381,26 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
             raise PreparationFailure(
                 f"slot {slot_number} armed but never reached RECORDING within "
                 f"{request.phase_timeout_s:g}s; there is no take to score")
-        span_s = max(request.bars, 1) * 2.0
-        gap_s = span_s / (request.notes + 1)
-        for i in range(request.notes):
-            pitch = note_base + (i % 12)
-            out_port.send(mido.Message("note_on", note=pitch, velocity=100, channel=t0))
-            time.sleep(0.03)
-            out_port.send(mido.Message("note_off", note=pitch, velocity=0, channel=t0))
-            time.sleep(max(gap_s - 0.03, 0.01))
+        # DEC-112 ruling 2: the take's **length** is paced on the device's own MIDI clock, not on `bars * 2.0`
+        # seconds of wall time. A wall-paced seed landed at whatever the host's sleeps produced (measured: 1536 and
+        # 2304 ticks for the same `--bars 2`), and when a leg's own note burst then outlived that loop the leg crossed
+        # its end: the wrap (`Track::commitOverdubWrap`) resets the capture staging and reseeds `captureGeneration`
+        # from a `playbackGeneration` of 0, so the leg's stop arms a 0-generation marker with an empty post-wrap
+        # staging and its finalization window collapses to ~200 ms -- below the device's own admission latency, which
+        # is what serialized the successor in `captures/s45-fixcamp-20261002-181255-od2`. One bar is four beats of
+        # clock at this transport's own tempo, so the seeded loop is the intended length and a one-bar leg fits inside
+        # it. No clock (or too few pulses) is a **named** refusal, never a wall-paced take.
+        span_clocks = max(request.bars, 1) * MIDI_CLOCKS_PER_BEAT * 4
+        notes_clocks = max(request.notes, 1) * max(1, MIDI_CLOCKS_PER_BEAT // 4)
+        content = _send_clock_timed_notes(
+            out_port, clock_reader, count=request.notes, note_base=note_base, note_channel=t0,
+            timeout_s=request.phase_timeout_s, hold_clocks=max(0, span_clocks - notes_clocks))
+        events.append({"event": f"seed_{label}_notes", "span_clocks": span_clocks, **content})
+        if not content.get("confirmed"):
+            raise PreparationFailure(
+                f"slot {slot_number} seed content unconfirmed: the take's length is paced on the device's own MIDI "
+                f"clock and no clock (or too few pulses) answered ({content.get('clock_source')}, "
+                f"target pulse {content.get('target_pulse')})")
         # The mark goes in *before* the commit press: the device emits this take's
         # `RECS,stop,<slot>` at the stop edge, which can land in the log before the transport-stop row
         # the press's own confirmation waits for -- measured (`captures/s4f22-dec096-od-09`): the RECS
@@ -1276,9 +1415,9 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
         events.append({"event": f"seed_{label}_committed", "confirmed": committed})
         if not committed:
             raise PreparationFailure(f"slot {slot_number} seed commit unconfirmed")
-        # Recorded, not gated: whether the seeded take's finalization release edge arrived inside the
-        # bound. The *next* seed's own selection/arm receipts are its gates, and they fail by name when
-        # a predecessor still holds the selection, so this only has to make the latency attributable.
+        # Gate the next target on ownership release, not just a stop receipt. Continuing after a
+        # timeout can turn the next target's selection/clear into playback gestures while the
+        # seed finalizer still owns the track (observed in the same-boot overdub preparation).
         # Persistence completion is not the seed's ownership-release edge. A later leg can still be refused
         # while the seed's stop obligation remains live even after `PERS,result`; require the slot-scoped
         # canonical release marker before treating the seed as settled.
@@ -1287,6 +1426,10 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
                                  request.seed_settle_timeout_s, drain=drain)
         events.append({"event": f"seed_{label}_finalization_settled", "slot": slot_number,
                        "confirmed": settled})
+        if not settled:
+            raise PreparationFailure(
+                f"slot {slot_number} seed finalization release unconfirmed within "
+                f"{request.seed_settle_timeout_s:g}s; next target was not prepared")
 
     def require_idle(slot_number: int, label: str, mark: int) -> None:
         """Refuse to drive the record leg into a target that is left armed or recording (task 4.2).
@@ -1357,7 +1500,7 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
             outcome.result = _run_plan(
                 out_port, capture_log, plan, slot_b=request.slot_b, slot_a=request.slot_a,
                 press_ms=request.press_ms,
-                phase_timeout_s=request.phase_timeout_s, events=events,
+                phase_timeout_s=request.phase_timeout_s, events=events, bars=request.bars,
                 note_channel=t0, overdub_notes=request.notes, drain=drain, clock_reader=clock_reader)
             # The window ends where the plan did, not where the run does: the settle and the final stop below
             # are the run's own teardown, and the oracle reads the continuous-transport / clock-source
