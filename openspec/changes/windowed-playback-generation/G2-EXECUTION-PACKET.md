@@ -259,3 +259,40 @@ packet that touches their path"): deferred-service **fairness** across tracks an
 **3.10**; the **shared-view and cancellation transition table** with slice **3.11**; **second-miss post-breach
 behaviour with cross-generation ledger reconciliation** with slice **4.5**. This packet fixes only the owner's own
 bounded single-grain turn and its reachability.
+
+## Slice 3.4 — the window identity is carried, and a replacement cannot be straddled (2026-10-02)
+
+F-1's three clauses are **asserted rather than asserted-about**, and the successor lane the 3.2 refusal stood in
+for now exists. Detail and raw numbers: [`evidence/2026-10-02-s34-window-identity/EVIDENCE.md`](evidence/2026-10-02-s34-window-identity/EVIDENCE.md).
+
+- **What landed:** `PlaybackWindowIdentity` `{slot, playbackGeneration, playbackRevision, interval}` (equality over
+  exactly those fields; the snapshot identity stays provenance *inside* `PlaybackViewSourceIdentity`);
+  `Track::publishedPlaybackWindowIdentityForSlot` (const, returns a **copy**);
+  `RuntimePlaybackViewLifecycle::publishCompletedBuildAsReadySuccessor` (the successor lane — shell-tolerant,
+  keeping "one **real** successor at a time" and "only a complete view is ever installed", touching nothing else);
+  `Track::adoptPreparedPlaybackWindow` (one atomic `handoffReadyCoverage(Preparation)`); and the owner's completed
+  build now **routes** — no window → `current`, a window being served → the `ready` successor.
+- **The refusal changed with the routing:** `WindowAlreadyPublished` → **`SuccessorAlreadyPrepared`**. A window
+  merely *being served* is not a bound; a second *prepared* successor is. This **resolves** the 3.2 measured
+  finding (a second `begin` surfacing the new identity before its build completed) instead of working around it.
+- Oracle/contract unchanged: **YES** — DEC-108 items 1/4/5 and F-1's three clauses; no case weakened.
+- Fixture + discriminating assertions: **YES** — both owner fixtures. Identity is the real resolver's, and a second
+  request at the **same revision and the same ownership but a different interval** leaves generation **and**
+  revision unchanged while the interval moves (DEC-108 item 5's separation). The served window is asserted
+  identical field-for-field **before every preparation turn**, unchanged once the successor is ready, and swapped
+  only by the adoption.
+- Native verification: **GREEN** — focused **50/50**, `test_midi_service_drain` **38/38**, `test_playback_prewarm`
+  **190/190** (unchanged, cited), full native **2681 cases / 7 skipped / 2674 succeeded / 0 failed**.
+- Build/RAM1 verification: **GREEN** on a **clean rebuild** (all TUs recompiled, 70.8 s — not a cache hit):
+  `teensy41-capture-serial` **SUCCESS**, `variables 96,192 / ITCM 393,216 (code 392,200 + padding 1,016) / locals
+  34,880`, floor 840, 176 B of headroom. **No re-base**; the new code is `TRACK_COLD_MEM` (FLASH), so no `.data`
+  and no ITCM code moved.
+- Device verification: **NOT APPLICABLE** — no consumer-visible behaviour is enabled in this slice.
+- Red-proofs: **two**, each restored byte-identically with the sha256 verified: the successor routing reverted to
+  "always replace" fails *"the served window must not change while its successor is prepared"* and *"preparing a
+  successor must leave the served identity untouched"* (the 3.2 symptom, reproduced by mutation); the shell
+  tolerance reverted fails the successor publication's own expectations (*Expected TRUE Was FALSE*, twice).
+- Task IDs eligible for checkoff: **3.4** (identity carried, F-1 passes, the generation guards ownership rather
+  than becoming a second currency) and **2.1** (F-1's three clauses). **2.10** was checked off on 3.2's record.
+- **Still open, named rather than claimed:** the adoption edge is **not wired into production** (3.7 owns when a
+  boundary is eligible) and **readiness is still 3.5**'s predicate — nothing a consumer reads changed here.

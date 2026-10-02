@@ -231,12 +231,11 @@ public:
     Admitted,
     NoRuntime,
     BuildInFlight,
-    /// A window is already published for this slot. **Replacement is not a second start**: the successor lane
-    /// publishes a *ready* window and swaps it in with the lifecycle's atomic handoff (`handoffReadyCoverage`),
-    /// which is task 3.4/3.5's sequencing. Refusing here keeps the published window immutable by construction
-    /// until that lane exists -- measured 2026-10-02: a second `begin` against a slot whose window was already
-    /// published surfaced the *new* source identity in the published view before its build had completed.
-    WindowAlreadyPublished,
+    /// A **prepared successor** is already waiting for this slot and must be adopted (or released) before
+    /// another window can be prepared. A window merely *being served* is not a bound: preparing its replacement
+    /// is the successor lane -- the completed build becomes the ready successor and the served window stays
+    /// untouched until an adoption swaps it atomically (task 3.4; the consumer-facing adoption is 3.7).
+    SuccessorAlreadyPrepared,
     /// The slot has no committed content of a usable length, so there is no interval to prepare.
     NotServable,
     /// The slot has no published snapshot root: the enumeration this slice serves is the **selected
@@ -265,6 +264,14 @@ public:
   /// (the consumer switch), so this slice publishes without changing what any existing consumer reads.
   bool publishedPlaybackWindowForSlot(uint8_t slotIndex, PlaybackViewSourceIdentity& identityOut,
                                       PlaybackCoverageInterval& coverageOut) const;
+  /// DEC-108 item 5 / task 3.4: the published window's **identity** -- `(slot, playbackGeneration,
+  /// playbackRevision, interval)` -- which is what a consumer compares. `false` when no window is published.
+  bool publishedPlaybackWindowIdentityForSlot(uint8_t slotIndex, PlaybackWindowIdentity& out) const;
+  /// Task 3.4: **adopt** a published successor as the slot's current window, atomically (the lifecycle's own
+  /// handoff). This is the consumer-facing edge task 3.7 calls at an eligible boundary; until then nothing in
+  /// production calls it, and a prepared successor sits in the ready role without touching the window that is
+  /// being served.
+  bool adoptPreparedPlaybackWindow(uint8_t slotIndex);
   /// DEC-108 item 1 / task 3.2: the **interval policy** -- which interval a slot's window serves. A pure
   /// resolution from the loop's geometry, its demotion state and the playhead: whole-loop coverage where the
   /// whole-take view is admissible, else the two-bar window at the playhead that the live build already uses
