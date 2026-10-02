@@ -123,23 +123,35 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   own turn cannot produce a repeatable denial run today, because a denied grain is terminal in the current build API —
   a repeatable run needs a request that survives a terminal denial, which is 3.2's. See
   [`evidence/2026-10-02-s31-window-owner/EVIDENCE.md`](evidence/2026-10-02-s31-window-owner/EVIDENCE.md)*
-- [ ] 3.2 Publish **immutable interval windows** out of the owner — verify publication is atomic, that a whole-loop
+- [x] 3.2 Publish **immutable interval windows** out of the owner — verify publication is atomic, that a whole-loop
   coverage interval is treated as coverage spanning the loop, that enumeration goes through the effective-content
   resolver over the selected `LoopSnapshot` (the published-snapshot window gather) against the generation-qualified
   pinned source rather than raw committed chunks (§14), and that no whole-take
   reservation is restored for a demoted slot
-  *Partial 2026-10-02 — the **publication** half landed and is verified: the owner publishes inside the turn that
-  completes the build (`RuntimePlaybackViewLifecycle::publishCompletedBuildAsCurrentWindow`, which keeps the
-  "only a complete view is ever installed" invariant and performs the same atomic swap `handoff` does), the
-  window carries its identity and coverage, `Track::publishedPlaybackWindowForSlot` reads it, and a second window
-  is refused by name (`WindowAlreadyPublished`) with the published window unchanged. Green: 49/49 (this suite),
-  38/38, 190/190, full native 2680/2673/7 skipped/0 failed, and `teensy41-capture-serial` builds with RAM1
-  `variables 96,192` **unchanged**. Two mutations red-proved with byte-identical restores. **Still owed by this
-  task:** the enumeration clause (owner-side interval policy + the `Loop::tryGatherPublishedSnapshotEventsInWindow`
-  gather over the selected `LoopSnapshot`, so a caller names a slot and a phase rather than supplying events) and
-  fixture **2.10** (inspected work for the same window does not grow with loop length); replacement sequencing is
-  3.4/3.5's successor lane, per the measured finding recorded in
-  [`evidence/2026-10-02-s32-interval-publication/EVIDENCE.md`](evidence/2026-10-02-s32-interval-publication/EVIDENCE.md)*
+  *Landed 2026-10-02; all four clauses verified.* **Publication is atomic**: the owner publishes inside the turn
+  that completes the build (`RuntimePlaybackViewLifecycle::publishCompletedBuildAsCurrentWindow`, which keeps the
+  "only a complete view is ever installed" invariant and performs `handoff`'s atomic swap — a demoted slot's
+  *first* window had no publication path before it), the window carries its identity and coverage,
+  `Track::publishedPlaybackWindowForSlot` reads it, and a second window is refused by name
+  (`WindowAlreadyPublished`) with the published window unchanged. **A whole-loop interval is coverage spanning the
+  loop**: `Track::playbackWindowInterval` resolves it for a loop the whole-take view serves, and the two-bar
+  window at the playhead for a demoted one (one policy, shared with the live build). **Enumeration goes through
+  the effective-content resolver**: `Track::requestPlaybackWindow(slot, phase, scratch)` enumerates the selected
+  `LoopSnapshot`'s window membership via `Loop::tryGatherPublishedSnapshotEventsInWindow` — never raw committed
+  chunks — refuses a rootless slot (`SourceUnavailable`) or a non-current root (`SourceNotCurrent`) by name, and
+  stamps `{playbackRevision, playbackGeneration, publishedSnapshotIdentity}`. **No whole-take reservation for a
+  demoted slot**: the publication in the fixture's windowed slot succeeds through the windowed primitive while
+  `fullTakePlaybackViewAdmissible()` is false. Fixture **2.10** is asserted through the gather's new
+  inspected-work counter: identical inspected work (4 references) for the same window on a 4-bar and a 64-bar
+  loop, and 0 for a window whose bars carry no membership.
+  *Verification:* this suite **50/50**, `test_midi_service_drain` 38/38, `test_playback_prewarm` 190/190, full
+  native **2681 / 2674 succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** with RAM1
+  `variables 96,192` unchanged (no re-base); four mutations red-proved across the two increments, each restored
+  byte-identically.
+  *Named, not claimed:* an ordinary loop's whole-loop interval is refused by the declared contract's still
+  **unmeasured** per-turn phase advance (task 6.3's measurement is what makes it admissible), and *replacement*
+  sequencing is 3.4/3.5's successor lane (per the measured finding in
+  [`evidence/2026-10-02-s32-interval-publication/EVIDENCE.md`](evidence/2026-10-02-s32-interval-publication/EVIDENCE.md)).
 - [ ] 3.3 Budget the representation — verify current, ready and building windows (with reader retention, staging and
   transition overlap) are accounted, that the three rolling views' lifetimes are shown to suffice **before** any buffer
   is added, and that `test_playback_prewarm` stays green unchanged

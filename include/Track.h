@@ -237,6 +237,15 @@ public:
     /// until that lane exists -- measured 2026-10-02: a second `begin` against a slot whose window was already
     /// published surfaced the *new* source identity in the published view before its build had completed.
     WindowAlreadyPublished,
+    /// The slot has no committed content of a usable length, so there is no interval to prepare.
+    NotServable,
+    /// The slot has no published snapshot root: the enumeration this slice serves is the **selected
+    /// `LoopSnapshot`**, so a rootless slot is refused rather than served through a compatibility path.
+    SourceUnavailable,
+    /// The published root is **not current** (the gather would have to overlay unpublished session/pending
+    /// passes). Serving that as if it were the revision it names is exactly the staleness DEC-108 forbids, so
+    /// this slice refuses; the one-pass-late retention of a *previous* revision is 3.6's.
+    SourceNotCurrent,
     ContractUndeclared,
     CannotCompleteBeforeHandoff,
     AdmissionRefused,
@@ -256,6 +265,20 @@ public:
   /// (the consumer switch), so this slice publishes without changing what any existing consumer reads.
   bool publishedPlaybackWindowForSlot(uint8_t slotIndex, PlaybackViewSourceIdentity& identityOut,
                                       PlaybackCoverageInterval& coverageOut) const;
+  /// DEC-108 item 1 / task 3.2: the **interval policy** -- which interval a slot's window serves. A pure
+  /// resolution from the loop's geometry, its demotion state and the playhead: whole-loop coverage where the
+  /// whole-take view is admissible, else the two-bar window at the playhead that the live build already uses
+  /// (DEC-108 item 8's "prepare ahead of the playhead"; "centred on the playhead" is the present shape of that
+  /// rule, not its contract). Public so the resolver, its fixtures and its readers agree on one policy.
+  static bool playbackWindowInterval(uint32_t loopLengthTicks, bool demoted, uint32_t playheadPhase,
+                                     PlaybackCoverageInterval& out);
+  /// DEC-108 item 1 / task 3.2: ask the owner to prepare **the window this slot needs**, resolved from the
+  /// selected `LoopSnapshot` -- the caller names a **slot and a phase**, never events. `scratch` is the
+  /// caller's bounded buffer for the enumeration; the owner neither allocates nor keeps state for it. Returns
+  /// `Admitted` when the build is begun (then drive `stepPlaybackViewMaintenance`), or one of the named
+  /// refusals above, which are non-destructive.
+  PlaybackViewRequestResult requestPlaybackWindow(uint8_t slotIndex, uint32_t playheadPhase,
+                                                 SessionMidiEventVec& scratch);
   /// The declared `CoverageServiceContract` this owner is admitted under. Single-sourced: the declaration,
   /// its derivation and the measurement still owed are recorded where it is defined, and the grain quanta
   /// below are the sizes its declared grain counts come from.

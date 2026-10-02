@@ -1158,6 +1158,72 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   return PlaybackViewTurnResult::Idle;
 }
 
+TRACK_COLD_MEM bool Track::playbackWindowInterval(uint32_t loopLengthTicks, bool demoted,
+                                                  uint32_t playheadPhase, PlaybackCoverageInterval& out) {
+  if (loopLengthTicks == 0) {
+    return false;
+  }
+  if (!demoted) {
+    // Whole-loop coverage: the interval is the loop the playhead is in.
+    out = PlaybackCoverageInterval{0, loopLengthTicks, loopLengthTicks};
+    return true;
+  }
+  // Two bars at the playhead, clamped into the loop -- the same shape the live build uses, kept identical so
+  // the windowed representation is one policy rather than two.
+  constexpr uint32_t kWindowBars = 2;
+  uint32_t length = kWindowBars * Config::TICKS_PER_BAR;
+  if (length > loopLengthTicks) {
+    length = loopLengthTicks;
+  }
+  const uint32_t phase = playheadPhase % loopLengthTicks;
+  uint32_t start = phase > (length / 2) ? phase - (length / 2) : 0;
+  if (start + length > loopLengthTicks) {
+    start = loopLengthTicks - length;
+  }
+  out = PlaybackCoverageInterval{start, length, loopLengthTicks};
+  return true;
+}
+
+TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackWindow(uint8_t slotIndex,
+                                                                           uint32_t playheadPhase,
+                                                                           SessionMidiEventVec& scratch) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return PlaybackViewRequestResult::NoRuntime;
+  }
+  ensureLoopsAllocated();
+  Loop& loop = loopForSlot(slotIndex);
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+    return PlaybackViewRequestResult::NotServable;
+  }
+  PlaybackCoverageInterval coverage{};
+  if (!playbackWindowInterval(loop.loopLengthTicks, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks), playheadPhase,
+                              coverage)) {
+    return PlaybackViewRequestResult::NotServable;
+  }
+  // Enumerate through the **effective-content resolver**: the selected `LoopSnapshot`'s window membership,
+  // never raw committed chunks (spec *One pass late is the only stale authority*). Only the `Snapshot` branch is
+  // the *current* published root; an `Overlay` carries unpublished session/pending passes and a rootless slot
+  // has no content to resolve, so both refuse by name instead of serving stale content as current.
+  const uint32_t phase = playheadPhase % loop.loopLengthTicks;
+  Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+  uint32_t inspectedEntries = 0;
+  scratch.clear();
+  if (!loop.tryGatherPublishedSnapshotEventsInWindow(scratch, coverage.startPhase, coverage.lengthTicks, &path,
+                                                     &inspectedEntries)) {
+    return PlaybackViewRequestResult::SourceUnavailable;
+  }
+  if (path != Loop::SnapshotWindowGatherPath::Snapshot) {
+    return PlaybackViewRequestResult::SourceNotCurrent;
+  }
+  const PlaybackViewSourceIdentity identity{loop.playbackRevision, playbackGeneration,
+                                            loop.publishedSnapshotIdentity()};
+  // The handoff is the phase at which the playhead next *enters this interval* -- "readiness is owed per affected
+  // tick, before the playhead returns to it" -- so the distance is the rest of the loop plus the interval's own
+  // start. `canCompleteBeforeHandoff` decides whether the declared contract can make it.
+  return requestPlaybackViewMaintenance(slotIndex, scratch.data(), scratch.size(), identity, coverage, {}, {},
+                                       phase, coverage.startPhase);
+}
+
 TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   if (runtime == nullptr) {

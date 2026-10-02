@@ -214,7 +214,21 @@ consumers and the consumer switch are untouched** (3.5/3.4/3.7).
 - Green: this suite **49/49**, `test_midi_service_drain` 38/38, `test_playback_prewarm` 190/190, full native
   **2680 / 2673 succeeded / 7 skipped / 0 failed**, and `teensy41-capture-serial` **SUCCESS** with `variables
   96,192` (the approved line) and padding 1,080 ≥ the 840 floor.
-- **Open:** the enumeration clause and fixture 2.10; and the measured finding that a second `begin` on a slot with
+- **Second increment (same day) — the enumeration clause and fixture 2.10.** `Track::playbackWindowInterval` is
+  the **interval policy as one pure function** (whole-loop coverage where the whole-take view is admissible, else
+  the two-bar window at the playhead, clamped into the loop — the shape the live build already uses), and
+  `Track::requestPlaybackWindow(slot, phase, scratch)` lets the caller name a **slot and a phase, never events**:
+  it enumerates through `Loop::tryGatherPublishedSnapshotEventsInWindow` over the selected `LoopSnapshot`,
+  refuses a rootless slot (`SourceUnavailable`) or a non-current root (`SourceNotCurrent`) by name, and stamps
+  `{playbackRevision, playbackGeneration, publishedSnapshotIdentity}`. `Loop`'s gather gained an optional
+  **inspected-work** out-parameter (every membership reference it looks at, rejected ones included) and fixture
+  2.10 asserts it: the same window costs identical inspected work on a 4-bar and a 64-bar loop, and 0 when its
+  bars carry no membership. Red-proofs: the policy made to ignore demotion (*Expected 4232 Was 0*); the counter
+  removed (*"the short loop's window has content"*). Full native **2681 / 2674 succeeded / 7 skipped / 0 failed**,
+  build `variables 96,192` unchanged. **Task 3.2 is checked.**
+- **Still open, named rather than claimed:** an ordinary loop's whole-loop interval is refused by the declared
+  contract's **unmeasured** per-turn phase advance (task 6.3's measurement), and *replacement* sequencing is
+  3.4/3.5's successor lane; and the measured finding that a second `begin` on a slot with
   a published window surfaced the new identity before its build completed — **unattributed**, and made moot for
   this slice by the refusal; the successor lane (3.4/3.5) must sequence replacement through
   `handoffReadyCoverage`. Detail: [`evidence/2026-10-02-s32-interval-publication/EVIDENCE.md`](evidence/2026-10-02-s32-interval-publication/EVIDENCE.md).

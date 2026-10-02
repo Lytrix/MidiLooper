@@ -964,9 +964,14 @@ struct Loop {
   /// their companions overlay on top. Returns false only when no published
   /// snapshot exists so the caller can use compatibility gather. `pathOut`
   /// receives the branch actually taken (`None` / `Snapshot` / `Overlay`).
+  /// `inspectedEntriesOut`, when supplied, receives the number of snapshot membership references the walk
+  /// **looked at** for the window's bars -- including the references it rejected -- which is the inspected work
+  /// the window's preparation costs. It depends on the window and on the content *inside* it, never on the
+  /// loop's unrelated content (fixture 2.10).
   bool tryGatherPublishedSnapshotEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
                                                 uint32_t windowLength,
-                                                SnapshotWindowGatherPath* pathOut = nullptr) const;
+                                                SnapshotWindowGatherPath* pathOut = nullptr,
+                                                uint32_t* inspectedEntriesOut = nullptr) const;
   /// Snapshot window plus live `capture.store` events in the same window.
   /// Returns false only when no published snapshot exists. `pathOut` is the
   /// underlying snapshot-window branch (`None` / `Snapshot` / `Overlay`).
