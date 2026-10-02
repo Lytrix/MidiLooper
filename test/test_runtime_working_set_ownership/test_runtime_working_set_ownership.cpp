@@ -3590,6 +3590,184 @@ void test_s4b_4_the_undo_route_addresses_the_holder_the_switch_moved_to() {
                             "the applied entry must be consumed -- and only it: the refused one stays");
 }
 
+
+// ---------------------------------------------------------------------------
+// DEC-108 item 1 / `ExecutionBounds.md` rows 27-29: the window-build owner
+// (`Track::stepPlaybackViewMaintenance`) -- windowed-playback-generation slice 3.1.
+//
+// The owner's production surface is three off-clock calls. This slice changes no behaviour behind them: no
+// production path requests a window yet, and the owner publishes nothing a consumer reads. What is asserted
+// here is the contract the owner must satisfy **before** that request arrives: a bounded, declared grain
+// quantum; a persistent build cursor; a refusal that is named and non-destructive; and the deferred turn's
+// exact arithmetic, so neither a stacked nor a skipped grain can hide.
+// ---------------------------------------------------------------------------
+
+namespace {
+/// The owner's loop: 64 bars, so the loop holds the declared contract's required lead with room to spare and
+/// the demotion predicate's long-loop shape is the one under test.
+constexpr uint32_t kWindowOwnerLoopTicks = 64 * 768;
+
+/// A slot whose loop is long enough to hold the declared contract's required lead, with its playback runtime
+// prewarmed -- the state a pending window sits in. Nothing here establishes an obligation: the build the
+/// fixture begins *is* the obligation (DEC-108 item 1's state-driven shape).
+Track& prepareWindowOwnerSlot(uint8_t trackIndex) {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(trackIndex);
+  track.ensureLoopsAllocated();
+  track.getLoop(0).loopLengthTicks = kWindowOwnerLoopTicks;
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true),
+                           "the slot must prewarm a runtime for the owner to owe anything");
+  return track;
+}
+
+/// The declared contract's arithmetic written out, so the fixture's oracle is the *declaration* rather than
+/// the implementation's answer: 7 required grains, each preceded by at most 3 denied turns, each turn
+/// advancing at most one bar, plus the one-bar lead.
+constexpr uint32_t kWindowOwnerExpectedRequiredGrains = 7;
+constexpr uint32_t kWindowOwnerExpectedAdvancePerTurn = 768;
+constexpr uint32_t kWindowOwnerExpectedDeniedTurns = 3;
+constexpr uint32_t kWindowOwnerExpectedLead = 768;
+constexpr uint32_t kWindowOwnerExpectedRequiredLead =
+    kWindowOwnerExpectedRequiredGrains * (kWindowOwnerExpectedDeniedTurns + 1) *
+        kWindowOwnerExpectedAdvancePerTurn +
+    kWindowOwnerExpectedLead;
+
+/// A two-bar window's worth of source events, all inside the coverage interval so the fill's coverage filter
+/// appends every one of them: the fixture's grain count then follows from the declared quanta alone.
+size_t buildWindowOwnerSource(MidiEvent* out, size_t count) {
+  for (size_t i = 0; i < count; ++i) {
+    out[i] = MidiEvent::NoteOn(static_cast<uint32_t>(i * 15), 1, 48, 100);
+  }
+  return count;
+}
+
+}  // namespace
+
+/// W-5 + the declaration: the caps are declared, and the handoff margin -- not a bar count and not a
+/// millisecond constant -- is what admits or refuses.
+void test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle() {
+  const CoverageServiceContract declared = Track::playbackViewCoverageContract();
+  TEST_ASSERT_TRUE_MESSAGE(declared.isDeclared(), "the owner's contract must be declared before it works");
+  TEST_ASSERT_EQUAL_UINT32(kWindowOwnerExpectedAdvancePerTurn, declared.maximumPhaseAdvancePerTurn);
+  TEST_ASSERT_EQUAL_UINT16(kWindowOwnerExpectedDeniedTurns, declared.maximumConsecutiveDeniedTurns);
+  TEST_ASSERT_EQUAL_UINT16(3, declared.requiredFillGrains);
+  TEST_ASSERT_EQUAL_UINT16(3, declared.requiredOrderGrains);
+  TEST_ASSERT_EQUAL_UINT16(1, declared.requiredPromotionGrains);
+  TEST_ASSERT_EQUAL_UINT16(kWindowOwnerExpectedRequiredGrains, declared.requiredGrains());
+  TEST_ASSERT_EQUAL_UINT32(kWindowOwnerExpectedLead, declared.leadTicks);
+
+  MidiEvent source[4];
+  const size_t count = buildWindowOwnerSource(source, 4);
+  const PlaybackCoverageInterval coverage{0, 2 * 768, kWindowOwnerLoopTicks};
+  const PlaybackViewSourceIdentity identity{1, 1, nullptr};
+
+  // At the boundary: `canCompleteBeforeHandoff` admits exactly at the required lead.
+  Track& atBoundary = prepareWindowOwnerSlot(0);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(atBoundary.requestPlaybackViewMaintenance(
+                        0, source, count, identity, coverage, {}, {}, 0, kWindowOwnerExpectedRequiredLead)));
+  TEST_ASSERT_TRUE(atBoundary.hasPendingPlaybackViewMaintenance());
+
+  // Just inside: one tick more of lead is still admitted.
+  Track& inside = prepareWindowOwnerSlot(1);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(inside.requestPlaybackViewMaintenance(
+                        0, source, count, identity, coverage, {}, {}, 0,
+                        kWindowOwnerExpectedRequiredLead + 1)));
+
+  // Just outside: one tick short of the required lead is refused, by name, and takes nothing.
+  Track& outside = prepareWindowOwnerSlot(2);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
+                    static_cast<int>(outside.requestPlaybackViewMaintenance(
+                        0, source, count, identity, coverage, {}, {}, 0,
+                        kWindowOwnerExpectedRequiredLead - 1)));
+  TEST_ASSERT_FALSE_MESSAGE(outside.hasPendingPlaybackViewMaintenance(),
+                            "a refused request must not create an obligation");
+}
+
+/// W-2/W-3/W-6/W-7: the turn serves **exactly one declared grain**, the cursor persists across turns, the turn
+/// takes no pool capacity, and nothing a consumer reads changes.
+void test_window_owner_serves_one_grain_per_turn_and_publishes_nothing() {
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+  const uint32_t revisionBefore = loop.playbackRevision;
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingPlaybackViewMaintenance(),
+                            "an idle slot owes nothing before a request");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+                    static_cast<int>(track.stepPlaybackViewMaintenance()));
+
+  constexpr size_t kEvents = 100;
+  MidiEvent source[kEvents];
+  const size_t count = buildWindowOwnerSource(source, kEvents);
+  const PlaybackViewSourceIdentity identity{loop.playbackRevision, 1, nullptr};
+  const PlaybackCoverageInterval coverage{0, 2 * 768, kWindowOwnerLoopTicks};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackViewMaintenance(
+                        0, source, count, identity, coverage, {}, {}, 0, kWindowOwnerExpectedRequiredLead)));
+  TEST_ASSERT_TRUE(track.hasPendingPlaybackViewMaintenance());
+
+  // The expected turn count follows from the declared quanta: a grain served twice in one turn, or a grain
+  // skipped, changes this number.
+  const size_t expectedTurns =
+      (count + Track::kPlaybackViewFillQuantum - 1) / Track::kPlaybackViewFillQuantum +
+      (count + Track::kPlaybackViewOrderQuantum - 1) / Track::kPlaybackViewOrderQuantum;
+  TEST_ASSERT_EQUAL_UINT32(5, static_cast<uint32_t>(expectedTurns));
+  for (size_t turn = 1; turn <= expectedTurns; ++turn) {
+    const uint16_t chunksBefore = LoopEventStore::freeChunkCount();
+    const Track::PlaybackViewTurnResult result = track.stepPlaybackViewMaintenance();
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+                                  static_cast<int>(result),
+                                  "an owed window must be served, not skipped");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(chunksBefore, LoopEventStore::freeChunkCount(),
+                                     "the owner's turn takes no pool capacity");
+    TEST_ASSERT_FALSE_MESSAGE(track.isPlaybackMergedMidiEventsReadyForSlot(0),
+                              "the owner publishes nothing a consumer reads (task 3.2 does)");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(revisionBefore, loop.playbackRevision,
+                                     "the owner never moves the content-currency revision");
+    if (turn < expectedTurns) {
+      TEST_ASSERT_TRUE_MESSAGE(track.hasPendingPlaybackViewMaintenance(),
+                               "the build's cursor must persist across turns");
+    } else {
+      TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::BuildComplete),
+                        static_cast<int>(result));
+      TEST_ASSERT_FALSE_MESSAGE(track.hasPendingPlaybackViewMaintenance(),
+                                "a completed build owes nothing");
+    }
+  }
+  // Idempotent once complete: nothing owed, nothing served.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+                    static_cast<int>(track.stepPlaybackViewMaintenance()));
+}
+
+/// W-4: a refusal is named and **non-destructive** -- the obligation it found stays exactly as it was.
+void test_window_owner_refusals_are_named_and_non_destructive() {
+  // No runtime: the owner never allocates one, so the request is refused and nothing is owed.
+  LoopEventStore::initPool();
+  Track& bare = trackManager.getTrack(3);
+  bare.ensureLoopsAllocated();
+  bare.getLoop(0).loopLengthTicks = kWindowOwnerLoopTicks;
+  MidiEvent source[4];
+  const size_t count = buildWindowOwnerSource(source, 4);
+  const PlaybackViewSourceIdentity identity{1, 1, nullptr};
+  const PlaybackCoverageInterval coverage{0, 2 * 768, kWindowOwnerLoopTicks};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::NoRuntime),
+                    static_cast<int>(bare.requestPlaybackViewMaintenance(
+                        0, source, count, identity, coverage, {}, {}, 0, kWindowOwnerExpectedRequiredLead)));
+
+  // A build in flight: the second request is refused by name, and the obligation is untouched -- it still
+  // completes on its own turns, which is what makes the refusal non-destructive rather than a reset.
+  Track& track = prepareWindowOwnerSlot(4);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackViewMaintenance(
+                        0, source, count, identity, coverage, {}, {}, 0, kWindowOwnerExpectedRequiredLead)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::BuildInFlight),
+                    static_cast<int>(track.requestPlaybackViewMaintenance(
+                        0, source, count, identity, coverage, {}, {}, 0, kWindowOwnerExpectedRequiredLead)));
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingPlaybackViewMaintenance(),
+                           "a refused request must leave the existing obligation intact");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
+                    static_cast<int>(track.stepPlaybackViewMaintenance()));
+}
 int main() {
 
 
@@ -3663,5 +3841,10 @@ int main() {
   // The two exactly-once routes the fixture above left uncovered.
   RUN_TEST(test_the_arm_and_wait_requeue_retains_then_executes_exactly_once);
   RUN_TEST(test_a_start_refused_by_its_own_live_stop_obligation_retries_to_a_single_take);
+  // windowed-playback-generation slice 3.1: the window-build owner's declared contract, its one-grain turn
+  // and the naming/non-destructiveness of its refusals.
+  RUN_TEST(test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle);
+  RUN_TEST(test_window_owner_serves_one_grain_per_turn_and_publishes_nothing);
+  RUN_TEST(test_window_owner_refusals_are_named_and_non_destructive);
   return UNITY_END();
 }

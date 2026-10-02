@@ -170,23 +170,32 @@ nvm use 20 && openspec validate windowed-playback-generation --strict
 
 ## Completion record
 
-Nothing below is done. Each line is the field to fill, and each must be a real command/result, never a planned one.
+**Slice 3.1's record (2026-10-02).** The owner, its declared contract and its fixtures **landed and are green on
+the host and through the firmware gate**. Full detail and the raw numbers: [`evidence/2026-10-02-s31-window-owner/EVIDENCE.md`](evidence/2026-10-02-s31-window-owner/EVIDENCE.md).
 
-- Oracle/contract unchanged, or authorized change and supporting evidence: **NOT RUN** — the oracle above is not yet
-  frozen in code.
-- Fixture implemented and discriminating assertion demonstrated: **NOT RUN** — W-1…W-8 to be established with the
-  slice (fixture-first), then behaviour implemented, then the mutations of W-8 red-proved with byte-identical
-  restores.
-- Native verification: **NOT RUN** — no focused or full native run has been made for this slice.
-- Build/RAM1 verification: **NOT RUN** — no `teensy41-capture-serial` build and no budget check for this slice.
-- Device verification: **NOT APPLICABLE to checkoff** — this slice enables no behaviour and therefore makes no device
-  claim; a device row naming the turn is optional evidence, not a gate.
-- Required reviews and durable docs: **NOT RUN** — task 1.2 landed ([`DECISION_REVIEW.md`](DECISION_REVIEW.md), with
-  its F-1 blocker); the docs this slice touches (`docs/Runtime/CURRENT_WORK.md`,
-  `docs/Authority/Architecture/ExecutionBounds.md` rows 27–29) are updated at checkoff, not before.
-- Task IDs eligible for checkoff when the above are green: **3.1 only**; task 3.2 (interval publication) is the first
-  consumer and is where F-1 must be resolved. Task 2.4's "nothing allocates or blocks on the edge" fixture and task
-  2.8's red-proof are satisfied *by* W-6/W-8 for this slice.
+- Oracle/contract unchanged: **YES** — no case was weakened; the declaration is pinned value by value by W-5.
+- Fixture implemented and discriminating assertion demonstrated: **YES** — W-1…W-8 landed as
+  `test_playback_view_maintenance_turn_work_is_an_unfinished_build` plus the owner-rotation control in
+  `test_midi_service_drain`, and three owner fixtures in `test_runtime_working_set_ownership`. Four mutations
+  red-proved with byte-identical restores (sha256 verified): a served grain reported `Idle`; the declared quantum
+  ignored; the handoff-margin gate removed; the obligation claimed unconditionally.
+- Native verification: **GREEN** — `test_midi_service_drain` **38/38**, `test_runtime_working_set_ownership`
+  **48/48**, `test_playback_prewarm` **190/190** (unchanged), full native **2679 cases / 2672 succeeded /
+  7 skipped / 0 failed** (baseline 2675 → +4 cases).
+- Build/RAM1 verification: **GREEN** — `teensy41-capture-serial` **SUCCESS** with the approved line unchanged:
+  `variables 96,192 / ITCM 393,216 (code 392,008 + padding 1,208) / locals 34,880`, floor 840, 368 B of headroom.
+  **No re-base** of `scripts/ram1_budget.json` was needed or made. The first build of this slice *did* fail the guard
+  (`+4,096 B`) and the cause is now named: three `switch` statements in the owner emitted 16–24 B jump tables into
+  `.data`, and a few added `.data` bytes snapped the following `ALIGN(1024)`/`ALIGN(4096)` — the RAM1 rule's own
+  capture-tag finding. The fix was to add **zero `.data`**: no name table, an if/else chain instead of a `switch`, and
+  the refusal contract carried as the typed outcome enum (rendered as a name where the row is reported).
+- Device verification: **NOT APPLICABLE** — this slice enables no behaviour and makes no device claim.
+- Required reviews and durable docs: **task 1.2 landed** ([`DECISION_REVIEW.md`](DECISION_REVIEW.md)); the durable
+  docs (`docs/Runtime/CURRENT_WORK.md`, `ExecutionBounds.md` rows 27–29) are updated at checkoff, not before.
+- Task IDs eligible for checkoff: **3.1** (all four of its listed clauses have a green check: quantum, persistent
+  build cursor, the declared denial allowance consumed by the admission, and the demonstrated handoff margin; it is
+  reachable in the states a pending window sits in; and no new scheduling owner was introduced). Task 2.4's "nothing
+  allocates or blocks on the edge" and task 2.8's red-proof are satisfied *for this slice* by W-6/W-8.
 
 **Carried tightening items, explicitly not claimed here** (DEC-108 §12: "required contents of the first execution
 packet that touches their path"): deferred-service **fairness** across tracks and competing owners lands with slice

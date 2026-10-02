@@ -1030,3 +1030,147 @@ TRACK_COLD_MEM bool Track::tryClearCommittedMidiScratch() {
                                    committedMidiScratchPublishedIdentity_);
   return true;
 }
+
+// ---------------------------------------------------------------------------
+// DEC-108 item 1 / `ExecutionBounds.md` rows 27-29: the window-build owner
+// (`Track::stepPlaybackViewMaintenance`).
+//
+// This slice lands the owner, its declared service contract and its proof surface. **No behaviour changes
+// behind it**: nothing in production requests a window yet (the source resolution and the consumer-facing
+// publication are task 3.2), and the owner never publishes, hands off or allocates. What it must be able to
+// do before that request arrives is bounded, off-clock work: one declared grain per admitted turn, with the
+// admission arithmetic fixed in advance.
+// ---------------------------------------------------------------------------
+
+TRACK_COLD_MEM CoverageServiceContract Track::playbackViewCoverageContract() {
+  // The **declared** caps (DEC-108 item 1; `ExecutionBounds.md` row 27 asks the code to declare exactly
+  // these before active windowed playback may be admitted at all). This is deliberately conservative, and
+  // one term is explicitly **owed a measurement**:
+  //
+  // - `maximumPhaseAdvancePerTurn` = one bar (768 ticks). The playhead's real advance between two owner
+  //   turns is NOT measured yet (`ExecutionBounds` row 27's "maximum phase advance"), so the declaration
+  //   carries the conservative whole-bar bound. The direction is the safe one: `canCompleteBeforeHandoff`
+  //   turns a larger advance into a *larger required lead*, so an unmeasured value can only refuse work,
+  //   never admit too much. The measured figure is owed (task 6.3's sweeps and task 3.10's derived
+  //   envelope), and until it lands this declaration admits only a loop long enough to hold the lead below.
+  // - `maximumConsecutiveDeniedTurns` = 3: the allowance the admission calculus reserves, because each
+  //   required grain may be preceded by turns that could not advance (that is the term's purpose -- see
+  //   `canCompleteBeforeHandoff`'s `grains * (denied + 1)`).
+  // - grain counts: the declared window is **two bars at the design's ~72 events/bar typical density** =
+  //   144 events (`runtime-working-set-ownership/S2C1-PLAYBACK-WINDOW-LEASE.md`), which is 3 fill grains at
+  //   `kPlaybackViewFillQuantum` = 64 and 3 order grains at `kPlaybackViewOrderQuantum` = 48, plus one
+  //   promotion grain to make a completed build the ready view. The 2,048-event ceiling case needs more
+  //   grains than this and is therefore **refused**, not served -- the safe direction, and the reason the
+  //   ceiling stays a capacity limit rather than a promise (spec *Accepted content is never truncated*).
+  // - `leadTicks` = one bar: preparation runs ahead of the handoff (DEC-108 item 8's "prepare ahead of the
+  //   playhead"), so a window is owed for the interval the playhead is about to use.
+  CoverageServiceContract contract;
+  contract.maximumPhaseAdvancePerTurn = Config::TICKS_PER_BAR;
+  contract.maximumConsecutiveDeniedTurns = 3;
+  contract.requiredFillGrains = 3;
+  contract.requiredOrderGrains = 3;
+  contract.requiredPromotionGrains = 1;
+  contract.leadTicks = Config::TICKS_PER_BAR;
+  return contract;
+}
+
+TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMaintenance(
+    uint8_t slotIndex, const MidiEvent* source, size_t sourceCount,
+    const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
+    const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
+    uint32_t currentPhase, uint32_t handoffPhase) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return PlaybackViewRequestResult::NoRuntime;
+  }
+  // Never allocate here (S4b.6's rule): the runtime's owner is the provisioning path, and an absent runtime
+  // owes nothing. The obligation is the runtime's own unfinished build, so a refused request changes nothing.
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return PlaybackViewRequestResult::NoRuntime;
+  }
+  if (runtime->coverageBuildNeedsService()) {
+    return PlaybackViewRequestResult::BuildInFlight;
+  }
+  const CoverageServiceContract contract = playbackViewCoverageContract();
+  if (!contract.isDeclared()) {
+    return PlaybackViewRequestResult::ContractUndeclared;
+  }
+  // Named separately from the primitive's own answer: the declared gate is what refuses *here*, so the
+  // acceptance surface can tell "the margin was never there" from "the build was refused underneath it".
+  if (!contract.canCompleteBeforeHandoff(currentPhase, handoffPhase, coverage.loopLengthTicks)) {
+    return PlaybackViewRequestResult::CannotCompleteBeforeHandoff;
+  }
+  if (!runtime->beginCoverageBuild(contract, currentPhase, handoffPhase, source, sourceCount, sourceIdentity,
+                                   coverage, cursorAnchor, ledgerBoundary)) {
+    return PlaybackViewRequestResult::AdmissionRefused;
+  }
+  return PlaybackViewRequestResult::Admitted;
+}
+
+TRACK_COLD_MEM bool Track::hasPendingPlaybackViewMaintenance() const {
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+    const bool runtimePresent = runtime != nullptr;
+    if (MidiServiceDrain::playbackViewMaintenanceNeeded(
+            runtimePresent, runtimePresent && runtime->coverageBuildNeedsService())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance() {
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+    if (runtime == nullptr || !runtime->coverageBuildNeedsService()) {
+      continue;
+    }
+    // One grain, and only one: the phase decides which, so a turn can never copy source entries *and* merge
+    // order entries (the build contract's own rule), and the build's persistent cursor carries the progress
+    // to the next turn.
+    const RuntimePlaybackViewBuildGrain grain = runtime->nextCoverageBuildGrain();
+    if (grain == RuntimePlaybackViewBuildGrain::Fill) {
+      return finishPlaybackViewGrain(slot, runtime->stepCoverageBuildFill(kPlaybackViewFillQuantum));
+    }
+    if (grain == RuntimePlaybackViewBuildGrain::Order) {
+      return finishPlaybackViewGrain(slot, runtime->stepCoverageBuildOrder(kPlaybackViewOrderQuantum));
+    }
+    // `coverageBuildNeedsService()` is `viewBuild.active()`, which is Fill or Order only -- Complete and
+    // Denied are both terminal and owe nothing.
+    return PlaybackViewTurnResult::Idle;
+  }
+  return PlaybackViewTurnResult::Idle;
+}
+
+TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::finishPlaybackViewGrain(
+    uint8_t slotIndex, RuntimePlaybackViewBuildGrain grain) {
+  Loop& loop = loopForSlot(slotIndex);
+  // If/else rather than a `switch`, for the same `.data` reason as the name tables above.
+  if (grain == RuntimePlaybackViewBuildGrain::Denied) {
+    // Non-destructive: the build stopped where it was, nothing was published, and the requesting owner
+    // re-requests (task 3.2). Reported by name -- an unnamed denial is not an answer.
+    reportPlaybackViewMaintenanceRow(slotIndex, loop, "grain_denied");
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  if (grain == RuntimePlaybackViewBuildGrain::Complete) {
+    reportPlaybackViewMaintenanceRow(slotIndex, loop, "build_complete");
+    return PlaybackViewTurnResult::BuildComplete;
+  }
+  if (grain == RuntimePlaybackViewBuildGrain::Fill || grain == RuntimePlaybackViewBuildGrain::Order) {
+    return PlaybackViewTurnResult::GrainServed;
+  }
+  return PlaybackViewTurnResult::Idle;
+}
+
+TRACK_COLD_MEM void Track::reportPlaybackViewMaintenanceRow(uint8_t slotIndex, Loop& loop,
+                                                            const char* path) {
+#if defined(SESSION_CAPTURE)
+  DebugSessionCapture::playbackRebuild(0, loop.loopLengthTicks, 0, loop.playbackRevision,
+                                       playbackRebuildTrackIndex(*this),
+                                       playbackRebuildSlotIndex(*this, loop), 0, path);
+#else
+  (void)slotIndex;
+  (void)loop;
+  (void)path;
+#endif
+}

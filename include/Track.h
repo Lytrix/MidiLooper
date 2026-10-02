@@ -211,6 +211,47 @@ public:
   bool prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture = true);
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
   void ensurePlaybackMergedEventsForSlot(uint8_t slotIndex);
+  /// DEC-108 item 1 / `ExecutionBounds.md` rows 27-29: the **window-build/publication owner**. These are the
+  /// owner's whole production surface, and all of them are off-clock only -- the MIDI edge, the transport tick
+  /// and the clock path read readiness and never call them.
+  ///
+  /// A refusal is a **returned outcome**, never stored state: the enum value *is* the contract, the acceptance
+  /// surface names it where it reports the row, and nothing is added to DTCM, to `Track` or to
+  /// `LoopPlaybackRuntime`. The owner deliberately carries **no name table** -- a `switch` or a `const char*`
+  /// array is `.data`, and a few added `.data` bytes can snap this target's `ALIGN(1024)` and cost 4 KB of DTCM
+  /// (the RAM1 rule's finding, measured again for this slice).
+  /// `requestPlaybackViewMaintenance` establishes the obligation from an **already-resolved** source and
+  /// admits it under the declared contract (the publication request task 3.2 will issue); a refusal is
+  /// non-destructive and leaves any existing obligation intact.
+  /// `hasPendingPlaybackViewMaintenance` is the deferred turn's dispatch eligibility; an owed window -- a
+  /// build that is begun and unfinished -- *is* the obligation, so no request record is involved.
+  /// `stepPlaybackViewMaintenance` serves **at most one declared grain** and never publishes, hands off or
+  /// allocates: the consumer-facing publication is task 3.2's slice.
+  enum class PlaybackViewRequestResult : uint8_t {
+    Admitted,
+    NoRuntime,
+    BuildInFlight,
+    ContractUndeclared,
+    CannotCompleteBeforeHandoff,
+    AdmissionRefused,
+  };
+  enum class PlaybackViewTurnResult : uint8_t { Idle, GrainServed, BuildComplete, GrainDenied };
+
+  PlaybackViewRequestResult requestPlaybackViewMaintenance(
+      uint8_t slotIndex, const MidiEvent* source, size_t sourceCount,
+      const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
+      const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
+      uint32_t currentPhase, uint32_t handoffPhase);
+  bool hasPendingPlaybackViewMaintenance() const;
+  PlaybackViewTurnResult stepPlaybackViewMaintenance();
+  /// The declared `CoverageServiceContract` this owner is admitted under. Single-sourced: the declaration,
+  /// its derivation and the measurement still owed are recorded where it is defined, and the grain quanta
+  /// below are the sizes its declared grain counts come from.
+  static CoverageServiceContract playbackViewCoverageContract();
+  /// The owner's declared work quantum per grain (DEC-108 item 1: "a fixed work quantum"). Public so the
+  /// contract's derivation and its fixtures read the same declaration the owner serves.
+  static constexpr size_t kPlaybackViewFillQuantum = 64;
+  static constexpr size_t kPlaybackViewOrderQuantum = 48;
   /// S4b.6: does this slot's **inbound occupancy** (its playback runtime) exist? The switch commit path
   /// asks this instead of allocating: `ensurePlaybackMergedEventsForSlot` intentionally never takes the
   /// runtime, so a switch to a slot without occupancy stays pending until the off-clock provisioning owner
@@ -809,6 +850,11 @@ private:
   };
   std::unique_ptr<CaptureStopJobs, CaptureStopJobsDeleter> captureStopJobs_;
   bool prewarmCaptureStopJobs();
+  /// DEC-108 item 1: the window owner's two private halves -- one grain's outcome (and its named row), and
+  /// the row itself. Private because the owner's surface is the three calls above; nothing else may advance a
+  /// grain or report one.
+  PlaybackViewTurnResult finishPlaybackViewGrain(uint8_t slotIndex, RuntimePlaybackViewBuildGrain grain);
+  void reportPlaybackViewMaintenanceRow(uint8_t slotIndex, Loop& loop, const char* path);
   /// S4.5: finish any stop descriptor the retirement path left un-rearmed and re-arm it, one bounded
   /// grain per idle turn. The ring advances at retirement *before* the source release finishes, so a
   /// release that needs another grain (or a re-reservation that fails that instant) leaves the

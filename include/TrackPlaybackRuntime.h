@@ -744,6 +744,10 @@ struct LoopPlaybackRuntime {
   /// committed replacement exists. Idempotent; the bar-1 return window is left alone because
   /// it is served until a replacement view is handed off.
   void releaseFrozenRecordWindow();
+  /// True while this slot owes the window owner a grain: a coverage build that is **begun and unfinished**.
+  /// The build's own unfinished state is the obligation (DEC-108 item 1), so no separate request record is
+  /// involved and a slot with no build owes nothing. The term the eligibility predicate and the owner share.
+  bool coverageBuildNeedsService() const { return viewBuild.active(); }
   RuntimePlaybackViewBuildGrain nextCoverageBuildGrain() const;
   RuntimePlaybackViewBuildGrain stepCoverageBuildFill(size_t entryQuantum);
   RuntimePlaybackViewBuildGrain stepCoverageBuildOrder(size_t entryQuantum);
