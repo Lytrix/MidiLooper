@@ -972,6 +972,161 @@ TRACK_COLD_MEM const char* Track::playbackWindowReadinessHolder(PlaybackWindowRe
   }
   return "unknown";
 }
+TRACK_COLD_MEM Track::PlaybackSourceRetainResult Track::retainPlaybackSourceForSlot(uint8_t slotIndex,
+                                                                                  uint32_t revision,
+                                                                                  uint32_t generation) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return PlaybackSourceRetainResult::NoRuntime;
+  }
+  Loop& loop = loopForSlot(slotIndex);
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+    return PlaybackSourceRetainResult::NotServable;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return PlaybackSourceRetainResult::NoRuntime;
+  }
+  RetainedPlaybackSource* entry = runtime->retainedSourceForRevision(revision);
+  if (entry != nullptr) {
+    // The identity is the revision: re-admitting refreshes the role (it is serving again) and the generation, and
+    // never re-owns the bodies -- so a repeated admission cannot double the store's references.
+    entry->generation = generation;
+    entry->role = RetainedSourceRole::Serving;
+    for (RetainedPlaybackSource& other : runtime->retainedSources) {
+      if (&other != entry && other.role == RetainedSourceRole::Serving) {
+        other.role = RetainedSourceRole::Retiring;
+      }
+    }
+    return PlaybackSourceRetainResult::AlreadyRetained;
+  }
+  entry = runtime->freeRetainedSourceSlot();
+  if (entry == nullptr) {
+    return PlaybackSourceRetainResult::RoleCapacityReached;
+  }
+  // Two protections, each read by the consumer that would otherwise destroy the source. The descriptor pins are what
+  // `Loop::reclaimUnreferencedDisabled*Passes` honours; the owned references are what stops the store's
+  // `releaseChunkRefs` on the direct reset/replacement path from freeing or recycling the same bodies underneath a
+  // retained window. Both describe one revision, and both are dropped by the one release predicate.
+  pinPassesFromLoopPasses(loop.passes, entry->pins);
+  entry->ownedChunks.clear();
+  if (loop.passes.hasRecordPass()) {
+    for (uint16_t id : loop.passes.recordPass.committedChunkIds) {
+      entry->ownedChunks.push_back(id);
+    }
+  }
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    for (uint16_t id : pass.committedChunkIds) {
+      entry->ownedChunks.push_back(id);
+    }
+  }
+  LoopEventStore::retainChunkRefs(entry->ownedChunks);
+  entry->revision = revision;
+  entry->generation = generation;
+  entry->role = RetainedSourceRole::Serving;
+  for (RetainedPlaybackSource& other : runtime->retainedSources) {
+    if (&other != entry && other.role == RetainedSourceRole::Serving) {
+      other.role = RetainedSourceRole::Retiring;
+    }
+  }
+  return PlaybackSourceRetainResult::Admitted;
+}
+
+TRACK_COLD_MEM bool Track::retainedPlaybackSourceForSlot(uint8_t slotIndex,
+                                                         RetainedPlaybackSource& out) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return false;
+  }
+  for (const RetainedPlaybackSource& entry : runtime->retainedSources) {
+    if (entry.isRetained()) {
+      out = entry;
+      return true;
+    }
+  }
+  return false;
+}
+
+TRACK_COLD_MEM bool Track::hasRetainedPlaybackSourceForSlot(uint8_t slotIndex) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  return runtime != nullptr && runtime->hasRetainedPlaybackSource();
+}
+
+TRACK_COLD_MEM size_t Track::retainedPlaybackSourceCountForSlot(uint8_t slotIndex) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return 0;
+  }
+  size_t count = 0;
+  for (const RetainedPlaybackSource& entry : runtime->retainedSources) {
+    if (entry.isRetained()) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+TRACK_COLD_MEM bool Track::tryReleaseRetainedPlaybackSource(uint8_t slotIndex) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return false;
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  bool released = false;
+  for (RetainedPlaybackSource& entry : runtime->retainedSources) {
+    if (!entry.isRetained()) {
+      continue;
+    }
+    // **The one release predicate.** Every clause is a reason the source is still needed; the source is dropped only
+    // when none holds. The builder clause is deliberately conservative for this slice: while a build is outstanding
+    // its frozen source is not inspectable from here, so the sources are held rather than risk releasing one a
+    // builder is reconstructing from. The finer per-builder term is named as owed, not assumed away.
+    // The content the source describes can also be **gone** -- a clear/reset or a replacement load -- and then the
+    // counter never advances past the retained revision, so it is released here too rather than held forever. Still
+    // this one predicate, and still only when nothing references it.
+    const bool contentGone = !loop.hasCommittedPasses() || loop.loopLengthTicks == 0;
+    if (!contentGone && entry.revision >= loop.playbackRevision) {
+      continue;
+    }
+    PlaybackWindowIdentity published{};
+    if (publishedPlaybackWindowIdentityForSlot(slotIndex, published) &&
+        published.playbackRevision == entry.revision) {
+      continue;
+    }
+    if (runtime->coverageBuildNeedsService()) {
+      continue;
+    }
+    if (runtime->ownsLiveFinalization()) {
+      continue;
+    }
+    LoopEventStore::releaseChunkRefs(entry.ownedChunks);
+    entry.clear();
+    released = true;
+  }
+  return released;
+}
+
+TRACK_COLD_MEM bool Track::mergeRetainedPlaybackPinsInto(uint8_t slotIndex, SlotPassReferences& into) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return false;
+  }
+  bool merged = false;
+  for (const RetainedPlaybackSource& entry : runtime->retainedSources) {
+    if (!entry.isRetained()) {
+      continue;
+    }
+    for (PassId id : entry.pins.capturePassIds) {
+      into.pinCapturePass(id);
+      merged = true;
+    }
+    for (EditPassId id : entry.pins.editPassIds) {
+      into.pinEditPass(id);
+      merged = true;
+    }
+  }
+  return merged;
+}
+
 
 TRACK_COLD_MEM void Track::releasePlaybackMergedMidiEventsMemory() {
   releaseEligiblePlaybackRuntimeSlots(false);
@@ -1000,6 +1155,11 @@ TRACK_COLD_MEM bool Track::noLiveOwnerForSlot(uint8_t slot) const {
   // new owner kind is added here by name rather than as another inline clause.
   if (hasLiveCaptureStopJobForSlot(slot)) return false;
   if (hasAcceptedInteractionForSlot(slot)) return false;
+  // Task 3.6 (DEC-108 item 4): a **retained source revision** keeps this slot owned, by name. Its descriptors and
+  // bodies are still needed to reconstruct the revision a window serves (or one still being prepared), so the slot
+  // may not be released, cleared or replaced underneath it. The release side is the one predicate,
+  // `tryReleaseRetainedPlaybackSource`.
+  if (hasRetainedPlaybackSourceForSlot(slot)) return false;
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
   if (runtime != nullptr) {
     if (runtime->ownsLiveFinalization()) return false;

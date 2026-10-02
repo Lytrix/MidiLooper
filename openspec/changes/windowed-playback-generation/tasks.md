@@ -231,6 +231,28 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   passes, that later intervals are constructible from the pinned revision through the index over **pinned bodies** with no
   resident whole-loop root, that index updates cover both affected ranges and publish atomically with the source revision
   (§14), and that the retention and index cost is charged
+  *Increment 3.6a landed 2026-10-02 — the task stays **open**; the index and the lag rule are the next increment.*
+  `RetainedPlaybackSource` (identity `(revision, generation)` + descriptor **pins** + **owned bodies**) now lives in
+  explicit **serving / candidate / retiring** roles on the per-slot runtime, admitted through
+  `Track::retainPlaybackSourceForSlot` with typed outcomes (`Admitted`, `AlreadyRetained`, `NoRuntime`, `NotServable`,
+  `RoleCapacityReached` — the bound refuses by name rather than discarding a still-needed source, item 13(a)).
+  `tryReleaseRetainedPlaybackSource` is the **one release predicate** (the revision advanced past it; no window serves
+  it; no builder holds a frozen source; no closure obligation; and the content is gone) and retention is a **named term
+  of `Track::noLiveOwnerForSlot`**. The **reclamation consumer** now reads the retained pins
+  (`mergeRetainedPlaybackPinsInto` merged into the set `TrackManager::reclaimUnreferencedDisabledPasses` passes to the
+  loop), and the **direct reset/replacement path** is protected by **body ownership** rather than by a veto:
+  `LoopEventStore::retainChunkRefs` means all eleven `Loop::resetPassTimeline` call sites stay ungated — the gesture
+  works and the bodies survive it. Fixture:
+  `test_retained_source_is_admitted_with_roles_and_survives_both_destruction_paths`. **Verification:** focused
+  **52/52**, full native **2683 / 2676 succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a
+  clean rebuild with `variables 96,192` **unchanged** / `code 391,864 + padding 1,352` (512 B headroom, **336 B more
+  than the 3.5 baseline**) and **no re-base**; three mutations red-proved with byte-identical restores. The S3.0 pin is
+  re-based **per ABI** (6,368 → 6,464 target / 6,544 host) because the holder carries pointer-sized pin lists.
+  **OWED in this task, named rather than implied:** the **interval index over pinned bodies** (later intervals
+  constructible from the retained revision with no resident whole-loop root; both affected ranges; atomic publication
+  with the source revision; inspected-work budgeting) and the **lag rule** (F-3: one pass late and only that, the named
+  second-miss breach, the allowance not reset by a further edit, the consumer never blocked). Detail:
+  [`evidence/2026-10-02-s36a-retained-source/EVIDENCE.md`](evidence/2026-10-02-s36a-retained-source/EVIDENCE.md).
 - [ ] 3.7 Remove the live mutable merged-window build — **the last step of the ladder, stage (4)**, and only after **every**
   dependency is implemented and verified: committed interval publication (3.2), readiness and retention (3.5/3.6), the
   bounded legacy compatibility path (3.12), preview publication (3.13), shared-view ownership (3.11), fault recovery

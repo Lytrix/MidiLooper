@@ -360,6 +360,37 @@ public:
   /// The **holder's name** for a readiness answer, rendered where a row is reported (no name table: an if/else
   /// chain in FLASH, never a `switch` or a `const char*` array in `.data`, per the owner's own RAM1 rule).
   static const char* playbackWindowReadinessHolder(PlaybackWindowReadiness readiness);
+  /// Task 3.6 (DEC-108 items 4, 12(a), 13(a)): **admit a retained source** for a slot's revision — the previous
+  /// revision must stay reconstructible while a missed deadline keeps it authoritative, and later intervals must stay
+  /// constructible from it with no resident whole-loop root. The admission pins the revision's passes (what the
+  /// pass-level reclamation consumer reads) **and** takes the store's own references for its committed bodies (so
+  /// `Loop::resetPassTimeline` cannot free or silently alias them), records the identity `(revision, generation)` in a
+  /// named role, and is bounded: exceeding the role set is refused by name rather than discarding a source that is
+  /// still needed. A re-admission of the same revision refreshes the role and never re-owns the bodies. Off-clock only:
+  /// never call from the MIDI clock path.
+  enum class PlaybackSourceRetainResult : uint8_t {
+    Admitted,
+    /// The revision is already retained: the identity is the revision, so ownership is not a count.
+    AlreadyRetained,
+    NoRuntime,
+    NotServable,
+    /// The role set is full and every entry is still needed: refused **by name** rather than discarding one.
+    RoleCapacityReached,
+  };
+  PlaybackSourceRetainResult retainPlaybackSourceForSlot(uint8_t slotIndex, uint32_t revision, uint32_t generation);
+  /// Read the **serving** retained source (identity, role, pins and owned bodies). Cold: used by fixtures and by the
+  /// envelope accounting, never by a timing-critical consumer.
+  bool retainedPlaybackSourceForSlot(uint8_t slotIndex, RetainedPlaybackSource& out) const;
+  bool hasRetainedPlaybackSourceForSlot(uint8_t slotIndex) const;
+  size_t retainedPlaybackSourceCountForSlot(uint8_t slotIndex) const;
+  /// The **one release predicate** (the spec's rule: a source is released only here) — the loop's revision has
+  /// advanced past it, no window serves it, no builder holds a frozen source, and no closure obligation is
+  /// outstanding. Returns true when at least one source was released.
+  bool tryReleaseRetainedPlaybackSource(uint8_t slotIndex);
+  /// Merge this slot's retained pins into the set the **reclamation consumer** reads, so the pass-level reclaim
+  /// cannot free a retained revision's descriptors (a pin held only alongside undo references is not sufficient
+  /// protection, and the direct reset path is covered by the retained *ownership* rather than by a veto).
+  bool mergeRetainedPlaybackPinsInto(uint8_t slotIndex, SlotPassReferences& into) const;
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
   void releasePlaybackMergedMidiEventsMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.

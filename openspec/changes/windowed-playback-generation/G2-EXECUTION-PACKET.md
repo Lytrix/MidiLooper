@@ -355,3 +355,95 @@ raw numbers: [`evidence/2026-10-02-s35-readiness-holder/EVIDENCE.md`](evidence/2
   `PROJECT_STATE.md` and `ExecutionBounds.md` row 27 are updated at checkoff.
 - Task IDs eligible for checkoff: **3.5**. Task **2.2** (F-2's per-affected-tick deadline) is **not** claimed: this slice
   makes readiness the completed publication and names its holder; the deadline stays its own requirement.
+
+## Slice 3.6 — pinned-source retention, the interval index, and the lag rule (2026-10-02, in increments)
+
+**Why this slice is staged.** 3.6's own text has four clauses with different owners and different costs: the
+**retained source** (a new persistent holder, and therefore a deliberate `sizeof(LoopPlaybackRuntime)` re-base under
+the S3.0 pin), its **protection as read by the reclamation consumer and on the direct reset path**, the **interval
+index over pinned bodies**, and the **lag rule** (F-3). The climb is the ladder's, one increment at a time; 3.6 is
+checked only when every clause has its own green fixture.
+
+**What the discovery establishes** (read-only, cited, before any edit):
+
+- The pin mechanism exists and is **reclamation-side already**: `PassReclaim::pinPassesFromLoopPasses(passes, refs)`
+  fills a `SlotPassReferences` (pinned `PassId`/`EditPassId` lists), and `Loop::reclaimUnreferencedDisabledCapturePasses`
+  / `…DisabledEditPasses` free only what the passed set does not reference.
+- **The consumer reads pins from the undo stack alone**: `TrackManager::reclaimUnreferencedDisabledPasses` builds one
+  transient `PassReferenceSet` per track from `collectReferencedPasses(track.getGlobalUndoStack(), refs)`. That is
+  exactly what the spec forbids as *sufficient* ("a pin registered only alongside undo references is not sufficient"),
+  so a playback-owned retained source must be **merged into that same read**.
+- **The direct reset/replacement path is `Loop::resetPassTimeline()`** — it bumps `canonicalStorageGeneration` and then
+  releases every pass's chunk refs through `LoopEventStore::releaseChunkRefs`, which consults **no pin set at all**. It
+  has **eleven call sites** (record start, slot clear, boot load, undo, jam geometry, capture-stop commit, stop
+  telemetry), so "honoured on the direct reset/replacement paths" is a real decision about where the veto lives.
+- **The holder's cost is a pinned ABI**: `static_assert(sizeof(LoopPlaybackRuntime) == 6368)` (`static_assert` in
+  `src/Track/TrackPlaybackRuntime.cpp`), and `sizeof(Track) == 384`. Any per-slot holder re-bases that pin deliberately
+  and is recorded, exactly as DEC-107 recorded `6,352 -> 6,360`.
+- The published window's identity is **provenance, not ownership** (`PlaybackViewSourceIdentity::snapshotIdentity` is a
+  `const void*`), which is why DEC-108 item 5 says a null snapshot identity is not sufficient protection and item 4
+  makes retention **pinned bodies plus reconstruction through the effective-content resolver**.
+
+**Open implementation choices this packet records rather than assumes** (both are the owner's own recorded decisions,
+and they differ in cost, so the first increment waits on the owner's call):
+
+1. **Which retained-source shape the first increment builds.** DEC-108 item 12(a) decided "**one pinned revision per
+   slot**"; the second-pass resolution then **explicitly replaced that clause** with item 13(a)'s *serving / candidate /
+   retiring* source roles (bounded by role admission, unchanged bodies shared, a still-needed source never discarded to
+   satisfy a count). 13(a) is later and self-describing as a replacement, so it governs — but the minimum honest role
+   set (how many entries per slot, and whether `Retiring` is a role or a release path) is a cost decision: two entries
+   per slot costs roughly a `SlotPassReferences` each (two `std::vector`s, 48 B) plus the identity, on the pinned ABI.
+2. **Where the reset-path veto lives.** Either (a) `Loop::resetPassTimeline` consults a retention term and
+   **refuses/defers** while a retained source still needs the bodies, or (b) the reset calls the **one release
+   predicate** for its slot first and refuses when that predicate says the source is still referenced. (b) keeps the
+   single-release rule in one place and touches no `Loop` state; (a) is stricter but spreads the term to eleven call
+   sites and to `Loop`'s own size pin.
+
+**Increment 3.6a — the retained source and its one release predicate** (the enabling half; the index and the lag rule
+are 3.6b). Oracle cases, each with the mutation that must fail it:
+
+| # | Case | Discriminating assertion | Mutation that must fail it |
+|---|---|---|---|
+| W-14 | A revision is retained for a slot | the retained source names that revision and holds a **pinned pass set** — and the pins appear in what the **reclamation consumer** reads (the counts the reclaim pass already accumulates) | building the reclaim set from the undo stack alone (today's shape) |
+| W-15 | A reclaim pass runs while the source is retained | the retained revision's passes are **not** reclaimed | the merge removed from the reclaim consumer |
+| W-16 | The loop's revision advances past the retained one with no window/builder/obligation/reader referencing it | the **one release predicate** releases it, and only then are its passes reclaimable | releasing without the all-clear conditions; keeping the pins forever |
+| W-17 | A retained source exists | `Track::noLiveOwnerForSlot` is **false** by name (the retention term), and true once released | the term missing from the composite |
+
+**Verification recipe.** Focused `test_runtime_working_set_ownership` + `test_midi_service_drain` + the reclamation
+suite(s) that already pin the reclaim consumer, `test_playback_prewarm` (cited, unchanged), the full native suite, and
+the `teensy41-capture-serial` build with the RAM1 guard — plus, because this slice re-bases a pinned `sizeof`, the
+**size pin itself** is asserted in the build and in its fixture.
+
+### Increment 3.6a — the retained source and its one release predicate (2026-10-02)
+
+**What landed:** `RetainedSourceRole { None, Serving, Candidate, Retiring }` and `RetainedPlaybackSource` (identity +
+descriptor pins + **owned** bodies) on the per-slot runtime; `Track::retainPlaybackSourceForSlot` with typed
+outcomes; the reads; `tryReleaseRetainedPlaybackSource` (**the one release predicate**); `mergeRetainedPlaybackPinsInto`
+and the reclamation consumer's merge; and the retention term in `Track::noLiveOwnerForSlot`. Detail and raw numbers:
+[`evidence/2026-10-02-s36a-retained-source/EVIDENCE.md`](evidence/2026-10-02-s36a-retained-source/EVIDENCE.md).
+
+- Oracle/contract unchanged: **YES** — DEC-108 items 4, 12(a), 13(a), 14(c), with W-14…W-19 (W-18 and W-19 joined the
+  table above as the cases appeared); nothing was weakened to make a fixture pass.
+- Fixture implemented and discriminating assertion demonstrated: **YES** —
+  `test_retained_source_is_admitted_with_roles_and_survives_both_destruction_paths`.
+- Native verification: **GREEN** — focused **52/52** (was 51), full native **2683 / 2676 succeeded / 7 skipped /
+  0 failed**.
+- Build/RAM1 verification: **GREEN** on a **clean rebuild** — `variables 96,192` **unchanged** / `code 391,864 +
+  padding 1,352` / locals 34,880, floor 840, **512 B headroom** (336 B *more* than the 3.5 baseline). **No re-base.**
+  Two findings had to be resolved to get there, both recorded in the evidence: the S3.0 size pin is now **per ABI**
+  (6,368 → 6,464 on the target, 6,544 on the host — the holder contains pointer-sized pin lists, and one literal
+  cannot pin both), and the enlarged cold reclamation pass moved to FLASH with the TU's existing macro.
+- Red-proofs: **three**, each restored byte-identically (sha256 verified): the descriptors not pinned; the bodies named
+  but **not owned** (the reset then frees them); the "a window still serves it" clause dropped from the release predicate.
+- Device verification: **NOT APPLICABLE** — the lane has no production caller yet.
+- **One approved decision was replaced by a better mechanism, stated rather than buried:** the plan for this slice was
+  "the reset calls the one release predicate and **refuses** while still referenced". Implementing the holder exposed
+  `LoopEventStore::retainChunkRefs` ("pins borrowed ids for a deferred reader"), so the retained source **owns** its
+  bodies and the eleven `resetPassTimeline` call sites are safe **without any veto** — the gesture keeps working
+  (W-18 asserts exactly that, plus that the bodies survive and are returned only by the release predicate). The veto
+  was superseded by ownership, which is the spec's own "actual body ownership" clause, not a relaxation.
+- **Task 3.6 stays OPEN.** The **interval index over pinned bodies** (later intervals constructible from the retained
+  revision with no resident whole-loop root; both affected ranges; atomic publication with the source revision;
+  inspected-work budgeting) and the **lag rule / F-3** (one pass late and only that, the named second-miss breach, the
+  allowance not reset by a further edit, the consumer never blocked) are the next increment. This one builds their
+  precondition: a revision can be held, protected against both destruction paths, and released by one predicate.

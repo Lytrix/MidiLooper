@@ -68,7 +68,7 @@ PRESSURE_RECLAIM_MEM void TrackManager::tryReclaimDerivedViewCachesUnderPressure
   }
 }
 
-void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats* statsOut,
+PRESSURE_RECLAIM_MEM void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats* statsOut,
                                                      bool diagnosticVisibility) {
   const uint32_t startUs = micros();
   const uint16_t usedBefore = LoopEventStore::usedChunkCount();
@@ -88,6 +88,13 @@ void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats* statsOut,
     Track& track = tracks[trackIndex];
     PassReferenceSet refs{};
     collectReferencedPasses(track.getGlobalUndoStack(), refs);
+    // Task 3.6 (windowed-playback-generation): the pin set this pass reads is the **undo stack plus the track's
+    // playback-retained sources**. The spec is explicit that a pin registered only alongside undo references is not
+    // sufficient protection, so the retained source is merged into the same set the reclaim below consumes. Merged
+    // before the counters and the reclaim calls so all three read one set -- and so a fixture can see the pins.
+    for (uint8_t pinnedSlot = 0; pinnedSlot < Config::MAX_LOOPS_PER_TRACK; ++pinnedSlot) {
+      (void)track.mergeRetainedPlaybackPinsInto(pinnedSlot, refs.slots[pinnedSlot]);
+    }
     for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
       Loop& loop = track.getLoop(slotIndex);
 #if defined(SESSION_CAPTURE)

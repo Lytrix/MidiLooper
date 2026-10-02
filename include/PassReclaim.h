@@ -69,6 +69,43 @@ void collectReferencedPasses(const GlobalUndoStack& stack, PassReferenceSet& out
 
 bool overUndoMemoryPressure(const GlobalUndoStack& stack);
 
+/// windowed-playback-generation task 3.6 / DEC-108 items 4, 12(a) and 13(a): the **source roles**. A retained
+/// revision is admitted in a named role rather than counted as "one revision per slot" (item 13(a) replaced that
+/// clause): `Serving` is the revision a window serves, `Candidate` the newer revision being prepared, and
+/// `Retiring` a source that has stopped serving and awaits the one release predicate. The role vocabulary is what
+/// keeps "a still-needed source is never discarded to satisfy a count" checkable.
+enum class RetainedSourceRole : uint8_t { None, Serving, Candidate, Retiring };
+
+/// A **retained source revision**: the immutable description of a revision's pass membership — an identity
+/// (`revision`, `generation`), **descriptor protection** (`pins`, the set the pass-level reclamation consumer
+/// reads) and **actual body ownership** (`ownedChunks`, the store references this holder owns, so the direct
+/// reset/replacement path's `releaseChunkRefs` cannot free or silently alias them). The ownership is the spec's
+/// own clause ("with actual body ownership"): it is what makes the eleven `Loop::resetPassTimeline` call sites safe
+/// without a veto in any of them -- they release the loop's reference, and this holder keeps its own until the one
+/// release predicate drops it.
+struct RetainedPlaybackSource {
+  uint32_t revision = 0;
+  uint32_t generation = 0;
+  RetainedSourceRole role = RetainedSourceRole::None;
+  SlotPassReferences pins;
+  CommittedChunkIdList ownedChunks;
+
+  bool isRetained() const { return role != RetainedSourceRole::None; }
+
+  void clear() {
+    revision = 0;
+    generation = 0;
+    role = RetainedSourceRole::None;
+    pins = SlotPassReferences{};
+    ownedChunks.clear();
+  }
+};
+
+/// The bounded role set: one serving source plus one candidate/retiring source covers the lane's own sequencing
+/// (a single build at a time means a third source cannot be needed), and an admission that would exceed it is
+/// refused **by name** rather than discarding a source that is still needed (item 13(a)).
+constexpr size_t kMaxRetainedPlaybackSources = 2;
+
 /// Trim global undo entries under depth/pressure rails. Prefers dropping entries before
 /// cursor (undo history) so the redo branch at cursor..end stays intact when cursor > 0.
 size_t trimGlobalUndoStackForMemory(GlobalUndoStack& stack);
