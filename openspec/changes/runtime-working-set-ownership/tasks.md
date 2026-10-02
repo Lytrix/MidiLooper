@@ -848,6 +848,26 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       (`N x P` is not the memory law until phase F lands).
 
 - [ ] S2.9 **EXTRACTED (2026-09-19, Revision 18 § 3) — not a task of this change.** The decoupling of active
+- [ ] **S2.11 The 64-slot / 64-bar / 3-notes-per-16th capacity claim cannot be met by this change (measured
+      2026-10-02).** The owner's requirement — every one of the 64 slots minimally able to hold 64 bars at 3 notes
+      per 16th — needs **393,216 events** (6,144/slot), and the answer is **no, by 6-7x**, with **three independent
+      blockers**: (1) the **chunk-id ceiling** needs 1,536 chunks against `POOL_CHUNK_COUNT = 512` = 3.0x, a
+      structural limit rather than a byte one; (2) the **raw committed payload alone is 7,698 KiB = 94%** of the
+      8,192 KiB pool and 1,455 KiB over post-boot free; (3) the **snapshot representation duplicates the committed
+      events** (`LoopSnapshotEvent` carries a full `MidiEvent`; two event nodes per note) at 2.5-9x the pool. This
+      change reduces the canonical-copy reservation, boot staging and chunk laziness and *derives* the windowed P
+      (331 -> 28.6 KiB), but it does **not** reduce the committed event bodies (S2C23's `canonical` term = the
+      7,698 KiB), the chunk-id ceiling or whole-loop roots — and windowed publication, the term that makes per-slot
+      cost length-independent, is **extracted to a sibling change that does not exist yet** (`design.md:812`). The
+      change's own budget already admits *"OVER by 4,434 KiB"* and *"cannot fit at any N"*. Levers, with numbers:
+      windowed publication -19,397; dropping the `MidiEvent` SysEx pointer -5,632; **stopping the snapshot's
+      duplication of committed events -23,040..-73,920 (the only single lever of the right order)**; a compact
+      committed format + derived note-offs -6,153 — all four together reach 7,543 KiB with a 649 KiB margin, i.e.
+      the requirement is reachable **only with all four**. Owed, as a decision rather than a patch: re-open
+      `POOL_CHUNK_COUNT` as a design question, scope the snapshot de-duplication, land windowed publication, and
+      state a defended supported-density claim (today: ~28 loops at the observed density ≈ **~21 slots** at the
+      target density, against `proposal.md:8`'s own "~60 recorded slots at up to 64 bars"). Evidence:
+      [`evidence/2026-10-02-64x64x48-capacity/ANALYSIS.md`](evidence/2026-10-02-64x64x48-capacity/ANALYSIS.md).
       playback from whole-loop snapshot residency moves to the sibling change
       **`windowed-playback-generation`**, which carries its own DEC and reassessment for the interval publication
       unit, per-window currency, the five gather call sites, LSV1 root authority and undo root pinning. Its
