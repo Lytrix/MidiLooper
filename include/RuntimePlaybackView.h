@@ -21,6 +21,80 @@ constexpr size_t kEventsPerView = 2048;
 constexpr size_t kRecordsPerBridge = 2048;
 constexpr size_t kCaptureStagingEvents = 2048;
 constexpr size_t kMaxCaptureNoteReservations = ActiveNoteLedger::kMaxOpenNotes;
+
+/// DEC-108 §14 / task 3.12: the **admission limit** for a window. `L` is the decided accounting unit's ceiling, and it
+/// is the window's **storage capacity itself** -- `kEventsPerView`, with **no partition multiplier** -- which is the
+/// sliding window-span invariant's first half: what is admitted is exactly what a window can hold.
+constexpr size_t kWindowAdmissionLimit = kEventsPerView;
+
+/// The **reserved closure capacity** counted *inside* `L`: the note-offs and generated closures a window must be able to
+/// emit for the note-ons it holds, so "every accepted event is served" cannot be defeated by a window that is full of
+/// note-ons. **Provisional declared value** (DEC-108 §14 / item 12(c) requires the reserve to live inside the limit but
+/// leaves its size to measurement): 128 covers the per-bar worst case of the two-bar comparison span; task 6.3's sweeps
+/// are what may move it, and nothing here claims it is measured.
+constexpr size_t kWindowClosureReserve = 128;
+
+/// The **admission accounting** (DEC-108 §14, task 3.12): the capture interval's **effective** events, aggregated across
+/// the slot's overdub passes, plus **outstanding reservations** (accepted note-ons whose closures are still owed) and the
+/// reserved closure capacity -- all inside `L`. It is deliberately **preallocated and bounded**: adding an event is
+/// arithmetic, nothing allocates, no loop content is scanned and the effective-content resolver is never invoked, so it
+/// is usable at acceptance (the MIDI edge). That is also why it can only ever *refuse by name*: capacity pressure is
+/// reported before acceptance, and **interaction acceptance (DEC-078) is never a subject of this limit** -- a stop,
+/// switch or undo request is not content and has no place in these counters.
+struct WindowAdmissionAccounting {
+  /// Effective events already accepted into this window's interval (post-edit count for restored content, live count for
+  /// content being accepted).
+  size_t acceptedEffectiveEvents = 0;
+  /// Accepted note-ons whose note-off/closure is still owed: they occupy the window now and are released as they close.
+  size_t outstandingReservations = 0;
+  /// The reserve `kWindowClosureReserve` is *inside* `L`; kept as a field so a caller can see it in one number.
+  size_t closureReserve = kWindowClosureReserve;
+
+  /// What the window is committed to right now: accepted content plus everything still owed for it.
+  size_t committed() const { return acceptedEffectiveEvents + outstandingReservations + closureReserve; }
+
+  /// The one predicate: does the window still fit `additionalEffectiveEvents` **effective** events? `false` is capacity
+  /// pressure, reported before acceptance -- never a truncation and never a deadline fault (DEC-108 §14: over-capacity
+  /// is a supported compatibility case).
+  bool fits(size_t additionalEffectiveEvents) const {
+    return committed() + additionalEffectiveEvents <= kWindowAdmissionLimit;
+  }
+
+  /// Admit `effectiveEvents` effective events, or refuse **by name**. Admission is the only mutation, and it happens
+  /// only when the predicate already said yes, so nothing is ever half-accepted.
+  enum class Outcome : uint8_t { Admitted, OverCapacity };
+  Outcome admit(size_t effectiveEvents) {
+    if (!fits(effectiveEvents)) {
+      return Outcome::OverCapacity;
+    }
+    acceptedEffectiveEvents += effectiveEvents;
+    return Outcome::Admitted;
+  }
+
+  /// A conservative bound for an interval whose exact count is not available at acceptance: the per-bar ceiling times
+  /// the bars the interval intersects, **clamped by `L`** -- the task's "per-bar counts only as a conservative bound
+  /// over every intersected bar". It can only over-estimate, so a caller that refuses on it refuses early; a caller that
+  /// wants the exact count uses the effective count above.
+  static size_t conservativeBoundForBars(size_t barsIntersected, size_t eventsPerBarCeiling) {
+    const size_t bound = barsIntersected * eventsPerBarCeiling;
+    return bound > kWindowAdmissionLimit ? kWindowAdmissionLimit : bound;
+  }
+
+  /// The sliding window-span invariant's arithmetic, as one check a fixture can drive: for the configured span `W`
+  /// (a bar count), every `W`-wide interval -- a wrap-crossing one included, which is the same width by definition --
+  /// must fit `L` when its content is at the per-bar ceiling the window is provisioned for. "Fits" is the conservative
+  /// bound's own question, so this returns the bound and the caller compares; it is not a second predicate.
+  static size_t boundForSpan(size_t spanBars, size_t eventsPerBarCeiling) {
+    return conservativeBoundForBars(spanBars, eventsPerBarCeiling);
+  }
+};
+
+// The sliding window-span invariant's first half, pinned where it can never drift: the admission limit **is** the
+// window's storage capacity, so there is no partition multiplier to get out of step with it.
+static_assert(kWindowAdmissionLimit == kEventsPerView,
+              "DEC-108 §14: window storage capacity is exactly the admission limit L (no partition multiplier)");
+static_assert(kWindowClosureReserve < kWindowAdmissionLimit,
+              "the closure reserve is *inside* L, not an addition to it");
 static_assert(kEventsPerView <= UINT16_MAX, "fixed playback order uses uint16_t indexes");
 }  // namespace RuntimePlaybackViewConfig
 
