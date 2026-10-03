@@ -5401,6 +5401,82 @@ void test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot(
 }
 
 
+/// 4.1 (DEC-108 *Checkpoint parity for undo and save*, F-5): the published root is the immutable checkpoint authority
+/// for undo; its parity against the loop's **current** committed-pass revision is **named**, so a lagging checkpoint is
+/// reported as such and never presented as current; and neither the undo nor the answer consults the window's lag.
+void test_checkpoint_parity_names_the_lagging_case_and_ignores_the_windows_lag() {
+  // (A) The rule as one pure resolution: all four cases, without a loop in the way.
+  TEST_ASSERT_EQUAL(static_cast<int>(CheckpointParity::NoCheckpoint),
+                    static_cast<int>(resolveCheckpointParity(false, kSnapshotCoverageUnset, 7)));
+  TEST_ASSERT_EQUAL(static_cast<int>(CheckpointParity::CoverageUnrecorded),
+                    static_cast<int>(resolveCheckpointParity(true, kSnapshotCoverageUnset, 7)));
+  TEST_ASSERT_EQUAL(static_cast<int>(CheckpointParity::Current),
+                    static_cast<int>(resolveCheckpointParity(true, 7, 7)));
+  TEST_ASSERT_EQUAL(static_cast<int>(CheckpointParity::OwesReconciliation),
+                    static_cast<int>(resolveCheckpointParity(true, 6, 7)));
+  // (B) The named answer agrees with the predicate the loop already had: for a root that exists, `Current` is exactly
+  // `publishedSnapshotIsCurrent()`, so the name cannot drift from the rule it names.
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  const uint32_t revisionBeforeUndo = loop.committedPassRevision();
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(CheckpointParity::NoCheckpoint),
+                            static_cast<int>(loop.checkpointParity()),
+                            "no root is no checkpoint -- and nothing to present as current");
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  const auto rootForState = [&]() {
+    return std::make_shared<const LoopSnapshot>(LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
+  };
+  loop.storePublishedSnapshotForTest(rootForState(), 0, kSnapshotCoverageCurrent);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(CheckpointParity::Current), static_cast<int>(loop.checkpointParity()),
+                            "a root derived from the live state is current");
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  // (C) Through the **production undo path**: the entry names a root whose coverage is the pre-undo state, and the undo
+  // advances the committed-pass revision -- so the checkpoint authority is the entry's root, selected **with the
+  // coverage it carried**, and its parity is named as lagging: selected, yet never presented as current.
+  UndoEntry entry{};
+  entry.kind = UndoEntryKind::NoteEditPassClosed;
+  entry.slotIndex = 0;
+  entry.editPassType = EditPassType::Note;
+  entry.editPassIds.push_back(4242);
+  entry.beforePublishedSnapshot = rootForState();
+  entry.beforePublishedCoverage = revisionBeforeUndo;
+  EditPass batch{};
+  batch.id = 4242;
+  batch.passType = EditPassType::Note;
+  batch.state = EditPassState::Active;
+  loop.passes.editPasses.push_back(batch);
+  pushUndoEntry(track, std::move(entry));
+  TrackUndo::undoForLoop(track, track.getActiveLoop());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(revisionBeforeUndo, loop.publishedSnapshotCoveredRevision(),
+                                   "the undo restores the root its entry named, with the coverage it carried");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(revisionBeforeUndo + 1, loop.committedPassRevision(),
+                                   "fixture precondition: the undo advanced the committed-pass revision");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(CheckpointParity::OwesReconciliation),
+                            static_cast<int>(loop.checkpointParity()),
+                            "a lagging checkpoint is named as owing reconciliation");
+  TEST_ASSERT_NULL_MESSAGE(loop.publishedSnapshotIdentity(), "and it is never presented as current");
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  // (D) DEC-073's protection, **named**: a root installed with an explicit stamp that is not the live revision, and
+  // without its own coverage figure, is demoted to "no coverage recorded" -- conservatively never current, and the
+  // answer says which case that is.
+  loop.storePublishedSnapshotForTest(rootForState(), /*revision=*/revisionBeforeUndo, kSnapshotCoverageCurrent);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(CheckpointParity::CoverageUnrecorded),
+                            static_cast<int>(loop.checkpointParity()),
+                            "a stamp that is not the live revision is demoted, and named");
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  // (E) The answer reads the loop's own figures only: with the slot's window lane **not ready** (nothing published
+  // there), a current checkpoint root is still `Current`. The window's lag is the window's business.
+  TEST_ASSERT_FALSE(track.playbackWindowReadinessForSlot(0) == Track::PlaybackWindowReadiness::Ready);
+  loop.storePublishedSnapshotForTest(rootForState(), 0, kSnapshotCoverageCurrent);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(CheckpointParity::Current), static_cast<int>(loop.checkpointParity()),
+                            "a not-ready window does not make the checkpoint non-current");
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+}
+
 int main() {
 
 
@@ -5513,5 +5589,7 @@ int main() {
   RUN_TEST(test_cross_generation_closures_are_reconciled_and_an_empty_window_silences_nothing);
   // windowed-playback-generation slice 3.14: the undo/redo audible handoff (\u00a713g).
   RUN_TEST(test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot);
+  // windowed-playback-generation slice 4.1: named checkpoint parity for undo (F-5).
+  RUN_TEST(test_checkpoint_parity_names_the_lagging_case_and_ignores_the_windows_lag);
   return UNITY_END();
 }

@@ -66,6 +66,14 @@ LOOP_COLD_MEM uint32_t Loop::committedPassRevision() const {
   return playbackRevision;
 }
 
+LOOP_COLD_MEM CheckpointParity Loop::checkpointParity() const {
+  // The three figures the loop already keeps, resolved by the one pure rule: presence of a root, the committed-pass
+  // revision its content was enumerated from, and the live committed-pass revision. Nothing here reads the window's
+  // state, which is what the requirement's "neither SHALL consult the window's lag" means for the checkpoint authority.
+  const bool hasRoot = publishedSnapshotBox_ != nullptr && publishedSnapshotBox_->snapshot != nullptr;
+  return resolveCheckpointParity(hasRoot, publishedSnapshotCoveredRevision(), committedPassRevision());
+}
+
 LOOP_COLD_MEM uint32_t Loop::publishedSnapshotCoveredRevision() const {
   return publishedSnapshotBox_ ? publishedSnapshotBox_->coveredPassRevision
                                : kSnapshotCoverageUnset;
