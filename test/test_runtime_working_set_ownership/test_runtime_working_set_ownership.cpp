@@ -43,15 +43,17 @@ struct Row {
 inline Row rows[64];
 inline size_t count = 0;
 inline void reset() { count = 0; }
-inline void record(uint32_t maxDeltaTicks, uint32_t opportunities, uint32_t phase) {
+inline bool running[64] = {};
+inline void record(uint32_t maxDeltaTicks, uint32_t opportunities, uint32_t phase, bool transportRunning) {
   if (count < sizeof(rows) / sizeof(rows[0])) {
     rows[count] = Row{maxDeltaTicks, opportunities, phase};
+    running[count] = transportRunning;
   }
   ++count;
 }
 }  // namespace WindowGapRows
-#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase) \
-  WindowGapRows::record(maxDeltaTicks, opportunities, phase)
+#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase, running) \
+  WindowGapRows::record(maxDeltaTicks, opportunities, phase, running)
 // DEC-108 §13b / task 3.9 (increment 4): the window lane's **path rows** through the same substitutable-seam pattern, so
 // a claim about a row (`lag_breach`, `one_pass_late`) is checked as **the row**, not only as the state beside it. The
 // lane emitted these rows under a capture build only, which is why 3.6b's "the breach is reported once per episode"
@@ -6664,12 +6666,12 @@ void test_window_service_gap_sample_reports_the_measured_phase_advance_per_oppor
   // `count == 1` rule to be phase-independent -- the lesson the readiness-receipt fixture recorded.
   for (uint32_t i = 0; i < kInterval; ++i) {
     phase += kQuiet;
-    (void)track.stepPlaybackViewMaintenance(phase, nullptr);
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr, true);
   }
   WindowGapRows::reset();
   for (uint32_t i = 0; i < kInterval; ++i) {
     phase += (i == 3u) ? kSpike : kQuiet;
-    (void)track.stepPlaybackViewMaintenance(phase, nullptr);
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr, true);
   }
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowGapRows::count),
                                    "exactly one sample per declared interval of opportunities");
@@ -6681,12 +6683,34 @@ void test_window_service_gap_sample_reports_the_measured_phase_advance_per_oppor
   WindowGapRows::reset();
   for (uint32_t i = 0; i < kInterval; ++i) {
     phase += kQuiet;
-    (void)track.stepPlaybackViewMaintenance(phase, nullptr);
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr, true);
   }
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowGapRows::count), "one sample again");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(kQuiet, WindowGapRows::rows[0].maxDeltaTicks,
                                    "a quiet interval reports the ordinary advance: the max resets per row");
   TEST_ASSERT_GREATER_THAN_UINT32(firstOpportunities, WindowGapRows::rows[0].opportunities);
+  // **A transport transition is not a service gap.** The first device run's worst "gap" (9 367 ticks over 1.54 s) was a
+  // stop plus a restart, not service; so a sample taken while the transport is stopped must not accumulate a delta, and
+  // a jump across a stop/restart must not be reported. The row also records which it was.
+  WindowGapRows::reset();
+  for (uint32_t i = 0; i < kInterval; ++i) {
+    phase = (i == 5u) ? phase + 900000u : phase + kQuiet;
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr, i < 5u);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowGapRows::count), "one sample per interval");
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(kQuiet, WindowGapRows::rows[0].maxDeltaTicks,
+                                           "a stop/restart jump is NOT a service gap");
+  // The flag itself is asserted over an interval that is **entirely** stopped, so which opportunity the cadence picks
+  // cannot matter (the counter is a process-wide static, so a block that mixes states is phase-dependent).
+  WindowGapRows::reset();
+  for (uint32_t i = 0; i < kInterval; ++i) {
+    phase += kQuiet;
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr, false);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowGapRows::count), "one sample per interval");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, WindowGapRows::rows[0].maxDeltaTicks,
+                                   "a stopped interval accumulates no gap at all");
+  TEST_ASSERT_FALSE_MESSAGE(WindowGapRows::running[0], "and the row records that the transport was not running");
 }
 
 int main() {

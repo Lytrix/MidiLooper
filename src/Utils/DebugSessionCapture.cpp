@@ -1527,20 +1527,21 @@ SC_MEM_ATTR void persistenceResultImmediate(uint32_t durationUs, uint32_t heapBe
 /// **delayed rather than lost**. The direct path is the point: a window is prepared under transport, and the ring is
 /// retained by design while a transport runs, so a receipt enqueued during a leg would arrive only after the
 /// transport stops -- after the readiness it explains. Event-shaped and cadence-bounded by its caller.
-SC_MEM_ATTR void windowServiceGapImmediate(uint32_t maxDeltaTicks, uint32_t opportunities, uint32_t phase) {
+SC_MEM_ATTR void windowServiceGapImmediate(uint32_t maxDeltaTicks, uint32_t opportunities, uint32_t phase,
+                                         bool transportRunning) {
   // Emitted **where it is produced**, directly when USB has room, for the reason the readiness receipt is: the row is
   // produced under transport, and the ring is retained (or sheds) under transport, so a queued sample would arrive after
   // the run that produced it. The ring stays the fallback, so the sample is delayed rather than lost, and the family is
   // Tier-A so the timing-critical flush cannot shed it.
   if (serialWriteRoom(96)) {
-    Serial.printf(SC_FMT("#CAP,%lu,DIAG,win_gap,%lu,%lu,%lu\r\n"), static_cast<unsigned long>(micros()),
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,win_gap,%lu,%lu,%lu,%u\r\n"), static_cast<unsigned long>(micros()),
                   static_cast<unsigned long>(maxDeltaTicks), static_cast<unsigned long>(opportunities),
-                  static_cast<unsigned long>(phase));
+                  static_cast<unsigned long>(phase), static_cast<unsigned>(transportRunning ? 1 : 0));
     return;
   }
-  emitCapPrintf("#CAP,%lu,DIAG,win_gap,%lu,%lu,%lu\r\n", static_cast<unsigned long>(micros()),
+  emitCapPrintf("#CAP,%lu,DIAG,win_gap,%lu,%lu,%lu,%u\r\n", static_cast<unsigned long>(micros()),
                 static_cast<unsigned long>(maxDeltaTicks), static_cast<unsigned long>(opportunities),
-                static_cast<unsigned long>(phase));
+                static_cast<unsigned long>(phase), static_cast<unsigned>(transportRunning ? 1 : 0));
 }
 
 SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const char* readiness, const char* holder,

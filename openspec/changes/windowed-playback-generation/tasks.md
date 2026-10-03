@@ -956,3 +956,13 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   carries no transport state, so the typical figure is sound but the worst case — the one a bound needs — cannot be read off it.** Next: carry the
   transport/clock state in the row (or sample only while running), re-run the leg, and only then declare the supported `H × K` contention envelope and re-derive
   and enable the admission. **No bound is claimed; the derived admission stays disabled.** Detail: [`evidence/2026-10-03-s310l-gap-measured/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-03-s310l-gap-measured/EVIDENCE.md).*
+
+  *Increment 3.10 (increment 13) landed 2026-10-03 — **the row carries the transport state; the unit is confirmed and one ambiguity remains.** The lane turn now
+  takes `transportRunning` from its caller (`clockManager.isClockRunning()`), accumulates a delta only between two **running** samples, and the row reports the
+  flag; the fixture asserts that a stop/restart jump is not a service gap and that a stopped interval accumulates none (76/76, approved RAM1 line held). **Run 2
+  PASSED** (`git_commit 6913a7205332…`, `firmware_hex_sha256 1d7277fe868b…`): 22 rows, **18 running / 4 not-running**, with the running rows' `maxDeltaTicks`
+  min 0 / mean **515.4** / max **4 337** and a **median 2.88 ticks per lane opportunity** (≈ 7 416 µs apart) — the steady state confirmed at roughly **265× below
+  the declared one bar (768)**. **Still not a bound, for a named reason:** the max is either a genuine stall or a **tick reset misread as a loop wrap** (the sampler
+  treats a *decrease* in the phase as a wrap — right for a loop-relative phase, wrong for a counter reset — and the row carries no discriminator). **Next:** carry
+  the loop-relative phase with an explicit epoch/reset marker (or the clock-source state), then declare the `H × K` contention envelope and re-base and enable the
+  derived admission. **No bound is claimed; the derived admission stays disabled.** Detail: [`evidence/2026-10-03-s310l-gap-measured/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-03-s310l-gap-measured/EVIDENCE.md).*

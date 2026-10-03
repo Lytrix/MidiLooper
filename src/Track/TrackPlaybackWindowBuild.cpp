@@ -1772,10 +1772,13 @@ TRACK_COLD_MEM MidiServiceDrain::PlaybackHolder Track::playbackWindowServiceOffe
 DMAMEM static uint32_t sGapLastPhase = 0;
 DMAMEM static uint32_t sGapMaxDelta = 0;
 DMAMEM static uint32_t sGapSampleCount = 0;
+/// Whether the previous sample was taken while the transport ran: what makes a gap a *service* gap.
+DMAMEM static bool sGapLastPhaseRunning = false;
 #else
 static uint32_t sGapLastPhase = 0;
 static uint32_t sGapMaxDelta = 0;
 static uint32_t sGapSampleCount = 0;
+static bool sGapLastPhaseRunning = false;
 #endif
 /// One row per this many opportunities, so a sample cannot evict the evidence it explains (`TelemetryCadence`).
 /// `static` on purpose: an `inline constexpr` at namespace scope has external linkage and is emitted as a real data
@@ -1783,14 +1786,14 @@ static uint32_t sGapSampleCount = 0;
 static constexpr uint32_t kServiceGapSampleInterval = 16;
 
 TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
-    uint32_t currentPhase, MidiServiceDrain::PlaybackHolderCursor* cursor) {
+    uint32_t currentPhase, MidiServiceDrain::PlaybackHolderCursor* cursor, bool transportRunning) {
   // **The service-gap sample, taken at the top of every opportunity.** The opportunity is this call: one lane
   // owner turn, whatever it ends up doing -- a turn that serves nothing still consumed a dispatch, and the gap is about
   // *when* the lane is served. `currentPhase` is the caller's playhead, so the delta between two consecutive calls is
   // exactly the quantity `CoverageServiceContract::maximumPhaseAdvancePerTurn` is declared in, and which the existing
   // device rows cannot measure (they carry durations, not gaps).
   {
-    if (sGapSampleCount != 0u && currentPhase != sGapLastPhase) {
+    if (transportRunning && sGapLastPhaseRunning && sGapSampleCount != 0u && currentPhase != sGapLastPhase) {
       const uint32_t loopTicks = loopForSlot(0).loopLengthTicks;
       const uint32_t delta = (currentPhase > sGapLastPhase || loopTicks == 0u)
                                  ? currentPhase - sGapLastPhase
@@ -1800,9 +1803,13 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
       }
     }
     sGapLastPhase = currentPhase;
+    // A gap is a *service* gap only between two samples taken while the transport ran: while it is stopped the tick does
+    // not advance at all, and a start/stop or a wrap moves it discontinuously. Measured: the first device run's worst
+    // "gap" (9 367 ticks, 1.54 s) was a stop plus a restart, not service.
+    sGapLastPhaseRunning = transportRunning;
     // The cadence counts **opportunities**, not served grains; each row reports the max gap since the previous row.
     if (TelemetryCadence::shouldLogOccurrence(sGapSampleCount, kServiceGapSampleInterval)) {
-      SC_WINDOW_SERVICE_GAP(sGapMaxDelta, sGapSampleCount, currentPhase);
+      SC_WINDOW_SERVICE_GAP(sGapMaxDelta, sGapSampleCount, currentPhase, transportRunning);
       sGapMaxDelta = 0;
     }
   }

@@ -492,7 +492,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     uint8_t chosenTrack = MidiServiceDrain::kNoPlaybackHolder;
     if (MidiServiceDrain::selectPlaybackHolderRoundRobin(sWindowHolderCursor, offers, offerCount, chosenTrack) ==
         MidiServiceDrain::PlaybackHolderSelection::Service) {
-      (void)trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase, nullptr);
+      // The caller owns the clock, so the caller answers "is the transport running" for the service-gap sample.
+      (void)trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase, nullptr,
+                                                                          clockManager.isClockRunning());
     }
     return;
   }

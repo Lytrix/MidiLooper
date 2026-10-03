@@ -266,7 +266,8 @@ public:
   /// why the existing single-owing-slot fixtures need no change; a caller that serves more than one holder passes
   /// its own cursor so the rotation persists across turns.
   PlaybackViewTurnResult stepPlaybackViewMaintenance(
-      uint32_t currentPhase = 0, MidiServiceDrain::PlaybackHolderCursor* cursor = nullptr);
+      uint32_t currentPhase = 0, MidiServiceDrain::PlaybackHolderCursor* cursor = nullptr,
+      bool transportRunning = false);
   /// DEC-108 item 1 / task 3.2: the **interval window the owner published** for a slot -- its identity and the
   /// coverage interval it serves -- or `false` when none is authoritative. Read-only, and deliberately read by
   /// no production consumer yet: adoption is 3.4 (identity on the consumers), 3.5 (readiness predicate) and 3.7
