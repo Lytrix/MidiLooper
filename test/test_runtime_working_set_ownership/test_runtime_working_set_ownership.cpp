@@ -5969,6 +5969,83 @@ void test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them() 
   }
 }
 
+/// DEC-108 §13b / task 3.10 — **the cross-track question this task's own fixture raised**: the opportunity serves
+/// one *track* per turn, and today's production shape chose the **first track with work**, so a lowest-index track
+/// whose interval is a whole pass away monopolised every turn while a later track's interval fell late. With the
+/// offer read per track, the shared policy chooses by urgency instead. This fixture reads **two real tracks'** offers
+/// and asserts that choice, then that serving the chosen track works -- so the level the starvation argument lives
+/// at is measured, not implied.
+void test_window_opportunity_is_offered_across_tracks_by_urgency_not_by_index() {
+  using MidiServiceDrain::PlaybackHolder;
+  using MidiServiceDrain::PlaybackHolderCursor;
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 40 * kBar;
+  constexpr uint32_t kFarRequestPhase = 20000;   // -> interval start 19232: a whole pass away at the serving phase
+  constexpr uint32_t kNearRequestPhase = 10000;  // -> interval start  9232: 32 ticks away at the serving phase
+  constexpr uint32_t kServingPhase = 9200;
+
+  LoopEventStore::initPool();
+  Track& farTrack = trackManager.getTrack(0);
+  Track& nearTrack = trackManager.getTrack(1);
+  farTrack.ensureLoopsAllocated();
+  nearTrack.ensureLoopsAllocated();
+  prepareOwingWindowHolder(farTrack, 0, kLoopTicks, 25, 27, 80, kFarRequestPhase);
+  prepareOwingWindowHolder(nearTrack, 0, kLoopTicks, 12, 14, 1, kNearRequestPhase);
+
+  // (A) Each track answers for itself, read-only: its own most urgent holder, with its own lead.
+  const PlaybackHolder farOffer = farTrack.playbackWindowServiceOffer(kServingPhase);
+  const PlaybackHolder nearOffer = nearTrack.playbackWindowServiceOffer(kServingPhase);
+  TEST_ASSERT_TRUE_MESSAGE(farOffer.eligible && nearOffer.eligible, "both tracks owe a window grain");
+  TEST_ASSERT_TRUE_MESSAGE(farOffer.hasDeadline && nearOffer.hasDeadline, "and both carry a deadline");
+  TEST_ASSERT_TRUE_MESSAGE(nearOffer.handoffLeadTicks < farOffer.handoffLeadTicks,
+                           "the near track's interval is the imminent one");
+  TEST_ASSERT_TRUE_MESSAGE(farTrack.hasPendingPlaybackViewMaintenance() &&
+                               nearTrack.hasPendingPlaybackViewMaintenance(),
+                           "reading an offer serves nothing: both tracks still owe");
+
+  // (B) The production caller's shape: build every track's offer and let the policy choose ONE track. It must be
+  // the **urgent** one even though it is the **higher index** -- which is exactly what the ascending loop this
+  // replaced could not do.
+  PlaybackHolder offers[2] = {farOffer, nearOffer};
+  PlaybackHolderCursor cursor{};
+  uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;
+  TEST_ASSERT_EQUAL(static_cast<int>(MidiServiceDrain::PlaybackHolderSelection::Service),
+                    static_cast<int>(MidiServiceDrain::selectPlaybackHolder(cursor, offers, 2, chosen)));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, chosen,
+                                  "the urgent track is served even though it is the higher index");
+
+  // (C) Equally urgent tracks rotate: the cursor separates them, so a lower index cannot hold the turn.
+
+  // (E) The offer's own aggregation, which (A)-(D) left unexercised: a track with **two** owing holders must offer
+  // its **most urgent** one, not the lowest slot. (A mutation that returns the first owing holder passed the fixture
+  // before this block existed -- found by red-proofing, which is why it is here.)
+  {
+    Track& twoHolderTrack = trackManager.getTrack(2);
+    twoHolderTrack.ensureLoopsAllocated();
+    prepareOwingWindowHolder(twoHolderTrack, 0, kLoopTicks, 25, 27, 80, kFarRequestPhase);
+    prepareOwingWindowHolder(twoHolderTrack, 1, kLoopTicks, 12, 14, 1, kNearRequestPhase);
+    const PlaybackHolder trackOffer = twoHolderTrack.playbackWindowServiceOffer(kServingPhase);
+    TEST_ASSERT_TRUE(trackOffer.eligible);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(handoffLeadTicks(kServingPhase, 9232u, kLoopTicks),
+                                     trackOffer.handoffLeadTicks,
+                                     "the track offers its most urgent holder, not its lowest slot");
+  }
+  PlaybackHolder tied[2] = {nearOffer, nearOffer};
+  PlaybackHolderCursor rotation{};
+  uint8_t first = MidiServiceDrain::kNoPlaybackHolder;
+  uint8_t second = MidiServiceDrain::kNoPlaybackHolder;
+  (void)MidiServiceDrain::selectPlaybackHolder(rotation, tied, 2, first);
+  (void)MidiServiceDrain::selectPlaybackHolder(rotation, tied, 2, second);
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(first, second, "a tie rotates rather than sticking on one track");
+
+  // (D) The choice is executable: serving the chosen track advances *that* track's holder and leaves the far one.
+  LoopPlaybackRuntime* nearRuntime = TrackCaptureStopTestAccess::runtimeIfAllocated(nearTrack, 0);
+  LoopPlaybackRuntime* farRuntime = TrackCaptureStopTestAccess::runtimeIfAllocated(farTrack, 0);
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+                        static_cast<int>(nearTrack.stepPlaybackViewMaintenance(kServingPhase, nullptr)));
+  TEST_ASSERT_TRUE_MESSAGE(windowHolderAdvanced(nearRuntime), "the chosen track served its grain");
+  TEST_ASSERT_FALSE_MESSAGE(windowHolderAdvanced(farRuntime), "the other track was not touched");
+}
 int main() {
 
 
@@ -5986,6 +6063,8 @@ int main() {
   RUN_TEST(test_s4b_6_a_switch_to_a_multi_bar_target_without_occupancy_also_provisions_off_clock);
   // S4b.7 (demoted): the merged window releases the hold when a published root exists, and its absence is
   // bounded -- one report per episode, switch retained.
+  // windowed-playback-generation slice 3.10 increment 5: the cross-track offer and selection.
+  RUN_TEST(test_window_opportunity_is_offered_across_tracks_by_urgency_not_by_index);
   RUN_TEST(test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn);
   RUN_TEST(test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound);
   // S4b.5 (B4): one active-slot write authority -- a direct write (the undo route) cancels a queued switch,
