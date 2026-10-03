@@ -37,6 +37,16 @@
 
 static MidiServiceDrain::DeferredIdleOwnerCursor sDeferredIdleOwnerCursor{};
 
+/// DEC-108 §13b / task 3.10: the **holder rotation** position for the window-build owner (the caller-owned shape
+/// `sDeferredIdleOwnerCursor` uses -- the owner owns neither the rotation nor its persistence). One byte is enough:
+/// DEC-108 §13b / task 3.10: the **holder rotation** position for the window-build owner (the caller-owned shape
+/// `sDeferredIdleOwnerCursor` uses -- the owner owns neither the rotation nor its persistence). One byte is enough:
+/// the selection examines every holder each turn, so the rotation only breaks ties -- which is what bounds every
+/// holder's wait. Two guards shaped it: it is **not** an array per track, and it is `DMAMEM` rather than DTCM,
+/// because the RAM1 budget guard rejected both the 8-cursor array and the single DTCM byte (+32 B of `variables`)
+/// and the approved line may not grow for a tie-break. This owner's turn is off-clock (DEC-108 §13b's placement
+/// rule: an additional counter is `DMAMEM`/`FLASHMEM`).
+DMAMEM static MidiServiceDrain::PlaybackHolderCursor sWindowHolderCursor{};
 /// S4f.2/B06: the eligibility decision lives on `Track` (`hasRealtimeDeferredIdleWork`) so it is
 /// testable and so a later stage adds its term in one place rather than editing this scan.
 static bool hasRealtimeIdleWork(const Track& track) {
@@ -461,9 +471,15 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
   // One declared grain per admitted turn: the loop stops at the first track that had one. Nothing is
   // published yet, so no consumer's behaviour depends on this turn.
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance) {
+    // DEC-108 §13b / task 3.10: the caller owns the rotation and the phase -- a cursor per track (the same shape
+    // the selection can order holders by their outstanding handoff. The rotation is one shared byte: the selection
+    // examines every holder each turn, so the rotation only breaks ties -- which is what bounds every holder's wait.
     const uint8_t windowTrackCount = trackManager.getTrackCount();
+    const uint32_t windowPhase = static_cast<uint32_t>(clockManager.getCurrentTick());
+    sWindowHolderCursor.next =
+        static_cast<uint8_t>(sWindowHolderCursor.next % Config::MAX_LOOPS_PER_TRACK);
     for (uint8_t i = 0; i < windowTrackCount; ++i) {
-      if (trackManager.getTrack(i).stepPlaybackViewMaintenance() !=
+      if (trackManager.getTrack(i).stepPlaybackViewMaintenance(windowPhase, &sWindowHolderCursor) !=
           Track::PlaybackViewTurnResult::Idle) {
         break;
       }
