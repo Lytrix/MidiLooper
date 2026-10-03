@@ -1,0 +1,12 @@
+{
+ "rows": 34,
+ "max_delta": 9367,
+ "mean_delta": 279.53,
+ "us_per_opportunity_median": 8457.7,
+ "us_per_opportunity_p90": 9153.1,
+ "ticks_per_opportunity_median": 3.25,
+ "ticks_per_opportunity_max": 588.81,
+ "lane_opportunities": 528,
+ "git_commit": "a545def42d262fe03198edae9c62c81c84d6f174",
+ "firmware_hex_sha256": "531259700436ffe3b9a2216246c0835a0c1eace03e30443e3bc7e2cbe4d8ff3d"
+}

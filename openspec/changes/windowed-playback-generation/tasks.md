@@ -945,3 +945,14 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   re-proved on the landed code (**M101** `Expected 5000 Was 1000`, **M102** `Expected 5000 Was 91400`, **M103** `Expected 1 Was 2`) with byte-identical restores.
   **Unblocks the measurement:** next is the HITL leg with the **stimulus's own targets** (`track 8`, slots 4–5) to collect the `DIAG,win_gap` series, then the unit
   is measured, the `H × K` contention envelope declared, and the derived admission re-based and enabled — in that order. Detail: [`evidence/2026-10-03-s310k-gap-sampler-ram1-blocked/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-03-s310k-gap-sampler-ram1-blocked/EVIDENCE.md).*
+
+  *Increment 3.10 (increment 12) landed 2026-10-03 — **the service-gap unit measured on the device, with the first instrument's limit recorded.** The baseline
+  stimulus with its own targets (`--track 8 --loop-slot 4`, `--build-upload`) **PASSED**, pinned by `metadata.json` to `git_commit a545def42d26…` /
+  `firmware_hex_sha256 531259700436…` — the firmware carrying the sampler. 34 `DIAG,win_gap` rows over **528 lane opportunities**: the **phase advance per lane
+  opportunity** (the unit the admission is declared in) measures **median 3.25 ticks, p90 3.5** (≈ 8 458 µs apart), against a **declared 768** (one bar) — the
+  declaration is two orders too conservative for the steady state, which is why it refuses work the lane could service. The per-row **max** spans 0…9 367
+  (mean 279.5); the large outliers are almost certainly **transport-state transitions or loop wraps rather than service gaps** (the capture spans
+  record/overdub/stop legs and a stopped transport advances no ticks). **That exposes the instrument's own limit, recorded rather than averaged away: the row
+  carries no transport state, so the typical figure is sound but the worst case — the one a bound needs — cannot be read off it.** Next: carry the
+  transport/clock state in the row (or sample only while running), re-run the leg, and only then declare the supported `H × K` contention envelope and re-derive
+  and enable the admission. **No bound is claimed; the derived admission stays disabled.** Detail: [`evidence/2026-10-03-s310l-gap-measured/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-03-s310l-gap-measured/EVIDENCE.md).*
