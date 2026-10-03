@@ -920,3 +920,16 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   **gated instrumentation** (a per-`PlaybackViewMaintenance`-opportunity phase row, cadence-bounded, `DMAMEM`/`FLASHMEM` per DEC-108 §13b, RAM1 guard checked)
   before device data can be collected; then one run with the stimulus's own targets, then measure → declare the `H × K` envelope → re-base and enable. Detail:
   [`evidence/2026-10-03-s310j-service-gap-not-measurable/EVIDENCE.md`](evidence/2026-10-03-s310j-service-gap-not-measurable/EVIDENCE.md).*
+
+  *Increment 3.10 (increment 11) attempted 2026-10-03 — **the service-gap sampler written, native-green, and blocked by the held RAM1 pin** (reverted; nothing
+  landed). Implemented and proved at 74/74: `windowServiceGapImmediate` + the `SC_WINDOW_SERVICE_GAP` seam, a sample at the **top of every lane
+  opportunity** (a turn that serves nothing still counts, which is the case the gap must include), `DMAMEM` state, one row per 16 opportunities, each row
+  carrying the **max gap since the previous row**, `DIAG,win_gap,` Tier-A, plus a fixture with a known progression (quiet 1 000, one 5 000 spike) and three
+  mutations (`Expected 5000 Was 1000` no-running-max; `Expected 5000 Was 91400` no-per-row-reset; `Expected 1 Was 2` interval 16 → 8). **The RAM1 guard then
+  refused the link** — `variables 100,288` vs approved `96,192` (**+4,096 B**), with `code` unchanged and `locals` down to 30,784, i.e. one DTCM `ALIGN` page.
+  Four rebuild diagnostics showed the cause is **scale, not the literal**: header literal `100,288`; literal removed **`96,192` ✓**; literal moved into the single
+  TU `100,288`; `inline`→`static constexpr` `100,288` — the section is within a few bytes of the boundary, so shaving cannot fix it. **The fix is the playbook's
+  routing** (that TU's `.rodata` to FLASH in `linker/imxrt1062_t41_lcr.ld`, as lines 98/99/113 do), which lands `variables` **below** 96,192 and therefore requires
+  **re-basing `scripts/ram1_budget.json` in the same commit** — a pin the project holds deliberately, so the decision is the user's: re-base downward with the
+  routing fix, or retire ~4 KB of DTCM first. Everything was reverted to green (73/73; approved RAM1 line) and an **unrelated concurrent edit** in
+  `docs/Runtime/CURRENT_WORK.md` was preserved rather than staged. Detail: [`evidence/2026-10-03-s310k-gap-sampler-ram1-blocked/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-03-s310k-gap-sampler-ram1-blocked/EVIDENCE.md).*
