@@ -348,6 +348,19 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   **envelope derivation** from grain costs and the worst permitted service gap (bounds in turns here, gap measurement
   owed); and **one declared grain per turn** as a uniform invariant, which is not there to assert yet. Detail:
   [`evidence/2026-10-02-s310-holder-service-fairness/EVIDENCE.md`](evidence/2026-10-02-s310-holder-service-fairness/EVIDENCE.md).*
+  *Increment 3.10 (increment 2) landed 2026-10-02 — the **urgency figure, named once and shared**: `handoffLeadTicks` (the tick distance along the loop to a handoff)
+  lands beside the contract whose `available` sub-term it is, and `canCompleteBeforeHandoff` now **calls** it, so the admission and the scheduler
+  cannot diverge. The holder policy therefore orders by **ticks to the handoff**, not by a raw phase — a phase is meaningless across holders whose
+  loops differ in length: the fixture pins the pair where the **more urgent holder carries the larger phase** (1,400 ticks on a 2,000-tick loop
+  versus a whole 18,200-tick pass on a 20,000-tick loop), plus the wrap case and the refusals (an undeclared loop, an out-of-range phase — `0`, never a
+  wrap). Verified: 39/39 (fixture extended) + 67/67 (the admission side of the shared definition) and full native 2700 / 2693 succeeded / 7 skipped /
+  0 failed, build SUCCESS with the RAM1 line unchanged; three mutations red-proved with byte-identical restores — the wrap branch dropped (fails the
+  new fixture **and 11 cases in the sibling suite**, the point of one definition), the out-of-range refusal dropped, and "a deadline beats none"
+  inverted. **Recorded:** two of this task's own fixture attempts were wrong, not the code (increment 1's outcome block, and an assertion that
+  claimed equal phase distances differ with loop length — they do not; the difference is the wrap). **The task stays open** on the same four items:
+  the wiring (still no production caller; nothing computes the lead for a live holder), the starvation half, the envelope derivation, and one
+  declared grain per turn as a uniform invariant. Detail:
+  [`evidence/2026-10-02-s310b-shared-handoff-lead/EVIDENCE.md`](evidence/2026-10-02-s310b-shared-handoff-lead/EVIDENCE.md).*
 - [x] 3.11 **Implement the shared-view ownership rules and transitions** (*DEC-108 §13d*) — published/current views
   read-only, only the owning builder writes its candidate, a ready view immutable until adopted or retired, storage
   reusable only after every owner releases it; then the transitions: new edit (retain the frozen source, coalesce the

@@ -67,3 +67,16 @@ struct CoverageServiceContract {
                                 uint32_t loopLengthTicks,
                                 uint16_t additionalGrains = 0) const;
 };
+
+/// DEC-108 §13b / task 3.10: **the tick distance from the playhead to a handoff** -- how long the caller has
+/// before its interval is needed, measured along the loop (`handoffPhase < currentPhase` means the next entry is
+/// a full pass away). It is the contract's own `available` sub-term, named once so the admission decision and any
+/// *scheduling* reader of the same quantity cannot disagree; a raw phase is not comparable between holders whose
+/// loops differ in length, and this is.
+inline uint32_t handoffLeadTicks(uint32_t currentPhase, uint32_t handoffPhase, uint32_t loopLengthTicks) {
+  if (loopLengthTicks == 0 || currentPhase >= loopLengthTicks || handoffPhase >= loopLengthTicks) {
+    return 0;
+  }
+  return handoffPhase >= currentPhase ? handoffPhase - currentPhase
+                                      : loopLengthTicks - currentPhase + handoffPhase;
+}

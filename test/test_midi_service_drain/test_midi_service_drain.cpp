@@ -2,6 +2,7 @@
 #include <initializer_list>
 
 #include "Utils/MidiServiceDrain.h"
+#include "RuntimePlaybackViewBuild.h"
 #include "Utils/SlotProvisionHold.h"
 
 void test_canonical_prework_prioritizes_runnable_visual_work() {
@@ -621,10 +622,12 @@ void test_playback_holder_service_is_fair_deadline_ordered_and_never_held_by_a_b
       holders[i].eligible = true;
       holders[i].hasDeadline = true;
     }
-    holders[0].deadlinePhase = 900;
-    holders[1].deadlinePhase = 100;
-    holders[2].deadlinePhase = 700;
-    holders[3].deadlinePhase = 300;
+    // Ticks to the handoff -- and deliberately **not** sorted by phase: holders 1 and 3 can belong to loops of
+    // different lengths, where a raw phase says nothing about urgency but the tick distance does.
+    holders[0].handoffLeadTicks = 9000;
+    holders[1].handoffLeadTicks = 1000;
+    holders[2].handoffLeadTicks = 7000;
+    holders[3].handoffLeadTicks = 3000;
     PlaybackHolderCursor cursor{};
     const uint8_t expectedOrder[kHolders] = {1, 3, 2, 0};
     for (uint8_t turn = 0; turn < kHolders; ++turn) {
@@ -647,7 +650,7 @@ void test_playback_holder_service_is_fair_deadline_ordered_and_never_held_by_a_b
       holders[i].eligible = true;
     }
     holders[3].hasDeadline = true;
-    holders[3].deadlinePhase = 5000;
+    holders[3].handoffLeadTicks = 5000;
     PlaybackHolderCursor cursor{};
     uint8_t holder = kNone;
     (void)MidiServiceDrain::selectPlaybackHolder(cursor, holders, kHolders, holder);
@@ -728,6 +731,31 @@ void test_playback_holder_service_is_fair_deadline_ordered_and_never_held_by_a_b
     TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::None),
                       static_cast<int>(MidiServiceDrain::selectPlaybackHolder(cursor, holders, 0, holder)));
     TEST_ASSERT_EQUAL_UINT8(kNone, holder);
+  }
+
+  // (F) The urgency figure the ordering above consumes is **derived, not stored**: `handoffLeadTicks` is the tick
+  // distance along the loop, and it is now the admission's own `available` sub-term, so the scheduler and the
+  // admission cannot disagree about how much time a holder has. The wrap case is the one a raw phase subtraction
+  // gets wrong.
+  {
+    TEST_ASSERT_EQUAL_UINT32(200u, handoffLeadTicks(800u, 1000u, 4000u));
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(3400u, handoffLeadTicks(800u, 200u, 4000u),
+                                     "a handoff behind the playhead is a full pass away, not negative");
+    TEST_ASSERT_EQUAL_UINT32(0u, handoffLeadTicks(1000u, 1000u, 4000u));
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, handoffLeadTicks(0u, 0u, 0u),
+                                     "an undeclared loop has no lead rather than a wrapped one");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, handoffLeadTicks(4000u, 10u, 4000u),
+                                     "an out-of-range phase is a refusal, not a wrap");
+    // The same quantity at two loop lengths: equal phases, different urgency -- which is exactly why the selector
+    // orders by these ticks and not by the phase.
+    // Where a raw phase would order two holders **wrongly**: A's handoff phase (1900) is far ahead of B's (100),
+    // so ordering by phase would serve B first -- yet B's wait is a whole pass (18,200 ticks) while A's is 1,400.
+    // This is the wrap case, and it is why the selector's ordering quantity is the tick distance.
+    TEST_ASSERT_EQUAL_UINT32(1400u, handoffLeadTicks(500u, 1900u, 2000u));
+    TEST_ASSERT_EQUAL_UINT32(18200u, handoffLeadTicks(1900u, 100u, 20000u));
+    TEST_ASSERT_TRUE_MESSAGE(handoffLeadTicks(500u, 1900u, 2000u) <
+                                 handoffLeadTicks(1900u, 100u, 20000u),
+                             "the more urgent holder has the *larger* handoff phase: phase order is not urgency");
   }
 }
 int main() {
