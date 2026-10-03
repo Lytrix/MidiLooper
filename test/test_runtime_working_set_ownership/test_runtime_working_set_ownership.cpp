@@ -6300,6 +6300,103 @@ void test_window_service_keeps_one_turn_per_rotation_and_no_owner_loses_a_turn()
       kGrainsWithDenials, laneTurnsToCompletion,
       "recorded: the declared 7 grains x 4 turns does not bound this shape -- derive the envelope (task 3.10)");
 }
+
+/// DEC-108 §13b / task 3.10 — **the grain-cost model, measured, and the supported window derived from it.** Increment 6
+/// measured one shape and left the cost model unestablished, which is why the contract's declared grain counts could not
+/// be checked against real work. This fixture sweeps the window's event count and reads the counter-observable cost in
+/// **turns**, so the envelope is derived from a measurement rather than assumed — and the measurement contradicts both
+/// the declared grains and the window capacity admission currently allows.
+namespace {
+struct WindowCostSample {
+  uint32_t loopBars;
+  uint32_t notes;
+  uint32_t fills;
+  uint32_t orders;
+  uint32_t turns;
+};
+
+/// Drive one owed window to completion, counting grains by phase: `nextCoverageBuildGrain()` is read **before** each turn,
+/// so the fill/order split is the owner's own answer rather than an inference from the totals.
+WindowCostSample measureWindowCost(Track& track, uint8_t slot, uint32_t loopBars, uint32_t notes, uint32_t fromBar,
+                                   uint32_t toBar) {
+  const uint32_t loopTicks = loopBars * 768u;
+  const uint32_t requestPhase = (fromBar * 768u) + 384u;
+  prepareOwingWindowHolder(track, slot, loopTicks, fromBar, toBar, notes, requestPhase);
+  WindowCostSample sample{loopBars, notes, 0, 0, 0};
+  while (track.hasPendingPlaybackViewMaintenance() && sample.turns < 6000u) {
+    LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot);
+    TEST_ASSERT_NOT_NULL(runtime);
+    const RuntimePlaybackViewBuildGrain grain = runtime->nextCoverageBuildGrain();
+    if (grain == RuntimePlaybackViewBuildGrain::Fill) {
+      ++sample.fills;
+    } else if (grain == RuntimePlaybackViewBuildGrain::Order) {
+      ++sample.orders;
+    }
+    (void)track.stepPlaybackViewMaintenance(requestPhase, nullptr);
+    ++sample.turns;
+  }
+  return sample;
+}
+}  // namespace
+
+void test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window() {
+  constexpr uint32_t kBar = 768;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+
+  const WindowCostSample one = measureWindowCost(track, 0, 64, 1, 12, 13);
+  const WindowCostSample ten = measureWindowCost(track, 1, 64, 10, 12, 13);
+  const WindowCostSample twenty = measureWindowCost(track, 2, 64, 20, 12, 13);
+  const WindowCostSample forty = measureWindowCost(track, 3, 64, 40, 12, 13);
+  const WindowCostSample eighty = measureWindowCost(track, 4, 64, 80, 12, 13);
+  const WindowCostSample oneSixty = measureWindowCost(track, 5, 64, 160, 12, 13);
+  const WindowCostSample eightyOn32 = measureWindowCost(track, 6, 32, 80, 6, 7);
+  // The same 80 notes **spread across the loop** rather than dense in the window: the window then holds a handful.
+  const WindowCostSample spread = measureWindowCost(track, 7, 64, 80, 12, 60);
+
+  // (A) **The cost is a function of the window's event count** — not of the loop, and not of the source. The same 80
+  // notes cost the same on a 64-bar and a 32-bar loop; the same 80 notes spread out of the window cost one turn.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(eighty.turns, eightyOn32.turns,
+                                   "the same window content costs the same on a 64-bar and a 32-bar loop");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(eighty.orders, eightyOn32.orders, "including its order work");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, spread.turns,
+                                   "80 notes outside the window are not the window's cost: a sparse window is one turn");
+
+  // (B) **A small window needs no order grain at all** — the threshold the declared `requiredOrderGrains` is about.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, one.turns, "a one-note window completes in a single grain");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, one.orders, "with no order grain");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ten.orders, "and so does a ten-note window");
+
+  // (C) The measured cost above the threshold, pinned so a changed order pass must re-baseline it: 20 -> 11, 40 -> 25,
+  // 80 -> 57, 160 -> 127 order grains. The per-note cost **rises** with the window's size (0.55 -> 0.79 grains/note),
+  // i.e. the order pass is super-linear in the window's entries rather than linear in them.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(11u, twenty.orders, "measured order grains for a 20-note window");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(25u, forty.orders, "measured order grains for a 40-note window");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(57u, eighty.orders, "measured order grains for an 80-note window");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(127u, oneSixty.orders, "measured order grains for a 160-note window");
+  // Doubling the window more than doubles the order work: 11 -> 25 -> 57 -> 127 (x2.27, x2.28, x2.23), which is why the
+  // order cost cannot be covered by a *linear* grain count in the window's entries.
+  TEST_ASSERT_TRUE_MESSAGE(eighty.orders > forty.orders * 2u && oneSixty.orders > eighty.orders * 2u,
+                           "doubling the window more than doubles the order work: super-linear, not linear");
+
+  // (D) **The derived bound, in the contract's own currency.** A lane turn advances the playhead at most
+  // `maximumPhaseAdvancePerTurn`, so a window's service need is `turns x 768` ticks of playhead travel — ticks the loop
+  // must have left before the handoff. The measured 60 turns are 46 080 ticks = 60 bars.
+  const CoverageServiceContract contract = Track::playbackViewCoverageContract();
+  const uint32_t serviceNeedTicks =
+      static_cast<uint32_t>(eighty.turns) * static_cast<uint32_t>(contract.maximumPhaseAdvancePerTurn);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(60u * kBar, serviceNeedTicks, "60 lane turns are 60 bars of playhead travel");
+  // An 80-note window on a **32-bar** loop needs more service ticks than the loop is long — and the request was
+  // **admitted** anyway, because admission judges the handoff with the *declared* grains (7 at quanta 64/48, i.e. a
+  // 29-bar lead) rather than with the measured cost. This is the contradiction, stated where it is measurable.
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
+      32u * kBar, serviceNeedTicks,
+      "the admitted 80-note window on a 32-bar loop needs more service ticks than the loop has -- measured");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
+      29u * kBar, serviceNeedTicks,
+      "and more than the declared 29-bar lead the admission judged it by -- measured");
+}
 int main() {
 
 
@@ -6323,6 +6420,8 @@ int main() {
   RUN_TEST(test_window_readiness_receipt_reports_the_outcome_and_is_cadence_bounded);
   // windowed-playback-generation slice 3.10 increment 6: the starvation half and the derived turn envelope.
   RUN_TEST(test_window_service_keeps_one_turn_per_rotation_and_no_owner_loses_a_turn);
+  // windowed-playback-generation slice 3.10 increment 7: the measured grain-cost model and the derived bound.
+  RUN_TEST(test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window);
   RUN_TEST(test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn);
   RUN_TEST(test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound);
   // S4b.5 (B4): one active-slot write authority -- a direct write (the undo route) cancels a queued switch,

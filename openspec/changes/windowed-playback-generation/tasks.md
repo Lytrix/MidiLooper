@@ -400,6 +400,27 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   measured problem), the wiring, and the systematic grain-cost sweep. Detail:
   [`evidence/2026-10-02-s310f-composed-service-bound/EVIDENCE.md`](evidence/2026-10-02-s310f-composed-service-bound/EVIDENCE.md).*
 
+  *Increment 3.10 (increment 7) landed 2026-10-02 — **the measured grain-cost model and the supported window derived from it** (test-only). This is the
+  increment the previous two pointed at: **derive the envelope from grain costs without inventing a microsecond budget**. A sweep reads the
+  counter-observable cost in **turns**, with `nextCoverageBuildGrain()` sampled before each turn, so the fill/order split is the owner's own answer. Measured:
+  window events 1 and 10 → **1 turn, no order grain**; 20 → 11 orders (12 turns); 40 → 25 (27); 80 → **57 (60 turns)**; 160 → 127 (132). Controls in the
+  same run: **80 notes cost identically on a 32-bar and a 64-bar loop**, and the same 80 notes **spread across the loop** cost **one** turn — so the cost
+  is a function of the **window's event count alone**, it has a threshold near 10 events, and above it the order pass is **super-linear** (per-note cost
+  0.55 → 0.79 grains). **The derived bound**, in the contract's own currency: a turn advances the playhead at most `maximumPhaseAdvancePerTurn`, so a
+  window's need is `turns × 768` ticks of playhead travel — 80 events = **46 080 ticks ≈ 60 bars** (fits a 64-bar loop, not a 32-bar one), 160 events =
+  101 376 (fits neither). **The contradictions, now numeric:** the declared `3 + 3 + 1 = 7` grains at quanta 64/48 (worst case 28 turns) cover roughly
+  `N ≈ 5–10`, not a window of 80 — and an 80-event window on a **32-bar** loop was nevertheless **admitted** while needing 46 080 ticks ≫ the declared
+  29-bar lead; `kWindowAdmissionLimit = kEventsPerView = 2048` extrapolates to ~1 600 lane turns ≈ 1 600 bars, an order of magnitude beyond any admissible
+  loop. **Preferred reconciliation, stated and deliberately NOT applied:** keep the grain quanta (a deliberate timing choice with a measurement behind it)
+  and derive both the exported grain counts and 3.12's admitted window size from the measured envelope and the loop's own length — confidence **high**
+  that the capacity is the wrong side to keep, **medium** on the exact functional form (four points establish the shape, not the constant). It is not
+  applied because it moves the declared lead, 3.12's admission limit and 4.4's floor and would refuse shapes admitted today; assertion (D) is written as
+  the *contradiction*, so applying it inverts it. **M98–M100** red-prove the fixture (the order quantum doubled halves the pinned table; always entering
+  the order phase breaks the threshold and the sparse-window assertions; inflating the declared `maximumPhaseAdvancePerTurn` breaks the derivation's
+  equality pin — i.e. (D) reads the declared field, not a literal). Verified: 72/72, full native **2707 / 2700 / 7 / 0**, build SUCCESS (relink, RAM1 line
+  byte-identical, no re-base). **Task 3.10 stays open** on the **reconciliation decision** (above), the wiring, and the systematic sweep. Detail:
+  [`evidence/2026-10-02-s310g-cost-model/EVIDENCE.md`](evidence/2026-10-02-s310g-cost-model/EVIDENCE.md).*
+
 - [ ] 3.10 **Implement fair, bounded, deadline-ordered service** (*DEC-108 §13b*) — a recurring bounded opportunity on the
   existing deferred machinery; round-robin across eligible holders; earliest outstanding playback deadline first within a
   holder; **cursor advances even when a holder cannot progress**; capture finalization and persistence keep their own
