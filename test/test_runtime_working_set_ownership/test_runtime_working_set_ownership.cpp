@@ -6710,6 +6710,76 @@ void test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_suppor
                            "the declaration exists; what it does not yet have is a measured unit and the full "
                            "contention envelope -- which is why active windowed playback stays gated");
 }
+/// The review's **step 2** (*"bound interference within each track"*), task 3.10: a **per-track outstanding-work
+/// budget** replaces the vague `K` allowance, and a new admission must leave **every already-admitted window's
+/// deadline feasible** -- not just its own -- under the deliberate EDF-free rule (*charge all sibling work*).
+/// **The claim made good here:** a continuously replenished early-deadline sibling cannot invalidate an older
+/// window's admitted bound, because the bound refuses exactly those admissions. **The bound of this fixture:** it
+/// exercises that bound through its public predicate with explicit phases; the production call site keeps it
+/// **unenforced** until `Delta-max` is measured, so this is not a claim that the admission already refuses them.
+void test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a_sibling() {
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLongLoopTicks = 900 * kBar;  // the loop both windows are admitted on
+  constexpr uint32_t kShortLoopTicks = 40 * kBar;  // a loop the sibling's charge cannot fit inside
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  const CoverageServiceContract contract = Track::playbackViewCoverageContract();
+
+  // Two windows on one track: slot 0 the small older window, slot 1 the larger sibling. Both are requested **just past**
+  // their interval's start, so their deadline is nearly a full pass away -- the available lead is the distance to the
+  // handoff, and a near deadline would bind long before any charge does.
+  prepareOwingWindowHolder(track, 0, kLongLoopTicks, 60, 62, 8, (60 * kBar) + 384);
+  prepareOwingWindowHolder(track, 1, kLongLoopTicks, 60, 62, 80, (60 * kBar) + 384);
+  const LoopPlaybackRuntime* first = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  const LoopPlaybackRuntime* second = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
+  TEST_ASSERT_NOT_NULL(first);
+  TEST_ASSERT_NOT_NULL(second);
+  const PlaybackViewAdmittedWork* work0 = first->activeViewBuildWork();
+  const PlaybackViewAdmittedWork* work1 = second->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(work0);
+  TEST_ASSERT_NOT_NULL(work1);
+
+  // **(A) The budget is the per-track outstanding work, and it can be read excluding one slot** -- that exclusion is
+  // what lets a candidate charge the siblings against its own lead.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(work1->requiredGrains()),
+                           static_cast<uint32_t>(track.playbackViewOutstandingGrains(0)),
+                           "the budget excluding slot 0 is slot 1's outstanding work");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(work0->requiredGrains()),
+                           static_cast<uint32_t>(track.playbackViewOutstandingGrains(1)),
+                           "and the other way round");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(work0->requiredGrains() + work1->requiredGrains()),
+                           static_cast<uint32_t>(track.playbackViewOutstandingGrains()),
+                           "the whole-track budget is every active build, charged in full as an upper bound");
+  // The deadline is **retained**, not re-derived: it is what a later admission is checked against.
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, work0->handoffPhase, "the admitted window retains its deadline");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, work1->handoffPhase, "and so does the sibling");
+
+  // **(B) An admission that cannot leave the older window's deadline feasible is refused** -- the promise that a
+  // continuously replenished early-deadline sibling cannot invalidate an older window's admitted bound. The same
+  // candidate charge fits on the loop both windows were admitted on and does not fit on a short one, so the bound
+  // refuses *capacity*, not siblings.
+  const uint32_t earlyPhase = (60 * kBar) + 384;  // the phase both windows were requested at
+  TEST_ASSERT_FALSE_MESSAGE(
+      track.playbackViewAdmissionKeepsAdmittedDeadlines(contract, earlyPhase, kShortLoopTicks,
+                                                       static_cast<uint16_t>(work1->requiredGrains())),
+      "on a short loop the sibling's charge cannot leave the older window's deadline feasible");
+  TEST_ASSERT_TRUE_MESSAGE(
+      track.playbackViewAdmissionKeepsAdmittedDeadlines(contract, earlyPhase, kLongLoopTicks,
+                                                       static_cast<uint16_t>(work1->requiredGrains())),
+      "on the loop both windows were admitted on, the same charge still fits");
+
+  // **(C) Why the bound is not enforced yet**, asserted rather than left to prose: with the *declared* advance (one
+  // bar per turn) the charge for a single sibling already exceeds a 40-bar loop by more than an order of magnitude,
+  // so enforcing it now would refuse shapes the current constants admit. Written as an inequality against the declared
+  // field, so a change to that advance re-opens the question instead of silently flipping a gate.
+  const uint32_t siblingChargeTicks = static_cast<uint32_t>(work1->requiredGrains()) *
+                                      (static_cast<uint32_t>(contract.maximumConsecutiveDeniedTurns) + 1u) *
+                                      contract.maximumPhaseAdvancePerTurn;
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(kShortLoopTicks, siblingChargeTicks,
+                                          "the declared charge for one sibling already exceeds a 40-bar loop");
+}
+
 /// The review's **step 1** (*"bound the work of each request"*), task 3.10: at admission the requested window's work is
 /// **bounded and retained** -- the entries the fill must inspect, the maximum retained window events, and the grain
 /// cost derived from those counts -- and the retained record is the contract's own `deriveGrainsFrom`, never the
@@ -6985,6 +7055,7 @@ int main() {
   // windowed-playback-generation slice 3.10 increment 7: the measured grain-cost model and the derived bound.
   RUN_TEST(test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window);
   RUN_TEST(test_window_request_work_is_bounded_and_retained_across_source_shapes);
+  RUN_TEST(test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a_sibling);
   RUN_TEST(test_window_request_beyond_the_retained_capacity_is_refused_by_name_and_truncates_nothing);
   // slice 3.10 increment 11: the service-gap unit, sampled from the lane's own opportunities.
   RUN_TEST(test_window_service_gap_sample_reports_the_measured_phase_advance_per_opportunity);

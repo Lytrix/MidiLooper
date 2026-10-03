@@ -273,6 +273,10 @@ struct PlaybackViewAdmittedWork {
   uint16_t fillGrains = 0;
   uint16_t orderGrains = 0;
   uint16_t promotionGrains = 0;
+  /// The **deadline** this window was admitted against: the phase at which the playhead next needs the interval the
+  /// build serves. Retained so that a **later** admission can be checked against it (review step 2) rather than only
+  /// against its own margin -- "admission must leave every already-admitted window's deadline feasible".
+  uint32_t handoffPhase = 0;
   /// The same saturating sum the contract uses, so a reader cannot disagree with `requiredGrains()`.
   uint32_t requiredGrains() const {
     const uint32_t total = static_cast<uint32_t>(fillGrains) + orderGrains + promotionGrains;

@@ -252,6 +252,11 @@ public:
     /// (`RuntimePlaybackViewConfig::kWindowAdmissionLimit`), so its work cannot be bounded by the window that would
     /// have to hold it. It is **refused rather than truncated** -- accepted content is never silently dropped.
     WindowExceedsRetainedCapacity,
+    /// Task 3.10 (the review's step 2): admitting this window would **break the promise already made** to a window on
+    /// this track -- after charging all outstanding work, some already-admitted window could no longer reach its own
+    /// deadline. The request is refused by name, so it can be re-issued when the interference clears; it is never
+    /// silently dropped and the existing window's deadline is never traded away.
+    TrackInterferenceBudgetExceeded,
   };
   enum class PlaybackViewTurnResult : uint8_t { Idle, GrainServed, BuildComplete, GrainDenied };
 
@@ -261,6 +266,17 @@ public:
       const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
       uint32_t currentPhase, uint32_t handoffPhase);
   bool hasPendingPlaybackViewMaintenance() const;
+  /// DEC-108 §13b / task 3.10 (the review's step 2): the **per-track outstanding-work budget** -- the sum of every
+  /// active build's **full** admitted grains on this track. Full, not remaining, is deliberate: it is an **upper
+  /// bound** on what is still owed (a served grain is charged again), which is the safe direction for a budget. A
+  /// tighter figure needs the build's remaining-grain count, which is not observable today.
+  uint16_t playbackViewOutstandingGrains(uint8_t excludingSlot = Config::MAX_LOOPS_PER_TRACK) const;
+  /// DEC-108 §13b / task 3.10 (the review's step 2): whether admitting `candidateGrains` of new work leaves **every
+  /// already-admitted window on this track** able to reach its own deadline. Each window is charged its own grains
+  /// plus **all** the other outstanding work (the candidate included) -- the deliberate, EDF-free "charge all sibling
+  /// work" rule -- so no later request can invalidate an older window's admitted bound.
+  bool playbackViewAdmissionKeepsAdmittedDeadlines(const CoverageServiceContract& contract, uint32_t currentPhase,
+                                                   uint32_t loopLengthTicks, uint16_t candidateGrains) const;
   /// DEC-108 §13b / task 3.10: serve **one declared grain** of this track's owed window work. `currentPhase` is
   /// the playhead's phase and `cursor` the caller's rotation position across holders: the selection is the shared
   /// policy (`MidiServiceDrain::selectPlaybackHolder`) -- holders rotate, the earliest outstanding handoff is

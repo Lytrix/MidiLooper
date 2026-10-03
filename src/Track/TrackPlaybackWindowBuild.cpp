@@ -1720,9 +1720,29 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   admittedWork.fillGrains = derived.requiredFillGrains;
   admittedWork.orderGrains = derived.requiredOrderGrains;
   admittedWork.promotionGrains = derived.requiredPromotionGrains;
+  // The **deadline** this window is admitted against, retained so that a later request can be checked against it (the
+  // review's step 2) instead of only against its own margin.
+  admittedWork.handoffPhase = handoffPhase;
+  // **The interference budget is computed and proved, but deliberately not enforced yet** -- the review's own ordering
+  // puts that after the preventing paths are bounded and `Delta-max` is chosen. Charging a sibling's outstanding work
+  // against a new window's lead only becomes usable once the per-turn advance inside that charge is the **measured**
+  // one: with the declared one bar per turn, the charge for a second window on a track exceeds most loops, so enforcing
+  // it now would refuse shapes the current constants admit -- the capacity reduction the review says the envelope work
+  // must not start with. `playbackViewAdmissionKeepsAdmittedDeadlines` *is* the bound; step 4's formula
+  // (`Delta-max x H x bounded per-track work`) is what turns it on.
+  constexpr bool kEnforceInterferenceBudget = false;
+  if (kEnforceInterferenceBudget &&
+      !playbackViewAdmissionKeepsAdmittedDeadlines(contract, currentPhase, coverage.loopLengthTicks,
+                                                   static_cast<uint16_t>(admittedWork.requiredGrains()))) {
+    return PlaybackViewRequestResult::TrackInterferenceBudgetExceeded;
+  }
   // Named separately from the primitive's own answer: the declared gate is what refuses *here*, so the
-  // acceptance surface can tell "the margin was never there" from "the build was refused underneath it".
-  if (!contract.canCompleteBeforeHandoff(currentPhase, handoffPhase, coverage.loopLengthTicks)) {
+  // acceptance surface can tell "the margin was never there" from "the build was refused underneath it". The
+  // candidate's own lead is charged the siblings' outstanding work through the contract's own `additionalGrains`
+  // term -- the same figure the budget above reads the other way round, and only while that budget is enforced.
+  if (!contract.canCompleteBeforeHandoff(
+          currentPhase, handoffPhase, coverage.loopLengthTicks,
+          kEnforceInterferenceBudget ? playbackViewOutstandingGrains(slotIndex) : 0)) {
     return PlaybackViewRequestResult::CannotCompleteBeforeHandoff;
   }
   if (!runtime->beginCoverageBuild(contract, currentPhase, handoffPhase, source, sourceCount, sourceIdentity,
@@ -1736,6 +1756,50 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   // the generation has moved is late, and the publication guard refuses it.
   runtime->viewBuildOperationGeneration = playbackGeneration;
   return PlaybackViewRequestResult::Admitted;
+}
+
+TRACK_COLD_MEM uint16_t Track::playbackViewOutstandingGrains(uint8_t excludingSlot) const {
+  uint32_t total = 0;
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    if (slot == excludingSlot) {
+      continue;
+    }
+    const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+    const PlaybackViewAdmittedWork* work = runtime != nullptr ? runtime->activeViewBuildWork() : nullptr;
+    if (work != nullptr) {
+      total += work->requiredGrains();
+    }
+  }
+  // Saturate rather than wrap: an absurd budget refuses, never admits.
+  return total > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(total);
+}
+
+TRACK_COLD_MEM bool Track::playbackViewAdmissionKeepsAdmittedDeadlines(
+    const CoverageServiceContract& contract, uint32_t currentPhase, uint32_t loopLengthTicks,
+    uint16_t candidateGrains) const {
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+    const PlaybackViewAdmittedWork* work = runtime != nullptr ? runtime->activeViewBuildWork() : nullptr;
+    if (work == nullptr) {
+      continue;
+    }
+    // The window's own grains come from its **retained record** (not from the candidate's contract), while **all** the
+    // other outstanding work -- every sibling, and the candidate itself -- is charged against that window's own lead.
+    // This is the deliberate EDF-free rule the review asks for first: a sibling whose deadline is earlier may
+    // legitimately take the lane's turns, so charging all of it is the promise-keeping bound. The arithmetic is the
+    // contract's own `canCompleteBeforeHandoff`, reached through a per-slot copy, so the budget and the admission
+    // cannot disagree about what a grain costs in turns.
+    CoverageServiceContract forSlot = contract;
+    forSlot.requiredFillGrains = static_cast<uint16_t>(work->fillGrains);
+    forSlot.requiredOrderGrains = static_cast<uint16_t>(work->orderGrains);
+    forSlot.requiredPromotionGrains = static_cast<uint16_t>(work->promotionGrains);
+    const uint32_t others = static_cast<uint32_t>(playbackViewOutstandingGrains(slot)) + candidateGrains;
+    const uint16_t charged = others > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(others);
+    if (!forSlot.canCompleteBeforeHandoff(currentPhase, work->handoffPhase, loopLengthTicks, charged)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 TRACK_COLD_MEM bool Track::hasPendingPlaybackViewMaintenance() const {

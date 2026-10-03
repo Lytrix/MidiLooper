@@ -1051,3 +1051,15 @@ suite + the `teensy41-capture-serial` build with the RAM1 guard. Detail:
 - **Verified:** focused **79/79**, full native **2718 / 2711 / 7 / 0**, build SUCCESS, RAM1 line byte-identical; `sizeof(LoopPlaybackRuntime)` re-based **6 624 → 6 640** on the target (measured), host pin unchanged at 6 544.
 - **Next:** review step 2 (per-track outstanding-work budget; every already-admitted window's deadline feasible), step 3 (the lane dispatch boundary — what `Delta-max` must come from), then step 4's formula.
 - Detail: [`evidence/2026-10-03-s310o-request-work-bounded/EVIDENCE.md`](evidence/2026-10-03-s310o-request-work-bounded/EVIDENCE.md).
+
+### Increment 3.10 (increment 20) — review step 2: the per-track outstanding-work budget (2026-10-03)
+
+- **Budget**: `Track::playbackViewOutstandingGrains(excludingSlot)` — every active build's **full** admitted grains, an upper bound on what is still owed (the safe direction for a budget; a tighter figure needs an unobservable remaining count).
+- **Predicate**: `Track::playbackViewAdmissionKeepsAdmittedDeadlines(...)` — **every** already-admitted window must still reach its own deadline once the candidate *and* all sibling work is charged, evaluated through a per-slot contract copy so the arithmetic stays `canCompleteBeforeHandoff`. The reviewer's EDF-free *charge all sibling work* rule.
+- **Deadline retained**: `PlaybackViewAdmittedWork::handoffPhase`, so a later request is checked against it.
+- **Named refusal**: `TrackInterferenceBudgetExceeded` — refused by name, re-issuable, never a silent drop and never a traded deadline.
+- **Enforcement gated off, measured:** with the declared one-bar advance, one sibling's charge exceeds a 40-bar loop by >10× (fixture pin (C)); **M115 flips the gate on and three existing fixtures fail** with `TrackInterferenceBudgetExceeded`. Step 4's `Delta-max x H x bounded per-track work` turns it on.
+- **Red-proofs** M112 (no sibling charge), M113 (deadline unretained), M114 (no slot exclusion), M115 (gate on) — each with its exact message; restores byte-identical.
+- **Verified:** focused **80/80**, full native **2719 / 2712 / 7 / 0**, build SUCCESS, RAM1 line byte-identical; `sizeof(LoopPlaybackRuntime)` **6 640 → 6 648** target only (host 6 544 unchanged).
+- **Next:** step 3's instrumentation + device leg, then step 4's formula and enforcement; coalescing is *not* implemented (recorded).
+- Detail: [`evidence/2026-10-03-s310q-track-interference-budget/EVIDENCE.md`](evidence/2026-10-03-s310q-track-interference-budget/EVIDENCE.md).
