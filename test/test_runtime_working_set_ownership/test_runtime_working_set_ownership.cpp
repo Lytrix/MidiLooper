@@ -5302,6 +5302,55 @@ void test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot(
                                    "a refresh with no affected identity emits nothing by itself");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 64),
                            "and it leaves the soundings it did not reconcile alone");
+  // (7) The **publication-owner handoff** (task 3.14c): the undo edge speaks the owner's currency instead of silencing.
+  // A served window is published for the slot first, so the undo's staleness is visible in the owner's own vocabulary; the
+  // refresh then completes through the owner's normal request path, and the served window carries the restored revision.
+  Track& refreshTrack = trackManager.getTrack(3);
+  refreshTrack.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(refreshTrack, 0);
+  commitRecordPassIntoTrackSlot(refreshTrack, 0);
+  Loop& refreshLoop = refreshTrack.getActiveLoop();
+  refreshLoop.loopLengthTicks = kWindowOwnerLoopTicks;
+  publishBarSpacedRootForSlot(refreshLoop, 64);
+  TEST_ASSERT_TRUE(refreshTrack.prewarmPlaybackForSlot(0, true));
+  SessionMidiEventVec refreshScratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(refreshTrack.requestPlaybackWindow(0, 500u, refreshScratch)));
+  for (size_t turn = 0; turn < 8 && refreshTrack.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)refreshTrack.stepPlaybackViewMaintenance();
+  }
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::Ready),
+                    static_cast<int>(refreshTrack.playbackWindowReadinessForSlot(0)));
+  const uint32_t revisionBeforeUndo = refreshLoop.playbackRevision;
+  EditPass refreshBatch{};
+  refreshBatch.id = 4343;
+  refreshBatch.passType = EditPassType::Note;
+  refreshBatch.state = EditPassState::Active;
+  refreshBatch.addedEvents.push_back(MidiEvent::NoteOn(0, 1, 66, 100));
+  refreshLoop.passes.editPasses.push_back(refreshBatch);
+  UndoEntry refreshEntry{};
+  refreshEntry.kind = UndoEntryKind::NoteEditPassClosed;
+  refreshEntry.slotIndex = 0;
+  refreshEntry.editPassType = EditPassType::Note;
+  refreshEntry.editPassIds.push_back(4343);
+  pushUndoEntry(refreshTrack, std::move(refreshEntry));
+  TrackUndo::undoForLoop(refreshTrack, refreshTrack.getActiveLoop());
+  TEST_ASSERT_TRUE_MESSAGE(refreshLoop.playbackRevision != revisionBeforeUndo,
+                           "fixture precondition: the undo advanced the loop's revision");
+  // The handoff, in the owner's vocabulary: the window lane owes a rebuild, and the edge said so instead of silencing.
+  TEST_ASSERT_TRUE_MESSAGE(refreshTrack.playbackWindowReadinessForSlot(0) != Track::PlaybackWindowReadiness::Ready,
+                           "a stale window is named as owing, not silently replaced by silence");
+  // And the refresh through the owner's own request path is **refused by name**, not served stale: an undo deliberately
+  // does not stamp its restored root current (DEC-073's protection, and task 4.1's lagging-checkpoint outcome), so the
+  // window's enumeration refuses `SourceNotCurrent` until a current root exists. That is the measured reason the gesture
+  // edge does not enumerate for itself: the correct requester is the lane that owns a current root (4.1's outcome, then
+  // 3.7's consumer), and what this edge owes is exactly what it does -- advance the currency, settle the closures and
+  // let the owner's vocabulary name the rebuild.
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::SourceNotCurrent),
+                            static_cast<int>(refreshTrack.requestPlaybackWindow(0, 500u, refreshScratch)),
+                            "a lagging root is named, never served as current");
+  TEST_ASSERT_FALSE(refreshTrack.hasPendingPlaybackViewMaintenance());
+
   // (5) A slot with **no window lane** is not silenced either: the blanket emitter was the only thing that acted there,
   // and acting was the defect.
   MidiSendCapture::reset();
