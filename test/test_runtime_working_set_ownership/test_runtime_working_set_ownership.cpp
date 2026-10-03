@@ -3904,6 +3904,64 @@ void test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle() 
                             "a refused request must not create an obligation");
 }
 
+/// The service-gap declaration is **bounded by the measurement, not by its own claim** (task 3.10 / DEC-108 §13b).
+/// Device runs 4/5/6 (2026-10-03) measured, per lane opportunity: a steady state of **2.9-5.5 ticks** (a rotation of
+/// ~7.3-7.5 ms, **tempo-invariant** across 120 and 240 BPM) and separate **starvation episodes** of **2 138 /
+/// 4 355 / 8 520 ticks**. So the declaration must be an *upper* bound on the first and must **stay below** the
+/// second: an admitted window can be starved past its handoff, that miss belongs to the lag rule
+/// (`one_pass_late` / `lag_breach`), and raising this constant towards the starvation figure would hide the gap
+/// rather than close it. **The bound of this fixture:** it pins *recorded device measurements* against the
+/// declaration, so it can refuse a declaration that contradicts them; it cannot re-measure the device.
+void test_window_owner_service_gap_declaration_is_bounded_by_measurement_not_by_its_own_claim() {
+  const CoverageServiceContract declared = Track::playbackViewCoverageContract();
+  TEST_ASSERT_TRUE_MESSAGE(declared.isDeclared(), "the owner's contract must be declared");
+
+  // Measured per-opportunity p50: 8 ticks with the host clock at 240 BPM (the external one-pulse floor), 4 ticks
+  // at 120 BPM; the per-opportunity rate over both regimes is 2.9-5.5.
+  constexpr uint32_t kMeasuredSteadyAdvanceTicks = 8;
+  constexpr uint32_t kMeasuredStarvationAdvanceTicks = 2138;
+
+  char message[192];
+  // (1) An upper bound on the **scheduling** advance, with room to spare.
+  snprintf(message, sizeof(message),
+           "declared per-turn advance %u must cover the measured steady state %u (ticks per opportunity)",
+           static_cast<unsigned>(declared.maximumPhaseAdvancePerTurn),
+           static_cast<unsigned>(kMeasuredSteadyAdvanceTicks));
+  TEST_ASSERT_TRUE_MESSAGE(declared.maximumPhaseAdvancePerTurn >= kMeasuredSteadyAdvanceTicks, message);
+
+  // (2) The pin that refuses the wrong repair: the declaration stays **below** the measured starvation episodes,
+  // because enlarging the constant until the gap disappears would satisfy (1) trivially while hiding a real miss
+  // that this constant is not responsible for.
+  snprintf(message, sizeof(message),
+           "declared per-turn advance %u must stay below the measured starvation episode %u: a starved window's miss is the lag rule's, not this constant's",
+           static_cast<unsigned>(declared.maximumPhaseAdvancePerTurn),
+           static_cast<unsigned>(kMeasuredStarvationAdvanceTicks));
+  TEST_ASSERT_TRUE_MESSAGE(declared.maximumPhaseAdvancePerTurn < kMeasuredStarvationAdvanceTicks, message);
+
+  // (3) The unit is a tick count, so its wall-clock meaning is tempo-dependent: `microsPerTick` is the clock's own
+  // `60000000 / (bpm * INTERNAL_PPQN)`, so the allowance halves when the tempo doubles.
+  const uint32_t allowanceMsAt120 = static_cast<uint32_t>(
+      static_cast<uint64_t>(declared.maximumPhaseAdvancePerTurn) * 60000000ULL /
+      (120ULL * Config::INTERNAL_PPQN) / 1000ULL);
+  const uint32_t allowanceMsAt240 = static_cast<uint32_t>(
+      static_cast<uint64_t>(declared.maximumPhaseAdvancePerTurn) * 60000000ULL /
+      (240ULL * Config::INTERNAL_PPQN) / 1000ULL);
+  // These two absolutes carry the relation the finding rests on -- a tick-denominated allowance buys half the
+  // wall-clock margin (2 000 ms -> 1 000 ms) when the tempo doubles. No separate assertion states the halving,
+  // because it could not fail while both absolutes hold.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2000, allowanceMsAt120,
+                                   "the declared allowance is 2.0 s of wall-clock at 120 BPM");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1000, allowanceMsAt240,
+                                   "the same tick count is 1.0 s of wall-clock at 240 BPM: the unit is tempo-dependent");
+
+  // (4) The denied-turn term is the **within-lane** contention allowance, not the owner rotation -- the rotation is
+  // already inside `maximumPhaseAdvancePerTurn` by that field's unit, so declaring it here as well would
+  // double-count it (the conflation an earlier record corrects).
+  TEST_ASSERT_TRUE_MESSAGE(
+      declared.maximumConsecutiveDeniedTurns != MidiServiceDrain::kDeferredIdleOwnerCount - 1,
+      "the owner rotation belongs to the per-turn unit, not to the turn-count allowance");
+}
+
 /// W-2/W-3/W-6/W-7: the turn serves **exactly one declared grain**, the cursor persists across turns, the turn
 /// takes no pool capacity, and nothing a consumer reads changes.
 void test_window_owner_serves_one_grain_per_turn_and_publishes_nothing() {
@@ -6835,6 +6893,7 @@ int main() {
   // windowed-playback-generation slice 3.1: the window-build owner's declared contract, its one-grain turn
   // and the naming/non-destructiveness of its refusals.
   RUN_TEST(test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle);
+  RUN_TEST(test_window_owner_service_gap_declaration_is_bounded_by_measurement_not_by_its_own_claim);
   RUN_TEST(test_window_owner_serves_one_grain_per_turn_and_publishes_nothing);
   // windowed-playback-generation slice 3.10 increment 3's own fixture: the routed scan serves the urgent holder.
   RUN_TEST(test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them);

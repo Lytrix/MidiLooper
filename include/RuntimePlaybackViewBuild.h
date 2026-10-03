@@ -64,7 +64,22 @@ struct CoverageServiceContract {
   /// *measured* rather than assumed. Measured 2026-10-02: conflating the two readings -- injecting the owner rotation
   /// here *and* keeping it in the turn count -- double-counts it, which is the error an earlier record made (see
   /// `evidence/2026-10-02-s310h-lifetime-fairness-derivation/`).
+  ///
+  /// **Measured 2026-10-03, and the measurement decides how this field may be read.** The device measures the
+  /// steady state at **2.9-5.5 ticks per opportunity** (a rotation of ~7.3-7.5 ms) and the rotation is
+  /// **tempo-invariant** while this tick-denominated allowance is not: doubling the tempo doubles the
+  /// ticks-per-opportunity, so the declared 768 is 2.0 s at 120 BPM and 1.0 s at 240 BPM. A separate and much
+  /// larger quantity appears in the same runs -- **starvation episodes** of 2 138 / 4 355 / 8 520 ticks
+  /// (5.6-11.3 s), from cumulative *lost* opportunities rather than from one blocking call. This field is
+  /// therefore an upper bound on the **scheduling** advance and is **not** an upper bound on how far the playhead
+  /// can move between two of this owner's opportunities. A window admitted on this figure can be starved past its
+  /// handoff; that miss is handled and reported by the lag rule (`one_pass_late` / `lag_breach`), not by this
+  /// constant, and the constant must not be enlarged towards the starvation figure to make the gap disappear.
   uint32_t maximumPhaseAdvancePerTurn = 0;
+  /// The **within-lane** contention allowance -- `H` eligible tracks x `K` sibling slots of the chosen track -- not
+  /// the owner rotation: the rotation is already inside `maximumPhaseAdvancePerTurn` by that field's unit, so
+  /// putting it here as well would double-count it. It is an **allowance**, not a proved bound; declaring `H x K`
+  /// is task 3.10's remaining work.
   uint16_t maximumConsecutiveDeniedTurns = 0;
   uint16_t requiredFillGrains = 0;
   uint16_t requiredOrderGrains = 0;

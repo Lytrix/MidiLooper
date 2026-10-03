@@ -1608,16 +1608,30 @@ TRACK_COLD_MEM CoverageServiceContract Track::playbackViewCoverageContract() {
   // these before active windowed playback may be admitted at all). This is deliberately conservative, and
   // one term is explicitly **owed a measurement**:
   //
-  // - `maximumPhaseAdvancePerTurn` = one bar (768 ticks). The playhead's real advance between two owner
-  //   turns is NOT measured yet (`ExecutionBounds` row 27's "maximum phase advance"), so the declaration
-  //   carries the conservative whole-bar bound. The direction is the safe one: `canCompleteBeforeHandoff`
-  //   turns a larger advance into a *larger required lead*, so an unmeasured value can only refuse work,
-  //   never admit too much. The measured figure is owed (task 6.3's sweeps and task 3.10's derived
-  //   envelope), and until it lands this declaration admits only a loop long enough to hold the lead below.
-  // - `maximumConsecutiveDeniedTurns` = the **rotation**, `kDeferredIdleOwnerCount - 1`: under the fair rule the gap
-  //   between two services of the same holder is one rotation (the across-holders round-robin), so this is a *bound the
-  //   fairness rule proves* rather than an allowance anyone picked. It was `3` (invented); the rotation is larger, so
-  //   the correction makes the admission **stricter**, which is the safe direction.
+  // - `maximumPhaseAdvancePerTurn` = one bar (768 ticks). **Measured 2026-10-03, and the safety claim this
+  //   comment used to make is refuted by that measurement.** The field's unit is the phase between two of
+  //   *this owner's own* opportunities (the field doc in `RuntimePlaybackViewBuild.h`), and the device
+  //   measures the steady state at **2.9-5.5 ticks per opportunity** (~7.3-7.5 ms, tempo-invariant across
+  //   120 and 240 BPM), so one bar is an upper bound on the *scheduling* advance with ~140-265x to spare.
+  //   It is **not** an upper bound on the advance itself: separate **starvation episodes** of **2 138 /
+  //   4 355 / 8 520 ticks** (5.6-11.3 s, from cumulative *lost* opportunities rather than from one blocking
+  //   call -- the largest single span measured is 501 ms) appeared in the same runs, i.e. 2.8x-11.1x
+  //   *above* this declaration. The text that stood here claimed an unmeasured value "can only refuse work,
+  //   never admit too much"; measured, an admitted window **can** be starved past its handoff, and that miss
+  //   is the lag rule's business (`advancePlaybackLagTraversal` -> `one_pass_late` / `lag_breach`, task
+  //   3.6b), not this constant's. Enlarging this constant towards the starvation figure is therefore the
+  //   **wrong** repair, and a fixture pins the declaration against it
+  //   (`test_window_owner_service_gap_declaration_is_bounded_by_measurement_not_by_its_own_claim`).
+  // - The unit is a **tick** count, so its wall-clock meaning is **tempo-dependent**: 768 ticks is 2.0 s at
+  //   120 BPM and 1.0 s at 240 BPM, through the same `microsPerTick` formula the clock uses (measured, and
+  //   pinned by the same fixture). A declaration in ticks therefore buys half the wall-clock margin when the
+  //   tempo doubles, which is a property of the unit rather than of any one observation.
+  // - `maximumConsecutiveDeniedTurns` = the **within-lane** contention allowance (`H` eligible tracks x `K`
+  //   sibling slots of the chosen track -- `src/main.cpp`'s offer round-robin), *not* the owner rotation: the
+  //   rotation is already inside `maximumPhaseAdvancePerTurn` by that field's unit, so injecting it here as
+  //   well would double-count it (the conflation `evidence/2026-10-02-s310h-lifetime-fairness-derivation/`
+  //   records). The declared value stays the small `3`; declaring `H x K` itself is task 3.10's remaining
+  //   work, so this term is an allowance rather than a proved bound, and it is named as such here.
   // - grain counts: **derived, not asserted** (task 3.10). The basis window is the 144-event two-bar window this
   //   declaration was written around (`runtime-working-set-ownership/S2C1-PLAYBACK-WINDOW-LEASE.md`), and its cost is
   //   computed by the same helper every request uses -- `ceil(events / kPlaybackViewFillQuantum)` fills plus

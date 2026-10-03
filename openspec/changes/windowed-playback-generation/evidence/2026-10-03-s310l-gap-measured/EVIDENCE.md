@@ -139,3 +139,17 @@ excluded from the tick the admission uses (e.g. by bounding how far the tick may
 **Not claimed:** that 4 355 is the worst case (five runs, one tempo, one configuration, and the deliberate
 external-clock/burst leg is still unreachable from the managed harness — no scenario drives a host clock, so batching
 can only be *observed*, not *provoked*, until a clock-driving stimulus variant exists).
+
+---
+
+## SUPERSEDED (2026-10-03) — the mechanism named below is wrong; read increment 16 instead
+
+Runs 5's worst-case advance is **not** clock batching. `ClockManager::updateInternalClock()` — the only path while the
+clock source is INTERNAL, which run 5 ran — advances the tick by `currentTick++`, one tick per IntervalTimer callback,
+so a bulk jump is not constructible there; the `+= TICKS_PER_CLOCK` path is the *external* one, and run 5's
+`DIAG,clk_batch` read **`0,0`**. The 2 138-tick step is **lane-service starvation under a running transport**. The
+batching mechanism was later provoked deliberately (host-driven clock at 240 BPM) and measured **bounded at 336 ticks =
+44 % of the declared 768** — inside the declaration, not the violation. See
+[`../2026-10-03-s310m-host-clock-starvation/EVIDENCE.md`](../2026-10-03-s310m-host-clock-starvation/EVIDENCE.md) and
+[`../2026-10-03-s310n-declaration-corrected/EVIDENCE.md`](../2026-10-03-s310n-declaration-corrected/EVIDENCE.md).
+The *measured figures* in this file stand; only the mechanism attributed to them does not.
