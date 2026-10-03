@@ -5481,6 +5481,167 @@ void test_checkpoint_parity_names_the_lagging_case_and_ignores_the_windows_lag()
 /// tile, one whose NoteOn is inside that tile and whose NoteOff is in the next (**the closure crossing the
 /// boundary**), and one late note so the last tile is not empty. Same construction idiom as
 /// `publishBarSpacedRootForSlot`, because the windowed gather reads the root's **event** membership.
+/// 4.4 (F-8): **the residency statement per slot is length-independent**, swept over loop lengths. For each
+/// length the slot is set up through the production entries only -- `Loop::fullTakePlaybackViewAdmissible()` as
+/// the policy, `Track::prewarmPlaybackForSlot()` as the admission -- and the residency is read from the slot's own
+/// accounting:
+///   * the **whole-take (whole-root) playback representation is reserved exactly while the loop is short enough**
+///     for the policy to admit it, and for every demoted length it is absent -- "no whole-take reservation SHALL
+///     be restored for demoted slots";
+///   * for every demoted length the slot's **windowed reservation is the same figure**: a function of the declared
+///     views and stagings, never of the loop's length;
+///   * every view's storage is the **declared capacity** at every length;
+///   * whether a window can actually be prepared is the **declaration's own answer**
+///     (`CoverageServiceContract::canCompleteBeforeHandoff`, not an arithmetic of mine), so the loop-length floor
+///     the declaration's conservative lead implies is measured rather than asserted -- and below it the request is
+///     refused by name.
+void test_demoted_slot_residency_is_length_independent_swept_over_lengths() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kPhase = kBar;  // a two-bar window centred on the bar line: its interval starts at tick 0
+  const uint32_t sweepBars[] = {16u, 17u, 24u, 30u, 32u, 64u};
+  constexpr size_t kSweep = sizeof(sweepBars) / sizeof(sweepBars[0]);
+  struct ResidencyRow {
+    uint32_t bars = 0;
+    bool admissible = false;
+    bool wholeTakeReserved = false;
+    size_t windowedBytes = 0;
+    uint16_t viewCapacity = 0;
+    bool stagingsPrewarmed = false;
+    uint32_t requestResult = 0;
+    bool served = false;
+    bool declarationCanComplete = false;
+  };
+  ResidencyRow rows[kSweep] = {};
+  const CoverageServiceContract contract = Track::playbackViewCoverageContract();
+  TEST_ASSERT_TRUE_MESSAGE(contract.isDeclared(), "the admission calculus must be declared before it can be swept");
+
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  for (size_t index = 0; index < kSweep; ++index) {
+    ResidencyRow& row = rows[index];
+    row.bars = sweepBars[index];
+    const uint32_t loopTicks = row.bars * kBar;
+    const uint8_t slot = static_cast<uint8_t>(index);  // one slot per length: a clean residency per length
+    commitRecordPassIntoTrackSlotOfLength(track, slot, loopTicks);
+    Loop& loop = track.getLoop(slot);
+    loop.loopLengthTicks = loopTicks;
+    publishBarSpacedRootForSlot(loop, row.bars);
+    row.admissible = loop.fullTakePlaybackViewAdmissible();
+    // The production admission: it reads the loop's own admissibility and decides the representation itself
+    // (`runtime->prewarmViews(..., loop.fullTakePlaybackViewAdmissible())`), so the fixture never states the
+    // policy to the code -- it only reads back what the code reserved.
+    TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(slot),
+                             "the slot's playback runtime must prewarm through the production admission");
+    LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot);
+    TEST_ASSERT_NOT_NULL(runtime);
+    RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+    TEST_ASSERT_NOT_NULL_MESSAGE(set, "and its view set, which is where the residency lives");
+    row.wholeTakeReserved = set->wholeTakeViewsReserved();
+    row.windowedBytes = set->fixedExternalBytes();
+    row.viewCapacity = static_cast<uint16_t>(set->views[0].storage.capacity);
+    row.stagingsPrewarmed = set->captureStagingsPrewarmed();
+
+    // The declaration is the oracle for whether this length can be prepared at all: the same predicate the
+    // production request asks, evaluated for this length's interval.
+    PlaybackCoverageInterval interval{};
+    TEST_ASSERT_TRUE(Track::playbackWindowInterval(loopTicks, !row.admissible, kPhase, interval));
+    row.declarationCanComplete =
+        contract.canCompleteBeforeHandoff(kPhase % loopTicks, interval.startPhase, loopTicks);
+    SessionMidiEventVec scratch;
+    const Track::PlaybackViewRequestResult result = track.requestPlaybackWindow(slot, kPhase, scratch);
+    row.requestResult = static_cast<uint32_t>(result);
+    if (result == Track::PlaybackViewRequestResult::Admitted) {
+      for (size_t turn = 0; turn < 16 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+        (void)track.stepPlaybackViewMaintenance();
+      }
+      TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+      (void)track.adoptPreparedPlaybackWindow(slot);
+      row.served = track.playbackWindowServesSlot(slot);
+    }
+  }
+
+  // (A) The policy boundary, swept: the whole-take representation is admissible at the declared bar cap and not
+  // one bar past it.
+  for (size_t index = 0; index < kSweep; ++index) {
+    TEST_ASSERT_EQUAL_MESSAGE(rows[index].bars <= DisplayWindowUtils::kMaxDetailedWindowBars,
+                              rows[index].admissible, "admissibility follows the declared bar cap");
+  }
+
+  // (B) "No whole-take reservation is restored for demoted slots": reserved exactly while admissible, absent for
+  // every demoted length.
+  bool sawAdmissible = false;
+  size_t admissibleBytes = 0;
+  size_t demotedBytes = 0;
+  bool demotedBytesSet = false;
+  for (size_t index = 0; index < kSweep; ++index) {
+    const ResidencyRow& row = rows[index];
+    TEST_ASSERT_EQUAL_MESSAGE(row.admissible, row.wholeTakeReserved,
+                              "the whole-root playback representation is resident exactly while admissible");
+    TEST_ASSERT_TRUE_MESSAGE(row.stagingsPrewarmed, "the capture stagings are resident at every length");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(RuntimePlaybackViewConfig::kEventsPerView, row.viewCapacity,
+                                     "the window storage is the declared capacity at every length");
+    if (row.admissible) {
+      sawAdmissible = true;
+      admissibleBytes = row.windowedBytes;
+      continue;
+    }
+    // (C) Length independence: every demoted length reports the SAME windowed reservation.
+    if (!demotedBytesSet) {
+      demotedBytes = row.windowedBytes;
+      demotedBytesSet = true;
+    }
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(demotedBytes, row.windowedBytes,
+                                     "the windowed reservation does not grow with the loop's length");
+  }
+  TEST_ASSERT_TRUE_MESSAGE(sawAdmissible && demotedBytesSet, "the sweep must cover both regimes");
+  TEST_ASSERT_TRUE_MESSAGE(demotedBytes < admissibleBytes,
+                           "the demoted reservation is genuinely smaller: the whole-take bundle is absent");
+
+  // (D) The declaration's own answer is the admissibility oracle, and it is what the production request returns.
+  bool sawRefusal = false;
+  bool sawAdmission = false;
+  for (size_t index = 0; index < kSweep; ++index) {
+    const ResidencyRow& row = rows[index];
+    if (row.declarationCanComplete) {
+      sawAdmission = true;
+      TEST_ASSERT_EQUAL_MESSAGE(static_cast<uint32_t>(Track::PlaybackViewRequestResult::Admitted),
+                                row.requestResult,
+                                "the declaration's answer is what the request returns when it can complete");
+      TEST_ASSERT_TRUE_MESSAGE(row.served, "and the slot is then served from a window while its root is demoted");
+    } else {
+      sawRefusal = true;
+      TEST_ASSERT_EQUAL_MESSAGE(
+          static_cast<uint32_t>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
+          row.requestResult, "below the declaration's lead the window is refused by name, never half-prepared");
+      TEST_ASSERT_FALSE(row.served);
+    }
+  }
+  // (E) The floor as a *number*: the declaration's own arithmetic is evaluated here and the sweep's answer is
+  // required to be exactly it -- so "below the lead the window is refused" is a derived boundary rather than a
+  // guess, and the smallest demoted length that admits is pinned instead of hiding inside the sweep's granularity.
+  const uint32_t requiredLeadTicks =
+      static_cast<uint32_t>(contract.requiredGrains()) *
+          static_cast<uint32_t>(contract.maximumConsecutiveDeniedTurns + 1u) *
+          contract.maximumPhaseAdvancePerTurn +
+      contract.leadTicks;
+  uint32_t firstAdmittingBars = 0;
+  for (size_t index = 0; index < kSweep; ++index) {
+    const uint32_t loopTicks = rows[index].bars * kBar;
+    const uint32_t distanceToHandoff = loopTicks - (kPhase % loopTicks);
+    TEST_ASSERT_EQUAL_MESSAGE(distanceToHandoff >= requiredLeadTicks, rows[index].declarationCanComplete,
+                              "the declaration's answer is its own lead arithmetic, per length");
+    if (rows[index].declarationCanComplete && firstAdmittingBars == 0) {
+      firstAdmittingBars = rows[index].bars;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(firstAdmittingBars * kBar - kPhase >= requiredLeadTicks,
+                           "the measured floor satisfies the declaration's lead (distance to the handoff)");
+  TEST_ASSERT_TRUE_MESSAGE((firstAdmittingBars - 1u) * kBar - kPhase < requiredLeadTicks,
+                           "and the bar below it does not: the floor is exact to the sweep's last bar");
+  TEST_ASSERT_TRUE_MESSAGE(sawAdmission && sawRefusal,
+                           "the sweep must straddle the declaration's loop-length floor");
+}
 void publishBoundaryRootForSlot(Loop& loop) {
   constexpr uint32_t kTile = 2 * 768;
   struct NoteSpec { NoteId noteId; uint8_t pitch; uint32_t on; uint32_t off; };
@@ -5763,5 +5924,7 @@ int main() {
   RUN_TEST(test_checkpoint_parity_names_the_lagging_case_and_ignores_the_windows_lag);
   // windowed-playback-generation slice 4.3: content parity across a window boundary (F-7).
   RUN_TEST(test_windowed_stream_concatenates_to_the_whole_loop_stream_across_a_boundary);
+  // windowed-playback-generation slice 4.4: length-independent residency, swept over lengths (F-8).
+  RUN_TEST(test_demoted_slot_residency_is_length_independent_swept_over_lengths);
   return UNITY_END();
 }

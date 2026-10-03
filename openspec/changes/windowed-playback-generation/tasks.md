@@ -585,6 +585,22 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   [`evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md`](evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md).*
 - [ ] 4.4 Land **F-8** (length-independent root residency) — verify a residency statement per slot (windows resident,
   root demoted) plus content parity for the demoted state, **swept** over loop lengths
+  *Increment 4.4 landed 2026-10-02 — **test-only**: the residency statement per slot, swept over 16/17/24/30/32/64 bars
+  through the production policy and admission (`fullTakePlaybackViewAdmissible` + `prewarmPlaybackForSlot`, which
+  decides the representation itself) and read from the slot's own accounting. Verified: the policy boundary is the
+  declared bar cap; the whole-take representation is reserved **exactly while admissible and absent at every demoted
+  length**; **every demoted length reports the same windowed reservation** (length-independent, and strictly smaller),
+  with each view at the declared capacity and the stagings resident; at/above the declaration's floor the slot is
+  **served from a window while its root is demoted**, and below it the refusal is **named**. **The floor as a number:**
+  the lead the declaration's own arithmetic implies is 22,272 ticks ≈ 29 bars, so the floor is **exactly 30 bars** and
+  loops between the bar cap and it have neither representation admissible — the number 6.3/3.10 need, pinned from the
+  contract's fields rather than hardcoded. **The task stays open** on the parity half with the content-verification
+  pipeline (6.4/6.5), the retained-source figure (3.6a), and 6.3's wider sweeps. Verified: 67/67 (+1 fixture) + 52/52 +
+  190/190 (cited pin) + 38/38, full native 2699 / 2692 succeeded / 7 skipped / 0 failed, build SUCCESS and a no-op with
+  the RAM1 line unchanged; three mutations red-proved with byte-identical restores, their two limits stated (the oracle
+  is the policy function itself, so the contract's declared numbers are 3.10/6.3's to own; and the absolute figure is
+  cited from `test_playback_prewarm`). Detail:
+  [`evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md`](evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md).*
 
 - [ ] 4.5 **Implement second-miss fault containment, the approved last resort, and cross-generation closures**
   (*DEC-108 §13e–g*) — latch a **named deadline-contract fault** on the second miss; continue the last coherent revision
