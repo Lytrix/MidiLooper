@@ -385,6 +385,24 @@ void test_other_diag_subtags_are_not_tier_a() {
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,100,DIAG,reclaim,1,2,3,4,5,ok,6"));
 }
 
+// DEC-108 §13b / task 3.9. The window lane's readiness receipt is produced **under transport** -- the regime whose
+// flush budget is 8 (`src/main.cpp`, `timingCriticalTrackActive ? 8 : 64`) and whose shed path drops non-Tier-A head
+// records **silently, by design**. Its delivery rule is direct-when-there-is-room with the ring as the fallback, so
+// the fallback has to survive: before this entry a receipt that could not go direct (USB busy) was shed and never
+// reported. The boundary is exact, as `test_deferred_stop_identity_match_has_no_length_boundary_gap` pins for
+// `canonical_release,`.
+void test_window_lane_readiness_receipt_is_tier_a_and_its_boundary_is_exact() {
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,6701459,DIAG,win_readiness,3,5,owes_build,window_build_owner,42,768"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,1,DIAG,win_readiness,3,5,ready,ready,43,0"));
+  // A longer subtag is a different tag and must not be swept in.
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,win_readiness_partial,1"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,1,DIAG,win_readinessx,1"));
+  // The lane's own service rows keep their class, so the two families are not confused with one another.
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,1,DIAG,playback_build,grain_denied,0,0,0,0,0,0,0,0,0,0"));
+}
+
 // The micros field grows over a long session; the tag offset must not be assumed fixed.
 void test_tag_parse_survives_a_wide_micros_field() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,7,DIAG,clockrate,0"));
@@ -500,6 +518,7 @@ int main() {
   RUN_TEST(test_deferred_stop_identity_edges_are_tier_a);
   RUN_TEST(test_s4_5_finalization_busy_owner_vocabulary_is_tier_a);
   RUN_TEST(test_deferred_stop_identity_match_has_no_length_boundary_gap);
+  RUN_TEST(test_window_lane_readiness_receipt_is_tier_a_and_its_boundary_is_exact);
   RUN_TEST(test_tag_parse_survives_a_wide_micros_field);
   RUN_TEST(test_tag_starts_with_matches_led_mo_diag);
   RUN_TEST(test_malformed_lines_are_not_tier_a);

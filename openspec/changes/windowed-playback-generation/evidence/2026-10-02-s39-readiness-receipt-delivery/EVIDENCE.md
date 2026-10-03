@@ -76,3 +76,17 @@ Both applied to the named file at an anchor whose occurrence count was asserted,
   documentation-level change to this slice rather than a behavioural one.
 - **No device evidence:** the emitter's behaviour is proved through the capture build's own native seam (a substituted
   `Serial` plus the real ring), not on hardware.
+
+## Correction (added by increment 3, 2026-10-02)
+
+**"Delayed rather than lost" describes the delivery rules in isolation; as a claim about the device under transport it
+was false until increment 3.** Half (B) of this fixture restores room and drains with a budget of **64** — the idle
+budget. Under transport the budget is **8** (`src/main.cpp`, `timingCriticalTrackActive ? 8 : 64`), and at that budget
+the ring **drops non-Tier-A head records silently, by design**. `DIAG,win_readiness` was not Tier-A, so a receipt that
+could not go direct (USB busy) was *sheddable without report* — which makes the direct path not an optimisation but the
+only guaranteed delivery, a stronger statement than this increment recorded.
+
+Increment 3 classifies `DIAG,win_readiness` as Tier-A and drives the transport regime in the ring fixture; see
+[`../2026-10-02-s39c-timing-critical-delivery/EVIDENCE.md`](../2026-10-02-s39c-timing-critical-delivery/EVIDENCE.md).
+Nothing measured here is retracted: the two delivery rules are unchanged, and the row family remains this slice's
+stated choice.

@@ -348,6 +348,20 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   interval — the fixture now primes the counter (deliberately **unasserted**) and pins **exactly one row per declared interval** in two phase-independent
   blocks, which also pins **one reporter call per completed build** (M85 measured 2 calls/round, not the 7 predicted). The priming bound the first pass used
   was **removed because it masked the rate assertion**. Still open: the **refusal paths remain silent by row**, "one pass late but served" has no row, the
+
+  *Increment 3.9 (increment 3) landed 2026-10-02 — **the receipt's row family is Tier-A, because the transport regime sheds what is not**, and it
+  **corrects increments 1–2**: their "delayed rather than lost" was true of the delivery rules in isolation and false about the device under
+  transport, since the transport flush budget is 8 (`src/main.cpp`, `timingCriticalTrackActive ? 8 : 64`) and at that budget the ring drops
+  non-Tier-A head records **silently, by design**. `DIAG,playback_build,` was already Tier-A; `DIAG,win_readiness` was not in `CaptureLineTier`
+  at all, so the "fallback" was sheddable without report — which makes the direct path the only **guaranteed** delivery. Fix: the family is
+  Tier-A (bounded by `strlen` of its literal), with the shed path's **47-byte prefix limit** recorded at the receipt's doc comment. Fixtures: a
+  new `test_capture_line_tier` case (classification + exact boundary) and `test_capture_ring` half (C) driving the transport regime end to
+  end (retained at budget 8, delivered by the idle drain, the drained row classified Tier-A). **M86–M89** red-prove it with byte-identical
+  restores; verification **19/19 + 16/16**, full native **2705 / 2698 / 7 / 0**, build SUCCESS from a **true rebuild** with the RAM1 line
+  byte-identical and **no re-base**. **Task 3.9 stays open** on the "one pass late but served" row, the declared interval, and hardware —
+  and its noted **refusal rows** are now established to be the **caller's** rows, not 3.9's (the spec's "refused by name" requirement is the
+  content-admission one landed in 3.12c; the request refusals are typed enum results on `Track`'s contract, returned to whoever requests).
+  Detail: [`evidence/2026-10-02-s39c-timing-critical-delivery/EVIDENCE.md`](evidence/2026-10-02-s39c-timing-critical-delivery/EVIDENCE.md).*
   interval (16) is a declared choice, no hardware observation, and fixture isolation was **repaired, not designed**. Detail:
   [`evidence/2026-10-02-s39b-receipt-emission-site/EVIDENCE.md`](evidence/2026-10-02-s39b-receipt-emission-site/EVIDENCE.md).*
 

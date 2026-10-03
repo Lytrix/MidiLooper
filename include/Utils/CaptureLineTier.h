@@ -167,6 +167,16 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,track_resid,", 17) == 0 ||
          strncmp(tag, "DIAG,playback_build,", 20) == 0 ||
          strncmp(tag, "DIAG,playback_order,", 20) == 0 ||
+         // The window lane's **readiness receipt** (DEC-108 §13b / task 3.9). It is event-shaped and
+         // cadence-bounded (terminal outcomes only, one row per declared interval), and it is produced
+         // **under transport** -- precisely the regime whose flush budget is 8 (`src/main.cpp`,
+         // `timingCriticalTrackActive ? 8 : 64`) and whose shed path drops non-Tier-A head records
+         // **silently, by design**. The row's delivery rule is direct-when-there-is-room with the ring as its
+         // fallback, so the fallback has to *survive*: without this entry a receipt that could not go direct
+         // (USB busy) was shed and never reported at all -- the same defect class that made `reentry`,
+         // `canonical_release` and the post-restore markers Tier-A above. Bounded by `strlen` of the literal
+         // for the reason stated at the top of this list; the boundary is pinned in `test_capture_line_tier`.
+         strncmp(tag, "DIAG,win_readiness,", strlen("DIAG,win_readiness,")) == 0 ||
          strncmp(tag, "DIAG,snapshot_alloc,", 20) == 0 ||
          strncmp(tag, "DIAG,snapshot_unit,", 19) == 0 ||
          strncmp(tag, "DIAG,snapshot_slab_fail,", 24) == 0 ||
