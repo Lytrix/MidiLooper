@@ -374,6 +374,17 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   deadline order are **proved as a policy** (increments 1–2) and **wired but not proved end-to-end**. **Also not claimed:** nothing in production owes a
   window today, so no reachable behaviour changed. The other open items are unchanged (starvation half; envelope derivation; one declared grain per turn).
   Detail: [`evidence/2026-10-02-s310c-routed-scan/EVIDENCE.md`](evidence/2026-10-02-s310c-routed-scan/EVIDENCE.md).*
+  *Increment 3.10 (increment 4) landed 2026-10-02 — **the owed fixture, closing increment 3's own gate**: `test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them`
+  (no production change). The observable is a holder's **own next grain** — "progressed" past `Fill`, since a small window finishes outright (`Complete`, which my first
+  version wrongly expected as `Order`). Three cases, each on its **own slot pair** (a slot that already owes answers `BuildInFlight`, and that check is *per slot*, so two
+  slots on one track can owe at once): the far/urgent pair proves urgency beats index order, the swapped pair is the control that it is not "the higher index always
+  wins", and the equal-urgency pair proves one persistent cursor rotates between them. Verified: 68/68 (+1 fixture) + 39/39 + 52/52 + 190/190 (cited pin), full native
+  2701 / 2694 succeeded / 7 skipped / 0 failed, build SUCCESS with the RAM1 line unchanged; **two mutations red-proved with byte-identical restores — M76 (the scan
+  reverted to the pre-3.10 ascending order) fails case A, so the fixture does distinguish the routed scan from the old one** and the RWO-recorded "a dropped build left
+  every fixture green" trap is closed for this wiring; M77 (urgency ignored) also fails case A. **The task stays open** on the starvation half, the envelope derivation
+  and one declared grain per turn — plus one **new question this fixture raises and does not answer**: it exercises holders within a track, while the same starvation
+  argument applies to the `main.cpp` loop that stops at the first *track* with work. Detail:
+  [`evidence/2026-10-02-s310d-routed-scan-fixture/EVIDENCE.md`](evidence/2026-10-02-s310d-routed-scan-fixture/EVIDENCE.md).*
 - [x] 3.11 **Implement the shared-view ownership rules and transitions** (*DEC-108 §13d*) — published/current views
   read-only, only the owning builder writes its candidate, a ready view immutable until adopted or retired, storage
   reusable only after every owner releases it; then the transitions: new edit (retain the frozen source, coalesce the
