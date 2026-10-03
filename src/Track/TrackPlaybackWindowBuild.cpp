@@ -1664,36 +1664,72 @@ TRACK_COLD_MEM bool Track::hasPendingPlaybackViewMaintenance() const {
   return false;
 }
 
-TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance() {
+TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
+    uint32_t currentPhase, MidiServiceDrain::PlaybackHolderCursor* cursor) {
+  // DEC-108 §13b / task 3.10: the **holder set** for this track -- the slots that owe a grain -- each with its
+  // urgency, and the shared policy chooses which holder this turn serves. The urgency is the tick distance to the
+  // handoff (`handoffLeadTicks`), the same quantity the admission judges, so the scheduler's answer and the
+  // admission's margin cannot be two different numbers. Nothing is stored to get it: an in-flight build already
+  // carries its interval on the view it fills (`RuntimePlaybackViewFill::begin` sets `destination.coverage`).
+  MidiServiceDrain::PlaybackHolder holders[Config::MAX_LOOPS_PER_TRACK] = {};
   for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
     LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
     if (runtime == nullptr || !runtime->coverageBuildNeedsService()) {
       continue;
     }
-    // One grain, and only one: the phase decides which, so a turn can never copy source entries *and* merge
-    // order entries (the build contract's own rule), and the build's persistent cursor carries the progress
-    // to the next turn.
-    const RuntimePlaybackViewBuildGrain grain = runtime->nextCoverageBuildGrain();
-    RuntimePlaybackViewBuildGrain result = RuntimePlaybackViewBuildGrain::Denied;
-    if (grain == RuntimePlaybackViewBuildGrain::Fill) {
-      result = runtime->stepCoverageBuildFill(kPlaybackViewFillQuantum);
-    } else if (grain == RuntimePlaybackViewBuildGrain::Order) {
-      result = runtime->stepCoverageBuildOrder(kPlaybackViewOrderQuantum);
-    } else {
-      // `coverageBuildNeedsService()` is `viewBuild.active()`, which is Fill or Order only -- Complete and
-      // Denied are both terminal and owe nothing.
-      return PlaybackViewTurnResult::Idle;
+    const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+    if (set == nullptr || set->lifecycle.build >= RuntimePlaybackViewConfig::kViewCount) {
+      continue;
     }
-    if (result == RuntimePlaybackViewBuildGrain::Complete) {
-      // **Publication is atomic** (DEC-108 item 1): the completed build becomes this slot's current interval
-      // window inside this turn-step, and the window it replaced stays readable until this call. Nothing a
-      // consumer reads changes yet -- 3.4 carries the identity to the consumers, 3.5 makes readiness out of it
-      // and 3.7 switches the consumer -- so an existing consumer's view of this slot is untouched.
-      (void)publishCompletedPlaybackWindow(slot);
-    }
-    return finishPlaybackViewGrain(slot, result);
+    const PlaybackCoverageInterval& interval = set->views[set->lifecycle.build].coverage;
+    const Loop& loop = loopForSlot(slot);
+    MidiServiceDrain::PlaybackHolder& holder = holders[slot];
+    holder.eligible = true;
+    holder.hasDeadline = interval.isValid() && loop.loopLengthTicks == interval.loopLengthTicks &&
+                         loop.loopLengthTicks > 0;
+    holder.handoffLeadTicks =
+        holder.hasDeadline
+            ? handoffLeadTicks(currentPhase % loop.loopLengthTicks, interval.startPhase, loop.loopLengthTicks)
+            : 0;
+    // A begun build's grains are bounded work, so an owing holder can always progress one -- the refusals live at
+    // *request* time (`CannotCompleteBeforeHandoff`, `SourceNotCurrent`). The policy's blocked path is for a holder
+    // whose source goes stale mid-build; that is named here rather than assumed away.
+    holder.canProgress = true;
   }
-  return PlaybackViewTurnResult::Idle;
+  MidiServiceDrain::PlaybackHolderCursor localCursor{};
+  MidiServiceDrain::PlaybackHolderCursor& rotation = cursor != nullptr ? *cursor : localCursor;
+  uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;
+  if (MidiServiceDrain::selectPlaybackHolder(rotation, holders, Config::MAX_LOOPS_PER_TRACK, chosen) !=
+      MidiServiceDrain::PlaybackHolderSelection::Service) {
+    return PlaybackViewTurnResult::Idle;
+  }
+  const uint8_t slot = chosen;
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  if (runtime == nullptr || !runtime->coverageBuildNeedsService()) {
+    return PlaybackViewTurnResult::Idle;
+  }
+  // One grain, and only one: the phase decides which, so a turn can never copy source entries *and* merge
+  // order entries (the build contract's own rule), and the build's persistent cursor carries the progress
+  // to the next turn.
+  const RuntimePlaybackViewBuildGrain grain = runtime->nextCoverageBuildGrain();
+  RuntimePlaybackViewBuildGrain result = RuntimePlaybackViewBuildGrain::Denied;
+  if (grain == RuntimePlaybackViewBuildGrain::Fill) {
+    result = runtime->stepCoverageBuildFill(kPlaybackViewFillQuantum);
+  } else if (grain == RuntimePlaybackViewBuildGrain::Order) {
+    result = runtime->stepCoverageBuildOrder(kPlaybackViewOrderQuantum);
+  } else {
+    // `coverageBuildNeedsService()` is `viewBuild.active()`, which is Fill or Order only -- Complete and
+    // Denied are both terminal and owe nothing.
+    return PlaybackViewTurnResult::Idle;
+  }
+  if (result == RuntimePlaybackViewBuildGrain::Complete) {
+    // **Publication is atomic** (DEC-108 item 1): the completed build becomes this slot's current interval
+    // window inside this turn-step, and the window it replaced stays readable until this call. Nothing a
+    // consumer reads changes yet -- 3.4 carries the identity to the consumers, 3.5 makes readiness out of it
+    // and 3.7 switches the consumer -- so an existing consumer's view of this slot is untouched.
+    (void)publishCompletedPlaybackWindow(slot);
+  }
+  return finishPlaybackViewGrain(slot, result);
 }
 
 TRACK_COLD_MEM bool Track::playbackWindowInterval(uint32_t loopLengthTicks, bool demoted,

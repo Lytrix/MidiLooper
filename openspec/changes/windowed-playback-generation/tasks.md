@@ -361,6 +361,19 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   the wiring (still no production caller; nothing computes the lead for a live holder), the starvation half, the envelope derivation, and one
   declared grain per turn as a uniform invariant. Detail:
   [`evidence/2026-10-02-s310b-shared-handoff-lead/EVIDENCE.md`](evidence/2026-10-02-s310b-shared-handoff-lead/EVIDENCE.md).*
+  *Increment 3.10 (increment 3) landed 2026-10-02 — the **wiring**: `Track::stepPlaybackViewMaintenance(currentPhase = 0, cursor = nullptr)` takes the
+  playhead's phase and the caller's rotation cursor, builds the holder set from live state (each owing slot's urgency from its **in-flight build's
+  interval**, which `RuntimePlaybackViewFill::begin` already sets — no new field, no pin move) and lets `selectPlaybackHolder` choose; `src/main.cpp`'s single
+  production call site passes the phase and one cursor. **The RAM1 guard rejected it twice** — an 8-cursor array and then a single DTCM byte each cost +32 B
+  of `variables` against the approved 96,192 — so the cursor is **`DMAMEM`**, per DEC-108 §13b's own placement rule, and the approved line is untouched,
+  **not re-based**. Verified: 67/67 + 39/39, full native 2700 / 2693 succeeded / 7 skipped / 0 failed, build SUCCESS with `variables 96,192` unchanged (48 B
+  headroom). **The task's own gate is not yet met and is named: the wiring has no discriminating fixture.** Its new behaviour is observable only with **more
+  than one owing holder on one track** (every existing fixture has exactly one), so those fixtures cannot tell the routed scan from the old ascending one —
+  the RWO-recorded trap. **OWED, specified:** two slots on one track, both owing, the urgent one at the higher index and one grain from publication,
+  asserting the single turn publishes the **urgent** slot rather than slot 0, plus a persistent cursor interleaving them. Until then the rotation and
+  deadline order are **proved as a policy** (increments 1–2) and **wired but not proved end-to-end**. **Also not claimed:** nothing in production owes a
+  window today, so no reachable behaviour changed. The other open items are unchanged (starvation half; envelope derivation; one declared grain per turn).
+  Detail: [`evidence/2026-10-02-s310c-routed-scan/EVIDENCE.md`](evidence/2026-10-02-s310c-routed-scan/EVIDENCE.md).*
 - [x] 3.11 **Implement the shared-view ownership rules and transitions** (*DEC-108 §13d*) — published/current views
   read-only, only the owning builder writes its candidate, a ready view immutable until adopted or retired, storage
   reusable only after every owner releases it; then the transitions: new edit (retain the frozen source, coalesce the
