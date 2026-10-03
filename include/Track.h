@@ -564,6 +564,17 @@ public:
   /// through the existing **slot-scoped** primitive. Both halves are slot-scoped by construction, which is why this can
   /// never become a global transport stop; and it rebuilds nothing, so it can never become an unbounded rebuild.
   LastResortOutcome applyLastResortForSlot(uint8_t slotIndex, uint32_t phase);
+  /// DEC-108 §13(g) / task 4.5: the **off-clock closure reconciliation** for one version handoff. It walks the outgoing
+  /// ledger's open notes and the incoming revision's note-ons and writes a fixed-size plan: soundings the replacement
+  /// removes (to close at handoff), soundings it re-issues (whose note-ons are suppressed, because an unchanged note is
+  /// never retriggered), and soundings it leaves alone. Bounded and allocation-free; `incomingIsWholeLoop` is what makes
+  /// absence evidence of removal at all (see `handoffAbsenceMeansRemoval`).
+  ClosureSettlement planClosureSettlementForSlot(uint8_t slotIndex, const MidiEvent* events, size_t eventCount,
+                                                 bool incomingIsWholeLoop) const;
+  /// Emit the settlement's closures **first** -- before any replacement note-on, which is the ordering the spec
+  /// requires -- and discharge exactly those ledger obligations. A preserved note is not touched: neither closed nor
+  /// retriggered. Returns the number of closures emitted.
+  size_t applyClosureSettlementForSlot(uint8_t slotIndex, const ClosureSettlement& settlement);
   /// accepted in this interval, plus the closures they owe, plus the closure reserve -- all inside `L`. Pure
   /// arithmetic over state that already exists, which is what "preallocated, bounded accounting that includes
   /// outstanding reservations" means at the edge: nothing allocates, nothing is scanned, and the effective-content

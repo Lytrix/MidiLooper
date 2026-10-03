@@ -528,6 +528,29 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   handoff), together with its own verification (a closure whose note-off moves across the handoff, a window that is empty
   while a note is sustained). Detail:
   [`evidence/2026-10-02-s45-containment/EVIDENCE.md`](evidence/2026-10-02-s45-containment/EVIDENCE.md).
+  *Increment 4.5b landed 2026-10-02 — the **cross-generation closure reconciliation** (§13g), the dependency 3.14 names
+  ("task 4.5's off-clock selective reconciliation"); the **task stays open** for the serving-path integration.*
+  `ClosureSettlement` is one handoff's plan as a **value** — the soundings the replacement **removes** (note-offs required
+  at handoff), the ones it **re-issues** (their note-ons **suppressed**, because an unchanged note is never retriggered),
+  and the ones it leaves alone — every list bounded by `ActiveNoteLedger::kMaxOpenNotes` and nothing allocating.
+  `Track::planClosureSettlementForSlot` computes it **off-clock** (one bounded pass over the incoming note-ons into a
+  256-byte presence set, then a walk of ≤128 ledger entries with no search), and
+  `Track::applyClosureSettlementForSlot` emits the closures **first** and only closures — the replacement's note-ons are
+  the caller's to emit afterwards, which is the spec's "note-offs before replacement note-ons" as a calling order rather
+  than a promise — discharging exactly those ledger obligations through the ledger's own event path. The one
+  **interpretive** rule is stated where it is decided and marked as such: absence from the incoming content is evidence
+  of removal **only when that content is authoritative for the whole loop**, and never for an empty window, because a
+  window is a *slice* and a note sustained across it is still sounding — which is what makes "an event-empty window means
+  *no new events*" a consequence rather than a special case. *Verification:* focused **63/63**, full native **2694 / 2687
+  succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192`
+  **unchanged** / `code 392,328 + padding 888` (48 B above the floor; the line is byte-identical to the two previous
+  slices — FLASH-placed additions, no ITCM growth, no size pin move). Four mutations red-proved with byte-identical
+  restores (absence always removal; a re-issued note also closed; no closure emitted; the ledger not discharged); one
+  non-unique-anchor harness repair is recorded, caught by the `shasum` oracle before the gates ran. **OWED in this
+  task:** the emitted order at the **real** handoff (the clock-path caller that emits the replacement's note-ons after
+  the closures), the **moving-closure** case (a note-off moved across the boundary, fired at its correct tick) and
+  displayed provenance — all on the serving path (3.7's consumer switch). Detail:
+  [`evidence/2026-10-02-s45-closure-reconciliation/EVIDENCE.md`](evidence/2026-10-02-s45-closure-reconciliation/EVIDENCE.md).
 
 ## 5. Capacity, envelope and placement
 

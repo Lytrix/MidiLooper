@@ -5145,6 +5145,80 @@ void test_second_miss_latches_a_fault_and_the_last_resort_is_targeted_not_global
   set->views[current].complete = false;
 }
 
+/// 4.5 (DEC-108 §13g): the **cross-generation closure reconciliation**, computed off-clock and bounded. A sounding note
+/// the replacement removes is closed at handoff (its note-off goes out **first**, before any replacement note-on); a
+/// sounding note the replacement **re-issues** is not retriggered and not closed; a note sustained across the handoff is
+/// untouched; and an **event-empty window means "no new events"** -- it silences nothing.
+void test_cross_generation_closures_are_reconciled_and_an_empty_window_silences_nothing() {
+  LoopEventStore::initPool();
+  MidiSendCapture::reset();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  // (A) Authoritative whole-loop content: three sounding notes, one re-issued, two absent.
+  TrackCaptureStopTestAccess::markLedgerEntry(track, 0, 60);
+  TrackCaptureStopTestAccess::markLedgerEntry(track, 0, 64);
+  TrackCaptureStopTestAccess::markLedgerEntry(track, 0, 67);
+  MidiEventVec incoming;
+  incoming.push_back(MidiEvent::NoteOn(0, 1, 60, 100));
+  incoming.push_back(MidiEvent::NoteOn(0, 1, 70, 100));
+  const ClosureSettlement settlement =
+      track.planClosureSettlementForSlot(0, incoming.data(), incoming.size(), /*incomingIsWholeLoop=*/true);
+  TEST_ASSERT_FALSE(settlement.eventEmptyWindow);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(2u, settlement.closureCount, "the two absent soundings are closed");
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>((1u << 8) | 64u), settlement.closures[0]);
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>((1u << 8) | 67u), settlement.closures[1]);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1u, settlement.suppressedRetriggerCount,
+                                   "the re-issued note is not retriggered");
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>((1u << 8) | 60u), settlement.suppressedRetriggers[0]);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, settlement.preservedCount,
+                                   "whole-loop absence is removal, so nothing here is merely preserved");
+  // The closures go out **first**, and only they -- the caller emits the replacement's note-ons after this returns.
+  MidiSendCapture::reset();
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(track.applyClosureSettlementForSlot(0, settlement)));
+  TEST_ASSERT_EQUAL_UINT32(2u, static_cast<uint32_t>(MidiSendCapture::count()));
+  TEST_ASSERT_TRUE(MidiSendCapture::at(0).isNoteOff());
+  TEST_ASSERT_EQUAL_UINT8(64, MidiSendCapture::at(0).data.noteData.note);
+  TEST_ASSERT_TRUE(MidiSendCapture::at(1).isNoteOff());
+  TEST_ASSERT_EQUAL_UINT8(67, MidiSendCapture::at(1).data.noteData.note);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 64),
+                            "a closed note's obligation is discharged");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 67));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60),
+                           "the re-issued note stays sounding: its obligation survives the handoff untouched");
+  // (B) A **slice** of the loop: absence is not evidence, so a sounding note is preserved rather than closed.
+  TrackCaptureStopTestAccess::markLedgerEntry(track, 0, 72);
+  MidiEventVec slice;
+  slice.push_back(MidiEvent::NoteOn(0, 1, 70, 100));
+  const ClosureSettlement fromSlice =
+      track.planClosureSettlementForSlot(0, slice.data(), slice.size(), /*incomingIsWholeLoop=*/false);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, fromSlice.closureCount,
+                                   "a slice cannot prove a sounding note was removed");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(2u, fromSlice.preservedCount,
+                                   "both soundings absent from the slice are sustained across the handoff");
+  MidiSendCapture::reset();
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(track.applyClosureSettlementForSlot(0, fromSlice)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "and nothing is emitted for a preserved note");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 72));
+  // (C) An **event-empty** window: "no new events", so it silences nothing -- even when it is authoritative.
+  TrackCaptureStopTestAccess::markLedgerEntry(track, 0, 74);
+  const ClosureSettlement fromEmpty =
+      track.planClosureSettlementForSlot(0, nullptr, 0, /*incomingIsWholeLoop=*/true);
+  TEST_ASSERT_TRUE(fromEmpty.eventEmptyWindow);
+  TEST_ASSERT_FALSE(handoffAbsenceMeansRemoval(true, true));
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, fromEmpty.closureCount, "an empty window closes nothing");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(3u, fromEmpty.preservedCount,
+                                   "every sounding note is preserved: an empty window says nothing about them");
+  MidiSendCapture::reset();
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(track.applyClosureSettlementForSlot(0, fromEmpty)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "an empty window must not silence a legitimately sustained note");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 74));
+}
+
 int main() {
 
 
@@ -5253,5 +5327,7 @@ int main() {
   RUN_TEST(test_preview_window_is_cancelled_by_its_lifecycle_and_hands_off_to_committed);
   // windowed-playback-generation slice 4.5: second-miss fault containment and the approved last resort.
   RUN_TEST(test_second_miss_latches_a_fault_and_the_last_resort_is_targeted_not_global);
+  // windowed-playback-generation slice 4.5: the cross-generation closure reconciliation (\u00a713g).
+  RUN_TEST(test_cross_generation_closures_are_reconciled_and_an_empty_window_silences_nothing);
   return UNITY_END();
 }

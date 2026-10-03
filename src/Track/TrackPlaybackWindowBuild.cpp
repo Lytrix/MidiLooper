@@ -1937,6 +1937,86 @@ TRACK_COLD_MEM bool Track::publishCompletedPlaybackWindow(uint8_t slotIndex) {
   return set->lifecycle.publishCompletedBuildAsCurrentWindow(set->views);
 }
 
+namespace {
+/// A bounded presence set for the incoming revision's note-ons: 16 channels x 128 notes as bits (256 B), so the ledger
+/// walk below is O(open notes) with no search. A byte table would be 2 KB on a frame this repo also keeps small.
+inline void notePresentSet(uint32_t (&bits)[16][4], uint8_t channel, uint8_t note) {
+  if (channel == 0 || channel > 16 || note > 127) {
+    return;
+  }
+  bits[channel - 1][note / 32] |= uint32_t(1) << (note % 32);
+}
+inline bool notePresentGet(const uint32_t (&bits)[16][4], uint8_t channel, uint8_t note) {
+  if (channel == 0 || channel > 16 || note > 127) {
+    return false;
+  }
+  return (bits[channel - 1][note / 32] & (uint32_t(1) << (note % 32))) != 0;
+}
+}  // namespace
+
+TRACK_COLD_MEM ClosureSettlement Track::planClosureSettlementForSlot(uint8_t slotIndex, const MidiEvent* events,
+                                                                    size_t eventCount,
+                                                                    bool incomingIsWholeLoop) const {
+  ClosureSettlement settlement;
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return settlement;
+  }
+  uint32_t present[16][4] = {};
+  for (size_t i = 0; i < eventCount; ++i) {
+    const MidiEvent& event = events[i];
+    if (!event.isNoteOn()) {
+      continue;
+    }
+    notePresentSet(present, event.channel, event.data.noteData.note);
+  }
+  settlement.eventEmptyWindow = eventCount == 0;
+  const bool absenceMeansRemoval = handoffAbsenceMeansRemoval(incomingIsWholeLoop, settlement.eventEmptyWindow);
+  runtime->ledger.forEachActive([&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry&) {
+    const uint16_t key = static_cast<uint16_t>((static_cast<uint16_t>(channel) << 8) | note);
+    if (notePresentGet(present, channel, note)) {
+      // The replacement re-issues this sounding note: its note-on must be suppressed, and the note must NOT be closed --
+      // an unchanged note is neither retriggered nor silenced.
+      if (settlement.suppressedRetriggerCount < ClosureSettlement::kMaxKeys) {
+        settlement.suppressedRetriggers[settlement.suppressedRetriggerCount++] = key;
+      }
+      return;
+    }
+    if (absenceMeansRemoval) {
+      if (settlement.closureCount < ClosureSettlement::kMaxKeys) {
+        settlement.closures[settlement.closureCount++] = key;
+      }
+      return;
+    }
+    // Absence is not evidence here (a slice, or an empty window): the note is sustained across the handoff and is left
+    // exactly as it is -- no closure and no retrigger.
+    ++settlement.preservedCount;
+  });
+  return settlement;
+}
+
+TRACK_COLD_MEM size_t Track::applyClosureSettlementForSlot(uint8_t slotIndex, const ClosureSettlement& settlement) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return 0;
+  }
+  size_t emitted = 0;
+  // Closures **first**, and only closures: the replacement's own note-ons are the caller's to emit after this returns,
+  // which is the spec's "required note-offs SHALL be emitted before the replacement's note-ons" expressed as a calling
+  // order rather than as a promise. The ledger is discharged through its own event path, so the obligation leaves the
+  // same way it would have on the emission path. A preserved note is never touched.
+  for (uint16_t i = 0; i < settlement.closureCount; ++i) {
+    const uint16_t key = settlement.closures[i];
+    const uint8_t channel = static_cast<uint8_t>(key >> 8);
+    const uint8_t note = static_cast<uint8_t>(key & 0xFFu);
+    const MidiEvent close = MidiEvent::NoteOff(0, channel, note, 0);
+    midiHandler.sendMidiEvent(close);
+    (void)runtime->ledger.applyPlaybackEvent(channel, close);
+    ++emitted;
+  }
+  return emitted;
+}
+
 TRACK_COLD_MEM bool Track::publishedPlaybackWindowForSlot(uint8_t slotIndex,
                                                          PlaybackViewSourceIdentity& identityOut,
                                                          PlaybackCoverageInterval& coverageOut) const {

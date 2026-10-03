@@ -340,6 +340,41 @@ inline PlaybackViewTransitionEffect resolvePlaybackViewTransition(PlaybackViewTr
   // frozen source is held, and the successor -- if any -- is coalesced rather than retired.
   return effect;
 }
+/// DEC-108 §13(g) / task 4.5: the **cross-generation closure reconciliation** for one version handoff, computed
+/// **off-clock** and bounded. It is a value, not a running process: the plan is written once and the clock path only
+/// ever reads it. Every list is bounded by `ActiveNoteLedger::kMaxOpenNotes` and nothing allocates.
+///
+/// The three fates a sounding note can have at a handoff are separated by construction, which is how the spec's clauses
+/// become checkable rather than implied:
+///   - **removed or invalidated** by the replacement -> `closures` (its note-off is required at handoff);
+///   - **re-issued** by the replacement -> `suppressedRetriggers` (the replacement's note-on must NOT be emitted: a note
+///     that remains unchanged is never retriggered);
+///   - **neither** -> preserved untouched (`preservedCount`), which is also where a note that is simply sustained across
+///     the handoff lands.
+struct ClosureSettlement {
+  static constexpr size_t kMaxKeys = ActiveNoteLedger::kMaxOpenNotes;
+  /// Sounding keys to close at handoff, as `(channel << 8) | note`.
+  std::array<uint16_t, kMaxKeys> closures{};
+  uint16_t closureCount = 0;
+  /// Sounding keys the replacement re-issues: its note-ons for these are suppressed.
+  std::array<uint16_t, kMaxKeys> suppressedRetriggers{};
+  uint16_t suppressedRetriggerCount = 0;
+  /// Sounding keys the replacement neither removes nor re-issues: untouched, neither closed nor retriggered.
+  uint16_t preservedCount = 0;
+  /// The incoming content carried **no events at all**: "no new events", so nothing is closed on its account.
+  bool eventEmptyWindow = false;
+
+  bool closesNothing() const { return closureCount == 0; }
+};
+
+/// The reconciliation's one **interpretive** rule, stated where it is decided rather than buried in a loop: absence from
+/// the incoming content is evidence of removal **only when that content is authoritative for the whole loop**. A window
+/// is a *slice* of the loop, so a sustained note whose onset lies outside the slice is still sounding -- which is exactly
+/// why "an event-empty window means *no new events*" and must never silence it.
+inline bool handoffAbsenceMeansRemoval(bool incomingIsWholeLoop, bool incomingIsEmpty) {
+  return !incomingIsEmpty && incomingIsWholeLoop;
+}
+
 
 struct LedgerBoundarySummary {
   std::array<ActiveNoteLedger::Entry, ActiveNoteLedger::kMaxOpenNotes> openNotes{};
