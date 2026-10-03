@@ -5219,6 +5219,98 @@ void test_cross_generation_closures_are_reconciled_and_an_empty_window_silences_
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 74));
 }
 
+/// 3.14 (DEC-108 §13(g)): the **undo/redo audible handoff**. The blanket slot silence is gone: undoing an edit batch
+/// settles the batch's **own** identities against the ledger, so a sounding note the batch never touched receives neither
+/// an early NoteOff nor a retrigger, and only a note whose identity the batch removes is closed. Driven through the
+/// production path (`TrackUndo::undoForLoop` / `TrackUndo::redoForLoop`).
+void test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot() {
+  LoopEventStore::initPool();
+  MidiSendCapture::reset();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  // An edit batch that **added** one note (60): its identities are what an undo removes.
+  constexpr EditPassId kBatchId = 4242;
+  EditPass batch{};
+  batch.id = kBatchId;
+  batch.passType = EditPassType::Note;
+  batch.state = EditPassState::Active;
+  batch.addedEvents.push_back(MidiEvent::NoteOn(0, 1, 60, 100));
+  loop.passes.editPasses.push_back(batch);
+  // Two soundings: one the batch owns (60) and one unrelated (64) that must survive untouched.
+  runtime->ledger.noteOn(1, 60, 7, 0, 100);
+  runtime->ledger.noteOn(1, 64, 8, 0, 100);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 64));
+  // (1) Undo: the batch is disabled, so its identity is removed -- exactly one closure, and the unrelated sounding is
+  // untouched. The blanket silence this task replaces emitted a NoteOff for **both**.
+  UndoEntry entry{};
+  entry.kind = UndoEntryKind::NoteEditPassClosed;
+  entry.slotIndex = 0;
+  entry.editPassType = EditPassType::Note;
+  entry.editPassIds.push_back(kBatchId);
+  pushUndoEntry(track, std::move(entry));
+  MidiSendCapture::reset();
+  TrackUndo::undoForLoop(track, track.getActiveLoop());
+  bool batchDisabled = false;
+  for (const EditPass& pass : loop.passes.editPasses) {
+    if (pass.id == kBatchId && pass.state == EditPassState::Disabled) {
+      batchDisabled = true;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(batchDisabled, "the production undo disabled the edit batch");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "exactly one closure goes out, for the identity the batch owned");
+  TEST_ASSERT_TRUE(MidiSendCapture::at(0).isNoteOff());
+  TEST_ASSERT_EQUAL_UINT8(60, MidiSendCapture::at(0).data.noteData.note);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60),
+                            "the removed identity is discharged");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 64),
+                           "and a sounding note the batch never named is untouched -- no early NoteOff at all");
+  // (2) The re-establishing direction: nothing is closed, and a note the batch re-establishes is **suppressed** rather
+  // than retriggered because it never stopped sounding.
+  runtime->ledger.noteOn(1, 60, 7, 0, 100);
+  const EditPassIdList redoIds{kBatchId};
+  const ClosureSettlement redoPlan =
+      track.reconcileAfterEditPassStateChange(0, redoIds, /*identitiesAreRemoved=*/false);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, redoPlan.closureCount, "a re-establishing change closes nothing");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1u, redoPlan.suppressedRetriggerCount,
+                                   "and the note it re-establishes is not retriggered");
+  TEST_ASSERT_EQUAL_UINT16(static_cast<uint16_t>((1u << 8) | 60u), redoPlan.suppressedRetriggers[0]);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1u, redoPlan.preservedCount, "the unrelated sounding stays preserved");
+  // (3) The same claim where it matters for output: a re-establishing reconciliation emits nothing, so a sound the
+  // batch re-establishes is not retriggered either. (Driven through the Track entry point: the production redo route's
+  // other entry kinds -- clear-slot side effects, geometry-preview cancellation -- are outside this fixture's subject,
+  // and reaching them here would drag the whole edit stack into a suite that deliberately stubs it.)
+  MidiSendCapture::reset();
+  (void)track.reconcileAfterEditPassStateChange(0, redoIds, /*identitiesAreRemoved=*/false);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "a re-establishing change closes nothing -- the blanket silence would have closed both");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 64));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60));
+  // (4) The **generic** refresh -- the path the two overdub-session undo/redo sites take -- is not a silence either. It
+  // is reached directly here because driving a whole overdub session is a different fixture's subject; what this one
+  // asserts is the audible claim, so it calls the production function and watches the wire.
+  MidiSendCapture::reset();
+  refreshPlaybackAfterCapturePassStateChange(track, 0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "the content-state-change refresh emits nothing by itself");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 64),
+                           "and it leaves the soundings it did not reconcile alone");
+  // (5) A slot with **no window lane** is not silenced either: the blanket emitter was the only thing that acted there,
+  // and acting was the defect.
+  MidiSendCapture::reset();
+  const ClosureSettlement noLane = track.reconcileAfterEditPassStateChange(1, redoIds, /*identitiesAreRemoved=*/true);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, noLane.closureCount, "no lane, nothing to settle");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "and nothing is silenced on its account");
+}
+
 int main() {
 
 
@@ -5329,5 +5421,7 @@ int main() {
   RUN_TEST(test_second_miss_latches_a_fault_and_the_last_resort_is_targeted_not_global);
   // windowed-playback-generation slice 4.5: the cross-generation closure reconciliation (\u00a713g).
   RUN_TEST(test_cross_generation_closures_are_reconciled_and_an_empty_window_silences_nothing);
+  // windowed-playback-generation slice 3.14: the undo/redo audible handoff (\u00a713g).
+  RUN_TEST(test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot);
   return UNITY_END();
 }
