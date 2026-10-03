@@ -114,3 +114,17 @@ Re-verification after the sharpening: `test_runtime_working_set_ownership` **70/
 **byte-identical** (`variables 96,192 / code 392,328 + padding 888`). That build took **2.77 s**, which is a **relink,
 not a rebuild** — this addendum changes only the test file, so no firmware object changed and the RAM1 line cannot have
 moved; it is reported as a no-op rather than as a re-measurement.
+
+## Correction (added by increment 3, 2026-10-02)
+
+**"Delayed rather than lost" is true of the delivery rules in isolation and was, until increment 3, false about the
+device under transport.** The ring fallback here holds the receipt only if the row's family survives the ring's own
+shedding, and the ceiling is not the ring's size but the **flush budget**: under transport `src/main.cpp` flushes with
+`timingCriticalTrackActive ? 8 : 64`, and at `maxRecords <= 8` the ring **drops non-Tier-A head records silently, by
+design**. `DIAG,win_readiness` was not Tier-A, so the fallback this increment called "delayed" was in fact
+**sheddable without report** — a stronger reason for the direct path than the reasoning recorded above, and the reason
+half (B) of this fixture passed only because a *native* flush at budget 64 is not the transport regime.
+
+Increment 3 makes `DIAG,win_readiness` Tier-A and drives the transport regime in the fixture
+(`test_capture_ring`, half (C)); see [`../2026-10-02-s39c-timing-critical-delivery/EVIDENCE.md`](../2026-10-02-s39c-timing-critical-delivery/EVIDENCE.md).
+The delivery rules themselves are unchanged and this increment's measurements stand.

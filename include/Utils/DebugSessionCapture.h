@@ -326,6 +326,14 @@ SC_MEM_ATTR void persistenceResultImmediate(uint32_t durationUs, uint32_t heapBe
 /// arrives only after the transport stops -- after the moment it explains. Event-shaped (one row per readiness
 /// outcome, never per grain) and cadence-bounded by its caller, so a diagnostic cannot evict the evidence it
 /// explains.
+///
+/// **Its row family is Tier-A, and that is load-bearing rather than tidy** (measured 2026-10-02): the transport
+/// regime flushes with a budget of 8 (`src/main.cpp`, `timingCriticalTrackActive ? 8 : 64`), and at that budget the
+/// ring *sheds non-Tier-A head records silently, by design*. So without the classification the **ring fallback was
+/// not a fallback**: a receipt that could not go direct (USB busy) was shed and never reported, which is worse than
+/// arriving late. `CaptureLineTier` carries the entry, and `test_capture_line_tier` pins both the classification and
+/// its exact boundary. Note the prefix buffer's own limit: `headRecordIsTierAText` reads only the first 47 bytes, so
+/// a tag starting beyond that could never be recognised as Tier-A at all.
 SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const char* readiness, const char* holder,
                                            uint32_t revision, uint32_t leadTicks);
 /// A1.8/A2.1 (design D6): one event-shaped line per restore **request state transition**, carrying the

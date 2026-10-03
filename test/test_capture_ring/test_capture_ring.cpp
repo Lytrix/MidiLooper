@@ -347,10 +347,16 @@ void test_the_save_completion_receipt_is_emitted_directly() {
   TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
 }
 
-/// DEC-108 §13b / task 3.9 — **the readiness receipt's two delivery rules**, and the half of that pair that had no
-/// fixture at all: the delivery *shape* is the save-completion receipt's, so this fixture proves both sides of it --
-/// emitted directly when USB has room, and **delayed rather than lost** (the ring carries it, a later drain delivers
-/// it) when there is none. The second half is the one the precedent's own fixture never covered.
+/// DEC-108 §13b / task 3.9 — **the readiness receipt's two delivery rules**, the half of that pair that had no
+/// fixture at all, and **the tier the fallback depends on**. The delivery *shape* is the save-completion receipt's:
+/// emitted directly when USB has room, and carried by the ring when there is none. The second half is the one the
+/// precedent's own fixture never covered.
+///
+/// **"Delayed rather than lost" is only true because the row's family is protected.** The receipt is produced
+/// *under transport*, and that is exactly the regime whose flush budget is **8** (`src/main.cpp`,
+/// `timingCriticalTrackActive ? 8 : 64`) and whose shed path drops non-Tier-A head records **silently, by design**.
+/// Half (C) drives that regime, which is why `DIAG,win_readiness` is Tier-A; without the classification the queued
+/// receipt was shed by the timing-critical flush and no later drain could deliver it.
 void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_than_lost() {
   // (A) With room: written straight to the stream, and **nothing enqueued** -- a reader that never flushes still
   // sees the receipt, which is the whole point for a row produced under transport (the ring is retained by design
@@ -375,6 +381,40 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
   TEST_ASSERT_TRUE_MESSAGE(
       captureSerial.output.find("DIAG,win_readiness,3,5,owes_source,published_source,43,0") != std::string::npos,
       "delayed rather than lost: the ring delivered the receipt");
+
+  // (C) **The transport regime**, which is the regime the receipt is actually produced in: a flush budget of 8
+  // leaves Tier-A records for the idle drain and sheds everything else silently. So the ring fallback is only safe
+  // if this family is Tier-A -- and this half is what proves it end to end (the drained row text, classified by the
+  // production predicate). Before the promotion this half failed: the timing-critical flush dropped the queued
+  // receipt and the idle drain had nothing to deliver.
+  captureSerial.output.clear();
+  captureSerial.room = 0;
+  readinessReceiptImmediate(3, 5, "ready", "ready", 44u, 0u);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, sCaptureRing.used);
+  // The shed path's own question, asked directly: the *stored record* must classify as Tier-A, since that is
+  // what `flushCaptureBuffer`'s timing-critical budget consults before it retains or sheds the head.
+  {
+    char head[48] = {};
+    headRecordTextPrefix(head);
+    TEST_ASSERT_TRUE_MESSAGE(CaptureLineTier::isTierALine(head), head);
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32(0, sCaptureRing.used);
+  flushCaptureBuffer(8);
+  // Unity's order is (threshold, actual, message): the receipt must still be in the ring, because the
+  // timing-critical budget retains a Tier-A head instead of shedding it.
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
+      0u, sCaptureRing.used,
+      "the timing-critical flush leaves a Tier-A receipt for the idle drain instead of shedding it");
+  captureSerial.room = 4096;
+  flushCaptureBuffer(64);
+  const std::string drained = captureSerial.output;
+  const size_t rowPos = drained.rfind("#CAP,", drained.find("win_readiness"));
+  TEST_ASSERT_TRUE(rowPos != std::string::npos);
+  const std::string row = drained.substr(rowPos, drained.find('\r', rowPos) - rowPos);
+  TEST_ASSERT_TRUE_MESSAGE(row.find("DIAG,win_readiness,3,5,ready,ready,44,0") != std::string::npos,
+                           "the receipt survived the timing-critical flush and the idle drain delivered it");
+  TEST_ASSERT_TRUE_MESSAGE(CaptureLineTier::isTierALine(row.c_str()),
+                           "and the row the production emitter produced is Tier-A by the production predicate");
 }
 void test_rejected_critical_rows_are_replayed_at_stopped_flush() {
   sCaptureRing.capacity = 1;
