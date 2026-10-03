@@ -255,17 +255,19 @@ TRACK_COLD_MEM bool enableCapturePass(Loop& loop, PassId passId) {
     return loop.setCapturePassState(passId, CapturePassState::Active);
 }
 
-TRACK_COLD_MEM void refreshPlaybackAfterCapturePassStateChange(Track& track, uint8_t slotIndex) {
+/// Task 3.14: the refresh for a **committed pass** state change -- the overdub-session undo/redo steps, where one
+/// committed pass (and its companion edit batches) changes state. This used to blanket-silence the slot; now the
+/// affected pass's **own identities** are settled against the ledger, so a note the pass carried closes and every other
+/// sounding note is preserved untouched. The merged representation is invalidated; the **sounding ledger is not**,
+/// because it is the closure-obligation set this reconciliation works from.
+TRACK_COLD_MEM void refreshPlaybackAfterCommittedPassStateChange(Track& track, uint8_t slotIndex,
+                                                                const PassId* passIds, size_t passCount,
+                                                                bool identitiesAreRemoved) {
     track.invalidateCaches();
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
-    // Task 3.14: **no blanket silence.** This used to call `silenceSlotMidiOutput(slotIndex)`, which emitted a NoteOff
-    // for *every* sounding note -- so undoing a change that touched none of them killed them anyway. Silencing is now a
-    // decision taken from the ledger by the reconciliation below, and a slot with nothing to settle is left alone.
-    // The merged representation is invalidated; the **sounding ledger is not**, because it is the closure
-    // obligation set the handoff reconciles. `false` here cleared it, which is the other half of the blanket
-    // invalidation this task replaces.
+    (void)track.reconcileAfterCommittedPassStateChange(slotIndex, passIds, passCount, identitiesAreRemoved);
     track.invalidatePlaybackMergedMidiEvents(true);
 }
 
@@ -893,7 +895,15 @@ TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
     loop.invalidateCaches();
     displayManager.invalidateLiveDisplayCache();
     if (loop.playbackRevision != revisionBefore) {
-        refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
+        // Task 3.14: the identities this step removed are the session pass it just disabled plus the companion edit
+        // batches disabled with it. `undoOverdubSession` reads its cursor **after** decrementing, so the step's pass is
+        // the one at `overdubSessionUndoDepth()`; the accessors answer an out-of-range index with `kInvalidPassId` and
+        // an empty companion list rather than a neighbouring step.
+        const size_t stepIndex = loop.overdubSessionUndoDepth();
+        const PassId stepPass = loop.overdubSessionPassIdAt(stepIndex);
+        const uint8_t slot = resolveSlotIndexForLoop(track, loop);
+        refreshPlaybackAfterCommittedPassStateChange(track, slot, &stepPass, 1, /*identitiesAreRemoved=*/true);
+        refreshPlaybackAfterEditPassStateChange(track, slot, loop.overdubSessionCompanionIdsAt(stepIndex), true);
     }
     logger.logTrackEvent("Overdub session undone", clockManager.getCurrentTick());
 #if defined(SESSION_CAPTURE)
@@ -919,7 +929,14 @@ TRACK_COLD_MEM bool TrackUndo::redoOverdubSession(Track& track, Loop& loop) {
     loop.invalidateCaches();
     displayManager.invalidateLiveDisplayCache();
     if (loop.playbackRevision != revisionBefore) {
-        refreshPlaybackAfterCapturePassStateChange(track, resolveSlotIndexForLoop(track, loop));
+        // The re-establishing direction: `redoOverdubSession` reads its cursor **before** incrementing, so the step's
+        // pass is at `overdubSessionUndoDepth() - 1` (an out-of-range index answers `kInvalidPassId` -- the live-undo
+        // branch never moves the cursor, so this is asked defensively rather than assumed).
+        const size_t stepIndex = loop.overdubSessionUndoDepth();
+        const PassId stepPass = loop.overdubSessionPassIdAt(stepIndex == 0 ? 0 : stepIndex - 1);
+        const uint8_t slot = resolveSlotIndexForLoop(track, loop);
+        refreshPlaybackAfterCommittedPassStateChange(track, slot, &stepPass, 1, /*identitiesAreRemoved=*/false);
+        refreshPlaybackAfterEditPassStateChange(track, slot, loop.overdubSessionCompanionIdsAt(stepIndex == 0 ? 0 : stepIndex - 1), false);
     }
     logger.logTrackEvent("Overdub session redone", clockManager.getCurrentTick());
 #if defined(SESSION_CAPTURE)
