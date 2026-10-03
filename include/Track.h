@@ -544,6 +544,13 @@ public:
   /// True when the exit handoff is owed for a slot: the preview source has yielded and a committed window is required.
   bool previewWindowHandoffOwedForSlot(uint8_t slotIndex) const;
   size_t playbackWindowEventCountForSlot(uint8_t slotIndex) const;
+  /// DEC-108 item 1 / task 4.3: **the ordered event stream the served window holds**, in emission order --
+  /// `storage.events[storage.order[cursor]]`, the same rendering the fixed-view emission path uses (`cursor` is a
+  /// position in that order, `0 .. playbackWindowEventCountForSlot()-1`). It reads the window that is **served**,
+  /// never a prepared successor, and it is read-only, allocation-free and O(1). Nothing in production consumes it
+  /// yet: the emission path is task 3.7's switch, so this exists to let the parity proof read what the lane
+  /// actually produced instead of inferring it from the identity.
+  bool playbackWindowEventAtForSlot(uint8_t slotIndex, uint16_t cursor, MidiEvent& out) const;
   /// The window admission accounting for a slot's **live capture interval**: the window's content, plus the rows
   /// DEC-108 §13(e) / task 4.5: the latched **deadline-contract fault** for a slot -- a second consecutive missed
   /// traversal, distinct from meeting the one-pass-late guarantee, cleared only at an eligible boundary.

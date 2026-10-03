@@ -5477,6 +5477,176 @@ void test_checkpoint_parity_names_the_lagging_case_and_ignores_the_windows_lag()
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
 }
 
+/// 4.3 (F-7): a root whose content is built to be **boundary-sensitive**: a note fully inside the first two-bar
+/// tile, one whose NoteOn is inside that tile and whose NoteOff is in the next (**the closure crossing the
+/// boundary**), and one late note so the last tile is not empty. Same construction idiom as
+/// `publishBarSpacedRootForSlot`, because the windowed gather reads the root's **event** membership.
+void publishBoundaryRootForSlot(Loop& loop) {
+  constexpr uint32_t kTile = 2 * 768;
+  struct NoteSpec { NoteId noteId; uint8_t pitch; uint32_t on; uint32_t off; };
+  const NoteSpec notes[] = {
+      {3001, 60, 100, 200},                  // inside tile 0
+      {3002, 62, kTile - 36, kTile + 84},     // ON in tile 0, OFF in tile 1: the boundary closure
+      {3003, 64, loop.loopLengthTicks - 300, loop.loopLengthTicks - 200},  // last tile
+  };
+  auto empty = std::make_shared<const LoopSnapshot>(
+      LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
+  LoopSnapshotChangeSet changes;
+  EventId nextEventId = 6000;
+  uint32_t canonicalOrder = 0;
+  for (const NoteSpec& spec : notes) {
+    SnapshotNoteChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.noteId = spec.noteId;
+    add.next.pitch = spec.pitch;
+    add.next.velocity = 100;
+    add.next.startTick = spec.on;
+    add.next.endTick = spec.off;
+    changes.notes.push_back(add);
+    SnapshotEventChange on{};
+    on.kind = SnapshotChangeKind::Add;
+    on.next.loopId = loop.loopId;
+    on.next.eventId = nextEventId++;
+    on.next.canonicalOrder = canonicalOrder++;
+    on.next.value = MidiEvent::NoteOn(spec.on, 1, spec.pitch, 100);
+    changes.events.push_back(on);
+    SnapshotEventChange off{};
+    off.kind = SnapshotChangeKind::Add;
+    off.next.loopId = loop.loopId;
+    off.next.eventId = nextEventId++;
+    off.next.canonicalOrder = canonicalOrder++;
+    off.next.value = MidiEvent::NoteOff(spec.off, 1, spec.pitch, 0);
+    changes.events.push_back(off);
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  loop.storePublishedSnapshotForTest(snapshot, loop.playbackRevision);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                           "the fixture must install a *current* root, or the gather refuses it");
+}
+
+/// Reads the **served** window's whole stream, in emission order, through the stream accessor a consumer will use.
+void readServedWindowStream(Track& track, uint8_t slot, SessionMidiEventVec& out) {
+  out.clear();
+  const size_t count = track.playbackWindowEventCountForSlot(slot);
+  // An interval with no events is a legitimately **ready** window (task 3.5): the window exists and serves the
+  // slot, it simply holds nothing. So the presence claim is `playbackWindowServesSlot`, not a non-zero count.
+  TEST_ASSERT_TRUE_MESSAGE(track.playbackWindowServesSlot(slot), "a published window serves the slot");
+  for (size_t cursor = 0; cursor < count; ++cursor) {
+    MidiEvent event{};
+    TEST_ASSERT_TRUE(track.playbackWindowEventAtForSlot(slot, static_cast<uint16_t>(cursor), event));
+    out.push_back(event);
+  }
+  // Out of range is a refusal, not a wrapped read.
+  MidiEvent beyond{};
+  TEST_ASSERT_FALSE(track.playbackWindowEventAtForSlot(slot, static_cast<uint16_t>(count), beyond));
+}
+
+/// F-7: the events served by **successive windows** concatenate to exactly the events the whole-loop path
+/// is present exactly once in the concatenation, so no note-on is left unclosed by the transition.
+void test_windowed_stream_concatenates_to_the_whole_loop_stream_across_a_boundary() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kTile = 2 * kBar;
+  loop.loopLengthTicks = kWindowOwnerLoopTicks;  // 64 bars: demoted policy, and long enough for the declared lead
+  publishBoundaryRootForSlot(loop);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+
+  // The whole-loop reference comes from the project's existing resolver at whole-loop width -- the same
+  // primitive the content-verification pipeline's inventory dump is built on, not a second pipeline.
+  SessionMidiEventVec wholeLoop;
+  LoopContentResolution::resolveWindow(*loop.publishedSnapshot(), 0, loop.loopLengthTicks, wholeLoop);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(6u, static_cast<uint32_t>(wholeLoop.size()),
+                                   "three notes, on and off: the reference stream");
+
+  SessionMidiEventVec concatenated;
+  SessionMidiEventVec window;
+  SessionMidiEventVec scratch;
+  uint32_t tilesServed = 0;
+  uint32_t boundaryOnTile = 0;
+  uint32_t boundaryOffTile = 0;
+  for (uint32_t start = 0; start < loop.loopLengthTicks; start += kTile) {
+    // The playhead in the middle of the tile resolves to that tile: a two-bar window centred on the playhead.
+    const uint32_t centre = start + kTile / 2;
+    PlaybackCoverageInterval expected{};
+    TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks, true, centre, expected));
+    TEST_ASSERT_EQUAL_UINT32(start, expected.startPhase);
+    TEST_ASSERT_EQUAL_UINT32(kTile, expected.lengthTicks);
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                      static_cast<int>(track.requestPlaybackWindow(0, centre, scratch)));
+    for (size_t turn = 0; turn < 16 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+      (void)track.stepPlaybackViewMaintenance();
+    }
+    TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+    // The two publication paths, told apart rather than papered over: the **first** window is installed as the
+    // served one (nothing to straddle), while a **replacement** publishes as the ready successor and the
+    // consumer-side edge adopts it at an eligible boundary (task 3.4). Either way, after this point the window
+    // that serves the slot is the tile that was just requested.
+    const bool adopted = track.adoptPreparedPlaybackWindow(0);
+    if (tilesServed == 0) {
+      TEST_ASSERT_FALSE_MESSAGE(adopted, "the first window is installed as served, not as a successor");
+    } else {
+      TEST_ASSERT_TRUE_MESSAGE(adopted, "a replacement publishes as a successor for the consumer to adopt");
+    }
+    PlaybackCoverageInterval coverageOut{};
+    PlaybackViewSourceIdentity identityOut{};
+    TEST_ASSERT_TRUE(track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut));
+    TEST_ASSERT_EQUAL_UINT32(start, coverageOut.startPhase);
+    TEST_ASSERT_EQUAL_UINT32(kTile, coverageOut.lengthTicks);
+
+    readServedWindowStream(track, 0, window);
+    const size_t tileIndex = tilesServed;
+    for (const MidiEvent& event : window) {
+      if (event.type == midi::NoteOn && event.data.noteData.note == 62) {
+        boundaryOnTile = static_cast<uint32_t>(tileIndex);
+      }
+      if (event.type == midi::NoteOff && event.data.noteData.note == 62) {
+        boundaryOffTile = static_cast<uint32_t>(tileIndex);
+      }
+      concatenated.push_back(event);
+    }
+    ++tilesServed;
+  }
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(loop.loopLengthTicks / kTile), tilesServed);
+
+  // Parity: the concatenation equals the whole-loop stream, row for row and in order.
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(wholeLoop.size()),
+                           static_cast<uint32_t>(concatenated.size()));
+  for (size_t index = 0; index < concatenated.size(); ++index) {
+    TEST_ASSERT_EQUAL_UINT32(wholeLoop[index].tick, concatenated[index].tick);
+    TEST_ASSERT_EQUAL(static_cast<int>(wholeLoop[index].type),
+                      static_cast<int>(concatenated[index].type));
+    TEST_ASSERT_EQUAL_UINT8(wholeLoop[index].channel, concatenated[index].channel);
+    TEST_ASSERT_EQUAL_UINT8(wholeLoop[index].data.noteData.note,
+                            concatenated[index].data.noteData.note);
+  }
+
+  // The closure clause, read as the *concatenation*: no note-on is left unclosed by the transition. The
+  // boundary note's closure is served by the **next** tile -- measured, not assumed -- because a window's
+  // stream is a half-open tick filter and the closure's tick belongs to the following interval. The
+  // obligation at the transition is therefore the consumer's (the ledger's obligation set), which is what
+  // task 3.7's emission switch and 4.5's closure handling own.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, boundaryOnTile, "the boundary note's ON is in the first tile");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, boundaryOffTile,
+                                   "and its closure is served by the next tile, not synthesized at the edge");
+  size_t ons = 0;
+  size_t offs = 0;
+  for (const MidiEvent& event : concatenated) {
+    if (event.type == midi::NoteOn) ++ons;
+    if (event.type == midi::NoteOff) ++offs;
+  }
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(offs), static_cast<uint32_t>(ons));
+}
+
 int main() {
 
 
@@ -5591,5 +5761,7 @@ int main() {
   RUN_TEST(test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot);
   // windowed-playback-generation slice 4.1: named checkpoint parity for undo (F-5).
   RUN_TEST(test_checkpoint_parity_names_the_lagging_case_and_ignores_the_windows_lag);
+  // windowed-playback-generation slice 4.3: content parity across a window boundary (F-7).
+  RUN_TEST(test_windowed_stream_concatenates_to_the_whole_loop_stream_across_a_boundary);
   return UNITY_END();
 }
