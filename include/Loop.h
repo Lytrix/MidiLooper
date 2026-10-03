@@ -881,6 +881,12 @@ struct Loop {
   /// older committed-pass state is never current, no matter which revision was reached afterwards.
   /// The persistence gate (RC2) adds its own "publisher is settled" requirement on top.
   bool publishedSnapshotIsCurrent() const;
+  /// DEC-108 *Checkpoint parity for undo and save* / task 4.1 (F-5): the **named** parity of the published root against
+  /// the loop's current committed-pass revision -- `Current`, `OwesReconciliation` (behind the committed passes: a
+  /// rebuild is owed), `CoverageUnrecorded` (no coverage recorded: conservatively not current) or `NoCheckpoint`. It is
+  /// the same rule `publishedSnapshotIsCurrent()` applies, named, so a lagging checkpoint is *reported* rather than
+  /// merely not-current, and it reads the loop's own figures only: neither undo nor save consults the window's lag.
+  CheckpointParity checkpointParity() const;
   /// Non-owning identity of the current published root, or nullptr when none is
   /// selected or the published root is stale versus `playbackRevision`.
   const void* publishedSnapshotIdentity() const;

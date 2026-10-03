@@ -30,6 +30,39 @@ constexpr EventId kInvalidEventId = 0;
 inline constexpr uint32_t kSnapshotCoverageUnset = 0xFFFFFFFFu;
 inline constexpr uint32_t kSnapshotCoverageCurrent = 0xFFFFFFFEu;
 
+/// DEC-108 *Checkpoint parity for undo and save* / task 4.1 (F-5): the **named** parity of the published root -- the
+/// immutable checkpoint authority for undo and save -- against the loop's **current** committed-pass revision. The
+/// predicate already answers this as a bool; this names the answer, because the requirement is that a checkpoint which
+/// lags "SHALL be named in the readiness/lag vocabulary and SHALL NOT be presented as current".
+enum class CheckpointParity : uint8_t {
+  /// No root is selected: there is no checkpoint to judge, and nothing to present as current.
+  NoCheckpoint,
+  /// The root was enumerated from the committed-pass state that is live now: parity holds.
+  Current,
+  /// The root is **behind** the committed passes. The readiness vocabulary's answer for this is that a rebuild is owed,
+  /// and the outcome is never reported as current without reconciliation.
+  OwesReconciliation,
+  /// No coverage was recorded for the root -- conservatively **not** current, which is also what DEC-073's demotion
+  /// produces when a root is installed for an earlier state without explicit coverage.
+  CoverageUnrecorded,
+};
+
+/// The parity rule as one **pure** resolution of the three figures the loop already keeps. DEC-073's rule is that
+/// coverage, not the revision stamp, decides currency, and `storePublishedSnapshot` resolves the `kSnapshotCoverage*
+/// sentinel into a real revision as it stores it -- so for every reachable state this agrees with
+/// `Loop::publishedSnapshotIsCurrent()` exactly: that predicate is true iff `parity == Current` for a root that exists.
+inline CheckpointParity resolveCheckpointParity(bool hasRoot, uint32_t coveredPassRevision,
+                                                uint32_t currentCommittedPassRevision) {
+  if (!hasRoot) {
+    return CheckpointParity::NoCheckpoint;
+  }
+  if (coveredPassRevision == kSnapshotCoverageUnset) {
+    return CheckpointParity::CoverageUnrecorded;
+  }
+  return coveredPassRevision == currentCommittedPassRevision ? CheckpointParity::Current
+                                                            : CheckpointParity::OwesReconciliation;
+}
+
 constexpr uint16_t kLoopSnapshotPitchCount = 128;
 constexpr uint16_t kLoopSnapshotBarsPerPage = 32;
 constexpr uint16_t kSnapshotMembershipPageCapacity = 16;
