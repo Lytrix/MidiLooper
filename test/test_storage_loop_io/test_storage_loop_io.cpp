@@ -2218,6 +2218,88 @@ void test_diagnostic_decoder_reads_captured_teensy_lsv1() {
   TEST_ASSERT_FALSE(decodeSlotBody(bytes,decoded,true));
 }
 
+/// 4.2 (DEC-108 *Checkpoint parity for undo and save*, F-6): **save parity is judged on the serialized
+/// root.** Through the production writer and the production restore edge, the restored root is equivalent
+/// to the root that was serialized, the committed state the body carried arrives with it, and the
+/// restore's coverage outcome is **named** (4.1's `CheckpointParity`) rather than silently current.
+void test_lsv1_save_parity_is_judged_on_the_serialized_root() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+
+  Loop source;
+  source.loopId = 7;
+  source.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  source.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 62, 100)));
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 62, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    source.commitCapturePass(CommitReason::RecordStop, 200));
+  drainPendingSnapshotPublish(source);
+
+  // The save admission's evidence: only a *settled* root may be embedded (DEC-073 RC2), pinned by
+  // `test_write_loop_persisted_requires_a_settled_published_snapshot` in this suite. That admission is the
+  // ONLY evidence a body carries about its root's coverage -- which is why the violating case is measured
+  // and owed below rather than claimed safe here.
+  TEST_ASSERT_TRUE(loopUsesLoopSnapshotBodyFormatV1ForSave(source));
+  const ImmutableLoopSnapshotRef serialized = source.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(serialized.get());
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(CheckpointParity::Current),
+                        static_cast<int>(source.checkpointParity()));
+  const uint32_t serializedNextNoteId = serialized->nextNoteId();
+
+  // Persist through the *production* writer.
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), source));
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(LoopSnapshotBodyFormatProbeResult::SupportedV1),
+                        static_cast<int>(
+                            probeLoopSnapshotBodyFormat(buffer.data(), buffer.size())));
+
+  // Read and restore through the *production* restore edge: the stepped parser, then the commit.
+  LoopSnapshotBodyFormatV1LoadParseState parseState{};
+  PersistedLoopSnapshot oracle{};
+  LoopSnapshotBodyFormatV1LoadStepResult stepResult =
+      LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+    stepResult = stepLoopSnapshotBodyFormatV1LoadParse(buffer.data(), buffer.size(), oracle,
+                                                       parseState, 0, 1);
+  }
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(LoopSnapshotBodyFormatV1LoadStepResult::Completed),
+                        static_cast<int>(stepResult));
+
+  Loop restored;
+  alignas(16) static unsigned char trackStorage[16] = {};
+  Track& track = *reinterpret_cast<Track*>(trackStorage);
+  testResetRebuildSlotFromLoopContentCallCount();
+  ImmutableLoopSnapshotRef loadedSnapshot = parseState.loopSnapshot;
+  parseState.loopSnapshot = nullptr;
+  applyLoadedLoopSlotBodyCommit(restored, track, 0, true, oracle, std::move(loadedSnapshot));
+
+  // (A) The body is equivalent to the root it was serialized from, asserted at the *restore edge* rather
+  // than only across the read: the installed root IS that root, content for content.
+  TEST_ASSERT_NOT_NULL(restored.publishedSnapshot().get());
+  // Equivalence is content, not address: the round trip rebuilds the root, so the claim is asserted as
+  // content-for-content equivalence (the same helper the read-level round-trip fixtures use).
+  assertSnapshotsEquivalent(*serialized, *restored.publishedSnapshot());
+  // (B) The committed state the body carried arrived with it -- metadata, passes and the note-id figure the
+  // root itself was enumerated from. Without these the installed root could not be the body's state at all.
+  TEST_ASSERT_EQUAL(source.loopId, restored.loopId);
+  TEST_ASSERT_EQUAL(source.loopLengthTicks, restored.loopLengthTicks);
+  TEST_ASSERT_TRUE(restored.passes.hasRecordPass());
+  TEST_ASSERT_EQUAL_UINT32(serializedNextNoteId, restored.peekNextNoteId());
+  TEST_ASSERT_EQUAL_UINT32(serializedNextNoteId, restored.publishedSnapshot()->nextNoteId());
+  // (C) The restore's coverage outcome is **named** and it is current here, because the installed root was
+  // enumerated from the committed state the body restored. 4.1's `CheckpointParity` is that name.
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(CheckpointParity::Current),
+                        static_cast<int>(restored.checkpointParity()));
+  TEST_ASSERT_TRUE(restored.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL_PTR(static_cast<const void*>(restored.publishedSnapshot().get()),
+                        restored.publishedSnapshotIdentity());
+  TEST_ASSERT_EQUAL_UINT32(1u, testRebuildSlotFromLoopContentCallCount());
+  releasePersistedLoopSnapshotChunks(oracle);
+}
+
 int main(int argc, char** argv) {
   if (argc == 3 && std::strcmp(argv[1], "--decode-slot-body") == 0)
     return decodeSlotBodyFile(argv[2]);
@@ -2274,5 +2356,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_lsv1_rejects_missing_loop_snapshot_section);
   RUN_TEST(test_lsv1_unknown_section_is_skipped);
   RUN_TEST(test_lsv1_rejects_duplicate_loop_snapshot_section);
+  // windowed-playback-generation slice 4.2: save parity judged on the serialized root (F-6).
+  RUN_TEST(test_lsv1_save_parity_is_judged_on_the_serialized_root);
   return UNITY_END();
 }

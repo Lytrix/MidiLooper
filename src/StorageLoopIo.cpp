@@ -1358,8 +1358,13 @@ void STORAGE_LOOP_IO_MEM applyLoadedLoopSlotBodyCommit(
     if (!loadedLoopSnapshot) {
       return;
     }
-    // DEC-073: the restored passes and the installed root are the same committed state, so the
-    // loaded root's coverage is the current committed-pass revision.
+    // DEC-073's restore edge. A body carries no coverage figure of its own, so this claim rests on the
+    // WRITER's admission (RC2 -- `loopUsesLoopSnapshotBodyFormatV1ForSave`: only a *settled* root is
+    // embedded), not on anything the reader can re-derive: the reader checks section presence and each
+    // section's internal structure, never the root's correspondence to the passes. Stated as a boundary
+    // rather than as a derivation -- task 4.2 (F-6) measures that a body violating that admission is
+    // indistinguishable here (the root is installed as `CheckpointParity::Current` while its content does
+    // not come from the restored state), so the repair is owed, not assumed.
     loop.storePublishedSnapshot(std::move(loadedLoopSnapshot), 0, kSnapshotCoverageCurrent);
   }
   // DEC-088: saved active pass records reconstruct per-slot undo for both formats.
