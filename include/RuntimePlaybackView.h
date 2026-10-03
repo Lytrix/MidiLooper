@@ -340,6 +340,35 @@ inline PlaybackViewTransitionEffect resolvePlaybackViewTransition(PlaybackViewTr
   // frozen source is held, and the successor -- if any -- is coalesced rather than retired.
   return effect;
 }
+/// Task 3.14: a bounded presence set over `(channel, note)` identities -- 16 channels x 128 notes as bits, 256 B. It is
+/// how an off-clock identity reconciliation batches its input without allocating: one bounded pass fills it, and the
+/// ledger walk that follows is O(open notes) with no search.
+struct NotePresenceSet {
+  std::array<uint32_t, 16 * 4> bits{};
+  size_t count = 0;
+
+  bool empty() const { return count == 0; }
+
+  void add(uint8_t channel, uint8_t note) {
+    if (channel == 0 || channel > 16 || note > 127) {
+      return;
+    }
+    uint32_t& word = bits[static_cast<size_t>(channel - 1) * 4 + (note / 32)];
+    const uint32_t mask = uint32_t(1) << (note % 32);
+    if ((word & mask) == 0) {
+      word |= mask;
+      ++count;
+    }
+  }
+
+  bool has(uint8_t channel, uint8_t note) const {
+    if (channel == 0 || channel > 16 || note > 127) {
+      return false;
+    }
+    return (bits[static_cast<size_t>(channel - 1) * 4 + (note / 32)] & (uint32_t(1) << (note % 32))) != 0;
+  }
+};
+
 /// DEC-108 §13(g) / task 4.5: the **cross-generation closure reconciliation** for one version handoff, computed
 /// **off-clock** and bounded. It is a value, not a running process: the plan is written once and the clock path only
 /// ever reads it. Every list is bounded by `ActiveNoteLedger::kMaxOpenNotes` and nothing allocates.

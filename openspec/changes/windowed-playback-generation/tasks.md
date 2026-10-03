@@ -476,6 +476,34 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   retained-source lifetime and eventual release. Reuse task 2.12 for preview-session undo/redo. Red-prove
   the fixture with blanket silence restored. Gate normal windowed undo/redo enablement and task 3.7's
   fallback removal on this task; content parity in task 4.1 alone is insufficient.
+  *Increment 3.14 landed 2026-10-02 — the **audible half** (the blanket silence replaced); the **task stays open** for
+  the overdub-session identity source and the publication-owner request.* The four **edit-batch** call sites now
+  reconcile before they refresh: `Track::reconcileAfterEditPassStateChange(slot, passIds, identitiesAreRemoved)` takes
+  the affected edit passes' **own added events** as the identity set (a bounded, allocation-free `NotePresenceSet`) and
+  one ledger walk classifies every sounding note as **closed** (its identity was removed), **suppressed** (its identity
+  was re-established while the note never stopped sounding, so it is not retriggered), or **preserved** (untouched) —
+  which is "unchanged sustained notes receive no early NoteOff or retrigger" as a mechanical claim. **The blanket
+  invalidation had a second half that the fixture found:** the same refresh also **cleared the ledger**, so removing the
+  silence alone would still have killed soundings; `LoopPlaybackRuntime::reset` now clears the revision/generation
+  caches unconditionally (they describe the merged representation) while `preserveLedger` governs **only** the ledger.
+  Undo semantics, the revision bump and the stack discipline are untouched, and the reconciliation is off-clock. *The
+  task's own red-proof is satisfied:* restoring the blanket silence on either refresh path makes the fixture fail (one
+  closure becomes three; none becomes two). *Verification:* focused **64/64**, full native **2695 / 2688 succeeded / 7
+  skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192` **unchanged** /
+  `code 392,328 + padding 888` (48 B above the floor; byte-identical to the three previous slices, no size pin move);
+  six mutations red-proved with byte-identical restores, and the first blanket-silence attempt did **not** discriminate
+  (it mutated the generic refresh while the fixture drives the edit-batch one), so the fixture now asserts the generic
+  path directly as well. **OWED in this task:** (a) the two **overdub-session** sites no longer silence and preserve the
+  ledger but do **not** yet close the session's removed soundings — they need a **committed-pass identity source**
+  (`PassId` list → the passes' own rows), and until then a note can remain sounding whose content an undo removed
+  (strictly better than killing every sounding note, but not the requirement); (b) the refresh is not yet a **request
+  through the immutable publication owner** — that needs a bounded content source for the affected interval, and the
+  existing request path takes a caller-owned enumerated scratch, so the choice between a cold content-sized allocation
+  and the owner's own companion-pass source is a design decision to state here first; (c) the between-grains matrix
+  (repeated undo/redo, track/slot switching, stale completion — 3.7's serving path), retained-source lifetime and
+  discharge (3.6a's release predicate, cited) and preview-session undo/redo (3.13/2.12, cited). One finding is recorded
+  rather than silently changed: `UndoEntryKind::RecordPassAdded`'s undo case does not call the refresh at all. Detail:
+  [`evidence/2026-10-02-s314-undo-audible-handoff/EVIDENCE.md`](evidence/2026-10-02-s314-undo-audible-handoff/EVIDENCE.md).
 
 ## 4. Checkpoint parity and content parity
 

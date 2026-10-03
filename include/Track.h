@@ -571,6 +571,15 @@ public:
   /// absence evidence of removal at all (see `handoffAbsenceMeansRemoval`).
   ClosureSettlement planClosureSettlementForSlot(uint8_t slotIndex, const MidiEvent* events, size_t eventCount,
                                                  bool incomingIsWholeLoop) const;
+  /// Task 3.14 / DEC-108 §13(g): the **audible handoff for a committed-identity change** -- the edit batch that an
+  /// undo disables or a redo re-enables. `identitiesAreRemoved` says the change takes the affected identities away;
+  /// otherwise it re-establishes them. A sounding note whose identity is removed closes at handoff; a sounding note
+  /// whose identity is re-established has its note-on suppressed, because it never stopped sounding; every other
+  /// sounding note is preserved **untouched**, which is what "unchanged sustained notes receive no early NoteOff or
+  /// retrigger" means mechanically. Off-clock and bounded: the presence set comes from the edit passes' own added
+  /// events and the ledger walk is O(open notes). Returns the settlement it applied, so a caller can assert the counts.
+  ClosureSettlement reconcileAfterEditPassStateChange(uint8_t slotIndex, const EditPassIdList& passIds,
+                                                      bool identitiesAreRemoved);
   /// Emit the settlement's closures **first** -- before any replacement note-on, which is the ordering the spec
   /// requires -- and discharge exactly those ledger obligations. A preserved note is not touched: neither closed nor
   /// retriggered. Returns the number of closures emitted.

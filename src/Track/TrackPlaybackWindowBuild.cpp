@@ -2017,6 +2017,58 @@ TRACK_COLD_MEM size_t Track::applyClosureSettlementForSlot(uint8_t slotIndex, co
   return emitted;
 }
 
+TRACK_COLD_MEM ClosureSettlement Track::reconcileAfterEditPassStateChange(uint8_t slotIndex,
+                                                                          const EditPassIdList& passIds,
+                                                                          bool identitiesAreRemoved) {
+  ClosureSettlement settlement;
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return settlement;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    // No window lane on this slot: there is nothing to settle here -- and, the point of this task, **nothing is
+    // silenced**. The blanket emitter was the only thing that acted in this case, and acting was the defect.
+    return settlement;
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  // The affected identities come from the edit passes' **own added events** (an edit pass carries no chunk bodies),
+  // collected in one bounded pass; the presence set is 256 B and nothing allocates.
+  NotePresenceSet affected;
+  for (const EditPassId id : passIds) {
+    for (const EditPass& pass : loop.passes.editPasses) {
+      if (pass.id != id) {
+        continue;
+      }
+      for (const MidiEvent& event : pass.addedEvents) {
+        if (event.isNoteOn()) {
+          affected.add(event.channel, event.data.noteData.note);
+        }
+      }
+      break;
+    }
+  }
+  // One walk of the ledger: a sounding note the change does not name is **preserved**, and only a named one is closed
+  // (its identities were removed) or suppressed (they were re-established, and the note never stopped sounding).
+  runtime->ledger.forEachActive([&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry&) {
+    if (!affected.has(channel, note)) {
+      ++settlement.preservedCount;
+      return;
+    }
+    const uint16_t key = static_cast<uint16_t>((static_cast<uint16_t>(channel) << 8) | note);
+    if (identitiesAreRemoved) {
+      if (settlement.closureCount < ClosureSettlement::kMaxKeys) {
+        settlement.closures[settlement.closureCount++] = key;
+      }
+      return;
+    }
+    if (settlement.suppressedRetriggerCount < ClosureSettlement::kMaxKeys) {
+      settlement.suppressedRetriggers[settlement.suppressedRetriggerCount++] = key;
+    }
+  });
+  (void)applyClosureSettlementForSlot(slotIndex, settlement);
+  return settlement;
+}
+
 TRACK_COLD_MEM bool Track::publishedPlaybackWindowForSlot(uint8_t slotIndex,
                                                          PlaybackViewSourceIdentity& identityOut,
                                                          PlaybackCoverageInterval& coverageOut) const {

@@ -260,8 +260,31 @@ TRACK_COLD_MEM void refreshPlaybackAfterCapturePassStateChange(Track& track, uin
     if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
-    track.silenceSlotMidiOutput(slotIndex);
-    track.invalidatePlaybackMergedMidiEvents(false);
+    // Task 3.14: **no blanket silence.** This used to call `silenceSlotMidiOutput(slotIndex)`, which emitted a NoteOff
+    // for *every* sounding note -- so undoing a change that touched none of them killed them anyway. Silencing is now a
+    // decision taken from the ledger by the reconciliation below, and a slot with nothing to settle is left alone.
+    // The merged representation is invalidated; the **sounding ledger is not**, because it is the closure
+    // obligation set the handoff reconciles. `false` here cleared it, which is the other half of the blanket
+    // invalidation this task replaces.
+    track.invalidatePlaybackMergedMidiEvents(true);
+}
+
+/// Task 3.14: the same refresh for an **edit batch** state change, plus the identity reconciliation. The batch's own
+/// added identities are settled against the ledger: a sounding note the batch owned closes (its identity is gone), a
+/// sounding note whose identity is re-established is not retriggered, and every other sounding note is preserved
+/// untouched. Off-clock: this runs where the undo/redo already mutates the pass timeline, never on the clock edge.
+TRACK_COLD_MEM void refreshPlaybackAfterEditPassStateChange(Track& track, uint8_t slotIndex,
+                                                          const EditPassIdList& passIds,
+                                                          bool identitiesAreRemoved) {
+    track.invalidateCaches();
+    if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return;
+    }
+    (void)track.reconcileAfterEditPassStateChange(slotIndex, passIds, identitiesAreRemoved);
+    // The merged representation is invalidated; the **sounding ledger is not**, because it is the closure
+    // obligation set the handoff reconciles. `false` here cleared it, which is the other half of the blanket
+    // invalidation this task replaces.
+    track.invalidatePlaybackMergedMidiEvents(true);
 }
 
 TRACK_COLD_MEM bool setEditPassState(Loop& loop, const EditPassIdList& ids, EditPassState state,
@@ -367,7 +390,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            refreshPlaybackAfterEditPassStateChange(track, entry.slotIndex, entry.editPassIds,
+                                                     /*identitiesAreRemoved=*/true);
             loop.refreshVisualCacheAfterPassStateChange();
             refreshNoteEditSessionAfterPassStateChange(loop);
             entry.hasRedoPayload = true;
@@ -392,7 +416,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.editPassIds.size()));
                 return false;
             }
-            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            refreshPlaybackAfterEditPassStateChange(track, entry.slotIndex, entry.editPassIds,
+                                                     /*identitiesAreRemoved=*/true);
             loop.refreshVisualCacheAfterPassStateChange();
             refreshNoteEditSessionAfterPassStateChange(loop);
             entry.hasRedoPayload = true;
@@ -503,7 +528,8 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.slotIndex));
                 return false;
             }
-            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            refreshPlaybackAfterEditPassStateChange(track, entry.slotIndex, entry.editPassIds,
+                                                     /*identitiesAreRemoved=*/false);
             loop.refreshVisualCacheAfterPassStateChange();
             refreshNoteEditSessionAfterPassStateChange(loop);
             applied = true;
@@ -527,7 +553,8 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                            static_cast<unsigned>(entry.editPassIds.size()));
                 return false;
             }
-            refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
+            refreshPlaybackAfterEditPassStateChange(track, entry.slotIndex, entry.editPassIds,
+                                                     /*identitiesAreRemoved=*/false);
             loop.refreshVisualCacheAfterPassStateChange();
             refreshNoteEditSessionAfterPassStateChange(loop);
             logger.log(CAT_TRACK, LOG_INFO, "Scoped edit pass redone session=%u editPass=%u edits=%u",

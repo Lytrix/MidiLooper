@@ -387,9 +387,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(bool preserveLed
     else
       viewSet->resetMetadata();
   }
+  // The two questions this reset answers are **separate**, and task 3.14 needs them separate: the revision/generation
+  // caches describe the *merged representation* (which every caller of this reset invalidates, so they always clear),
+  // while the ledger is the set of notes **sounding on the wire**. Coupling them is what made a content state change
+  // kill soundings it never touched: `preserveLedger` now governs the ledger and only the ledger.
+  cachedLoopRevision = 0;
+  cachedTrackGeneration = 0;
   if (!preserveLedger) {
-    cachedLoopRevision = 0;
-    cachedTrackGeneration = 0;
     ledger.clear();
   }
   return true;
