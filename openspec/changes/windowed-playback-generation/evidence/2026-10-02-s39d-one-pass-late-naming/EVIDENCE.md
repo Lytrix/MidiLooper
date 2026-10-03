@@ -90,3 +90,24 @@ Anchors had their **occurrence count asserted to be 1**, and every case restored
   than smoothed.
 - **The row's volume is the caller's traversal rate** (above): no counter guards it, and the argument that none is
   needed rests on a caller discipline that no production caller currently exercises.
+
+## Mapping to the sibling contract's AC-8 (verified by reading it, not assumed)
+
+This change must accept `runtime-working-set-ownership`'s `S4C1-READINESS-CURRENCY-CONTRACT.md` criteria. **AC-8** reads:
+
+> **AC-8 — Readiness evidence is delivered where it is produced.** A row an acceptance surface fences on must **not depend
+> on bulk-retention policy for its delivery**, and a diagnostic **must not evict the evidence it explains** … A windowed
+> publication's readiness receipts are exactly the rows this trap catches. *Evidence:* the sibling's receipt rows in a
+> device leg with the transport running throughout.
+
+Read against what the increments actually did:
+
+| AC-8 clause | Where it is met |
+|---|---|
+| "must **not depend on bulk-retention policy for its delivery**" | **increment 3.** Measured: the receipt's ring fallback *did* depend on the ring's retention policy, and under the transport flush budget (8) a non-Tier-A head record is **shed silently** — so the fallback was a loss, not a delay. The direct path plus the Tier-A classification remove the dependency |
+| "a diagnostic **must not evict the evidence it explains**" | **increment 2**, the declared cadence (`Utils/TelemetryCadence.h`, one row per declared interval, verified as a rate in the increment-2 addendum) |
+| "*Evidence:* the sibling's receipt rows **in a device leg with the transport running throughout**" | **not met, and not claimable natively** — this is the device leg, and task **6.4** scopes it in its own words ("the F-7/F-8 device legs and the **AC-8 receipts under a running transport**"). Every increment here is native |
+
+Two consequences worth stating plainly: (i) increment 3 was not only a prose correction — it closed AC-8's **first**
+clause, which the lane did not meet before it; (ii) **AC-8's own evidence requirement is the device leg**, so 3.9's
+remaining open item is not an inference of mine but a citation, and it lands with 6.4.
