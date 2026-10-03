@@ -2017,6 +2017,92 @@ TRACK_COLD_MEM size_t Track::applyClosureSettlementForSlot(uint8_t slotIndex, co
   return emitted;
 }
 
+namespace {
+/// The settlement core, shared by every identity change: classify each sounding note against the affected **presence
+/// set** and write the plan. One walk of the ledger, O(open notes); the caller has already bounded the presence set.
+ClosureSettlement settleLedgerAgainstPresence(const ActiveNoteLedger& ledger, const NotePresenceSet& affected,
+                                              bool identitiesAreRemoved) {
+  ClosureSettlement settlement;
+  ledger.forEachActive([&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry&) {
+    if (!affected.has(channel, note)) {
+      // A sounding note the change does not name is **preserved**: no early closure, no retrigger.
+      ++settlement.preservedCount;
+      return;
+    }
+    const uint16_t key = static_cast<uint16_t>((static_cast<uint16_t>(channel) << 8) | note);
+    if (identitiesAreRemoved) {
+      if (settlement.closureCount < ClosureSettlement::kMaxKeys) {
+        settlement.closures[settlement.closureCount++] = key;
+      }
+      return;
+    }
+    // The identities were re-established while the note never stopped sounding: its note-on is suppressed rather than
+    // retriggered, and it is not closed.
+    if (settlement.suppressedRetriggerCount < ClosureSettlement::kMaxKeys) {
+      settlement.suppressedRetriggers[settlement.suppressedRetriggerCount++] = key;
+    }
+  });
+  return settlement;
+}
+
+/// Collect one committed pass's NoteOn identities from its **own bodies**, a row at a time: bounded by the pass's chunk
+/// references, allocation-free. A disabled pass still holds its references (the timeline keeps them so a redo can
+/// re-enable the pass), which is what lets an identity removal be settled against them at all.
+void collectCommittedPassIdentities(const Loop& loop, PassId passId, NotePresenceSet& out) {
+  const CommittedChunkIdList* refs = nullptr;
+  if (loop.passes.recordPass.id == passId) {
+    refs = &loop.passes.recordPass.committedChunkIds;
+  } else {
+    for (const OverdubPass& pass : loop.passes.overdubPasses) {
+      if (pass.id == passId) {
+        refs = &pass.committedChunkIds;
+        break;
+      }
+    }
+  }
+  if (refs == nullptr) {
+    return;
+  }
+  for (const uint16_t chunkId : *refs) {
+    const uint16_t used = LoopEventStore::chunkUsedCount(chunkId);
+    for (uint16_t index = 0; index < used; ++index) {
+      MidiEvent event;
+      bool atEnd = false;
+      if (!LoopEventStore::readSealedChunkEvent(chunkId, index, event, atEnd) || atEnd) {
+        break;
+      }
+      if (event.isNoteOn()) {
+        out.add(event.channel, event.data.noteData.note);
+      }
+    }
+  }
+}
+}  // namespace
+
+TRACK_COLD_MEM ClosureSettlement Track::reconcileAfterCommittedPassStateChange(uint8_t slotIndex,
+                                                                              const PassId* passIds, size_t passCount,
+                                                                              bool identitiesAreRemoved) {
+  ClosureSettlement settlement;
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return settlement;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    // No window lane on this slot: nothing to settle -- and nothing silenced.
+    return settlement;
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  NotePresenceSet affected;
+  for (size_t i = 0; i < passCount; ++i) {
+    if (passIds[i] != kInvalidPassId) {
+      collectCommittedPassIdentities(loop, passIds[i], affected);
+    }
+  }
+  settlement = settleLedgerAgainstPresence(runtime->ledger, affected, identitiesAreRemoved);
+  (void)applyClosureSettlementForSlot(slotIndex, settlement);
+  return settlement;
+}
+
 TRACK_COLD_MEM ClosureSettlement Track::reconcileAfterEditPassStateChange(uint8_t slotIndex,
                                                                           const EditPassIdList& passIds,
                                                                           bool identitiesAreRemoved) {
@@ -2047,24 +2133,7 @@ TRACK_COLD_MEM ClosureSettlement Track::reconcileAfterEditPassStateChange(uint8_
       break;
     }
   }
-  // One walk of the ledger: a sounding note the change does not name is **preserved**, and only a named one is closed
-  // (its identities were removed) or suppressed (they were re-established, and the note never stopped sounding).
-  runtime->ledger.forEachActive([&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry&) {
-    if (!affected.has(channel, note)) {
-      ++settlement.preservedCount;
-      return;
-    }
-    const uint16_t key = static_cast<uint16_t>((static_cast<uint16_t>(channel) << 8) | note);
-    if (identitiesAreRemoved) {
-      if (settlement.closureCount < ClosureSettlement::kMaxKeys) {
-        settlement.closures[settlement.closureCount++] = key;
-      }
-      return;
-    }
-    if (settlement.suppressedRetriggerCount < ClosureSettlement::kMaxKeys) {
-      settlement.suppressedRetriggers[settlement.suppressedRetriggerCount++] = key;
-    }
-  });
+  settlement = settleLedgerAgainstPresence(runtime->ledger, affected, identitiesAreRemoved);
   (void)applyClosureSettlementForSlot(slotIndex, settlement);
   return settlement;
 }

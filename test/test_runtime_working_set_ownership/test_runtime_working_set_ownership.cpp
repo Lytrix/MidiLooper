@@ -5297,9 +5297,9 @@ void test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot(
   // is reached directly here because driving a whole overdub session is a different fixture's subject; what this one
   // asserts is the audible claim, so it calls the production function and watches the wire.
   MidiSendCapture::reset();
-  refreshPlaybackAfterCapturePassStateChange(track, 0);
+  refreshPlaybackAfterCommittedPassStateChange(track, 0, nullptr, 0, /*identitiesAreRemoved=*/true);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
-                                   "the content-state-change refresh emits nothing by itself");
+                                   "a refresh with no affected identity emits nothing by itself");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 64),
                            "and it leaves the soundings it did not reconcile alone");
   // (5) A slot with **no window lane** is not silenced either: the blanket emitter was the only thing that acted there,
@@ -5309,7 +5309,48 @@ void test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot(
   TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, noLane.closureCount, "no lane, nothing to settle");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
                                    "and nothing is silenced on its account");
+
+  // (6) The **committed-pass identity source** (the overdub-session undo/redo sites): a session step names a committed
+  // pass, whose own bodies give the identities it removes -- so a sounding note that pass carries is closed, an
+  // unrelated sounding is preserved, and the stuck-note risk of a session undo is gone.
+  Track& sessionTrack = trackManager.getTrack(2);
+  sessionTrack.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(sessionTrack, 0);
+  Loop& sessionLoop = sessionTrack.getActiveLoop();
+  sessionLoop.loopLengthTicks = 4 * Config::TICKS_PER_BAR;
+  sessionLoop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(sessionLoop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 55, 100)));
+  TEST_ASSERT_TRUE(sessionLoop.appendCaptureEvent(MidiEvent::NoteOff(96, 1, 55, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, sessionLoop.sealCapture(sessionLoop.loopLengthTicks, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(sessionLoop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(sessionTrack.prewarmPlaybackForSlot(0, true));
+  LoopPlaybackRuntime* sessionRuntime = TrackCaptureStopTestAccess::runtimeIfAllocated(sessionTrack, 0);
+  TEST_ASSERT_NOT_NULL(sessionRuntime);
+  sessionRuntime->ledger.noteOn(1, 55, 11, 0, 100);
+  sessionRuntime->ledger.noteOn(1, 62, 12, 0, 100);
+  const PassId sessionPassId = sessionLoop.passes.recordPass.id;
+  TEST_ASSERT_NOT_EQUAL(static_cast<unsigned>(kInvalidPassId), static_cast<unsigned>(sessionPassId));
+  MidiSendCapture::reset();
+  const ClosureSettlement fromPass =
+      sessionTrack.reconcileAfterCommittedPassStateChange(0, &sessionPassId, 1, /*identitiesAreRemoved=*/true);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1u, fromPass.closureCount, "the pass's own sounding closes");
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(MidiSendCapture::count()));
+  TEST_ASSERT_TRUE(MidiSendCapture::at(0).isNoteOff());
+  TEST_ASSERT_EQUAL_UINT8(55, MidiSendCapture::at(0).data.noteData.note);
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(sessionTrack, 0, 55),
+                            "and the pass's carried note is discharged");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(sessionTrack, 0, 62),
+                           "while a sounding the pass does not carry is preserved");
+  // ... and the re-establishing direction suppresses rather than closes or retriggers.
+  sessionRuntime->ledger.noteOn(1, 55, 11, 0, 100);
+  MidiSendCapture::reset();
+  const ClosureSettlement reestablished =
+      sessionTrack.reconcileAfterCommittedPassStateChange(0, &sessionPassId, 1, /*identitiesAreRemoved=*/false);
+  TEST_ASSERT_EQUAL_UINT16(0u, reestablished.closureCount);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1u, reestablished.suppressedRetriggerCount, "the re-established note is not retriggered");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()), "and nothing is emitted");
 }
+
 
 int main() {
 

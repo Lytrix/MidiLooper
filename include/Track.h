@@ -580,6 +580,14 @@ public:
   /// events and the ledger walk is O(open notes). Returns the settlement it applied, so a caller can assert the counts.
   ClosureSettlement reconcileAfterEditPassStateChange(uint8_t slotIndex, const EditPassIdList& passIds,
                                                       bool identitiesAreRemoved);
+  /// Task 3.14: the same handoff when the affected identities live in a **committed pass's own bodies** -- the
+  /// overdub-session undo/redo sites, where a session step disables or re-enables one committed pass. The identities are
+  /// read a row at a time from the pass's committed chunk references (bounded, allocation-free), and everything else
+  /// about the settlement is shared with the edit-batch case: close the removed, suppress the re-established, preserve
+  /// the rest. This is what closes the session case's stuck-note risk -- a note can no longer keep sounding after an
+  /// undo removed the pass that carried it.
+  ClosureSettlement reconcileAfterCommittedPassStateChange(uint8_t slotIndex, const PassId* passIds, size_t passCount,
+                                                           bool identitiesAreRemoved);
   /// Emit the settlement's closures **first** -- before any replacement note-on, which is the ordering the spec
   /// requires -- and discharge exactly those ledger obligations. A preserved note is not touched: neither closed nor
   /// retriggered. Returns the number of closures emitted.

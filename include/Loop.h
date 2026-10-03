@@ -487,6 +487,18 @@ struct Loop {
   bool canRedoOverdubSession() const;
   /// Sealed wraps on the cursor. Live `capture.store` is not a session layer.
   size_t overdubSessionUndoDepth() const;
+  /// Task 3.14: the pass a **session undo/redo step just changed**, and the companion edit batches it changed with it.
+  /// The cursor is what names it, and the two directions read it at opposite moments: `undoOverdubSession` decrements
+  /// first, so a step's pass sits at `overdubSessionUndoDepth()`; `redoOverdubSession` reads before incrementing, so a
+  /// redo step's pass sits at `overdubSessionUndoDepth() - 1`. Out-of-range answers are named (`kInvalidPassId` / empty)
+  /// rather than clamped to a neighbouring step.
+  PassId overdubSessionPassIdAt(size_t index) const {
+    return index < overdubSessionPassIds_.size() ? overdubSessionPassIds_[index] : kInvalidPassId;
+  }
+  const EditPassIdList& overdubSessionCompanionIdsAt(size_t index) const {
+    static const EditPassIdList kNoCompanions{};
+    return index < overdubSessionCompanionIds_.size() ? overdubSessionCompanionIds_[index] : kNoCompanions;
+  }
   /// Sidebar `O:` — current wrap (`overdubSessionUndoDepth() + 1` while the session is open).
   size_t overdubSessionDisplayDepth() const;
   size_t overdubSessionRedoDepth() const;

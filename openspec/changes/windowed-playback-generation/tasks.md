@@ -504,6 +504,35 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   discharge (3.6a's release predicate, cited) and preview-session undo/redo (3.13/2.12, cited). One finding is recorded
   rather than silently changed: `UndoEntryKind::RecordPassAdded`'s undo case does not call the refresh at all. Detail:
   [`evidence/2026-10-02-s314-undo-audible-handoff/EVIDENCE.md`](evidence/2026-10-02-s314-undo-audible-handoff/EVIDENCE.md).
+  *Increment 3.14b landed 2026-10-02 — the **committed-pass identity source**; the **task stays open** for the
+  publication-owner request (3.14c) and the between-grains matrix.* The two **overdub-session** sites — which the
+  previous increment could only stop from silencing — now **settle** as well. `Loop::overdubSessionPassIdAt` and
+  `overdubSessionCompanionIdsAt` name the pass a session step just changed and the companion edit batches it changed
+  with it (out-of-range answers are **named**, never clamped to a neighbouring step: the undo reads the cursor after
+  decrementing, the redo before incrementing, and the live-undo branch never moves it), and
+  `Track::reconcileAfterCommittedPassStateChange` takes the identities from that pass's **own bodies** — a row at a
+  time through `chunkUsedCount`/`readSealedChunkEvent`, bounded and allocation-free — so a note the undo removed
+  **closes** and the session case's **stuck-note risk is gone**. The classification is now **one shared core**
+  (`settleLedgerAgainstPresence`: closed / suppressed / preserved over a single ledger walk) fed by two sources — an
+  edit batch's added events and a committed pass's bodies — so the two cases cannot diverge in rule, only in input; the
+  generic refresh is replaced by `refreshPlaybackAfterCommittedPassStateChange` at those two sites. A disabled pass
+  keeps its chunk references ("keep disabled capture passes on the timeline so redo can re-enable them"), which is what
+  makes the removal settleable at all. *Verification:* focused **64/64** (the 3.14 fixture **extended**, not added),
+  full native **2695 / 2688 succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild
+  with `variables 96,192` **unchanged** / `code 392,328 + padding 888` (48 B above the floor; byte-identical to the four
+  previous slices) and **no size pin moved** — the `Loop` accessors add no state, which the build's own
+  `static_assert(sizeof(Loop) == 984)` proves. Six mutations red-proved with byte-identical restores, and two
+  bookkeeping facts are recorded rather than left implicit: the earlier M38/M39 anchors moved into the shared core and
+  M36b's target was deleted, so **M42/M43/M44** are their successors on the code as it now stands; and M44's first
+  attempt reported green only because its anchor sat in the wrong **file** — an unmatched anchor is not evidence.
+  **OWED in this task:** (a) the refresh is still **not a request through the immutable publication owner** — the two
+  candidate sources are now both visible in the code (the owner's own `RuntimeCompanionPasses`, which needs no caller
+  buffer but whose authority for a slot at undo time is **unverified**, versus the existing request path's
+  caller-owned enumerated scratch, correct but a cold content-sized allocation), and choosing between them is a design
+  decision to state here first (3.14c); (b) the between-grains matrix (repeated undo/redo, track/slot switching, stale
+  completion while preparation grains are paused — 3.7's serving path); (c) retained-source lifetime and discharge
+  (3.6a, cited), displayed provenance, and preview-session undo/redo (3.13/2.12, cited). Detail:
+  [`evidence/2026-10-02-s314b-committed-pass-source/EVIDENCE.md`](evidence/2026-10-02-s314b-committed-pass-source/EVIDENCE.md).
 
 ## 4. Checkpoint parity and content parity
 
