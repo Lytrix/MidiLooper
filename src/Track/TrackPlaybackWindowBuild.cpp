@@ -1583,6 +1583,12 @@ TRACK_COLD_MEM bool Track::tryClearCommittedMidiScratch() {
 // admission arithmetic fixed in advance.
 // ---------------------------------------------------------------------------
 
+#if defined(__IMXRT1062__)
+DMAMEM static bool sInterferenceBudgetEnforced = false;
+#else
+static bool sInterferenceBudgetEnforced = false;
+#endif
+
 /// The two-bar basis window this contract was written around (kept beside the derivation it names).
 constexpr size_t kPlaybackViewContractBasisEvents = 144;
 
@@ -1720,9 +1726,12 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   admittedWork.fillGrains = derived.requiredFillGrains;
   admittedWork.orderGrains = derived.requiredOrderGrains;
   admittedWork.promotionGrains = derived.requiredPromotionGrains;
-  // The **deadline** this window is admitted against, retained so that a later request can be checked against it (the
-  // review's step 2) instead of only against its own margin.
+  // The **deadline** this window is admitted against, and the **intended traversal** (the phase it was admitted at and
+  // the lead that traversal was allowed), retained so a later request is checked against this window's own deadline --
+  // and so that a deadline already passed cannot be re-granted another pass.
   admittedWork.handoffPhase = handoffPhase;
+  admittedWork.admittedPhase = currentPhase;
+  admittedWork.admittedLeadTicks = handoffLeadTicks(currentPhase, handoffPhase, coverage.loopLengthTicks);
   // **The interference budget is computed and proved, but deliberately not enforced yet** -- the review's own ordering
   // puts that after the preventing paths are bounded and `Delta-max` is chosen. Charging a sibling's outstanding work
   // against a new window's lead only becomes usable once the per-turn advance inside that charge is the **measured**
@@ -1730,8 +1739,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   // it now would refuse shapes the current constants admit -- the capacity reduction the review says the envelope work
   // must not start with. `playbackViewAdmissionKeepsAdmittedDeadlines` *is* the bound; step 4's formula
   // (`Delta-max x H x bounded per-track work`) is what turns it on.
-  constexpr bool kEnforceInterferenceBudget = false;
-  if (kEnforceInterferenceBudget &&
+  if (sInterferenceBudgetEnforced &&
       !playbackViewAdmissionKeepsAdmittedDeadlines(contract, currentPhase, coverage.loopLengthTicks,
                                                    static_cast<uint16_t>(admittedWork.requiredGrains()))) {
     return PlaybackViewRequestResult::TrackInterferenceBudgetExceeded;
@@ -1742,7 +1750,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   // term -- the same figure the budget above reads the other way round, and only while that budget is enforced.
   if (!contract.canCompleteBeforeHandoff(
           currentPhase, handoffPhase, coverage.loopLengthTicks,
-          kEnforceInterferenceBudget ? playbackViewOutstandingGrains(slotIndex) : 0)) {
+          sInterferenceBudgetEnforced ? playbackViewOutstandingGrains(slotIndex) : 0)) {
     return PlaybackViewRequestResult::CannotCompleteBeforeHandoff;
   }
   if (!runtime->beginCoverageBuild(contract, currentPhase, handoffPhase, source, sourceCount, sourceIdentity,
@@ -1750,7 +1758,10 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
     return PlaybackViewRequestResult::AdmissionRefused;
   }
   // The admitted request's **bounded work**, recorded where the build begins -- and only once the build really began,
-  // so a refused request records nothing (the record is read only while the build is active).
+  // so a refused request records nothing (the record is read only while the build is active). **A refusal retains no
+  // obligation by itself:** `TrackInterferenceBudgetExceeded` is a *named refusal*, and it becomes a promise only when
+  // a caller actually keeps the pending request and its original deadline. No such caller or pending-request store
+  // exists yet, so that half is **not implemented and not claimed** (recorded as owed).
   runtime->viewBuildWork = admittedWork;
   // Task 3.11: this build's **operation identity**, recorded where the build begins: a completion that arrives after
   // the generation has moved is late, and the publication guard refuses it.
@@ -1758,6 +1769,11 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   return PlaybackViewRequestResult::Admitted;
 }
 
+/// DEC-108 §13b / task 3.10 (the review's step 2): **the interference budget's enforcement switch.** It is a
+/// **runtime** flag rather than a compile-time gate, precisely so the *enforced* admission path can be exercised by a
+/// fixture with a controlled timing contract -- which is what the review asks for -- while production keeps it off until
+/// the timing bound is supported. Placed like the service-gap sampler's state (`DMAMEM` on the target, plain on the
+/// host) so a scalar never moves the approved RAM1 line.
 TRACK_COLD_MEM uint16_t Track::playbackViewOutstandingGrains(uint8_t excludingSlot) const {
   uint32_t total = 0;
   for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
@@ -1795,6 +1811,16 @@ TRACK_COLD_MEM bool Track::playbackViewAdmissionKeepsAdmittedDeadlines(
     forSlot.requiredPromotionGrains = static_cast<uint16_t>(work->promotionGrains);
     const uint32_t others = static_cast<uint32_t>(playbackViewOutstandingGrains(slot)) + candidateGrains;
     const uint16_t charged = others > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(others);
+    // **A passed deadline must not be re-granted another pass.** `handoffLeadTicks` measures *forward* distance, so on
+    // its own it would report a nearly full pass of lead the moment the playhead went past the deadline. The retained
+    // traversal settles it: the forward distance from the admission phase is inside the admitted lead exactly while the
+    // traversal is **open**, and wraps past it once the deadline is behind -- so a closed traversal is refused here,
+    // before any arithmetic can flatter it. (Review: "retain the intended traversal/absolute deadline, or prove the
+    // rollover cannot happen"; this retains the traversal and the closure is arithmetic.)
+    const uint32_t elapsed = handoffLeadTicks(work->admittedPhase, currentPhase, loopLengthTicks);
+    if (work->admittedLeadTicks == 0u || elapsed > work->admittedLeadTicks) {
+      return false;
+    }
     if (!forSlot.canCompleteBeforeHandoff(currentPhase, work->handoffPhase, loopLengthTicks, charged)) {
       return false;
     }

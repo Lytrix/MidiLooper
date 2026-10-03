@@ -2264,7 +2264,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // below is **unchanged** at 6,544: the host layout had 16 B of tail padding there, so the same field costs the host
 // nothing -- which is why only the target pin moves.
 #if defined(__IMXRT1062__)
-static_assert(sizeof(LoopPlaybackRuntime) == 6648,
+static_assert(sizeof(LoopPlaybackRuntime) == 6656,
               "S3.0/3.10: LoopPlaybackRuntime is the per-slot working set -- the admitted-work record (review "
               "step 1) plus its retained deadline (review step 2); re-based from 6,640, measured on target)");
 #else

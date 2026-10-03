@@ -6778,6 +6778,69 @@ void test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a
                                       contract.maximumPhaseAdvancePerTurn;
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(kShortLoopTicks, siblingChargeTicks,
                                           "the declared charge for one sibling already exceeds a 40-bar loop");
+
+  // **(D) A passed deadline is NOT re-granted another pass.** A phase repeats every loop, so the forward distance to
+  // the deadline would flatter a *closed* traversal into a nearly full pass of available lead. The retained traversal
+  // settles it, and the boundary is exact: one tick past the deadline the traversal is closed and the same charge that
+  // fitted a moment earlier is refused.
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, work0->admittedLeadTicks, "the traversal's lead is retained");
+  const uint32_t pastDeadline = (work0->handoffPhase + 1u) % kLongLoopTicks;
+  TEST_ASSERT_FALSE_MESSAGE(
+      track.playbackViewAdmissionKeepsAdmittedDeadlines(contract, pastDeadline, kLongLoopTicks,
+                                                       static_cast<uint16_t>(work1->requiredGrains())),
+      "once the playhead is past the deadline the traversal is closed, so no extra pass is granted");
+}
+
+/// The review's step 2, third point: **the enforced path is tested now, with a controlled timing contract** -- failing
+/// older fixtures is not a reason to leave enforcement unexercised. The switch is a **runtime** flag precisely so this
+/// fixture can turn it on, drive the *real* admission, and see the named refusal come out of it. Production keeps it
+/// off until the timing bound is supported, and the flag is restored so no later fixture inherits it.
+void test_window_admission_refuses_by_name_once_the_interference_budget_is_enforced() {
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLongLoopTicks = 900 * kBar;
+  constexpr uint32_t kRequestPhase = (60 * kBar) + 384;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+
+  TEST_ASSERT_FALSE_MESSAGE(sInterferenceBudgetEnforced, "production default: the budget is not enforced");
+  // Slot 0 is a substantial window (200 notes), admitted while the budget is off, so there is a promise to protect.
+  prepareOwingWindowHolder(track, 0, kLongLoopTicks, 60, 62, 200, kRequestPhase);
+  const LoopPlaybackRuntime* first = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(first);
+  const PlaybackViewAdmittedWork* work0 = first->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(work0);
+  const uint32_t candidateGrains = static_cast<uint32_t>(work0->requiredGrains());
+
+  // The sibling is requested **twice**: once with the budget enforced and once without. Only the budget can tell the
+  // two apart, which is what makes the refusal below attributable to it rather than to some other guard.
+  commitRecordPassIntoTrackSlotOfLength(track, 1, kLongLoopTicks);
+  Loop& loop = track.getLoop(1);
+  loop.loopLengthTicks = kLongLoopTicks;
+  publishNotesInBarsRootForSlot(loop, 60, 62, 200);
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(1), "slot 1 must prewarm");
+  SessionMidiEventVec& scratch = windowSourceScratch(1);
+
+  sInterferenceBudgetEnforced = true;
+  scratch.clear();
+  const Track::PlaybackViewRequestResult refused = track.requestPlaybackWindow(1, kRequestPhase, scratch);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::TrackInterferenceBudgetExceeded),
+                            static_cast<int>(refused),
+                            "with the budget enforced the real admission refuses by name, charging the sibling");
+  TEST_ASSERT_NULL_MESSAGE(TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1)->activeViewBuildWork(),
+                           "a refused request retains nothing");
+
+  sInterferenceBudgetEnforced = false;
+  scratch.clear();
+  const Track::PlaybackViewRequestResult admitted = track.requestPlaybackWindow(1, kRequestPhase, scratch);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                            static_cast<int>(admitted),
+                            "with the budget off the very same request is admitted: the budget is what refused it");
+  TEST_ASSERT_NOT_NULL(TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1)->activeViewBuildWork());
+  const PlaybackViewAdmittedWork* work1 =
+      TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1)->activeViewBuildWork();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(candidateGrains, static_cast<uint32_t>(work1->requiredGrains()),
+                                   "and the sibling's own work is the charge it would have added");
 }
 
 /// The review's **step 1** (*"bound the work of each request"*), task 3.10: at admission the requested window's work is
@@ -7056,6 +7119,7 @@ int main() {
   RUN_TEST(test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window);
   RUN_TEST(test_window_request_work_is_bounded_and_retained_across_source_shapes);
   RUN_TEST(test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a_sibling);
+  RUN_TEST(test_window_admission_refuses_by_name_once_the_interference_budget_is_enforced);
   RUN_TEST(test_window_request_beyond_the_retained_capacity_is_refused_by_name_and_truncates_nothing);
   // slice 3.10 increment 11: the service-gap unit, sampled from the lane's own opportunities.
   RUN_TEST(test_window_service_gap_sample_reports_the_measured_phase_advance_per_opportunity);
