@@ -910,3 +910,13 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   advance; the admission's turn count smaller than the contention factor) rather than a fabricated bar figure. **Leaving cost enforcement disabled does not make
   the current admission safe**, so active windowed playback stays **gated** — as `ExecutionBounds.md` row 27 records and as 3.7's block depends on. Verified:
   73/73, full native **2708 / 2701 / 7 / 0**, build SUCCESS, RAM1 line byte-identical, no re-base. Detail: [`evidence/2026-10-02-s310i-service-gap-unit/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-02-s310i-service-gap-unit/EVIDENCE.md).*
+
+  *Increment 3.10 (increment 10) attempted 2026-10-03 — **the service-gap unit is not measurable from the existing instrumentation** (device run, negative result;
+  no code changed). Ran the canonical baseline preset against the attached board (metadata pins `git_commit 24134bd8…` / `firmware_hex_sha256 5e1dfa21…`): the run
+  is **INCONCLUSIVE_CAPTURE** (`RECA,entered=0`, the record gesture never armed — the baseline stimulus declares `targets=track 8 slots 4,5` and I passed
+  `--track 5 --loop-slot 1`), so it is not a pass and nothing content-wise is claimed from it. The useful result is the **row semantics**: `service_period` and
+  `idle_maint` are `<maxUs>,<overCount>` — service *durations* (2 604 µs and 84 µs observed), not opportunity gaps — `BAR,<tick>` is emitted on bar boundaries
+  (one row in 2 559) and `DIAG,clk` carries 0, so **no row pairs the playhead phase with the number of opportunities**. The unit therefore needs its own
+  **gated instrumentation** (a per-`PlaybackViewMaintenance`-opportunity phase row, cadence-bounded, `DMAMEM`/`FLASHMEM` per DEC-108 §13b, RAM1 guard checked)
+  before device data can be collected; then one run with the stimulus's own targets, then measure → declare the `H × K` envelope → re-base and enable. Detail:
+  [`evidence/2026-10-03-s310j-service-gap-not-measurable/EVIDENCE.md`](evidence/2026-10-03-s310j-service-gap-not-measurable/EVIDENCE.md).*
