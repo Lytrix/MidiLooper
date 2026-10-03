@@ -342,11 +342,13 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   and the precedent's fix covered it**: the cause was the compiler's own **jump tables** (`.rodata.CSWTCH.*` — the if/else form does not stop a dense enum chain
   being tabulated), so this TU's read-only routing was widened to `.rodata.CSWTCH*`, restoring the line **exactly** (`variables 96,192`, ITCM `code`
   byte-identical, **no re-base**). Fixture: the receipt's content (slot, readiness `ready`, holder `ready`, revision) through the `#ifndef`-guarded
-  `SC_WINDOW_READINESS` recorder, plus the **cadence bound**. Verified: 70/70 (+1 fixture) + 16/16 + 39/39 + 190/190 (cited pin), full native 2704 / 2697 succeeded
-  / 7 skipped / 0 failed, build SUCCESS; **M82** (the cadence gate dropped) fails the fixture, so the bound is load-bearing. **Recorded, not smoothed:** the
-  first cadence assertion expected 2 rows for 17 completions and measured **1**, and why only one outcome reached the reporter is **not established here** —
-  the assertion was restated as the bound and the question named for the next increment; the **refusal paths remain silent by row**; the interval (16) is a
-  declared choice; no hardware observation; and fixture isolation was **repaired, not designed**. Detail:
+  `SC_WINDOW_READINESS` recorder, plus the **cadence rate**. Verified: 70/70 (+1 fixture) + 16/16 + 39/39 + 190/190 (cited pin), full native 2704 / 2697 succeeded
+  / 7 skipped / 0 failed, build SUCCESS; **M82–M85** fail the fixture, so the cadence is load-bearing. **The loose end this increment recorded was closed
+  the same day, by measurement:** the cadence counter is a **process-wide TU static**, so any 16 consecutive outcomes contain exactly one multiple of the
+  interval — the fixture now primes the counter (deliberately **unasserted**) and pins **exactly one row per declared interval** in two phase-independent
+  blocks, which also pins **one reporter call per completed build** (M85 measured 2 calls/round, not the 7 predicted). The priming bound the first pass used
+  was **removed because it masked the rate assertion**. Still open: the **refusal paths remain silent by row**, "one pass late but served" has no row, the
+  interval (16) is a declared choice, no hardware observation, and fixture isolation was **repaired, not designed**. Detail:
   [`evidence/2026-10-02-s39b-receipt-emission-site/EVIDENCE.md`](evidence/2026-10-02-s39b-receipt-emission-site/EVIDENCE.md).*
 
 - [ ] 3.10 **Implement fair, bounded, deadline-ordered service** (*DEC-108 §13b*) — a recurring bounded opportunity on the

@@ -6022,8 +6022,9 @@ void test_window_readiness_receipt_reports_the_outcome_and_is_cadence_bounded() 
 
   WindowReadinessRows::reset();
   SessionMidiEventVec scratch;
-  // Drive `kReceiptInterval + 1` builds to completion: each completion is one readiness outcome.
-  for (uint32_t round = 0; round <= kReceiptInterval; ++round) {
+  // One round = one completed build = one terminal outcome, which is what the receipt is emitted at. A `Denied` grain
+  // is a *stopped* build rather than an ordinary fill, so a healthy round reports exactly once (`GrainServed` is silent).
+  auto driveOneBuildToCompletion = [&]() {
     TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                       static_cast<int>(track.requestPlaybackWindow(0, kRequestPhase, scratch)));
     PlaybackHolderCursor cursor{};
@@ -6033,11 +6034,29 @@ void test_window_readiness_receipt_reports_the_outcome_and_is_cadence_bounded() 
     TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
     // The next round prepares the replacement; adopt it so the slot keeps a servable window.
     (void)track.adoptPreparedPlaybackWindow(0);
+  };
+
+  // **Prime the process-wide cadence counter, and do not assert its row count.** `sReadinessReceiptCount` belongs to
+  // the owner's TU, not to this fixture: by the time this fixture runs, earlier fixtures in this binary have already
+  // advanced it. The first version of this fixture drove `kReceiptInterval + 1` rounds and measured **one** row where
+  // it expected two (`Expected 2 Was 1`, 2026-10-02) -- because `shouldLogOccurrence` emits when
+  // `count == 1 || count % interval == 0`, and any `interval` consecutive counter values contain exactly one multiple
+  // of `interval`. The priming block's own count depends on that phase, so it is **not asserted**: asserting it would
+  // pin the fixture's position in the binary rather than the cadence, and it is strictly weaker than the exact-rate
+  // assertions below (it masks them -- with it in place, a mutation fails here first and the rate assertion never
+  // speaks). Each priming round still asserts its own `Admitted`/`!pending`, so 64 asserted completions are driven.
+  for (uint32_t round = 0; round < 2 * kReceiptInterval; ++round) {
+    driveOneBuildToCompletion();
   }
 
   // (A) The receipt says what the outcome was: a completed build makes the slot's window *ready*, and the holder for
   // a ready slot is the readiness itself. The slot and the revision locate it.
-  TEST_ASSERT_TRUE_MESSAGE(WindowReadinessRows::count > 0, "a completion reported a readiness receipt");
+  WindowReadinessRows::reset();
+  for (uint32_t round = 0; round < kReceiptInterval; ++round) {
+    driveOneBuildToCompletion();
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowReadinessRows::count),
+                                   "exactly one of `kReceiptInterval` outcomes is reported, whatever phase it began at");
   const WindowReadinessRows::Row& first = WindowReadinessRows::rows[0];
   TEST_ASSERT_EQUAL_UINT8(0, first.slot);
   TEST_ASSERT_EQUAL_STRING_MESSAGE("ready", first.readiness,
@@ -6045,12 +6064,14 @@ void test_window_readiness_receipt_reports_the_outcome_and_is_cadence_bounded() 
   TEST_ASSERT_EQUAL_STRING_MESSAGE("ready", first.holder, "and a ready slot's holder is the readiness itself");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(loop.playbackRevision, first.revision, "the receipt names the revision it judged");
 
-  // (B) The cadence **bound**: whatever number of outcomes the loop produced, the rows cannot exceed one per declared
-  // interval plus the always-reported first. An ungated reporter would have produced one row per completion and failed
-  // this; the exact count is recorded in the evidence rather than assumed here.
-  const uint32_t outcomes = kReceiptInterval + 1u;
-  TEST_ASSERT_TRUE_MESSAGE(WindowReadinessRows::count <= 1u + outcomes / kReceiptInterval,
-                           "reported at most once per declared interval, plus the first");
+  // (B) A second measured block with the counter further on: the count is the declared *rate*, not an artefact of the
+  // block's starting phase. An ungated reporter yields `kReceiptInterval` rows in either block and fails both.
+  WindowReadinessRows::reset();
+  for (uint32_t round = 0; round < kReceiptInterval; ++round) {
+    driveOneBuildToCompletion();
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowReadinessRows::count),
+                                   "and again in the next interval: a rate, not a phase");
 }
 
 /// DEC-108 §13b / task 3.10 — **the cross-track question this task's own fixture raised**: the opportunity serves
