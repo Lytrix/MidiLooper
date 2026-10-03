@@ -381,6 +381,25 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   but served" item is **closed by this increment**. Detail:
   [`evidence/2026-10-02-s39d-one-pass-late-naming/EVIDENCE.md`](evidence/2026-10-02-s39d-one-pass-late-naming/EVIDENCE.md).*
 
+  *Increment 3.10 (increment 6) landed 2026-10-02 — **the starvation half, the composed progress bound, and a measured contradiction in the declared
+  envelope** (test-only: no production line changed). The task's own verification sentence is what this supplies: the **production selector** composed with
+  the lane's own turn while the lane owes two windows, asserting that **every one of the seven owners — the lane included — is served exactly once per
+  rotation** (no starvation, no extra share), that the lane progresses to completion with one completion per owed window, and pinning the measured turn
+  count. **Not re-claimed:** the exact rotation was already proved including the lane (RWO's `…backlog_snapshot_two_of_eight`), one grain per call by 3.1's
+  `expectedTurns == 5`, and a blocked holder by increment 1; the lane is never **denied** (`deferredIdleOwnerDependsOnVisualCacheWrap` covers only
+  `VisualCache`/`LoadAndDisplay`), and the caller's single-dispatch shape is build-verified. **The finding, measured and numeric:** for one 64-bar loop and
+  two owed windows carrying 81 notes, the lane needed **58 grains and 60 lane turns** (2 completions), while the contract it is admitted under declares
+  `3 + 3 + 1 = 7` grains at quanta 64/48 with a 3-denied-turn allowance → **28 turns** worst case. So **the declaration does not bound this work shape**, and
+  two of its own numbers disagree by ~an order of magnitude: `3` order grains × `48` = **144 ordered entries** against a window declared to hold
+  `kEventsPerView = 2048`. In the contract's currency: admission judges the lead with the declared grains (29 bars / 22 272 ticks, and 4.4's derived 30-bar
+  floor), while a 60-lane-turn shape needs `60 × 768 ≈ 60 bars` — so such a shape can be **admitted and still miss its handoff**. The one-pass-late rule is
+  the designed answer to the miss; the *declared* envelope is unsupported for the shape, and **deriving it is this task's remaining item** — assertion (C)
+  deliberately pins the violation so the derivation inverts it and forces this record to be updated. **M95–M97** red-prove the fixture (an extra lane turn
+  per rotation starves an owner to 1 turn; a doubled fill quantum moves the pinned figure; a skipped turn fails 18 cases); verification 71/71, full native
+  **2706 / 2699 / 7 / 0**, build SUCCESS (relink; RAM1 line byte-identical, no re-base). **Task 3.10 stays open** on the envelope derivation (now a concrete
+  measured problem), the wiring, and the systematic grain-cost sweep. Detail:
+  [`evidence/2026-10-02-s310f-composed-service-bound/EVIDENCE.md`](evidence/2026-10-02-s310f-composed-service-bound/EVIDENCE.md).*
+
 - [ ] 3.10 **Implement fair, bounded, deadline-ordered service** (*DEC-108 §13b*) — a recurring bounded opportunity on the
   existing deferred machinery; round-robin across eligible holders; earliest outstanding playback deadline first within a
   holder; **cursor advances even when a holder cannot progress**; capture finalization and persistence keep their own

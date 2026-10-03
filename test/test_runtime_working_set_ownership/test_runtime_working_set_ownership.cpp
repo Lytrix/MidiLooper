@@ -6213,6 +6213,93 @@ void test_window_opportunity_is_offered_across_tracks_by_urgency_not_by_index() 
   TEST_ASSERT_TRUE_MESSAGE(windowHolderAdvanced(nearRuntime), "the chosen track served its grain");
   TEST_ASSERT_FALSE_MESSAGE(windowHolderAdvanced(farRuntime), "the other track was not touched");
 }
+
+/// DEC-108 §13b / task 3.10 — **the starvation half and the derived turn envelope**, which the holder fixture could not
+/// reach. The opportunity is one owner inside the shared deferred-idle rotation, so the question is not whether a lane
+/// *holder* is fair (that is proved) but whether the lane's presence takes anything from the owners that keep their own
+/// opportunities — capture finalization, inbound switch preparation, persistence. The bound here is in **turns**,
+/// derived from the contract the owner is admitted under (its declared grain counts and denied-turn allowance): no
+/// microsecond budget is invented, and the measured figure is pinned beside the derivation.
+void test_window_service_keeps_one_turn_per_rotation_and_no_owner_loses_a_turn() {
+  using MidiServiceDrain::DeferredIdleOwner;
+  using MidiServiceDrain::DeferredIdleOwnerCursor;
+  constexpr uint32_t kLoopTicks = 64 * 768;
+  constexpr uint32_t kServingPhase = 9200;
+  const uint8_t kOwnerCount = MidiServiceDrain::kDeferredIdleOwnerCount;
+  // The **production declaration**, read rather than restated: if it drifts from the work the owner actually does, the
+  // envelope below moves with it.
+  const CoverageServiceContract contract = Track::playbackViewCoverageContract();
+  const uint32_t kGrains = static_cast<uint32_t>(contract.requiredFillGrains) +
+                           static_cast<uint32_t>(contract.requiredOrderGrains) +
+                           static_cast<uint32_t>(contract.requiredPromotionGrains);
+  const uint32_t kGrainsWithDenials = kGrains * (static_cast<uint32_t>(contract.maximumConsecutiveDeniedTurns) + 1u);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, kGrains);
+
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  // One track owing two windows, so the lane's own turn has real work while the other owners' turns come round. The
+  // notes must lie **inside the window each request selects** (a 2-bar interval centred on the request phase): content
+  // published elsewhere leaves the window empty and this fixture would then measure an empty build, which is how its
+  // first version wrongly reported two lane turns for two windows. (The *blocked* holder case is the sibling fixture's;
+  // this one is about the allocation, not the choice within it.)
+  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 13, 80, 10000);
+  prepareOwingWindowHolder(track, 1, kLoopTicks, 12, 14, 1, 10032);
+
+  // The composed service, exactly as the production loop composes it: the **production selector** picks one owner per
+  // idle turn and the lane's turns serve one grain. The other owners' turns are counted rather than executed — what is
+  // on trial is the allocation; their work per turn is the caller's business and is build-verified there.
+  DeferredIdleOwnerCursor cursor{};
+  uint32_t ownerTurns[MidiServiceDrain::kDeferredIdleOwnerCount] = {};
+  uint32_t laneTurns = 0;
+  uint32_t laneTurnsToCompletion = 0;
+  uint32_t completeTurns = 0;
+  // **The progress bound, measured -- and the reason it is not the declared one.** Driving the composed service until the
+  // lane's owed windows are done took **58 grains and 60 lane turns**, with **two** completions, for this fixture's shape
+  // (a 64-bar loop, two owed windows carrying 81 notes between them; measured 2026-10-02). The contract the owner is
+  // admitted under declares `3 + 3 + 1 = 7` grains and a `3`-denied-turn allowance, i.e. its own worst case is 28 turns,
+  // so **the declaration does not bound this work shape** -- which is precisely the task's still-owed item ("derive the
+  // supported envelope from grain costs and the worst permitted service gap ... invent no microsecond budget"). This
+  // fixture contributes the measurement (and assertion (C) below); the derivation itself is not invented here.
+  constexpr uint32_t kMeasuredProgressBoundRotations = 60u;
+  const uint32_t kEnvelopeTurns = kMeasuredProgressBoundRotations * static_cast<uint32_t>(kOwnerCount);
+  const uint32_t kRotations = kEnvelopeTurns / static_cast<uint32_t>(kOwnerCount);
+  for (uint32_t turn = 0; turn < kEnvelopeTurns; ++turn) {
+    const DeferredIdleOwner owner = MidiServiceDrain::selectDeferredIdleOwner(cursor, false);
+    ++ownerTurns[static_cast<uint8_t>(owner)];
+    if (owner != DeferredIdleOwner::PlaybackViewMaintenance) {
+      continue;
+    }
+    ++laneTurns;
+    if (track.stepPlaybackViewMaintenance(kServingPhase, nullptr) == Track::PlaybackViewTurnResult::BuildComplete) {
+      ++completeTurns;
+    }
+    if (laneTurnsToCompletion == 0 && !track.hasPendingPlaybackViewMaintenance()) {
+      laneTurnsToCompletion = laneTurns;
+    }
+  }
+  // (A) **No starvation, and no extra share**: every owner — the lane included — is served exactly once per rotation.
+  // An owner that takes the lane's work as its own, or a lane that takes a second turn, moves one of these counts.
+  for (uint8_t owner = 0; owner < kOwnerCount; ++owner) {
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+        kRotations, ownerTurns[owner],
+        "every deferred-idle owner keeps exactly one turn per rotation while the lane owes windows");
+  }
+
+  // (B) The lane progresses to completion inside that measured bound, one completion per owed window, and the measured
+  // lane-turn figure is pinned: a grain served twice in one lane turn, or one skipped, moves it.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, completeTurns, "each owed window completed exactly once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kMeasuredProgressBoundRotations, laneTurnsToCompletion,
+                                   "the owed windows were done in the measured number of lane turns");
+
+  // (C) **The recorded finding, asserted so it cannot be forgotten:** the composed lane turns exceed the declared
+  // grain/denial allowance, so that declaration does not bound this work shape. This assertion is deliberately the
+  // *violation* -- deriving the envelope properly (3.10's own owed item) is expected to invert it, which is why it is
+  // here rather than in prose only.
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
+      kGrainsWithDenials, laneTurnsToCompletion,
+      "recorded: the declared 7 grains x 4 turns does not bound this shape -- derive the envelope (task 3.10)");
+}
 int main() {
 
 
@@ -6234,6 +6321,8 @@ int main() {
   RUN_TEST(test_window_opportunity_is_offered_across_tracks_by_urgency_not_by_index);
   // windowed-playback-generation slice 3.9 increment 2: the readiness receipt's emission site and cadence.
   RUN_TEST(test_window_readiness_receipt_reports_the_outcome_and_is_cadence_bounded);
+  // windowed-playback-generation slice 3.10 increment 6: the starvation half and the derived turn envelope.
+  RUN_TEST(test_window_service_keeps_one_turn_per_rotation_and_no_owner_loses_a_turn);
   RUN_TEST(test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn);
   RUN_TEST(test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound);
   // S4b.5 (B4): one active-slot write authority -- a direct write (the undo route) cancels a queued switch,
