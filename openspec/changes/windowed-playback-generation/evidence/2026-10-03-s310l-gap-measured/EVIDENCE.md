@@ -102,3 +102,40 @@ envelope can be declared on top of a measured maximum rather than on my arithmet
 
 **Instrument note for the record:** `--build-upload` flashes the **working tree**, while `metadata.json`'s `git_commit`
 field reports **HEAD** — run 4's identity is its `firmware_hex_sha256` (`44bdec57…`) because the fix was still uncommitted.
+
+## Run 5 (increment 15) — the `accepted_sequence` preset, three legs, and a falsified safety claim
+
+Run 5 drives the **`accepted_sequence`** preset (three legs: record, overdub, mixed) with the stimulus's own targets
+(`--track 8 --loop-slot 4 --slot-b 5 --midi-channel 8`; the leg injects note input on the track's own channel, so the
+channel must equal the track). Firmware identity, now clean because the tree was committed first:
+**`firmware_hex_sha256 44bdec575d24be0b…`**, HEAD `c49e267d08…`.
+
+**84 `win_gap` rows, all 84 taken while the transport ran** (the gate held across three legs):
+
+| quantity | run 5 |
+|---|---|
+| running `maxDeltaTicks` | min 0, **p50 4**, **p90 8**, **max 2 138** |
+| advances > 100 ticks | **1** (a single outlier; > 1000 also 1) |
+| resets reported | **3** (so resets *do* occur, and are now excluded and counted) |
+| **ticks per lane opportunity (median)** | **2.94** (≈ 7 574 µs apart) |
+| the declaration | **768** (one bar) |
+
+**What is now established.** The *typical* service gap is **4 ticks (median), 8 (p90)** — 100–190x below the declared 768.
+The *worst observed* is **2 138 ticks in this run and 4 355 in run 4** — single, isolated, positive jumps while the
+transport ran, with resets excluded — consistent with the **clock batching** the code and the design both name.
+
+**And that falsifies the argument the constant rests on.** `playbackViewCoverageContract` records: *"The direction is the
+safe one: `canCompleteBeforeHandoff` turns a larger advance into a larger required lead, so an unmeasured value can only
+refuse work, never admit too much."* That holds **only if the declared value is an upper bound**. Measured, it is not:
+observed single-step advances reach **2 138–4 355 ticks, i.e. 2.8x to 5.7x the declared 768**. The admission therefore
+computes a required lead that is **too small** for those steps and can **admit work it cannot complete** — the unsafe
+direction the comment rules out.
+
+**Consequence, stated plainly:** the derived admission must **not** be enabled on the declared 768, and the constant
+cannot be "corrected" by a single larger number either (the median needs ~4 and the worst case needs >=4 355). The
+admission needs the two figures — a typical service interval and a **batched** worst step — or the batching must be
+excluded from the tick the admission uses (e.g. by bounding how far the tick may advance per owner turn).
+
+**Not claimed:** that 4 355 is the worst case (five runs, one tempo, one configuration, and the deliberate
+external-clock/burst leg is still unreachable from the managed harness — no scenario drives a host clock, so batching
+can only be *observed*, not *provoked*, until a clock-driving stimulus variant exists).
