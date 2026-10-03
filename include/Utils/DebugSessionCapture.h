@@ -319,6 +319,15 @@ SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t he
                              uint32_t heapAfter, const char* outcome);
 SC_MEM_ATTR void persistenceResultImmediate(uint32_t durationUs, uint32_t heapBefore,
                                            uint32_t heapAfter, const char* outcome);
+/// The window lane's **readiness receipt** (DEC-108 §13b / task 3.9): the readiness outcome for a slot, and the
+/// **holder** that owes the work when it is not ready, with the revision and the lead it judged. Emitted
+/// **directly when USB has room** for the same reason `persistenceResultImmediate` is: a window is prepared *under
+/// transport*, and the ring is retained by design while a transport runs, so a receipt enqueued during the leg
+/// arrives only after the transport stops -- after the moment it explains. Event-shaped (one row per readiness
+/// outcome, never per grain) and cadence-bounded by its caller, so a diagnostic cannot evict the evidence it
+/// explains.
+SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const char* readiness, const char* holder,
+                                           uint32_t revision, uint32_t leadTicks);
 /// A1.8/A2.1 (design D6): one event-shaped line per restore **request state transition**, carrying the
 /// full identity and the named reason/outcome. Event-shaped, not per-turn: the capture-ring precedent
 /// showed a per-turn family evicts the rows a run is read for. `state`, `wait` and `terminal` are the
@@ -486,6 +495,12 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_ACCEPTED_LATCH(transition, track, slot, interval, destination, outcome) \
   DebugSessionCapture::interactionLatchTransition(transition, track, slot, interval, destination, outcome)
 #endif
+/// `#ifndef`-guarded so a native suite can substitute its own recorder (the `SC_ACCEPTED_LATCH` pattern).
+#ifndef SC_WINDOW_READINESS
+/// The window lane's readiness receipt, emitted directly when USB has room (see `readinessReceiptImmediate`).
+#define SC_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks) \
+  DebugSessionCapture::readinessReceiptImmediate(track, slot, readiness, holder, revision, leadTicks)
+#endif
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
 /// `#ifndef`-guarded so a native suite can substitute its own recorder (the `SC_ACCEPTED_LATCH` pattern).
@@ -641,6 +656,9 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #endif
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_PERSIST_RESULT(durationUs, heapBefore, heapAfter, outcome) ((void)0)
+#ifndef SC_WINDOW_READINESS
+#define SC_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks) ((void)0)
+#endif
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) ((void)0)
 // `restored-library-stability` 1.3: no records without a capture build (the request trigger is
 // session-capture-only too). `#ifndef`-guarded for a native suite that substitutes its own recorder.

@@ -323,6 +323,19 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   holders, no starvation — stays **task 3.10's**.
 - [ ] 3.9 Deliver readiness receipts by the two delivery rules — verify a receipt produced under transport reaches the
   evidence stream and that diagnostic cadence cannot evict it
+  *Increment 3.9 (increment 1) landed 2026-10-02 — **the readiness receipt and its two delivery rules**, and the half of that pair that had no fixture at all:
+  `DebugSessionCapture::readinessReceiptImmediate(track, slot, readiness, holder, revision, leadTicks)` is implemented exactly as the precedent is
+  (`serialWriteRoom(96)` → direct `Serial.printf`; otherwise `emitCapPrintf` → the ring), with the `#ifndef`-guarded `SC_WINDOW_READINESS` macro in both
+  regions so a native suite can substitute a recorder; row `#CAP,<micros>,DIAG,win_readiness,<track>,<slot>,<readiness>,<holder>,<revision>,<leadTicks>`.
+  **The direct path is the point** — a window is prepared *under transport* and the ring is retained by design while a transport runs, so an enqueued
+  receipt arrives after the transport stops, i.e. after the readiness it explains (the precedent's own measurement). Fixture in `test_capture_ring`: with
+  room the row reaches the stream and nothing is enqueued; with no room it is **delayed rather than lost** (the ring holds it, a drain delivers it) —
+  **the second half closes a gap the precedent's own fixture never covered.** Verified: 16/16 (+1 fixture) + 69/69 + 39/39 + 190/190 (cited pin), full
+  native 2703 / 2696 succeeded / 7 skipped / 0 failed, build SUCCESS with the RAM1 line unchanged; two mutations (the fallback dropped, the direct path
+  dropped) red-proved with byte-identical restores. **The task stays open**: nothing in the lane **emits** it yet — the emitting call site (the owner
+  turn's terminal outcomes and the refusal path, silent by row today) and the cadence bound (`TelemetryCadence::shouldLogOccurrence` with a `DMAMEM`
+  counter; no `src/Track/*` consumer exists and the per-grain rows are ungated) are the next increment, so the task's own wording is **half met**. Detail:
+  [`evidence/2026-10-02-s39-readiness-receipt-delivery/EVIDENCE.md`](evidence/2026-10-02-s39-readiness-receipt-delivery/EVIDENCE.md).*
 
 - [ ] 3.10 **Implement fair, bounded, deadline-ordered service** (*DEC-108 §13b*) — a recurring bounded opportunity on the
   existing deferred machinery; round-robin across eligible holders; earliest outstanding playback deadline first within a

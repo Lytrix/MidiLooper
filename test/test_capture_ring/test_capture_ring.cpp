@@ -347,6 +347,35 @@ void test_the_save_completion_receipt_is_emitted_directly() {
   TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
 }
 
+/// DEC-108 §13b / task 3.9 — **the readiness receipt's two delivery rules**, and the half of that pair that had no
+/// fixture at all: the delivery *shape* is the save-completion receipt's, so this fixture proves both sides of it --
+/// emitted directly when USB has room, and **delayed rather than lost** (the ring carries it, a later drain delivers
+/// it) when there is none. The second half is the one the precedent's own fixture never covered.
+void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_than_lost() {
+  // (A) With room: written straight to the stream, and **nothing enqueued** -- a reader that never flushes still
+  // sees the receipt, which is the whole point for a row produced under transport (the ring is retained by design
+  // while a transport runs).
+  captureSerial.room = 4096;
+  readinessReceiptImmediate(3, 5, "owes_build", "window_build_owner", 42u, 768u);
+  TEST_ASSERT_TRUE(captureSerial.output.find("DIAG,win_readiness,3,5,owes_build,window_build_owner,42,768") !=
+                   std::string::npos);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.appendsOk);
+  TEST_ASSERT_EQUAL_UINT32(0, sCaptureRing.used);
+
+  // (B) No room: not written directly, **not lost** either -- it goes on the ring, and the drain delivers it once
+  // there is room. This is the half of the two rules that no fixture covered before this one.
+  captureSerial.output.clear();
+  captureSerial.room = 0;
+  readinessReceiptImmediate(3, 5, "owes_source", "published_source", 43u, 0u);
+  TEST_ASSERT_TRUE_MESSAGE(captureSerial.output.find("win_readiness") == std::string::npos,
+                           "with no room the receipt is not written directly");
+  TEST_ASSERT_GREATER_THAN_UINT32(0, sCaptureRing.used);
+  captureSerial.room = 4096;
+  flushCaptureBuffer(64);
+  TEST_ASSERT_TRUE_MESSAGE(
+      captureSerial.output.find("DIAG,win_readiness,3,5,owes_source,published_source,43,0") != std::string::npos,
+      "delayed rather than lost: the ring delivered the receipt");
+}
 void test_rejected_critical_rows_are_replayed_at_stopped_flush() {
   sCaptureRing.capacity = 1;
   recStop("stop", 3, 800, 0, 800, 768, false);
@@ -377,6 +406,7 @@ int main() {
   RUN_TEST(test_a_corrupt_head_prefix_drops_only_the_prefix_and_keeps_the_records);
   RUN_TEST(test_a_head_with_no_boundary_anywhere_still_wipes);
   RUN_TEST(test_the_save_completion_receipt_is_emitted_directly);
+  RUN_TEST(test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_than_lost);
   RUN_TEST(test_rejected_critical_rows_are_replayed_at_stopped_flush);
   return UNITY_END();
 }
