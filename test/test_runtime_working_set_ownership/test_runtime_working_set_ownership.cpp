@@ -6710,6 +6710,161 @@ void test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_suppor
                            "the declaration exists; what it does not yet have is a measured unit and the full "
                            "contention envelope -- which is why active windowed playback stays gated");
 }
+/// The review's **step 1** (*"bound the work of each request"*), task 3.10: at admission the requested window's work is
+/// **bounded and retained** -- the entries the fill must inspect, the maximum retained window events, and the grain
+/// cost derived from those counts -- and the retained record is the contract's own `deriveGrainsFrom`, never the
+/// declared constants. The claim made good here is the review's own *"done when"*: **actual work never exceeds the
+/// calculated cost**, across empty, sparse, dense and filtered sources. `actual` is counted by phase
+/// (`nextCoverageBuildGrain()` before each turn, as the cost sweep does); `calculated` is the retained record.
+/// **The bound of this fixture:** it proves the record bounds the *observed* work for these four shapes on one loop
+/// length; it does not sweep the whole shape space (task 3.10's systematic sweep is still owed).
+void test_window_request_work_is_bounded_and_retained_across_source_shapes() {
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 64 * kBar;
+  constexpr uint32_t kRequestPhase = (12 * kBar) + 384;
+  struct Shape {
+    uint8_t slot;
+    uint32_t notes;
+    uint32_t fromBar;
+    uint32_t toBar;
+  };
+  // "Filtered" is the *spread* shape: the gather carries entries the window around the request phase will not retain,
+  // so the fill must inspect more than it keeps -- which is exactly why the bound is derived from the inspected count.
+  const Shape shapes[] = {
+      {0, 0, 12, 13},
+      {1, 1, 12, 13},
+      {2, 200, 12, 13},
+      {3, 80, 12, 62},
+  };
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  for (uint8_t i = 0; i < sizeof(shapes) / sizeof(shapes[0]); ++i) {
+    const Shape& shape = shapes[i];
+    commitRecordPassIntoTrackSlotOfLength(track, shape.slot, kLoopTicks);
+    Loop& loop = track.getLoop(shape.slot);
+    loop.loopLengthTicks = kLoopTicks;
+    publishNotesInBarsRootForSlot(loop, shape.fromBar, shape.toBar, shape.notes);
+    TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(shape.slot), "the slot must prewarm a runtime");
+    SessionMidiEventVec& scratch = windowSourceScratch(shape.slot);
+    scratch.clear();
+    const Track::PlaybackViewRequestResult result =
+        track.requestPlaybackWindow(shape.slot, kRequestPhase, scratch);
+    const size_t inspected = scratch.size();
+    LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, shape.slot);
+    TEST_ASSERT_NOT_NULL(runtime);
+    if (shape.notes == 0u) {
+      // An **empty gather is a legitimate window**, not a no-op to refuse: the empty interval is Ready, and the window
+      // still owes its promotion. So it is admitted, and its bounded work is the emptiness itself. **This is the case
+      // that found the cost model's one real gap**: an empty window spends **one fill grain** (that grain is what
+      // establishes the emptiness), while `ceil(0 / quantum)` is zero -- so the bound under-cut the work it exists to
+      // bound, and `deriveGrainsFrom` now floors the fill count at one. (My first version of this fixture asserted a
+      // *refusal* here; the run corrected that too.)
+      TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                                static_cast<int>(result),
+                                "an empty gather is a legitimate window, not a no-op to be refused");
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(inspected), "the empty gather inspects nothing");
+      TEST_ASSERT_EQUAL_UINT16_MESSAGE(1u, runtime->activeViewBuildWork()->fillGrains,
+                                       "an empty window still costs its one fill grain");
+      TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, runtime->activeViewBuildWork()->orderGrains,
+                                       "an empty window costs no order grain");
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(runtime->activeViewBuildWork()->requiredGrains()),
+                                       "an empty window owes its fill grain and its promotion");
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                              static_cast<int>(result),
+                              "the shape must be admitted for its work to be bounded");
+    const PlaybackViewAdmittedWork* work = runtime->activeViewBuildWork();
+    TEST_ASSERT_NOT_NULL_MESSAGE(work, "an admitted request retains the work it was bounded to");
+
+    // **(A) The retained work is *derived from the inspected entries*, not the declaration.** One helper, so the record
+    // cannot drift from the cost model the admission uses.
+    CoverageServiceContract derived = Track::playbackViewCoverageContract();
+    derived.deriveGrainsFrom(inspected);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(inspected), work->sourceEntries,
+                                     "the record names the entries the fill must inspect");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+        static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit), work->retainedEventBound,
+        "the retained-event bound is the window's own storage capacity");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(derived.requiredFillGrains, work->fillGrains, "fills: derived, not declared");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(derived.requiredOrderGrains, work->orderGrains, "orders: derived, not declared");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1u, work->promotionGrains, "the promotion grain is always one");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(work->requiredGrains()),
+                                     static_cast<uint32_t>(derived.requiredGrains()),
+                                     "the record's own sum agrees with the contract's");
+    if (shape.notes >= 200u) {
+      TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(3u, static_cast<uint32_t>(work->orderGrains),
+                                              "a dense window needs more order grains than the declared 3");
+    }
+
+    // **(B) The review's *done when*: actual work never exceeds the calculated cost**, and the build does finish (a
+    // bound that never completes is not a bound). The work is driven through the runtime's **own grain primitives**
+    // rather than through the lane turn, with the same quanta the turn uses: the turn samples the **process-wide**
+    // service-gap series at its top (`SC_WINDOW_SERVICE_GAP`, a TU static), so driving turns from here would perturb
+    // the gap fixture that runs later in this binary. Same work, no lane-turn side effect.
+    uint32_t actualFills = 0;
+    uint32_t actualOrders = 0;
+    uint32_t actualPromotions = 0;
+    uint32_t turns = 0;
+    while (runtime->coverageBuildNeedsService() && turns < 6000u) {
+      const RuntimePlaybackViewBuildGrain next = runtime->nextCoverageBuildGrain();
+      RuntimePlaybackViewBuildGrain served = RuntimePlaybackViewBuildGrain::Denied;
+      if (next == RuntimePlaybackViewBuildGrain::Fill) {
+        ++actualFills;
+        served = runtime->stepCoverageBuildFill(Track::kPlaybackViewFillQuantum);
+      } else if (next == RuntimePlaybackViewBuildGrain::Order) {
+        ++actualOrders;
+        served = runtime->stepCoverageBuildOrder(Track::kPlaybackViewOrderQuantum);
+      } else {
+        break;  // Complete and Denied are terminal: `coverageBuildNeedsService()` is the active phase only
+      }
+      if (served == RuntimePlaybackViewBuildGrain::Complete) {
+        ++actualPromotions;
+      }
+      ++turns;
+    }
+    TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(6000u, turns, "the build must complete inside its own bound");
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(work->fillGrains), actualFills,
+                                             "actual fill grains never exceed the calculated cost");
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(work->orderGrains), actualOrders,
+                                             "actual order grains never exceed the calculated cost");
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(work->promotionGrains), actualPromotions,
+                                             "at most one promotion grain becomes the ready view");
+    // **(C) The record gates on the build.** A finished build owes nothing, so its record must not be readable.
+    TEST_ASSERT_NULL_MESSAGE(runtime->activeViewBuildWork(), "a finished build retains no readable work record");
+  }
+}
+
+/// The review's step 1, second half: **reject or defer preparation whose work cannot be bounded; don't truncate
+/// accepted content.** A window can be prepared only from what its destination can retain, so a gather beyond the
+/// window's storage capacity is refused **by name** and retains nothing -- never quietly shortened to fit.
+void test_window_request_beyond_the_retained_capacity_is_refused_by_name_and_truncates_nothing() {
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 200 * kBar;  // long enough that the lead is not what refuses
+  const uint32_t limit = static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit);
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlotOfLength(track, 0, kLoopTicks);
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = kLoopTicks;
+  // One note becomes a note-on/note-off pair, so this gather carries more entries than a window can retain.
+  publishNotesInBarsRootForSlot(loop, 60, 61, (limit / 2u) + 8u);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0));
+  SessionMidiEventVec& scratch = windowSourceScratch(0);
+  scratch.clear();
+  const Track::PlaybackViewRequestResult result = track.requestPlaybackWindow(0, (60 * kBar) + 384, scratch);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(limit, static_cast<uint32_t>(scratch.size()),
+                                          "the fixture's gather must exceed the window's capacity");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::WindowExceedsRetainedCapacity),
+                            static_cast<int>(result),
+                            "a gather beyond the retained capacity is refused by name, not truncated");
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingPlaybackViewMaintenance(), "a refused request owes nothing");
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_NULL_MESSAGE(runtime->activeViewBuildWork(), "nothing is retained for a refused request");
+}
+
 /// DEC-108 §13b / task 3.10 — **the service-gap unit, measured rather than declared.** `maximumPhaseAdvancePerTurn` is
 /// the phase advance between two of *this owner's own* opportunities, and it was the only term in the admission that had
 /// never been measured (the device rows that exist carry durations, not gaps). This fixture drives the lane turn with a
@@ -6829,6 +6984,8 @@ int main() {
   RUN_TEST(test_track_service_rotates_so_no_track_is_starved_by_anothers_earlier_deadline);
   // windowed-playback-generation slice 3.10 increment 7: the measured grain-cost model and the derived bound.
   RUN_TEST(test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window);
+  RUN_TEST(test_window_request_work_is_bounded_and_retained_across_source_shapes);
+  RUN_TEST(test_window_request_beyond_the_retained_capacity_is_refused_by_name_and_truncates_nothing);
   // slice 3.10 increment 11: the service-gap unit, sampled from the lane's own opportunities.
   RUN_TEST(test_window_service_gap_sample_reports_the_measured_phase_advance_per_opportunity);
   RUN_TEST(test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn);

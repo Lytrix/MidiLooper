@@ -2259,10 +2259,14 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // land before members whose alignment then moves -- 6,512 -> **6,624** (**+112 B**, measured with the temporary
 // compile-time probe, which was removed again). The **host** figure is unchanged at 6,544 (its slack absorbed them), and
 // this state is extmem per-slot storage: it costs no RAM1 `variables` and no DTCM. The delta is a deliberate, recorded
-// re-base, exactly as DEC-107 recorded 6,352 -> 6,360 and slice 3.6 recorded the one above.
+// re-base, exactly as DEC-107 recorded 6,352 -> 6,360, slice 3.6 recorded the one above, and task 3.10's review step 1
+// recorded 6,624 -> 6,640 for the **admitted-work record** retained where a window build begins. The host-ABI figure
+// below is **unchanged** at 6,544: the host layout had 16 B of tail padding there, so the same field costs the host
+// nothing -- which is why only the target pin moves.
 #if defined(__IMXRT1062__)
-static_assert(sizeof(LoopPlaybackRuntime) == 6624,
-              "S3.0/3.13: LoopPlaybackRuntime is the per-slot working set (6,624 B extmem: +112 B preview-source lane)");
+static_assert(sizeof(LoopPlaybackRuntime) == 6640,
+              "S3.0/3.10: LoopPlaybackRuntime is the per-slot working set (6,640 B extmem: +16 B for the "
+              "PlaybackViewAdmittedWork record; measured on target, not assumed)");
 #else
 static_assert(sizeof(LoopPlaybackRuntime) == 6544,
               "S3.0/3.6: LoopPlaybackRuntime host-ABI size (6,544 B: +176 B retained sources)");

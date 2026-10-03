@@ -88,6 +88,14 @@ struct CoverageServiceContract {
 
   bool isDeclared() const;
   uint16_t requiredGrains() const;
+  /// DEC-108 §13b / task 3.10 (the review's step 1, *"bound the work of each request"*): **the grain cost of a
+  /// request, derived from the entries the fill must inspect** -- `ceil(events / kPlaybackViewFillQuantum)` fills
+  /// plus `RuntimePlaybackOrderBuilder::requiredGrains(events, kPlaybackViewOrderQuantum)` order grains plus one
+  /// promotion grain. It is the **single source of truth** for cost: the admission, the retained work record and
+  /// the fixtures all read this one function, so they cannot disagree about what a window costs. It *sets* the
+  /// three grain fields and leaves every other declared field (the advance, the denial allowance, the lead)
+  /// untouched -- deriving cost is not the same act as changing what may be admitted.
+  void deriveGrainsFrom(size_t windowEventCount);
   bool canCompleteBeforeHandoff(uint32_t currentPhase, uint32_t handoffPhase,
                                 uint32_t loopLengthTicks,
                                 uint16_t additionalGrains = 0) const;

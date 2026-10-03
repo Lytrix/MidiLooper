@@ -258,6 +258,28 @@ struct PreparedPlaybackPair {
   uint16_t cursorSeed = 0;
 };
 
+/// DEC-108 §13b / task 3.10 (the review's step 1, *"bound the work of each request"*): **the work an admitted
+/// request was bounded to**, recorded where its build began. Every figure is *derived from the entries the fill
+/// must inspect* (`sourceEntries`), never asserted: the grain counts come from the contract's own
+/// `CoverageServiceContract::deriveGrainsFrom`, and `retainedEventBound` is the window's storage capacity -- the
+/// maximum number of events a window can retain (`RuntimePlaybackViewConfig::kWindowAdmissionLimit`). It is read
+/// **only while the build it describes is active** (see `activeViewBuildWork`), so a finished build's record can
+/// never be mistaken for outstanding work.
+struct PlaybackViewAdmittedWork {
+  /// The entries the fill must inspect: the gathered window, not the loop.
+  uint32_t sourceEntries = 0;
+  /// The maximum retained window events (the destination window's own storage capacity).
+  uint32_t retainedEventBound = 0;
+  uint16_t fillGrains = 0;
+  uint16_t orderGrains = 0;
+  uint16_t promotionGrains = 0;
+  /// The same saturating sum the contract uses, so a reader cannot disagree with `requiredGrains()`.
+  uint32_t requiredGrains() const {
+    const uint32_t total = static_cast<uint32_t>(fillGrains) + orderGrains + promotionGrains;
+    return total > UINT16_MAX ? UINT16_MAX : total;
+  }
+};
+
 struct LoopPlaybackRuntime {
   // --- S3.1 working-set lease -------------------------------------------------------------
   // This object *is* the per-slot working set, so it carries its own lease: the slot cannot hold
@@ -419,6 +441,10 @@ struct LoopPlaybackRuntime {
   /// (The identity the caller stamps into the source is free-form, so the operation's own generation is recorded here
   /// where the build begins rather than inferred from it.)
   uint32_t viewBuildOperationGeneration = 0;
+  /// DEC-108 §13b / task 3.10 (the review's step 1): the **bounded work of the admitted request**, recorded where
+  /// the build begins. Read it through `activeViewBuildWork()`, which returns null once the build it describes is no
+  /// longer active -- a finished build owes nothing, and its record must not be read as outstanding work.
+  PlaybackViewAdmittedWork viewBuildWork;
   /// DEC-108 item 5 / task 3.13: the **preview source contract** for this slot. `previewSourceActive` says the
   /// in-flight or served window belongs to the preview lane, and `previewSourceRevision` is the session revision it
   /// was frozen at -- the lane's own freeze token, never a second committed currency. The flag is how the lane
@@ -811,6 +837,12 @@ struct LoopPlaybackRuntime {
   /// involved and a slot with no build owes nothing. The term the eligibility predicate and the owner share.
   bool coverageBuildNeedsService() const { return viewBuild.active(); }
   RuntimePlaybackViewBuildGrain nextCoverageBuildGrain() const;
+  /// DEC-108 §13b / task 3.10 (the review's step 1): the work this slot's **admitted** request was bounded to, valid
+  /// only while the build it describes is active. Null once the build has completed or been discarded, so a reader
+  /// (a per-track budget, a fixture) can never count a finished build as outstanding work.
+  const PlaybackViewAdmittedWork* activeViewBuildWork() const {
+    return viewBuild.active() ? &viewBuildWork : nullptr;
+  }
   RuntimePlaybackViewBuildGrain stepCoverageBuildFill(size_t entryQuantum);
   RuntimePlaybackViewBuildGrain stepCoverageBuildOrder(size_t entryQuantum);
   void discardCoverageBuild();

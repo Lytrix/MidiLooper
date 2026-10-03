@@ -248,6 +248,10 @@ public:
     ContractUndeclared,
     CannotCompleteBeforeHandoff,
     AdmissionRefused,
+    /// Task 3.10 (the review's step 1): the gathered window holds **more entries than a window can retain**
+    /// (`RuntimePlaybackViewConfig::kWindowAdmissionLimit`), so its work cannot be bounded by the window that would
+    /// have to hold it. It is **refused rather than truncated** -- accepted content is never silently dropped.
+    WindowExceedsRetainedCapacity,
   };
   enum class PlaybackViewTurnResult : uint8_t { Idle, GrainServed, BuildComplete, GrainDenied };
 

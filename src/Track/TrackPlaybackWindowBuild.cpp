@@ -1583,24 +1583,35 @@ TRACK_COLD_MEM bool Track::tryClearCommittedMidiScratch() {
 // admission arithmetic fixed in advance.
 // ---------------------------------------------------------------------------
 
-/// DEC-108 §13b / task 3.10: **the service requirement of the work actually being admitted.** The window's own event
-/// count is the whole input: fills are `ceil(events / kPlaybackViewFillQuantum)` and order grains are the builder's own
-/// worst-case entry count (`RuntimePlaybackOrderBuilder::requiredGrains`, i.e. `events x (1 + 2 x ceil(log2 events))`
-/// divided by the order quantum), plus one promotion grain. Using the builder's helper means the admission and the
-/// builder cannot disagree about what a window costs -- which is the defect this replaces: the declared constants
+/// The two-bar basis window this contract was written around (kept beside the derivation it names).
+constexpr size_t kPlaybackViewContractBasisEvents = 144;
+
+/// DEC-108 §13b / task 3.10 (the review's step 1, *"bound the work of each request"*): **the service requirement of
+/// the work actually being admitted**, as the contract's own **single source of truth**. The window's own event count
+/// is the whole input: fills are `ceil(events / kPlaybackViewFillQuantum)`, order grains are the builder's own
+/// worst-case entry count (`RuntimePlaybackOrderBuilder::requiredGrains`, i.e.
+/// `events x (1 + 2 x ceil(log2 events))` divided by the order quantum), plus one promotion grain for turning a
+/// completed build into the ready view. Using the builder's helper means the admission, the retained work record and
+/// the builder cannot disagree about what a window costs -- which is the defect this replaces: the declared constants
 /// assumed a *linear* order pass and were therefore 17x too small for their own basis window.
 ///
-/// The counts saturate rather than wrap (an absurd window refuses, never admits).
-constexpr size_t kPlaybackViewContractBasisEvents = 144;  // the two-bar basis window this contract was written around
-
-TRACK_COLD_MEM void applyWindowCostToContract(CoverageServiceContract& contract, size_t windowEventCount) {
-  const size_t fills = (windowEventCount + Track::kPlaybackViewFillQuantum - 1) / Track::kPlaybackViewFillQuantum;
+/// The counts saturate rather than wrap (an absurd window refuses, never admits). An empty source derives **no order
+/// work** (the helper returns 0 for an empty entry list) and **one fill grain plus the one promotion grain** -- the
+/// fill grain is what establishes the emptiness, measured by the source-shape fixture after an earlier version of this
+/// comment claimed an empty window derived no fill work at all.
+TRACK_COLD_MEM void CoverageServiceContract::deriveGrainsFrom(size_t windowEventCount) {
+  // **At least one fill grain**, because a window is filled by that grain even when it turns out to hold nothing.
+  // Measured, not assumed: the source-shape fixture caught this -- an *empty* window spent one fill grain while
+  // `ceil(0 / quantum)` is 0, so the bound under-cut the very work it exists to bound (task 3.10, review step 1).
+  const size_t fills = windowEventCount == 0
+                           ? 1
+                           : (windowEventCount + Track::kPlaybackViewFillQuantum - 1) / Track::kPlaybackViewFillQuantum;
   const size_t orders =
       RuntimePlaybackOrderBuilder::requiredGrains(windowEventCount, Track::kPlaybackViewOrderQuantum);
-  contract.requiredFillGrains = fills > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(fills);
-  contract.requiredOrderGrains = orders > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(orders);
+  requiredFillGrains = fills > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(fills);
+  requiredOrderGrains = orders > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(orders);
   // A completed build has to become the ready view, which is its own grain.
-  contract.requiredPromotionGrains = 1;
+  requiredPromotionGrains = 1;
 }
 
 TRACK_COLD_MEM CoverageServiceContract Track::playbackViewCoverageContract() {
@@ -1687,19 +1698,28 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   if (!contract.isDeclared()) {
     return PlaybackViewRequestResult::ContractUndeclared;
   }
-  // **Derive the requirement from the work actually being admitted** (task 3.10): the window's own event count
-  // (`sourceCount` is the gathered window, not the loop), through the builder's own helper -- so the admission and the
-  // builder cannot disagree about what this window costs, and a window too large for its loop is refused by the
-  // arithmetic below rather than by a claim about typical density.
-  // **The derived requirement is deliberately NOT enforced yet** (2026-10-02). It is computed below by
-  // `applyWindowCostToContract`, and with the *declared* `maximumPhaseAdvancePerTurn` (one bar per owner turn, itself
-  // still unmeasured -- the service-gap bound) it refuses window shapes that the current constants admit: the basis
-  // window's own honest cost is 51 order grains rather than 3, and one rotation of service-gap turns (kDeferredIdleOwnerCount)
-  // multiplies every grain. Enabling it therefore *is* the capacity reduction the reviewer asked not to approve on
-  // unmeasured evidence, so it lands together with the re-based fixtures and, ideally, the measured gap. Until then the
-  // admission keeps its declared counts, and the derived figure is available for the envelope work.
-  const size_t kDerivedWindowEvents = sourceCount;
-  (void)kDerivedWindowEvents;
+  // **Bound the work before admitting it** (the review's step 1, task 3.10). A window can only be prepared from what
+  // its own destination view can retain, so the entry count is checked against the window's storage capacity first --
+  // `RuntimePlaybackViewConfig::kWindowAdmissionLimit`, which *is* `kEventsPerView` and is `static_assert`ed as the
+  // admission limit. A larger gather is **refused by name rather than truncated**: accepted content is never silently
+  // dropped (spec *Accepted content is never truncated*).
+  if (sourceCount > RuntimePlaybackViewConfig::kWindowAdmissionLimit) {
+    return PlaybackViewRequestResult::WindowExceedsRetainedCapacity;
+  }
+  // The cost of that bounded work is **derived from the entries the fill must inspect**, by the contract's own
+  // `deriveGrainsFrom` -- one helper for the admission, the retained record and the fixtures, so none of them can
+  // disagree about what this window costs. Deriving cost is deliberately **not** the same act as changing what may be
+  // admitted: the lead judgement below still uses the **declared** counts, so no shape admitted today is refused by
+  // this step. The lead-side derivation is the review's step 4, and it needs a measured `Delta-max` and the `H x K`
+  // interference bound first.
+  CoverageServiceContract derived = contract;
+  derived.deriveGrainsFrom(sourceCount);
+  PlaybackViewAdmittedWork admittedWork;
+  admittedWork.sourceEntries = static_cast<uint32_t>(sourceCount);
+  admittedWork.retainedEventBound = static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit);
+  admittedWork.fillGrains = derived.requiredFillGrains;
+  admittedWork.orderGrains = derived.requiredOrderGrains;
+  admittedWork.promotionGrains = derived.requiredPromotionGrains;
   // Named separately from the primitive's own answer: the declared gate is what refuses *here*, so the
   // acceptance surface can tell "the margin was never there" from "the build was refused underneath it".
   if (!contract.canCompleteBeforeHandoff(currentPhase, handoffPhase, coverage.loopLengthTicks)) {
@@ -1709,6 +1729,9 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
                                    coverage, cursorAnchor, ledgerBoundary)) {
     return PlaybackViewRequestResult::AdmissionRefused;
   }
+  // The admitted request's **bounded work**, recorded where the build begins -- and only once the build really began,
+  // so a refused request records nothing (the record is read only while the build is active).
+  runtime->viewBuildWork = admittedWork;
   // Task 3.11: this build's **operation identity**, recorded where the build begins: a completion that arrives after
   // the generation has moved is late, and the publication guard refuses it.
   runtime->viewBuildOperationGeneration = playbackGeneration;

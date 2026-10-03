@@ -1038,3 +1038,16 @@ suite + the `teensy41-capture-serial` build with the RAM1 guard. Detail:
 - **Verified:** focused **77/77**, full native **2716 / 2709 / 7 / 0**, build SUCCESS (33.6 s, partial rebuild), RAM1 line **byte-identical**, no re-base. All mutation restores byte-identical.
 - **Still not declared:** the `H × K` envelope (the measured maximum is a starvation figure under instrumentation, not a scheduling bound); the derived admission stays disabled and no fixture was re-based to it.
 - Detail: [`evidence/2026-10-03-s310n-declaration-corrected/EVIDENCE.md`](evidence/2026-10-03-s310n-declaration-corrected/EVIDENCE.md).
+
+### Increment 3.10 (increment 18) — review step 1: the work of each request bounded and retained (2026-10-03)
+
+- **The cost helper is now the contract's own method** (`CoverageServiceContract::deriveGrainsFrom`), setting only the three grain fields — *deriving cost is not the same act as changing what may be admitted*. It had existed since increment 8 with **no caller**.
+- **The retained-event bound is enforced**: a gather beyond `kWindowAdmissionLimit` (== `kEventsPerView`, `static_assert`ed) is refused by the **new named outcome** `WindowExceedsRetainedCapacity` — refused, never truncated.
+- **The bounded work is retained on the runtime** (`PlaybackViewAdmittedWork`), read through `activeViewBuildWork()` which returns null unless the build is active — the record step 2's per-track budget needs.
+- **No capacity change:** the lead judgement still uses the declared counts.
+- **Two defects found by the fixtures, mine:** the cost model **under-cut an empty window by one fill grain** (now floored at one, comment corrected); and an empty gather is **admitted** (a legitimate Ready window), not refused as my first fixture asserted.
+- **One coupling defect of mine:** driving the lane turn from the fixture fed the **process-wide** gap sampler; now driven through the runtime's grain primitives.
+- **Red-proofs:** M108 (capacity bound dropped), M109 (record from the declared counts), M110 (record not gated on the build), M111 (empty fill floor removed) — each with its exact message; restores byte-identical.
+- **Verified:** focused **79/79**, full native **2718 / 2711 / 7 / 0**, build SUCCESS, RAM1 line byte-identical; `sizeof(LoopPlaybackRuntime)` re-based **6 624 → 6 640** on the target (measured), host pin unchanged at 6 544.
+- **Next:** review step 2 (per-track outstanding-work budget; every already-admitted window's deadline feasible), step 3 (the lane dispatch boundary — what `Delta-max` must come from), then step 4's formula.
+- Detail: [`evidence/2026-10-03-s310o-request-work-bounded/EVIDENCE.md`](evidence/2026-10-03-s310o-request-work-bounded/EVIDENCE.md).
