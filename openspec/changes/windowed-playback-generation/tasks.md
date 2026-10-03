@@ -533,6 +533,31 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   completion while preparation grains are paused — 3.7's serving path); (c) retained-source lifetime and discharge
   (3.6a, cited), displayed provenance, and preview-session undo/redo (3.13/2.12, cited). Detail:
   [`evidence/2026-10-02-s314b-committed-pass-source/EVIDENCE.md`](evidence/2026-10-02-s314b-committed-pass-source/EVIDENCE.md).
+  *Increment 3.14c landed 2026-10-02 — the **refresh's source question, verified** (no production code changed); the
+  task stays open on the requester's own ordering.* Both no-caller-buffer candidates for an eager refresh request at this
+  edge are rejected **on their own documentation**: `RuntimeCompanionPasses` is an *operation-scoped preparation*
+  ("caller **freezes** active passes … and keeps their descriptors/events and rows immutable **until done**";
+  `ready(source)` requires `phase_ == Complete && valid() && source == expected_`), and `RuntimeCanonicalPassInputs`
+  documents *"invalidate before pass/history mutation or release"* — while this edge's act **is** that mutation, so a
+  refresh sourced from either would read content the same gesture has just invalidated. The third option (the existing
+  request path's enumerated scratch) is **measurably gated**: with a served window and a real `TrackUndo::undoForLoop`,
+  readiness stops being `Ready` (a rebuild is owed, **named** in the owner's vocabulary) and `requestPlaybackWindow`
+  answers **`SourceNotCurrent`** — the lagging root is named, never served as current, which is DEC-073's protection and
+  exactly **4.1**'s lagging-checkpoint outcome. So the refresh's requester belongs to **4.1** (a current root) and then
+  **3.7** (the consumer/traversal lane, which knows the interval and the phase) — an ordering statement backed by two
+  measurements, not a deferral. What this edge owes it already does: advance the currency (revision + generation), settle
+  the closures from the change's own identities, keep the ledger (the closure-obligation set), silence nothing and
+  enumerate nothing. *Verification:* focused **64/64** (fixture extended again, not added), full native **2695 / 2688
+  succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192`
+  **unchanged** / `code 392,328 + padding 888` (48 B above the floor; byte-identical to the five previous slices). Three
+  mutations red-proved with byte-identical restores, and **two of them deliberately mutate other owners' code** (the
+  not-current guard, the revision bump) because those are the facts the handoff rests on — a fixture that only fails when
+  its own slice is undone would not test the claim it states. **OWED in this task:** the refresh's requester (4.1 -> 3.7);
+  the between-grains matrix (repeated undo/redo, track/slot switching, stale completion while preparation grains are
+  paused — 3.7's serving path); retained-source lifetime and eventual release (3.6a, cited); displayed provenance; and
+  preview-session undo/redo (3.13/2.12, cited). Its **audible** requirement and the red-proof the task demands
+  ("restore the blanket silence") are complete. Detail:
+  [`evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md`](evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md).
 
 ## 4. Checkpoint parity and content parity
 
