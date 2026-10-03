@@ -900,3 +900,13 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   evidence. **The service-gap bound is split:** the rotation half is proven, the ticks-per-turn half is not (`maximumPhaseAdvancePerTurn` is still the declared one
   bar, now asserted as a statement). Verified: 73/73, full native **2708 / 2701 / 7 / 0**, build SUCCESS from a true rebuild with the RAM1 line byte-identical and
   no re-base. Detail: [`evidence/2026-10-02-s310h-lifetime-fairness-derivation/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-02-s310h-lifetime-fairness-derivation/EVIDENCE.md).*
+
+  *Increment 3.10 (increment 9) landed 2026-10-02 — **the service-gap unit pinned and increment 8's bound retracted as non-general**. The "≈428 bars" figure
+  in increment 8 was wrong twice: it **double-counted** the owner rotation (the declared advance is *per this owner's opportunity*, which already contains the
+  other owners' share) and it **omitted the contention inside the lane** (one track of every `H` eligible tracks per lane turn, plus the chosen track's sibling
+  slots, whose earlier intervals may take that turn under the spec's within-holder earliest-deadline-first). `CoverageServiceContract::maximumPhaseAdvancePerTurn`
+  now pins its unit at the point of declaration, names the `H × K` factors it does **not** contain, and states that `canCompleteBeforeHandoff`'s
+  `grains × (denied + 1)` is **not yet a complete bound**; the sweep fixture asserts that structure (61 grains for an 80-note window; the still-declared one-bar
+  advance; the admission's turn count smaller than the contention factor) rather than a fabricated bar figure. **Leaving cost enforcement disabled does not make
+  the current admission safe**, so active windowed playback stays **gated** — as `ExecutionBounds.md` row 27 records and as 3.7's block depends on. Verified:
+  73/73, full native **2708 / 2701 / 7 / 0**, build SUCCESS, RAM1 line byte-identical, no re-base. Detail: [`evidence/2026-10-02-s310i-service-gap-unit/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-02-s310i-service-gap-unit/EVIDENCE.md).*

@@ -54,6 +54,16 @@ class RuntimePlaybackViewBuild {
 /// denied-turn allowance, grain count, and lead into a deterministic admission
 /// decision. A false result keeps windowed work out of active transport.
 struct CoverageServiceContract {
+  /// **The unit is "the phase the playhead advances between two of THIS owner's own opportunities"** -- i.e. between two
+  /// `PlaybackViewMaintenance` dispatches, which already contains the other six deferred owners' share of the rotation.
+  /// It does **not** contain the contention *inside* the lane: one *track* of every `H` eligible tracks per lane turn
+  /// (`src/main.cpp`'s offer round-robin), nor the sibling slots of the chosen track (the spec's within-holder
+  /// earliest-deadline-first lets a sibling's earlier interval take that turn). Those multiply onto the **turn count**,
+  /// not onto this field, so `canCompleteBeforeHandoff`'s `grains x (denied + 1)` is **not yet a complete bound**: it
+  /// needs the `H x K` contention factors before any envelope can be called supported, and the unit above must be
+  /// *measured* rather than assumed. Measured 2026-10-02: conflating the two readings -- injecting the owner rotation
+  /// here *and* keeping it in the turn count -- double-counts it, which is the error an earlier record made (see
+  /// `evidence/2026-10-02-s310h-lifetime-fairness-derivation/`).
   uint32_t maximumPhaseAdvancePerTurn = 0;
   uint16_t maximumConsecutiveDeniedTurns = 0;
   uint16_t requiredFillGrains = 0;

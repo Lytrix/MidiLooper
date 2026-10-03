@@ -6488,21 +6488,32 @@ void test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_suppor
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(eighty.turns, eightyOn32.turns, "same content, same cost, different loop length");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(eighty.orders, eightyOn32.orders, "including its order work");
 
-  // (C) **The derived service need, in the contract's own currency** -- the quantity the admission must judge, with the
-  // declared per-turn advance still the one unmeasured factor (the service-gap bound the user asked to be *proven*, not
-  // asserted). One rotation between two services of a holder means `kDeferredIdleOwnerCount` turns per grain.
+  // (C) **The derived service need, and the two multipliers a *general* bound would need.** An earlier version of this
+  // section multiplied the grains by the owner rotation and called the result a per-window bound in bars. That was
+  // wrong twice (measured against the code, 2026-10-02): `maximumPhaseAdvancePerTurn` is declared **per this owner's own
+  // opportunity**, which already contains the other six owners' share -- so injecting the rotation again double-counts
+  // it -- while the contention *inside* the lane is missing: one track of every `H` eligible tracks per lane turn, and
+  // the sibling slots of the chosen track. What can be asserted without the missing measurement is the *structure* and
+  // the fact that it is incomplete.
   const CoverageServiceContract contract = Track::playbackViewCoverageContract();
   const uint32_t grainsFor80Notes =
       static_cast<uint32_t>(eighty.fills) + static_cast<uint32_t>(eighty.orders) + 1u;
-  const uint64_t serviceTicks = static_cast<uint64_t>(grainsFor80Notes) *
-                                static_cast<uint64_t>(MidiServiceDrain::kDeferredIdleOwnerCount) *
-                                static_cast<uint64_t>(contract.maximumPhaseAdvancePerTurn);
-  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
-      64u * kBar, static_cast<uint32_t>(serviceTicks),
-      "an 80-note window's derived service need exceeds a 64-bar loop at the declared one-bar-per-turn advance");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(61u, grainsFor80Notes, "the measured cost of an 80-note window: 3 + 57 + 1");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       1u, static_cast<uint32_t>(contract.maximumPhaseAdvancePerTurn / kBar),
-      "and that advance is still the *declared* one bar per turn: the service-gap bound remains unmeasured");
+      "the advance is still the *declared* one bar per this owner's opportunity: the service-gap unit is unmeasured");
+  // The contention a general bound must multiply in, named from the production shape rather than guessed:
+  // (`src/main.cpp` bounds the eligible-track offers at 8 as well; the smaller of the two is the real divisor.)
+  const uint32_t kContentionFactor = static_cast<uint32_t>(MidiServiceDrain::kDeferredIdleOwnerCount) *
+                                     static_cast<uint32_t>(Config::NUM_TRACKS) *
+                                     static_cast<uint32_t>(Config::MAX_LOOPS_PER_TRACK);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
+      static_cast<uint32_t>(contract.maximumConsecutiveDeniedTurns) + 1u, kContentionFactor,
+      "the admission's turn count applies only the denied-turn allowance, so the derived bound is INCOMPLETE until "
+      "the tracks x slots contention is declared and the per-opportunity advance is measured");
+  TEST_ASSERT_TRUE_MESSAGE(contract.maximumPhaseAdvancePerTurn > 0u && !contract.isDeclared() == false,
+                           "the declaration exists; what it does not yet have is a measured unit and the full "
+                           "contention envelope -- which is why active windowed playback stays gated");
 }
 int main() {
 
