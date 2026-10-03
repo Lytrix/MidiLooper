@@ -492,9 +492,12 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     uint8_t chosenTrack = MidiServiceDrain::kNoPlaybackHolder;
     if (MidiServiceDrain::selectPlaybackHolderRoundRobin(sWindowHolderCursor, offers, offerCount, chosenTrack) ==
         MidiServiceDrain::PlaybackHolderSelection::Service) {
-      // The caller owns the clock, so the caller answers "is the transport running" for the service-gap sample.
+      // The caller owns the clock, so the caller answers the state for the service-gap sample -- and the question is
+      // whether the **transport** runs, not whether the clock does: a running clock with a stopped transport still
+      // advances the tick while nothing needs service, which is what made the first three runs' maxima (9 367 / 4 337 /
+      // 4 400 ticks) look like service gaps. Measured: those runs reported **0 resets**, so they were not resets either.
       (void)trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase, nullptr,
-                                                                          clockManager.isClockRunning());
+                                                                          clockManager.isTransportRunning());
     }
     return;
   }

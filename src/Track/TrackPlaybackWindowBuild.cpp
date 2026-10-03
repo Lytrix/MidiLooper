@@ -1774,11 +1774,15 @@ DMAMEM static uint32_t sGapMaxDelta = 0;
 DMAMEM static uint32_t sGapSampleCount = 0;
 /// Whether the previous sample was taken while the transport ran: what makes a gap a *service* gap.
 DMAMEM static bool sGapLastPhaseRunning = false;
+/// Decreases of the monotonic tick seen since the previous row: **resets** (transport start / clock re-base), excluded
+/// from the max and reported, so a reader can see the exclusion rather than trusting it.
+DMAMEM static uint32_t sGapResets = 0;
 #else
 static uint32_t sGapLastPhase = 0;
 static uint32_t sGapMaxDelta = 0;
 static uint32_t sGapSampleCount = 0;
 static bool sGapLastPhaseRunning = false;
+static uint32_t sGapResets = 0;
 #endif
 /// One row per this many opportunities, so a sample cannot evict the evidence it explains (`TelemetryCadence`).
 /// `static` on purpose: an `inline constexpr` at namespace scope has external linkage and is emitted as a real data
@@ -1793,13 +1797,19 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   // exactly the quantity `CoverageServiceContract::maximumPhaseAdvancePerTurn` is declared in, and which the existing
   // device rows cannot measure (they carry durations, not gaps).
   {
-    if (transportRunning && sGapLastPhaseRunning && sGapSampleCount != 0u && currentPhase != sGapLastPhase) {
-      const uint32_t loopTicks = loopForSlot(0).loopLengthTicks;
-      const uint32_t delta = (currentPhase > sGapLastPhase || loopTicks == 0u)
-                                 ? currentPhase - sGapLastPhase
-                                 : currentPhase + loopTicks - sGapLastPhase;
-      if (delta > sGapMaxDelta) {
-        sGapMaxDelta = delta;
+    if (transportRunning && sGapLastPhaseRunning && sGapSampleCount != 0u) {
+      // **`clockManager.getCurrentTick()` is monotonic between resets** (it is incremented per clock and set to 0 when
+      // the transport starts or the clock is re-based -- `ClockManager.cpp`), so a *decrease* is a **reset, not a loop
+      // wrap**. The first version added the loop length on any decrease, which turned a reset into an apparent gap of
+      // thousands of ticks: that, and not service, is what the first two device runs' maxima measured. A decrease is
+      // therefore **excluded and counted**, so the series says how many were dropped instead of inventing a gap.
+      if (currentPhase >= sGapLastPhase) {
+        const uint32_t delta = currentPhase - sGapLastPhase;
+        if (delta > sGapMaxDelta) {
+          sGapMaxDelta = delta;
+        }
+      } else {
+        ++sGapResets;
       }
     }
     sGapLastPhase = currentPhase;
@@ -1809,7 +1819,8 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     sGapLastPhaseRunning = transportRunning;
     // The cadence counts **opportunities**, not served grains; each row reports the max gap since the previous row.
     if (TelemetryCadence::shouldLogOccurrence(sGapSampleCount, kServiceGapSampleInterval)) {
-      SC_WINDOW_SERVICE_GAP(sGapMaxDelta, sGapSampleCount, currentPhase, transportRunning);
+      SC_WINDOW_SERVICE_GAP(sGapMaxDelta, sGapSampleCount, currentPhase, transportRunning, sGapResets);
+      sGapResets = 0;
       sGapMaxDelta = 0;
     }
   }

@@ -44,16 +44,19 @@ inline Row rows[64];
 inline size_t count = 0;
 inline void reset() { count = 0; }
 inline bool running[64] = {};
-inline void record(uint32_t maxDeltaTicks, uint32_t opportunities, uint32_t phase, bool transportRunning) {
+inline uint32_t resets[64] = {};
+inline void record(uint32_t maxDeltaTicks, uint32_t opportunities, uint32_t phase, bool transportRunning,
+                   uint32_t resetCount) {
   if (count < sizeof(rows) / sizeof(rows[0])) {
     rows[count] = Row{maxDeltaTicks, opportunities, phase};
     running[count] = transportRunning;
+    resets[count] = resetCount;
   }
   ++count;
 }
 }  // namespace WindowGapRows
-#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase, running) \
-  WindowGapRows::record(maxDeltaTicks, opportunities, phase, running)
+#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase, running, resets) \
+  WindowGapRows::record(maxDeltaTicks, opportunities, phase, running, resets)
 // DEC-108 §13b / task 3.9 (increment 4): the window lane's **path rows** through the same substitutable-seam pattern, so
 // a claim about a row (`lag_breach`, `one_pass_late`) is checked as **the row**, not only as the state beside it. The
 // lane emitted these rows under a capture build only, which is why 3.6b's "the breach is reported once per episode"
@@ -6711,6 +6714,34 @@ void test_window_service_gap_sample_reports_the_measured_phase_advance_per_oppor
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, WindowGapRows::rows[0].maxDeltaTicks,
                                    "a stopped interval accumulates no gap at all");
   TEST_ASSERT_FALSE_MESSAGE(WindowGapRows::running[0], "and the row records that the transport was not running");
+  // **A tick reset is not a wrap.** `getCurrentTick()` is monotonic between resets, so a *decrease* is a reset (the
+  // transport started or the clock was re-based) and must be **excluded and counted**, never turned into thousands of
+  // ticks of apparent gap -- which is what the first two device runs' maxima actually measured.
+  WindowGapRows::reset();
+  // Two intervals, so which opportunity the (process-wide) cadence picks cannot decide the outcome: any row emitted
+  // after the reset reports it.
+  for (uint32_t i = 0; i < 2u * kInterval; ++i) {
+    phase += kQuiet;
+    if (i == 7u) {
+      phase = 1000u;  // a reset: the counter goes back to its start
+    }
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr, true);
+  }
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(WindowGapRows::count),
+                                              "one sample per interval, over two intervals");
+  uint32_t reportedResets = 0;
+  uint32_t biggestGap = 0;
+  for (size_t r = 0; r < WindowGapRows::count && r < 8u; ++r) {
+    if (WindowGapRows::resets[r] > reportedResets) {
+      reportedResets = WindowGapRows::resets[r];
+    }
+    if (WindowGapRows::rows[r].maxDeltaTicks > biggestGap) {
+      biggestGap = WindowGapRows::rows[r].maxDeltaTicks;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(reportedResets >= 1u, "the row reports that a reset was dropped");
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(kQuiet, biggestGap,
+                                           "and a reset never inflates the reported gap: it is not a service gap");
 }
 
 int main() {

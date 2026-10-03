@@ -62,3 +62,43 @@ enabled.
 - **Not claimed:** any **bound** (the residual ambiguity above); any generalisation across tempos, loop lengths, track
   counts or clock sources (two runs, one configuration each); and therefore **no envelope**, so the derived admission
   **stays disabled**.
+
+## Runs 3 and 4 (increments 13–14) — two hypotheses tested, one refuted, and what the maximum actually is
+
+**Run 3** (reset-aware row, gate on the *clock*): 15 rows, all "running", **0 resets** — which **refuted my own wrap/reset
+hypothesis**: the maxima were neither wraps nor resets. It also showed the gate was wrong: `clockManager.isClockRunning()`
+is **the clock**, and a running clock with a **stopped transport** keeps advancing the tick while nothing needs service.
+
+**Run 4** (gate corrected to `clockManager.isTransportRunning()`, `--build-upload`): **`Result: PASS`**.
+
+| quantity | run 4 |
+|---|---|
+| rows / running / not-running | **25 / 21 / 4** (the gate now discriminates) |
+| running `maxDeltaTicks` | min 0, mean **459.0**, **max 4 355** |
+| resets reported | **0** |
+| **ticks per lane opportunity (median)** | **2.88** |
+| wall clock per lane opportunity (median) | **7 475.6 µs** (⇒ ≈ 385 ticks/s at this tempo) |
+| the declaration | **768** (one bar) |
+
+**The two readings, and they point in opposite directions — which is the finding:**
+
+1. **Typical:** ~**2.88 ticks** per lane opportunity, i.e. the lane is served every ~7.5 ms and the playhead moves ~3 ticks
+   between services. The declaration (768) over-states *this* by ~265×, and it is why the declared envelope refuses work
+   the lane could trivially service.
+2. **Worst observed while the transport ran: 4 355 ticks** (mean 459), with **0 resets** — so it is a *positive* jump, not
+   a wrap and not a reset. The mechanism the code names for exactly that is **clock batching**: `ClockManager` advances
+   `currentTick += Config::TICKS_PER_CLOCK` in the batched paths, and the design itself records the hazard — *"batched
+   pulses can compress the effective deadline"*. **A batched advance is real playhead travel**: it compresses the time the
+   window has, which is precisely what `maximumPhaseAdvancePerTurn` exists to bound.
+
+**So the declaration is not a bound at all — it is far too small at the maximum and far too large in the median.** The
+first device evidence therefore says the admission's single constant cannot serve both roles: the *typical* service gap
+(~3 ticks) and the *worst* single-step phase advance (~4 355 ticks, batching included) differ by three orders.
+
+**Not claimed:** that 4 355 is the worst case (21 running samples, one leg, one configuration — the clock batch may be
+larger elsewhere), nor that ~2.88 is the envelope's typical figure across tempos. The next step is a longer leg that
+*deliberately* exercises batching (an external/USB-device clock burst) to bound it, and then the `H × K` contention
+envelope can be declared on top of a measured maximum rather than on my arithmetic.
+
+**Instrument note for the record:** `--build-upload` flashes the **working tree**, while `metadata.json`'s `git_commit`
+field reports **HEAD** — run 4's identity is its `firmware_hex_sha256` (`44bdec57…`) because the fix was still uncommitted.

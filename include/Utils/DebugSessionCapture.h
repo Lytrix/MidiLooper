@@ -353,7 +353,7 @@ SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const ch
 /// transport*, the regime that sheds non-Tier-A diagnostics. `#ifndef`-guarded for the native seam
 /// (`SC_WINDOW_READINESS`'s pattern).
 SC_MEM_ATTR void windowServiceGapImmediate(uint32_t maxDeltaTicks, uint32_t opportunities, uint32_t phase,
-                                         bool transportRunning);
+                                         bool transportRunning, uint32_t resets);
 /// A1.8/A2.1 (design D6): one event-shaped line per restore **request state transition**, carrying the
 /// full identity and the named reason/outcome. Event-shaped, not per-turn: the capture-ring precedent
 /// showed a per-turn family evicts the rows a run is read for. `state`, `wait` and `terminal` are the
@@ -528,8 +528,8 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
   DebugSessionCapture::readinessReceiptImmediate(track, slot, readiness, holder, revision, leadTicks)
 #endif
 #ifndef SC_WINDOW_SERVICE_GAP
-#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase, running) \
-  DebugSessionCapture::windowServiceGapImmediate(maxDeltaTicks, opportunities, phase, running)
+#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase, running, resets) \
+  DebugSessionCapture::windowServiceGapImmediate(maxDeltaTicks, opportunities, phase, running, resets)
 #endif
 /// The window lane's **path row** (`DIAG,playback_build,<path>`) — the vehicle every lane event already uses
 /// (`grain_denied`, `build_complete`, `lag_breach`, `one_pass_late`, the last resort). `#ifndef`-guarded so a native
@@ -702,7 +702,7 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #define SC_PLAYBACK_BUILD_ROW(track, slot, loopLengthTicks, revision, path) ((void)0)
 #endif
 #ifndef SC_WINDOW_SERVICE_GAP
-#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase, running) ((void)0)
+#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase, running, resets) ((void)0)
 #endif
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) ((void)0)
 // `restored-library-stability` 1.3: no records without a capture build (the request trigger is
