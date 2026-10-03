@@ -501,6 +501,33 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   silence for a sustained note. Verify with a forced two-miss-and-repeated-edit run, a closure whose note-off moves across
   the handoff, and a window that is empty while a note is sustained — asserting MIDI output, ledger state, displayed
   provenance and eventual recovery
+  *Increment 4.5 landed 2026-10-02 — the **containment half**; the **task stays open** for the cross-generation closure
+  half (§13g).* `ContinuityContainment { Nominal, ServeLastCoherentRevision, LastResortTargetedSilence }` with its
+  **pure** `resolveContinuityContainment(faultLatched, validCoverageRemains)` is the containment rule, deliberately
+  **total with no waiting and no rebuilding outcome** — so "block the clock" and "unbounded rebuild" are
+  unrepresentable rather than merely avoided. The **second consecutive miss latches** `deadlineContractFaultLatched`
+  (3.6b's once-per-episode breach *report* keeps its shape; the latch is what containment reads) and it clears at
+  **one** place only — the eligible boundary where the current revision may be served — so containment is never mistaken
+  for the one-pass-late guarantee and a further edit never forgives it (AC-5). `Track::containmentForSlot(slot, phase)`
+  answers it as a **coverage** question (the served window must be readable and cover the traversal; an event-empty
+  window still covers its interval, the structural half of "an event-empty window means *no new events*"), and
+  `Track::applyLastResortForSlot(slot, phase)` applies the **approved last resort** — targeted note closure plus
+  affected-slot silence through the existing **slot-scoped** owner, never a global transport stop and never a rebuild —
+  answering `NotNeeded`, with **zero** emitted events, whenever coverage remains. *Verification:* focused **62/62**, full
+  native **2693 / 2686 succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with
+  `variables 96,192` **unchanged** / `code 392,328 + padding 888` (48 B above the floor; the line is byte-identical to
+  the previous slice — FLASH-placed additions, no ITCM growth — and the new `bool` fitted padding, so **no size pin
+  moved**). Six mutations red-proved with byte-identical restores; the first "track-wide silence" mutation did **not**
+  discriminate (the fixture observed only the ledger, while that owner emits CC 123 and touches no ledger), so the
+  fixture now asserts the real **MIDI output** through `MidiSendCapture`, and an assertion that was **vacuous in this
+  suite** (`g_nativeSilenceTrackCalls`) was **removed** rather than kept as evidence, with a genuinely global mutation
+  added so the sibling-slot assertion is shown to have teeth. **OWED in this task:** the **cross-generation closure**
+  half (§13g) — preserve unchanged sounding notes without retriggering, close removed/invalidated notes at handoff,
+  suppress obsolete closures, note-offs **before** replacement note-ons, obligations outliving view retirement — which is
+  **emission at a version handoff** and therefore the consumption path's (3.7's consumer switch and 3.14's undo/redo
+  handoff), together with its own verification (a closure whose note-off moves across the handoff, a window that is empty
+  while a note is sustained). Detail:
+  [`evidence/2026-10-02-s45-containment/EVIDENCE.md`](evidence/2026-10-02-s45-containment/EVIDENCE.md).
 
 ## 5. Capacity, envelope and placement
 

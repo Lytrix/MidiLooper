@@ -219,6 +219,31 @@ enum class PlaybackLagDecision : uint8_t {
   BreachSecondMiss,
 };
 
+/// DEC-108 §13(e)/(f) / task 4.5: the **containment** decision at the moment of serving, once a deadline-contract fault
+/// is latched. It is total, and it deliberately has **no** waiting and no rebuilding outcome: the clock is never
+/// blocked, no partial content is published, and no unbounded rebuild is ever performed.
+enum class ContinuityContainment : uint8_t {
+  /// No fault is latched: the traversal is served normally (or one pass late, which is the allowance, not a fault).
+  Nominal,
+  /// The fault is latched and valid coverage remains: the **last coherent revision** keeps being served through the
+  /// admitted bounded path while preparation keeps progressing toward the eligible boundary.
+  ServeLastCoherentRevision,
+  /// The fault is latched and **no valid coverage remains at all**: the approved last resort -- targeted note closure
+  /// plus affected-slot silence. Never a global transport stop, never an unbounded rebuild.
+  LastResortTargetedSilence,
+};
+
+/// The containment rule as one **pure** resolution, so "containment is not a successful fallback" is a property of the
+/// table rather than of a caller's control flow: an unlatched fault is nominal; a latched fault with remaining coverage
+/// continues the last coherent revision; a latched fault with none takes the approved last resort.
+inline ContinuityContainment resolveContinuityContainment(bool faultLatched, bool validCoverageRemains) {
+  if (!faultLatched) {
+    return ContinuityContainment::Nominal;
+  }
+  return validCoverageRemains ? ContinuityContainment::ServeLastCoherentRevision
+                              : ContinuityContainment::LastResortTargetedSilence;
+}
+
 /// The per-interval accounting behind the lag rule: which interval is being traversed, the revisions involved, how many
 /// consecutive traversals missed, and whether this episode's breach has been reported (once per episode).
 struct PlaybackLagState {
