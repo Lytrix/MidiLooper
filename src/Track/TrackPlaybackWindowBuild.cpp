@@ -2163,6 +2163,36 @@ TRACK_COLD_MEM bool Track::publishedPlaybackWindowForSlot(uint8_t slotIndex,
   return true;
 }
 
+TRACK_COLD_MEM bool Track::playbackWindowEventAtForSlot(uint8_t slotIndex, uint16_t cursor,
+                                                       MidiEvent& out) const {
+  // Task 4.3: the served window's stream, in **emission order** -- the same rendering `makeFixedPlaybackStream`
+  // feeds the emission path (`events[order[cursor]]`), so a parity proof reads what a consumer would play rather
+  // than a differently-ordered view of it. The window must be the *served* one (complete, published, valid
+  // interval): a prepared successor is deliberately not readable through this door.
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return false;
+  }
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  if (set == nullptr) {
+    return false;
+  }
+  const uint8_t current = set->lifecycle.current;
+  if (current >= RuntimePlaybackViewConfig::kViewCount) {
+    return false;
+  }
+  const RuntimePlaybackView& view = set->views[current];
+  if (!view.complete || !view.published || !view.coverage.isValid()) {
+    return false;
+  }
+  const FixedPlaybackEventStorage& storage = view.storage;
+  if (storage.events == nullptr || storage.order == nullptr || cursor >= storage.eventCount) {
+    return false;
+  }
+  out = storage.events[storage.order[cursor]];
+  return true;
+}
+
 TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::finishPlaybackViewGrain(
     uint8_t slotIndex, RuntimePlaybackViewBuildGrain grain) {
   Loop& loop = loopForSlot(slotIndex);

@@ -571,6 +571,18 @@ them. Nothing in this section may stand in for production behaviour with a stub 
 - [ ] 4.3 Land **F-7** (content parity across a window boundary) — verify the windowed stream equals the whole-loop
   stream across the boundary, including **boundary note closures**, driven through the project's existing
   content-verification pipeline rather than a second one
+  *Increment 4.3 landed 2026-10-02 — the **served window's stream is now readable** (`Track::playbackWindowEventAtForSlot`, emission order, served window only, no new state) and the parity clause has
+  its first observable: 32 successive windows over a 64-bar demoted loop concatenate **row for row** to the whole-loop
+  stream from the project's existing resolver, across all 31 boundaries, with the boundary note's ON in tile 0 and its
+  OFF in tile 1 (measured: not synthesized at the edge) and the concatenation balanced, so no note-on is left unclosed
+  by the transition. **The task stays open** on three named items: its **device leg** (6.4's windowed content-verification
+  profile with 6.5's split; `ExecutionBounds.md` row 27 still denies active windowed playback), the **closure obligation
+  at the transition** — the sequence is balanced while either window alone is not, so the closure is the consumer's
+  (3.7 with 4.5's ledger set) — and the **overlap rule** (the interval policy is centred, so arbitrary-phase consecutive
+  windows overlap; 3.7). Loop-wrap content is deliberately not in this fixture. Verified: 66/66 (+1 fixture) + 52/52 +
+  190/190 (cited pin) + 38/38, full native 2698 / 2691 succeeded / 7 skipped / 0 failed, true clean rebuild with the RAM1
+  line byte-identical (48 B headroom); four mutations red-proved with byte-identical restores. Detail:
+  [`evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md`](evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md).*
 - [ ] 4.4 Land **F-8** (length-independent root residency) — verify a residency statement per slot (windows resident,
   root demoted) plus content parity for the demoted state, **swept** over loop lengths
 
