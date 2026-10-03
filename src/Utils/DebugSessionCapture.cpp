@@ -1348,6 +1348,13 @@ SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                 (unsigned long)currentPhase, (unsigned long)eventCount);
 }
 
+SC_MEM_ATTR void playbackBuildRow(uint8_t track, uint8_t slot, uint32_t loopLengthTicks, uint32_t revision,
+                                  const char* path) {
+  // Exactly the call the lane used to make inline, so the row is byte-for-byte what a capture build produced before the
+  // seam existed; `windowStartTick` and `rebuildCount` stay 0 because the lane does not track them.
+  playbackRebuild(0, loopLengthTicks, 0, revision, track, slot, 0, path);
+}
+
 SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount) {
   emitCapPrintf("#CAP,%lu,DIAG,playback_order,%lu,%lu\r\n", (unsigned long)micros(),
                 (unsigned long)durationUs, (unsigned long)eventCount);
