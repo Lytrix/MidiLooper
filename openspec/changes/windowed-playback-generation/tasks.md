@@ -331,6 +331,23 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   keeps an early holder blocked while later holders need preparation and capture/persistence work is pending, asserting a
   progress bound for **every admitted holder** (including inbound switch preparation and overlapping finalization), and
   derive the supported envelope from grain costs and the worst permitted service gap — invent no microsecond budget
+  *Increment 3.10 landed 2026-10-02 — the **holder level** (the gap below the already-proved owner rotation): `include/Utils/MidiServiceDrain.h`
+  gains the pure `selectPlaybackHolder(cursor, holders, count, out)` with `PlaybackHolder` (eligible / can progress /
+  outstanding deadline) and the named `PlaybackHolderSelection { None, Service, AllBlocked }`. The deadline is **not new
+  state**: it is the phase at which the playhead next enters the interval the build serves — the figure
+  `Track::requestPlaybackWindow` already passes as `handoffPhase`. Proved as five bounds: each able holder served exactly
+  once per rotation and the rotation continues from the cursor; earliest outstanding deadline first; a deadline outranks
+  none while deadline-less holders still rotate evenly; a **blocked holder is never chosen** and is served within one
+  rotation of becoming able; and "nothing owed" is distinct from "all blocked", with the rotation advancing in both
+  (never a latch). Earliest-deadline-first is applied **globally** over the eligible set — the tighter reading, from which
+  the per-holder one follows. Verified: 39/39 (+1 fixture) + 67/67 + 52/52 + 190/190 (cited pin), full native 2700 / 2693
+  succeeded / 7 skipped / 0 failed, build SUCCESS with the RAM1 line unchanged (the policy is inline and unconsumed);
+  four mutations red-proved with byte-identical restores. **The task stays open** on four named items: the **wiring** (no
+  production caller yet: the holder scan and the `main.cpp` track scan stay ascending first-match, and nothing carries the
+  handoff phase per holder); the **starvation half** (capture finalization/persistence are structural only today); the
+  **envelope derivation** from grain costs and the worst permitted service gap (bounds in turns here, gap measurement
+  owed); and **one declared grain per turn** as a uniform invariant, which is not there to assert yet. Detail:
+  [`evidence/2026-10-02-s310-holder-service-fairness/EVIDENCE.md`](evidence/2026-10-02-s310-holder-service-fairness/EVIDENCE.md).*
 - [x] 3.11 **Implement the shared-view ownership rules and transitions** (*DEC-108 §13d*) — published/current views
   read-only, only the owning builder writes its candidate, a ready view immutable until adopted or retired, storage
   reusable only after every owner releases it; then the transitions: new edit (retain the frozen source, coalesce the

@@ -571,6 +571,165 @@ void test_stopped_pending_snapshot_wins_over_first_paint() {
       false, false, false, false, false, true, true, false));
 }
 
+/// DEC-108 §13b / task 3.10: **fair, bounded, deadline-ordered service at the holder level.** The owner rotation
+/// above decides that the playback owner gets a turn; this decides which *holder* (one slot's owed window build)
+/// that turn serves. The assertions are the design's four properties, each stated as the bound a caller relies on:
+/// every holder that can progress is served within one rotation, a blocked holder never holds the position, the
+/// earliest outstanding deadline is served first, and "nothing owed" / "all owed and blocked" are named.
+void test_playback_holder_service_is_fair_deadline_ordered_and_never_held_by_a_blocked_holder() {
+  using MidiServiceDrain::PlaybackHolder;
+  using MidiServiceDrain::PlaybackHolderCursor;
+  using MidiServiceDrain::PlaybackHolderSelection;
+  constexpr uint8_t kHolders = 4;
+  constexpr uint8_t kNone = MidiServiceDrain::kNoPlaybackHolder;
+
+  // (A) The progress bound: with every holder eligible and able, `kHolders` consecutive turns serve each holder
+  // exactly once -- so every holder's progress bound is one rotation, and no holder is served twice before
+  // another is served once.
+  {
+    PlaybackHolder holders[kHolders];
+    uint8_t servedCount[kHolders] = {};
+    for (uint8_t i = 0; i < kHolders; ++i) {
+      holders[i].eligible = true;
+    }
+    PlaybackHolderCursor cursor{};
+    for (uint8_t turn = 0; turn < kHolders; ++turn) {
+      uint8_t holder = kNone;
+      TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::Service),
+                        static_cast<int>(
+                            MidiServiceDrain::selectPlaybackHolder(cursor, holders, kHolders, holder)));
+      TEST_ASSERT_TRUE(holder < kHolders);
+      TEST_ASSERT_TRUE_MESSAGE(servedCount[holder] == 0, "no holder may be served twice inside one rotation");
+      servedCount[holder] = 1;
+    }
+    for (uint8_t i = 0; i < kHolders; ++i) {
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, servedCount[i], "every holder is served exactly once per rotation");
+    }
+    uint8_t afterRotation = kNone;
+    TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::Service),
+                      static_cast<int>(
+                          MidiServiceDrain::selectPlaybackHolder(cursor, holders, kHolders, afterRotation)));
+    TEST_ASSERT_TRUE_MESSAGE(servedCount[afterRotation] == 1,
+                             "the next rotation begins from the cursor, not from holder zero");
+  }
+
+  // (B) Earliest outstanding deadline first. The phases are deliberately the reverse of the holder order, so an
+  // ascending scan would answer wrongly.
+  {
+    PlaybackHolder holders[kHolders];
+    for (uint8_t i = 0; i < kHolders; ++i) {
+      holders[i].eligible = true;
+      holders[i].hasDeadline = true;
+    }
+    holders[0].deadlinePhase = 900;
+    holders[1].deadlinePhase = 100;
+    holders[2].deadlinePhase = 700;
+    holders[3].deadlinePhase = 300;
+    PlaybackHolderCursor cursor{};
+    const uint8_t expectedOrder[kHolders] = {1, 3, 2, 0};
+    for (uint8_t turn = 0; turn < kHolders; ++turn) {
+      uint8_t holder = kNone;
+      TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::Service),
+                        static_cast<int>(
+                            MidiServiceDrain::selectPlaybackHolder(cursor, holders, kHolders, holder)));
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(expectedOrder[turn], holder,
+                                      "the earliest outstanding deadline is served first");
+      holders[holder].hasDeadline = false;
+      holders[holder].eligible = false;
+    }
+  }
+
+  // (C) A holder without a deadline is ordered after every holder that has one; deadline-less holders still
+  // rotate evenly among themselves.
+  {
+    PlaybackHolder holders[kHolders];
+    for (uint8_t i = 0; i < kHolders; ++i) {
+      holders[i].eligible = true;
+    }
+    holders[3].hasDeadline = true;
+    holders[3].deadlinePhase = 5000;
+    PlaybackHolderCursor cursor{};
+    uint8_t holder = kNone;
+    (void)MidiServiceDrain::selectPlaybackHolder(cursor, holders, kHolders, holder);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(3, holder, "an outstanding deadline outranks holders that have none");
+    holders[3].eligible = false;
+    uint8_t visited[kHolders] = {};
+    for (uint8_t turn = 0; turn < 3; ++turn) {
+      (void)MidiServiceDrain::selectPlaybackHolder(cursor, holders, kHolders, holder);
+      TEST_ASSERT_NOT_EQUAL(3, holder);
+      visited[holder] = 1;
+    }
+    for (uint8_t i = 0; i < 3; ++i) {
+      TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, visited[i], "deadline-less holders still rotate evenly");
+    }
+  }
+
+  // (D) A blocked holder never holds the position: it is skipped every turn, the others keep their bound, and it is
+  // served within one rotation of becoming able again -- skipped over, never lost.
+  {
+    PlaybackHolder holders[kHolders];
+    for (uint8_t i = 0; i < kHolders; ++i) {
+      holders[i].eligible = true;
+    }
+    holders[0].canProgress = false;
+    PlaybackHolderCursor cursor{};
+    for (uint8_t turn = 0; turn < kHolders; ++turn) {
+      uint8_t holder = kNone;
+      TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::Service),
+                        static_cast<int>(
+                            MidiServiceDrain::selectPlaybackHolder(cursor, holders, kHolders, holder)));
+      TEST_ASSERT_NOT_EQUAL_MESSAGE(0, holder, "a holder that cannot progress must never be chosen");
+    }
+    holders[0].canProgress = true;
+    bool servedZero = false;
+    for (uint8_t turn = 0; turn < kHolders; ++turn) {
+      uint8_t holder = kNone;
+      (void)MidiServiceDrain::selectPlaybackHolder(cursor, holders, kHolders, holder);
+      if (holder == 0) {
+        servedZero = true;
+        break;
+      }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(servedZero,
+                             "a holder that was blocked is served within one rotation of becoming able");
+  }
+
+  // (E) The named outcomes: everything owed but blocked, nothing owed, and the degenerate span.
+  {
+    PlaybackHolder holders[kHolders];
+    PlaybackHolderCursor cursor{};
+    uint8_t holder = kNone;
+    // Nothing owed: the opportunity serves nothing, and the rotation still moves on (never a latch).
+    TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::None),
+                      static_cast<int>(
+                          MidiServiceDrain::selectPlaybackHolder(cursor, holders, kHolders, holder)));
+    TEST_ASSERT_EQUAL_UINT8(kNone, holder);
+    const uint8_t cursorAfterNone = cursor.next;
+    TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::None),
+                      static_cast<int>(
+                          MidiServiceDrain::selectPlaybackHolder(cursor, holders, kHolders, holder)));
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(cursorAfterNone, cursor.next,
+                                  "the rotation advances even when nothing is owed");
+    // Everything owed but blocked: a *different* named outcome, and the rotation still advances.
+    for (uint8_t i = 0; i < kHolders; ++i) {
+      holders[i].eligible = true;
+      holders[i].canProgress = false;
+    }
+    const uint8_t cursorAfterNone2 = cursor.next;
+    TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::AllBlocked),
+                      static_cast<int>(
+                          MidiServiceDrain::selectPlaybackHolder(cursor, holders, kHolders, holder)));
+    TEST_ASSERT_EQUAL_UINT8(kNone, holder);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(cursorAfterNone2, cursor.next,
+                                  "the rotation advances even when nothing can progress");
+    // The degenerate spans.
+    TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::None),
+                      static_cast<int>(MidiServiceDrain::selectPlaybackHolder(cursor, nullptr, kHolders, holder)));
+    TEST_ASSERT_EQUAL(static_cast<int>(PlaybackHolderSelection::None),
+                      static_cast<int>(MidiServiceDrain::selectPlaybackHolder(cursor, holders, 0, holder)));
+    TEST_ASSERT_EQUAL_UINT8(kNone, holder);
+  }
+}
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_prework_prioritizes_runnable_visual_work);
@@ -593,6 +752,8 @@ int main() {
   // DEC-108 item 1: the window-build owner's eligibility, and the proof that the deferred enumeration it
   // joined keeps every owner's turn (see the rotation fixtures above).
   RUN_TEST(test_playback_view_maintenance_turn_work_is_an_unfinished_build);
+  // windowed-playback-generation slice 3.10: holder-level fair, bounded, deadline-ordered service (DEC-108 §13b).
+  RUN_TEST(test_playback_holder_service_is_fair_deadline_ordered_and_never_held_by_a_blocked_holder);
   RUN_TEST(test_slot_provision_hold_age_is_bounded_and_wrap_safe);
   RUN_TEST(test_select_deferred_idle_owner_session_exit_drain_extra_snapshot);
   RUN_TEST(test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap);

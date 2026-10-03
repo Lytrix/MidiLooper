@@ -224,6 +224,102 @@ inline bool slotProvisionNeeded(bool hasPendingSlotSwitch, bool inboundOccupancy
 inline bool playbackViewMaintenanceNeeded(bool runtimePresent, bool buildUnfinished) {
   return runtimePresent && buildUnfinished;
 }
+
+/// DEC-108 §13b / task 3.10: a **holder** is one item of playback-maintenance work inside the
+/// `PlaybackViewMaintenance` opportunity -- one slot's owed window build. The owner rotation above decides *that*
+/// the playback owner gets a turn; this decides *which holder* that turn serves, which is where the design's two
+/// remaining properties live: holders rotate, and within the eligible set the **earliest outstanding playback
+/// deadline** is served first. Nothing here is state the caller cannot answer: eligibility is the same
+/// "unfinished build" answer, and the deadline is the phase at which the playhead next enters the interval the
+/// build serves (the figure `Track::requestPlaybackWindow` already passes as `handoffPhase`).
+inline constexpr uint8_t kNoPlaybackHolder = 0xFFu;
+
+struct PlaybackHolder {
+  /// Owes a grain now (an unfinished build: `playbackViewMaintenanceNeeded`'s shape).
+  bool eligible = false;
+  /// False while the holder is owed a grain it **cannot** serve this turn (admission denied, contract margin not
+  /// met, source not current): the holder stays eligible, so it is not lost -- only skipped over.
+  bool canProgress = true;
+  /// The phase at which the playhead next enters this holder's interval: its outstanding playback deadline.
+  uint32_t deadlinePhase = 0;
+  /// False means "no outstanding deadline" -- ordered after every holder that has one.
+  bool hasDeadline = false;
+};
+
+/// An earlier outstanding deadline wins. A holder that *has* a deadline beats one that does not; two holders with
+/// none keep the rotation's order, so fairness survives where urgency cannot distinguish them.
+inline bool playbackHolderDeadlineIsEarlier(const PlaybackHolder& candidate,
+                                            const PlaybackHolder& incumbent) {
+  if (candidate.hasDeadline != incumbent.hasDeadline) {
+    return candidate.hasDeadline;
+  }
+  if (!candidate.hasDeadline) {
+    return false;
+  }
+  return candidate.deadlinePhase < incumbent.deadlinePhase;
+}
+
+/// The rotation's position. `next` is where the scan begins, never "the last holder": a holder selected once is
+/// resumed *after*, which is what makes the fairness bound below hold without any per-holder state.
+struct PlaybackHolderCursor {
+  uint8_t next = 0;
+};
+
+/// What the selection did, named -- so "nothing was owed", "a holder was served" and "every owed holder was
+/// blocked" are distinguishable outcomes rather than a bare index.
+enum class PlaybackHolderSelection : uint8_t {
+  /// No holder owed anything: the opportunity serves nothing this turn.
+  None,
+  /// The named holder is owed a grain and can progress.
+  Service,
+  /// Every owed holder is blocked this turn. The rotation still advanced past them.
+  AllBlocked,
+};
+
+/// Round-robin across holders, earliest outstanding deadline first within the eligible set, and the cursor
+/// advances **even when the chosen holder cannot progress** (a blocked early holder can therefore never monopolise
+/// service).
+///
+/// Earliest-deadline-first is applied **globally** over the eligible set, which is the tighter of the two readings
+/// of the design's "within a holder": a global order cannot serve a later deadline first inside any one holder, so
+/// the per-holder reading follows a fortiori, and the property is stated once rather than per holder.
+///
+/// The bound this buys, as what a caller may rely on: at most `count` consecutive selections examine every holder
+/// once, so **every holder that can progress is served within `count` turns** -- the per-holder progress bound task
+/// 3.10 asks to be asserted for *every* admitted holder.
+inline PlaybackHolderSelection selectPlaybackHolder(PlaybackHolderCursor& cursor,
+                                                    const PlaybackHolder* holders,
+                                                    uint8_t count, uint8_t& holderOut) {
+  holderOut = kNoPlaybackHolder;
+  if (holders == nullptr || count == 0) {
+    return PlaybackHolderSelection::None;
+  }
+  bool sawEligible = false;
+  uint8_t best = kNoPlaybackHolder;
+  for (uint8_t step = 0; step < count; ++step) {
+    const uint8_t index = static_cast<uint8_t>((cursor.next + step) % count);
+    const PlaybackHolder& holder = holders[index];
+    if (!holder.eligible) {
+      continue;
+    }
+    sawEligible = true;
+    if (!holder.canProgress) {
+      continue;
+    }
+    if (best == kNoPlaybackHolder || playbackHolderDeadlineIsEarlier(holder, holders[best])) {
+      best = index;
+    }
+  }
+  if (best != kNoPlaybackHolder) {
+    cursor.next = static_cast<uint8_t>((best + 1u) % count);
+    holderOut = best;
+    return PlaybackHolderSelection::Service;
+  }
+  // Nothing can progress this turn. The rotation still moves on, so a holder that is blocked now never holds the
+  // position while it is blocked -- and the caller's next turn begins somewhere else.
+  cursor.next = static_cast<uint8_t>((cursor.next + 1u) % count);
+  return sawEligible ? PlaybackHolderSelection::AllBlocked : PlaybackHolderSelection::None;
+}
 inline bool aroundIdleMaintenance(bool postOverdubPlayingDrain, bool overdubStopping = false) {
   return postOverdubPlayingDrain || overdubStopping;
 }
