@@ -14,6 +14,7 @@
 #include "TickPhase.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/MidiNoteName.h"
 #include "Utils/PlaybackCursorAdvance.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/TrackMem.h"
@@ -596,13 +597,14 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
 
   // Hot path: logging every loop note at DEBUG blocks USB Serial for milliseconds and freezes the UI.
   // Use LOG_TRACE so deep MIDI tracing is opt-in (Logger at TRACE + CAT_MIDI on).
-  if (evt.isNoteOn() || evt.isNoteOff()) {
-    const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-    int octave = (evtCopy.data.noteData.note / 12) - 1;
-    const char* noteName = noteNames[evtCopy.data.noteData.note % 12];
+  // Timing-path review, item 4: **the gate comes first**. The note-name lookup and the octave arithmetic used
+  // to be evaluated for every played note only for `log()` to discard the line, which is the common case (the
+  // runtime level is `LOG_DEBUG`). The line itself is unchanged when tracing is on.
+  if ((evt.isNoteOn() || evt.isNoteOff()) && Logger::isEnabled(CAT_MIDI, LOG_TRACE)) {
     logger.log(CAT_MIDI, LOG_TRACE, "Loop SEND: %s ch=%d %s%d (note %d) vel=%d tick=%lu",
                evt.isNoteOn() ? "NoteOn" : "NoteOff",
-               evtCopy.channel, noteName, octave,
+               evtCopy.channel, MidiNoteName::pitchClassName(evtCopy.data.noteData.note),
+               MidiNoteName::octave(evtCopy.data.noteData.note),
                evtCopy.data.noteData.note, evtCopy.data.noteData.velocity, evt.tick);
   }
   // A Stop can arrive while an internal-clock interval is already walking its

@@ -74,6 +74,13 @@ SECTIONS
 		*StorageManagerHitlSerial*.o(.text .text.*)
 		*DebugSessionCapture*.o(.text .text.*)
 		*NoteEditSessionUndoStack*.o(.text .text.*)
+		/* The DIN *input* path: the `MidiInterface` parse pipeline this TU
+		   instantiates is entered from `MidiHandler::handleMidiInput`, which
+		   only the main loop calls. `send` deliberately stays in ITCM -- the
+		   MIDI tick ISR reaches it through `sendClock`. The rule is the one
+		   DroidHostFeedbackRing.h cites: what the tick ISR can reach stays in
+		   ITCM, everything else is FLASH headroom. */
+		*MidiHandler.cpp.o(.text._ZN4midi*5parseEv .text._ZN4midi*14launchCallbackEv .text._ZN4midi*10thruFilterEh)
 		. = ALIGN(4);
 		KEEP(*(.init))
 		__preinit_array_start = .;
@@ -111,6 +118,13 @@ SECTIONS
 		   string literals slice 3.5 moved: `variables` 100,288 -> 96,192 with the ITCM
 		   `code` figure byte-identical. */
 		*TrackPlaybackWindowBuild.cpp.o(.rodata.str* .rodata.*.str* .rodata.CSWTCH*)
+		/* Timing-path review, item 1: the tick edge's deferred results carry one new
+		   string (the drop report), and ~90 B of DTCM string data was enough to cross
+		   the same align edge the four entries above record -- `variables` 96,192 ->
+		   100,288 with ITCM code byte-identical. This TU's row strings are the
+		   "LoopEnd playback commit ..." evidence the host tooling greps for, and they
+		   travel with the new one; all of them are read-only. */
+		*TrackManagerTransportTick.cpp.o(.rodata.str* .rodata.*.str*)
 		. = ALIGN(4);
 	} > FLASH
 

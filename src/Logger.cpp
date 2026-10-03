@@ -3,6 +3,7 @@
 
 #include "Logger.h"
 #include <stdarg.h>
+#include <cstdio>
 #include <cstring>
 #include "MidiEvent.h"
 #include "Utils/DebugSessionCapture.h"
@@ -14,8 +15,51 @@ bool Logger::isInitialized = false;
 bool Logger::categoryEnabled[] = { true, true, true, true, true, true, true, false, false, false, false };
 Logger logger;
 
-void Logger::setup(LogLevel) { isInitialized = false; }
-void Logger::setCategoryEnabled(LogCategory, bool) {}
+/// Native-only seam for `test_logger_gate`: the *(category, level)* pair the filter last **admitted** into
+/// `log()`. Without it "the gate agrees with the message path" would be a reading of two code paths rather
+/// than an assertion -- the native build prints nothing, so admission is the only observable the pair shares.
+/// `lastAdmittedLevel == -1` means "nothing admitted yet" (`LogLevel` has no such value, which is why these
+/// are `int`s). The firmware build has neither this state nor this seam.
+namespace LoggerNativeProbe {
+int lastAdmittedCategory = -1;
+int lastAdmittedLevel = -1;
+inline void reset() {
+  lastAdmittedCategory = -1;
+  lastAdmittedLevel = -1;
+}
+inline void recordAdmitted(LogCategory category, LogLevel level) {
+  lastAdmittedCategory = static_cast<int>(category);
+  lastAdmittedLevel = static_cast<int>(level);
+}
+}  // namespace LoggerNativeProbe
+
+/// Second native-only seam: the **text** of the last `info()` line. The tick edge's rows (the slot-switch
+/// commit and its two cancels) are evidence the host tooling greps for by exact text, and moving the *call*
+/// off the edge (timing-path review, item 1) must not move the *text*: this is what makes that an assertion.
+namespace LoggerNativeInfoProbe {
+inline char lastLine[256] = {};
+inline uint32_t lineCount = 0;
+inline void reset() {
+  lastLine[0] = '\0';
+  lineCount = 0;
+}
+}  // namespace LoggerNativeInfoProbe
+
+void Logger::setup(LogLevel level) {
+  // Native builds store the filter state even though nothing is printed: `test_logger_gate` asserts the
+  // gate's agreement with the message path, which is only meaningful if the state it reads is real.
+  currentLevel = level;
+  isInitialized = false;
+}
+void Logger::setCategoryEnabled(LogCategory category, bool enabled) {
+  if (category >= CAT_GENERAL && category <= CAT_STORAGE) {
+    categoryEnabled[category] = enabled;
+  }
+}
+bool Logger::isEnabled(LogCategory category, LogLevel level) {
+  if (currentLevel < level) return false;
+  return categoryEnabled[category];
+}
 
 void Logger::printTimestamp() {}
 void Logger::printLevel(LogLevel) {}
@@ -24,11 +68,25 @@ void Logger::printPrefix(LogLevel, LogCategory) {}
 
 void Logger::error(const char*, ...) {}
 void Logger::warning(const char*, ...) {}
-void Logger::info(const char*, ...) {}
+void Logger::info(const char* format, ...) {
+  // Same filter as the firmware (an `info` line is emitted only when the level admits it); the *text* is
+  // captured instead of printed, which is the observable the edge-effect fixtures read.
+  if (currentLevel < LOG_INFO) return;
+  va_list args;
+  va_start(args, format);
+  vsnprintf(LoggerNativeInfoProbe::lastLine, sizeof(LoggerNativeInfoProbe::lastLine), format, args);
+  va_end(args);
+  ++LoggerNativeInfoProbe::lineCount;
+}
 void Logger::debug(const char*, ...) {}
 void Logger::trace(const char*, ...) {}
 
-void Logger::log(LogCategory, LogLevel, const char*, ...) {}
+void Logger::log(LogCategory category, LogLevel level, const char*, ...) {
+  // Same filter, no output: the native build keeps the *decision* observable (the seam below) and silences
+  // the sink, so the gate above can be held to it.
+  if (!isEnabled(category, level)) return;
+  LoggerNativeProbe::recordAdmitted(category, level);
+}
 void Logger::logStateTransition(const char*, const char*, const char*) {}
 void Logger::dumpMidiEvents(const MidiEventVec&, int) {}
 void Logger::logMidiEvent(const MidiEvent&) {}
@@ -57,6 +115,14 @@ void Logger::setCategoryEnabled(LogCategory category, bool enabled) {
   if (category >= CAT_GENERAL && category <= CAT_STORAGE) {
     categoryEnabled[category] = enabled;
   }
+}
+
+/// The message gate: `log()`'s own filter, asked in advance so a hot path can skip building a message it
+/// would throw away. It is the *only* definition of that filter -- `log()` below routes through it, so the
+/// two cannot drift.
+bool Logger::isEnabled(LogCategory category, LogLevel level) {
+  if (currentLevel < level) return false;
+  return categoryEnabled[category];
 }
 
 void Logger::printTimestamp() {
@@ -142,8 +208,7 @@ void Logger::trace(const char* format, ...) {
 }
 
 void Logger::log(LogCategory category, LogLevel level, const char* format, ...) {
-  if (currentLevel < level) return;
-  if (!categoryEnabled[category]) return;
+  if (!isEnabled(category, level)) return;
   printPrefix(level, category);
   va_list args;
   va_start(args, format);

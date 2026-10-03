@@ -812,6 +812,12 @@ void loop() {
 
   midiHandler.processDroidUsbHostOutbound();
 
+  // Timing-path review, item 1: the MIDI tick edge (an `IntervalTimer` ISR while the clock is internal)
+  // records what it decided -- the slot-switch commit row, the panel's invalidation, the LED refresh -- and
+  // this is where that work is done, beside the other deferred outbound work. It sits here so a row is
+  // emitted before this iteration's `SC_CAPTURE_FLUSH` rather than after it.
+  trackManager.drainEdgeEffects();
+
   // Detect clock source changes (external timeout -> internal fallback)
   clockManager.checkClockSource();
 

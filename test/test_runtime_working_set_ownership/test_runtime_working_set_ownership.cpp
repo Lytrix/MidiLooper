@@ -3582,6 +3582,15 @@ void test_s4b_4_the_display_authority_moves_to_the_holder_the_switch_moved_to() 
   }
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(kInbound, TrackCaptureStopTestAccess::activeLoopIndex(track),
                                   "fixture precondition: the switch must land on the inbound holder");
+  // **Timing-path review, item 1 is what this pair now also proves:** the tick edge did *not* tell the panel
+  // itself -- it recorded the decision -- so nothing was observed while the ticks ran, and the drain is what
+  // emits it. Reverting the deferral (calling `invalidateForSlotChange` on the edge again) fails the first
+  // assertion; dropping the drain's display half fails the second.
+  const SlotChangeObservation& beforeDrain = slotChangeObservation();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      0, beforeDrain.count,
+      "the edge must record the panel handoff, not perform it: nothing may be observed before the drain");
+  trackManager.drainEdgeEffects();
   const SlotChangeObservation& observation = slotChangeObservation();
   TEST_ASSERT_TRUE_MESSAGE(observation.count > 0,
                            "the display boundary must be told about a role handoff");
@@ -3590,6 +3599,108 @@ void test_s4b_4_the_display_authority_moves_to_the_holder_the_switch_moved_to() 
                                   "the display must be told which slot the roles left");
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(kInbound, observation.to,
                                   "the display authority must move to the slot that took over");
+}
+
+/// **Timing-path review, items 1 and 3 — the edge's row text is unchanged, only its producer moved.**
+///
+/// `LoopEnd playback commit track=%u %u->%u start=%lu len=%lu` is a row the host tooling greps for by exact
+/// text (it is how a switch's commit is attributed to a device time), so the one thing the deferral may not do
+/// is change it. This drives the same production switch as the display fixture above, asserts **no** row
+/// before the drain (the edge is not printing), and then reads the row's *rendered text* from the native
+/// logger seam and compares it field for field against the loop the commit actually moved to.
+void test_the_commit_row_is_rendered_by_the_drain_with_its_text_unchanged() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kOutbound = 0;
+  constexpr uint8_t kInbound = 2;
+  commitRecordPassIntoTrackSlot(track, kOutbound);
+  commitRecordPassIntoTrackSlot(track, kInbound);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kOutbound, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kInbound, false));
+
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::selectSlot(track, kOutbound);
+  TrackCaptureStopTestAccess::activateSlot(0, kOutbound);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 96, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  for (int turn = 0; turn < 8192 && TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOutbound);
+       ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kOutbound));
+
+  clockManager.assignCurrentTickSilently(200);
+  TrackCaptureStopTestAccess::toggleRecordForSlot(kInbound);
+  TEST_ASSERT_TRUE(trackManager.hasPendingSlotSwitch(0));
+  LoggerNativeInfoProbe::reset();
+  for (int round = 0; round < 4 && TrackCaptureStopTestAccess::activeLoopIndex(track) != kInbound;
+       ++round) {
+    (void)trackManager.servicePendingSlotProvision();
+    const uint32_t base = clockManager.getCurrentTick();
+    for (uint32_t tick = base + 1; tick <= base + 768; ++tick) {
+      clockManager.assignCurrentTickSilently(tick);
+      trackManager.updateAllTracks(tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(kInbound, TrackCaptureStopTestAccess::activeLoopIndex(track),
+                                  "fixture precondition: the switch must land on the inbound holder");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, LoggerNativeInfoProbe::lineCount,
+                                   "the tick edge must not print the commit row; the drain does");
+
+  trackManager.drainEdgeEffects();
+  const Loop& inbound = track.getLoop(kInbound);
+  char expected[128];
+  snprintf(expected, sizeof(expected), "LoopEnd playback commit track=%u %u->%u start=%lu len=%lu",
+           static_cast<unsigned>(0), static_cast<unsigned>(kOutbound),
+           static_cast<unsigned>(kInbound), static_cast<unsigned long>(inbound.loopStartTick),
+           static_cast<unsigned long>(inbound.loopLengthTicks));
+  TEST_ASSERT_EQUAL_STRING_MESSAGE(expected, LoggerNativeInfoProbe::lastLine,
+                                   "the commit row's text and field order are the evidence contract");
+  TEST_ASSERT_EQUAL_UINT32(1, LoggerNativeInfoProbe::lineCount);
+}
+
+/// **The edge-effect queue's own bounds** (timing-path review, item 1): one position per context, FIFO order,
+/// and a full queue counts the effect it could not take instead of overwriting a recorded one.
+void test_the_edge_effect_queue_is_fifo_bounded_and_counts_what_it_cannot_take() {
+  EdgeEffectQueue queue;
+  EdgeEffectRecord out;
+  TEST_ASSERT_EQUAL_UINT16(0, queue.depth());
+  TEST_ASSERT_FALSE(queue.takeOldest(out));
+
+  for (uint16_t i = 0; i < EdgeEffectQueue::kCapacity; ++i) {
+    EdgeEffectRecord effect;
+    effect.kind = static_cast<uint8_t>(EdgeEffectKind::LoopEndCommit);
+    effect.track = static_cast<uint8_t>(i);
+    TEST_ASSERT_TRUE(queue.record(effect));
+  }
+  TEST_ASSERT_EQUAL_UINT16(EdgeEffectQueue::kCapacity, queue.depth());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, queue.droppedCount(), "a record inside the capacity is never a drop");
+
+  EdgeEffectRecord overflow;
+  overflow.track = 200;
+  TEST_ASSERT_FALSE(queue.record(overflow));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, queue.droppedCount(),
+                                   "the effect that did not fit must be counted, not silently overwrite");
+
+  // FIFO, in the order the edge produced them, and the overflow never entered the queue.
+  for (uint16_t i = 0; i < EdgeEffectQueue::kCapacity; ++i) {
+    TEST_ASSERT_TRUE(queue.takeOldest(out));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(i), out.track);
+  }
+  TEST_ASSERT_FALSE(queue.takeOldest(out));
+  TEST_ASSERT_EQUAL_UINT16(0, queue.depth());
+
+  // The positions are monotonic, so a drained slot is reusable without resetting either index.
+  EdgeEffectRecord afterWrap;
+  afterWrap.track = 7;
+  TEST_ASSERT_TRUE(queue.record(afterWrap));
+  TEST_ASSERT_TRUE(queue.takeOldest(out));
+  TEST_ASSERT_EQUAL_UINT8(7, out.track);
+  TEST_ASSERT_EQUAL_UINT16(0, queue.depth());
 }
 
 void test_s4b_4_the_undo_route_addresses_the_holder_the_switch_moved_to() {
@@ -6560,6 +6671,9 @@ int main() {
   RUN_TEST(test_s4b_4_the_undo_route_addresses_the_holder_the_switch_moved_to);
   // S4b.4 (display clause): the display authority moves to the holder the switch moved to.
   RUN_TEST(test_s4b_4_the_display_authority_moves_to_the_holder_the_switch_moved_to);
+  // Timing-path review, item 1: the edge records, the drain reports -- and the row's text is unchanged.
+  RUN_TEST(test_the_commit_row_is_rendered_by_the_drain_with_its_text_unchanged);
+  RUN_TEST(test_the_edge_effect_queue_is_fifo_bounded_and_counts_what_it_cannot_take);
   RUN_TEST(test_boot_leaves_a_committed_slot_without_a_working_set);
   RUN_TEST(test_a_repeated_admission_does_not_churn_the_lease);
   RUN_TEST(test_release_is_refused_while_an_owner_remains_and_allowed_once_it_retires);

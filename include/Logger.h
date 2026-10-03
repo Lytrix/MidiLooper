@@ -59,6 +59,19 @@ public:
   static void trace(const char* format, ...);
 
   // Category-specific logging
+  /**
+   * @brief Would `log(category, level, ...)` emit anything?
+   *
+   * The gate a hot path must ask **before** building a message it may only throw away. Its two clauses are
+   * exactly `log()`'s own early returns (the runtime level and the category flag), so it is the message gate,
+   * not a second policy: `isEnabled(c, l) == false` is precisely the case in which `log(c, l, ...)` would
+   * return without printing. `test_logger_gate` pins that agreement.
+   *
+   * Used by the playback hot path (`Track::sendMidiEvent`), whose `LOG_TRACE` note line used to pay for the
+   * note-name table and octave arithmetic on every played note with tracing off.
+   */
+  static bool isEnabled(LogCategory category, LogLevel level);
+
   static void log(LogCategory category, LogLevel level, const char* format, ...);
   
   // State transition logging

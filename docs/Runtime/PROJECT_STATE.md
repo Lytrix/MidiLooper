@@ -1,3 +1,38 @@
+**2026-10-02 — the timing path's four review items are implemented, natively green and inside the RAM1 budget; the
+device half is owed.** A user-scoped hygiene slice on the fork's *timing path* (`windowed-playback-generation`
+branch), taken from an independent code review's items 1–4 and deliberately outside the window lane's ladder.
+**(1) The tick edge stopped doing logging/LED/display work.** `TrackManager::updateAllTracks` — the internal clock's
+`IntervalTimer` ISR — called `logger.info` (3 sites, through the one shared 128-byte `Logger` buffer),
+`displayManager.invalidateForSlotChange` and `forceMidiLedUpdate` inline; those are now a bounded `EdgeEffectRecord`
+(`Utils/EdgeEffects.h`, 16-entry SPSC queue in DMAMEM, drops counted and named) that the edge **records** and
+`TrackManager::drainEdgeEffects` **performs** from `loop()`, beside `processDroidUsbHostOutbound()`. The state
+applications (the commit, the cancel, `applyActiveLoopIndex`, notes-off, the queued start) stay on the edge, so the
+switch still lands on its boundary tick, and the row **text** is unchanged. **(2) The DROID feedback queue's
+ISR/main shared state got one owner per index** (`Utils/DroidHostFeedbackRing.h`): `head`+`count` were
+read-modify-written by both contexts on plain `uint16_t`s (a lost update corrupts the count for the rest of the
+boot); they are now monotonic positions with a fence and a publish that restores the caller's mask state.
+**(3) The enqueue left the flash:** `queueDeferredDroidHostEvent` was `FLASHMEM` while ISR-reachable and scanned up
+to 256 entries and could log an overflow *from the ISR*; the push is O(1) in ITCM and the coalescing scan, the
+overflow warning and the `DIAG,droid_queue` rows moved to the main-loop drain. **(4) The per-note trace arithmetic
+is gated:** `Track::sendMidiEvent` asked `Logger::isEnabled(CAT_MIDI, LOG_TRACE)` *before* building the note-name
+table and octave math that `log()` discarded on every played note, with the arithmetic shared once in
+`Utils/MidiNoteName.h`. **The RAM1 story:** the tick-edge partition paid for itself — the DIN input pipeline
+(`MidiInterface::parse`/`launchCallback`/`thruFilter`, 1,884 B) and `beginUsbHost`/`handleMidiInput` (908 B) moved to
+FLASH (main-loop-only callers; `send` stays in ITCM because `sendClock` reaches it from the ISR) while the enqueue
+(348 B) and `recordEdgeEffect` (160 B) moved into ITCM as the ISR-reachable half — `code 392,328 + padding 888` →
+**`390,088 + 3,128`** with `variables 96,192` / `locals 34,880` byte-identical, and the one new string literal joins
+the five existing `.text.progmem` carve-outs (`variables` 96,192 → 100,288 without it; the DTCM `.rodata` align edge
+the tree is documented to sit on). Verification: full native **2,714 cases / 2,707 succeeded / 7 skipped / 0 failed**
+(baseline 2,709) with `test_logger_gate` **4/4** and `test_runtime_working_set_ownership` **75/75** (the S4b.4
+display fixture now also proves the deferral: nothing observed before the drain, the recorded pair after it; the
+commit row is asserted as **rendered text**; the queue's FIFO/overflow/wrap bounds are pinned);
+`teensy41-capture-serial` SUCCESS through the RAM1 guard. **Owed:** a device evaluation (upload + a bounded leg) —
+the moved rows and the deferred LED/display refresh are observable over serial — and the review's item 5 and its
+cleanup list are untouched. Note for the session log: `pio run -e teensy41` (the *plain*, non-capture env) fails to
+compile on `SC_LIBRARY_OBSERVATION_*` argument counts in `LibraryObservationSession.cpp`; that file is unmodified
+here and the failure predates this slice.
+[Scope entry](CURRENT_WORK.md#now-implementing), [bounds rows 32/33](Authority/Architecture/ExecutionBounds.md).
+
 **2026-10-02 — the record-stop stall is fixed on device; the repeat campaign's blocker moved to our own boot link.**
 The named denial (`raw_range_unsealable`) led to one owner: `Track::stepDeferredRecordRetirement` cleared
 `job.ownsRawRange` without returning the sealed extent or re-arming the descriptor, so the second cycle's successor

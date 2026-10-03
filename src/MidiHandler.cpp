@@ -15,26 +15,51 @@
 #include "ControlSurfaceManager.h"
 #include "Utils/DebugSessionCapture.h"
 #include "LooperState.h"
+#include "Utils/DroidHostFeedbackRing.h"
 #include "Utils/MidiBatchComposition.h"
+#include "Utils/MidiNoteName.h"
 #include "Utils/MidiDispatchOrder.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
 namespace {
 
-struct DeferredDroidHostEvent {
-  uint8_t type = 0;
-  uint8_t channel = 0;
-  uint8_t data1 = 0;
-  uint8_t data2 = 0;
-  int16_t pitchBend = 0;
-  uint32_t queuedUs = 0;
-};
-
+/// The feedback queue's state (timing-path review, items 2/3). Two placement decisions, both forced by this
+/// tree's RAM1 rule rather than chosen:
+///   - the **event store** stays in `EXTMEM` (PSRAM) exactly as the queue it replaces did -- 256 entries is
+///     3 KB and nothing about ordering wants it closer;
+///   - the **ring's own state** is `DMAMEM`, because it is mutable state and the rule the capture-side
+///     counters already follow is that mutable state must not grow DTCM (`PersistenceWorkItemPersist.cpp`
+///     records the same reason: `scripts/ram1_budget.json`'s variables line is checked byte-for-byte).
+/// `DroidHostFeedbackRing` owns no clock and no policy beyond the ordering rule, so the key and the timestamp
+/// are the caller's, computed below.
 constexpr uint16_t kDeferredDroidHostCapacity = 256;
-EXTMEM DeferredDroidHostEvent gDeferredDroidHostQueue[kDeferredDroidHostCapacity];
-uint16_t gDeferredDroidHostHead = 0;
-uint16_t gDeferredDroidHostCount = 0;
-uint32_t gDeferredDroidHostOverflow = 0;
+EXTMEM DroidHostFeedbackEvent gDeferredDroidHostQueue[kDeferredDroidHostCapacity];
+DMAMEM uint32_t gReportedDroidFeedbackOverflow = 0;
+DMAMEM DroidHostFeedbackRing gDeferredDroidHostRing;
+
+/// Declared here because the predicate itself lives with the other DROID-channel predicates below (same
+/// translation unit, same anonymous namespace): the key is built from the *same* predicates, so it can never
+/// claim a target the send path does not treat as fader state.
+bool isDroidFaderFeedbackOnlyControlChange(uint8_t channel, uint8_t cc);
+
+/// The coalescing key for a **state** (fader-feedback) event, or 0 for a gesture. It is the caller's job
+/// because "the same target" is a `MidiConfig` question (`isDroidFaderFeedbackOnlyPitchbend` /
+/// `...ControlChange`), and the ring's job to honour; the pairs are enumerated rather than hashed so two
+/// different targets can never share a key.
+uint8_t droidFeedbackCoalesceKey(uint8_t type, uint8_t channel, uint8_t data1) {
+  if (type == midi::PitchBend) {
+    if (channel == MidiConfig::Fader::COARSE_CHANNEL) return 1;
+    if (channel == MidiConfig::Fader::SELECT_CHANNEL) return 2;
+    return 0;
+  }
+  if (type != midi::ControlChange || !isDroidFaderFeedbackOnlyControlChange(channel, data1)) {
+    return 0;
+  }
+  if (channel == MidiConfig::Fader::FINE_CHANNEL) {
+    return data1 == MidiConfig::Fader::FINE_CC ? 3 : 4;
+  }
+  return data1 == MidiConfig::LoopEdit::LENGTH_CC_NUMBER ? 5 : 6;
+}
 
 }  // namespace
 
@@ -147,10 +172,16 @@ void dispatchMidiBatch(MidiInputMsg* batch, size_t count) {
 void MidiHandler::setup() {
   Serial8.begin(31250);  // DIN MIDI out/in (explicit before MIDI library wraps Serial8)
   MIDIserial.begin(MidiConfig::CHANNEL_OMNI);  // Listen to all channels
+  // Attach the DROID feedback queue's storage once, before any event can be queued (the queue is only
+  // reachable while the USB host is ready, which `beginUsbHost` establishes later still).
+  gDeferredDroidHostRing.init(gDeferredDroidHostQueue, kDeferredDroidHostCapacity);
   instance = this;  // Set static instance pointer for callbacks
 }
 
-void MidiHandler::beginUsbHost() {
+/// FLASH-resident: the USB-host bring-up runs from `setup`/the main loop and is never on the tick ISR path,
+/// which is the only partition this file needs (the ISR-reachable half -- `sendMidiEvent`, the realtime sends,
+/// the feedback enqueue -- stays in ITCM). Same reason as the input path below.
+FLASHMEM void MidiHandler::beginUsbHost() {
   if (usbHostReady_) {
     return;
   }
@@ -181,7 +212,10 @@ void MidiHandler::beginUsbHost() {
   }
 }
 
-void MidiHandler::handleMidiInput() {
+/// FLASH-resident: every caller is the main loop (`main.cpp`), so this belongs to the headroom half of the
+/// partition rather than to ITCM. The tick ISR reaches this file only through the playback sends, and the
+/// functions it can reach are the ones that stay in ITCM.
+FLASHMEM void MidiHandler::handleMidiInput() {
 #if RUNTIME_TIMING_ENABLED
   const uint32_t inputEnterUs = micros();
   RUNTIME_TIMING_NOTE_MIDI_INPUT_ENTER(inputEnterUs);
@@ -323,12 +357,11 @@ void MidiHandler::handleMidiMessage(byte type, byte channel, byte data1, byte da
     logger.log(CAT_MIDI, LOG_DEBUG, "%s MIDI: type=%s ch=%d d1=%d d2=%d",
                sourceStr, getMidiTypeName(type), channel, data1, data2);
 
-    if (type == midi::NoteOn || type == midi::NoteOff) {
-      const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-      int octave = (data1 / 12) - 1;
-      const char* noteName = noteNames[data1 % 12];
+    if ((type == midi::NoteOn || type == midi::NoteOff) && Logger::isEnabled(CAT_MIDI, LOG_DEBUG)) {
+      // The same pitch-class/octave pair the playback hot path prints (`Utils/MidiNoteName.h`), behind the same
+      // gate, so the input path stops paying for the table when DEBUG is filtered out.
       logger.log(CAT_MIDI, LOG_DEBUG, "  -> Note: %s%d (MIDI note %d), Velocity: %d",
-                 noteName, octave, data1, data2);
+                 MidiNoteName::pitchClassName(data1), MidiNoteName::octave(data1), data1, data2);
     }
   }
 #endif
@@ -528,70 +561,39 @@ void MidiHandler::queueLedUsbHostFeedback(uint8_t note, uint8_t velocityOrZero) 
   ledPendingCount_++;
 }
 
-FLASHMEM bool MidiHandler::queueDeferredDroidHostEvent(const MidiEvent& event) {
-  const bool replaceableFaderState =
-      (event.type == midi::PitchBend && isDroidFaderFeedbackOnlyPitchbend(event.channel)) ||
-      (event.type == midi::ControlChange &&
-       isDroidFaderFeedbackOnlyControlChange(event.channel, event.data.ccData.cc));
-  if (replaceableFaderState) {
-    // Fader feedback is state, so keep the newest value for the same target while
-    // retaining the position of the first queued update in the ordered stream.
-    for (uint16_t offset = 0; offset < gDeferredDroidHostCount; ++offset) {
-      const uint16_t index = static_cast<uint16_t>(
-          (gDeferredDroidHostHead + offset) % kDeferredDroidHostCapacity);
-      DeferredDroidHostEvent& pending = gDeferredDroidHostQueue[index];
-      const bool sameTarget = pending.type == static_cast<uint8_t>(event.type) &&
-                              pending.channel == event.channel &&
-                              (event.type == midi::PitchBend ||
-                               pending.data1 == event.data.ccData.cc);
-      if (sameTarget) {
-        pending.data2 = event.type == midi::ControlChange ? event.data.ccData.value : 0;
-        if (event.type == midi::PitchBend) {
-          pending.pitchBend = event.data.pitchBend;
-        }
-        SC_DROID_FEEDBACK_QUEUE(gDeferredDroidHostCount,
-                                micros() - gDeferredDroidHostQueue[gDeferredDroidHostHead].queuedUs,
-                                gDeferredDroidHostOverflow);
-        return true;
-      }
-    }
-  }
-  if (gDeferredDroidHostCount >= kDeferredDroidHostCapacity) {
-    ++gDeferredDroidHostOverflow;
-    SC_DROID_FEEDBACK_QUEUE(gDeferredDroidHostCount, 0, gDeferredDroidHostOverflow);
-    logger.log(CAT_MIDI, LOG_WARNING, "DROID host feedback queue overflow (%lu)",
-               static_cast<unsigned long>(gDeferredDroidHostOverflow));
-    return false;
-  }
-  const uint16_t index = static_cast<uint16_t>(
-      (gDeferredDroidHostHead + gDeferredDroidHostCount) % kDeferredDroidHostCapacity);
-  DeferredDroidHostEvent& pending = gDeferredDroidHostQueue[index];
-  pending.type = static_cast<uint8_t>(event.type);
-  pending.channel = event.channel;
-  pending.data1 = 0;
-  pending.data2 = 0;
-  pending.pitchBend = 0;
+/// **The ISR-reachable enqueue** (timing-path review, items 2 and 3). What changed and why:
+///   - the body is no longer `FLASHMEM`: `RuntimeTimingTelemetry.cpp` records that code reached from this ISR
+///     must stay in ITCM (a flash-resident body starved USB after transport start). The body is now small
+///     enough for that to be free rather than a trade;
+///   - the fader-state coalescing scan moved to the main-loop drain (`processDroidUsbHostOutbound`), so the
+///     ISR's cost no longer scales with what is queued -- it maps one event and calls one O(1) push;
+///   - **no logging and no telemetry here**: the overflow is counted (the ring's own counter) and reported by
+///     the drain, which is the only place allowed to format a message or touch the capture ring. The old body
+///     could `logger.log` a warning from the ISR over the shared 128-byte format buffer.
+/// The key is the caller's half of the coalescing rule ("which events are *state*"), and `queuedUs` is the
+/// caller's half of the age row, because the ring owns neither a clock nor `MidiConfig`.
+bool MidiHandler::queueDeferredDroidHostEvent(const MidiEvent& event) {
+  DroidHostFeedbackEvent queued;
+  queued.type = static_cast<uint8_t>(event.type);
+  queued.channel = event.channel;
   if (event.isNoteOn() || event.isNoteOff()) {
-    pending.data1 = event.data.noteData.note;
-    pending.data2 = event.data.noteData.velocity;
+    queued.data1 = event.data.noteData.note;
+    queued.data2 = event.data.noteData.velocity;
   } else if (event.type == midi::ControlChange) {
-    pending.data1 = event.data.ccData.cc;
-    pending.data2 = event.data.ccData.value;
+    queued.data1 = event.data.ccData.cc;
+    queued.data2 = event.data.ccData.value;
   } else if (event.type == midi::PitchBend) {
-    pending.pitchBend = event.data.pitchBend;
+    queued.pitchBend = event.data.pitchBend;
   } else if (event.type == midi::ProgramChange) {
-    pending.data1 = event.data.program;
+    queued.data1 = event.data.program;
   } else if (event.type == midi::AfterTouchChannel) {
-    pending.data1 = event.data.channelPressure;
+    queued.data1 = event.data.channelPressure;
   } else {
     return false;
   }
-  pending.queuedUs = micros();
-  ++gDeferredDroidHostCount;
-  const uint32_t oldestAgeUs = micros() -
-      gDeferredDroidHostQueue[gDeferredDroidHostHead].queuedUs;
-  SC_DROID_FEEDBACK_QUEUE(gDeferredDroidHostCount, oldestAgeUs, gDeferredDroidHostOverflow);
-  return true;
+  queued.coalesceKey = droidFeedbackCoalesceKey(queued.type, queued.channel, queued.data1);
+  queued.queuedUs = micros();
+  return gDeferredDroidHostRing.push(queued);
 }
 
 FLASHMEM void MidiHandler::sendDeferredDroidHostEvent(uint8_t type, uint8_t channel, uint8_t data1,
@@ -627,12 +629,19 @@ FLASHMEM void MidiHandler::processDroidUsbHostOutbound() {
     return;
   }
   uint8_t drained = 0;
-  while (gDeferredDroidHostCount > 0 &&
-         drained < MidiConfig::DroidUsbHost::LED_DRAIN_MAX_PER_LOOP) {
-    const DeferredDroidHostEvent pending = gDeferredDroidHostQueue[gDeferredDroidHostHead];
-    gDeferredDroidHostHead = static_cast<uint16_t>(
-        (gDeferredDroidHostHead + 1) % kDeferredDroidHostCapacity);
-    --gDeferredDroidHostCount;
+  // Recycle first: a state entry whose target has a newer queued value was marked `superseded` by the send
+  // step below, and recycling it is O(1) (the O(depth) scan lives in `takeOldestForSend`, once per sent state
+  // entry, not once per queued duplicate). Bounded by the ring's capacity.
+  while (gDeferredDroidHostRing.recycleSupersededOldest()) {
+  }
+  while (drained < MidiConfig::DroidUsbHost::LED_DRAIN_MAX_PER_LOOP) {
+    // The coalescing rule itself: the oldest queued update keeps its position in the ordered stream and
+    // carries the newest value for its target (the rule this queue has always kept for fader feedback, moved
+    // off the ISR path by the timing-path review's item 3).
+    DroidHostFeedbackEvent pending;
+    if (!gDeferredDroidHostRing.takeOldestForSend(pending)) {
+      break;
+    }
     sendDeferredDroidHostEvent(pending.type, pending.channel, pending.data1, pending.data2,
                                pending.pitchBend);
     ++drained;
@@ -656,10 +665,21 @@ FLASHMEM void MidiHandler::processDroidUsbHostOutbound() {
     serviceUsbHostAfterOutboundPacket();
     drained++;
   }
-  if (gDeferredDroidHostCount > 0) {
-    const uint32_t oldestAgeUs = micros() -
-        gDeferredDroidHostQueue[gDeferredDroidHostHead].queuedUs;
-    SC_DROID_FEEDBACK_QUEUE(gDeferredDroidHostCount, oldestAgeUs, gDeferredDroidHostOverflow);
+  // The queue's own evidence row and its overflow warning, both emitted **here** -- the drain is the only
+  // place allowed to format a message or write to the capture ring, and the enqueue is reachable from the MIDI
+  // tick ISR (the row family's cadence follows the drain now: one row per drain call that left the queue
+  // non-empty, instead of one per enqueue/coalesce).
+  if (!gDeferredDroidHostRing.empty()) {
+    SC_DROID_FEEDBACK_QUEUE(gDeferredDroidHostRing.depth(),
+                            gDeferredDroidHostRing.oldestAgeUs(micros()),
+                            gDeferredDroidHostRing.overflowCount());
+  }
+  const uint32_t overflowCount = gDeferredDroidHostRing.overflowCount();
+  if (overflowCount != gReportedDroidFeedbackOverflow) {
+    gReportedDroidFeedbackOverflow = overflowCount;
+    SC_DROID_FEEDBACK_QUEUE(gDeferredDroidHostRing.depth(), 0, overflowCount);
+    logger.log(CAT_MIDI, LOG_WARNING, "DROID host feedback queue overflow (%lu)",
+               static_cast<unsigned long>(overflowCount));
   }
 }
 

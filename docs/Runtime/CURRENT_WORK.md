@@ -4890,7 +4890,62 @@ the layered runner and `--verify-only` still write their own progress report, an
 bridge's verify path) are unrelated and unchanged. See
 [REPORT-BUNDLE-EXECUTION.md](../../openspec/changes/response-driven-hitl-acceptance/REPORT-BUNDLE-EXECUTION.md).
 
+
 ## Now implementing
+
+### Timing-path findings 1–4 — the tick edge, the DROID ring, and the per-note trace (2026-10-02)
+
+User-scoped hygiene slice on the **timing path itself** (`windowed-playback-generation` branch), from an independent
+code review's items 1–4. Out of the change's own ladder and deliberately so: none of it touches the window lane, and
+each item is named in the review's own "timing before everything" order. **Implemented, natively verified and
+building through the RAM1 guard; no upload and no device leg** — the observable half is owed and named at the end.
+
+1. **The tick edge stops doing logging/LED/display work → `Utils/EdgeEffects.h` + `TrackManager::drainEdgeEffects`.**
+   `updateAllTracks` runs in the `IntervalTimer` ISR under the internal clock, and its commit paths called
+   `logger.info` (3 sites, through the one shared 128-byte `Logger` buffer), `displayManager.invalidateForSlotChange`
+   (a cold display-cache walk) and `forceMidiLedUpdate` (a MIDI send) inline. Those are now one `EdgeEffectRecord`
+   the edge **records** (kind + work bits + track + `from`/`to` slot + geometry; a bounded 16-entry SPSC queue in
+   DMAMEM, drops counted and named) and the main loop **drains** at the top of `loop()`, beside
+   `processDroidUsbHostOutbound()` and before the capture flush. The **state** applications stay on the edge (the
+   commit, the cancel, `applyActiveLoopIndex`, notes-off, the queued start), so the switch still lands on its
+   boundary tick. The row *text* is unchanged, which is what the host tooling greps for.
+2. **The DROID feedback queue's ISR/main shared state gets one owner per index → `Utils/DroidHostFeedbackRing.h`.**
+   `gDeferredDroidHostHead` + `gDeferredDroidHostCount` were read-modify-written by the ISR and the main loop on
+   plain `uint16_t`s (a lost update leaves the count wrong for the rest of the boot). They become monotonic
+   producer/consumer positions with a compiler/`dmb` fence and a masked publish that **restores** the caller's mask
+   state (both contexts are producers: playback queues from the ISR, direct sends from the main loop).
+3. **The enqueue leaves the flash.** `queueDeferredDroidHostEvent` was `FLASHMEM` while reached from the ISR —
+   `RuntimeTimingTelemetry.cpp`'s own rule (ISR-reached code stays in ITCM; the queue's store is PSRAM on the same
+   FlexSPI bus) — and it scanned up to 256 entries and could `logger.log` an overflow **from the ISR**. The push is
+   now O(1) in ITCM; the coalescing scan (the oldest position keeps the newest value for its fader target, the rule
+   the push-side scan used to apply), the overflow warning and the `DIAG,droid_queue` rows all moved to the
+   main-loop drain.
+4. **The per-note trace arithmetic is gated.** `Track::sendMidiEvent` built the 12-entry note-name table and the
+   octave/modulo math for every played note even with `LOG_TRACE`/`CAT_MIDI` filtered out (the runtime level is
+   `INFO`/`DEBUG`). The guarded block now asks `Logger::isEnabled(CAT_MIDI, LOG_TRACE)` first, and the arithmetic it
+   prints lives once, in `Utils/MidiNoteName.h` (also used by the input path's DEBUG line).
+
+**The RAM1 story this slice produced** (both directions of `scripts/ram1_budget.json` are checked): the tick-edge
+partition paid for itself, and the ITCM headroom went **up**. `MIDI`'s DIN *input* pipeline
+(`MidiInterface::parse`/`launchCallback`/`thruFilter`, 1,884 B) and `MidiHandler::beginUsbHost` +
+`handleMidiInput` (908 B) moved to FLASH with a linker carve-out and a documented reason (every caller is the main
+loop; `send` deliberately stays in ITCM because the tick ISR reaches it through `sendClock`), while
+`queueDeferredDroidHostEvent` (348 B) and `recordEdgeEffect` (160 B) moved **into** ITCM as the ISR-reachable half —
+`code 392,328 + padding 888` → **`code 390,088 + padding 3,128`**, `variables 96,192` and `locals 34,880`
+byte-identical. The new drop-report string (~90 B of DTCM `.rodata`) crossed the `_VectorsRam`/periodictable align
+edge (`variables` 96,192 → 100,288), so that TU's string literals join the four existing `.text.progmem` carve-outs;
+the instance and its counters are DMAMEM/PSRAM for the same reason every other mutable counter in the tree is.
+
+Verification: full native **2,714 cases / 2,707 succeeded / 7 skipped / 0 failed** (baseline 2,709), including
+`test_logger_gate` **4/4** (new: the gate must admit exactly what `log()` admits, at the level boundary and with the
+category flag off) and three new/updated fixtures in `test_runtime_working_set_ownership` (**75/75**): the S4b.4
+display fixture now also proves the **deferral** (nothing observed before the drain, the recorded pair after it),
+the commit row is asserted as *rendered text* through a native `info()` seam, and the queue's FIFO/overflow/wrap
+bounds are pinned. `teensy41-capture-serial` SUCCESS through the guard. **Owed, and named rather than implied:** a
+**device evaluation** (upload + a bounded leg) because the moved rows and the deferred LED/display refresh are
+observable over serial; the review's remaining items (5 and the cleanups) are untouched; `handlePendingRecordStart`,
+`stopRecordingTrack` and `handleTransportStop`'s own `forceMidiLedUpdate` stay on their current owners (the review
+named the tick edge, and moving a stop/record *commit* is a scheduling decision, not a side-effect move).
 
 ### S4.5 — same-slot record-finalization reuse fix (2026-10-02)
 

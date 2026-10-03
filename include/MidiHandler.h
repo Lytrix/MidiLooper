@@ -117,7 +117,10 @@ private:
   void paceDroidUsbHostBeforeSend();
   void markDroidUsbHostSent();
   void queueLedUsbHostFeedback(uint8_t note, uint8_t velocityOrZero);
-  FLASHMEM bool queueDeferredDroidHostEvent(const MidiEvent& event);
+  /// Enqueue one outbound DROID host event. **ISR-reachable** (playback events are queued from the MIDI tick
+  /// ISR), so it stays out of flash and does no logging, no scanning and no formatting: the queue's ordering
+  /// and coalescing live in `Utils/DroidHostFeedbackRing.h`, and what it cannot queue is counted, not printed.
+  bool queueDeferredDroidHostEvent(const MidiEvent& event);
   void sendDeferredDroidHostEvent(uint8_t type, uint8_t channel, uint8_t data1,
                                   uint8_t data2, int16_t pitchBend);
 

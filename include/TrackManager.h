@@ -11,6 +11,7 @@
 #include "MidiLedManager.h"
 #include "SlotStateMachine.h"
 #include "PassReclaim.h"
+#include "Utils/EdgeEffects.h"
 #include "Utils/MemoryPressureLevel.h"
 
 /// Phase 1 playback policy for slot selection (queued start remains caller-composed).
@@ -107,6 +108,17 @@ public:
   /// is accepted-but-unexecuted (S4f.5 requires the active slot not to move there), so a caller that also
   /// requested a start can tell "the target is active now" from "the request still has to wait".
   bool finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newSlot, uint32_t currentTick);
+
+  /// **Timing-path review, item 1 -- the tick edge's deferred effects.**
+  /// `recordEdgeEffect` is the edge's *only* way to report a decision it made (the commit row, the panel's
+  /// invalidation, the LED refresh); `drainEdgeEffects` is the main loop doing that work, in the order the edge
+  /// decided it. The edge keeps applying the state changes itself -- the reason to split is that a log line, a
+  /// display invalidation and an LED send are not what "advance the playhead" means, while the commit is.
+  void recordEdgeEffect(EdgeEffectKind kind, uint8_t track, uint8_t fromSlot, uint8_t toSlot,
+                        uint32_t loopStartTick, uint32_t loopLengthTicks, uint8_t work);
+  /// Call from the main loop only (beside the other deferred outbound work). Bounded per call: at most one
+  /// queue's worth of records, and it reports -- once per growth -- any effect the edge could not record.
+  void drainEdgeEffects();
 
   // --- Playback / Overdub ---
   void startPlayingTrack(uint8_t trackIndex);
