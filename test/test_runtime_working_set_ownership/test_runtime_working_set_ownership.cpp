@@ -5033,6 +5033,118 @@ void test_preview_window_is_cancelled_by_its_lifecycle_and_hands_off_to_committe
   TEST_ASSERT_FALSE(other.previewWindowHandoffOwedForSlot(0));
 }
 
+/// 4.5 (DEC-108 §13e-f): the second consecutive miss **latches** a named deadline-contract fault, containment is total
+/// (the last coherent revision keeps being served while coverage remains, preparation keeps progressing, recovery happens
+/// only at an eligible boundary), and only when **no** valid coverage remains does the approved last resort fire --
+/// targeted note closure plus affected-slot silence, never a global transport stop and never an unbounded rebuild.
+void test_second_miss_latches_a_fault_and_the_last_resort_is_targeted_not_global() {
+  LoopEventStore::initPool();
+  g_nativeSilenceTrackCalls = 0;
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = kWindowOwnerLoopTicks;
+  publishBarSpacedRootForSlot(loop, 64);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1, true));
+  // A committed window is served, so containment has coverage to reason about.
+  SessionMidiEventVec scratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, 500u, scratch)));
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  PlaybackWindowIdentity served{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, served));
+  const uint32_t servedRevision = served.playbackRevision;
+  const uint32_t len = kWindowOwnerLoopTicks;
+  // (1) The first miss is the one-pass-late **allowance**, not a fault.
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::PreviousOnePass),
+                    static_cast<int>(track.advancePlaybackLagTraversal(0, 0, len, servedRevision + 1, false)));
+  TEST_ASSERT_FALSE(track.deadlineContractFaultLatchedForSlot(0));
+  // (2) The second consecutive miss latches the **named** fault and is reported once per episode.
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::BreachSecondMiss),
+                    static_cast<int>(track.advancePlaybackLagTraversal(0, 0, len, servedRevision + 1, false)));
+  TEST_ASSERT_TRUE_MESSAGE(track.deadlineContractFaultLatchedForSlot(0),
+                           "a second miss latches the deadline-contract fault");
+  TEST_ASSERT_EQUAL_UINT8(1, track.playbackLagBreachReportsForSlot(0));
+  // A **further edit** neither forgives the miss nor re-reports it (AC-5), and the fault stays latched.
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::BreachSecondMiss),
+                    static_cast<int>(track.advancePlaybackLagTraversal(0, 0, len, servedRevision + 2, false)));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagBreachReportsForSlot(0),
+                                  "the breach is named once per episode, not once per miss");
+  TEST_ASSERT_TRUE(track.deadlineContractFaultLatchedForSlot(0));
+  // (3) Continuity, and containment that is **not** a successful fallback: the served window is untouched, and with
+  // coverage intact the decision is to keep serving the last coherent revision.
+  PlaybackWindowIdentity stillServed{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, stillServed));
+  TEST_ASSERT_TRUE_MESSAGE(stillServed == served, "no containment path tears the served window");
+  TEST_ASSERT_EQUAL(static_cast<int>(ContinuityContainment::ServeLastCoherentRevision),
+                    static_cast<int>(track.containmentForSlot(0, 500u)));
+  // ... and preparation keeps progressing: the lane still admits a replacement while the fault is latched.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, 900u, scratch)));
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  // (4) Recovery at an **eligible boundary** -- the adopted replacement -- and only there.
+  TEST_ASSERT_TRUE(track.adoptPreparedPlaybackWindow(0));
+  PlaybackWindowIdentity recovered{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, recovered));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::Current),
+                    static_cast<int>(track.advancePlaybackLagTraversal(0, 0, len, recovered.playbackRevision, false)));
+  TEST_ASSERT_FALSE_MESSAGE(track.deadlineContractFaultLatchedForSlot(0),
+                            "an eligible boundary clears the latched fault");
+  TEST_ASSERT_EQUAL_UINT32(0u, track.playbackLagMissedTraversalsForSlot(0));
+  // (5) The **approved last resort**, and only when no valid coverage remains: latch the fault again, then remove the
+  // served window. Both slot 0 and slot 1 hold an open note, so "the affected slot" and "not global" are observable in
+  // the same run.
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::PreviousOnePass),
+                    static_cast<int>(track.advancePlaybackLagTraversal(0, 0, len, recovered.playbackRevision + 1, false)));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::BreachSecondMiss),
+                    static_cast<int>(track.advancePlaybackLagTraversal(0, 0, len, recovered.playbackRevision + 1, false)));
+  TEST_ASSERT_TRUE(track.deadlineContractFaultLatchedForSlot(0));
+  TrackCaptureStopTestAccess::markLedgerEntry(track, 0, 60);
+  TrackCaptureStopTestAccess::markLedgerEntry(track, 1, 62);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 1, 62));
+  MidiSendCapture::reset();
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::LastResortOutcome::NotNeeded),
+                    static_cast<int>(track.applyLastResortForSlot(0, 500u)));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60),
+                           "silence is never opportunistic: untouched while coverage remains");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "and it emits nothing at all: no closure, no all-notes-off");
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const uint8_t current = set->lifecycle.current;
+  set->views[current].published = false;
+  PlaybackViewSourceIdentity ignoredIdentity{};
+  PlaybackCoverageInterval ignoredCoverage{};
+  TEST_ASSERT_FALSE(track.publishedPlaybackWindowForSlot(0, ignoredIdentity, ignoredCoverage));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(ContinuityContainment::LastResortTargetedSilence),
+                            static_cast<int>(track.containmentForSlot(0, 500u)),
+                            "no valid coverage remains at all");
+  MidiSendCapture::reset();
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::LastResortOutcome::SlotSilenced),
+                    static_cast<int>(track.applyLastResortForSlot(0, 500u)));
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60),
+                            "the affected slot's notes are closed");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 1, 62),
+                           "and a sibling slot is untouched -- the last resort is targeted, not global");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "exactly the affected slot's one open note is closed, and nothing else is sent");
+  TEST_ASSERT_TRUE(MidiSendCapture::at(0).isNoteOff());
+  TEST_ASSERT_EQUAL_UINT8(1, MidiSendCapture::at(0).channel);
+  TEST_ASSERT_EQUAL_UINT8(60, MidiSendCapture::at(0).data.noteData.note);
+  // Leave the slot's view set as the fixture found it.
+  set->views[current].complete = false;
+}
+
 int main() {
 
 
@@ -5139,5 +5251,7 @@ int main() {
   RUN_TEST(test_preview_window_is_a_distinct_source_and_never_committed_currency);
   // windowed-playback-generation slice 3.13: the preview lane's cancellation and the committed-content handoff.
   RUN_TEST(test_preview_window_is_cancelled_by_its_lifecycle_and_hands_off_to_committed);
+  // windowed-playback-generation slice 4.5: second-miss fault containment and the approved last resort.
+  RUN_TEST(test_second_miss_latches_a_fault_and_the_last_resort_is_targeted_not_global);
   return UNITY_END();
 }

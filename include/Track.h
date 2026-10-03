@@ -545,6 +545,25 @@ public:
   bool previewWindowHandoffOwedForSlot(uint8_t slotIndex) const;
   size_t playbackWindowEventCountForSlot(uint8_t slotIndex) const;
   /// The window admission accounting for a slot's **live capture interval**: the window's content, plus the rows
+  /// DEC-108 §13(e) / task 4.5: the latched **deadline-contract fault** for a slot -- a second consecutive missed
+  /// traversal, distinct from meeting the one-pass-late guarantee, cleared only at an eligible boundary.
+  bool deadlineContractFaultLatchedForSlot(uint8_t slotIndex) const;
+  /// The **containment** decision for a traversal of `phase` on a slot (task 4.5): nominal, continue the last coherent
+  /// revision, or the approved last resort. Total, and it never waits -- the clock is never blocked by a missed
+  /// deadline, and no branch rebuilds.
+  ContinuityContainment containmentForSlot(uint8_t slotIndex, uint32_t phase) const;
+  /// What applying the last resort did, named.
+  enum class LastResortOutcome : uint8_t {
+    /// The slot had neither a latched fault nor exhausted coverage, so nothing was applied: silence is never
+    /// opportunistic, and this is the answer a caller can rely on to leave a healthy slot alone.
+    NotNeeded,
+    /// The affected slot's notes were closed and that slot fell silent.
+    SlotSilenced,
+  };
+  /// Apply the **approved last resort** (DEC-108 §13f) for a slot: targeted note closure plus affected-slot silence
+  /// through the existing **slot-scoped** primitive. Both halves are slot-scoped by construction, which is why this can
+  /// never become a global transport stop; and it rebuilds nothing, so it can never become an unbounded rebuild.
+  LastResortOutcome applyLastResortForSlot(uint8_t slotIndex, uint32_t phase);
   /// accepted in this interval, plus the closures they owe, plus the closure reserve -- all inside `L`. Pure
   /// arithmetic over state that already exists, which is what "preallocated, bounded accounting that includes
   /// outstanding reservations" means at the edge: nothing allocates, nothing is scanned, and the effective-content

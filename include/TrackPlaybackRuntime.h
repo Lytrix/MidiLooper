@@ -429,6 +429,10 @@ struct LoopPlaybackRuntime {
   uint32_t previewSourceRevision = 0;
   bool previewSourceActive = false;
   bool previewHandoffOwed = false;
+  /// DEC-108 §13(e) / task 4.5: the **latched deadline-contract fault** for this slot. It is set by the second
+  /// consecutive miss and cleared only at an **eligible boundary** (a replacement published, or a different interval),
+  /// never silently -- which is what keeps containment distinguishable from meeting the one-pass-late guarantee.
+  bool deadlineContractFaultLatched = false;
   /// S4f.19 continuity gate, bounded in DEC-070's shape: grains spent in the `RecordPublished`
   /// retirement wait with an unchanged frozen-window build phase, and that phase. A phase change
   /// is progress and resets the count, so a build its writers are still feeding is never cut; a

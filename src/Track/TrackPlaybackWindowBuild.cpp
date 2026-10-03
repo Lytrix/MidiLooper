@@ -1172,9 +1172,12 @@ TRACK_COLD_MEM PlaybackLagDecision Track::advancePlaybackLagTraversal(uint8_t sl
   lag.servedRevision = hasPublished ? published.playbackRevision : 0;
   lag.desiredRevision = desiredRevision;
   if (decision == PlaybackLagDecision::Current) {
-    // The boundary may serve the current revision, so the episode is over and the next one starts clean.
+    // The boundary may serve the current revision, so the episode is over and the next one starts clean. Task 4.5's
+    // fault clears **here** and nowhere else: an eligible boundary is the only thing that ends a latched fault, never a
+    // further edit and never a silent reset.
     lag.missedTraversals = 0;
     lag.breachReported = false;
+    runtime->deadlineContractFaultLatched = false;
     return decision;
   }
   if (lag.missedTraversals < UINT8_MAX) {
@@ -1182,12 +1185,52 @@ TRACK_COLD_MEM PlaybackLagDecision Track::advancePlaybackLagTraversal(uint8_t sl
   }
   if (decision == PlaybackLagDecision::BreachSecondMiss && !lag.breachReported) {
     // A **report**, not a decision (the S4b.7 hold terminal's shape): the breach is named once per episode, the
-    // previous revision keeps being served, and no partial content is published.
+    // previous revision keeps being served, and no partial content is published. Task 4.5 adds the **latch** -- it is
+    // what containment reads, and what keeps this distinguishable from meeting the one-pass-late guarantee.
     lag.breachReported = true;
     ++lag.breachReports;
+    runtime->deadlineContractFaultLatched = true;
     reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex), "lag_breach");
   }
   return decision;
+}
+
+TRACK_COLD_MEM Track::LastResortOutcome Track::applyLastResortForSlot(uint8_t slotIndex, uint32_t phase) {
+  if (containmentForSlot(slotIndex, phase) != ContinuityContainment::LastResortTargetedSilence) {
+    return LastResortOutcome::NotNeeded;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return LastResortOutcome::NotNeeded;
+  }
+  // The approved last resort, and **both halves are slot-scoped by construction**: the closures go out for this slot's
+  // ledger keys through `silenceSlotMidiOutput` -- not the track-wide or the global entry point -- and the ledger is
+  // cleared so the closed notes owe nothing further. Nothing here rebuilds anything, so this cannot become an unbounded
+  // rebuild, and nothing here touches the transport, so it cannot become a global stop.
+  silenceSlotMidiOutput(slotIndex);
+  runtime->ledger.clear();
+  reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex), "last_resort_slot_silence");
+  return LastResortOutcome::SlotSilenced;
+}
+
+TRACK_COLD_MEM ContinuityContainment Track::containmentForSlot(uint8_t slotIndex, uint32_t phase) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return ContinuityContainment::Nominal;
+  }
+  // "Valid coverage remains" is a **coverage** question, never a content question: the served window must still be
+  // readable and its interval must still cover the traversal's phase. An event-empty window still covers its interval,
+  // which is exactly why an empty window means "no new events" rather than a reason to fall silent.
+  PlaybackViewSourceIdentity identity{};
+  PlaybackCoverageInterval coverage{};
+  const bool validCoverageRemains =
+      publishedPlaybackWindowForSlot(slotIndex, identity, coverage) && coverage.contains(phase);
+  return resolveContinuityContainment(runtime->deadlineContractFaultLatched, validCoverageRemains);
+}
+
+TRACK_COLD_MEM bool Track::deadlineContractFaultLatchedForSlot(uint8_t slotIndex) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  return runtime != nullptr && runtime->deadlineContractFaultLatched;
 }
 
 TRACK_COLD_MEM PlaybackLagDecision Track::playbackLagDecisionForSlot(uint8_t slotIndex) const {
