@@ -270,6 +270,15 @@ public:
   /// DEC-108 item 1 / task 3.2: the **interval window the owner published** for a slot -- its identity and the
   /// coverage interval it serves -- or `false` when none is authoritative. Read-only, and deliberately read by
   /// no production consumer yet: adoption is 3.4 (identity on the consumers), 3.5 (readiness predicate) and 3.7
+  /// DEC-108 §13b / task 3.10: **what this track offers** the next playback-maintenance opportunity -- its most
+  /// urgent owing holder (`eligible` + `handoffLeadTicks`), read without serving anything. The production caller
+  /// builds every track's offer and lets the shared policy choose **one track** per turn, so the lowest-index track
+  /// with work no longer monopolises the turn; the offer is also what a fixture can assert on.
+  MidiServiceDrain::PlaybackHolder playbackWindowServiceOffer(uint32_t currentPhase) const;
+  /// The holder set the offer and the turn both read: this track's owing slots, each with its urgency. Public only
+  /// so the two callers in this owner's own translation unit agree on one description of a holder.
+  void fillPlaybackHolders(uint32_t currentPhase,
+                           MidiServiceDrain::PlaybackHolder* holders) const;
   /// (the consumer switch), so this slice publishes without changing what any existing consumer reads.
   bool publishedPlaybackWindowForSlot(uint8_t slotIndex, PlaybackViewSourceIdentity& identityOut,
                                       PlaybackCoverageInterval& coverageOut) const;

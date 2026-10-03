@@ -385,6 +385,17 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   and one declared grain per turn — plus one **new question this fixture raises and does not answer**: it exercises holders within a track, while the same starvation
   argument applies to the `main.cpp` loop that stops at the first *track* with work. Detail:
   [`evidence/2026-10-02-s310d-routed-scan-fixture/EVIDENCE.md`](evidence/2026-10-02-s310d-routed-scan-fixture/EVIDENCE.md).*
+  *Increment 3.10 (increment 5) landed 2026-10-02 — the **cross-track question increment 4 raised is measured**: `Track::playbackWindowServiceOffer(currentPhase)` reads a
+  track's **most urgent owing holder without serving**, and `src/main.cpp` builds every track's offer and lets `selectPlaybackHolder` choose **one track** per turn, so the
+  lowest-index track with work no longer monopolises it (the loop it replaced stopped at the first track with work). A track almost always owes one holder, which is why the
+  *track* level is where the starvation argument bites and the tick lead is what makes tracks comparable. Fixture (`…across_tracks_by_urgency_not_by_index`, two real tracks):
+  each offer answers read-only and both still owe; the policy picks the **urgent track though it is the higher index**; equal urgency rotates; the choice is executable; and a
+  track with two owing holders offers its most urgent. **The last block exists because a red-proof found the gap** — M79 (offer returns the first owing holder) passed before it
+  and fails after. Verified: 69/69 (+1 fixture) + 39/39 + 52/52 + 190/190 (cited pin), full native 2702 / 2695 succeeded / 7 skipped / 0 failed, build SUCCESS with
+  `variables 96,192` unchanged (48 B headroom); M78/M79 red-proved with byte-identical restores. **Not claimed:** the caller's own shape is **build-verified, not
+  fixture-proved** (`src/main.cpp` is not native-linkable — the boundary carried since 3.1), nothing requests windows in production yet, and the **starvation half**, the
+  **envelope derivation** and **one declared grain per turn** stay open. Detail:
+  [`evidence/2026-10-02-s310e-cross-track-offer/EVIDENCE.md`](evidence/2026-10-02-s310e-cross-track-offer/EVIDENCE.md).*
 - [x] 3.11 **Implement the shared-view ownership rules and transitions** (*DEC-108 §13d*) — published/current views
   read-only, only the owning builder writes its candidate, a ready view immutable until adopted or retired, storage
   reusable only after every owner releases it; then the transitions: new edit (retain the frozen source, coalesce the

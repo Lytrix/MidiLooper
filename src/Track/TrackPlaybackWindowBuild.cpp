@@ -1664,16 +1664,15 @@ TRACK_COLD_MEM bool Track::hasPendingPlaybackViewMaintenance() const {
   return false;
 }
 
-TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
-    uint32_t currentPhase, MidiServiceDrain::PlaybackHolderCursor* cursor) {
-  // DEC-108 §13b / task 3.10: the **holder set** for this track -- the slots that owe a grain -- each with its
-  // urgency, and the shared policy chooses which holder this turn serves. The urgency is the tick distance to the
-  // handoff (`handoffLeadTicks`), the same quantity the admission judges, so the scheduler's answer and the
-  // admission's margin cannot be two different numbers. Nothing is stored to get it: an in-flight build already
-  // carries its interval on the view it fills (`RuntimePlaybackViewFill::begin` sets `destination.coverage`).
-  MidiServiceDrain::PlaybackHolder holders[Config::MAX_LOOPS_PER_TRACK] = {};
+TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
+                                               MidiServiceDrain::PlaybackHolder* holders) const {
+  // DEC-108 §13b / task 3.10: this track's **holder set** -- the slots that owe a grain -- each with its urgency.
+  // The urgency is the tick distance to the handoff (`handoffLeadTicks`), the same quantity the admission judges, so
+  // the scheduler's answer and the admission's margin cannot be two different numbers. Nothing is stored to get it:
+  // an in-flight build already carries its interval on the view it fills
+  // (`RuntimePlaybackViewFill::begin` sets `destination.coverage`).
   for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
-    LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+    const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
     if (runtime == nullptr || !runtime->coverageBuildNeedsService()) {
       continue;
     }
@@ -1696,6 +1695,34 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     // whose source goes stale mid-build; that is named here rather than assumed away.
     holder.canProgress = true;
   }
+}
+
+TRACK_COLD_MEM MidiServiceDrain::PlaybackHolder Track::playbackWindowServiceOffer(
+    uint32_t currentPhase) const {
+  // The **most urgent** owing holder, read without serving: the cross-track counterpart of the turn below. The one
+  // production caller builds every track's offer and lets the shared policy choose one track per turn, so a
+  // lowest-index track whose interval is a whole pass away no longer monopolises the opportunity.
+  MidiServiceDrain::PlaybackHolder holders[Config::MAX_LOOPS_PER_TRACK] = {};
+  fillPlaybackHolders(currentPhase, holders);
+  MidiServiceDrain::PlaybackHolder offer{};
+  for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+    const MidiServiceDrain::PlaybackHolder& holder = holders[slot];
+    if (!holder.eligible) {
+      continue;
+    }
+    if (!offer.eligible || MidiServiceDrain::playbackHolderDeadlineIsEarlier(holder, offer)) {
+      offer = holder;
+    }
+  }
+  return offer;
+}
+
+TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
+    uint32_t currentPhase, MidiServiceDrain::PlaybackHolderCursor* cursor) {
+  MidiServiceDrain::PlaybackHolder holders[Config::MAX_LOOPS_PER_TRACK] = {};
+  fillPlaybackHolders(currentPhase, holders);
+  // The shared policy chooses which holder this turn serves (task 3.10): holders rotate, the earliest outstanding
+  // handoff is served first, and the cursor advances even when the chosen holder cannot progress.
   MidiServiceDrain::PlaybackHolderCursor localCursor{};
   MidiServiceDrain::PlaybackHolderCursor& rotation = cursor != nullptr ? *cursor : localCursor;
   uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;
