@@ -31,6 +31,27 @@ inline void record(uint8_t track, uint8_t slot, const char* readiness, const cha
 }  // namespace WindowReadinessRows
 #define SC_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks) \
   WindowReadinessRows::record(track, slot, readiness, holder, revision, leadTicks)
+
+// DEC-108 §13b / task 3.10: the lane's **service-gap sample** through the same substitutable-seam pattern, so the one
+// quantity the admission's `maximumPhaseAdvancePerTurn` is declared in can be observed and asserted rather than assumed.
+namespace WindowGapRows {
+struct Row {
+  uint32_t maxDeltaTicks = 0;
+  uint32_t opportunities = 0;
+  uint32_t phase = 0;
+};
+inline Row rows[64];
+inline size_t count = 0;
+inline void reset() { count = 0; }
+inline void record(uint32_t maxDeltaTicks, uint32_t opportunities, uint32_t phase) {
+  if (count < sizeof(rows) / sizeof(rows[0])) {
+    rows[count] = Row{maxDeltaTicks, opportunities, phase};
+  }
+  ++count;
+}
+}  // namespace WindowGapRows
+#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase) \
+  WindowGapRows::record(maxDeltaTicks, opportunities, phase)
 // DEC-108 §13b / task 3.9 (increment 4): the window lane's **path rows** through the same substitutable-seam pattern, so
 // a claim about a row (`lag_breach`, `one_pass_late`) is checked as **the row**, not only as the state beside it. The
 // lane emitted these rows under a capture build only, which is why 3.6b's "the breach is reported once per episode"
@@ -6626,6 +6647,48 @@ void test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_suppor
                            "the declaration exists; what it does not yet have is a measured unit and the full "
                            "contention envelope -- which is why active windowed playback stays gated");
 }
+/// DEC-108 §13b / task 3.10 — **the service-gap unit, measured rather than declared.** `maximumPhaseAdvancePerTurn` is
+/// the phase advance between two of *this owner's own* opportunities, and it was the only term in the admission that had
+/// never been measured (the device rows that exist carry durations, not gaps). This fixture drives the lane turn with a
+/// known phase progression and asserts the sample: the running **max** delta, the opportunity count, and that each row
+/// reports the max *since the previous row*, so a quiet interval cannot hide behind a loud one.
+void test_window_service_gap_sample_reports_the_measured_phase_advance_per_opportunity() {
+  constexpr uint32_t kInterval = 16;  // must match the TU's declared kServiceGapSampleInterval
+  constexpr uint32_t kQuiet = 1000;   // the ordinary advance per opportunity
+  constexpr uint32_t kSpike = 5000;   // one slow opportunity, which the row must carry as the max
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  uint32_t phase = 100000u;
+  // **Prime** the cadence counter: it is a process-wide TU static, so the measured blocks below must start above the
+  // `count == 1` rule to be phase-independent -- the lesson the readiness-receipt fixture recorded.
+  for (uint32_t i = 0; i < kInterval; ++i) {
+    phase += kQuiet;
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr);
+  }
+  WindowGapRows::reset();
+  for (uint32_t i = 0; i < kInterval; ++i) {
+    phase += (i == 3u) ? kSpike : kQuiet;
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowGapRows::count),
+                                   "exactly one sample per declared interval of opportunities");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kSpike, WindowGapRows::rows[0].maxDeltaTicks,
+                                   "the row carries the **max** advance, so one slow opportunity cannot hide");
+  const uint32_t firstOpportunities = WindowGapRows::rows[0].opportunities;
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(kInterval, firstOpportunities);
+  // A quiet block: its row must report the ordinary advance, i.e. the max **resets** per row.
+  WindowGapRows::reset();
+  for (uint32_t i = 0; i < kInterval; ++i) {
+    phase += kQuiet;
+    (void)track.stepPlaybackViewMaintenance(phase, nullptr);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowGapRows::count), "one sample again");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kQuiet, WindowGapRows::rows[0].maxDeltaTicks,
+                                   "a quiet interval reports the ordinary advance: the max resets per row");
+  TEST_ASSERT_GREATER_THAN_UINT32(firstOpportunities, WindowGapRows::rows[0].opportunities);
+}
+
 int main() {
 
 
@@ -6653,6 +6716,8 @@ int main() {
   RUN_TEST(test_track_service_rotates_so_no_track_is_starved_by_anothers_earlier_deadline);
   // windowed-playback-generation slice 3.10 increment 7: the measured grain-cost model and the derived bound.
   RUN_TEST(test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window);
+  // slice 3.10 increment 11: the service-gap unit, sampled from the lane's own opportunities.
+  RUN_TEST(test_window_service_gap_sample_reports_the_measured_phase_advance_per_opportunity);
   RUN_TEST(test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn);
   RUN_TEST(test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound);
   // S4b.5 (B4): one active-slot write authority -- a direct write (the undo route) cancels a queued switch,

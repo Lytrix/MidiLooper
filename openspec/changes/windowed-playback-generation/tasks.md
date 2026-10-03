@@ -933,3 +933,15 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   **re-basing `scripts/ram1_budget.json` in the same commit** — a pin the project holds deliberately, so the decision is the user's: re-base downward with the
   routing fix, or retire ~4 KB of DTCM first. Everything was reverted to green (73/73; approved RAM1 line) and an **unrelated concurrent edit** in
   `docs/Runtime/CURRENT_WORK.md` was preserved rather than staged. Detail: [`evidence/2026-10-03-s310k-gap-sampler-ram1-blocked/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-03-s310k-gap-sampler-ram1-blocked/EVIDENCE.md).*
+
+  *Increment 3.10 (increment 11, LANDED) 2026-10-03 — **the service-gap sampler is in, with no re-base and no linker change.** `windowServiceGapImmediate` +
+  the `SC_WINDOW_SERVICE_GAP` seam, sampled at the **top of every lane opportunity** (a turn that serves nothing still counts, which is the case the gap must
+  include), `DMAMEM` state, one row per 16 opportunities, each row carrying the **max gap since the previous row**, `DIAG,win_gap,` Tier-A through the
+  production predicate (`isTierATextLine` — a single-TU literal, not one instantiated in every including TU). **The RAM1 blocker resolved without re-basing:**
+  the first attempt was refused (`variables 100,288` vs 96,192, +4,096 B) because the DTCM `.data`/`.rodata` section sat within a few bytes of an `ALIGN` page
+  boundary (removing one literal restored the line; moving it to a single TU did not); a **concurrent logging/telemetry workstream on this branch then freed
+  ITCM** (padding 888 → 3,128) and the unchanged instrumentation links at **exactly the approved `variables 96,192`**, with **2,288 B** above the floor instead of
+  48 B. Verified: `test_runtime_working_set_ownership` **76/76**, `test_capture_ring` **16/16**, full native **2715 / 2708 / 7 / 0**, build SUCCESS; mutations
+  re-proved on the landed code (**M101** `Expected 5000 Was 1000`, **M102** `Expected 5000 Was 91400`, **M103** `Expected 1 Was 2`) with byte-identical restores.
+  **Unblocks the measurement:** next is the HITL leg with the **stimulus's own targets** (`track 8`, slots 4–5) to collect the `DIAG,win_gap` series, then the unit
+  is measured, the `H × K` contention envelope declared, and the derived admission re-based and enabled — in that order. Detail: [`evidence/2026-10-03-s310k-gap-sampler-ram1-blocked/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-03-s310k-gap-sampler-ram1-blocked/EVIDENCE.md).*

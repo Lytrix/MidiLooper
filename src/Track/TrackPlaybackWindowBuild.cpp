@@ -1766,8 +1766,46 @@ TRACK_COLD_MEM MidiServiceDrain::PlaybackHolder Track::playbackWindowServiceOffe
   return offer;
 }
 
+#if defined(__IMXRT1062__)
+/// The service-gap sampler state (DEC-108 §13b / task 3.10). `DMAMEM` by the placement rule for additional counters:
+/// off-clock, read by the owner turn alone, never DTCM.
+DMAMEM static uint32_t sGapLastPhase = 0;
+DMAMEM static uint32_t sGapMaxDelta = 0;
+DMAMEM static uint32_t sGapSampleCount = 0;
+#else
+static uint32_t sGapLastPhase = 0;
+static uint32_t sGapMaxDelta = 0;
+static uint32_t sGapSampleCount = 0;
+#endif
+/// One row per this many opportunities, so a sample cannot evict the evidence it explains (`TelemetryCadence`).
+/// `static` on purpose: an `inline constexpr` at namespace scope has external linkage and is emitted as a real data
+/// symbol, which does not belong in the DTCM accounting at all.
+static constexpr uint32_t kServiceGapSampleInterval = 16;
+
 TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     uint32_t currentPhase, MidiServiceDrain::PlaybackHolderCursor* cursor) {
+  // **The service-gap sample, taken at the top of every opportunity.** The opportunity is this call: one lane
+  // owner turn, whatever it ends up doing -- a turn that serves nothing still consumed a dispatch, and the gap is about
+  // *when* the lane is served. `currentPhase` is the caller's playhead, so the delta between two consecutive calls is
+  // exactly the quantity `CoverageServiceContract::maximumPhaseAdvancePerTurn` is declared in, and which the existing
+  // device rows cannot measure (they carry durations, not gaps).
+  {
+    if (sGapSampleCount != 0u && currentPhase != sGapLastPhase) {
+      const uint32_t loopTicks = loopForSlot(0).loopLengthTicks;
+      const uint32_t delta = (currentPhase > sGapLastPhase || loopTicks == 0u)
+                                 ? currentPhase - sGapLastPhase
+                                 : currentPhase + loopTicks - sGapLastPhase;
+      if (delta > sGapMaxDelta) {
+        sGapMaxDelta = delta;
+      }
+    }
+    sGapLastPhase = currentPhase;
+    // The cadence counts **opportunities**, not served grains; each row reports the max gap since the previous row.
+    if (TelemetryCadence::shouldLogOccurrence(sGapSampleCount, kServiceGapSampleInterval)) {
+      SC_WINDOW_SERVICE_GAP(sGapMaxDelta, sGapSampleCount, currentPhase);
+      sGapMaxDelta = 0;
+    }
+  }
   MidiServiceDrain::PlaybackHolder holders[Config::MAX_LOOPS_PER_TRACK] = {};
   fillPlaybackHolders(currentPhase, holders);
   // The shared policy chooses which holder this turn serves (task 3.10): holders rotate, the earliest outstanding

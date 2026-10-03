@@ -343,6 +343,16 @@ SC_MEM_ATTR void persistenceResultImmediate(uint32_t durationUs, uint32_t heapBe
 /// a tag starting beyond that could never be recognised as Tier-A at all.
 SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const char* readiness, const char* holder,
                                            uint32_t revision, uint32_t leadTicks);
+/// The window lane's **service-gap sample** (DEC-108 §13b / task 3.10): what the *unit* of the service envelope actually
+/// measures. `CoverageServiceContract::maximumPhaseAdvancePerTurn` is declared **per this owner's own opportunity**, and
+/// that number has never been measured -- the device rows that exist carry *durations* (`service_period`), not the gap
+/// between two opportunities. This row carries the quantity directly: the **largest phase advance observed between two
+/// consecutive lane opportunities** since the previous row (the running-max idiom `TelemetryCadence` documents, so a
+/// bound read off these rows is a faithful upper bound rather than a sample of it), with the opportunity count so the
+/// series reads as ticks-per-opportunity, and the phase for context. Its row family is **Tier-A**: it is taken *under
+/// transport*, the regime that sheds non-Tier-A diagnostics. `#ifndef`-guarded for the native seam
+/// (`SC_WINDOW_READINESS`'s pattern).
+SC_MEM_ATTR void windowServiceGapImmediate(uint32_t maxDeltaTicks, uint32_t opportunities, uint32_t phase);
 /// A1.8/A2.1 (design D6): one event-shaped line per restore **request state transition**, carrying the
 /// full identity and the named reason/outcome. Event-shaped, not per-turn: the capture-ring precedent
 /// showed a per-turn family evicts the rows a run is read for. `state`, `wait` and `terminal` are the
@@ -516,6 +526,10 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks) \
   DebugSessionCapture::readinessReceiptImmediate(track, slot, readiness, holder, revision, leadTicks)
 #endif
+#ifndef SC_WINDOW_SERVICE_GAP
+#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase) \
+  DebugSessionCapture::windowServiceGapImmediate(maxDeltaTicks, opportunities, phase)
+#endif
 /// The window lane's **path row** (`DIAG,playback_build,<path>`) — the vehicle every lane event already uses
 /// (`grain_denied`, `build_complete`, `lag_breach`, `one_pass_late`, the last resort). `#ifndef`-guarded so a native
 /// suite can substitute its own recorder (the `SC_ACCEPTED_LATCH` / `SC_WINDOW_READINESS` pattern): without a seam
@@ -685,6 +699,9 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #endif
 #ifndef SC_PLAYBACK_BUILD_ROW
 #define SC_PLAYBACK_BUILD_ROW(track, slot, loopLengthTicks, revision, path) ((void)0)
+#endif
+#ifndef SC_WINDOW_SERVICE_GAP
+#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase) ((void)0)
 #endif
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) ((void)0)
 // `restored-library-stability` 1.3: no records without a capture build (the request trigger is

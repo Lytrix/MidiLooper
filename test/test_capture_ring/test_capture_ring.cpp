@@ -415,6 +415,12 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
                            "the receipt survived the timing-critical flush and the idle drain delivered it");
   TEST_ASSERT_TRUE_MESSAGE(CaptureLineTier::isTierALine(row.c_str()),
                            "and the row the production emitter produced is Tier-A by the production predicate");
+
+  // DEC-108 §13b / task 3.10: the window lane's **service-gap sample** is Tier-A too, classified through the production
+  // predicate (which is where the tag lives -- see the comment there). The boundary is exact.
+  TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gap,5000,32,123456"),
+                           "the service-gap sample survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gapx,1"), "and a longer subtag is not swept in");
 }
 void test_rejected_critical_rows_are_replayed_at_stopped_flush() {
   sCaptureRing.capacity = 1;

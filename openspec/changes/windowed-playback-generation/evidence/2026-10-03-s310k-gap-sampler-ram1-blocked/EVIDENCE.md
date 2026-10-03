@@ -1,8 +1,11 @@
 # Slice 3.10 (increment 11) — the service-gap sampler is written and proved natively, and **blocked by the held RAM1 pin**
 
-**Status:** 2026-10-03. The instrumentation the review's step (1) asks for **was implemented and is green natively**; the
-firmware build was then **refused by the RAM1 budget guard** (`variables 100,288` vs the approved `96,192`, **+4,096 B**).
-The tree was restored to green rather than re-basing a pin the project deliberately holds. **Reverted; nothing landed.**
+**Status:** 2026-10-03. **LANDED — see "Landing" at the end.** The instrumentation was first refused by the RAM1 budget
+guard (`variables 100,288` vs the approved `96,192`, **+4,096 B**) and was therefore reverted rather than re-basing a pin
+the project deliberately holds; the guard's cause was the DTCM `ALIGN` page being **within a few bytes of its boundary**.
+An **unrelated concurrent workstream on this branch (a logging/telemetry optimisation) freed ITCM** — the ITCM padding went
+from **888 to 3,128** — and the same instrumentation then linked with `variables` back at exactly the approved `96,192`.
+No pin was re-based, and no routing change was needed.
 
 ## What was implemented (native-green before the guard refused the link)
 
@@ -59,3 +62,26 @@ re-base downward with the routing fix, or find ~4 KB of DTCM to retire first.
 - **Unrelated concurrent edit preserved:** `docs/Runtime/CURRENT_WORK.md` carries a 29-line block *"Timing-path findings
   1–4 — the tick edge, the DROID ring, and the per-note trace (2026-10-02)"* that is **not mine**; it is deliberately
   left uncommitted and untouched by this increment.
+
+
+## Landing (2026-10-03, after the concurrent logging work)
+
+Re-applied unchanged and it now fits, with **no re-base and no linker change**:
+
+| Check | Result |
+|---|---|
+| `pio run -e teensy41-capture-serial` | **SUCCESS** — `variables 96,192` (**exactly the approved line**), `code 390,088 + padding 3,128`, `locals 34,880`; **2,288 B of headroom above the floor** (was **48 B**), floor not re-based |
+| `test_runtime_working_set_ownership` | **76/76** |
+| `test_capture_ring` | **16/16** (the Tier-A classification and its exact boundary, through the production predicate) |
+| full `pio test -e native` | **2715 cases: 7 skipped, 2708 succeeded, 0 failed** |
+| mutations, re-proved on the landed code, byte-identical restores (sha256 `71bfb33b…a2d33c`) | **M101** no running max → `Expected 5000 Was 1000`; **M102** no per-row reset → `Expected 5000 Was 91400`; **M103** interval 16 → 8 → `Expected 1 Was 2` |
+
+**What the earlier blocker turned out to be.** Not a routing problem at all: the DTCM `.data`/`.rodata` section sat within a
+few bytes of an `ALIGN` page boundary, so *any* addition of that scale tipped it by a whole page — which is why removing
+one literal restored the line and moving it to a single TU did not. The concurrent workstream's ITCM savings gave the
+page enough slack for the row, so the measurement instrumentation cost **zero net DTCM**.
+
+**What this unblocks.** The review's step (1) is done: the unit now has an instrument. Next: the HITL leg with the
+**stimulus's own targets** (`track 8`, slots 4–5) to collect the `DIAG,win_gap` series under a running transport — and
+then the unit is measured, the supported `H × K` contention envelope declared, the derived admission re-based and
+enabled, in that order.
