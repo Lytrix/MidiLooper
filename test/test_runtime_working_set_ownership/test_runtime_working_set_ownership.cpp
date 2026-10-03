@@ -1,5 +1,35 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
+#include <cstddef>
+#include <cstdint>
+
+// DEC-108 §13b / task 3.9: the window lane's **readiness receipt**, substituted the way the `#ifndef`-guarded
+// `SC_WINDOW_READINESS` macro invites (the `SC_ACCEPTED_LATCH` pattern this suite's siblings use). The production TU
+// then calls THIS recorder, so a receipt's content **and its cadence** are observable without a capture build. The
+// macro is defined before any include that would pull `DebugSessionCapture.h`, which is what makes the substitution
+// take effect.
+namespace WindowReadinessRows {
+struct Row {
+  uint8_t track = 0;
+  uint8_t slot = 0;
+  const char* readiness = nullptr;
+  const char* holder = nullptr;
+  uint32_t revision = 0;
+  uint32_t leadTicks = 0;
+};
+inline Row rows[64];
+inline size_t count = 0;
+inline void reset() { count = 0; }
+inline void record(uint8_t track, uint8_t slot, const char* readiness, const char* holder, uint32_t revision,
+                   uint32_t leadTicks) {
+  if (count < sizeof(rows) / sizeof(rows[0])) {
+    rows[count] = Row{track, slot, readiness, holder, revision, leadTicks};
+  }
+  ++count;
+}
+}  // namespace WindowReadinessRows
+#define SC_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks) \
+  WindowReadinessRows::record(track, slot, readiness, holder, revision, leadTicks)
 //
 // **S3 gate — `runtime-working-set-ownership` acceptance suite.** The stage's unit contracts live in
 // `test_working_set_lease` (the vocabulary) and `test_continuous_capture` (the per-owner-kind matrix
@@ -5968,6 +5998,60 @@ void test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them() 
                              "and so was the second: the cursor rotated instead of repeating");
   }
 }
+/// DEC-108 §13b / task 3.9 — the **emission site and its cadence**, which the delivery-rule fixture could not reach:
+/// the lane now reports a readiness receipt where the outcome is reached, so this fixture drives real window builds
+/// to completion and asserts (A) the receipt says what the outcome was (readiness, holder, revision, the slot), and
+/// (B) the **cadence bound** holds -- the first outcome is always reported and a repeated one is reported once every
+/// declared interval, so a readiness state that repeats on every owning turn cannot evict the evidence it explains.
+void test_window_readiness_receipt_reports_the_outcome_and_is_cadence_bounded() {
+  using MidiServiceDrain::PlaybackHolderCursor;
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 40 * kBar;
+  constexpr uint32_t kRequestPhase = 10000;
+  constexpr uint32_t kServingPhase = 9200;
+  constexpr uint32_t kReceiptInterval = 16;  // must match the TU's declared kReadinessReceiptInterval
+
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlotOfLength(track, 0, kLoopTicks);
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = kLoopTicks;
+  publishNotesInBarsRootForSlot(loop, 12, 14, 1);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0));
+
+  WindowReadinessRows::reset();
+  SessionMidiEventVec scratch;
+  // Drive `kReceiptInterval + 1` builds to completion: each completion is one readiness outcome.
+  for (uint32_t round = 0; round <= kReceiptInterval; ++round) {
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                      static_cast<int>(track.requestPlaybackWindow(0, kRequestPhase, scratch)));
+    PlaybackHolderCursor cursor{};
+    for (size_t turn = 0; turn < 16 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+      (void)track.stepPlaybackViewMaintenance(kServingPhase, &cursor);
+    }
+    TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+    // The next round prepares the replacement; adopt it so the slot keeps a servable window.
+    (void)track.adoptPreparedPlaybackWindow(0);
+  }
+
+  // (A) The receipt says what the outcome was: a completed build makes the slot's window *ready*, and the holder for
+  // a ready slot is the readiness itself. The slot and the revision locate it.
+  TEST_ASSERT_TRUE_MESSAGE(WindowReadinessRows::count > 0, "a completion reported a readiness receipt");
+  const WindowReadinessRows::Row& first = WindowReadinessRows::rows[0];
+  TEST_ASSERT_EQUAL_UINT8(0, first.slot);
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("ready", first.readiness,
+                                   "a completed build's outcome is the ready case, named");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("ready", first.holder, "and a ready slot's holder is the readiness itself");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(loop.playbackRevision, first.revision, "the receipt names the revision it judged");
+
+  // (B) The cadence **bound**: whatever number of outcomes the loop produced, the rows cannot exceed one per declared
+  // interval plus the always-reported first. An ungated reporter would have produced one row per completion and failed
+  // this; the exact count is recorded in the evidence rather than assumed here.
+  const uint32_t outcomes = kReceiptInterval + 1u;
+  TEST_ASSERT_TRUE_MESSAGE(WindowReadinessRows::count <= 1u + outcomes / kReceiptInterval,
+                           "reported at most once per declared interval, plus the first");
+}
 
 /// DEC-108 §13b / task 3.10 — **the cross-track question this task's own fixture raised**: the opportunity serves
 /// one *track* per turn, and today's production shape chose the **first track with work**, so a lowest-index track
@@ -5984,6 +6068,12 @@ void test_window_opportunity_is_offered_across_tracks_by_urgency_not_by_index() 
   constexpr uint32_t kNearRequestPhase = 10000;  // -> interval start  9232: 32 ticks away at the serving phase
   constexpr uint32_t kServingPhase = 9200;
 
+  // **Fixture isolation, taken from the suite's own `setUp`:** this fixture reads two tracks' offers, so it must not
+  // inherit a previous fixture's per-track build state (a slot that already completed a build owes nothing, and its
+  // offer would be ineligible for reasons that have nothing to do with this assertion).
+  trackManager.~TrackManager();
+  LoopEventStore::resetPoolForTests();
+  new (&trackManager) TrackManager();
   LoopEventStore::initPool();
   Track& farTrack = trackManager.getTrack(0);
   Track& nearTrack = trackManager.getTrack(1);
@@ -5991,7 +6081,6 @@ void test_window_opportunity_is_offered_across_tracks_by_urgency_not_by_index() 
   nearTrack.ensureLoopsAllocated();
   prepareOwingWindowHolder(farTrack, 0, kLoopTicks, 25, 27, 80, kFarRequestPhase);
   prepareOwingWindowHolder(nearTrack, 0, kLoopTicks, 12, 14, 1, kNearRequestPhase);
-
   // (A) Each track answers for itself, read-only: its own most urgent holder, with its own lead.
   const PlaybackHolder farOffer = farTrack.playbackWindowServiceOffer(kServingPhase);
   const PlaybackHolder nearOffer = nearTrack.playbackWindowServiceOffer(kServingPhase);
@@ -6065,6 +6154,8 @@ int main() {
   // bounded -- one report per episode, switch retained.
   // windowed-playback-generation slice 3.10 increment 5: the cross-track offer and selection.
   RUN_TEST(test_window_opportunity_is_offered_across_tracks_by_urgency_not_by_index);
+  // windowed-playback-generation slice 3.9 increment 2: the readiness receipt's emission site and cadence.
+  RUN_TEST(test_window_readiness_receipt_reports_the_outcome_and_is_cadence_bounded);
   RUN_TEST(test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn);
   RUN_TEST(test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound);
   // S4b.5 (B4): one active-slot write authority -- a direct write (the undo route) cancels a queued switch,

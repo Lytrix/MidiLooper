@@ -103,7 +103,14 @@ SECTIONS
 		   (variables 96,192 -> 100,288 with ITCM code byte-identical). Only the
 		   string literals move, so the row strings this TU already carries travel
 		   with them; all of them are read-only. */
-		*TrackPlaybackWindowBuild.cpp.o(.rodata.str* .rodata.*.str*)
+		/* windowed-playback-generation slice 3.9: the same edge, one class wider. The
+		   readiness-**label** names added ~100 B, but what crossed the align edge was the
+		   compiler's own **jump tables** for the readiness chains (`UNMATCHED:
+		   .rodata.CSWTCH.377/476/494` -- the if/else form does not stop the optimizer from
+		   tabulating a dense enum chain). All of these are read-only, so they travel with the
+		   string literals slice 3.5 moved: `variables` 100,288 -> 96,192 with the ITCM
+		   `code` figure byte-identical. */
+		*TrackPlaybackWindowBuild.cpp.o(.rodata.str* .rodata.*.str* .rodata.CSWTCH*)
 		. = ALIGN(4);
 	} > FLASH
 

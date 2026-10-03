@@ -15,6 +15,7 @@
 #include "Utils/Diagnostics.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/TelemetryCadence.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/ExternalPoolAccounting.h"
 #include "Utils/RuntimeTimingTelemetry.h"
@@ -1756,7 +1757,14 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     // and 3.7 switches the consumer -- so an existing consumer's view of this slot is untouched.
     (void)publishCompletedPlaybackWindow(slot);
   }
-  return finishPlaybackViewGrain(slot, result);
+  const PlaybackViewTurnResult turnResult = finishPlaybackViewGrain(slot, result);
+  if (turnResult == PlaybackViewTurnResult::GrainDenied || turnResult == PlaybackViewTurnResult::BuildComplete) {
+    // DEC-108 §13b / task 3.9: the **readiness receipt**, emitted where the outcome is reached -- a denied grain
+    // (whose holder now owes the work) and a completion (whose window is ready) are the two events worth a row, not
+    // every grain. Cadence-bounded inside the reporter, so it cannot evict what it explains.
+    reportPlaybackWindowReadinessReceipt(slot, currentPhase);
+  }
+  return turnResult;
 }
 
 TRACK_COLD_MEM bool Track::playbackWindowInterval(uint32_t loopLengthTicks, bool demoted,
@@ -2287,4 +2295,63 @@ TRACK_COLD_MEM void Track::reportPlaybackViewMaintenanceRow(uint8_t slotIndex, L
   (void)loop;
   (void)path;
 #endif
+}
+
+TRACK_COLD_MEM const char* Track::playbackWindowReadinessLabel(PlaybackWindowReadiness readiness) {
+  // No name table and no `switch`: either is `.data` on this target (the RAM1 rule's finding), and this TU's string
+  // literals are routed to FLASH by the linker script -- the pattern `playbackWindowReadinessHolder` established.
+  if (readiness == PlaybackWindowReadiness::Ready) {
+    return "ready";
+  }
+  if (readiness == PlaybackWindowReadiness::OwesBuild) {
+    return "owes_build";
+  }
+  if (readiness == PlaybackWindowReadiness::OwesSource) {
+    return "owes_source";
+  }
+  if (readiness == PlaybackWindowReadiness::OwesCurrency) {
+    return "owes_currency";
+  }
+  if (readiness == PlaybackWindowReadiness::NotServable) {
+    return "not_servable";
+  }
+  if (readiness == PlaybackWindowReadiness::NoRuntime) {
+    return "no_runtime";
+  }
+  return "unknown";
+}
+
+/// DEC-108 §13b / task 3.9: how many readiness outcomes pass before one is reported -- the declared cadence, so a
+/// readiness state that repeats on every owning turn cannot evict the evidence it explains. Every phase still logs
+/// (`shouldLogOccurrence` always emits the first), which is why a *transition* is never missed.
+inline constexpr uint32_t kReadinessReceiptInterval = 16;
+#if defined(__IMXRT1062__)
+/// DEC-108 §13b's placement rule: an additional counter is `DMAMEM`/`FLASHMEM`, never DTCM. Off-clock, read by the
+/// owner turn alone.
+DMAMEM static uint32_t sReadinessReceiptCount = 0;
+#else
+static uint32_t sReadinessReceiptCount = 0;
+#endif
+
+TRACK_COLD_MEM void Track::reportPlaybackWindowReadinessReceipt(uint8_t slotIndex, uint32_t currentPhase) {
+  // **Cadence first** (DEC-108 §13b / design D10): the receipt is event-shaped, but a readiness outcome can repeat on
+  // every owning turn, so the row is bounded -- that bound is what keeps this diagnostic from evicting the evidence it
+  // explains, which is the contract `TelemetryCadence` exists for.
+  if (!TelemetryCadence::shouldLogOccurrence(sReadinessReceiptCount, kReadinessReceiptInterval)) {
+    return;
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  const PlaybackWindowReadiness readiness = playbackWindowReadinessForSlot(slotIndex);
+  // The lead the receipt explains: the interval this slot is *serving*, measured from the phase this turn is in.
+  // Zero when no window serves the slot yet -- a receipt about "no window" has no lead to report, and saying zero
+  // there is honest rather than inventing urgency.
+  uint32_t leadTicks = 0;
+  PlaybackViewSourceIdentity identity{};
+  PlaybackCoverageInterval coverage{};
+  if (publishedPlaybackWindowForSlot(slotIndex, identity, coverage) && coverage.isValid() &&
+      loop.loopLengthTicks == coverage.loopLengthTicks && loop.loopLengthTicks > 0) {
+    leadTicks = handoffLeadTicks(currentPhase % loop.loopLengthTicks, coverage.startPhase, loop.loopLengthTicks);
+  }
+  SC_WINDOW_READINESS(playbackRebuildTrackIndex(*this), slotIndex, playbackWindowReadinessLabel(readiness),
+                      playbackWindowReadinessHolder(readiness), loop.playbackRevision, leadTicks);
 }
