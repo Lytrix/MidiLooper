@@ -5808,6 +5808,167 @@ void test_windowed_stream_concatenates_to_the_whole_loop_stream_across_a_boundar
   TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(offs), static_cast<uint32_t>(ons));
 }
 
+/// A root carrying `count` short notes inside the bar range `[fromBar, toBar)`, and nothing elsewhere. The
+/// windowed gather reads the root's **event** membership, so every note is added with its on and off.
+void publishNotesInBarsRootForSlot(Loop& loop, uint32_t fromBar, uint32_t toBar, uint32_t count) {
+  auto empty = std::make_shared<const LoopSnapshot>(
+      LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
+  LoopSnapshotChangeSet changes;
+  constexpr uint32_t kBar = 768;
+  const uint32_t span = (toBar - fromBar) * kBar;
+  EventId nextEventId = 9000;
+  for (uint32_t i = 0; i < count; ++i) {
+    const uint32_t on = fromBar * kBar + (span * i) / (count > 0 ? count : 1);
+    const uint8_t pitch = static_cast<uint8_t>(36 + (i % 40));
+    SnapshotNoteChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.noteId = static_cast<NoteId>(4000 + i);
+    add.next.pitch = pitch;
+    add.next.velocity = 100;
+    add.next.startTick = on;
+    add.next.endTick = on + 48;
+    changes.notes.push_back(add);
+    SnapshotEventChange on_change{};
+    on_change.kind = SnapshotChangeKind::Add;
+    on_change.next.loopId = loop.loopId;
+    on_change.next.eventId = nextEventId++;
+    on_change.next.canonicalOrder = nextEventId * 2;
+    on_change.next.value = MidiEvent::NoteOn(on, 1, pitch, 100);
+    changes.events.push_back(on_change);
+    SnapshotEventChange off_change{};
+    off_change.kind = SnapshotChangeKind::Add;
+    off_change.next.loopId = loop.loopId;
+    off_change.next.eventId = nextEventId++;
+    off_change.next.canonicalOrder = nextEventId * 2 + 1;
+    off_change.next.value = MidiEvent::NoteOff(on + 48, 1, pitch, 0);
+    changes.events.push_back(off_change);
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  loop.storePublishedSnapshotForTest(snapshot, loop.playbackRevision);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                           "the fixture must install a *current* root, or the gather refuses it");
+}
+/// Has a holder's owed build moved past its first fill grain? **"Progressed" is the honest observable**: a small
+/// window's single fill grain finishes the build outright (`Complete`), while a larger one stays `Fill` for several
+/// turns, so the fixture asserts that the served holder advanced and the others did not -- the specific post-state is
+/// the builder's business, not this fixture's.
+bool windowHolderAdvanced(const LoopPlaybackRuntime* runtime) {
+  if (runtime == nullptr) {
+    return false;
+  }
+  if (!runtime->coverageBuildNeedsService()) {
+    return true;
+  }
+  return runtime->nextCoverageBuildGrain() != RuntimePlaybackViewBuildGrain::Fill;
+}
+
+
+/// Prepares one slot with a current root and a prewarmed runtime, then requests the window its own policy names.
+void prepareOwingWindowHolder(Track& track, uint8_t slot, uint32_t loopTicks, uint32_t fromBar, uint32_t toBar,
+                              uint32_t notes, uint32_t requestPhase) {
+  commitRecordPassIntoTrackSlotOfLength(track, slot, loopTicks);
+  Loop& loop = track.getLoop(slot);
+  loop.loopLengthTicks = loopTicks;
+  publishNotesInBarsRootForSlot(loop, fromBar, toBar, notes);
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(slot), "the slot must prewarm a runtime to owe a grain");
+  SessionMidiEventVec scratch;
+  TEST_ASSERT_EQUAL_MESSAGE(
+      static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+      static_cast<int>(track.requestPlaybackWindow(slot, requestPhase, scratch)),
+      "the fixture's loop must be long enough for the declared lead, or the request is refused");
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot);
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_TRUE_MESSAGE(runtime->coverageBuildNeedsService(), "the slot now owes a window grain");
+}
+
+/// DEC-108 §13b / task 3.10 — the **wiring's own fixture**, and the one the increment owed: with the scan routed
+/// through the policy, an admitted turn serves the **most urgent holder**, not the lowest slot index, and a
+/// persistent cursor rotates between holders whose urgency ties. The observable is each holder's own next grain
+/// (`Fill` while the fill still has work, `Order` once a single ≤64-event fill grain finished it), which is what
+/// tells the two scans apart: the old ascending scan served slot 0 every turn.
+void test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them() {
+  using MidiServiceDrain::PlaybackHolderCursor;
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 40 * kBar;      // above the declared lead floor, so requests are admitted
+  constexpr uint32_t kFarRequestPhase = 20000;    // -> interval start 19232
+  constexpr uint32_t kNearRequestPhase = 10000;   // -> interval start  9232
+  constexpr uint32_t kServingPhase = 9200;        // 32 ticks before the near interval, a whole pass before the far
+
+  // (A) **Urgency beats index order.** Slot 0's interval is a full pass away; slot 1's is 32 ticks away. The old
+  // scan would serve slot 0 (the lowest index) and leave slot 1 untouched; the policy serves slot 1.
+  {
+    LoopEventStore::initPool();
+    Track& track = trackManager.getTrack(0);
+    track.ensureLoopsAllocated();
+    prepareOwingWindowHolder(track, 0, kLoopTicks, 25, 27, 80, kFarRequestPhase);   // > one fill grain of work
+    prepareOwingWindowHolder(track, 1, kLoopTicks, 12, 14, 1, kNearRequestPhase);   // one grain finishes it
+    LoopPlaybackRuntime* far = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+    LoopPlaybackRuntime* near = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
+    TEST_ASSERT_EQUAL(static_cast<int>(RuntimePlaybackViewBuildGrain::Fill),
+                      static_cast<int>(far->nextCoverageBuildGrain()));
+    TEST_ASSERT_EQUAL(static_cast<int>(RuntimePlaybackViewBuildGrain::Fill),
+                      static_cast<int>(near->nextCoverageBuildGrain()));
+
+    PlaybackHolderCursor cursor{};
+    TEST_ASSERT_NOT_EQUAL(
+        static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+        static_cast<int>(track.stepPlaybackViewMaintenance(kServingPhase, &cursor)));
+    TEST_ASSERT_TRUE_MESSAGE(windowHolderAdvanced(near), "the urgent holder was served, not slot 0");
+    TEST_ASSERT_FALSE_MESSAGE(windowHolderAdvanced(far), "and the far holder was not");
+  }
+
+  // (B) The symmetric control: swap which slot is urgent. This is what rules out "the higher index always wins"
+  // as an accidental explanation of (A).
+  {
+    LoopEventStore::initPool();
+    Track& track = trackManager.getTrack(0);
+    track.ensureLoopsAllocated();
+    // A pristine slot pair: a slot that already owes a build answers `BuildInFlight`, so the cases must not share
+    // slots (the check is per slot, which is also why two slots on one track *can* owe at the same time).
+    prepareOwingWindowHolder(track, 2, kLoopTicks, 12, 14, 1, kNearRequestPhase);
+    prepareOwingWindowHolder(track, 3, kLoopTicks, 25, 27, 80, kFarRequestPhase);
+    LoopPlaybackRuntime* near = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+    LoopPlaybackRuntime* far = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 3);
+
+    PlaybackHolderCursor cursor{};
+    TEST_ASSERT_NOT_EQUAL(
+        static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+        static_cast<int>(track.stepPlaybackViewMaintenance(kServingPhase, &cursor)));
+    TEST_ASSERT_TRUE_MESSAGE(windowHolderAdvanced(near), "urgency decides, not the index");
+    TEST_ASSERT_FALSE_MESSAGE(windowHolderAdvanced(far), "the far holder waits its turn");
+  }
+
+  // (C) **Rotation when urgency ties.** Both holders carry the same interval and the same lead, so only the cursor
+  // can separate them: two turns with one persistent cursor must serve both -- while the old scan would serve slot
+  // 0 twice and leave slot 1's fill untouched.
+  {
+    LoopEventStore::initPool();
+    Track& track = trackManager.getTrack(0);
+    track.ensureLoopsAllocated();
+    prepareOwingWindowHolder(track, 4, kLoopTicks, 12, 14, 1, kNearRequestPhase);
+    prepareOwingWindowHolder(track, 5, kLoopTicks, 12, 14, 1, kNearRequestPhase);
+    LoopPlaybackRuntime* first = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 4);
+    LoopPlaybackRuntime* second = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 5);
+
+    PlaybackHolderCursor cursor{};
+    TEST_ASSERT_NOT_EQUAL(
+        static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+        static_cast<int>(track.stepPlaybackViewMaintenance(kServingPhase, &cursor)));
+    TEST_ASSERT_NOT_EQUAL(
+        static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+        static_cast<int>(track.stepPlaybackViewMaintenance(kServingPhase, &cursor)));
+    TEST_ASSERT_TRUE_MESSAGE(windowHolderAdvanced(first), "the first holder was served within one rotation");
+    TEST_ASSERT_TRUE_MESSAGE(windowHolderAdvanced(second),
+                             "and so was the second: the cursor rotated instead of repeating");
+  }
+}
+
 int main() {
 
 
@@ -5885,6 +6046,8 @@ int main() {
   // and the naming/non-destructiveness of its refusals.
   RUN_TEST(test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle);
   RUN_TEST(test_window_owner_serves_one_grain_per_turn_and_publishes_nothing);
+  // windowed-playback-generation slice 3.10 increment 3's own fixture: the routed scan serves the urgent holder.
+  RUN_TEST(test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them);
   RUN_TEST(test_window_owner_refusals_are_named_and_non_destructive);
   // windowed-playback-generation slice 3.2: the owner's atomic interval-window publication.
   RUN_TEST(test_window_owner_publishes_the_interval_window_atomically);
