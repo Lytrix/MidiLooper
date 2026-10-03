@@ -336,6 +336,18 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   turn's terminal outcomes and the refusal path, silent by row today) and the cadence bound (`TelemetryCadence::shouldLogOccurrence` with a `DMAMEM`
   counter; no `src/Track/*` consumer exists and the per-grain rows are ungated) are the next increment, so the task's own wording is **half met**. Detail:
   [`evidence/2026-10-02-s39-readiness-receipt-delivery/EVIDENCE.md`](evidence/2026-10-02-s39-readiness-receipt-delivery/EVIDENCE.md).*
+  *Increment 3.9 (increment 2) landed 2026-10-02 — the **emission site and its cadence**, which increment 1 could not reach: `playbackWindowReadinessLabel` +
+  `reportPlaybackWindowReadinessReceipt` (cadence **first**, then readiness + holder + the revision it judged + the lead from the served window), called on the
+  owner turn's terminal outcomes only, with `TelemetryCadence.h`'s first `src/Track/*` consumer and a `DMAMEM` counter. **The RAM1 guard caught a second +4096
+  and the precedent's fix covered it**: the cause was the compiler's own **jump tables** (`.rodata.CSWTCH.*` — the if/else form does not stop a dense enum chain
+  being tabulated), so this TU's read-only routing was widened to `.rodata.CSWTCH*`, restoring the line **exactly** (`variables 96,192`, ITCM `code`
+  byte-identical, **no re-base**). Fixture: the receipt's content (slot, readiness `ready`, holder `ready`, revision) through the `#ifndef`-guarded
+  `SC_WINDOW_READINESS` recorder, plus the **cadence bound**. Verified: 70/70 (+1 fixture) + 16/16 + 39/39 + 190/190 (cited pin), full native 2704 / 2697 succeeded
+  / 7 skipped / 0 failed, build SUCCESS; **M82** (the cadence gate dropped) fails the fixture, so the bound is load-bearing. **Recorded, not smoothed:** the
+  first cadence assertion expected 2 rows for 17 completions and measured **1**, and why only one outcome reached the reporter is **not established here** —
+  the assertion was restated as the bound and the question named for the next increment; the **refusal paths remain silent by row**; the interval (16) is a
+  declared choice; no hardware observation; and fixture isolation was **repaired, not designed**. Detail:
+  [`evidence/2026-10-02-s39b-receipt-emission-site/EVIDENCE.md`](evidence/2026-10-02-s39b-receipt-emission-site/EVIDENCE.md).*
 
 - [ ] 3.10 **Implement fair, bounded, deadline-ordered service** (*DEC-108 §13b*) — a recurring bounded opportunity on the
   existing deferred machinery; round-robin across eligible holders; earliest outstanding playback deadline first within a

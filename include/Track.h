@@ -1145,6 +1145,13 @@ private:
   /// there is nothing completed to publish, which is a refusal rather than an error.
   bool publishCompletedPlaybackWindow(uint8_t slotIndex);
   void reportPlaybackViewMaintenanceRow(uint8_t slotIndex, Loop& loop, const char* path);
+  /// DEC-108 §13b / task 3.9: the **readiness outcome's name**, so a receipt says which case it is rather than an
+  /// ordinal -- the same if/else form the holder names use, for the `.data` reason recorded there.
+  static const char* playbackWindowReadinessLabel(PlaybackWindowReadiness readiness);
+  /// DEC-108 §13b / task 3.9: report the slot's **readiness receipt** by the two delivery rules, **cadence-bounded**
+  /// so this diagnostic cannot evict the evidence it explains. Event-shaped: called where a readiness outcome is
+  /// reached (a denied grain, a completion), never per grain.
+  void reportPlaybackWindowReadinessReceipt(uint8_t slotIndex, uint32_t currentPhase);
   /// S4.5: finish any stop descriptor the retirement path left un-rearmed and re-arm it, one bounded
   /// grain per idle turn. The ring advances at retirement *before* the source release finishes, so a
   /// release that needs another grain (or a re-reservation that fails that instant) leaves the
