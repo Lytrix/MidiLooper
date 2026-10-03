@@ -240,14 +240,18 @@ struct PlaybackHolder {
   /// False while the holder is owed a grain it **cannot** serve this turn (admission denied, contract margin not
   /// met, source not current): the holder stays eligible, so it is not lost -- only skipped over.
   bool canProgress = true;
-  /// The phase at which the playhead next enters this holder's interval: its outstanding playback deadline.
-  uint32_t deadlinePhase = 0;
+  /// How long the holder has before its interval is needed, **in ticks along its own loop**
+  /// (`RuntimePlaybackViewBuild.h`'s `handoffLeadTicks`) -- not a raw phase. A phase is meaningless across
+  /// holders whose loops differ in length (phase 900 is late on a 1,000-tick loop and early on a 20,000-tick one),
+  /// while the tick distance is the same quantity the admission already judges, so urgency is comparable.
+  uint32_t handoffLeadTicks = 0;
   /// False means "no outstanding deadline" -- ordered after every holder that has one.
   bool hasDeadline = false;
 };
 
-/// An earlier outstanding deadline wins. A holder that *has* a deadline beats one that does not; two holders with
-/// none keep the rotation's order, so fairness survives where urgency cannot distinguish them.
+/// An earlier outstanding deadline wins, where "earlier" means **fewer ticks to go**, not a smaller phase. A
+/// holder that has a deadline beats one that does not; two holders with none keep the rotation's order, so
+/// fairness survives where urgency cannot distinguish them.
 inline bool playbackHolderDeadlineIsEarlier(const PlaybackHolder& candidate,
                                             const PlaybackHolder& incumbent) {
   if (candidate.hasDeadline != incumbent.hasDeadline) {
@@ -256,7 +260,7 @@ inline bool playbackHolderDeadlineIsEarlier(const PlaybackHolder& candidate,
   if (!candidate.hasDeadline) {
     return false;
   }
-  return candidate.deadlinePhase < incumbent.deadlinePhase;
+  return candidate.handoffLeadTicks < incumbent.handoffLeadTicks;
 }
 
 /// The rotation's position. `next` is where the scan begins, never "the last holder": a holder selected once is

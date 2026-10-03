@@ -157,8 +157,9 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool CoverageServiceContract::canCompleteBeforeH
                          (static_cast<uint64_t>(maximumConsecutiveDeniedTurns) + 1U);
   const uint64_t requiredLead =
       turns * maximumPhaseAdvancePerTurn + static_cast<uint64_t>(leadTicks);
-  const uint32_t available = handoffPhase >= currentPhase
-                                 ? handoffPhase - currentPhase
-                                 : loopLengthTicks - currentPhase + handoffPhase;
+  // The lead available to the caller is the distance to the handoff, **named once** (`handoffLeadTicks`, in the
+  // header beside this contract) so a scheduling reader of the same quantity cannot disagree with this admission
+  // decision (DEC-108 §13b / task 3.10).
+  const uint32_t available = handoffLeadTicks(currentPhase, handoffPhase, loopLengthTicks);
   return requiredLead <= available;
 }
