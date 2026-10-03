@@ -281,16 +281,20 @@ enum class PlaybackHolderSelection : uint8_t {
 };
 
 /// Round-robin across holders, earliest outstanding deadline first within the eligible set, and the cursor
-/// advances **even when the chosen holder cannot progress** (a blocked early holder can therefore never monopolise
-/// service).
+/// **The within-a-holder rule** -- earliest outstanding deadline first, and the cursor advances **even when the chosen
+/// holder cannot progress**, so a blocked early holder can never monopolise service.
 ///
-/// Earliest-deadline-first is applied **globally** over the eligible set, which is the tighter of the two readings
-/// of the design's "within a holder": a global order cannot serve a later deadline first inside any one holder, so
-/// the per-holder reading follows a fortiori, and the property is stated once rather than per holder.
+/// **Scope, corrected (2026-10-02).** This ordering is the *inside-one-holder* rule, and it must not be applied across
+/// holders. The spec is explicit: "Service SHALL rotate round-robin across eligible holders, and **within a holder**
+/// SHALL serve the earliest outstanding playback deadline first", with the scenario *"Earlier deadlines win within a
+/// holder -- WHEN **a holder has more than one outstanding playback deadline** THEN its earliest outstanding deadline is
+/// served first"*. The earlier version here applied earliest-deadline-first **globally** and called that "the tighter of
+/// the two readings"; that reading is wrong and it starves: a holder whose deadline is permanently earlier than
+/// another's is chosen **every** rotation, and the cursor cannot rescue the loser because the comparison ignores where
+/// the scan starts. Across holders the rule is `selectPlaybackHolderRoundRobin` below.
 ///
-/// The bound this buys, as what a caller may rely on: at most `count` consecutive selections examine every holder
-/// once, so **every holder that can progress is served within `count` turns** -- the per-holder progress bound task
-/// 3.10 asks to be asserted for *every* admitted holder.
+/// The bound, as what a caller may rely on: at most `count` consecutive selections examine every holder once, so every
+/// holder that can progress is served within `count` turns.
 inline PlaybackHolderSelection selectPlaybackHolder(PlaybackHolderCursor& cursor,
                                                     const PlaybackHolder* holders,
                                                     uint8_t count, uint8_t& holderOut) {
@@ -321,6 +325,46 @@ inline PlaybackHolderSelection selectPlaybackHolder(PlaybackHolderCursor& cursor
   }
   // Nothing can progress this turn. The rotation still moves on, so a holder that is blocked now never holds the
   // position while it is blocked -- and the caller's next turn begins somewhere else.
+  cursor.next = static_cast<uint8_t>((cursor.next + 1u) % count);
+  return sawEligible ? PlaybackHolderSelection::AllBlocked : PlaybackHolderSelection::None;
+}
+
+/// **The across-holders rule** -- plain round-robin, and the one the spec's fairness sentence names for holders: "Service
+/// SHALL rotate round-robin across eligible holders". The cursor decides *who*; the holder's own urgency is not an
+/// ordering key here, because it must not be: a holder whose deadline is permanently earlier than another's would then
+/// be chosen on every rotation and starve the other, which is the defect this rule removes. Urgency is still used, one
+/// level down -- within a holder (`selectPlaybackHolder` above) and by the per-holder offer that picks which of a
+/// holder's own obligations is the urgent one.
+///
+/// A holder that cannot progress is skipped **without consuming the rotation's position for anyone else**: the scan
+/// keeps walking to the next eligible holder, so a blocked holder costs at most its own turn. If no eligible holder can
+/// progress, the cursor still advances and the outcome is named `AllBlocked` -- never a latch, and never a silent
+/// "nothing owed".
+///
+/// The bound this buys, and the one the envelope is derived from: **every eligible holder that can progress is served
+/// once per `count` turns** (one rotation), so the worst gap between two services of the same holder is `count` turns.
+inline PlaybackHolderSelection selectPlaybackHolderRoundRobin(PlaybackHolderCursor& cursor,
+                                                             const PlaybackHolder* holders, uint8_t count,
+                                                             uint8_t& holderOut) {
+  holderOut = kNoPlaybackHolder;
+  if (holders == nullptr || count == 0) {
+    return PlaybackHolderSelection::None;
+  }
+  bool sawEligible = false;
+  for (uint8_t step = 0; step < count; ++step) {
+    const uint8_t index = static_cast<uint8_t>((cursor.next + step) % count);
+    const PlaybackHolder& holder = holders[index];
+    if (!holder.eligible) {
+      continue;
+    }
+    sawEligible = true;
+    if (!holder.canProgress) {
+      continue;
+    }
+    cursor.next = static_cast<uint8_t>((index + 1u) % count);
+    holderOut = index;
+    return PlaybackHolderSelection::Service;
+  }
   cursor.next = static_cast<uint8_t>((cursor.next + 1u) % count);
   return sawEligible ? PlaybackHolderSelection::AllBlocked : PlaybackHolderSelection::None;
 }

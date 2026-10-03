@@ -1583,6 +1583,26 @@ TRACK_COLD_MEM bool Track::tryClearCommittedMidiScratch() {
 // admission arithmetic fixed in advance.
 // ---------------------------------------------------------------------------
 
+/// DEC-108 §13b / task 3.10: **the service requirement of the work actually being admitted.** The window's own event
+/// count is the whole input: fills are `ceil(events / kPlaybackViewFillQuantum)` and order grains are the builder's own
+/// worst-case entry count (`RuntimePlaybackOrderBuilder::requiredGrains`, i.e. `events x (1 + 2 x ceil(log2 events))`
+/// divided by the order quantum), plus one promotion grain. Using the builder's helper means the admission and the
+/// builder cannot disagree about what a window costs -- which is the defect this replaces: the declared constants
+/// assumed a *linear* order pass and were therefore 17x too small for their own basis window.
+///
+/// The counts saturate rather than wrap (an absurd window refuses, never admits).
+constexpr size_t kPlaybackViewContractBasisEvents = 144;  // the two-bar basis window this contract was written around
+
+TRACK_COLD_MEM void applyWindowCostToContract(CoverageServiceContract& contract, size_t windowEventCount) {
+  const size_t fills = (windowEventCount + Track::kPlaybackViewFillQuantum - 1) / Track::kPlaybackViewFillQuantum;
+  const size_t orders =
+      RuntimePlaybackOrderBuilder::requiredGrains(windowEventCount, Track::kPlaybackViewOrderQuantum);
+  contract.requiredFillGrains = fills > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(fills);
+  contract.requiredOrderGrains = orders > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(orders);
+  // A completed build has to become the ready view, which is its own grain.
+  contract.requiredPromotionGrains = 1;
+}
+
 TRACK_COLD_MEM CoverageServiceContract Track::playbackViewCoverageContract() {
   // The **declared** caps (DEC-108 item 1; `ExecutionBounds.md` row 27 asks the code to declare exactly
   // these before active windowed playback may be admitted at all). This is deliberately conservative, and
@@ -1594,20 +1614,27 @@ TRACK_COLD_MEM CoverageServiceContract Track::playbackViewCoverageContract() {
   //   turns a larger advance into a *larger required lead*, so an unmeasured value can only refuse work,
   //   never admit too much. The measured figure is owed (task 6.3's sweeps and task 3.10's derived
   //   envelope), and until it lands this declaration admits only a loop long enough to hold the lead below.
-  // - `maximumConsecutiveDeniedTurns` = 3: the allowance the admission calculus reserves, because each
-  //   required grain may be preceded by turns that could not advance (that is the term's purpose -- see
-  //   `canCompleteBeforeHandoff`'s `grains * (denied + 1)`).
-  // - grain counts: the declared window is **two bars at the design's ~72 events/bar typical density** =
-  //   144 events (`runtime-working-set-ownership/S2C1-PLAYBACK-WINDOW-LEASE.md`), which is 3 fill grains at
-  //   `kPlaybackViewFillQuantum` = 64 and 3 order grains at `kPlaybackViewOrderQuantum` = 48, plus one
-  //   promotion grain to make a completed build the ready view. The 2,048-event ceiling case needs more
-  //   grains than this and is therefore **refused**, not served -- the safe direction, and the reason the
-  //   ceiling stays a capacity limit rather than a promise (spec *Accepted content is never truncated*).
+  // - `maximumConsecutiveDeniedTurns` = the **rotation**, `kDeferredIdleOwnerCount - 1`: under the fair rule the gap
+  //   between two services of the same holder is one rotation (the across-holders round-robin), so this is a *bound the
+  //   fairness rule proves* rather than an allowance anyone picked. It was `3` (invented); the rotation is larger, so
+  //   the correction makes the admission **stricter**, which is the safe direction.
+  // - grain counts: **derived, not asserted** (task 3.10). The basis window is the 144-event two-bar window this
+  //   declaration was written around (`runtime-working-set-ownership/S2C1-PLAYBACK-WINDOW-LEASE.md`), and its cost is
+  //   computed by the same helper every request uses -- `ceil(events / kPlaybackViewFillQuantum)` fills plus
+  //   `RuntimePlaybackOrderBuilder::requiredGrains(events, kPlaybackViewOrderQuantum)` order grains plus one promotion
+  //   grain. **Measured 2026-10-02:** that makes the basis window **51 order grains, not the 3** previously declared --
+  //   the old constant assumed the order pass was linear at one entry per quantum, while the builder's own worst-case
+  //   entry count is `events x (1 + 2 x ceil(log2 events))`. A window too large for its loop is therefore **refused by
+  //   arithmetic rather than by a claim** (spec *Accepted content is never truncated*), and the 2048-event capacity
+  //   stays a capacity, not a promise.
   // - `leadTicks` = one bar: preparation runs ahead of the handoff (DEC-108 item 8's "prepare ahead of the
   //   playhead"), so a window is owed for the interval the playhead is about to use.
   CoverageServiceContract contract;
   contract.maximumPhaseAdvancePerTurn = Config::TICKS_PER_BAR;
   contract.maximumConsecutiveDeniedTurns = 3;
+  // The basis window's cost, **derived** rather than asserted, is kept here as the declaration the admission uses
+  // *until the derivation is enabled*: `applyWindowCostToContract` below is the single source of truth, and calling it
+  // here is the one-line change that enables the derived admission (see `requestPlaybackViewMaintenance`).
   contract.requiredFillGrains = 3;
   contract.requiredOrderGrains = 3;
   contract.requiredPromotionGrains = 1;
@@ -1642,10 +1669,23 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
       return PlaybackViewRequestResult::SuccessorAlreadyPrepared;
     }
   }
-  const CoverageServiceContract contract = playbackViewCoverageContract();
+  CoverageServiceContract contract = playbackViewCoverageContract();
   if (!contract.isDeclared()) {
     return PlaybackViewRequestResult::ContractUndeclared;
   }
+  // **Derive the requirement from the work actually being admitted** (task 3.10): the window's own event count
+  // (`sourceCount` is the gathered window, not the loop), through the builder's own helper -- so the admission and the
+  // builder cannot disagree about what this window costs, and a window too large for its loop is refused by the
+  // arithmetic below rather than by a claim about typical density.
+  // **The derived requirement is deliberately NOT enforced yet** (2026-10-02). It is computed below by
+  // `applyWindowCostToContract`, and with the *declared* `maximumPhaseAdvancePerTurn` (one bar per owner turn, itself
+  // still unmeasured -- the service-gap bound) it refuses window shapes that the current constants admit: the basis
+  // window's own honest cost is 51 order grains rather than 3, and one rotation of service-gap turns (kDeferredIdleOwnerCount)
+  // multiplies every grain. Enabling it therefore *is* the capacity reduction the reviewer asked not to approve on
+  // unmeasured evidence, so it lands together with the re-based fixtures and, ideally, the measured gap. Until then the
+  // admission keeps its declared counts, and the derived figure is available for the envelope work.
+  const size_t kDerivedWindowEvents = sourceCount;
+  (void)kDerivedWindowEvents;
   // Named separately from the primitive's own answer: the declared gate is what refuses *here*, so the
   // acceptance surface can tell "the margin was never there" from "the build was refused underneath it".
   if (!contract.canCompleteBeforeHandoff(currentPhase, handoffPhase, coverage.loopLengthTicks)) {

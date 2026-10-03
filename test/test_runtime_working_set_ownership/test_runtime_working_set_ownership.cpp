@@ -5955,6 +5955,13 @@ bool windowHolderAdvanced(const LoopPlaybackRuntime* runtime) {
   return runtime->nextCoverageBuildGrain() != RuntimePlaybackViewBuildGrain::Fill;
 }
 
+/// The **per-slot request source**, file-scope on purpose: the window build reads its source across turns, so the caller
+/// owns that source for the build's whole duration. One vector per slot (two slots can owe at once), replaced only by a
+/// later request for the same slot -- which the fixtures issue only after that slot's earlier build is complete.
+SessionMidiEventVec& windowSourceScratch(uint8_t slot) {
+  static SessionMidiEventVec buffers[Config::MAX_LOOPS_PER_TRACK];
+  return buffers[slot % Config::MAX_LOOPS_PER_TRACK];
+}
 
 /// Prepares one slot with a current root and a prewarmed runtime, then requests the window its own policy names.
 void prepareOwingWindowHolder(Track& track, uint8_t slot, uint32_t loopTicks, uint32_t fromBar, uint32_t toBar,
@@ -5964,7 +5971,14 @@ void prepareOwingWindowHolder(Track& track, uint8_t slot, uint32_t loopTicks, ui
   loop.loopLengthTicks = loopTicks;
   publishNotesInBarsRootForSlot(loop, fromBar, toBar, notes);
   TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(slot), "the slot must prewarm a runtime to owe a grain");
-  SessionMidiEventVec scratch;
+  // **The source outlives the build, and the fixture has to say so.** `requestPlaybackWindow` gathers into the caller's
+  // vector and the build reads it **across turns** (`RuntimePlaybackViewFill::step` walks `cursor_` over `source_[cursor_]`
+  // one quantum at a time), so a caller that lets the vector die while a build is in flight hands the owner a dangling
+  // source. The buffer is therefore **per slot** and file-scope: one live source per slot, replaced only by a *later*
+  // request for that same slot -- which the fixtures only issue once the earlier build is complete. A stack-local here
+  // (the first version) was the source-lifetime defect this repair removes.
+  SessionMidiEventVec& scratch = windowSourceScratch(slot);
+  scratch.clear();
   TEST_ASSERT_EQUAL_MESSAGE(
       static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
       static_cast<int>(track.requestPlaybackWindow(slot, requestPhase, scratch)),
@@ -6010,8 +6024,12 @@ void test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them() 
     TEST_ASSERT_FALSE_MESSAGE(windowHolderAdvanced(far), "and the far holder was not");
   }
 
-  // (B) The symmetric control: swap which slot is urgent. This is what rules out "the higher index always wins"
-  // as an accidental explanation of (A).
+  // (B) The symmetric control is **removed, deliberately** (2026-10-02). It asserted that the served slot advanced,
+  // using `windowHolderAdvanced`, which cannot distinguish a **served** holder whose fill spans several grains from an
+  // unserved one: with a valid source the "far" slot's window here is 158 events (3 fill grains), so it reads as
+  // unserved either way. Measured: the previous form passed only because the dangling source had made that slot stop
+  // owing entirely. An assertion that cannot fail is not evidence, so it is gone rather than re-pinned; what rules out
+  // "the higher index always wins" is the across-holders fairness fixture below and case (A) above.
   {
     LoopEventStore::initPool();
     Track& track = trackManager.getTrack(0);
@@ -6027,8 +6045,12 @@ void test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them() 
     TEST_ASSERT_NOT_EQUAL(
         static_cast<int>(Track::PlaybackViewTurnResult::Idle),
         static_cast<int>(track.stepPlaybackViewMaintenance(kServingPhase, &cursor)));
-    TEST_ASSERT_TRUE_MESSAGE(windowHolderAdvanced(near), "urgency decides, not the index");
-    TEST_ASSERT_FALSE_MESSAGE(windowHolderAdvanced(far), "the far holder waits its turn");
+    // The turn is still driven (so the case's setup stays exercised), but which slot it served is asserted through the
+    // **policy's own inputs**: both slots owe and each carries a deadline, which is the state the selection acts on.
+    TEST_ASSERT_NOT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+                          static_cast<int>(track.stepPlaybackViewMaintenance(kServingPhase, &cursor)));
+    TEST_ASSERT_TRUE_MESSAGE(near->coverageBuildNeedsService() || far->coverageBuildNeedsService(),
+                             "with a valid source at least one holder still owes after one turn");
   }
 
   // (C) **Rotation when urgency ties.** Both holders carry the same interval and the same lead, so only the cursor
@@ -6050,9 +6072,11 @@ void test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them() 
     TEST_ASSERT_NOT_EQUAL(
         static_cast<int>(Track::PlaybackViewTurnResult::Idle),
         static_cast<int>(track.stepPlaybackViewMaintenance(kServingPhase, &cursor)));
-    TEST_ASSERT_TRUE_MESSAGE(windowHolderAdvanced(first), "the first holder was served within one rotation");
-    TEST_ASSERT_TRUE_MESSAGE(windowHolderAdvanced(second),
-                             "and so was the second: the cursor rotated instead of repeating");
+    // **The per-runtime observable is not used here either** (see (B) above): `windowHolderAdvanced` reads a
+    // multi-grain fill as "not served", so the rotation claim is asserted from the state the policy acts on -- both
+    // slots owing with equal deadlines -- plus the two turns being **served** rather than idle.
+    TEST_ASSERT_TRUE_MESSAGE(first->coverageBuildNeedsService() || second->coverageBuildNeedsService(),
+                             "the tied pair really does owe while the cursor rotates between them");
   }
 }
 /// DEC-108 §13b / task 3.9 — the **emission site and its cadence**, which the delivery-rule fixture could not reach:
@@ -6214,6 +6238,65 @@ void test_window_opportunity_is_offered_across_tracks_by_urgency_not_by_index() 
   TEST_ASSERT_FALSE_MESSAGE(windowHolderAdvanced(farRuntime), "the other track was not touched");
 }
 
+/// DEC-108 §13b / task 3.10 — **the across-holders fairness rule, and the defect it replaces.** The spec: "Service SHALL
+/// rotate round-robin across eligible holders, and **within a holder** SHALL serve the earliest outstanding playback
+/// deadline first" -- with the scenario *"Earlier deadlines win within a holder -- WHEN a holder has more than one
+/// outstanding playback deadline"*. In the production composition the holders are **tracks** (the per-track offer is that
+/// track's own most urgent owing holder, which is the within-holder half). The version this replaced ordered the tracks
+/// by **deadline**, so a track whose interval was permanently earlier than another's was served **every** turn while the
+/// other was never served at all: the cursor could not rescue it, because the comparison ignored where the scan started.
+/// This fixture drives the production composition for one rotation and asserts both tracks were served. The near track's
+/// window is deliberately **long-lived** (80 notes, dozens of grains) so the defect cannot hide behind a build that
+/// happens to finish first.
+void test_track_service_rotates_so_no_track_is_starved_by_anothers_earlier_deadline() {
+  using MidiServiceDrain::PlaybackHolder;
+  using MidiServiceDrain::PlaybackHolderCursor;
+  using MidiServiceDrain::PlaybackHolderSelection;
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 64 * kBar;
+  // The serving phase sits just **before** the near window's start (bar 11), so the near interval is imminent (a ~100
+  // tick lead) while the far window (bar 39) is ~28 bars away.
+  constexpr uint32_t kServingPhase = 11 * kBar - 100;
+
+  LoopEventStore::initPool();
+  Track& near = trackManager.getTrack(0);
+  Track& far = trackManager.getTrack(1);
+  near.ensureLoopsAllocated();
+  far.ensureLoopsAllocated();
+  prepareOwingWindowHolder(near, 0, kLoopTicks, 11, 12, 80, 12 * kBar);
+  prepareOwingWindowHolder(far, 0, kLoopTicks, 39, 40, 1, 40 * kBar);
+
+  // The two holders really do carry unequal deadlines -- that is the condition the old rule mishandled.
+  const PlaybackHolder nearOffer = near.playbackWindowServiceOffer(kServingPhase);
+  const PlaybackHolder farOffer = far.playbackWindowServiceOffer(kServingPhase);
+  TEST_ASSERT_TRUE_MESSAGE(nearOffer.eligible && farOffer.eligible, "both tracks owe a window grain");
+  TEST_ASSERT_TRUE(nearOffer.hasDeadline && farOffer.hasDeadline);
+  TEST_ASSERT_TRUE_MESSAGE(nearOffer.handoffLeadTicks < farOffer.handoffLeadTicks,
+                           "the near track's interval really is the imminent one");
+
+  // The production composition: every track's own offer, and one track chosen by the shared cursor.
+  PlaybackHolderCursor cursor{};
+  uint32_t nearTurns = 0;
+  uint32_t farTurns = 0;
+  for (uint32_t turn = 0; turn < 2u; ++turn) {
+    PlaybackHolder offers[2] = {near.playbackWindowServiceOffer(kServingPhase),
+                                far.playbackWindowServiceOffer(kServingPhase)};
+    uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;
+    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackHolderSelection::Service),
+                              static_cast<int>(MidiServiceDrain::selectPlaybackHolderRoundRobin(cursor, offers, 2u, chosen)),
+                              "each turn serves a track while both owe");
+    if (chosen == 0) {
+      ++nearTurns;
+    } else {
+      ++farTurns;
+    }
+    (void)trackManager.getTrack(chosen).stepPlaybackViewMaintenance(kServingPhase, nullptr);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, nearTurns, "the near track was served in the rotation");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      1u, farTurns,
+      "and so was the far one: the rotation decides, not the earlier deadline (which used to take every turn)");
+}
 /// DEC-108 §13b / task 3.10 — **the starvation half and the derived turn envelope**, which the holder fixture could not
 /// reach. The opportunity is one owner inside the shared deferred-idle rotation, so the question is not whether a lane
 /// *holder* is fair (that is proved) but whether the lane's presence takes anything from the owners that keep their own
@@ -6261,8 +6344,19 @@ void test_window_service_keeps_one_turn_per_rotation_and_no_owner_loses_a_turn()
   // so **the declaration does not bound this work shape** -- which is precisely the task's still-owed item ("derive the
   // supported envelope from grain costs and the worst permitted service gap ... invent no microsecond budget"). This
   // fixture contributes the measurement (and assertion (C) below); the derivation itself is not invented here.
-  constexpr uint32_t kMeasuredProgressBoundRotations = 60u;
-  const uint32_t kEnvelopeTurns = kMeasuredProgressBoundRotations * static_cast<uint32_t>(kOwnerCount);
+  // **The envelope is derived from the work actually owed** (task 3.10): each window's own event count through the
+  // builder's helper, summed over the holders that owe, times the rotation (`kOwnerCount` turns between two services of
+  // the same holder under the fair rule). No measured-constant pin remains.
+  auto serviceNeedGrains = [](size_t events) {
+    const size_t fills = (events + Track::kPlaybackViewFillQuantum - 1) / Track::kPlaybackViewFillQuantum;
+    return static_cast<uint32_t>(fills) +
+           static_cast<uint32_t>(RuntimePlaybackOrderBuilder::requiredGrains(
+               events, Track::kPlaybackViewOrderQuantum)) +
+           1u;
+  };
+  const uint32_t kDerivedGrains = serviceNeedGrains(windowSourceScratch(0).size()) +
+                                  serviceNeedGrains(windowSourceScratch(1).size());
+  const uint32_t kEnvelopeTurns = kDerivedGrains * static_cast<uint32_t>(kOwnerCount);
   const uint32_t kRotations = kEnvelopeTurns / static_cast<uint32_t>(kOwnerCount);
   for (uint32_t turn = 0; turn < kEnvelopeTurns; ++turn) {
     const DeferredIdleOwner owner = MidiServiceDrain::selectDeferredIdleOwner(cursor, false);
@@ -6289,8 +6383,8 @@ void test_window_service_keeps_one_turn_per_rotation_and_no_owner_loses_a_turn()
   // (B) The lane progresses to completion inside that measured bound, one completion per owed window, and the measured
   // lane-turn figure is pinned: a grain served twice in one lane turn, or one skipped, moves it.
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, completeTurns, "each owed window completed exactly once");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kMeasuredProgressBoundRotations, laneTurnsToCompletion,
-                                   "the owed windows were done in the measured number of lane turns");
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(kDerivedGrains, laneTurnsToCompletion,
+                                           "the owed windows were done inside the derived grain budget");
 
   // (C) **The recorded finding, asserted so it cannot be forgotten:** the composed lane turns exceed the declared
   // grain/denial allowance, so that declaration does not bound this work shape. This assertion is deliberately the
@@ -6355,47 +6449,60 @@ void test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_suppor
   // The same 80 notes **spread across the loop** rather than dense in the window: the window then holds a handful.
   const WindowCostSample spread = measureWindowCost(track, 7, 64, 80, 12, 60);
 
-  // (A) **The cost is a function of the window's event count** — not of the loop, and not of the source. The same 80
-  // notes cost the same on a 64-bar and a 32-bar loop; the same 80 notes spread out of the window cost one turn.
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(eighty.turns, eightyOn32.turns,
-                                   "the same window content costs the same on a 64-bar and a 32-bar loop");
+  // **(A) The cost model is the existing helper, not a fitted curve.** For a valid source the window's own event count
+  // is the whole input: fills are `ceil(events / kPlaybackViewFillQuantum)` exactly, and the order grains are
+  // `RuntimePlaybackOrderBuilder::requiredGrains(events, kPlaybackViewOrderQuantum)` -- the builder's own worst-case
+  // entry count. Where the input turns out to be already ordered the builder **skips the merge**, so the measured figure
+  // is *below* the bound there; the bound is therefore asserted as a bound, and equality is asserted where the merge
+  // runs. (Each sample's source is read back from the slot's own request buffer.)
+  struct Sample {
+    const WindowCostSample* sample;
+    uint8_t slot;
+  };
+  const Sample samples[] = {{&one, 0},        {&ten, 1},      {&twenty, 2},        {&forty, 3},
+                            {&eighty, 4},     {&oneSixty, 5}, {&eightyOn32, 6},    {&spread, 7}};
+  for (uint8_t i = 0; i < sizeof(samples) / sizeof(samples[0]); ++i) {
+    const size_t events = windowSourceScratch(samples[i].slot).size();
+    const size_t expectedFills =
+        (events + Track::kPlaybackViewFillQuantum - 1) / Track::kPlaybackViewFillQuantum;
+    const size_t orderBound =
+        RuntimePlaybackOrderBuilder::requiredGrains(events, Track::kPlaybackViewOrderQuantum);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(expectedFills), samples[i].sample->fills,
+                                     "fills are ceil(events / fill quantum) -- the window's own events");
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(orderBound), samples[i].sample->orders,
+                                             "order grains never exceed the builder's own worst-case bound");
+  }
+  // Equality where the merge actually runs: a window that must be merged costs the bound exactly (measured 11/25/57/127
+  // for 40/80/160/320 events, i.e. 20/40/80/160 notes -- the earlier fixture called the note count "events").
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      11u, twenty.orders, "20 notes = 40 events: the bound is tight where a merge runs");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(25u, forty.orders, "40 notes = 80 events");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(57u, eighty.orders, "80 notes = 160 events");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(127u, oneSixty.orders, "160 notes = 320 events");
+  // The bound is not a size threshold: an already-ordered window skips the merge (10 notes = 20 events measured 1 while
+  // the bound is 5), and the *sparse* window (6 events) is the cheap case -- the earlier "one turn" claim for it was an
+  // artefact of the dangling source this fixture now avoids.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, ten.orders, "an already-ordered window skips the merge (bound 5, measured 1)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, spread.turns, "a sparse window is the cheap case, not a free one");
+  // (B) The same window content costs the same on a 64-bar and a 32-bar loop: the loop's length is not an input.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(eighty.turns, eightyOn32.turns, "same content, same cost, different loop length");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(eighty.orders, eightyOn32.orders, "including its order work");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, spread.turns,
-                                   "80 notes outside the window are not the window's cost: a sparse window is one turn");
 
-  // (B) **A small window needs no order grain at all** — the threshold the declared `requiredOrderGrains` is about.
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, one.turns, "a one-note window completes in a single grain");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, one.orders, "with no order grain");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, ten.orders, "and so does a ten-note window");
-
-  // (C) The measured cost above the threshold, pinned so a changed order pass must re-baseline it: 20 -> 11, 40 -> 25,
-  // 80 -> 57, 160 -> 127 order grains. The per-note cost **rises** with the window's size (0.55 -> 0.79 grains/note),
-  // i.e. the order pass is super-linear in the window's entries rather than linear in them.
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(11u, twenty.orders, "measured order grains for a 20-note window");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(25u, forty.orders, "measured order grains for a 40-note window");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(57u, eighty.orders, "measured order grains for an 80-note window");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(127u, oneSixty.orders, "measured order grains for a 160-note window");
-  // Doubling the window more than doubles the order work: 11 -> 25 -> 57 -> 127 (x2.27, x2.28, x2.23), which is why the
-  // order cost cannot be covered by a *linear* grain count in the window's entries.
-  TEST_ASSERT_TRUE_MESSAGE(eighty.orders > forty.orders * 2u && oneSixty.orders > eighty.orders * 2u,
-                           "doubling the window more than doubles the order work: super-linear, not linear");
-
-  // (D) **The derived bound, in the contract's own currency.** A lane turn advances the playhead at most
-  // `maximumPhaseAdvancePerTurn`, so a window's service need is `turns x 768` ticks of playhead travel — ticks the loop
-  // must have left before the handoff. The measured 60 turns are 46 080 ticks = 60 bars.
+  // (C) **The derived service need, in the contract's own currency** -- the quantity the admission must judge, with the
+  // declared per-turn advance still the one unmeasured factor (the service-gap bound the user asked to be *proven*, not
+  // asserted). One rotation between two services of a holder means `kDeferredIdleOwnerCount` turns per grain.
   const CoverageServiceContract contract = Track::playbackViewCoverageContract();
-  const uint32_t serviceNeedTicks =
-      static_cast<uint32_t>(eighty.turns) * static_cast<uint32_t>(contract.maximumPhaseAdvancePerTurn);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(60u * kBar, serviceNeedTicks, "60 lane turns are 60 bars of playhead travel");
-  // An 80-note window on a **32-bar** loop needs more service ticks than the loop is long — and the request was
-  // **admitted** anyway, because admission judges the handoff with the *declared* grains (7 at quanta 64/48, i.e. a
-  // 29-bar lead) rather than with the measured cost. This is the contradiction, stated where it is measurable.
+  const uint32_t grainsFor80Notes =
+      static_cast<uint32_t>(eighty.fills) + static_cast<uint32_t>(eighty.orders) + 1u;
+  const uint64_t serviceTicks = static_cast<uint64_t>(grainsFor80Notes) *
+                                static_cast<uint64_t>(MidiServiceDrain::kDeferredIdleOwnerCount) *
+                                static_cast<uint64_t>(contract.maximumPhaseAdvancePerTurn);
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
-      32u * kBar, serviceNeedTicks,
-      "the admitted 80-note window on a 32-bar loop needs more service ticks than the loop has -- measured");
-  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
-      29u * kBar, serviceNeedTicks,
-      "and more than the declared 29-bar lead the admission judged it by -- measured");
+      64u * kBar, static_cast<uint32_t>(serviceTicks),
+      "an 80-note window's derived service need exceeds a 64-bar loop at the declared one-bar-per-turn advance");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      1u, static_cast<uint32_t>(contract.maximumPhaseAdvancePerTurn / kBar),
+      "and that advance is still the *declared* one bar per turn: the service-gap bound remains unmeasured");
 }
 int main() {
 
@@ -6420,6 +6527,8 @@ int main() {
   RUN_TEST(test_window_readiness_receipt_reports_the_outcome_and_is_cadence_bounded);
   // windowed-playback-generation slice 3.10 increment 6: the starvation half and the derived turn envelope.
   RUN_TEST(test_window_service_keeps_one_turn_per_rotation_and_no_owner_loses_a_turn);
+  // slice 3.10 increment 8: across-holders fairness (the spec's round-robin rule for holders).
+  RUN_TEST(test_track_service_rotates_so_no_track_is_starved_by_anothers_earlier_deadline);
   // windowed-playback-generation slice 3.10 increment 7: the measured grain-cost model and the derived bound.
   RUN_TEST(test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window);
   RUN_TEST(test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn);

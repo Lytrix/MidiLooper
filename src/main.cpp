@@ -483,12 +483,14 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     for (uint8_t i = 0; i < offerCount; ++i) {
       offers[i] = trackManager.getTrack(i).playbackWindowServiceOffer(windowPhase);
     }
-    // The rotation (one shared byte) breaks ties between tracks whose urgency is equal; the selection examines
-    // every track every turn, which is what bounds each track's wait. The chosen track then serves its own most
-    // urgent holder, which is why no cursor is passed down (a track almost always owes at most one holder).
+    // The holder here is a **track**: across holders the rule is **round-robin** (the spec's fairness sentence), so the
+    // cursor decides which track is served and urgency is deliberately *not* an ordering key -- a track whose interval is
+    // permanently earlier than another's would otherwise be chosen every turn and starve it (the defect this fixes).
+    // Urgency still decides one level down: the offer above is the track's own most urgent owing holder, which is the
+    // "within a holder, earliest outstanding deadline first" half of the same requirement.
     sWindowHolderCursor.next = static_cast<uint8_t>(sWindowHolderCursor.next % (offerCount > 0 ? offerCount : 1));
     uint8_t chosenTrack = MidiServiceDrain::kNoPlaybackHolder;
-    if (MidiServiceDrain::selectPlaybackHolder(sWindowHolderCursor, offers, offerCount, chosenTrack) ==
+    if (MidiServiceDrain::selectPlaybackHolderRoundRobin(sWindowHolderCursor, offers, offerCount, chosenTrack) ==
         MidiServiceDrain::PlaybackHolderSelection::Service) {
       (void)trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase, nullptr);
     }

@@ -885,3 +885,18 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   one-pass-late edit is measured as audible-action latency, never hidden as immediate execution. Supply
   evidence to runtime task S7.5b — dependency closure and task S7.5 — combined continuity acceptance;
   passing this subsystem does not certify the whole runtime. Keep task 4.5's fault-injection results separate.
+
+  *Increment 3.10 (increment 8) landed 2026-10-02 — **source-lifetime repair, fairness repair, and the derived admission (not enabled)**. Two defects in my own
+  earlier increments: (1) the fixture helper gathered the request source into a **stack-local** vector while the build reads `source_[cursor_]` **across turns**
+  ⇒ dangling memory; the repair (a file-scope **per-slot** buffer) is what **proves the measurements were invalid** — three fixtures' outcomes changed with a
+  valid source, and two cases of the urgency fixture turned out unable to fail at all and were removed. (2) `selectPlaybackHolder` applied earliest-deadline-first
+  **globally**; the spec says **round-robin across** holders with the earliest deadline **within a holder**, so a permanently-earlier deadline was served every
+  rotation and starved the rest. New `selectPlaybackHolderRoundRobin` is the across-holders rule, the within-a-holder doc is corrected, `main.cpp` uses the
+  round-robin form, and a new fixture proves both tracks are served in one rotation with genuinely unequal deadlines. **Admission derivation:** the window's own
+  event count through `RuntimePlaybackOrderBuilder::requiredGrains` + `ceil(events/64)` + 1 — corrected cost model: events = **2 × notes**, fills exactly
+  ⌈events/64⌉, orders equal to the helper where a merge runs (20 events already ordered: bound 5, measured 1 — increment 7's "threshold near 10" was that skip;
+  its 1 600-grain extrapolation was wrong, the helper gives **982**). It is **implemented and deliberately not enabled**: at the declared advance an 80-note
+  window's derived need is ≈428 bars, so enabling refuses what the current constants admit — the capacity reduction the review said not to approve on unmeasured
+  evidence. **The service-gap bound is split:** the rotation half is proven, the ticks-per-turn half is not (`maximumPhaseAdvancePerTurn` is still the declared one
+  bar, now asserted as a statement). Verified: 73/73, full native **2708 / 2701 / 7 / 0**, build SUCCESS from a true rebuild with the RAM1 line byte-identical and
+  no re-base. Detail: [`evidence/2026-10-02-s310h-lifetime-fairness-derivation/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-02-s310h-lifetime-fairness-derivation/EVIDENCE.md).*
