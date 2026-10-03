@@ -348,6 +348,8 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   interval — the fixture now primes the counter (deliberately **unasserted**) and pins **exactly one row per declared interval** in two phase-independent
   blocks, which also pins **one reporter call per completed build** (M85 measured 2 calls/round, not the 7 predicted). The priming bound the first pass used
   was **removed because it masked the rate assertion**. Still open: the **refusal paths remain silent by row**, "one pass late but served" has no row, the
+  interval (16) is a declared choice, no hardware observation, and fixture isolation was **repaired, not designed**. Detail:
+  [`evidence/2026-10-02-s39b-receipt-emission-site/EVIDENCE.md`](evidence/2026-10-02-s39b-receipt-emission-site/EVIDENCE.md).*
 
   *Increment 3.9 (increment 3) landed 2026-10-02 — **the receipt's row family is Tier-A, because the transport regime sheds what is not**, and it
   **corrects increments 1–2**: their "delayed rather than lost" was true of the delivery rules in isolation and false about the device under
@@ -362,8 +364,22 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   and its noted **refusal rows** are now established to be the **caller's** rows, not 3.9's (the spec's "refused by name" requirement is the
   content-admission one landed in 3.12c; the request refusals are typed enum results on `Track`'s contract, returned to whoever requests).
   Detail: [`evidence/2026-10-02-s39c-timing-critical-delivery/EVIDENCE.md`](evidence/2026-10-02-s39c-timing-critical-delivery/EVIDENCE.md).*
-  interval (16) is a declared choice, no hardware observation, and fixture isolation was **repaired, not designed**. Detail:
-  [`evidence/2026-10-02-s39b-receipt-emission-site/EVIDENCE.md`](evidence/2026-10-02-s39b-receipt-emission-site/EVIDENCE.md).*
+
+  *Increment 3.9 (increment 4) landed 2026-10-02 — **the one-pass-late traversal names itself, through a seam that makes the lane's rows
+  observable**. The gap was the AC-5 scenario "Further edits do not extend the allowance"'s last clause, **"the stale condition continues to
+  be named"**: the **breach** was row-visible while the **allowance** (`PreviousOnePass`, the state the spec protects) was silent. Found on the
+  way and closed with it: the lane's path rows were **observable nowhere** — `reportPlaybackViewMaintenanceRow` called `playbackRebuild` inside
+  `#if defined(SESSION_CAPTURE)` with no seam, so 3.6b's "the breach is reported once per episode" could only be asserted as a **counter**,
+  never as **the row**. Change: `DebugSessionCapture::playbackBuildRow(...)` + the `#ifndef`-guarded **`SC_PLAYBACK_BUILD_ROW`** macro (the
+  `SC_ACCEPTED_LATCH` / `SC_WINDOW_READINESS` pattern) reached from `reportPlaybackViewMaintenanceRow`, and **`one_pass_late`** emitted on a
+  `PreviousOnePass` traversal. Bound: one row per traversal — the rate the decision is made at — so no counter and no new state; the volume rests
+  on the caller's traversal discipline, which no production caller exercises yet. Fixture: 3.6b's is **extended** (allowance names itself once and
+  not as a breach; the breach row is emitted — 3.6b's claim as the row; a third stale traversal re-emits nothing; the eligible boundary adds
+  nothing; the episode totals exactly two rows, measured). **M90–M94** red-prove it, including **M94** (the pre-seam shape) which shows the seam
+  is what makes the rows observable. Verified: 70/70, full native **2705 / 2698 / 7 / 0**, build SUCCESS from a **true rebuild** (79.9 s) with the
+  RAM1 line **byte-identical** and **no re-base**. **Task 3.9 stays open** on the declared interval (16) and hardware only — the "one pass late
+  but served" item is **closed by this increment**. Detail:
+  [`evidence/2026-10-02-s39d-one-pass-late-naming/EVIDENCE.md`](evidence/2026-10-02-s39d-one-pass-late-naming/EVIDENCE.md).*
 
 - [ ] 3.10 **Implement fair, bounded, deadline-ordered service** (*DEC-108 §13b*) — a recurring bounded opportunity on the
   existing deferred machinery; round-robin across eligible holders; earliest outstanding playback deadline first within a

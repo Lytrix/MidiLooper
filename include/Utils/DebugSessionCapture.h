@@ -266,6 +266,13 @@ SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                                  uint8_t slotIndex, uint32_t rebuildCount, const char* path,
                                  uint32_t atUs = 0, uint32_t previousPhase = UINT32_MAX,
                                  uint32_t currentPhase = 0, uint32_t eventCount = 0);
+/** The window lane's path row in its **named-field form** -- `DIAG,playback_build,<path>,<loopLengthTicks>,... ` with the
+ *  track/slot/revision the lane knows -- i.e. exactly the call `Track::reportPlaybackViewMaintenanceRow` makes, wrapped
+ *  once so a native suite can substitute its recorder through `SC_PLAYBACK_BUILD_ROW` (the `SC_WINDOW_READINESS`
+ *  pattern). The lane's events are named here: `grain_denied`, `build_complete`, `lag_breach`, `one_pass_late`, the last
+ *  resort. */
+SC_MEM_ATTR void playbackBuildRow(uint8_t track, uint8_t slot, uint32_t loopLengthTicks, uint32_t revision,
+                                  const char* path);
 /** Playback-order rebuild on the same tick as gather: DIAG,playback_order,<durationUs>,<eventCount> (Tier-A). */
 SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount);
 /** The deferred predecessor stop has frozen its interval and handed the live capture role
@@ -509,6 +516,15 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks) \
   DebugSessionCapture::readinessReceiptImmediate(track, slot, readiness, holder, revision, leadTicks)
 #endif
+/// The window lane's **path row** (`DIAG,playback_build,<path>`) — the vehicle every lane event already uses
+/// (`grain_denied`, `build_complete`, `lag_breach`, `one_pass_late`, the last resort). `#ifndef`-guarded so a native
+/// suite can substitute its own recorder (the `SC_ACCEPTED_LATCH` / `SC_WINDOW_READINESS` pattern): without a seam
+/// these rows were emitted under a capture build and **observable nowhere**, so a claim about one of them could only
+/// be asserted as a state, never as the row the claim is about.
+#ifndef SC_PLAYBACK_BUILD_ROW
+#define SC_PLAYBACK_BUILD_ROW(track, slot, loopLengthTicks, revision, path) \
+  DebugSessionCapture::playbackBuildRow(track, slot, loopLengthTicks, revision, path)
+#endif
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
 /// `#ifndef`-guarded so a native suite can substitute its own recorder (the `SC_ACCEPTED_LATCH` pattern).
@@ -666,6 +682,9 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #define SC_PERSIST_RESULT(durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #ifndef SC_WINDOW_READINESS
 #define SC_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks) ((void)0)
+#endif
+#ifndef SC_PLAYBACK_BUILD_ROW
+#define SC_PLAYBACK_BUILD_ROW(track, slot, loopLengthTicks, revision, path) ((void)0)
 #endif
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) ((void)0)
 // `restored-library-stability` 1.3: no records without a capture build (the request trigger is

@@ -1193,6 +1193,14 @@ TRACK_COLD_MEM PlaybackLagDecision Track::advancePlaybackLagTraversal(uint8_t sl
     runtime->deadlineContractFaultLatched = true;
     reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex), "lag_breach");
   }
+  if (decision == PlaybackLagDecision::PreviousOnePass) {
+    // AC-5's **"the stale condition continues to be named"**, and the row the lane was missing: the breach was visible
+    // while the **allowance** -- the state the spec protects, previous revision authoritative, one pass late -- was
+    // silent. One row per traversal, which is the rate this decision is itself made at, so the row can never be more
+    // frequent than the condition it names: no counter, no new state, no cadence interval to justify. Emitted for the
+    // allowance traversal only, so the two names never blur (the breach keeps its own once-per-episode rule).
+    reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex), "one_pass_late");
+  }
   return decision;
 }
 
@@ -2286,17 +2294,17 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::finishPlaybackViewGrain(
 
 TRACK_COLD_MEM void Track::reportPlaybackViewMaintenanceRow(uint8_t slotIndex, Loop& loop,
                                                             const char* path) {
-#if defined(SESSION_CAPTURE)
-  DebugSessionCapture::playbackRebuild(0, loop.loopLengthTicks, 0, loop.playbackRevision,
-                                       playbackRebuildTrackIndex(*this),
-                                       playbackRebuildSlotIndex(*this, loop), 0, path);
-#else
+  // The lane's one row vehicle, reached through the substitutable seam (`SC_PLAYBACK_BUILD_ROW`): byte-for-byte the row a
+  // capture build emits, and one a native suite can observe -- which is what makes a claim about *one of these rows*
+  // (rather than about the state beside it) checkable. The `#if defined(SESSION_CAPTURE)` guard this used to carry now
+  // lives inside the macro, which is `((void)0)` without a capture build; the casts below keep the parameters used in
+  // that build too.
   (void)slotIndex;
   (void)loop;
   (void)path;
-#endif
+  SC_PLAYBACK_BUILD_ROW(playbackRebuildTrackIndex(*this), playbackRebuildSlotIndex(*this, loop), loop.loopLengthTicks,
+                        loop.playbackRevision, path);
 }
-
 TRACK_COLD_MEM const char* Track::playbackWindowReadinessLabel(PlaybackWindowReadiness readiness) {
   // No name table and no `switch`: either is `.data` on this target (the RAM1 rule's finding), and this TU's string
   // literals are routed to FLASH by the linker script -- the pattern `playbackWindowReadinessHolder` established.

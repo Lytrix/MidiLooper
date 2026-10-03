@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 // DEC-108 §13b / task 3.9: the window lane's **readiness receipt**, substituted the way the `#ifndef`-guarded
 // `SC_WINDOW_READINESS` macro invites (the `SC_ACCEPTED_LATCH` pattern this suite's siblings use). The production TU
@@ -30,6 +31,37 @@ inline void record(uint8_t track, uint8_t slot, const char* readiness, const cha
 }  // namespace WindowReadinessRows
 #define SC_WINDOW_READINESS(track, slot, readiness, holder, revision, leadTicks) \
   WindowReadinessRows::record(track, slot, readiness, holder, revision, leadTicks)
+// DEC-108 §13b / task 3.9 (increment 4): the window lane's **path rows** through the same substitutable-seam pattern, so
+// a claim about a row (`lag_breach`, `one_pass_late`) is checked as **the row**, not only as the state beside it. The
+// lane emitted these rows under a capture build only, which is why 3.6b's "the breach is reported once per episode"
+// could be asserted as a counter but never as a row.
+namespace PlaybackPathRows {
+inline const char* paths[64] = {};
+inline uint32_t revisions[64] = {};
+inline size_t count = 0;
+inline void reset() { count = 0; }
+inline void record(uint8_t track, uint8_t slot, uint32_t loopLengthTicks, uint32_t revision, const char* path) {
+  (void)track;
+  (void)slot;
+  (void)loopLengthTicks;
+  if (count < sizeof(paths) / sizeof(paths[0])) {
+    paths[count] = path;
+    revisions[count] = revision;
+  }
+  ++count;
+}
+inline size_t countOf(const char* path) {
+  size_t seen = 0;
+  for (size_t i = 0; i < count && i < sizeof(paths) / sizeof(paths[0]); ++i) {
+    if (paths[i] != nullptr && strcmp(paths[i], path) == 0) {
+      ++seen;
+    }
+  }
+  return seen;
+}
+}  // namespace PlaybackPathRows
+#define SC_PLAYBACK_BUILD_ROW(track, slot, loopLengthTicks, revision, path) \
+  PlaybackPathRows::record(track, slot, loopLengthTicks, revision, path)
 //
 // **S3 gate — `runtime-working-set-ownership` acceptance suite.** The stage's unit contracts live in
 // `test_working_set_lease` (the vocabulary) and `test_continuous_capture` (the per-owner-kind matrix
@@ -4339,6 +4371,9 @@ void test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second
                         0, interval.startPhase, interval.lengthTicks, servedRevision, false)));
   TEST_ASSERT_EQUAL_UINT8(0, track.playbackLagMissedTraversalsForSlot(0));
   TEST_ASSERT_EQUAL_UINT8(0, track.playbackLagBreachReportsForSlot(0));
+  // From here the fixture is about the lag rows, so start the recorder at the episode's beginning: the lane's other path
+  // rows (`build_complete`, `grain_denied`) were produced while setting the served window up.
+  PlaybackPathRows::reset();
 
   // An edit advances the desired revision, and nothing is published for it.
   commitRecordPassIntoTrackSlot(track, 0);
@@ -4359,6 +4394,13 @@ void test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second
   TEST_ASSERT_TRUE_MESSAGE(beforeMiss == afterMiss, "a missed traversal must not tear the served window");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(servedRevision, afterMiss.playbackRevision,
                                    "the previous revision is still what is served");
+  // (W-22 rows) **The allowance traversal names itself** -- AC-5's "the stale condition continues to be named". This is the
+  // row the lane was missing: the breach was visible while the state the spec protects (previous revision authoritative,
+  // one pass late) was silent. Exactly one row, and it is the allowance's, because the breach has not happened yet.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "the one-pass-late traversal is named in the evidence stream");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(PlaybackPathRows::countOf("lag_breach")),
+                                   "and it is not named as a breach, which it is not");
 
   // (W-23) A **further edit** must not forgive the outstanding miss, and the second consecutive miss is the named
   // breach -- reported once, with the previous revision still served.
@@ -4372,6 +4414,10 @@ void test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second
                                   "and the further edit did not reset the allowance");
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagBreachReportsForSlot(0),
                                   "the breach is reported once per episode");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("lag_breach")),
+                                   "the breach row is emitted -- 3.6b's claim, now checked as the row itself");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "and the allowance's name is not reused for a breach traversal");
   TEST_ASSERT_TRUE(track.playbackLagBreachReportedForSlot(0));
   TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::BreachSecondMiss),
                     static_cast<int>(track.advancePlaybackLagTraversal(
@@ -4379,6 +4425,8 @@ void test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second
   TEST_ASSERT_EQUAL_UINT8(3, track.playbackLagMissedTraversalsForSlot(0));
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagBreachReportsForSlot(0),
                                   "a third miss keeps breaching without re-reporting");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("lag_breach")),
+                                   "a third stale traversal re-emits no breach row: the row obeys once-per-episode too");
 
   // (W-21 through the seam, W-24) A replacement published before this traversal makes the boundary Current and ends
   // the episode; a *different* interval then starts a clean one.
@@ -4386,6 +4434,15 @@ void test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second
                     static_cast<int>(track.advancePlaybackLagTraversal(
                         0, interval.startPhase, interval.lengthTicks, loop.playbackRevision, true)));
   TEST_ASSERT_EQUAL_UINT8(0, track.playbackLagMissedTraversalsForSlot(0));
+  // **The naming, through the seam**: the episode ends at an eligible boundary, so the two rows it produced stand and the
+  // boundary that serves current names nothing. (This also makes 3.6b's once-per-episode breach claim a claim about the
+  // *row* rather than only about the counter beside it.)
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "one allowance traversal, one allowance row");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("lag_breach")),
+                                   "one breach episode, one breach row, however many stale traversals it contains");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, static_cast<uint32_t>(PlaybackPathRows::count),
+                                   "and the eligible boundary that serves current adds no row at all");
   TEST_ASSERT_FALSE(track.playbackLagBreachReportedForSlot(0));
   TEST_ASSERT_EQUAL(static_cast<int>(PlaybackLagDecision::Current),
                     static_cast<int>(track.playbackLagDecisionForSlot(0)));
