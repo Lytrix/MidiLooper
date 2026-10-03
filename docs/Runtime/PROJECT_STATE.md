@@ -26,9 +26,21 @@ the tree is documented to sit on). Verification: full native **2,714 cases / 2,7
 (baseline 2,709) with `test_logger_gate` **4/4** and `test_runtime_working_set_ownership` **75/75** (the S4b.4
 display fixture now also proves the deferral: nothing observed before the drain, the recorded pair after it; the
 commit row is asserted as **rendered text**; the queue's FIFO/overflow/wrap bounds are pinned);
-`teensy41-capture-serial` SUCCESS through the RAM1 guard. **Owed:** a device evaluation (upload + a bounded leg) —
-the moved rows and the deferred LED/display refresh are observable over serial — and the review's item 5 and its
-cleanup list are untouched. Note for the session log: `pio run -e teensy41` (the *plain*, non-capture env) fails to
+`teensy41-capture-serial` SUCCESS through the RAM1 guard, **and the device half is now measured** (authorized track 8
+slots 4/5; `captures/pi-timing-edge-01`; image `050ae3bd…`, `git_commit c7adebd6`, `git_dirty: false`; the S4b8
+switch-during-finalization wrapper). The commit row is still emitted, unchanged and in place — `Button press: Loop 4
+(short)` 15.478 → `Loop 4: Queued playback switch` 15.534 → **`LoopEnd playback commit track=7 4->3 start=0
+len=768`** 16.457, and `3->4` at 66.190 for the second press — with the row's own deferral measured at **22 ms**
+(`All Notes Off sent @ tick 773` 16.435 is the edge's inline row), i.e. within one main-loop frame; the switch's
+**LED refresh still rides the commit** (channel-15 feedback 311 ms after the press, at the LoopEnd boundary). Zero
+`Edge effects dropped`, zero `DROID host feedback queue overflow`, zero `RING,overflow|shed|wiped|head_bad`, all
+`PERS,result,…,ok`, `MIDI-boundary timing … overflow_free=True call_sites=True`, both DISP checks green,
+`boot_reset,crash=0`. **Named limits:** the base recipe's own verdict is `FAIL (FIRMWARE_CONTRADICTION)` on its two
+documented pre-existing overdub findings (the same failure this recipe already carried), and **no DROID host was
+attached**, so items 2/3's queue is not exercised on device — its evidence stays the ring's native fixtures. The
+review's item 5 and its cleanup list are untouched. Note for the session log: `pio run -e teensy41` (the *plain*,
+non-capture env) fails to compile on `SC_LIBRARY_OBSERVATION_*` argument counts in `LibraryObservationSession.cpp`;
+that file is unmodified here and the failure predates this slice.
 compile on `SC_LIBRARY_OBSERVATION_*` argument counts in `LibraryObservationSession.cpp`; that file is unmodified
 here and the failure predates this slice.
 [Scope entry](CURRENT_WORK.md#now-implementing), [bounds rows 32/33](Authority/Architecture/ExecutionBounds.md).

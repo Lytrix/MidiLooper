@@ -4941,11 +4941,26 @@ Verification: full native **2,714 cases / 2,707 succeeded / 7 skipped / 0 failed
 category flag off) and three new/updated fixtures in `test_runtime_working_set_ownership` (**75/75**): the S4b.4
 display fixture now also proves the **deferral** (nothing observed before the drain, the recorded pair after it),
 the commit row is asserted as *rendered text* through a native `info()` seam, and the queue's FIFO/overflow/wrap
-bounds are pinned. `teensy41-capture-serial` SUCCESS through the guard. **Owed, and named rather than implied:** a
-**device evaluation** (upload + a bounded leg) because the moved rows and the deferred LED/display refresh are
-observable over serial; the review's remaining items (5 and the cleanups) are untouched; `handlePendingRecordStart`,
-`stopRecordingTrack` and `handleTransportStop`'s own `forceMidiLedUpdate` stay on their current owners (the review
-named the tick edge, and moving a stop/record *commit* is a scheduling decision, not a side-effect move).
+bounds are pinned. `teensy41-capture-serial` SUCCESS through the guard.
+
+**Device evaluation (authorized track 8 slots 4/5; `captures/pi-timing-edge-01`; image `050ae3bd…`, `git_commit`
+`c7adebd6`, `git_dirty: false`; S4b8 switch-during-finalization wrapper):** the tick edge's commit row is still
+emitted, with its text and field order unchanged and in the right place — `Button press: Loop 4 (short)` 15.478 →
+`Loop 4: Queued playback switch` 15.534 → **`LoopEnd playback commit track=7 4->3 start=0 len=768`** 16.457 (and
+`3->4` at 66.190 for the second press) — and the row's own measured deferral is **22 ms** (`All Notes Off sent @
+tick 773` 16.435, the edge's inline row, against the drain's commit row), i.e. bounded by one main-loop frame. The
+slot-switch **LED refresh still rides the commit** (channel-15 feedback 311 ms after the press, at the LoopEnd
+boundary). Zero `Edge effects dropped`, zero `DROID host feedback queue overflow`, zero
+`RING,overflow|shed|wiped|head_bad`, all four `PERS,result,…,ok`, `MIDI-boundary timing … overflow_free=True
+call_sites=True`, both DISP checks green, `boot_reset,crash=0`. **Named limits, not glossed:** the base recipe's own
+verdict is `FAIL (FIRMWARE_CONTRADICTION)` on its two **documented, pre-existing** overdub findings
+(`overdub_unmatched_open_notes`, `overdub_out_of_range_notes` — the same failure the S4b8 record already carries for
+this recipe, and the reason its own entry says "not a green baseline"); and **no DROID host was attached**, so items
+2/3's queue was never pushed on device (no push happens without `canSendUsbHostMidi()`) — their evidence remains the
+ring's native fixtures plus the verified placement. Still untouched: the review's item 5 and its cleanup list;
+`handlePendingRecordStart`, `stopRecordingTrack` and `handleTransportStop`'s own `forceMidiLedUpdate` stay on their
+current owners (the review named the tick edge, and moving a stop/record *commit* is a scheduling decision, not a
+side-effect move).
 
 ### S4.5 — same-slot record-finalization reuse fix (2026-10-02)
 
