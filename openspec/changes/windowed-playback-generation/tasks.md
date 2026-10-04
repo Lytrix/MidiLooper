@@ -1088,3 +1088,17 @@ the two-holder fixtures 200 -> 300 bars, the retention fixtures 30 -> 70 bars wi
 all restored byte-identically (`Track.h 3ae6b899699f2692`, `TrackPlaybackWindowBuild.cpp 1ff579cb96e31498`). Evidence:
 [`evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md`](evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md)
 § Addendum.
+
+**Task 3.10 (increment 25c) — the declaration re-measured on this increment's own image: it holds.**
+Owner-authorized flash of `16a1f931` (hex `bde422e5…`, `git_dirty: false`), then three legs of the authoritative entry
+point: internal (INCONCLUSIVE_CAPTURE/EVIDENCE_MISSING, its rows still used), internal fresh-boot (**PASS**), and 300 BPM
+(**PASS**). Together with the two legs on the previously flashed image: **300 BPM reproduces 48 ticks on both images**,
+internal p90 8-10 / p95 17 across four legs, **no saturated gaps anywhere**, and the only row above 64 in five legs
+(0.24%) sits inside a **4 561-node snapshot allocation and publication** — a *blocked* gap by a heavy non-lane owner,
+not a scheduling delay. The declaration **stands at 64 ticks** with its basis stated precisely (>= the measured 300-BPM
+maximum with a 1.33x margin, >=2.9x the internal p95, and explicitly not a bound on every observed gap). The first
+internal leg's `display_empty_after_overdub_stop` **did not reproduce on the retry**, so it is a run artifact, not a
+finding — backed by the byte-identical ITCM code figure (390,472), `FLASHMEM` placement of the new code, untouched
+`src/main.cpp`/sampler/emitter, and no production window request. No code change was needed. Detail:
+[`evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md`](evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md)
+§ Addendum 2.

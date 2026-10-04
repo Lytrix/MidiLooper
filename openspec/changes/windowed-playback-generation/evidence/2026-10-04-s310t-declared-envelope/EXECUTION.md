@@ -181,3 +181,54 @@ moved **inside** it.
 - One device run per tempo, an instrumented build, per-block maxima rather than per-dispatch samples: the declaration is
   set from the worst *measured* scheduling maximum with a stated margin, and the next device leg can tighten it the same
   way. **No upload; no timing-envelope acceptance claim.**
+
+---
+
+## Addendum 2 (same session): the device leg repeated on **this increment's image** (the owner authorized the upload)
+
+The owner authorized flashing, so both tempos were measured again on the image that *declares* the bound, not on the
+previously flashed one. Three legs, `--build-upload` building and flashing `16a1f931` (hex
+**`bde422e5659a7b7c34655b475325462e37e51c63e455af01b112f5bca3249967`**, `metadata.json` records
+`git_commit 16a1f931…`, **`git_dirty: false`**):
+
+| Leg | Image | Clock | Capture | Rows / opportunities | Verdict | `eligiblePred` p50 / p90 / p95 / p99 / **max** | >64 |
+|---|---|---|---|---:|---|---|---:|
+| A | current `bde422e5` | internal | `captures/step4b-lane-internal-current` | 94 / 4 864 | INCONCLUSIVE_CAPTURE (EVIDENCE_MISSING; `persistence_active_snapshot_unavailable_during_save`, `display_empty_after_overdub_stop`) | 7 / 8 / 17 / **70** / **70** | 1 |
+| A-retry | current | internal, fresh boot (`--boot-reset`) | `captures/step4b-lane-internal-current-retry` | 87 / 6 144 | **PASS** | 9 / 10 / 10 / 22 / **22** | 0 |
+| C | current | host clock, **300 BPM** (`--boot-reset`) | `captures/step4b-lane-external300-current` | 94 / 5 888 | **PASS** | 8 / 8 / 16 / 48 / **48** | 0 |
+| A' | flashed `7c2a1377` | internal | `captures/step4-lane-internal-led` | 226 / 68 352 | FAIL (large-loop slice bounds) | 0 / 9 / 9 / 15 / **17** | 0 |
+| B' | flashed | 300 BPM | `captures/step4-lane-external300` | 97 / 5 888 | **PASS** | 8 / 16 / 16 / 48 / **48** | 0 |
+
+**What reproduces, and what does not.** The **fastest declared tempo gives 48 ticks on both images, to the tick**
+(two independent runs), and the internal *scheduling* population is stable at p90 8-10 / p95 17 across the four internal
+legs. No leg reported a saturated gap. The one variable figure is the internal **tail**.
+
+**The single exceedance, classified with evidence rather than excused.** The only row above 64 in five legs (1 of 411
+rows with work, 0.24%) is `#CAP,27539099,DIAG,win_gap,75,1536,2849,1,1,70,4,4,0,295,4,0,2` — and its *neighbourhood*
+in the same capture shows what held the loop: `DIAG,snapshot_unit,kind=step` immediately before it and
+`kind=step` / `kind=alloc,nodes=4561,bytes=327240` / `kind=finish` / `kind=publish` immediately after, i.e. a
+**4 561-node snapshot allocation and publication** was in flight across that gap, while the lane's own worker took
+**295 us**. That is a **blocked** gap — a heavy non-lane owner holding the loop — not a scheduling delay of this
+owner, which is exactly the class the declaration does not claim to bound and the overrun policy covers. Enlarging the
+constant to cover it would be the repair increment 17 forbade (its fixture pins `declared < the measured starvation
+episode`), and it would trade away real capability for a figure that a *run* of lost turns can exceed anyway.
+
+**The declaration therefore stands at 64 ticks, with its basis stated precisely:** at or above the **measured maximum at
+the fastest declared tempo (48, reproduced on two images)** with a 1.33x stated margin, and at or above the internal
+scheduling population (p90 8-10, p95 17, 22 in the retry) with >=2.9x. It is **not** claimed as a bound on every gap an
+observer will see: a blocked owner can exceed it, and that miss is reported and contained by the lag rule rather than
+absorbed into the constant.
+
+**The leg-A verdicts, recorded as they came out.** `INCONCLUSIVE_CAPTURE (EVIDENCE_MISSING)` with
+`persistence_active_snapshot_unavailable_during_save` and `display_empty_after_overdub_stop` — and the **retry on the
+same image PASSED**, so the display issue did not reproduce and is a run/capture artifact of that leg, not a finding
+about this increment. That reading is backed rather than assumed: increments 24-25 change **no production path** — the
+ITCM code figure is byte-identical (`code 390,472`, so the pinned layout is unchanged), the added code is `FLASHMEM`
+(not ITCM), `src/main.cpp`, the sampler and the capture emitter are untouched, and the admission is never called because
+no production path requests a window. The INCONCLUSIVE leg's lane rows are nonetheless included above as evidence of the
+distribution (they are the reason the tail is visible at all).
+
+**One run per tempo per image, an instrumented build, per-block maxima** — the declaration is set from the worst
+*measured scheduling* maximum with a stated margin; the next leg can tighten it the same way, and nothing here is an
+acceptance claim for the timing envelope as a whole (activation, the re-attempt and a production requester are still
+owed).
