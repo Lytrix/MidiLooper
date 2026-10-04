@@ -140,3 +140,10 @@ this increment: the elapsed-time **O8 re-attempt**, the `H x K` sweep of the dec
 envelope/overrun (grain duration and maximum service gaps), and the production requester itself. This increment adds no
 device evidence, no upload, no timing acceptance claim and no new owner.
 
+
+Landed as **`ef6c1325`** on `feature/windowed-playback-generation`, after two comment-only edits to
+`TrackPlaybackWindowBuild.cpp`/`TrackPlaybackRuntime.h` (documentation, no behaviour). Because those edits followed the
+mutation run, the focused suite and the capture build were **re-run at the final tree**: focused **97/97**,
+`pio run -e teensy41-capture-serial` **SUCCESS**, RAM1 `variables 96,192` / `code 390,472` / `padding 2,744`
+(1,904 B above the approved floor) and `firmware.elf` relinked after the last source change. Firmware hex
+`19b6682affd625cd280c2a584cb952443c8f2081987e56c50fc15d99720e6086` -- **not uploaded**.
