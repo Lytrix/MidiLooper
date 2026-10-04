@@ -1,14 +1,14 @@
 # Reconciliation — the change's remaining tasks against the code and the evidence
 
-**Current closeout — the `H x K` contention sweep, atop `25542299`, the gated rolling slice and the preserved cumulative
-uncommitted work.** Full native: **2,789 cases / 2,782 passed / 7 skipped / 0 failed**. Default capture build passes the
-unchanged RAM1 floor 840 (padding **1,640**; the explicit rolling qualification build's 984 is from the rolling slice).
-No upload or commit. Earlier counts below and in dated runtime history are historical, not final-tree verification. Two
-slices sit in this dirty tree: the gated rolling handoff
-([ROLLING_HANDOFF.md](evidence/requester-retry-integration/ROLLING_HANDOFF.md)) and the test-only contention sweep
-([EVIDENCE.md](evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md)), each with its own durable verification
-manifest for the exact scope and results.
-
+**Current closeout — the activation audit, atop `25542299`, the gated rolling slice, the `H x K` contention sweep and the
+preserved cumulative uncommitted work.** Full native: **2,791 cases / 2,784 passed / 7 skipped / 0 failed**. Default
+capture build passes the unchanged RAM1 floor 840 (padding **1,640**; the explicit rolling qualification build's 984 is
+from the rolling slice). No upload; the first two slices are committed (`2620168e`), the audit is not. Earlier counts below
+and in dated runtime history are historical, not final-tree verification. Three slices sit in this tree's history: the
+gated rolling handoff ([ROLLING_HANDOFF.md](evidence/requester-retry-integration/ROLLING_HANDOFF.md)), the test-only
+contention sweep ([EVIDENCE.md](evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md)) and the activation audit
+([EVIDENCE.md](evidence/2026-10-05-s310y-activation-audit/EVIDENCE.md)), each with its own durable verification manifest
+for the exact scope and results.
 **Method / corrected dependency reading.** Task completion requires code, production-path
 fixtures and the applicable evidence. Implementation, controlled enablement, qualification and
 fallback removal are separate stages. `requestCommittedPlaybackWindow` and
@@ -49,7 +49,7 @@ audible handoff contract. The corrections below do not check off unfinished acce
 | 3.1–3.6, 3.8, 3.11 | **checked** | `stepPlaybackViewMaintenance`, `publishCompletedBuildAsCurrentWindow`, `PlaybackWindowIdentity`, `playbackWindowReadinessForSlot`, `RetainedIntervalIndex`, `resolvePlaybackLag`, `RetainedPlaybackSource`, `resolvePlaybackViewTransition` | `s31`, `s32`, `s34`, `s35`, `s36a/b/c`, `s311`, `REUSE-BEFORE-INVENTION.md` | 3.11 carries one **named gap**: the prepared-successor retirement branch is unfixtured, deferred to the slice that gives the successor lane a production caller (this document's §3) |
 | 3.7 remove the live mutable merged-window build | **open — gate still closed, nothing implemented** | target intact: `Track::playMidiEventsForSlot` (`src/Track/TrackPlaybackHotPath.cpp:505`), `useMergedFallback` → `buildMergedPlaybackFallbackCold` (`:308-311`), live buffer `mergedMidiEvents` (`include/TrackPlaybackRuntime.h:474`) | no evidence dir exists | gate items 3.12, 3.13, 3.14, 4.5 are **not** at full verification and the gated requester/handoff does not establish continuous service or recovery — see §3 |
 | 3.9 readiness receipts | **open** — landed 4/4 increments | `readinessReceiptImmediate` (`src/Utils/DebugSessionCapture.cpp:1562`), `reportPlaybackWindowReadinessReceipt` (`src/Track/TrackPlaybackWindowBuild.cpp:3175`), `playbackBuildRow`, Tier-A row `DIAG,win_readiness,` (`include/Utils/CaptureLineTier.h:179`) | `s39`, `s39b`, `s39c`, `s39d` | the declared cadence interval (16) and **hardware**; the refusal rows were re-assigned to the caller (3.12c's admission) |
-| 3.10 fair, bounded, deadline-ordered service | **open** — the change's front line | `selectPlaybackHolder` (`include/Utils/MidiServiceDrain.h:298`), `handoffLeadTicks`, `playbackWindowServiceOffer`, the offer+sweep dispatch (`src/main.cpp:477-516`), `preparePlaybackLaunchForSlot` ← `servicePendingSlotProvision` (`src/TrackManager/TrackManagerSlotMatrix.cpp:399`) | `s310`…`s310p`, `timing-envelope-qualification`, and the uncommitted `requester-retry-integration/*` | see §3 below; **wiring** and the **starvation half** are closed, the **envelope derivation**, **one grain per turn** as a uniform invariant, **continuous refill** remain open; a default-off current-root lookahead/boundary-adoption slice is verified, not general enablement |
+| 3.10 fair, bounded, deadline-ordered service | **open** — the change's front line | `selectPlaybackHolder` (`include/Utils/MidiServiceDrain.h:298`), `handoffLeadTicks`, `playbackWindowServiceOffer`, the offer+sweep dispatch (`src/main.cpp:477-516`), `preparePlaybackLaunchForSlot` ← `servicePendingSlotProvision` (`src/TrackManager/TrackManagerSlotMatrix.cpp:399`) | `s310`…`s310p`, `timing-envelope-qualification`, the gated `requester-retry-integration/*`, the `H x K` sweep and the activation audit | see §3 below; **wiring**, the **starvation half**, the **envelope derivation** (measured: the composed cost law, the density/span axes and the boundary pair) and the **contention** half (`H x K`) are closed; **one grain per turn** as a uniform invariant, **continuous refill**, the **clock/tempo** sweep beyond the declared advance and the **device leg** remain open, and activation itself is now an owner **enablement decision** (the demand that exists carries its stamp; the launch and the capture edge are exempt by design) |
 | 3.12 admission limit + bounded legacy path | **open** — 3.12a/b/c landed | `kWindowAdmissionLimit = kEventsPerView` with `WindowAdmissionAccounting` (`include/RuntimePlaybackView.h:28,44-92`), `captureIntervalAdmissionForSlot` + the MIDI-edge gate (`src/Track/TrackCaptureInput.cpp:768-769,940-962`), `WindowPagedStream`/`WindowPageCursor` (`include/WindowPagedStream.h:58`) | `s312a`, `s312b`, `s312c` | fixture **5.5**'s timing envelope (over-capacity same-tick, wrap, cross-page closures) and the paged path's **production consumer**; the ring size (3×128) and closure reserve (128) stay declared-but-unmeasured choices |
 | 3.13 preview contract | **open** — landed | `PlaybackWindowOrigin` in both identities (`include/RuntimePlaybackView.h:147,160,194`), `requestPreviewWindow` / `cancelPreviewWindowForSlot` (`src/Track/TrackPlaybackWindowBuild.cpp:2632,2676`) | `s313` | fixture 2.12's integration half + the production callers (preview requester, `EditManager` lifecycle hooks) |
 | 3.14 undo/redo audible handoff | **open** — 3.14a/b/c landed; production path exists | `refreshPlaybackAfterCommittedPassStateChange` / `refreshPlaybackAfterEditPassStateChange` (`src/TrackUndo.cpp:263,278`), `reconcileAfterCommittedPassStateChange` / `reconcileAfterEditPassStateChange` (`src/Track/TrackPlaybackWindowBuild.cpp:2992,3016`) | `s314`, `s314b`, `s314c` | the refresh is still not a **request through the immutable publication owner**; no between-grains matrix (3.10/3.14 serving-path integration, before 3.7 removal); `UndoEntryKind::RecordPassAdded`'s undo never calls the refresh (recorded finding) |
@@ -118,8 +118,11 @@ acceptance, not work that must wait for those downstream gates to pass.
    promotion grain and the order bound are charged while the work lands inside the completing turn), and the
    declaration's `Delta-max x H x lead` predicts **where** a promise stops being keepable -- a shape just outside
    it still admits (the unenforced admission judges only the request's own cost) and is then named
-   `one_pass_late`. What remains on the service side is therefore not a missing constant but the **callers'
-   clock wiring** (activation) and the wider sweep axes.
+   `one_pass_late`. **The callers' clock wiring is audited (2026-10-05) and the demand that exists is already stamped:**
+   the only production window request is the lane turn's `serviceRollingPlaybackWindow` (the launch is unpositioned by
+   construction and never judged, and the capture edge takes no clock because it is accounting, not a promise). What
+   remains on the service side is therefore the owner's **enablement decision plus the device leg**, and the wider sweep
+   axes -- not a missing stamp and not a missing constant.
 4. **The cumulative work remains uncommitted.** Final native and both build results
    are recorded above and in the slice manifest. No commit or upload was requested
    for this slice; preserved earlier device observations are not this image's proof.

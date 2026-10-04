@@ -1,3 +1,25 @@
+**Activation's clock-wiring question is answered with evidence: the production demand is stamped; the launch and the
+capture edge are exempt by design (test-only slice).**
+Task 3.10's own records named *"the clock-owner wiring"* as what activation needs (*"the MIDI edge, the switch
+preparation and the preview lane do not pass stamps yet"*). The audit pins what is actually true now: the **only**
+production window request is the lane turn's `serviceRollingPlaybackWindow`, which takes `ClockManager`'s clock in
+`main.cpp` and refuses an unqualified stamp with `Excluded` **before** promising anything (`requestPlaybackWindow` and
+`requestPreviewWindow` have no production caller -- the preview's belongs to 3.13); the **launch** is unpositioned by
+construction (`clockEpoch == 0`, `deadlineTick == 0`), is never judged late even when the clock runs far past any
+deadline, and still prepares and binds with the interference budget enforced; and the **capture edge**
+(`captureIntervalAdmissionForSlot`) takes no clock at all because it is a capacity answer, not a promise. So the
+remaining activation step is the **owner's enablement decision plus the device leg** (6.5), not a missing stamp. Three
+mutations red-prove the audit (MA1 the rolling epoch guard dropped, MA2 the launch given a position, MA3 the
+unpositioned guard dropped) and are restored byte-identically; no production line was edited. Focused **137/137** (was
+135), full native **2791 / 2784 succeeded / 7 skipped / 0 failed**, capture build SUCCESS with the RAM1 line
+byte-identical (variables 96,192 / padding 1,640), strict validation and `git diff --check` clean. **Recorded, not
+smoothed:** three earlier runs of the focused suite failed at the pre-existing `assert_s4b_7_a_demoted_target_through_the_turn`
+helper (`Expected 2 Was 0. the root-backed demoted switch must commit`) and the same byte-identical source then passed
+20+ runs (13 without a rebuild, 5 with `MALLOC_PERTURB_`), a clean rebuild and the full suite; the cause is **open and
+unproven** (a stale incremental-build object or an uninitialised read in the launch/commit path), and nothing here claims
+the helper is sound. No upload, no commit yet, no task checkoff. Evidence:
+[`activation-audit`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s310y-activation-audit/EVIDENCE.md).
+
 **The declared `H x K` envelope is measured on the composition, and it holds (test-only slice).**
 The `Delta-max x H x bounded per-track work` formula had each multiplier derived and its *composition* never measured:
 one lane turn serves one **track**, a track's sibling slots share that track's turns, and both are paid for out of one

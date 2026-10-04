@@ -1430,3 +1430,28 @@ constant moved, no upload, no commit. **Task 3.10 and 6.3 stay open** (device se
 density, other tempos and the device leg); this slice supplies the contention axis, the measured cost law and the
 boundary. Detail:
 [`evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md`](evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md).
+
+**Task 3.10 — activation audit: the production demand is stamped, and the exempt paths are pinned (2026-10-05; test-only).**
+Increment 25 left *"activation … needs the clock-owner wiring"* and measured that *"the MIDI edge, the switch preparation
+and the preview lane do not pass stamps yet"*. The audit pins what is true now, with no production line edited: the **only**
+production window request is the lane turn's `Track::serviceRollingPlaybackWindow` (reached from `src/main.cpp` with
+`clockManager.getPlaybackDeadlineClock()`); an unqualified stamp yields `Excluded` **before** any promise (no rolling
+frame, no retained demand), while the stamped call's demand and frame carry the same epoch and absolute deadline;
+`requestPlaybackWindow` and `requestPreviewWindow` have **no production caller** (the preview's belongs to 3.13). The
+**launch** demand is unpositioned by construction (`clockEpoch == 0`, `deadlineTick == 0`), and a far-future clock names no
+`one_pass_late`/`lag_breach`/`promise_epoch_invalidated`/`pending_position_invalidated` row for it — unpositioned is not
+late; with `sInterferenceBudgetEnforced` on it still prepares and binds, because the budget governs promises and a launch
+makes none. The **capture edge** (`captureIntervalAdmissionForSlot`) takes no clock: it is a capacity answer, not a
+promise. So what remains for activation is the **owner's enablement decision plus the device leg (6.5)**, not a missing
+stamp. Three mutations red-prove the audit, restored byte-identically (**MA1** the rolling epoch guard dropped → `Excluded`
+becomes `Requested`; **MA2** the launch demand given a position; **MA3** the unpositioned guard dropped → a far-future
+clock mints an epoch invalidation); `git diff --stat -- src include` is empty afterwards. Verified: focused **137/137**
+(was 135), full native **2791 / 2784 succeeded / 7 skipped / 0 failed**, capture build SUCCESS with the RAM1 line
+byte-identical, strict validation valid, `git diff --check` clean. **Recorded rather than smoothed:** three earlier focused
+runs failed at the pre-existing `assert_s4b_7_a_demoted_target_through_the_turn` helper (`Expected 2 Was 0. the
+root-backed demoted switch must commit`) and the same byte-identical source then passed 20+ runs (13 without a rebuild, 5
+under `MALLOC_PERTURB_`), a clean cache rebuild and the full suite; the cause is **open and unproven** (a stale
+incremental-build object or an uninitialised read in the launch/commit path), and no claim is made that the helper is
+sound. **Task 3.10 stays open** on service qualification (device enforcement), and 6.3's remaining axes and 3.7's removal
+are untouched. Detail:
+[`evidence/2026-10-05-s310y-activation-audit/EVIDENCE.md`](evidence/2026-10-05-s310y-activation-audit/EVIDENCE.md).

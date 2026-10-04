@@ -9184,11 +9184,115 @@ void test_rolling_generation_change_at_completion_publishes_nothing() {
 
 // DEC-108 §13b / task 3.10 + 6.3: the `H x K` contention sweep (the declared envelope, measured on the composition).
 #include "../test_support/window_contention_sweep.inc"
+
+/// **Task 3.10 -- the activation audit, half 1: the production demand carries a qualified stamp, and an unqualified one
+/// promises nothing.**
+///
+/// Task 3.10's own remainder names *"the clock-owner wiring"* as what activation still needs. This pins what the demand
+/// that exists today does. `src/main.cpp`'s lane turn takes its clock from `ClockManager` and hands it to
+/// `Track::serviceRollingPlaybackWindow` -- the only production window request: `requestPlaybackWindow` (the
+/// caller-owned-scratch entry) and `requestPreviewWindow` have **no production caller** (the preview's belongs to 3.13),
+/// the launch makes no promise (half 2 below) and the capture edge only accounts. An unqualified stamp is refused
+/// **before** anything is promised (DEC-108 §13c's fail-closed direction), and the demand a qualified call retains
+/// carries the same epoch and deadline the frame does -- so every input the enforced admission reads comes from the one
+/// stamp the caller supplied.
+void test_activation_audit_the_production_demand_is_positioned_and_an_unqualified_clock_is_refused() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const uint64_t origin = clockManager.getCurrentTick();
+
+  // **(A) Unqualified: nothing is promised.** The frame stays idle and no demand is retained -- the refusal is the
+  // error, never a position minted from a clock that carries none.
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(2), "the audit needs a slot with no retained demand");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Excluded),
+                            static_cast<int>(track.serviceRollingPlaybackWindow({origin, 0})),
+                            "an unqualified clock is refused before a demand is made");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle),
+                            static_cast<int>(runtime->rolling.phase), "and no rolling frame was opened");
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(2), "nor was a demand retained");
+
+  // **(B) Qualified: one stamp, one promise.** The retained demand and the frame read the same epoch and deadline.
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow({origin, 1})),
+                            "the stamped caller opens the demand");
+  const PlaybackViewPendingRequest* pending = track.pendingViewRequest(2);
+  TEST_ASSERT_NOT_NULL(pending);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, pending->clockEpoch, "the demand is positioned in the caller's epoch");
+  TEST_ASSERT_GREATER_THAN_UINT64_MESSAGE(origin, pending->deadlineTick, "with an absolute deadline ahead of it");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(pending->clockEpoch, runtime->rolling.epoch,
+                                   "and the frame reads that same epoch");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(pending->deadlineTick, runtime->rolling.deadlineTick,
+                                   "and the deadline the admission would judge");
+}
+
+/// **Task 3.10 -- the activation audit, half 2: the launch demand is unpositioned by design, and enforcement exempts it
+/// rather than refusing it.**
+///
+/// The launch is the other production path that reaches window state, and it makes **no promise**: it waits for
+/// readiness rather than owing it by a tick, which is why it may be prepared off-clock. That has two consequences worth
+/// pinning, because both are what would break if a future caller "helpfully" stamped it: the deadline service must not
+/// judge an unpositioned demand as late, and the interference budget must not refuse it.
+void test_activation_audit_the_launch_demand_is_unpositioned_and_never_judged() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+
+  // **(A) The launch demand holds no position.**
+  const PlaybackViewPendingRequest* pending = track.pendingViewRequest(2);
+  TEST_ASSERT_NOT_NULL(pending);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, pending->clockEpoch,
+                                   "the launch demand is unpositioned: it is not a promise by a tick");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(0ull, pending->deadlineTick, "and it carries no deadline to be late against");
+
+  // Serve the launch far enough that the **build is in flight** -- the state the deadline service judges is the admitted
+  // work, so the guard under test is the one that reads a *live* unpositioned promise.
+  for (uint32_t turn = 0; turn < 256u && !runtime->coverageBuildNeedsService(); ++turn) {
+    nativePlaybackDeadlineClock = {1000ull + turn * 64ull, 1u};
+    trackManager.servicePendingSlotProvision();
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  }
+  const PlaybackViewAdmittedWork* work = runtime->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL_MESSAGE(work, "the launch must reach an in-flight build for this audit to be about one");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, work->clockEpoch, "and that build is unpositioned too");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(0ull, work->deadlineTick, "with no deadline to judge it against");
+
+  // **(B) A far-future clock judges nothing.** Eight services at ticks an order of magnitude past any deadline the
+  // suite's shapes use name no miss, no breach and no invalidation: unpositioned is not late.
+  PlaybackPathRows::reset();
+  for (uint32_t step = 0; step < 8u; ++step) {
+    track.serviceAdmittedDeadlineMisses({1000000000ull + step * 768ull, 1u});
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "an unpositioned demand is never one pass late");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("lag_breach")),
+                                   "nor in breach");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      0u, static_cast<uint32_t>(PlaybackPathRows::countOf("promise_epoch_invalidated")), "nor epoch-invalidated");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      0u, static_cast<uint32_t>(PlaybackPathRows::countOf("pending_position_invalidated")),
+      "nor position-invalidated");
+
+  // **(C) Served, not judged -- and exempt under enforcement.** With the interference budget on, the launch still
+  // prepares and binds: that budget governs *promises*, and a launch makes none. The flag is restored here, so no later
+  // fixture inherits it.
+  const bool wasEnforced = sInterferenceBudgetEnforced;
+  sInterferenceBudgetEnforced = true;
+  drainImmutableLaunch(track, 2);
+  TEST_ASSERT_TRUE_MESSAGE(track.bindPlaybackLaunchForSlot(2, 2000),
+                           "the unpositioned launch binds even with the interference budget enforced");
+  sInterferenceBudgetEnforced = wasEnforced;
+  TEST_ASSERT_FALSE_MESSAGE(sInterferenceBudgetEnforced, "and the fixture left the enforcement switch as it found it");
+}
 int main() {
 
 
 
   UNITY_BEGIN();
+  RUN_TEST(test_activation_audit_the_production_demand_is_positioned_and_an_unqualified_clock_is_refused);
+  RUN_TEST(test_activation_audit_the_launch_demand_is_unpositioned_and_never_judged);
   RUN_TEST(test_committed_retry_eight_tracks_prepare_empty_windows_with_eight_bar_lead);
   RUN_TEST(test_committed_retry_eight_tracks_refuse_two_bar_lead_without_synthetic_completion);
   RUN_TEST(test_committed_retry_prices_actual_pinned_topology_not_maximum_retirement);
@@ -9381,5 +9485,7 @@ int main() {
   RUN_TEST(test_window_contention_sweep_measures_the_composed_cost_across_h_and_k);
   RUN_TEST(test_window_contention_sweep_scales_with_density_and_is_span_independent);
   RUN_TEST(test_window_contention_boundary_is_predicted_by_the_declaration_and_named_when_crossed);
+  // windowed-playback-generation task 3.10: the activation audit -- which production demand carries a qualified stamp,
+  // and which production paths are deliberately exempt.
   return UNITY_END();
 }

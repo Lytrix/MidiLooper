@@ -1,0 +1,61 @@
+{
+  "slice": "windowed-playback-generation task 3.10 — activation audit (which production demand carries a qualified stamp)",
+  "kind": "verification-only (no production line edited, no gate flipped)",
+  "packet": "EXECUTION.md",
+  "evidence": "EVIDENCE.md",
+  "git_head_at_work": "2620168e",
+  "production_changes": [],
+  "inventory": {
+    "command": "grep -rn 'requestPlaybackViewMaintenance|requestCommittedPlaybackWindow|requestPlaybackWindow|requestPreviewWindow' src | grep -v '^src/Track/TrackPlaybackWindowBuild.cpp'",
+    "result": "only LoopPlaybackRuntime::beginCoverageBuild definitions (lines 1615, 1633); no production caller requests a window outside TrackPlaybackWindowBuild.cpp",
+    "main_call_sites": {
+      "servicePendingSlotProvision": "src/main.cpp:466",
+      "serviceRollingPlaybackWindow": "src/main.cpp:487",
+      "serviceAdmittedDeadlineMisses": "src/main.cpp:489",
+      "stepPlaybackViewMaintenance": "src/main.cpp:508"
+    },
+    "clock_source": "clockManager.getPlaybackDeadlineClock() (native stand-in: nativePlaybackDeadlineClock)"
+  },
+  "paths": [
+    {"path": "lane turn demand", "positioned": true, "evidence": "AA-1"},
+    {"path": "launch (preparePlaybackLaunchForSlot)", "positioned": false, "by_design": true, "evidence": "AA-2"},
+    {"path": "capture edge (captureIntervalAdmissionForSlot)", "takes_clock": false, "kind": "accounting only"},
+    {"path": "preview / undo requesters", "production_caller": false, "owner": "3.13 / 3.14"}
+  ],
+  "fixtures": {
+    "AA-1": "test_activation_audit_the_production_demand_is_positioned_and_an_unqualified_clock_is_refused",
+    "AA-2": "test_activation_audit_the_launch_demand_is_unpositioned_and_never_judged"
+  },
+  "mutations": [
+    {"id": "MA1", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "drop `!clock.epoch ||` from serviceRollingPlaybackWindow's guard", "caught_by": "AA-1: Expected 1 Was 3 (Excluded -> Requested)", "restored_sha256_16": "75c23a3f1849d15a"},
+    {"id": "MA2", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "give the launch demand a position (clockEpoch = 1, deadlineTick = 1000000)", "caught_by": "AA-2: Expected 0 Was 1 (the launch demand is unpositioned) + five pre-existing launch fixtures", "restored_sha256_16": "75c23a3f1849d15a"},
+    {"id": "MA3", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "drop `work.clockEpoch == 0 ||` from serviceAdmittedDeadlineMisses's guard", "caught_by": "AA-2: Expected 0 Was 1 (nor epoch-invalidated)", "restored_sha256_16": "75c23a3f1849d15a"}
+  ],
+  "verification": {
+    "focused": {"command": "pio test -e native -f test_runtime_working_set_ownership", "cases": 137, "passed": 137, "failed": 0},
+    "full_native": {"command": "pio test -e native", "cases": 2791, "succeeded": 2784, "skipped": 7, "failed": 0},
+    "capture_build": {"command": "pio run -e teensy41-capture-serial", "status": "SUCCESS", "ram1_variables": 96192, "ram1_code": 391576, "ram1_padding": 1640, "ram1_floor": 840, "rebased": false},
+    "strict_openspec": {"command": "openspec validate windowed-playback-generation --strict", "result": "valid"},
+    "git_diff_check": "clean",
+    "artifact": {"path": "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp", "sha256_16": "f6a0fe3b45b0df66"},
+    "device": "NOT RUN"
+  },
+  "recorded_anomaly": {
+    "observation": "three consecutive focused runs failed at the pre-existing helper assert_s4b_7_a_demoted_target_through_the_turn: 'Expected 2 Was 0. the root-backed demoted switch must commit'",
+    "not_reproduced": {
+      "focused_runs_without_rebuild": 13,
+      "focused_runs_with_malloc_perturb": 5,
+      "perturb_values": [1, 42, 85, 170, 254],
+      "clean_cache_rebuild": true,
+      "full_native_suite": true
+    },
+    "cause": "open and unproven (stale incremental-build object, or an uninitialised read in the launch/commit path)",
+    "claim": "the helper's soundness is not claimed; only the run results above are"
+  },
+  "not_claimed": [
+    "activation / enforcement enabled in production",
+    "device verification",
+    "checkoff of task 3.10 or 6.3",
+    "that the S4b.7 helper is free of latent defects"
+  ]
+}

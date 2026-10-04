@@ -4903,6 +4903,37 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+### Task 3.10 — activation audit: the production demand is stamped, and the two exempt paths are pinned
+
+**Activation's named blocker ("the clock-owner wiring") is answered with evidence, and no production line changed.** The
+audit asks which production demand carries a qualified stamp today, what happens to one that does not, and which paths
+are deliberately exempt:
+
+* **The demand that exists is stamped.** `src/main.cpp`'s lane turn takes `clockManager.getPlaybackDeadlineClock()` and
+  hands it to `Track::serviceRollingPlaybackWindow` — the **only** production window request
+  (`requestPlaybackWindow` and `requestPreviewWindow` have no production caller; the preview's belongs to 3.13). An
+  unqualified stamp returns `Excluded` **before** promising anything — no rolling frame, no retained demand — while the
+  qualified call's retained demand and frame agree on `clockEpoch` and on an absolute `deadlineTick`.
+* **The launch is unpositioned by design** (`clockEpoch == 0`, `deadlineTick == 0`): it waits for readiness instead of
+  owing it by a tick. Eight deadline services at ticks far beyond any deadline name **no** `one_pass_late`, `lag_breach`,
+  `promise_epoch_invalidated` or `pending_position_invalidated` row, and with `sInterferenceBudgetEnforced` on the launch
+  still prepares and binds — the budget governs promises, and a launch makes none.
+* **The capture edge takes no clock at all**: `captureIntervalAdmissionForSlot` is a capacity answer about the interval
+  being captured, not a promise.
+
+Verification: focused **137/137** (was 135; +2 cases); full native **2791 / 2784 succeeded / 7 skipped / 0 failed** (was
+2789 / 2782); capture build **SUCCESS** with the RAM1 line byte-identical (`variables 96,192` / `padding 1,640`, no
+re-base); strict validation valid; `git diff --check` clean. **MA1** (the rolling epoch guard dropped), **MA2** (the
+launch given a position) and **MA3** (the unpositioned guard dropped) each fail their named assertions and are restored
+byte-identically — `git diff --stat -- src include` is empty afterwards. No upload and no device claim.
+**Recorded, not smoothed:** three earlier focused runs failed at the pre-existing S4b.7 helper
+(`Expected 2 Was 0. the root-backed demoted switch must commit`) and the same byte-identical source then passed 20+ runs
+(13 without a rebuild, 5 under `MALLOC_PERTURB_`), a clean cache rebuild and the full suite; the cause stays **open and
+unproven** (a stale incremental-build object, or an uninitialised read in the launch/commit path), and the helper's
+soundness is not claimed. **What remains for activation** is the owner's enablement decision plus the device leg (6.5) —
+not a missing stamp. Evidence:
+[`activation-audit`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s310y-activation-audit/EVIDENCE.md).
+
 ### Task 3.10 / 6.3 — the `H x K` contention sweep (the declared envelope measured on the composition)
 
 **The composed service is measured in the declaration's own currency, and the declaration holds.** The envelope
