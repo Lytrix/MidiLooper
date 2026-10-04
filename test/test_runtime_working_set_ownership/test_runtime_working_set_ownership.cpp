@@ -39,24 +39,49 @@ struct Row {
   uint32_t maxDeltaTicks = 0;
   uint32_t opportunities = 0;
   uint32_t phase = 0;
+  // **Schema 3** (review step 4 / blocker 3): the block carries the permitted advance it compared against, how many
+  // eligible-predecessor gaps exceeded it, and the worst of them -- so the row is self-describing.
+  uint32_t permittedAdvanceTicks = 0;
+  uint32_t overruns = 0;
+  uint32_t overrunMaxTicks = 0;
+};
+struct OverrunRow {
+  uint32_t permitted = 0;
+  uint32_t overruns = 0;
+  uint32_t overrunMaxTicks = 0;
+  bool running = false;
+  uint32_t epoch = 0;
 };
 inline Row rows[64];
 inline size_t count = 0;
 inline void reset() { count = 0; }
 inline bool running[64] = {};
 inline uint32_t resets[64] = {};
+inline OverrunRow overrunRows[16];
+inline size_t overrunCount = 0;
 inline void record(uint32_t maxDeltaTicks, uint32_t opportunities, uint32_t phase, bool transportRunning,
-                   uint32_t resetCount) {
+                   uint32_t resetCount, uint32_t permittedAdvanceTicks, uint32_t overruns, uint32_t overrunMaxTicks) {
   if (count < sizeof(rows) / sizeof(rows[0])) {
-    rows[count] = Row{maxDeltaTicks, opportunities, phase};
+    rows[count] = Row{maxDeltaTicks, opportunities, phase, permittedAdvanceTicks, overruns, overrunMaxTicks};
     running[count] = transportRunning;
     resets[count] = resetCount;
   }
   ++count;
 }
+/// The **named** overrun row (`DIAG,win_gap_overrun`) a capture build emits once per block that saw one.
+inline void recordOverrun(uint32_t permitted, uint32_t overruns, uint32_t overrunMaxTicks, bool transportRunning,
+                          uint32_t epoch) {
+  if (overrunCount < sizeof(overrunRows) / sizeof(overrunRows[0])) {
+    overrunRows[overrunCount] = OverrunRow{permitted, overruns, overrunMaxTicks, transportRunning, epoch};
+  }
+  ++overrunCount;
+}
 }  // namespace WindowGapRows
 #define SC_WINDOW_SERVICE_GAP(sample, phase, running, epoch) \
-  WindowGapRows::record((sample).maxDeltaTicks, (sample).opportunities, phase, running, (sample).discontinuities)
+  WindowGapRows::record((sample).maxDeltaTicks, (sample).opportunities, phase, running, (sample).discontinuities, \
+                        (sample).permittedAdvanceTicks, (sample).overruns, (sample).overrunMaxTicks)
+#define SC_WINDOW_GAP_OVERRUN(permitted, overruns, overrunMax, running, epoch) \
+  WindowGapRows::recordOverrun(permitted, overruns, overrunMax, running, epoch)
 // DEC-108 §13b / task 3.9 (increment 4): the window lane's **path rows** through the same substitutable-seam pattern, so
 // a claim about a row (`lag_breach`, `one_pass_late`) is checked as **the row**, not only as the state beside it. The
 // lane emitted these rows under a capture build only, which is why 3.6b's "the breach is reported once per episode"
@@ -3850,6 +3875,84 @@ constexpr uint32_t kWindowOwnerExpectedRequiredGrains = 7;
 constexpr uint32_t kWindowOwnerExpectedAdvancePerTurn = 64;
 constexpr uint32_t kWindowOwnerExpectedDeniedTurns = Config::NUM_TRACKS - 1;
 constexpr uint32_t kWindowOwnerExpectedLead = 768;
+/// **Blockers 3 — the permitted service-gap limit is *wired*, and its exceedance is named.**
+///
+/// Step 4 declared the permitted per-turn advance; this fixture pins that the live lane **compares against it** rather
+/// than only recording maxima. A gap above the limit across a turn whose predecessor was **eligible** is an **overrun**:
+/// counted, sized, and named in its own row (with the permitted value, so the report is self-describing). The same gap
+/// with an **ineligible** predecessor is idle time and is *not* an overrun, and neither is a gap spanning a clock
+/// epoch change. That separation is the whole reason the sampler records the predecessor's eligibility -- and it is why
+/// the declaration is a *scheduling* bound, not a bound on every gap an observer will see.
+void test_the_declared_permitted_gap_is_wired_and_its_overrun_is_named() {
+  constexpr uint32_t kPermitted = Track::kPlaybackViewPermittedAdvancePerTurn;
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  // The lane compares against the **declaration**, not a second constant (the sampler reads the same field).
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kPermitted,
+                                   Track::playbackViewCoverageContract().maximumPhaseAdvancePerTurn,
+                                   "the limit the lane applies is the declared permitted advance");
+  Track::resetPlaybackLaneMeasurement();
+  WindowGapRows::reset();
+  WindowGapRows::overrunCount = 0;
+  using Result = Track::PlaybackViewTurnResult;
+  // A running tick, advanced by **one** between cases: a case's first dispatch closes the *previous* block, so a large
+  // inter-case gap would be an overrun in its own right and the case being asserted would inherit it. One tick keeps
+  // every block to the case it belongs to, and the assertions below say so.
+  uint64_t tick = 1000;
+
+  // (B2) A gap **at** the limit across an eligible predecessor: no overrun, no row -- and the block still carries the
+  // limit it compared against, so a reader never has to know the declaration (schema 3).
+  Track::samplePlaybackLaneOpportunity({tick, 1}, true, true, Result::GrainDenied, 10);
+  tick += kPermitted;
+  Track::samplePlaybackLaneOpportunity({tick, 1}, true, true, Result::GrainDenied, 10);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, WindowGapRows::overrunCount, "a gap at the limit names nothing");
+  const WindowGapRows::Row& atLimit = WindowGapRows::rows[WindowGapRows::count - 1];
+  TEST_ASSERT_EQUAL_UINT32(kPermitted, atLimit.maxDeltaTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, atLimit.overruns, "and the block counts none");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kPermitted, atLimit.permittedAdvanceTicks,
+                                   "while carrying the permitted advance it compared against");
+
+  // (B1) One tick past the limit across an eligible predecessor: an overrun, counted, sized and **named**.
+  tick += 1;
+  Track::samplePlaybackLaneOpportunity({tick, 1}, true, true, Result::GrainDenied, 10);
+  tick += kPermitted + 1;
+  Track::samplePlaybackLaneOpportunity({tick, 1}, true, true, Result::GrainDenied, 10);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, WindowGapRows::overrunCount, "one tick past the limit is named");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kPermitted, WindowGapRows::overrunRows[0].permitted,
+                                   "and the row says what it was compared against");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, WindowGapRows::overrunRows[0].overruns, "with the block's count");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kPermitted + 1, WindowGapRows::overrunRows[0].overrunMaxTicks,
+                                   "and the worst gap that exceeded it");
+  const WindowGapRows::Row& past = WindowGapRows::rows[WindowGapRows::count - 1];
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, past.overruns, "the block row carries the same count");
+  TEST_ASSERT_EQUAL_UINT32(kPermitted + 1, past.overrunMaxTicks);
+
+  // (B3) The same oversized gap with an **ineligible** predecessor is idle time, not an overrun: the bound asserts a
+  // scheduling promise, and there was no work owed across that turn.
+  tick += 1;
+  Track::samplePlaybackLaneOpportunity({tick, 1}, true, false, Result::GrainDenied, 0);
+  tick += kBar;
+  Track::samplePlaybackLaneOpportunity({tick, 1}, true, false, Result::GrainDenied, 0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, WindowGapRows::overrunCount,
+                                   "an idle gap above the limit is NOT an overrun");
+  const WindowGapRows::Row& idle = WindowGapRows::rows[WindowGapRows::count - 1];
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kBar, idle.maxDeltaTicks, "the gap is still recorded as a maximum");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, idle.overruns, "and counted as no overrun");
+
+  // (B4) A gap spanning a clock **epoch** change is a reset, not an overrun: it is reported as a discontinuity and
+  // contributes no delta at all (the sampler's own rule -- resets are excluded from the maxima and counted).
+  tick += 1;
+  Track::samplePlaybackLaneOpportunity({tick, 1}, true, true, Result::GrainDenied, 10);
+  tick += kBar;
+  Track::samplePlaybackLaneOpportunity({tick, 2}, true, true, Result::GrainDenied, 10);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, WindowGapRows::overrunCount, "an epoch change is not an overrun");
+  const WindowGapRows::Row& resetBlock = WindowGapRows::rows[WindowGapRows::count - 1];
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, resetBlock.overruns, "nor counted as one");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, resetBlock.maxDeltaTicks, "the delta is not accumulated across the reset");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, WindowGapRows::resets[WindowGapRows::count - 1],
+                                   "the change is reported as a discontinuity instead");
+
+}
+
 /// The lead the **declared envelope** requires for `eventCount` entries -- the contract's own arithmetic, evaluated on
 /// the *derived* cost (the review's step 4 made the lead-side accounting derived: an expectation built from the declared
 /// basis counts would describe a request the firmware no longer makes).
@@ -7646,6 +7749,7 @@ int main() {
   RUN_TEST(test_enforced_candidate_charges_derived_cost_and_eight_track_rotation);
   RUN_TEST(test_window_admission_refuses_by_name_once_the_interference_budget_is_enforced);
   RUN_TEST(test_the_declared_envelope_states_its_terms_its_derivation_and_what_it_refuses);
+  RUN_TEST(test_the_declared_permitted_gap_is_wired_and_its_overrun_is_named);
   RUN_TEST(test_a_refused_request_is_retained_with_its_original_deadline_and_discharged_by_its_admission);
   RUN_TEST(test_a_pending_request_owes_no_grains_and_does_not_charge_a_sibling);
   RUN_TEST(test_coalesced_requests_keep_the_oldest_deadline_and_the_newest_attempt);

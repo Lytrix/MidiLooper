@@ -349,6 +349,8 @@ SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const ch
 /// pending-work identity. The Tier-A row is aggregated and queued outside the worker.
 SC_MEM_ATTR void windowServiceGapImmediate(const PlaybackLaneMeasurement& sample, uint32_t phase,
                                          bool transportRunning, uint32_t epoch);
+SC_MEM_ATTR void windowGapOverrunImmediate(uint32_t permittedAdvanceTicks, uint32_t overruns, uint32_t overrunMaxTicks,
+                                           bool transportRunning, uint32_t epoch);
 /// A1.8/A2.1 (design D6): one event-shaped line per restore **request state transition**, carrying the
 /// full identity and the named reason/outcome. Event-shaped, not per-turn: the capture-ring precedent
 /// showed a per-turn family evicts the rows a run is read for. `state`, `wait` and `terminal` are the
@@ -526,6 +528,15 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_WINDOW_SERVICE_GAP(sample, phase, running, epoch) \
   DebugSessionCapture::windowServiceGapImmediate(sample, phase, running, epoch)
 #endif
+/// DEC-108 §13b / task 3.10 (**blocker 3**): the **named overrun row** -- emitted once per reporting block that saw at
+/// least one eligible-predecessor gap above the permitted advance, so the limit's exceedance is an *event in the stream*
+/// and not only a number inside a max. Cadence-bounded by construction: the block is already the reporting unit, so this
+/// row can never be more frequent than the condition it names (the readiness receipt's own rule). `#ifndef`-guarded so a
+/// native suite can substitute its own recorder.
+#ifndef SC_WINDOW_GAP_OVERRUN
+#define SC_WINDOW_GAP_OVERRUN(permitted, overruns, overrunMax, running, epoch) \
+  DebugSessionCapture::windowGapOverrunImmediate(permitted, overruns, overrunMax, running, epoch)
+#endif
 /// The window lane's **path row** (`DIAG,playback_build,<path>`) — the vehicle every lane event already uses
 /// (`grain_denied`, `build_complete`, `lag_breach`, `one_pass_late`, the last resort). `#ifndef`-guarded so a native
 /// suite can substitute its own recorder (the `SC_ACCEPTED_LATCH` / `SC_WINDOW_READINESS` pattern): without a seam
@@ -698,6 +709,9 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #endif
 #ifndef SC_WINDOW_SERVICE_GAP
 #define SC_WINDOW_SERVICE_GAP(sample, phase, running, epoch) ((void)0)
+#endif
+#ifndef SC_WINDOW_GAP_OVERRUN
+#define SC_WINDOW_GAP_OVERRUN(permitted, overruns, overrunMax, running, epoch) ((void)0)
 #endif
 #define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) ((void)0)
 // `restored-library-stability` 1.3: no records without a capture build (the request trigger is

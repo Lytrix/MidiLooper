@@ -1102,3 +1102,19 @@ finding — backed by the byte-identical ITCM code figure (390,472), `FLASHMEM` 
 `src/main.cpp`/sampler/emitter, and no production window request. No code change was needed. Detail:
 [`evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md`](evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md)
 § Addendum 2.
+
+**Task 3.10 (increment 26) — blocker 3, half 1: the permitted service-gap limit is wired into the live lane and its exceedance is named.**
+`PlaybackLaneMeasurement` now compares every **eligible-predecessor** gap against the permitted advance (`overruns`,
+`overrunMaxTicks`, the limit carried in the block row as **schema 3**), and a block that saw one emits the **named**
+`DIAG,win_gap_overrun` row through the usual `#ifndef`-guarded seam. The limit is read from the declaration
+(`kPlaybackViewPermittedAdvancePerTurn`), so bound and observation cannot drift; an **idle** gap above the limit is *not*
+an overrun (the eligibility split is what separates scheduling from idle time), and neither is an epoch change. Fixture
+`test_the_declared_permitted_gap_is_wired_and_its_overrun_is_named` (with one repair of my own recorded: the inter-case
+gap was forming its own block) proves B1-B5; **M130-M133** red-prove it and were restored byte-identically
+(`PlaybackLaneMeasurement.h 3245e37db9c710b7`, `TrackPlaybackWindowBuild.cpp c94103e134533e2a`). Verified: focused
+**91/91**, full native **2,734 / 2,727 succeeded / 7 skipped / 0 failed**, build SUCCESS with the RAM1 line
+byte-identical (no size-pin movement), `git diff --check` clean, `openspec validate --strict` valid. **Blocker 3 is half
+closed:** the limit is wired and named, but the admitted window's own **deadline** is still not read by the live serving
+path (the existing overrun policy is revision-driven and has no production caller), and wiring it needs three pinned
+decisions — the episode key, the clock reaching the turn, and what a miss means at completion. Detail:
+[`evidence/2026-10-04-s310u-permitted-gap-wired/EXECUTION.md`](evidence/2026-10-04-s310u-permitted-gap-wired/EXECUTION.md).

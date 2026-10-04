@@ -1529,17 +1529,34 @@ SC_MEM_ATTR void persistenceResultImmediate(uint32_t durationUs, uint32_t heapBe
 /// transport stops -- after the readiness it explains. Event-shaped and cadence-bounded by its caller.
 SC_MEM_ATTR void windowServiceGapImmediate(const PlaybackLaneMeasurement& sample, uint32_t phase,
                                          bool transportRunning, uint32_t epoch) {
-  // Schema 2: original five fields, then eligible predecessor max, eligible turns,
-  // progress turns, denied turns, worker max us, clock epoch, saturated gaps, schema.
+  // Schema 3: schema 2 (eligible predecessor max, eligible turns, progress turns, denied turns,
+  // worker max us, clock epoch, saturated gaps) plus the **permitted** advance this block compared
+  // against, the number of eligible-predecessor gaps that exceeded it, and the worst of them.
+  // The limit is part of the row so an observation is self-describing: a reader never has to know
+  // the declaration to see whether a gap was an overrun.
   // Aggregate off-clock; no direct USB write inside the timed worker span.
-  emitCapPrintf("#CAP,%lu,DIAG,win_gap,%lu,%lu,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,2\r\n",
+  emitCapPrintf("#CAP,%lu,DIAG,win_gap,%lu,%lu,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,3\r\n",
       static_cast<unsigned long>(micros()),
       static_cast<unsigned long>(sample.maxDeltaTicks), static_cast<unsigned long>(sample.opportunities),
       static_cast<unsigned long>(phase), static_cast<unsigned>(transportRunning),
       static_cast<unsigned long>(sample.discontinuities), static_cast<unsigned long>(sample.eligiblePredecessorMax),
       static_cast<unsigned long>(sample.eligibleTurns), static_cast<unsigned long>(sample.progressTurns),
       static_cast<unsigned long>(sample.deniedTurns), static_cast<unsigned long>(sample.maxWorkerUs),
-      static_cast<unsigned long>(epoch), static_cast<unsigned long>(sample.saturatedGaps));
+      static_cast<unsigned long>(epoch), static_cast<unsigned long>(sample.saturatedGaps),
+      static_cast<unsigned long>(sample.permittedAdvanceTicks), static_cast<unsigned long>(sample.overruns),
+      static_cast<unsigned long>(sample.overrunMaxTicks));
+}
+
+SC_MEM_ATTR void windowGapOverrunImmediate(uint32_t permittedAdvanceTicks, uint32_t overruns, uint32_t overrunMaxTicks,
+                                           bool transportRunning, uint32_t epoch) {
+  // DEC-108 §13b / task 3.10 (blocker 3): the permitted service-gap limit was **exceeded**, named as its own event.
+  // `permitted` travels with the report, so the row says what it was compared against rather than leaving a reader to
+  // find the declaration. Off-clock; one row per reporting block at most (the block is the cadence).
+  emitCapPrintf("#CAP,%lu,DIAG,win_gap_overrun,%lu,%lu,%lu,%u,%lu\r\n",
+      static_cast<unsigned long>(micros()),
+      static_cast<unsigned long>(permittedAdvanceTicks), static_cast<unsigned long>(overruns),
+      static_cast<unsigned long>(overrunMaxTicks), static_cast<unsigned>(transportRunning),
+      static_cast<unsigned long>(epoch));
 }
 
 SC_MEM_ATTR void readinessReceiptImmediate(uint8_t track, uint8_t slot, const char* readiness, const char* holder,

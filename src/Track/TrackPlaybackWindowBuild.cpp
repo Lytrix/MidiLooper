@@ -2021,14 +2021,22 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
     PlaybackDeadlineClock clock, bool running, bool eligible,
     PlaybackViewTurnResult result, uint32_t workerUs) {
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+  // DEC-108 §13b / task 3.10 (blocker 3): the **declared permitted limit** is the comparison this sampler applies.
+  // It is read from the declaration itself (not restated), so the bound and the observation cannot drift apart.
   sLaneMeasurement.observe(clock, running, eligible,
       result == PlaybackViewTurnResult::GrainServed || result == PlaybackViewTurnResult::BuildComplete,
-      result == PlaybackViewTurnResult::GrainDenied, workerUs);
+      result == PlaybackViewTurnResult::GrainDenied, workerUs, kPlaybackViewPermittedAdvancePerTurn);
   // First row then every 256 dispatches, and on an eligible->idle completion.
   // Idle dispatches are now counted, so the former 16-turn cadence would flood capture.
   if (sLaneMeasurement.opportunities == 1 || sLaneMeasurement.opportunities % 256 == 0 ||
       result == PlaybackViewTurnResult::BuildComplete || result == PlaybackViewTurnResult::GrainDenied) {
     SC_WINDOW_SERVICE_GAP(sLaneMeasurement, static_cast<uint32_t>(clock.tick), running, clock.epoch);
+    if (sLaneMeasurement.overruns > 0) {
+      // Named **before** the block is cleared, and only when the block saw one: the limit's exceedance is an event in
+      // the stream (blocker 3's "operationally reported"), not a number a reader has to derive from a maximum.
+      SC_WINDOW_GAP_OVERRUN(kPlaybackViewPermittedAdvancePerTurn, sLaneMeasurement.overruns,
+                            sLaneMeasurement.overrunMaxTicks, running, clock.epoch);
+    }
     sLaneMeasurement.clearBlock();
   }
 #else
