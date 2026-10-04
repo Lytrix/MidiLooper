@@ -146,20 +146,15 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool CoverageServiceContract::canCompleteBeforeH
       handoffPhase >= loopLengthTicks) {
     return false;
   }
-  const uint32_t grains = static_cast<uint32_t>(requiredGrains()) + additionalGrains;
-  if (grains == 0) {
-    return false;
-  }
-  // Every required grain may be preceded by the declared maximum number of
-  // denied owner turns. Use 64-bit arithmetic so an invalid declaration
-  // becomes a denial rather than wrapping into an unsafe admission.
-  const uint64_t turns = static_cast<uint64_t>(grains) *
-                         (static_cast<uint64_t>(maximumConsecutiveDeniedTurns) + 1U);
-  const uint64_t requiredLead =
-      turns * maximumPhaseAdvancePerTurn + static_cast<uint64_t>(leadTicks);
-  // The lead available to the caller is the distance to the handoff, **named once** (`handoffLeadTicks`, in the
-  // header beside this contract) so a scheduling reader of the same quantity cannot disagree with this admission
-  // decision (DEC-108 §13b / task 3.10).
-  const uint32_t available = handoffLeadTicks(currentPhase, handoffPhase, loopLengthTicks);
-  return requiredLead <= available;
+  return canCompleteWithinLead(handoffLeadTicks(currentPhase, handoffPhase, loopLengthTicks), additionalGrains);
+}
+
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool CoverageServiceContract::canCompleteWithinLead(
+    uint64_t availableTicks, uint16_t additionalGrains) const {
+  if (!isDeclared() || availableTicks < leadTicks) return false;
+  const uint64_t grains = static_cast<uint64_t>(requiredGrains()) + additionalGrains;
+  const uint64_t turns = grains * (static_cast<uint64_t>(maximumConsecutiveDeniedTurns) + 1u);
+  // Divide the available lead instead of multiplying by phase advance: no uint64 overflow
+  // can turn an impossible deadline into a successful admission.
+  return turns <= (availableTicks - leadTicks) / maximumPhaseAdvancePerTurn;
 }

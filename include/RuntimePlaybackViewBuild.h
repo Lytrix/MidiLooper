@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "Utils/PlaybackDeadlineClock.h"
 #include "RuntimePlaybackOrderBuilder.h"
 #include "RuntimePlaybackViewFill.h"
 
@@ -54,38 +55,23 @@ class RuntimePlaybackViewBuild {
 /// denied-turn allowance, grain count, and lead into a deterministic admission
 /// decision. A false result keeps windowed work out of active transport.
 struct CoverageServiceContract {
-  /// **The unit is "the phase the playhead advances between two of THIS owner's own opportunities"** -- i.e. between two
-  /// `PlaybackViewMaintenance` dispatches, which already contains the other six deferred owners' share of the rotation.
-  /// It does **not** contain the contention *inside* the lane: one *track* of every `H` eligible tracks per lane turn
-  /// (`src/main.cpp`'s offer round-robin), nor the sibling slots of the chosen track (the spec's within-holder
-  /// earliest-deadline-first lets a sibling's earlier interval take that turn). Those multiply onto the **turn count**,
-  /// not onto this field, so `canCompleteBeforeHandoff`'s `grains x (denied + 1)` is **not yet a complete bound**: it
-  /// needs the `H x K` contention factors before any envelope can be called supported, and the unit above must be
-  /// *measured* rather than assumed. Measured 2026-10-02: conflating the two readings -- injecting the owner rotation
-  /// here *and* keeping it in the turn count -- double-counts it, which is the error an earlier record made (see
-  /// `evidence/2026-10-02-s310h-lifetime-fairness-derivation/`).
-  ///
-  /// **Measured 2026-10-03, and the measurement decides how this field may be read.** The device measures the
-  /// steady state at **2.9-5.5 ticks per opportunity** (a rotation of ~7.3-7.5 ms) and the rotation is
-  /// **tempo-invariant** while this tick-denominated allowance is not: doubling the tempo doubles the
-  /// ticks-per-opportunity, so the declared 768 is 2.0 s at 120 BPM and 1.0 s at 240 BPM. A separate and much
-  /// larger quantity appears in the same runs -- **starvation episodes** of 2 138 / 4 355 / 8 520 ticks
-  /// (5.6-11.3 s), from cumulative *lost* opportunities rather than from one blocking call. This field is
-  /// therefore an upper bound on the **scheduling** advance and is **not** an upper bound on how far the playhead
-  /// can move between two of this owner's opportunities. A window admitted on this figure can be starved past its
-  /// handoff; that miss is handled and reported by the lag rule (`one_pass_late` / `lag_breach`), not by this
-  /// constant, and the constant must not be enlarged towards the starvation figure to make the gap disappear.
+  /// Phase advance between consecutive PlaybackViewMaintenance lane dispatches.
+  /// Includes every intervening owner turn (including extra Snapshot turns), not
+  /// track contention. A permitted upper bound plus an overrun policy is required;
+  /// an observed maximum or average is not a guarantee. Legacy selected-worker-only
+  /// samples cannot distinguish no-work intervals from pending-work service gaps.
   uint32_t maximumPhaseAdvancePerTurn = 0;
-  /// The **within-lane** contention allowance -- `H` eligible tracks x `K` sibling slots of the chosen track -- not
-  /// the owner rotation: the rotation is already inside `maximumPhaseAdvancePerTurn` by that field's unit, so
-  /// putting it here as well would double-count it. It is an **allowance**, not a proved bound; declaring `H x K`
-  /// is task 3.10's remaining work.
+  /// Across-track denial allowance: Hmax-1 for round-robin tracks. Charge same-track
+  /// sibling WORK through additionalGrains, never a fixed slot multiplier. The
+  /// current value is provisional and live window activation remains gated.
   uint16_t maximumConsecutiveDeniedTurns = 0;
   uint16_t requiredFillGrains = 0;
   uint16_t requiredOrderGrains = 0;
   uint16_t requiredPromotionGrains = 0;
   uint32_t leadTicks = 0;
 
+  /// Same admission arithmetic with an already-qualified, non-modular remaining lead.
+  bool canCompleteWithinLead(uint64_t availableTicks, uint16_t additionalGrains = 0) const;
   bool isDeclared() const;
   uint16_t requiredGrains() const;
   /// DEC-108 §13b / task 3.10 (the review's step 1, *"bound the work of each request"*): **the grain cost of a

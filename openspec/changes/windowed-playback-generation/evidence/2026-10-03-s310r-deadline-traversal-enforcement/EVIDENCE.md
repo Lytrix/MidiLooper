@@ -1,3 +1,9 @@
+> **Superseded deadline claim — full-lap correction.** The modular elapsed-phase guard
+> did not identify a traversal: a deadline could reopen after an unobserved full lap.
+> The focused count in this record is also corrected: commit `d08932c5` registers 81,
+> not 82 tests. See [absolute clock identity](../deadline-clock-identity/EXECUTION.md)
+> for the replacement, verified cases, and outstanding production clock wiring.
+
 # Slice 3.10 (increment 21) — the deadline rollover fixed, and the enforced admission path tested
 
 **Status:** 2026-10-03. Answering the three review points on increment 20.

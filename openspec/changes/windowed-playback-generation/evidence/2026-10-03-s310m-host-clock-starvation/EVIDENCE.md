@@ -1,3 +1,8 @@
+> Correction — timing-envelope qualification continuation: the selected-worker-only
+> sampler can span intervals with no eligible work. The starvation attribution and
+> "upper bound under instrumentation" claim below are withdrawn, not qualified facts.
+> See [corrected dispatch measurement](../timing-envelope-qualification/EXECUTION.md).
+
 # Slice 3.10 (increment 16) — the host clock is reachable from the managed harness, the 2× control, and the corrected attribution of the worst-case advance
 
 **Status:** 2026-10-03. One device run, **PASS**, identity clean. This increment **corrects increment 15's attribution**, **corrects its "blocked" note**, and produces a **new, larger maximum** — while keeping the derived admission **disabled** and claiming **no bound**.

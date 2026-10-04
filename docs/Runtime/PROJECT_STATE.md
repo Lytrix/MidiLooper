@@ -5575,3 +5575,32 @@ bounds, evidence and limitations. No firmware upload or device action occurred.
 **2026-10-03 - `windowed-playback-generation` slice 3.10, increment 20: review step 2 - the per-track outstanding-work budget.** Implemented and proved, **enforcement gated off** (enforcing it with the declared advance today is a capacity reduction, which the reviewer's ordering forbids at this step - and that is measured: flipping the gate breaks three existing fixtures with `TrackInterferenceBudgetExceeded`). Landed: `Track::playbackViewOutstandingGrains(excludingSlot)` (every active build's full admitted grains - an upper bound, the safe direction), `Track::playbackViewAdmissionKeepsAdmittedDeadlines(...)` (every already-admitted window must still reach its own deadline once the candidate and all siblings are charged - the EDF-free *charge all sibling work* rule, through a per-slot contract copy so the arithmetic stays `canCompleteBeforeHandoff`), the retained `handoffPhase` on `PlaybackViewAdmittedWork`, and the named refusal `TrackInterferenceBudgetExceeded`. Verified: focused **80/80**, full native **2719 / 2712 / 7 / 0**, build SUCCESS, RAM1 line byte-identical (no RAM1 re-base), `sizeof(LoopPlaybackRuntime)` measured **6 640 -> 6 648** target-only with the host pin unchanged. Still owed: enforcement (awaiting `Delta-max`), the reviewer's coalescing rule, step 3's instrumentation and device leg, the `H x K` envelope, the systematic sweep. Evidence: [`evidence/2026-10-03-s310q-track-interference-budget/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-03-s310q-track-interference-budget/EVIDENCE.md).
 
 **2026-10-03 - `windowed-playback-generation` slice 3.10, increment 21: the deadline rollover fixed, and the enforced admission path tested.** The review's sharpest point was a real soundness defect: a phase repeats every loop, and `handoffLeadTicks` measures forward distance, so a **passed** deadline would have been silently re-granted another whole pass. The repair retains the **intended traversal** (`admittedPhase`, `admittedLeadTicks`) and closes it arithmetically - the boundary is exact, one tick past the deadline - so a closed traversal refuses before any arithmetic can flatter it (pinned by M116). The over-claim that "the caller re-issues" is **withdrawn**: `TrackInterferenceBudgetExceeded` is a named refusal and retains no obligation until a caller keeps the pending request and its original deadline, which does not exist yet. And the enforced path is now **tested** with a controlled contract: the switch is a **runtime** flag (`DMAMEM`, so no RAM1 `variables`), the fixture drives the real admission and gets the named refusal (`Expected 11` under M119), and the same request is admitted with the switch off. Verified: focused **82/82**, full native **2720 / 2713 / 7 / 0**, build SUCCESS, RAM1 line byte-identical, one measured size re-base for the retained traversal. Owed: enforcement activation (awaiting `Delta-max`), a caller that retains a pending obligation, step 3's instrumentation and device leg, `H x K`, the sweep. Evidence: [`evidence/2026-10-03-s310r-deadline-traversal-enforcement/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-03-s310r-deadline-traversal-enforcement/EVIDENCE.md).
+
+**Task 3.10 — absolute deadline identity correction (native verified, activation still gated).**
+The prior `admittedPhase + admittedLeadTicks` guard could reopen after a complete
+unobserved lap. Requests now accept an explicit monotonic 64-bit tick and nonzero
+clock epoch, retaining an absolute deadline and the window's own loop length.
+Expiry, reset epoch, backward time, missing clock identity, changed geometry and
+overflow fail closed under enforced admission. Production clock-stamp wiring,
+pending-request preservation and the service-gap envelope remain owed; enforcement
+stays off. Focused 83/83; full native 2,722 / 2,715 passed / 7 skipped / 0 failed;
+capture build SUCCESS with RAM1 unchanged. Target runtime measured 6,656 -> 6,680 B;
+host stays 6,544 B. No upload. Prior increment 21's 82/82 claim was a count error:
+its commit registers 81 tests. Evidence: [deadline clock identity](../../openspec/changes/windowed-playback-generation/evidence/deadline-clock-identity/EXECUTION.md).
+
+**Task 3.10 — timing-envelope qualification continuation: measurement repaired, NOT QUALIFIED.**
+ClockManager now supplies a wrap-safe 64-bit tick/reset epoch, with PRIMASK-preserving
+atomic access; the sampler observes every lane dispatch (including idle turns),
+separates eligibility/progress/denial and is explicitly initialized despite NOLOAD
+DMAMEM. The gated admission now charges derived candidate work and eight-track
+rotation. Four mutation checks discriminate. Full native 2,727 / 2,720 passed /
+7 skipped / zero failures; capture build holds RAM1 variables 96,192, padding 2,808
+(floor 840 unchanged). Uploaded final image 7c2a1377...: 300 BPM baseline PASS;
+internal-clock baseline and its fresh-boot retry are INCONCLUSIVE_CAPTURE with
+`persistence_active_snapshot_unavailable_during_save`. Earlier sampler "starvation"
+attributions are withdrawn: selected-worker gaps could include no-work time.
+No live committed-window requester, retained retry/projection revalidation or
+permitted-gap/overrun enforcement exists yet, and the baseline exercises shared
+record/canonical builders. Thus task 3.10 and timing qualification remain open;
+activation remains gated, no capacity reduced, no RAM1 rebase, no commit.
+Evidence: [timing-envelope qualification](../../openspec/changes/windowed-playback-generation/evidence/timing-envelope-qualification/EXECUTION.md).

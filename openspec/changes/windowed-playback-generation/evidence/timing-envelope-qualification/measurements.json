@@ -1,0 +1,452 @@
+{
+  "timing_envelope_qualified": false,
+  "runs": [
+    {
+      "capture": "captures/timing-envelope-lane-internal",
+      "session_log": "captures/timing-envelope-lane-internal/session_20261003_210902.log",
+      "session_sha256": "b9ff8ab753a880f2e0b826ff8578a453368749f0a8021941600108540b936fdf",
+      "metadata": {
+        "schema_version": 1,
+        "timestamp": "2026-10-03T19:09:15.111802+00:00",
+        "git_commit": "d08932c5d77523c880f38d18c8341aab3b14018f",
+        "git_dirty": true,
+        "build_env": "teensy41-capture-serial",
+        "firmware_hex": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+        "firmware_hex_sha256": "8077308b5658a474b2e5470c5d64311a195d741a219c200179e292a5d91b3bbb",
+        "preset": "base",
+        "scenario_ids": [
+          "base"
+        ],
+        "track_number": 8,
+        "loop_slot": 4,
+        "midi_channel": 8,
+        "record_bars": 2,
+        "overdub_bars": 2,
+        "capture_serial_port": "/dev/cu.usbmodem154944801",
+        "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-lane-internal/session_20261003_210902.log",
+        "out_dir": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-lane-internal"
+      },
+      "report": "captures/timing-envelope-lane-internal/host_midi_automation_baseline_20261003_211026.json",
+      "overall_ok": true,
+      "hitl_report": {
+        "verdict": "PASS",
+        "capture_complete": true,
+        "stimulus_valid": true,
+        "setup_transitions_confirmed": true,
+        "firmware_contradiction": false,
+        "firmware_assertions_pass": true,
+        "capture_integrity": "COMPLETE",
+        "reason": "",
+        "action_outcomes": [],
+        "issues": []
+      },
+      "clock_source": "device",
+      "tempo_bpm": 120.0,
+      "schema": 2,
+      "row_count": 114,
+      "first_opportunity": 1,
+      "last_opportunity": 6656,
+      "maximum_lane_gap_ticks": 60,
+      "maximum_eligible_predecessor_gap_ticks": 36,
+      "maximum_selected_worker_us": 275,
+      "eligible_turns": 293,
+      "progress_turns": 293,
+      "denied_turns": 0,
+      "discontinuities": 3,
+      "saturated_gaps": 0,
+      "ring_stats": [
+        "#CAP,68696343,RING,stats,attempts=7595,ok=7595,flush=43288,tx=7593,shed=2,tierA_evict=0,overflow=0,crit_rej=0,wipe=0,wipe_bytes=0"
+      ],
+      "qualification": "NOT_QUALIFIED",
+      "limitations": [
+        "Shared record/canonical builders, not committed-window request workload",
+        "Observed maxima, not guaranteed service bound",
+        "Reporting covers completed blocks, not an unreported terminal tail",
+        "Before explicit NOLOAD sampler initialization; superseded by final-image runs"
+      ]
+    },
+    {
+      "capture": "captures/timing-envelope-lane-external300",
+      "session_log": "captures/timing-envelope-lane-external300/session_20261003_211053.log",
+      "session_sha256": "04d335654d6f14155d70179248e9ac735cac733e8e72c480a1764e7532ad50f6",
+      "metadata": {
+        "schema_version": 1,
+        "timestamp": "2026-10-03T19:10:56.226605+00:00",
+        "git_commit": "d08932c5d77523c880f38d18c8341aab3b14018f",
+        "git_dirty": true,
+        "build_env": "teensy41-capture-serial",
+        "firmware_hex": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+        "firmware_hex_sha256": "8077308b5658a474b2e5470c5d64311a195d741a219c200179e292a5d91b3bbb",
+        "preset": "base",
+        "scenario_ids": [
+          "base"
+        ],
+        "track_number": 8,
+        "loop_slot": 4,
+        "midi_channel": 8,
+        "record_bars": 2,
+        "overdub_bars": 2,
+        "capture_serial_port": "/dev/cu.usbmodem154944801",
+        "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-lane-external300/session_20261003_211053.log",
+        "out_dir": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-lane-external300"
+      },
+      "report": "captures/timing-envelope-lane-external300/host_midi_automation_baseline_20261003_211149.json",
+      "overall_ok": true,
+      "hitl_report": {
+        "verdict": "PASS",
+        "capture_complete": true,
+        "stimulus_valid": true,
+        "setup_transitions_confirmed": true,
+        "firmware_contradiction": false,
+        "firmware_assertions_pass": true,
+        "capture_integrity": "COMPLETE",
+        "reason": "",
+        "action_outcomes": [],
+        "issues": []
+      },
+      "clock_source": "host",
+      "tempo_bpm": 300.0,
+      "schema": 2,
+      "row_count": 193,
+      "first_opportunity": 7168,
+      "last_opportunity": 14080,
+      "maximum_lane_gap_ticks": 133,
+      "maximum_eligible_predecessor_gap_ticks": 80,
+      "maximum_selected_worker_us": 363,
+      "eligible_turns": 438,
+      "progress_turns": 429,
+      "denied_turns": 9,
+      "discontinuities": 5,
+      "saturated_gaps": 0,
+      "ring_stats": [
+        "#CAP,160373866,RING,stats,attempts=17025,ok=17025,flush=100075,tx=17020,shed=5,tierA_evict=0,overflow=0,crit_rej=0,wipe=0,wipe_bytes=0"
+      ],
+      "qualification": "NOT_QUALIFIED",
+      "limitations": [
+        "Shared record/canonical builders, not committed-window request workload",
+        "Observed maxima, not guaranteed service bound",
+        "Reporting covers completed blocks, not an unreported terminal tail",
+        "Before explicit NOLOAD sampler initialization; superseded by final-image runs"
+      ]
+    },
+    {
+      "capture": "captures/timing-envelope-final-internal",
+      "session_log": "captures/timing-envelope-final-internal/session_20261003_211909.log",
+      "session_sha256": "2d7e16d105b68d02ba559a16c1222057fb4dc0b599ba8dc08fcae2ab3705c7af",
+      "metadata": {
+        "schema_version": 1,
+        "timestamp": "2026-10-03T19:19:30.836600+00:00",
+        "git_commit": "d08932c5d77523c880f38d18c8341aab3b14018f",
+        "git_dirty": true,
+        "build_env": "teensy41-capture-serial",
+        "firmware_hex": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+        "firmware_hex_sha256": "387a910ac62efae6a1e952b4b4486930fb89d60c5f98f961efb1108e2fe506ba",
+        "preset": "base",
+        "scenario_ids": [
+          "base"
+        ],
+        "track_number": 8,
+        "loop_slot": 4,
+        "midi_channel": 8,
+        "record_bars": 2,
+        "overdub_bars": 2,
+        "capture_serial_port": "/dev/cu.usbmodem154944801",
+        "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-final-internal/session_20261003_211909.log",
+        "out_dir": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-final-internal"
+      },
+      "report": "captures/timing-envelope-final-internal/host_midi_automation_baseline_20261003_212041.json",
+      "overall_ok": true,
+      "hitl_report": {
+        "verdict": "PASS",
+        "capture_complete": true,
+        "stimulus_valid": true,
+        "setup_transitions_confirmed": true,
+        "firmware_contradiction": false,
+        "firmware_assertions_pass": true,
+        "capture_integrity": "COMPLETE",
+        "reason": "",
+        "action_outcomes": [],
+        "issues": []
+      },
+      "clock_source": "device",
+      "tempo_bpm": 120.0,
+      "schema": 2,
+      "row_count": 88,
+      "first_opportunity": 1,
+      "last_opportunity": 6400,
+      "maximum_lane_gap_ticks": 80,
+      "maximum_eligible_predecessor_gap_ticks": 47,
+      "maximum_selected_worker_us": 287,
+      "eligible_turns": 227,
+      "progress_turns": 227,
+      "denied_turns": 0,
+      "discontinuities": 3,
+      "saturated_gaps": 0,
+      "ring_stats": [
+        "#CAP,71243890,RING,stats,attempts=8366,ok=8366,flush=41852,tx=8365,shed=1,tierA_evict=0,overflow=0,crit_rej=0,wipe=0,wipe_bytes=0"
+      ],
+      "qualification": "NOT_QUALIFIED",
+      "limitations": [
+        "Shared record/canonical builders, not committed-window request workload",
+        "Observed maxima, not guaranteed service bound",
+        "Reporting covers completed blocks, not an unreported terminal tail"
+      ]
+    },
+    {
+      "capture": "captures/timing-envelope-final-external300",
+      "session_log": "captures/timing-envelope-final-external300/session_20261003_212102.log",
+      "session_sha256": "0d9b97e9b6ca5273596637dc46c4ab46945eeb0ba7c7d33d20112ec6b4b0facd",
+      "metadata": {
+        "schema_version": 1,
+        "timestamp": "2026-10-03T19:21:09.793570+00:00",
+        "git_commit": "d08932c5d77523c880f38d18c8341aab3b14018f",
+        "git_dirty": true,
+        "build_env": "teensy41-capture-serial",
+        "firmware_hex": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+        "firmware_hex_sha256": "387a910ac62efae6a1e952b4b4486930fb89d60c5f98f961efb1108e2fe506ba",
+        "preset": "base",
+        "scenario_ids": [
+          "base"
+        ],
+        "track_number": 8,
+        "loop_slot": 4,
+        "midi_channel": 8,
+        "record_bars": 2,
+        "overdub_bars": 2,
+        "capture_serial_port": "/dev/cu.usbmodem154944801",
+        "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-final-external300/session_20261003_212102.log",
+        "out_dir": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-final-external300"
+      },
+      "report": "captures/timing-envelope-final-external300/host_midi_automation_baseline_20261003_212213.json",
+      "overall_ok": true,
+      "hitl_report": {
+        "verdict": "PASS",
+        "capture_complete": true,
+        "stimulus_valid": true,
+        "setup_transitions_confirmed": true,
+        "firmware_contradiction": false,
+        "firmware_assertions_pass": true,
+        "capture_integrity": "COMPLETE",
+        "reason": "",
+        "action_outcomes": [],
+        "issues": []
+      },
+      "clock_source": "host",
+      "tempo_bpm": 300.0,
+      "schema": 2,
+      "row_count": 93,
+      "first_opportunity": 1,
+      "last_opportunity": 5888,
+      "maximum_lane_gap_ticks": 208,
+      "maximum_eligible_predecessor_gap_ticks": 40,
+      "maximum_selected_worker_us": 233,
+      "eligible_turns": 245,
+      "progress_turns": 245,
+      "denied_turns": 0,
+      "discontinuities": 6,
+      "saturated_gaps": 0,
+      "ring_stats": [
+        "#CAP,67768852,RING,stats,attempts=8895,ok=8895,flush=41891,tx=8889,shed=6,tierA_evict=0,overflow=0,crit_rej=0,wipe=0,wipe_bytes=0"
+      ],
+      "qualification": "NOT_QUALIFIED",
+      "limitations": [
+        "Shared record/canonical builders, not committed-window request workload",
+        "Observed maxima, not guaranteed service bound",
+        "Reporting covers completed blocks, not an unreported terminal tail"
+      ]
+    },
+    {
+      "capture": "captures/timing-envelope-qualified-clock-internal",
+      "session_log": "captures/timing-envelope-qualified-clock-internal/session_20261003_213106.log",
+      "session_sha256": "feafe35fcc832931453beb46263fc0acb0ca9d8975924b7d22b66c6878f98300",
+      "metadata": {
+        "schema_version": 1,
+        "timestamp": "2026-10-03T19:31:22.484554+00:00",
+        "git_commit": "d08932c5d77523c880f38d18c8341aab3b14018f",
+        "git_dirty": true,
+        "build_env": "teensy41-capture-serial",
+        "firmware_hex": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+        "firmware_hex_sha256": "7c2a137717da5b7100625241626f62d005e7262cc38a6f60b7e670d339501e95",
+        "preset": "base",
+        "scenario_ids": [
+          "base"
+        ],
+        "track_number": 8,
+        "loop_slot": 4,
+        "midi_channel": 8,
+        "record_bars": 2,
+        "overdub_bars": 2,
+        "capture_serial_port": "/dev/cu.usbmodem154944801",
+        "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-qualified-clock-internal/session_20261003_213106.log",
+        "out_dir": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-qualified-clock-internal"
+      },
+      "report": "captures/timing-envelope-qualified-clock-internal/host_midi_automation_baseline_20261003_213230.json",
+      "overall_ok": false,
+      "hitl_report": {
+        "verdict": "INCONCLUSIVE_CAPTURE",
+        "capture_complete": true,
+        "stimulus_valid": true,
+        "setup_transitions_confirmed": false,
+        "firmware_contradiction": false,
+        "firmware_assertions_pass": false,
+        "capture_integrity": "COMPLETE",
+        "reason": "EVIDENCE_MISSING",
+        "action_outcomes": [],
+        "issues": [
+          "persistence_active_snapshot_unavailable_during_save"
+        ]
+      },
+      "clock_source": "device",
+      "tempo_bpm": 120.0,
+      "schema": 2,
+      "row_count": 92,
+      "first_opportunity": 1,
+      "last_opportunity": 5888,
+      "maximum_lane_gap_ticks": 112,
+      "maximum_eligible_predecessor_gap_ticks": 16,
+      "maximum_selected_worker_us": 320,
+      "eligible_turns": 254,
+      "progress_turns": 254,
+      "denied_turns": 0,
+      "discontinuities": 3,
+      "saturated_gaps": 0,
+      "ring_stats": [
+        "#CAP,73006881,RING,stats,attempts=8465,ok=8465,flush=41025,tx=8462,shed=2,tierA_evict=0,overflow=0,crit_rej=0,wipe=0,wipe_bytes=0"
+      ],
+      "qualification": "NOT_QUALIFIED",
+      "limitations": [
+        "Shared record/canonical builders, not committed-window request workload",
+        "Observed maxima, not guaranteed service bound",
+        "Reporting covers completed blocks, not an unreported terminal tail"
+      ]
+    },
+    {
+      "capture": "captures/timing-envelope-qualified-clock-external300",
+      "session_log": "captures/timing-envelope-qualified-clock-external300/session_20261003_213230.log",
+      "session_sha256": "6e432eeeec85d24029e83c795a6c292915c48fa3c090b06d6f999f600a72e7a2",
+      "metadata": {
+        "schema_version": 1,
+        "timestamp": "2026-10-03T19:32:37.490414+00:00",
+        "git_commit": "d08932c5d77523c880f38d18c8341aab3b14018f",
+        "git_dirty": true,
+        "build_env": "teensy41-capture-serial",
+        "firmware_hex": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+        "firmware_hex_sha256": "7c2a137717da5b7100625241626f62d005e7262cc38a6f60b7e670d339501e95",
+        "preset": "base",
+        "scenario_ids": [
+          "base"
+        ],
+        "track_number": 8,
+        "loop_slot": 4,
+        "midi_channel": 8,
+        "record_bars": 2,
+        "overdub_bars": 2,
+        "capture_serial_port": "/dev/cu.usbmodem154944801",
+        "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-qualified-clock-external300/session_20261003_213230.log",
+        "out_dir": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-qualified-clock-external300"
+      },
+      "report": "captures/timing-envelope-qualified-clock-external300/host_midi_automation_baseline_20261003_213346.json",
+      "overall_ok": true,
+      "hitl_report": {
+        "verdict": "PASS",
+        "capture_complete": true,
+        "stimulus_valid": true,
+        "setup_transitions_confirmed": true,
+        "firmware_contradiction": false,
+        "firmware_assertions_pass": true,
+        "capture_integrity": "COMPLETE",
+        "reason": "",
+        "action_outcomes": [],
+        "issues": []
+      },
+      "clock_source": "host",
+      "tempo_bpm": 300.0,
+      "schema": 2,
+      "row_count": 96,
+      "first_opportunity": 1,
+      "last_opportunity": 6400,
+      "maximum_lane_gap_ticks": 168,
+      "maximum_eligible_predecessor_gap_ticks": 32,
+      "maximum_selected_worker_us": 249,
+      "eligible_turns": 239,
+      "progress_turns": 239,
+      "denied_turns": 0,
+      "discontinuities": 6,
+      "saturated_gaps": 0,
+      "ring_stats": [
+        "#CAP,65676065,RING,stats,attempts=9025,ok=9025,flush=41672,tx=9022,shed=3,tierA_evict=0,overflow=0,crit_rej=0,wipe=0,wipe_bytes=0"
+      ],
+      "qualification": "NOT_QUALIFIED",
+      "limitations": [
+        "Shared record/canonical builders, not committed-window request workload",
+        "Observed maxima, not guaranteed service bound",
+        "Reporting covers completed blocks, not an unreported terminal tail"
+      ]
+    },
+    {
+      "capture": "captures/timing-envelope-qualified-clock-internal-retry",
+      "session_log": "captures/timing-envelope-qualified-clock-internal-retry/session_20261003_213714.log",
+      "session_sha256": "bdb7902f024dd399d5798cb5e825f61c23e602a38120bf31133b56a956a476a9",
+      "metadata": {
+        "schema_version": 1,
+        "timestamp": "2026-10-03T19:37:22.008035+00:00",
+        "git_commit": "d08932c5d77523c880f38d18c8341aab3b14018f",
+        "git_dirty": true,
+        "build_env": "teensy41-capture-serial",
+        "firmware_hex": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+        "firmware_hex_sha256": "7c2a137717da5b7100625241626f62d005e7262cc38a6f60b7e670d339501e95",
+        "preset": "base",
+        "scenario_ids": [
+          "base"
+        ],
+        "track_number": 8,
+        "loop_slot": 4,
+        "midi_channel": 8,
+        "record_bars": 2,
+        "overdub_bars": 2,
+        "capture_serial_port": "/dev/cu.usbmodem154944801",
+        "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-qualified-clock-internal-retry/session_20261003_213714.log",
+        "out_dir": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/timing-envelope-qualified-clock-internal-retry"
+      },
+      "report": "captures/timing-envelope-qualified-clock-internal-retry/host_midi_automation_baseline_20261003_213832.json",
+      "overall_ok": false,
+      "hitl_report": {
+        "verdict": "INCONCLUSIVE_CAPTURE",
+        "capture_complete": true,
+        "stimulus_valid": true,
+        "setup_transitions_confirmed": false,
+        "firmware_contradiction": false,
+        "firmware_assertions_pass": false,
+        "capture_integrity": "COMPLETE",
+        "reason": "EVIDENCE_MISSING",
+        "action_outcomes": [],
+        "issues": [
+          "persistence_active_snapshot_unavailable_during_save"
+        ]
+      },
+      "clock_source": "device",
+      "tempo_bpm": 120.0,
+      "schema": 2,
+      "row_count": 95,
+      "first_opportunity": 1,
+      "last_opportunity": 6144,
+      "maximum_lane_gap_ticks": 149,
+      "maximum_eligible_predecessor_gap_ticks": 20,
+      "maximum_selected_worker_us": 288,
+      "eligible_turns": 162,
+      "progress_turns": 162,
+      "denied_turns": 0,
+      "discontinuities": 3,
+      "saturated_gaps": 0,
+      "ring_stats": [
+        "#CAP,66697613,RING,stats,attempts=8785,ok=8785,flush=41268,tx=8783,shed=2,tierA_evict=0,overflow=0,crit_rej=0,wipe=0,wipe_bytes=0"
+      ],
+      "qualification": "NOT_QUALIFIED",
+      "limitations": [
+        "Shared record/canonical builders, not committed-window request workload",
+        "Observed maxima, not guaranteed service bound",
+        "Reporting covers completed blocks, not an unreported terminal tail"
+      ]
+    }
+  ]
+}

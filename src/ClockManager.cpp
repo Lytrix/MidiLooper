@@ -30,6 +30,47 @@ IntervalTimer clockTimer;
 
 bool sequencerRunning = false;
 
+// Singleton ClockManager state; do not charge instrumentation/extension to DTCM.
+#if defined(__IMXRT1062__)
+DMAMEM static PlaybackDeadlineClockState deadlineClock;
+#else
+static PlaybackDeadlineClockState deadlineClock;
+#endif
+namespace {
+class ClockTickMask {
+ public:
+  ClockTickMask() {
+#if defined(__IMXRT1062__)
+    __asm__ volatile("mrs %0, primask" : "=r"(saved_));
+    __asm__ volatile("cpsid i" ::: "memory");
+#endif
+  }
+  ~ClockTickMask() {
+#if defined(__IMXRT1062__)
+    __asm__ volatile("msr primask, %0" :: "r"(saved_) : "memory");
+#endif
+  }
+ private:
+  uint32_t saved_ = 0;
+};
+}
+
+PlaybackDeadlineClock ClockManager::getPlaybackDeadlineClock() const {
+  const ClockTickMask mask;
+  return deadlineClock.stamp();
+}
+
+void ClockManager::advanceCurrentTick(uint32_t amount) {
+  const ClockTickMask mask;
+  currentTick += amount;
+  deadlineClock.advance(amount);
+}
+
+void ClockManager::invalidateDeadlineClock() {
+  const ClockTickMask mask;
+  deadlineClock.invalidate();
+}
+
 ClockManager::ClockManager()
   : pendingStart(false),
     microsPerTick(0),
@@ -44,15 +85,14 @@ ClockManager::ClockManager()
     pulseFillCount(0),
     bpmSmoothed(0.0f)
 {
+  deadlineClock = PlaybackDeadlineClockState{};  // DMAMEM is NOLOAD on Teensy.
   memset(pulseTimestamps, 0, sizeof(pulseTimestamps));
 }
 
 
 uint32_t ClockManager::getCurrentTick() const {
-  noInterrupts();
-  uint32_t tick = currentTick;
-  interrupts();
-  return tick;
+  const ClockTickMask mask;
+  return currentTick;
 }
 
 uint32_t ClockManager::getMicrosPerTick() const {
@@ -113,6 +153,7 @@ void ClockManager::setBpmFloat(float newBpm) {
 }
 
 void ClockManager::setTicksPerQuarterNote(uint16_t newTicks) {
+  if (ticksPerQuarterNote != newTicks) invalidateDeadlineClock();
   ticksPerQuarterNote = newTicks;
   microsPerTick = 60000000UL / (bpm * Config::INTERNAL_PPQN);
   clockTimer.update(microsPerTick);
@@ -126,6 +167,7 @@ void ClockManager::requestTransitionTo(ClockSource target) {
 }
 
 void ClockManager::actuallyTransition(ClockSource from, ClockSource to) {
+  if (from != to) invalidateDeadlineClock();
   SC_CLOCK_SOURCE(from == CLOCK_EXTERNAL ? "EXT" : "INT",
                   to == CLOCK_EXTERNAL ? "EXT" : "INT");
   clockSource = to;
@@ -164,7 +206,7 @@ void ClockManager::updateInternalClock() {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   InvestigationAllocProbe::recordInternalClockDispatch();
 #endif
-  currentTick++;
+  advanceCurrentTick(1);
 #if RUNTIME_TIMING_ENABLED
   const uint32_t nowUs = micros();
   RUNTIME_TIMING_NOTE_PLAYBACK_SERVICE_ENTER(nowUs, microsPerTick);
@@ -232,7 +274,7 @@ void ClockManager::onMidiClockPulse() {
   if (firstPulseAfterStart) {
     firstPulseAfterStart = false;
   } else {
-    currentTick += Config::TICKS_PER_CLOCK;
+    advanceCurrentTick(Config::TICKS_PER_CLOCK);
     trackManager.advanceJamTicks(Config::TICKS_PER_CLOCK);
   }
 #if RUNTIME_TIMING_ENABLED
@@ -280,7 +322,7 @@ CLOCK_COLD_MEM void ClockManager::onMidiStart() {
   pulseFillCount = 0;
   pulseHead = 0;
   lastMidiClockTime = micros();
-  currentTick = 0;
+  assignCurrentTickSilently(0);
   firstPulseAfterStart = true;
 
   // Do not auto-play other loops while a capture is active or armed — playback
@@ -307,7 +349,7 @@ void ClockManager::onMidiStop() {
 
 void ClockManager::handleMidiClock() {
   requestTransitionTo(CLOCK_EXTERNAL);
-  currentTick += Config::TICKS_PER_CLOCK;
+  advanceCurrentTick(Config::TICKS_PER_CLOCK);
 }
 
 bool ClockManager::isClockRunning() const {
@@ -323,26 +365,22 @@ bool ClockManager::shouldQuantizeRecordStart() const {
 }
 
 void ClockManager::resetToLoopStart() {
-  noInterrupts();
-  currentTick = 0;
-  interrupts();
+  assignCurrentTickSilently(0);
   trackManager.updateAllTracks(0);
   logger.info("Reset to loop start (tick 0)");
 }
 
 void ClockManager::setCurrentTick(uint32_t tick) {
-  noInterrupts();
-  currentTick = tick;
-  interrupts();
+  assignCurrentTickSilently(tick);
   trackManager.updateAllTracks(tick);
   trackManager.forceMidiLedUpdate(tick);
   logger.log(CAT_CLOCK, LOG_DEBUG, "Seek: currentTick set to %lu", tick);
 }
 
 void ClockManager::assignCurrentTickSilently(uint32_t tick) {
-  noInterrupts();
+  const ClockTickMask mask;
   currentTick = tick;
-  interrupts();
+  deadlineClock.rebase(tick);
 }
 
 CLOCK_COLD_MEM void ClockManager::toggleTransport() {
@@ -369,7 +407,7 @@ CLOCK_COLD_MEM void ClockManager::toggleTransport() {
       if (clockSource == CLOCK_EXTERNAL) {
         actuallyTransition(CLOCK_EXTERNAL, CLOCK_INTERNAL);
       }
-      currentTick = 0;  // Align with Start — downbeat at tick 0
+      assignCurrentTickSilently(0);  // Align with Start — downbeat at tick 0
       midiHandler.sendStart();
       midiHandler.sendClock();  // First clock after Start is the downbeat (per MIDI spec)
       if (trackManager.hasActiveOrPendingCapture()) {

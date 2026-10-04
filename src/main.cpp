@@ -476,7 +476,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
   // yet, so no consumer's behaviour depends on this turn.
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::PlaybackViewMaintenance) {
     const uint8_t windowTrackCount = trackManager.getTrackCount();
-    const uint32_t windowPhase = static_cast<uint32_t>(clockManager.getCurrentTick());
+    const PlaybackDeadlineClock windowClock = clockManager.getPlaybackDeadlineClock();
+    const uint32_t windowPhase = static_cast<uint32_t>(windowClock.tick);
     const uint8_t offerCount =
         windowTrackCount < kWindowHolderOffers ? windowTrackCount : kWindowHolderOffers;
     MidiServiceDrain::PlaybackHolder offers[kWindowHolderOffers] = {};
@@ -490,15 +491,22 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     // "within a holder, earliest outstanding deadline first" half of the same requirement.
     sWindowHolderCursor.next = static_cast<uint8_t>(sWindowHolderCursor.next % (offerCount > 0 ? offerCount : 1));
     uint8_t chosenTrack = MidiServiceDrain::kNoPlaybackHolder;
+#if defined(SESSION_CAPTURE)
+    const bool windowRunning = clockManager.isTransportRunning();
+    const uint32_t windowWorkerStart = micros();
+#endif
+    Track::PlaybackViewTurnResult windowResult = Track::PlaybackViewTurnResult::Idle;
     if (MidiServiceDrain::selectPlaybackHolderRoundRobin(sWindowHolderCursor, offers, offerCount, chosenTrack) ==
         MidiServiceDrain::PlaybackHolderSelection::Service) {
-      // The caller owns the clock, so the caller answers the state for the service-gap sample -- and the question is
-      // whether the **transport** runs, not whether the clock does: a running clock with a stopped transport still
-      // advances the tick while nothing needs service, which is what made the first three runs' maxima (9 367 / 4 337 /
-      // 4 400 ticks) look like service gaps. Measured: those runs reported **0 resets**, so they were not resets either.
-      (void)trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase, nullptr,
-                                                                          clockManager.isTransportRunning());
+      windowResult = trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase);
     }
+#if defined(SESSION_CAPTURE)
+    Track::samplePlaybackLaneOpportunity(windowClock, windowRunning,
+        chosenTrack != MidiServiceDrain::kNoPlaybackHolder, windowResult,
+        chosenTrack != MidiServiceDrain::kNoPlaybackHolder ? micros() - windowWorkerStart : 0);
+#else
+    (void)windowResult;
+#endif
     return;
   }
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Persistence ||
@@ -670,6 +678,9 @@ FLASHMEM __attribute__((noinline)) static void emitBootResetCapture(bool hadCras
 #endif
 
 FLASHMEM void setup() {
+#if defined(SESSION_CAPTURE)
+  Track::resetPlaybackLaneMeasurement();
+#endif
   HOT_PATH_TELEMETRY_RESET();
   delay(500);  // USB re-enumeration after reset
   Serial.begin(115200);

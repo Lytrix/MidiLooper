@@ -1,3 +1,4 @@
+#include "Utils/PlaybackLaneMeasurement.h"
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
@@ -1621,45 +1622,14 @@ TRACK_COLD_MEM void CoverageServiceContract::deriveGrainsFrom(size_t windowEvent
 }
 
 TRACK_COLD_MEM CoverageServiceContract Track::playbackViewCoverageContract() {
-  // The **declared** caps (DEC-108 item 1; `ExecutionBounds.md` row 27 asks the code to declare exactly
-  // these before active windowed playback may be admitted at all). This is deliberately conservative, and
-  // one term is explicitly **owed a measurement**:
-  //
-  // - `maximumPhaseAdvancePerTurn` = one bar (768 ticks). **Measured 2026-10-03, and the safety claim this
-  //   comment used to make is refuted by that measurement.** The field's unit is the phase between two of
-  //   *this owner's own* opportunities (the field doc in `RuntimePlaybackViewBuild.h`), and the device
-  //   measures the steady state at **2.9-5.5 ticks per opportunity** (~7.3-7.5 ms, tempo-invariant across
-  //   120 and 240 BPM), so one bar is an upper bound on the *scheduling* advance with ~140-265x to spare.
-  //   It is **not** an upper bound on the advance itself: separate **starvation episodes** of **2 138 /
-  //   4 355 / 8 520 ticks** (5.6-11.3 s, from cumulative *lost* opportunities rather than from one blocking
-  //   call -- the largest single span measured is 501 ms) appeared in the same runs, i.e. 2.8x-11.1x
-  //   *above* this declaration. The text that stood here claimed an unmeasured value "can only refuse work,
-  //   never admit too much"; measured, an admitted window **can** be starved past its handoff, and that miss
-  //   is the lag rule's business (`advancePlaybackLagTraversal` -> `one_pass_late` / `lag_breach`, task
-  //   3.6b), not this constant's. Enlarging this constant towards the starvation figure is therefore the
-  //   **wrong** repair, and a fixture pins the declaration against it
-  //   (`test_window_owner_service_gap_declaration_is_bounded_by_measurement_not_by_its_own_claim`).
-  // - The unit is a **tick** count, so its wall-clock meaning is **tempo-dependent**: 768 ticks is 2.0 s at
-  //   120 BPM and 1.0 s at 240 BPM, through the same `microsPerTick` formula the clock uses (measured, and
-  //   pinned by the same fixture). A declaration in ticks therefore buys half the wall-clock margin when the
-  //   tempo doubles, which is a property of the unit rather than of any one observation.
-  // - `maximumConsecutiveDeniedTurns` = the **within-lane** contention allowance (`H` eligible tracks x `K`
-  //   sibling slots of the chosen track -- `src/main.cpp`'s offer round-robin), *not* the owner rotation: the
-  //   rotation is already inside `maximumPhaseAdvancePerTurn` by that field's unit, so injecting it here as
-  //   well would double-count it (the conflation `evidence/2026-10-02-s310h-lifetime-fairness-derivation/`
-  //   records). The declared value stays the small `3`; declaring `H x K` itself is task 3.10's remaining
-  //   work, so this term is an allowance rather than a proved bound, and it is named as such here.
-  // - grain counts: **derived, not asserted** (task 3.10). The basis window is the 144-event two-bar window this
-  //   declaration was written around (`runtime-working-set-ownership/S2C1-PLAYBACK-WINDOW-LEASE.md`), and its cost is
-  //   computed by the same helper every request uses -- `ceil(events / kPlaybackViewFillQuantum)` fills plus
-  //   `RuntimePlaybackOrderBuilder::requiredGrains(events, kPlaybackViewOrderQuantum)` order grains plus one promotion
-  //   grain. **Measured 2026-10-02:** that makes the basis window **51 order grains, not the 3** previously declared --
-  //   the old constant assumed the order pass was linear at one entry per quantum, while the builder's own worst-case
-  //   entry count is `events x (1 + 2 x ceil(log2 events))`. A window too large for its loop is therefore **refused by
-  //   arithmetic rather than by a claim** (spec *Accepted content is never truncated*), and the 2048-event capacity
-  //   stays a capacity, not a promise.
-  // - `leadTicks` = one bar: preparation runs ahead of the handoff (DEC-108 item 8's "prepare ahead of the
-  //   playhead"), so a window is owed for the interval the playhead is about to use.
+  // Provisional declaration, NOT a qualified service bound. The legacy win_gap sampler
+  // ran only when a track was selected; its maxima may span intervals with no work.
+  // Schema-2 measurement now runs at every main-loop lane dispatch. Neither its
+  // observed maximum nor the legacy typical gap is a guaranteed service limit.
+  // Across tracks Hmax is 8; within a track charge bounded sibling WORK, not a
+  // slot multiplier. Extra Snapshot turns already belong to the measured lane gap.
+  // Keep activation gated until request costs, protected deadlines, pending retries,
+  // permitted service gap and overrun policy are qualified together.
   CoverageServiceContract contract;
   contract.maximumPhaseAdvancePerTurn = Config::TICKS_PER_BAR;
   contract.maximumConsecutiveDeniedTurns = 3;
@@ -1677,7 +1647,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
     uint8_t slotIndex, const MidiEvent* source, size_t sourceCount,
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
     const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
-    uint32_t currentPhase, uint32_t handoffPhase) {
+    uint32_t currentPhase, uint32_t handoffPhase, PlaybackDeadlineClock clock) {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return PlaybackViewRequestResult::NoRuntime;
   }
@@ -1720,18 +1690,27 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   // interference bound first.
   CoverageServiceContract derived = contract;
   derived.deriveGrainsFrom(sourceCount);
+  if (sInterferenceBudgetEnforced) {
+    contract = derived;
+    // One track grain per lane opportunity; sibling work is charged separately.
+    contract.maximumConsecutiveDeniedTurns = Config::NUM_TRACKS - 1;
+  }
   PlaybackViewAdmittedWork admittedWork;
   admittedWork.sourceEntries = static_cast<uint32_t>(sourceCount);
   admittedWork.retainedEventBound = static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit);
   admittedWork.fillGrains = derived.requiredFillGrains;
   admittedWork.orderGrains = derived.requiredOrderGrains;
   admittedWork.promotionGrains = derived.requiredPromotionGrains;
-  // The **deadline** this window is admitted against, and the **intended traversal** (the phase it was admitted at and
-  // the lead that traversal was allowed), retained so a later request is checked against this window's own deadline --
-  // and so that a deadline already passed cannot be re-granted another pass.
+  // Retain an absolute deadline. Missing clocks and addition overflow remain unqualified,
+  // and can never pass enforced admission. Phase only determines the initial lead.
   admittedWork.handoffPhase = handoffPhase;
-  admittedWork.admittedPhase = currentPhase;
-  admittedWork.admittedLeadTicks = handoffLeadTicks(currentPhase, handoffPhase, coverage.loopLengthTicks);
+  admittedWork.admittedLoopLength = coverage.loopLengthTicks;
+  admittedWork.admittedTick = clock.tick;
+  const uint32_t lead = handoffLeadTicks(currentPhase, handoffPhase, coverage.loopLengthTicks);
+  if (clock.epoch != 0 && lead != 0 && clock.tick <= UINT64_MAX - lead) {
+    admittedWork.deadlineTick = clock.tick + lead;
+    admittedWork.clockEpoch = clock.epoch;
+  }
   // **The interference budget is computed and proved, but deliberately not enforced yet** -- the review's own ordering
   // puts that after the preventing paths are bounded and `Delta-max` is chosen. Charging a sibling's outstanding work
   // against a new window's lead only becomes usable once the per-turn advance inside that charge is the **measured**
@@ -1740,8 +1719,9 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   // must not start with. `playbackViewAdmissionKeepsAdmittedDeadlines` *is* the bound; step 4's formula
   // (`Delta-max x H x bounded per-track work`) is what turns it on.
   if (sInterferenceBudgetEnforced &&
-      !playbackViewAdmissionKeepsAdmittedDeadlines(contract, currentPhase, coverage.loopLengthTicks,
-                                                   static_cast<uint16_t>(admittedWork.requiredGrains()))) {
+      (admittedWork.clockEpoch == 0 ||
+       !playbackViewAdmissionKeepsAdmittedDeadlines(contract, currentPhase, coverage.loopLengthTicks,
+                                                   static_cast<uint16_t>(admittedWork.requiredGrains()), clock))) {
     return PlaybackViewRequestResult::TrackInterferenceBudgetExceeded;
   }
   // Named separately from the primitive's own answer: the declared gate is what refuses *here*, so the
@@ -1792,7 +1772,8 @@ TRACK_COLD_MEM uint16_t Track::playbackViewOutstandingGrains(uint8_t excludingSl
 
 TRACK_COLD_MEM bool Track::playbackViewAdmissionKeepsAdmittedDeadlines(
     const CoverageServiceContract& contract, uint32_t currentPhase, uint32_t loopLengthTicks,
-    uint16_t candidateGrains) const {
+    uint16_t candidateGrains, PlaybackDeadlineClock clock) const {
+  if (clock.epoch == 0 || loopLengthTicks == 0 || currentPhase >= loopLengthTicks) return false;
   for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
     const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
     const PlaybackViewAdmittedWork* work = runtime != nullptr ? runtime->activeViewBuildWork() : nullptr;
@@ -1811,17 +1792,14 @@ TRACK_COLD_MEM bool Track::playbackViewAdmissionKeepsAdmittedDeadlines(
     forSlot.requiredPromotionGrains = static_cast<uint16_t>(work->promotionGrains);
     const uint32_t others = static_cast<uint32_t>(playbackViewOutstandingGrains(slot)) + candidateGrains;
     const uint16_t charged = others > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(others);
-    // **A passed deadline must not be re-granted another pass.** `handoffLeadTicks` measures *forward* distance, so on
-    // its own it would report a nearly full pass of lead the moment the playhead went past the deadline. The retained
-    // traversal settles it: the forward distance from the admission phase is inside the admitted lead exactly while the
-    // traversal is **open**, and wraps past it once the deadline is behind -- so a closed traversal is refused here,
-    // before any arithmetic can flatter it. (Review: "retain the intended traversal/absolute deadline, or prove the
-    // rollover cannot happen"; this retains the traversal and the closure is arithmetic.)
-    const uint32_t elapsed = handoffLeadTicks(work->admittedPhase, currentPhase, loopLengthTicks);
-    if (work->admittedLeadTicks == 0u || elapsed > work->admittedLeadTicks) {
+    // Compare absolute time even if no check occurred for many complete loop traversals.
+    // A reset/rebase, backwards clock or changed geometry invalidates the old promise.
+    if (work->clockEpoch != clock.epoch || work->admittedLoopLength == 0 ||
+        loopForSlot(slot).loopLengthTicks != work->admittedLoopLength ||
+        clock.tick < work->admittedTick || clock.tick >= work->deadlineTick) {
       return false;
     }
-    if (!forSlot.canCompleteBeforeHandoff(currentPhase, work->handoffPhase, loopLengthTicks, charged)) {
+    if (!forSlot.canCompleteWithinLead(work->deadlineTick - clock.tick, charged)) {
       return false;
     }
   }
@@ -1893,64 +1871,42 @@ TRACK_COLD_MEM MidiServiceDrain::PlaybackHolder Track::playbackWindowServiceOffe
   return offer;
 }
 
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
 #if defined(__IMXRT1062__)
-/// The service-gap sampler state (DEC-108 §13b / task 3.10). `DMAMEM` by the placement rule for additional counters:
-/// off-clock, read by the owner turn alone, never DTCM.
-DMAMEM static uint32_t sGapLastPhase = 0;
-DMAMEM static uint32_t sGapMaxDelta = 0;
-DMAMEM static uint32_t sGapSampleCount = 0;
-/// Whether the previous sample was taken while the transport ran: what makes a gap a *service* gap.
-DMAMEM static bool sGapLastPhaseRunning = false;
-/// Decreases of the monotonic tick seen since the previous row: **resets** (transport start / clock re-base), excluded
-/// from the max and reported, so a reader can see the exclusion rather than trusting it.
-DMAMEM static uint32_t sGapResets = 0;
+DMAMEM static PlaybackLaneMeasurement sLaneMeasurement;
 #else
-static uint32_t sGapLastPhase = 0;
-static uint32_t sGapMaxDelta = 0;
-static uint32_t sGapSampleCount = 0;
-static bool sGapLastPhaseRunning = false;
-static uint32_t sGapResets = 0;
+static PlaybackLaneMeasurement sLaneMeasurement;
 #endif
-/// One row per this many opportunities, so a sample cannot evict the evidence it explains (`TelemetryCadence`).
-/// `static` on purpose: an `inline constexpr` at namespace scope has external linkage and is emitted as a real data
-/// symbol, which does not belong in the DTCM accounting at all.
-static constexpr uint32_t kServiceGapSampleInterval = 16;
+#endif
+
+TRACK_COLD_MEM void Track::resetPlaybackLaneMeasurement() {
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+  sLaneMeasurement = PlaybackLaneMeasurement{};  // DMAMEM is NOLOAD on Teensy.
+#endif
+}
+
+TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
+    PlaybackDeadlineClock clock, bool running, bool eligible,
+    PlaybackViewTurnResult result, uint32_t workerUs) {
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+  sLaneMeasurement.observe(clock, running, eligible,
+      result == PlaybackViewTurnResult::GrainServed || result == PlaybackViewTurnResult::BuildComplete,
+      result == PlaybackViewTurnResult::GrainDenied, workerUs);
+  // First row then every 256 dispatches, and on an eligible->idle completion.
+  // Idle dispatches are now counted, so the former 16-turn cadence would flood capture.
+  if (sLaneMeasurement.opportunities == 1 || sLaneMeasurement.opportunities % 256 == 0 ||
+      result == PlaybackViewTurnResult::BuildComplete || result == PlaybackViewTurnResult::GrainDenied) {
+    SC_WINDOW_SERVICE_GAP(sLaneMeasurement, static_cast<uint32_t>(clock.tick), running, clock.epoch);
+    sLaneMeasurement.clearBlock();
+  }
+#else
+  (void)clock; (void)running; (void)eligible; (void)result; (void)workerUs;
+#endif
+}
 
 TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     uint32_t currentPhase, MidiServiceDrain::PlaybackHolderCursor* cursor, bool transportRunning) {
-  // **The service-gap sample, taken at the top of every opportunity.** The opportunity is this call: one lane
-  // owner turn, whatever it ends up doing -- a turn that serves nothing still consumed a dispatch, and the gap is about
-  // *when* the lane is served. `currentPhase` is the caller's playhead, so the delta between two consecutive calls is
-  // exactly the quantity `CoverageServiceContract::maximumPhaseAdvancePerTurn` is declared in, and which the existing
-  // device rows cannot measure (they carry durations, not gaps).
-  {
-    if (transportRunning && sGapLastPhaseRunning && sGapSampleCount != 0u) {
-      // **`clockManager.getCurrentTick()` is monotonic between resets** (it is incremented per clock and set to 0 when
-      // the transport starts or the clock is re-based -- `ClockManager.cpp`), so a *decrease* is a **reset, not a loop
-      // wrap**. The first version added the loop length on any decrease, which turned a reset into an apparent gap of
-      // thousands of ticks: that, and not service, is what the first two device runs' maxima measured. A decrease is
-      // therefore **excluded and counted**, so the series says how many were dropped instead of inventing a gap.
-      if (currentPhase >= sGapLastPhase) {
-        const uint32_t delta = currentPhase - sGapLastPhase;
-        if (delta > sGapMaxDelta) {
-          sGapMaxDelta = delta;
-        }
-      } else {
-        ++sGapResets;
-      }
-    }
-    sGapLastPhase = currentPhase;
-    // A gap is a *service* gap only between two samples taken while the transport ran: while it is stopped the tick does
-    // not advance at all, and a start/stop or a wrap moves it discontinuously. Measured: the first device run's worst
-    // "gap" (9 367 ticks, 1.54 s) was a stop plus a restart, not service.
-    sGapLastPhaseRunning = transportRunning;
-    // The cadence counts **opportunities**, not served grains; each row reports the max gap since the previous row.
-    if (TelemetryCadence::shouldLogOccurrence(sGapSampleCount, kServiceGapSampleInterval)) {
-      SC_WINDOW_SERVICE_GAP(sGapMaxDelta, sGapSampleCount, currentPhase, transportRunning, sGapResets);
-      sGapResets = 0;
-      sGapMaxDelta = 0;
-    }
-  }
+  (void)transportRunning;  // Compatibility argument; sampling belongs to the lane dispatcher.
   MidiServiceDrain::PlaybackHolder holders[Config::MAX_LOOPS_PER_TRACK] = {};
   fillPlaybackHolders(currentPhase, holders);
   // The shared policy chooses which holder this turn serves (task 3.10): holders rotate, the earliest outstanding
@@ -2026,7 +1982,7 @@ TRACK_COLD_MEM bool Track::playbackWindowInterval(uint32_t loopLengthTicks, bool
 
 TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackWindow(uint8_t slotIndex,
                                                                            uint32_t playheadPhase,
-                                                                           SessionMidiEventVec& scratch) {
+                                                                           SessionMidiEventVec& scratch, PlaybackDeadlineClock clock) {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return PlaybackViewRequestResult::NoRuntime;
   }
@@ -2061,14 +2017,14 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackWindow(uin
   // tick, before the playhead returns to it" -- so the distance is the rest of the loop plus the interval's own
   // start. `canCompleteBeforeHandoff` decides whether the declared contract can make it.
   return requestPlaybackViewMaintenance(slotIndex, scratch.data(), scratch.size(), identity, coverage, {}, {},
-                                       phase, coverage.startPhase);
+                                       phase, coverage.startPhase, clock);
 }
 
 TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPreviewWindow(uint8_t slotIndex,
                                                                            uint32_t previewRevision,
                                                                            const MidiEvent* source,
                                                                            size_t sourceCount,
-                                                                           uint32_t currentPhase) {
+                                                                           uint32_t currentPhase, PlaybackDeadlineClock clock) {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return PlaybackViewRequestResult::NoRuntime;
   }
@@ -2097,7 +2053,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPreviewWindow(uint
   const uint32_t phase = currentPhase % loop.loopLengthTicks;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   const PlaybackViewRequestResult result = requestPlaybackViewMaintenance(
-      slotIndex, source, sourceCount, identity, coverage, {}, {}, phase, coverage.startPhase);
+      slotIndex, source, sourceCount, identity, coverage, {}, {}, phase, coverage.startPhase, clock);
   if (result == PlaybackViewRequestResult::Admitted && runtime != nullptr) {
     // The lane owns this build from here: the revision is its freeze token, and the flag is how a cancellation tells
     // the lane's own work from a committed build's.

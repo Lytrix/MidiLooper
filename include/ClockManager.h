@@ -5,6 +5,7 @@
 #define CLOCKMANAGER_H
 
 #include <Arduino.h>
+#include "Utils/PlaybackDeadlineClock.h"
 
 enum ClockSource {
   CLOCK_INTERNAL,
@@ -42,6 +43,8 @@ public:
 
   // --- Accessors ---
   uint32_t getCurrentTick() const;
+  /// Atomically captured extended tick and reset/source identity; preserves interrupt mask.
+  PlaybackDeadlineClock getPlaybackDeadlineClock() const;
   /// Sub-tick phase in [0, 1) from time since last clock pulse; display-only (not for MIDI/scheduling).
   float getDisplayTickPhase() const;
   uint32_t getMicrosPerTick() const;
@@ -60,6 +63,8 @@ public:
 
 private:
   void actuallyTransition(ClockSource from, ClockSource to);
+  void advanceCurrentTick(uint32_t amount);
+  void invalidateDeadlineClock();
 
   // --- Timing data ---
   uint32_t microsPerTick;

@@ -260,11 +260,14 @@ public:
   };
   enum class PlaybackViewTurnResult : uint8_t { Idle, GrainServed, BuildComplete, GrainDenied };
 
+  /// Enforced admission requires a qualified clock stamp; the default is explicitly unqualified.
+  /// Phase and stamp must describe the same instant/projection. Reset, seek or re-projection
+  /// must invalidate the epoch before a pending deadline is checked again.
   PlaybackViewRequestResult requestPlaybackViewMaintenance(
       uint8_t slotIndex, const MidiEvent* source, size_t sourceCount,
       const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
       const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
-      uint32_t currentPhase, uint32_t handoffPhase);
+      uint32_t currentPhase, uint32_t handoffPhase, PlaybackDeadlineClock clock = {});
   bool hasPendingPlaybackViewMaintenance() const;
   /// DEC-108 §13b / task 3.10 (the review's step 2): the **per-track outstanding-work budget** -- the sum of every
   /// active build's **full** admitted grains on this track. Full, not remaining, is deliberate: it is an **upper
@@ -276,7 +279,8 @@ public:
   /// plus **all** the other outstanding work (the candidate included) -- the deliberate, EDF-free "charge all sibling
   /// work" rule -- so no later request can invalidate an older window's admitted bound.
   bool playbackViewAdmissionKeepsAdmittedDeadlines(const CoverageServiceContract& contract, uint32_t currentPhase,
-                                                   uint32_t loopLengthTicks, uint16_t candidateGrains) const;
+                                                   uint32_t loopLengthTicks, uint16_t candidateGrains,
+                                                   PlaybackDeadlineClock clock = {}) const;
   /// DEC-108 §13b / task 3.10: serve **one declared grain** of this track's owed window work. `currentPhase` is
   /// the playhead's phase and `cursor` the caller's rotation position across holders: the selection is the shared
   /// policy (`MidiServiceDrain::selectPlaybackHolder`) -- holders rotate, the earliest outstanding handoff is
@@ -285,6 +289,9 @@ public:
   /// Passing no cursor keeps the pre-3.10 single-holder behaviour (the scan starts at slot 0 every call), which is
   /// why the existing single-owing-slot fixtures need no change; a caller that serves more than one holder passes
   /// its own cursor so the rotation persists across turns.
+  static void resetPlaybackLaneMeasurement();
+  static void samplePlaybackLaneOpportunity(PlaybackDeadlineClock clock, bool running, bool eligible,
+                                            PlaybackViewTurnResult result, uint32_t workerUs);
   PlaybackViewTurnResult stepPlaybackViewMaintenance(
       uint32_t currentPhase = 0, MidiServiceDrain::PlaybackHolderCursor* cursor = nullptr,
       bool transportRunning = false);
@@ -324,7 +331,7 @@ public:
   /// `Admitted` when the build is begun (then drive `stepPlaybackViewMaintenance`), or one of the named
   /// refusals above, which are non-destructive.
   PlaybackViewRequestResult requestPlaybackWindow(uint8_t slotIndex, uint32_t playheadPhase,
-                                                 SessionMidiEventVec& scratch);
+                                                 SessionMidiEventVec& scratch, PlaybackDeadlineClock clock = {});
   /// The declared `CoverageServiceContract` this owner is admitted under. Single-sourced: the declaration,
   /// its derivation and the measurement still owed are recorded where it is defined, and the grain quanta
   /// below are the sizes its declared grain counts come from.
@@ -572,7 +579,7 @@ public:
   /// it without inspecting anything else.
   PlaybackViewRequestResult requestPreviewWindow(uint8_t slotIndex, uint32_t previewRevision,
                                                  const MidiEvent* source, size_t sourceCount,
-                                                 uint32_t currentPhase);
+                                                 uint32_t currentPhase, PlaybackDeadlineClock clock = {});
   /// The preview lane's cancellation. A mutated or removed source cancels the in-flight preview build and invalidates
   /// its operation identity, so a stale completion publishes nothing; a session exit additionally makes the
   /// **committed successor owed** (the handoff). The served window is never torn: at an exit the preview window keeps

@@ -277,14 +277,12 @@ struct PlaybackViewAdmittedWork {
   /// build serves. Retained so that a **later** admission can be checked against it (review step 2) rather than only
   /// against its own margin -- "admission must leave every already-admitted window's deadline feasible".
   uint32_t handoffPhase = 0;
-  /// **The intended traversal**, so a *passed* deadline can never be re-granted a whole extra pass. A phase repeats
-  /// every loop, so `handoffLeadTicks(currentPhase, handoffPhase, L)` on its own would compute a nearly full pass of
-  /// available lead the moment the playhead went past the deadline. Retaining the phase the window was admitted at and
-  /// the lead that traversal was allowed lets the check decide whether the traversal is still **open**: the forward
-  /// distance from the admission phase is inside the lead exactly while it is open, and wraps past it once the deadline
-  /// is behind.
-  uint32_t admittedPhase = 0;
-  uint32_t admittedLeadTicks = 0;
+  /// Absolute deadline in a qualified clock epoch. Never reconstruct from a repeating phase.
+  /// A zero epoch means this legacy/gated request has no qualified deadline.
+  uint64_t admittedTick = 0;
+  uint64_t deadlineTick = 0;
+  uint32_t clockEpoch = 0;
+  uint32_t admittedLoopLength = 0;
   /// The same saturating sum the contract uses, so a reader cannot disagree with `requiredGrains()`.
   uint32_t requiredGrains() const {
     const uint32_t total = static_cast<uint32_t>(fillGrains) + orderGrains + promotionGrains;

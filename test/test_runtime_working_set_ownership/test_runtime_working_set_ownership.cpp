@@ -55,8 +55,8 @@ inline void record(uint32_t maxDeltaTicks, uint32_t opportunities, uint32_t phas
   ++count;
 }
 }  // namespace WindowGapRows
-#define SC_WINDOW_SERVICE_GAP(maxDeltaTicks, opportunities, phase, running, resets) \
-  WindowGapRows::record(maxDeltaTicks, opportunities, phase, running, resets)
+#define SC_WINDOW_SERVICE_GAP(sample, phase, running, epoch) \
+  WindowGapRows::record((sample).maxDeltaTicks, (sample).opportunities, phase, running, (sample).discontinuities)
 // DEC-108 §13b / task 3.9 (increment 4): the window lane's **path rows** through the same substitutable-seam pattern, so
 // a claim about a row (`lag_breach`, `one_pass_late`) is checked as **the row**, not only as the state beside it. The
 // lane emitted these rows under a capture build only, which is why 3.6b's "the breach is reported once per episode"
@@ -6176,7 +6176,7 @@ void prepareOwingWindowHolder(Track& track, uint8_t slot, uint32_t loopTicks, ui
   scratch.clear();
   TEST_ASSERT_EQUAL_MESSAGE(
       static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-      static_cast<int>(track.requestPlaybackWindow(slot, requestPhase, scratch)),
+      static_cast<int>(track.requestPlaybackWindow(slot, requestPhase, scratch, {requestPhase, 1})),
       "the fixture's loop must be long enough for the declared lead, or the request is refused");
   LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot);
   TEST_ASSERT_NOT_NULL(runtime);
@@ -6762,11 +6762,11 @@ void test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a
   const uint32_t earlyPhase = (60 * kBar) + 384;  // the phase both windows were requested at
   TEST_ASSERT_FALSE_MESSAGE(
       track.playbackViewAdmissionKeepsAdmittedDeadlines(contract, earlyPhase, kShortLoopTicks,
-                                                       static_cast<uint16_t>(work1->requiredGrains())),
+                                                       static_cast<uint16_t>(work1->requiredGrains()), {earlyPhase, 1}),
       "on a short loop the sibling's charge cannot leave the older window's deadline feasible");
   TEST_ASSERT_TRUE_MESSAGE(
       track.playbackViewAdmissionKeepsAdmittedDeadlines(contract, earlyPhase, kLongLoopTicks,
-                                                       static_cast<uint16_t>(work1->requiredGrains())),
+                                                       static_cast<uint16_t>(work1->requiredGrains()), {earlyPhase, 1}),
       "on the loop both windows were admitted on, the same charge still fits");
 
   // **(C) Why the bound is not enforced yet**, asserted rather than left to prose: with the *declared* advance (one
@@ -6779,22 +6779,56 @@ void test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(kShortLoopTicks, siblingChargeTicks,
                                           "the declared charge for one sibling already exceeds a 40-bar loop");
 
-  // **(D) A passed deadline is NOT re-granted another pass.** A phase repeats every loop, so the forward distance to
-  // the deadline would flatter a *closed* traversal into a nearly full pass of available lead. The retained traversal
-  // settles it, and the boundary is exact: one tick past the deadline the traversal is closed and the same charge that
-  // fitted a moment earlier is refused.
-  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, work0->admittedLeadTicks, "the traversal's lead is retained");
-  const uint32_t pastDeadline = (work0->handoffPhase + 1u) % kLongLoopTicks;
-  TEST_ASSERT_FALSE_MESSAGE(
-      track.playbackViewAdmissionKeepsAdmittedDeadlines(contract, pastDeadline, kLongLoopTicks,
-                                                       static_cast<uint16_t>(work1->requiredGrains())),
-      "once the playhead is past the deadline the traversal is closed, so no extra pass is granted");
+  // Missing observation at the boundary does not matter: time is no longer loop-modular.
+  TEST_ASSERT_EQUAL_UINT64(earlyPhase, work0->admittedTick);
+  TEST_ASSERT_EQUAL_UINT64(kLongLoopTicks + work0->handoffPhase, work0->deadlineTick);
+  TEST_ASSERT_EQUAL_UINT32(1u, work0->clockEpoch);
+  for (uint64_t laps : {1ull, 2ull, 100ull}) {
+    TEST_ASSERT_FALSE_MESSAGE(
+        track.playbackViewAdmissionKeepsAdmittedDeadlines(contract, earlyPhase, kLongLoopTicks,
+            static_cast<uint16_t>(work1->requiredGrains()), {earlyPhase + laps * kLongLoopTicks, 1}),
+        "a full unobserved lap must not reopen the retained deadline");
+  }
+  TEST_ASSERT_FALSE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
+      contract, work0->handoffPhase, kLongLoopTicks, 0, {work0->deadlineTick, 1}));
+  TEST_ASSERT_FALSE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
+      contract, work0->handoffPhase + 1u, kLongLoopTicks, 0, {work0->deadlineTick + 1u, 1}));
 }
 
 /// The review's step 2, third point: **the enforced path is tested now, with a controlled timing contract** -- failing
 /// older fixtures is not a reason to leave enforcement unexercised. The switch is a **runtime** flag precisely so this
 /// fixture can turn it on, drive the *real* admission, and see the named refusal come out of it. Production keeps it
 /// off until the timing bound is supported, and the flag is restored so no later fixture inherits it.
+void test_enforced_candidate_charges_derived_cost_and_eight_track_rotation() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  for (uint8_t slot = 0; slot < 2; ++slot) {
+    const uint32_t length = (slot == 0 ? 100u : 200u) * 768;
+    commitRecordPassIntoTrackSlotOfLength(track, slot, length);
+    Loop& loop = track.getLoop(slot);
+    loop.loopLengthTicks = length;
+    publishNotesInBarsRootForSlot(loop, 0, 2, 32);
+    TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(slot));
+    SessionMidiEventVec& scratch = windowSourceScratch(slot);
+    sInterferenceBudgetEnforced = true;
+    const auto result = track.requestPlaybackWindow(slot, 1, scratch, {1, 1});
+    sInterferenceBudgetEnforced = false;
+    TEST_ASSERT_EQUAL_UINT32(63, scratch.size());  // End-boundary off is outside the half-open window.
+    if (slot == 0) {
+      TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
+                               static_cast<int>(result),
+                               "candidate must charge derived work across all eight tracks");
+      TEST_ASSERT_NULL(TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot)->activeViewBuildWork());
+    } else {
+      TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted), static_cast<int>(result));
+      const auto* work = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot)->activeViewBuildWork();
+      TEST_ASSERT_NOT_NULL(work);
+      TEST_ASSERT_EQUAL_UINT32(20, work->requiredGrains());
+    }
+  }
+}
+
 void test_window_admission_refuses_by_name_once_the_interference_budget_is_enforced() {
   constexpr uint32_t kBar = 768;
   constexpr uint32_t kLongLoopTicks = 900 * kBar;
@@ -6823,7 +6857,7 @@ void test_window_admission_refuses_by_name_once_the_interference_budget_is_enfor
 
   sInterferenceBudgetEnforced = true;
   scratch.clear();
-  const Track::PlaybackViewRequestResult refused = track.requestPlaybackWindow(1, kRequestPhase, scratch);
+  const Track::PlaybackViewRequestResult refused = track.requestPlaybackWindow(1, kRequestPhase, scratch, {kRequestPhase, 1});
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::TrackInterferenceBudgetExceeded),
                             static_cast<int>(refused),
                             "with the budget enforced the real admission refuses by name, charging the sibling");
@@ -6832,7 +6866,7 @@ void test_window_admission_refuses_by_name_once_the_interference_budget_is_enfor
 
   sInterferenceBudgetEnforced = false;
   scratch.clear();
-  const Track::PlaybackViewRequestResult admitted = track.requestPlaybackWindow(1, kRequestPhase, scratch);
+  const Track::PlaybackViewRequestResult admitted = track.requestPlaybackWindow(1, kRequestPhase, scratch, {kRequestPhase, 1});
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                             static_cast<int>(admitted),
                             "with the budget off the very same request is admitted: the budget is what refused it");
@@ -6998,96 +7032,136 @@ void test_window_request_beyond_the_retained_capacity_is_refused_by_name_and_tru
   TEST_ASSERT_NULL_MESSAGE(runtime->activeViewBuildWork(), "nothing is retained for a refused request");
 }
 
-/// DEC-108 §13b / task 3.10 — **the service-gap unit, measured rather than declared.** `maximumPhaseAdvancePerTurn` is
-/// the phase advance between two of *this owner's own* opportunities, and it was the only term in the admission that had
-/// never been measured (the device rows that exist carry durations, not gaps). This fixture drives the lane turn with a
-/// known phase progression and asserts the sample: the running **max** delta, the opportunity count, and that each row
-/// reports the max *since the previous row*, so a quiet interval cannot hide behind a loud one.
+// Sample the dispatch seam explicitly: worker-only calls must not count opportunities.
 void test_window_service_gap_sample_reports_the_measured_phase_advance_per_opportunity() {
-  constexpr uint32_t kInterval = 16;  // must match the TU's declared kServiceGapSampleInterval
-  constexpr uint32_t kQuiet = 1000;   // the ordinary advance per opportunity
-  constexpr uint32_t kSpike = 5000;   // one slow opportunity, which the row must carry as the max
+  Track::resetPlaybackLaneMeasurement();
+  WindowGapRows::reset();
+  Track::samplePlaybackLaneOpportunity({900000, 9}, true, true,
+                                      Track::PlaybackViewTurnResult::GrainDenied, 999);
+  Track::resetPlaybackLaneMeasurement();
+  WindowGapRows::reset();
+  Track::samplePlaybackLaneOpportunity({0, 1}, false, false,
+                                      Track::PlaybackViewTurnResult::Idle, 0);
+  TEST_ASSERT_EQUAL_UINT32(1, WindowGapRows::count);
+  TEST_ASSERT_EQUAL_UINT32(1, WindowGapRows::rows[0].opportunities);
+  TEST_ASSERT_EQUAL_UINT32(0, WindowGapRows::rows[0].maxDeltaTicks);
+  TEST_ASSERT_EQUAL_UINT32(0, WindowGapRows::resets[0]);
+  Track::resetPlaybackLaneMeasurement();
+  constexpr uint32_t interval = 256;
+  uint64_t tick = 100000;
+  using Result = Track::PlaybackViewTurnResult;
+  auto sample = [&](uint32_t advance, uint32_t epoch = 1, bool running = true) {
+    tick += advance;
+    Track::samplePlaybackLaneOpportunity({tick, epoch}, running, false, Result::Idle, 0);
+  };
+  for (uint32_t i = 0; i < interval; ++i) sample(10);
+  WindowGapRows::reset();
+  for (uint32_t i = 0; i < interval; ++i) sample(i == 3 ? 5000 : 10);
+  TEST_ASSERT_EQUAL_UINT32(1, WindowGapRows::count);
+  TEST_ASSERT_EQUAL_UINT32(5000, WindowGapRows::rows[0].maxDeltaTicks);
+  const uint32_t before = WindowGapRows::rows[0].opportunities;
+  WindowGapRows::reset();
+  for (uint32_t i = 0; i < interval; ++i) sample(10);
+  TEST_ASSERT_EQUAL_UINT32(1, WindowGapRows::count);
+  TEST_ASSERT_EQUAL_UINT32(10, WindowGapRows::rows[0].maxDeltaTicks);
+  TEST_ASSERT_EQUAL_UINT32(before + interval, WindowGapRows::rows[0].opportunities);
+  // Forward reset/catch-up is invisible to a decrease-only detector.
+  WindowGapRows::reset();
+  for (uint32_t i = 0; i < interval; ++i) sample(i == 3 ? 900000 : 10, i < 3 ? 1 : 2);
+  TEST_ASSERT_EQUAL_UINT32(1, WindowGapRows::resets[0]);
+  TEST_ASSERT_EQUAL_UINT32(10, WindowGapRows::rows[0].maxDeltaTicks);
+  WindowGapRows::reset();
+  for (uint32_t i = 0; i < interval; ++i) sample(900000, 2, false);
+  TEST_ASSERT_EQUAL_UINT32(0, WindowGapRows::rows[0].maxDeltaTicks);
+  TEST_ASSERT_FALSE(WindowGapRows::running[0]);
+  WindowGapRows::reset();
+  Track& track = trackManager.getTrack(0);
+  for (uint32_t i = 0; i < interval; ++i) track.stepPlaybackViewMaintenance(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, WindowGapRows::count,
+      "worker calls cannot masquerade as lane dispatches");
+}
+
+
+void test_window_deadline_clock_rejects_reset_and_unobserved_laps_at_admission() {
+  constexpr uint32_t length = 900 * 768;
+  constexpr uint32_t phase = 60 * 768 + 384;
   LoopEventStore::initPool();
   Track& track = trackManager.getTrack(0);
   track.ensureLoopsAllocated();
-  uint32_t phase = 100000u;
-  // **Prime** the cadence counter: it is a process-wide TU static, so the measured blocks below must start above the
-  // `count == 1` rule to be phase-independent -- the lesson the readiness-receipt fixture recorded.
-  for (uint32_t i = 0; i < kInterval; ++i) {
-    phase += kQuiet;
-    (void)track.stepPlaybackViewMaintenance(phase, nullptr, true);
+  prepareOwingWindowHolder(track, 0, length, 60, 62, 8, phase);
+  const auto contract = Track::playbackViewCoverageContract();
+  const auto* work = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0)->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(work);
+  TEST_ASSERT_TRUE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
+      contract, phase + 1, length, 1, {phase + 1, 1}));
+  TEST_ASSERT_FALSE_MESSAGE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
+      contract, phase, length, 1, {phase, 2}), "same phase after reset is a different epoch");
+  TEST_ASSERT_FALSE_MESSAGE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
+      contract, phase, length, 1, {phase - 1, 1}), "backwards time invalidates the promise");
+  TEST_ASSERT_FALSE_MESSAGE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
+      contract, phase, length, 1), "unspecified clock identity cannot prove a deadline");
+  track.getLoop(0).loopLengthTicks = length + 768;
+  TEST_ASSERT_FALSE_MESSAGE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
+      contract, phase, length, 1, {phase, 1}), "changed sibling geometry invalidates its deadline");
+  track.getLoop(0).loopLengthTicks = length;
+
+  commitRecordPassIntoTrackSlotOfLength(track, 1, length);
+  track.getLoop(1).loopLengthTicks = length;
+  publishNotesInBarsRootForSlot(track.getLoop(1), 60, 62, 1);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1));
+  auto& scratch = windowSourceScratch(1);
+  // Restore the gate before any assertion, including the failing path.
+  auto request = [&](PlaybackDeadlineClock clock) {
+    sInterferenceBudgetEnforced = true;
+    const auto result = track.requestPlaybackWindow(1, phase, scratch, clock);
+    sInterferenceBudgetEnforced = false;
+    return result;
+  };
+  for (PlaybackDeadlineClock clock : {PlaybackDeadlineClock{phase + uint64_t(length), 1},
+                                     PlaybackDeadlineClock{phase + 100ull * length, 1},
+                                     PlaybackDeadlineClock{phase, 2}, PlaybackDeadlineClock{},
+                                     PlaybackDeadlineClock{UINT64_MAX - 1, 1}}) {
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::TrackInterferenceBudgetExceeded),
+                      static_cast<int>(request(clock)));
+    TEST_ASSERT_NULL(TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1)->activeViewBuildWork());
+    TEST_ASSERT_EQUAL_UINT64(length + work->handoffPhase, work->deadlineTick);
   }
-  WindowGapRows::reset();
-  for (uint32_t i = 0; i < kInterval; ++i) {
-    phase += (i == 3u) ? kSpike : kQuiet;
-    (void)track.stepPlaybackViewMaintenance(phase, nullptr, true);
-  }
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowGapRows::count),
-                                   "exactly one sample per declared interval of opportunities");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kSpike, WindowGapRows::rows[0].maxDeltaTicks,
-                                   "the row carries the **max** advance, so one slow opportunity cannot hide");
-  const uint32_t firstOpportunities = WindowGapRows::rows[0].opportunities;
-  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(kInterval, firstOpportunities);
-  // A quiet block: its row must report the ordinary advance, i.e. the max **resets** per row.
-  WindowGapRows::reset();
-  for (uint32_t i = 0; i < kInterval; ++i) {
-    phase += kQuiet;
-    (void)track.stepPlaybackViewMaintenance(phase, nullptr, true);
-  }
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowGapRows::count), "one sample again");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kQuiet, WindowGapRows::rows[0].maxDeltaTicks,
-                                   "a quiet interval reports the ordinary advance: the max resets per row");
-  TEST_ASSERT_GREATER_THAN_UINT32(firstOpportunities, WindowGapRows::rows[0].opportunities);
-  // **A transport transition is not a service gap.** The first device run's worst "gap" (9 367 ticks over 1.54 s) was a
-  // stop plus a restart, not service; so a sample taken while the transport is stopped must not accumulate a delta, and
-  // a jump across a stop/restart must not be reported. The row also records which it was.
-  WindowGapRows::reset();
-  for (uint32_t i = 0; i < kInterval; ++i) {
-    phase = (i == 5u) ? phase + 900000u : phase + kQuiet;
-    (void)track.stepPlaybackViewMaintenance(phase, nullptr, i < 5u);
-  }
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowGapRows::count), "one sample per interval");
-  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(kQuiet, WindowGapRows::rows[0].maxDeltaTicks,
-                                           "a stop/restart jump is NOT a service gap");
-  // The flag itself is asserted over an interval that is **entirely** stopped, so which opportunity the cadence picks
-  // cannot matter (the counter is a process-wide static, so a block that mixes states is phase-dependent).
-  WindowGapRows::reset();
-  for (uint32_t i = 0; i < kInterval; ++i) {
-    phase += kQuiet;
-    (void)track.stepPlaybackViewMaintenance(phase, nullptr, false);
-  }
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(WindowGapRows::count), "one sample per interval");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, WindowGapRows::rows[0].maxDeltaTicks,
-                                   "a stopped interval accumulates no gap at all");
-  TEST_ASSERT_FALSE_MESSAGE(WindowGapRows::running[0], "and the row records that the transport was not running");
-  // **A tick reset is not a wrap.** `getCurrentTick()` is monotonic between resets, so a *decrease* is a reset (the
-  // transport started or the clock was re-based) and must be **excluded and counted**, never turned into thousands of
-  // ticks of apparent gap -- which is what the first two device runs' maxima actually measured.
-  WindowGapRows::reset();
-  // Two intervals, so which opportunity the (process-wide) cadence picks cannot decide the outcome: any row emitted
-  // after the reset reports it.
-  for (uint32_t i = 0; i < 2u * kInterval; ++i) {
-    phase += kQuiet;
-    if (i == 7u) {
-      phase = 1000u;  // a reset: the counter goes back to its start
-    }
-    (void)track.stepPlaybackViewMaintenance(phase, nullptr, true);
-  }
-  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(2u, static_cast<uint32_t>(WindowGapRows::count),
-                                              "one sample per interval, over two intervals");
-  uint32_t reportedResets = 0;
-  uint32_t biggestGap = 0;
-  for (size_t r = 0; r < WindowGapRows::count && r < 8u; ++r) {
-    if (WindowGapRows::resets[r] > reportedResets) {
-      reportedResets = WindowGapRows::resets[r];
-    }
-    if (WindowGapRows::rows[r].maxDeltaTicks > biggestGap) {
-      biggestGap = WindowGapRows::rows[r].maxDeltaTicks;
-    }
-  }
-  TEST_ASSERT_TRUE_MESSAGE(reportedResets >= 1u, "the row reports that a reset was dropped");
-  TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(kQuiet, biggestGap,
-                                           "and a reset never inflates the reported gap: it is not a service gap");
+  // A still-valid stamp with feasible work is admitted through the SAME enforced path.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(request({phase, 1})));
+  const auto* candidate = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1)->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(candidate);
+  TEST_ASSERT_EQUAL_UINT32(1, candidate->clockEpoch);
+
+  // Isolate invalid stamp/overflow refusal: no sibling can mask the candidate's guard.
+  TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0)->discardCoverageBuild();
+  TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1)->discardCoverageBuild();
+  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::TrackInterferenceBudgetExceeded),
+                    static_cast<int>(request({UINT64_MAX - 1, 1})));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::TrackInterferenceBudgetExceeded),
+                    static_cast<int>(request({})));
+  // A caller-extended tick crosses the device's uint32 boundary without losing time.
+  constexpr uint64_t extendedTick = uint64_t(UINT32_MAX) - 100;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(request({extendedTick, 7})));
+  TEST_ASSERT_TRUE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
+      contract, phase + 200, length, 0, {extendedTick + 200, 7}));
+  TEST_ASSERT_FALSE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
+      contract, phase, length, 0, {extendedTick + length, 7}));
+}
+
+void test_window_absolute_lead_arithmetic_does_not_overflow() {
+  CoverageServiceContract contract;
+  contract.maximumPhaseAdvancePerTurn = 1;
+  contract.requiredFillGrains = 1;
+  contract.leadTicks = 1;
+  TEST_ASSERT_FALSE(contract.canCompleteWithinLead(1));
+  TEST_ASSERT_TRUE(contract.canCompleteWithinLead(2));
+  contract.maximumPhaseAdvancePerTurn = UINT32_MAX;
+  contract.maximumConsecutiveDeniedTurns = UINT16_MAX;
+  contract.requiredFillGrains = UINT16_MAX;
+  TEST_ASSERT_FALSE(contract.canCompleteWithinLead(UINT64_MAX, UINT16_MAX));
 }
 
 int main() {
@@ -7119,7 +7193,10 @@ int main() {
   RUN_TEST(test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window);
   RUN_TEST(test_window_request_work_is_bounded_and_retained_across_source_shapes);
   RUN_TEST(test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a_sibling);
+  RUN_TEST(test_enforced_candidate_charges_derived_cost_and_eight_track_rotation);
   RUN_TEST(test_window_admission_refuses_by_name_once_the_interference_budget_is_enforced);
+  RUN_TEST(test_window_deadline_clock_rejects_reset_and_unobserved_laps_at_admission);
+  RUN_TEST(test_window_absolute_lead_arithmetic_does_not_overflow);
   RUN_TEST(test_window_request_beyond_the_retained_capacity_is_refused_by_name_and_truncates_nothing);
   // slice 3.10 increment 11: the service-gap unit, sampled from the lane's own opportunities.
   RUN_TEST(test_window_service_gap_sample_reports_the_measured_phase_advance_per_opportunity);
