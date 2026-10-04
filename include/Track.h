@@ -305,7 +305,7 @@ public:
                                             PlaybackViewTurnResult result, uint32_t workerUs);
   PlaybackViewTurnResult stepPlaybackViewMaintenance(
       uint32_t currentPhase = 0, MidiServiceDrain::PlaybackHolderCursor* cursor = nullptr,
-      bool transportRunning = false);
+      bool transportRunning = false, PlaybackDeadlineClock clock = {});
   /// DEC-108 item 1 / task 3.2: the **interval window the owner published** for a slot -- its identity and the
   /// coverage interval it serves -- or `false` when none is authoritative. Read-only, and deliberately read by
   /// no production consumer yet: adoption is 3.4 (identity on the consumers), 3.5 (readiness predicate) and 3.7
@@ -1212,6 +1212,16 @@ private:
   /// so this diagnostic cannot evict the evidence it explains. Event-shaped: called where a readiness outcome is
   /// reached (a denied grain, a completion), never per grain.
   void reportPlaybackWindowReadinessReceipt(uint8_t slotIndex, uint32_t currentPhase);
+  /// DEC-108 §13a/§13(e) / task 3.10 (**blocker 3, half 2**): what **one missed traversal** means -- the allowance
+  /// (`one_pass_late`), then the named breach and the latch. The one implementation, reached from both judgements a miss
+  /// can arrive from: the revision rule and the **deadline the admission promised**. It never publishes, adopts,
+  /// rebuilds or extends a deadline.
+  void noteMissedTraversalForSlot(uint8_t slotIndex, Loop& loop);
+  /// DEC-108 §13a/§13(c) / task 3.10 (**blocker 3, half 2**): service every **live admitted promise** against the clock:
+  /// each traversal of the promised interval that has passed is counted **once**, independent of completion and of
+  /// revision currency, in the epoch the promise was qualified in, and revalidated rather than erased on a change.
+  /// Unconditional (not capture-gated): only the row it produces is an instrumentation observation.
+  void serviceAdmittedDeadlineMisses(PlaybackDeadlineClock clock);
   /// DEC-108 §13(c) / task 3.10 (increment 24): the admission path's own retention call -- one shape for every "not
   /// now" refusal. It derives the demand's bounded cost from the entries the caller gathered (the contract's own
   /// `deriveGrainsFrom`, never an asserted count), computes the absolute deadline exactly as an admitted window's is,

@@ -283,6 +283,11 @@ struct PlaybackViewAdmittedWork {
   uint64_t deadlineTick = 0;
   uint32_t clockEpoch = 0;
   uint32_t admittedLoopLength = 0;
+  /// DEC-108 §13a / task 3.10 (blocker 3, half 2): the **interval the promise is for**, so a late window can be judged
+  /// against the traversal it was admitted for -- and so the miss episode can be keyed on the interval the promise names
+  /// rather than on whatever the consumer happens to be reading. `handoffPhase` is that interval's start; this is its
+  /// length.
+  uint32_t admittedIntervalLength = 0;
   /// The same saturating sum the contract uses, so a reader cannot disagree with `requiredGrains()`.
   uint32_t requiredGrains() const {
     const uint32_t total = static_cast<uint32_t>(fillGrains) + orderGrains + promotionGrains;
@@ -542,6 +547,12 @@ struct LoopPlaybackRuntime {
   /// consecutive miss and cleared only at an **eligible boundary** (a replacement published, or a different interval),
   /// never silently -- which is what keeps containment distinguishable from meeting the one-pass-late guarantee.
   bool deadlineContractFaultLatched = false;
+  /// DEC-108 §13a / task 3.10 (blocker 3, half 2): **which promise** the traversal counts below belong to (its own
+  /// admission tick) and **how many of its traversals have been counted as missed**. A new promise starts a new count;
+  /// the same promise observed across many turns and many traversals is counted **exactly once per traversal** -- which
+  /// is what keeps a per-turn check from turning one missed traversal into a burst of them.
+  uint64_t countedMissPromiseTick = 0;
+  uint16_t countedMissedTraversals = 0;
   /// S4f.19 continuity gate, bounded in DEC-070's shape: grains spent in the `RecordPublished`
   /// retirement wait with an unchanged frozen-window build phase, and that phase. A phase change
   /// is progress and resets the count, so a build its writers are still feeding is never cut; a

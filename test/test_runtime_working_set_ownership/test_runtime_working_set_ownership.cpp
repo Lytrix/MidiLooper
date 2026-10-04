@@ -3953,6 +3953,7 @@ void test_the_declared_permitted_gap_is_wired_and_its_overrun_is_named() {
 
 }
 
+
 /// The lead the **declared envelope** requires for `eventCount` entries -- the contract's own arithmetic, evaluated on
 /// the *derived* cost (the review's step 4 made the lead-side accounting derived: an expectation built from the declared
 /// basis counts would describe a request the firmware no longer makes).
@@ -6336,6 +6337,176 @@ void prepareOwingWindowHolder(Track& track, uint8_t slot, uint32_t loopTicks, ui
   TEST_ASSERT_TRUE_MESSAGE(runtime->coverageBuildNeedsService(), "the slot now owes a window grain");
 }
 
+/// **Blocker 3, half 2 — the deadline the admission promised is serviced on the live path.**
+///
+/// The admission promises a window will be ready before the playhead next enters the interval it serves, and until this
+/// slice **nothing on the live path read that promise**. The judgement is now made on **every lane turn**, for every slot
+/// holding a live promise, and it is deliberately independent of the two things a review of the first attempt named: of
+/// **completion** (an unfinished build can miss -- the case a completion-time check structurally cannot see) and of
+/// **revision currency** (a window that arrives late is late even when it carries the wanted revision, so routing this
+/// through the revision rule would let `Current` mask it). Each **traversal** of the promised interval is counted exactly
+/// once, and the deadline is never re-positioned.
+void test_an_admitted_deadline_miss_is_serviced_per_turn_once_per_traversal_and_never_re_granted() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  // A window large enough that its build stays in flight across the turns below.
+  constexpr uint32_t kLoopTicks = 300 * kBar;
+  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 14, 400, 12 * kBar);
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const PlaybackViewAdmittedWork* work = runtime->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL_MESSAGE(work, "the promise is readable while its build is in flight");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, work->clockEpoch, "and it is positioned in the epoch it was admitted in");
+  const uint64_t promisedDeadline = work->deadlineTick;
+  const uint32_t promisedLoop = work->admittedLoopLength;
+  TEST_ASSERT_TRUE_MESSAGE(promisedDeadline > work->admittedTick, "the promise has a deadline ahead of it");
+  TEST_ASSERT_TRUE_MESSAGE(work->admittedIntervalLength > 0u, "and retains the interval it is for");
+  PlaybackPathRows::reset();
+
+  // (1) Inside the promise: a turn names nothing.
+  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {work->admittedTick, 1});
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "a turn inside the promise names nothing");
+  TEST_ASSERT_EQUAL_UINT8(0, track.playbackLagMissedTraversalsForSlot(0));
+
+  // (2) Past the deadline with the build **unfinished**: the promise was missed, and that is named -- while nothing is
+  // published, adopted or re-granted, and the obligation survives.
+  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {promisedDeadline + 1u, 1});
+  TEST_ASSERT_NOT_NULL_MESSAGE(runtime->activeViewBuildWork(), "the build is still in flight: no completion to see it at");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "an unfinished build that ran past its own deadline is named one pass late");
+  TEST_ASSERT_EQUAL_UINT8(1, track.playbackLagMissedTraversalsForSlot(0));
+  TEST_ASSERT_FALSE_MESSAGE(track.deadlineContractFaultLatchedForSlot(0),
+                            "the first miss of the episode is the allowance, not the fault");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(promisedDeadline, runtime->viewBuildWork.deadlineTick,
+                                   "and the deadline is never re-positioned");
+  PlaybackViewSourceIdentity missIdentity{};
+  PlaybackCoverageInterval missCoverage{};
+  TEST_ASSERT_FALSE_MESSAGE(track.publishedPlaybackWindowForSlot(0, missIdentity, missCoverage),
+                            "the miss path publishes nothing: a late arrival waits for an eligible boundary");
+
+  // (3) Many turns at the same clock: still exactly one -- a per-turn check cannot turn one traversal into a burst.
+  for (uint32_t turn = 0; turn < 5; ++turn) {
+    (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {promisedDeadline + 1u, 1});
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "one missed traversal is counted once, however many turns observe it");
+  TEST_ASSERT_EQUAL_UINT8(1, track.playbackLagMissedTraversalsForSlot(0));
+
+  // (4) The **next** traversal of the promised interval: the second consecutive miss is the named breach, and the latch
+  // containment reads is set -- enforcement, not a capture observation.
+  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {promisedDeadline + promisedLoop + 1u, 1});
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("lag_breach")),
+                                   "a second consecutive missed traversal is the named breach");
+  TEST_ASSERT_EQUAL_UINT8(2, track.playbackLagMissedTraversalsForSlot(0));
+  TEST_ASSERT_TRUE_MESSAGE(track.deadlineContractFaultLatchedForSlot(0),
+                           "and the latch is set: the policy runs in any build, not only a capture build");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(promisedDeadline, runtime->viewBuildWork.deadlineTick,
+                                   "with the deadline still never re-positioned");
+}
+
+/// **Blocker 3, half 2 — revalidation without erasure, and a new promise counts from zero.**
+///
+/// DEC-108 §13(c): a changed clock invalidates the *promise's position*, never the content or the obligation. So a
+/// promise is judged only in the epoch it was qualified in (nothing is claimed there, and nothing is erased), and in its
+/// own epoch the same promise is judged normally. A **new** promise starts its own count: the missed-traversal count
+/// belongs to the promise and its interval, not to the slot.
+void test_an_admitted_deadline_is_revalidated_across_an_epoch_change_and_a_new_promise_counts_from_zero() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  constexpr uint32_t kLoopTicks = 300 * kBar;
+  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 14, 400, 12 * kBar);
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const PlaybackViewAdmittedWork* work = runtime->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(work);
+  const uint64_t promisedDeadline = work->deadlineTick;
+  PlaybackPathRows::reset();
+
+  // (i) A **different epoch**: the promise is unpositioned there, so nothing is judged -- and nothing is erased.
+  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {promisedDeadline + 1u, 2});
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "a promise is not judged in an epoch it was not qualified in");
+  TEST_ASSERT_EQUAL_UINT8(0, track.playbackLagMissedTraversalsForSlot(0));
+  TEST_ASSERT_FALSE(track.deadlineContractFaultLatchedForSlot(0));
+  TEST_ASSERT_NOT_NULL_MESSAGE(runtime->activeViewBuildWork(), "and the obligation survives the change");
+
+  // (ii) The same promise, in its own epoch: the epoch guard revalidates, it does not forgive.
+  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {promisedDeadline + 1u, 1});
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "in its own epoch the same promise is named late");
+
+  // (iii) A **new promise**, on another slot: its own count starts at zero, so one turn judges both promises and the
+  // newer one's first miss is the allowance -- not a breach inherited from its sibling.
+  prepareOwingWindowHolder(track, 1, kLoopTicks, 12, 14, 400, 12 * kBar);
+  LoopPlaybackRuntime* sibling = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
+  TEST_ASSERT_NOT_NULL(sibling);
+  const PlaybackViewAdmittedWork* siblingWork = sibling->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(siblingWork);
+  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {siblingWork->deadlineTick + 1u, 1});
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagMissedTraversalsForSlot(1),
+                                  "a new promise's first missed traversal is its own first miss");
+  TEST_ASSERT_FALSE_MESSAGE(track.deadlineContractFaultLatchedForSlot(1), "so nothing is latched on the sibling");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "each promise contributes one named allowance");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagMissedTraversalsForSlot(0),
+                                  "while the older promise stays at the traversal it had: once per traversal");
+}
+/// **Blocker 3, half 2 — revision currency does not excuse a late arrival.**
+///
+/// The judgement the deadline makes is **not** the revision rule's: a window that carries the *wanted* revision says
+/// nothing about whether it arrived in time. Routing the deadline through `resolvePlaybackLag` would let its `Current`
+/// outcome mask exactly this case (the served window is the current revision, and the *next* build for that slot is
+/// already past its own deadline), so the promise's own deadline decides and only the *consequence* is shared.
+void test_a_late_arrival_is_named_even_when_the_served_window_carries_the_wanted_revision() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kLoopTicks = 300 * kBar;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 14, 400, 12 * kBar);
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+
+  // Complete and adopt the first window: the slot now **serves** a window that carries the wanted revision.
+  for (size_t turn = 0; turn < 4096 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance(12 * kBar);  // no clock: the misses below are what this fixture is about
+  }
+  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  // The completion **published** the window itself (the lane's atomic publication), so there is nothing waiting in the
+  // ready role to adopt here -- and the slot now serves the wanted revision, which is this fixture's precondition.
+  PlaybackWindowIdentity served{};
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, served),
+                           "the fixture needs a served window");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(track.getLoop(0).playbackRevision, served.playbackRevision,
+                                   "and it carries the wanted revision: revision currency is satisfied");
+
+  // A **second** promise for that same slot, admitted with a qualified clock, and driven past its own deadline.
+  SessionMidiEventVec& scratch = windowSourceScratch(0);
+  scratch.clear();
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                            static_cast<int>(track.requestPlaybackWindow(0, 12 * kBar, scratch,
+                                                                        nextWindowRequestClock())),
+                            "a successor window is admitted for the slot");
+  const PlaybackViewAdmittedWork* work = runtime->activeViewBuildWork();
+  TEST_ASSERT_NOT_NULL(work);
+  PlaybackPathRows::reset();
+  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {work->deadlineTick + 1u, 1});
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "a promise that ran past its deadline is named late even though the served window "
+                                   "already carries the wanted revision");
+  TEST_ASSERT_EQUAL_UINT8(1, track.playbackLagMissedTraversalsForSlot(0));
+  PlaybackWindowIdentity stillServed{};
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, stillServed),
+                           "and the late arrival changes nothing about what is served");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(served.playbackRevision, stillServed.playbackRevision,
+                                   "the serving revision is preserved: adoption stays an explicit boundary");
+}
+
 /// DEC-108 §13b / task 3.10 — the **wiring's own fixture**, and the one the increment owed: with the scan routed
 /// through the policy, an admitted turn serves the **most urgent holder**, not the lowest slot index, and a
 /// persistent cursor rotates between holders whose urgency ties. The observable is each holder's own next grain
@@ -7836,6 +8007,9 @@ int main() {
   RUN_TEST(test_retained_source_is_admitted_with_roles_and_survives_both_destruction_paths);
   // windowed-playback-generation slice 3.6b: the lag rule -- one pass late and only that, the second miss named once.
   RUN_TEST(test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second_miss);
+  RUN_TEST(test_an_admitted_deadline_miss_is_serviced_per_turn_once_per_traversal_and_never_re_granted);
+  RUN_TEST(test_an_admitted_deadline_is_revalidated_across_an_epoch_change_and_a_new_promise_counts_from_zero);
+  RUN_TEST(test_a_late_arrival_is_named_even_when_the_served_window_carries_the_wanted_revision);
   // windowed-playback-generation slice 3.6c: the interval index over pinned bodies -- interval-directed skipping,
   // edit destinations folded in, and named refusals instead of stale or partial answers.
   RUN_TEST(test_retained_interval_index_is_interval_directed_and_refuses_stale_revisions);

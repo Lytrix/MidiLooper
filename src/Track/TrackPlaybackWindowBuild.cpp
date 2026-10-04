@@ -1182,27 +1182,113 @@ TRACK_COLD_MEM PlaybackLagDecision Track::advancePlaybackLagTraversal(uint8_t sl
     runtime->deadlineContractFaultLatched = false;
     return decision;
   }
+  // The **consequence** of one missed traversal lives in one place (`noteMissedTraversalForSlot`), because a missed
+  // traversal now arrives from two independent judgements: the revision rule below and the **deadline** the admission
+  // promised (blocker 3, half 2). What differs is the judgement; what a miss *means* does not.
+  if (decision == PlaybackLagDecision::BreachSecondMiss || decision == PlaybackLagDecision::PreviousOnePass) {
+    noteMissedTraversalForSlot(slotIndex, loopForSlot(slotIndex));
+  }
+  return decision;
+}
+
+/// DEC-108 §13a/§13(e) / task 3.10 (**blocker 3, half 2**): **what one missed traversal means** -- the one
+/// implementation, reached from both judgements a miss can arrive from. The first miss of the episode is the allowance
+/// the spec protects (`one_pass_late`: the previous revision stays authoritative for that traversal); the **second
+/// consecutive** one is the named contract breach, latched so containment can read it (and cleared only at an eligible
+/// boundary, in `advancePlaybackLagTraversal`). Nothing here publishes, adopts, rebuilds or stops the clock, and nothing
+/// here ever extends a deadline: the deadline is never silently re-granted.
+TRACK_COLD_MEM void Track::noteMissedTraversalForSlot(uint8_t slotIndex, Loop& loop) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return;
+  }
+  PlaybackLagState& lag = runtime->lagState;
   if (lag.missedTraversals < UINT8_MAX) {
     ++lag.missedTraversals;
   }
-  if (decision == PlaybackLagDecision::BreachSecondMiss && !lag.breachReported) {
-    // A **report**, not a decision (the S4b.7 hold terminal's shape): the breach is named once per episode, the
-    // previous revision keeps being served, and no partial content is published. Task 4.5 adds the **latch** -- it is
-    // what containment reads, and what keeps this distinguishable from meeting the one-pass-late guarantee.
+  if (lag.missedTraversals == 1) {
+    // AC-5's *"the stale condition continues to be named"*: the allowance is named once per traversal, which is the rate
+    // the condition itself is at.
+    reportPlaybackViewMaintenanceRow(slotIndex, loop, "one_pass_late");
+    return;
+  }
+  if (lag.missedTraversals >= 2 && !lag.breachReported) {
+    // A **report**, not a decision (the S4b.7 hold terminal's shape): named once per episode, with the latch task 4.5
+    // reads. The previous revision keeps being served and no partial content is published.
     lag.breachReported = true;
     ++lag.breachReports;
     runtime->deadlineContractFaultLatched = true;
-    reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex), "lag_breach");
+    reportPlaybackViewMaintenanceRow(slotIndex, loop, "lag_breach");
   }
-  if (decision == PlaybackLagDecision::PreviousOnePass) {
-    // AC-5's **"the stale condition continues to be named"**, and the row the lane was missing: the breach was visible
-    // while the **allowance** -- the state the spec protects, previous revision authoritative, one pass late -- was
-    // silent. One row per traversal, which is the rate this decision is itself made at, so the row can never be more
-    // frequent than the condition it names: no counter, no new state, no cadence interval to justify. Emitted for the
-    // allowance traversal only, so the two names never blur (the breach keeps its own once-per-episode rule).
-    reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex), "one_pass_late");
+}
+
+/// DEC-108 §13a/§13(c)/§13(e) / task 3.10 (**blocker 3, half 2**): **service the deadlines the admission promised.**
+///
+/// The admission makes a promise -- *this window will be ready before the playhead next enters the interval it serves* --
+/// and until this function existed **nothing on the live path read it**: publication was gated on identity, the overrun
+/// policy was driven by revision currency, and a build that ran past its own deadline was silently late. This is that
+/// judgement, and it is deliberately independent of both completion and revision currency:
+///
+///  * **Independent of completion.** It runs on every lane turn for **every slot holding a live promise**, so a build
+///    that has not finished -- the case a completion-time check structurally cannot see -- is judged too.
+///  * **Independent of revision currency.** The published window carrying the *desired* revision says nothing about
+///    whether it arrived in time; routing this judgement through `resolvePlaybackLag` would let `Current` mask a late
+///    arrival, so the promise's own deadline decides and only the *consequence* is shared.
+///  * **Once per traversal.** Each traversal of the promised interval is counted exactly once, however many turns
+///    observe it: the promise's own admission tick keys the count and the traversals passed are computed from the clock,
+///    so a per-turn check cannot turn one missed traversal into a burst.
+///  * **Revalidated, never erased.** A promise is judged only in the **epoch it was qualified in** (a reset, seek or
+///    re-projection leaves it unpositioned: no miss is claimed), and a *new* promise starts a new count -- while the
+///    obligation itself is never dropped for either reason.
+///  * **Enforcement is not capture-gated.** The accounting and the latch are unconditional; only the *row* is a capture
+///    observation (the instrumentation rule). A build without session capture contains and latches exactly as a capture
+///    build does.
+///
+/// What a miss means is `noteMissedTraversalForSlot`'s, not this function's, and nothing here serves, publishes, adopts
+/// or re-grants: the previous revision keeps serving for the missed traversal, and a late completion is published for
+/// the **following** eligible traversal (adoption is the consumer's explicit boundary, task 3.7).
+TRACK_COLD_MEM void Track::serviceAdmittedDeadlineMisses(PlaybackDeadlineClock clock) {
+  if (clock.epoch == 0) {
+    return;  // an unpositioned promise cannot be late
   }
-  return decision;
+  for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+    LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+    if (runtime == nullptr || runtime->activeViewBuildWork() == nullptr) {
+      continue;  // no live promise: the record is readable only while the build it describes is active
+    }
+    const PlaybackViewAdmittedWork& work = runtime->viewBuildWork;
+    if (work.clockEpoch == 0 || work.clockEpoch != clock.epoch || work.admittedLoopLength == 0) {
+      continue;  // unqualified, or qualified in another epoch: revalidate, never erase (the obligation survives)
+    }
+    if (clock.tick < work.deadlineTick) {
+      continue;  // still inside the traversal the promise names
+    }
+    // How many traversals of the promised interval have passed? The deadline is *the next entry* into it, so every
+    // further pass of the loop is one more missed traversal -- and the count saturates where the policy saturates.
+    const uint64_t passed = 1u + (clock.tick - work.deadlineTick) / work.admittedLoopLength;
+    const uint32_t target = passed > UINT16_MAX ? UINT16_MAX : static_cast<uint32_t>(passed);
+    if (work.admittedTick != runtime->countedMissPromiseTick) {
+      // A **new promise**: its own count starts at zero, and the episode belongs to the interval it names (the allowance
+      // is per interval *and* per pass).
+      runtime->countedMissPromiseTick = work.admittedTick;
+      runtime->countedMissedTraversals = 0;
+      runtime->lagState.resetEpisode(work.handoffPhase, work.admittedIntervalLength);
+    }
+    if (target > runtime->countedMissedTraversals) {
+      const uint16_t before = runtime->countedMissedTraversals;
+      const uint32_t newlyCounted = static_cast<uint32_t>(target) - before;
+      runtime->countedMissedTraversals = static_cast<uint16_t>(target);
+      // Account **exactly** the traversals that just passed, and only those that still change the policy: the allowance,
+      // then the breach. Beyond the second nothing new is named and nothing new is latched, so the work per turn stays
+      // bounded -- and because the loop is bounded by `newlyCounted`, one missed traversal can never be accounted twice.
+      for (uint32_t accounted = 0; accounted < newlyCounted; ++accounted) {
+        if (before + accounted >= 2u) {
+          break;
+        }
+        noteMissedTraversalForSlot(slotIndex, loopForSlot(slotIndex));
+      }
+    }
+  }
 }
 
 TRACK_COLD_MEM Track::LastResortOutcome Track::applyLastResortForSlot(uint8_t slotIndex, uint32_t phase) {
@@ -1755,6 +1841,7 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   // and can never pass enforced admission. Phase only determines the initial lead.
   admittedWork.handoffPhase = handoffPhase;
   admittedWork.admittedLoopLength = coverage.loopLengthTicks;
+  admittedWork.admittedIntervalLength = coverage.lengthTicks;
   admittedWork.admittedTick = clock.tick;
   const uint32_t lead = handoffLeadTicks(currentPhase, handoffPhase, coverage.loopLengthTicks);
   if (clock.epoch != 0 && lead != 0 && clock.tick <= UINT64_MAX - lead) {
@@ -1807,6 +1894,9 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   // live build -- the admission's own bounded record just above -- so keeping a pending demand beside it would count
   // the same obligation twice, and a later reader would see a deadline for work that is already being done. A
   // discharged demand leaves no record at all (a later refusal starts a fresh one).
+  // NOTE (blocker 3, half 2): the admitted promise is **not** re-positioned here, and its miss (if any) was already
+  // serviced at this turn's top while the record was still readable -- `serviceAdmittedDeadlineMisses` owns that
+  // judgement, so a completion never extends a deadline and never revives a passed traversal.
   runtime->clearViewPendingRequest();
   return PlaybackViewRequestResult::Admitted;
 }
@@ -1838,6 +1928,7 @@ TRACK_COLD_MEM void Track::retainRefusedPlaybackViewRequest(
   work.promotionGrains = cost.requiredPromotionGrains;
   work.handoffPhase = handoffPhase;
   work.admittedLoopLength = coverage.loopLengthTicks;
+  work.admittedIntervalLength = coverage.lengthTicks;
   work.admittedTick = clock.tick;
   uint64_t deadlineTick = 0;
   uint32_t clockEpoch = 0;
@@ -2045,8 +2136,13 @@ TRACK_COLD_MEM void Track::samplePlaybackLaneOpportunity(
 }
 
 TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
-    uint32_t currentPhase, MidiServiceDrain::PlaybackHolderCursor* cursor, bool transportRunning) {
+    uint32_t currentPhase, MidiServiceDrain::PlaybackHolderCursor* cursor, bool transportRunning,
+    PlaybackDeadlineClock clock) {
   (void)transportRunning;  // Compatibility argument; sampling belongs to the lane dispatcher.
+  // DEC-108 §13a / task 3.10 (blocker 3, half 2): **the deadlines the admission promised are serviced first**, for every
+  // slot holding a live promise -- not only the holder this turn happens to serve, and not only when a build completes.
+  // The judgement never depends on the revision currency; the consequence is `noteMissedTraversalForSlot`'s.
+  serviceAdmittedDeadlineMisses(clock);
   MidiServiceDrain::PlaybackHolder holders[Config::MAX_LOOPS_PER_TRACK] = {};
   fillPlaybackHolders(currentPhase, holders);
   // The shared policy chooses which holder this turn serves (task 3.10): holders rotate, the earliest outstanding

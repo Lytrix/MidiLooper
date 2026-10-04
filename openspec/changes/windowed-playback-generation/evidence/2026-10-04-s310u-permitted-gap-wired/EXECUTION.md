@@ -135,3 +135,26 @@ None of these is large; all three are *state/interface* decisions, and this incr
 before editing rather than invent it mid-file. **Blocker 3 is therefore half closed**: the permitted service-gap limit
 **is** wired and its exceedance **is** named on the live lane, while the admitted deadline is still not read where the
 promise is kept.
+
+---
+
+## Addendum 3 (2026-10-04): **correction to this increment's own claim** — the overrun detection is capture-lane *telemetry*, not live enforcement
+
+A review of this landing (pasted into the session, and **independently verified here**) found that the wording above is
+too strong, and it is right. Verified at `e65ceb48`:
+
+* `Track::samplePlaybackLaneOpportunity` — the only place that calls `observe(...)` with the permitted advance — has its
+  whole body inside **`#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)`**, so in a production
+  (non-capture) build the comparison, the counters and the named row **do not exist**. "Wired into the live lane" is
+  therefore wrong as written: what landed is the limit *compared and named where the capture lane observes*, which is the
+  instrumentation rule working as intended, but it is **not** enforcement and it is not a live policy.
+* `env:native`'s `build_flags` are empty (so `SESSION_CAPTURE` is *undef* natively, which is exactly why the half-2
+  enforcement below can be red-proved by a mutation that gates it behind `SESSION_CAPTURE`).
+* Also confirmed here: publication does not check the admitted deadline, and `advancePlaybackLagTraversal` has **no
+  production caller**.
+
+The review's five requirements for the other half were adopted verbatim as its oracle and are recorded in
+[`../2026-10-04-s310v-admitted-deadline-serviced/EXECUTION.md`](../2026-10-04-s310v-admitted-deadline-serviced/EXECUTION.md),
+together with the sixth point it raised (`replacementReady = false` is not sufficient, because the existing lag resolver
+can return `Current` from revision currency). Half 2 is landed there; **blocker 3's "operational overrun policy" half is
+that slice**, and this packet's own half stays what it is: the limit, compared and named in the capture lane.

@@ -1118,3 +1118,25 @@ closed:** the limit is wired and named, but the admitted window's own **deadline
 path (the existing overrun policy is revision-driven and has no production caller), and wiring it needs three pinned
 decisions — the episode key, the clock reaching the turn, and what a miss means at completion. Detail:
 [`evidence/2026-10-04-s310u-permitted-gap-wired/EXECUTION.md`](evidence/2026-10-04-s310u-permitted-gap-wired/EXECUTION.md).
+
+**Task 3.10 (increment 27) — blocker 3, half 2: the deadline the admission promised is serviced on the live path (a review's six points, adopted).**
+The admission's promise (`PlaybackViewAdmittedWork::deadlineTick`/`clockEpoch`) was written by the admission and read by
+the budget and the request bookkeeping, and **no serving path read it**; the overrun policy that existed was driven by
+revision currency and had no production caller. Now `Track::serviceAdmittedDeadlineMisses(clock)` runs at the **top of
+every lane turn** for every slot holding a live promise: each traversal of the promised interval that has passed is
+counted **exactly once** (computed from the clock, keyed on the promise's own admission tick), judged only in the epoch
+the promise was qualified in, and — on the first miss — named `one_pass_late` through the **one implementation** of what
+a miss means (`Track::noteMissedTraversalForSlot`), which `advancePlaybackLagTraversal` now also calls, with the **second
+consecutive** miss naming `lag_breach` and setting the latch. The accounting is **unconditional** (only the row is
+capture-gated) and **never** routed through the revision resolver, so a late arrival is named even when the served window
+already carries the wanted revision; the deadline is never re-positioned and nothing is published or adopted by the miss
+path. The promise retains `admittedIntervalLength`, the turn takes the clock (`main.cpp` passes the one it already
+holds), and the size pins were re-based on measurement (target 6,792 -> **6,816** B, host 8,744 -> **8,768** B; no RAM1
+re-base). Three fixtures and **M134-M139** red-prove the review's requirements R1-R6 (`TrackPlaybackWindowBuild.cpp`
+pre-mutation hash **518728238943f77a**), including one defect of mine the fixtures caught (the accounting loop called the
+helper twice per newly missed traversal, so the breach appeared at the first miss). Verified: focused **94/94**, full
+native **2,737 / 2,730 succeeded / 7 skipped / 0 failed**, build **SUCCESS** with the RAM1 line byte-identical,
+`git diff --check` clean, `openspec validate --strict` valid. No upload; production judges nothing (no promise is ever
+admitted, and the lane's production builds carry `clockEpoch == 0`), but the **policy is enforcement rather than
+telemetry** — R5's own point. Detail:
+[`evidence/2026-10-04-s310v-admitted-deadline-serviced/EXECUTION.md`](evidence/2026-10-04-s310v-admitted-deadline-serviced/EXECUTION.md).

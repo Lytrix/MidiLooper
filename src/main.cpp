@@ -498,7 +498,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     Track::PlaybackViewTurnResult windowResult = Track::PlaybackViewTurnResult::Idle;
     if (MidiServiceDrain::selectPlaybackHolderRoundRobin(sWindowHolderCursor, offers, offerCount, chosenTrack) ==
         MidiServiceDrain::PlaybackHolderSelection::Service) {
-      windowResult = trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase);
+      // The turn also consumes the clock: the deadlines the admission promised are serviced there (blocker 3, half 2).
+      windowResult =
+          trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase, nullptr, false, windowClock);
     }
 #if defined(SESSION_CAPTURE)
     Track::samplePlaybackLaneOpportunity(windowClock, windowRunning,
