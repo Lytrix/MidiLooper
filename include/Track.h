@@ -351,6 +351,16 @@ public:
   /// contract's derivation and its fixtures read the same declaration the owner serves.
   static constexpr size_t kPlaybackViewFillQuantum = 64;
   static constexpr size_t kPlaybackViewOrderQuantum = 48;
+  /// DEC-108 §13b / task 3.10 (**the review's step 4**): **`Delta-max`** -- the permitted phase advance between two of
+  /// this owner's opportunities, the per-turn term of the review's `Delta-max x H x bounded per-track work` formula.
+  /// Derived from the lane measurement (steady-state median 2.9-5.5 ticks per opportunity, p50 8, tempo-invariant
+  /// rotation 7.3-7.5 ms over a 20-300 BPM basis): 16 ticks is **2x the measured p50** and **~2.3x the measured
+  /// rotation at the fastest declared tempo** (16.7 ms at 300 BPM), and 3-5x the measured median. The tightest
+  /// defensible margin is deliberate: the envelope is a *declared capability*, and a loose factor here is what the
+  /// placeholder one-bar advance got wrong (it admitted work it could not complete). It bounds the **scheduling** advance; the seconds-scale starvation episodes are *lost
+  /// opportunities* and belong to the lag rule's overrun policy, not to this per-turn term. A declared, permitted
+  /// value -- not a measured WCET. Public so the declaration, its fixtures and any reader agree on one figure.
+  static constexpr uint32_t kPlaybackViewPermittedAdvancePerTurn = 16;
   /// S4b.6: does this slot's **inbound occupancy** (its playback runtime) exist? The switch commit path
   /// asks this instead of allocating: `ensurePlaybackMergedEventsForSlot` intentionally never takes the
   /// runtime, so a switch to a slot without occupancy stays pending until the off-clock provisioning owner

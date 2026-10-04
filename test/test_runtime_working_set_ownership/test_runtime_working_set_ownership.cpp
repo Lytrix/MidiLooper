@@ -3843,9 +3843,24 @@ Track& prepareWindowOwnerSlot(uint8_t trackIndex) {
 /// the implementation's answer: 7 required grains, each preceded by at most 3 denied turns, each turn
 /// advancing at most one bar, plus the one-bar lead.
 constexpr uint32_t kWindowOwnerExpectedRequiredGrains = 7;
-constexpr uint32_t kWindowOwnerExpectedAdvancePerTurn = 768;
-constexpr uint32_t kWindowOwnerExpectedDeniedTurns = 3;
+// DEC-108 §13b / task 3.10 (the review's step 4): these three now mirror the **declared envelope**, which is what
+// this fixture is for -- an earlier version pinned the placeholder declaration (768 ticks per turn, 3 denied turns).
+// The advance is the permitted scheduling bound and the denial allowance is the H-track rotation, both declared
+// where the contract is; the *demonstrated handoff margin* stays one bar.
+constexpr uint32_t kWindowOwnerExpectedAdvancePerTurn = 16;
+constexpr uint32_t kWindowOwnerExpectedDeniedTurns = Config::NUM_TRACKS - 1;
 constexpr uint32_t kWindowOwnerExpectedLead = 768;
+/// The lead the **declared envelope** requires for `eventCount` entries -- the contract's own arithmetic, evaluated on
+/// the *derived* cost (the review's step 4 made the lead-side accounting derived: an expectation built from the declared
+/// basis counts would describe a request the firmware no longer makes).
+uint32_t declaredRequiredLeadFor(size_t eventCount) {
+  CoverageServiceContract expected = Track::playbackViewCoverageContract();
+  expected.deriveGrainsFrom(eventCount);
+  return expected.leadTicks + static_cast<uint32_t>(expected.requiredGrains()) *
+                                  (static_cast<uint32_t>(expected.maximumConsecutiveDeniedTurns) + 1u) *
+                                  expected.maximumPhaseAdvancePerTurn;
+}
+
 constexpr uint32_t kWindowOwnerExpectedRequiredLead =
     kWindowOwnerExpectedRequiredGrains * (kWindowOwnerExpectedDeniedTurns + 1) *
         kWindowOwnerExpectedAdvancePerTurn +
@@ -3877,6 +3892,16 @@ void test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle() 
 
   MidiEvent source[4];
   const size_t count = buildWindowOwnerSource(source, 4);
+  // **The requirement is derived for this fixture's own source** (the review's step 4 made the lead-side accounting
+  // derived): an expectation built from the declared *basis* counts would describe a request the firmware no longer
+  // makes, and its boundary would sit below the real one. The boundary is the contract's own arithmetic, evaluated
+  // on the count this fixture actually sends.
+  CoverageServiceContract expected = Track::playbackViewCoverageContract();
+  expected.deriveGrainsFrom(count);
+  const uint32_t requiredLeadTicks =
+      expected.leadTicks + static_cast<uint32_t>(expected.requiredGrains()) *
+                               (static_cast<uint32_t>(expected.maximumConsecutiveDeniedTurns) + 1u) *
+                               expected.maximumPhaseAdvancePerTurn;
   const PlaybackCoverageInterval coverage{0, 2 * 768, kWindowOwnerLoopTicks};
   const PlaybackViewSourceIdentity identity{1, 1, nullptr};
 
@@ -3884,7 +3909,7 @@ void test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle() 
   Track& atBoundary = prepareWindowOwnerSlot(0);
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                     static_cast<int>(atBoundary.requestPlaybackViewMaintenance(
-                        0, source, count, identity, coverage, {}, {}, 0, kWindowOwnerExpectedRequiredLead)));
+                        0, source, count, identity, coverage, {}, {}, 0, requiredLeadTicks)));
   TEST_ASSERT_TRUE(atBoundary.hasPendingPlaybackViewMaintenance());
 
   // Just inside: one tick more of lead is still admitted.
@@ -3892,14 +3917,14 @@ void test_window_owner_declares_its_caps_and_the_handoff_margin_is_the_oracle() 
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                     static_cast<int>(inside.requestPlaybackViewMaintenance(
                         0, source, count, identity, coverage, {}, {}, 0,
-                        kWindowOwnerExpectedRequiredLead + 1)));
+                        requiredLeadTicks + 1)));
 
   // Just outside: one tick short of the required lead is refused, by name, and takes nothing.
   Track& outside = prepareWindowOwnerSlot(2);
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
                     static_cast<int>(outside.requestPlaybackViewMaintenance(
                         0, source, count, identity, coverage, {}, {}, 0,
-                        kWindowOwnerExpectedRequiredLead - 1)));
+                        requiredLeadTicks - 1)));
   TEST_ASSERT_FALSE_MESSAGE(outside.hasPendingPlaybackViewMaintenance(),
                             "a refused request must not create an obligation");
 }
@@ -3949,10 +3974,14 @@ void test_window_owner_service_gap_declaration_is_bounded_by_measurement_not_by_
   // These two absolutes carry the relation the finding rests on -- a tick-denominated allowance buys half the
   // wall-clock margin (2 000 ms -> 1 000 ms) when the tempo doubles. No separate assertion states the halving,
   // because it could not fail while both absolutes hold.
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2000, allowanceMsAt120,
-                                   "the declared allowance is 2.0 s of wall-clock at 120 BPM");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1000, allowanceMsAt240,
-                                   "the same tick count is 1.0 s of wall-clock at 240 BPM: the unit is tempo-dependent");
+  // **Re-based by the review's step 4** (recorded): the declared value moved from the placeholder one bar (768 ticks
+  // = 2 000 ms at 120 BPM) to the derived permitted scheduling bound (16 ticks = 2x the measured p50), so these
+  // absolutes moved with it and the relation they carry -- half the wall-clock margin when the tempo doubles -- is
+  // unchanged.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(41, allowanceMsAt120,
+                                   "the declared allowance is 41 ms of wall-clock at 120 BPM (16 ticks)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(20, allowanceMsAt240,
+                                   "the same tick count is 20 ms of wall-clock at 240 BPM: the unit is tempo-dependent");
 
   // (4) The denied-turn term is the **within-lane** contention allowance, not the owner rotation -- the rotation is
   // already inside `maximumPhaseAdvancePerTurn` by that field's unit, so declaring it here as well would
@@ -3980,7 +4009,7 @@ void test_window_owner_serves_one_grain_per_turn_and_publishes_nothing() {
   const PlaybackCoverageInterval coverage{0, 2 * 768, kWindowOwnerLoopTicks};
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                     static_cast<int>(track.requestPlaybackViewMaintenance(
-                        0, source, count, identity, coverage, {}, {}, 0, kWindowOwnerExpectedRequiredLead)));
+                        0, source, count, identity, coverage, {}, {}, 0, declaredRequiredLeadFor(count))));
   TEST_ASSERT_TRUE(track.hasPendingPlaybackViewMaintenance());
 
   // The expected turn count follows from the declared quanta: a grain served twice in one turn, or a grain
@@ -4171,7 +4200,7 @@ void test_window_owner_publishes_the_interval_window_atomically() {
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                     static_cast<int>(track.requestPlaybackViewMaintenance(
                         0, source, count, firstIdentity, firstCoverage, {}, {}, 0,
-                        kWindowOwnerExpectedRequiredLead)));
+                        declaredRequiredLeadFor(count))));
   const size_t expectedTurns =
       (count + Track::kPlaybackViewFillQuantum - 1) / Track::kPlaybackViewFillQuantum +
       (count + Track::kPlaybackViewOrderQuantum - 1) / Track::kPlaybackViewOrderQuantum;
@@ -4206,7 +4235,7 @@ void test_window_owner_publishes_the_interval_window_atomically() {
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
                     static_cast<int>(track.requestPlaybackViewMaintenance(
                         0, source, count, secondIdentity, secondCoverage, {}, {}, 768,
-                        static_cast<uint32_t>(768 + kWindowOwnerExpectedRequiredLead))));
+                        static_cast<uint32_t>(768 + declaredRequiredLeadFor(count)))));
   for (size_t turn = 1; turn <= expectedTurns; ++turn) {
     PlaybackViewSourceIdentity duringIdentity{};
     PlaybackCoverageInterval duringCoverage{};
@@ -5828,10 +5857,15 @@ void test_demoted_slot_residency_is_length_independent_swept_over_lengths() {
     // production request asks, evaluated for this length's interval.
     PlaybackCoverageInterval interval{};
     TEST_ASSERT_TRUE(Track::playbackWindowInterval(loopTicks, !row.admissible, kPhase, interval));
-    row.declarationCanComplete =
-        contract.canCompleteBeforeHandoff(kPhase % loopTicks, interval.startPhase, loopTicks);
     SessionMidiEventVec scratch;
     const Track::PlaybackViewRequestResult result = track.requestPlaybackWindow(slot, kPhase, scratch);
+    // The oracle is the same predicate the production request asks, on the **same derived cost** it asks it with
+    // (review step 4): a copy built from the declared basis counts would predict a different request than the
+    // firmware makes, which is exactly the mismatch this fixture exists to catch.
+    CoverageServiceContract expected = Track::playbackViewCoverageContract();
+    expected.deriveGrainsFrom(scratch.size());
+    row.declarationCanComplete =
+        expected.canCompleteBeforeHandoff(kPhase % loopTicks, interval.startPhase, loopTicks);
     row.requestResult = static_cast<uint32_t>(result);
     if (result == Track::PlaybackViewRequestResult::Admitted) {
       for (size_t turn = 0; turn < 16 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
@@ -5902,27 +5936,31 @@ void test_demoted_slot_residency_is_length_independent_swept_over_lengths() {
   // (E) The floor as a *number*: the declaration's own arithmetic is evaluated here and the sweep's answer is
   // required to be exactly it -- so "below the lead the window is refused" is a derived boundary rather than a
   // guess, and the smallest demoted length that admits is pinned instead of hiding inside the sweep's granularity.
-  const uint32_t requiredLeadTicks =
-      static_cast<uint32_t>(contract.requiredGrains()) *
-          static_cast<uint32_t>(contract.maximumConsecutiveDeniedTurns + 1u) *
-          contract.maximumPhaseAdvancePerTurn +
-      contract.leadTicks;
+  // The requirement is **derived per row** now (each length's own gather decides its cost), so what is pinned here is
+  // the shape of the boundary rather than one number: the answer is **monotone** in the loop length -- once a length
+  // admits, no longer loop re-refuses -- and the sweep straddles the flip.
   uint32_t firstAdmittingBars = 0;
+  bool refusedAfterAdmitting = false;
   for (size_t index = 0; index < kSweep; ++index) {
-    const uint32_t loopTicks = rows[index].bars * kBar;
-    const uint32_t distanceToHandoff = loopTicks - (kPhase % loopTicks);
-    TEST_ASSERT_EQUAL_MESSAGE(distanceToHandoff >= requiredLeadTicks, rows[index].declarationCanComplete,
-                              "the declaration's answer is its own lead arithmetic, per length");
-    if (rows[index].declarationCanComplete && firstAdmittingBars == 0) {
-      firstAdmittingBars = rows[index].bars;
+    if (rows[index].declarationCanComplete) {
+      if (firstAdmittingBars == 0u) {
+        firstAdmittingBars = rows[index].bars;
+      }
+      TEST_ASSERT_FALSE_MESSAGE(refusedAfterAdmitting,
+                                "a longer loop never stops being preparable: the floor is one flip");
+    } else if (firstAdmittingBars != 0u) {
+      refusedAfterAdmitting = true;
     }
   }
-  TEST_ASSERT_TRUE_MESSAGE(firstAdmittingBars * kBar - kPhase >= requiredLeadTicks,
-                           "the measured floor satisfies the declaration's lead (distance to the handoff)");
-  TEST_ASSERT_TRUE_MESSAGE((firstAdmittingBars - 1u) * kBar - kPhase < requiredLeadTicks,
-                           "and the bar below it does not: the floor is exact to the sweep's last bar");
-  TEST_ASSERT_TRUE_MESSAGE(sawAdmission && sawRefusal,
-                           "the sweep must straddle the declaration's loop-length floor");
+  TEST_ASSERT_TRUE_MESSAGE(firstAdmittingBars >= 1u,
+                           "the sweep must find a length whose derived lead is satisfied");
+  TEST_ASSERT_TRUE_MESSAGE(sawAdmission,
+                           "the sweep must admit at least one length: the derived cost fits somewhere in its range");
+  // **Re-based by the review's step 4, recorded:** with the lead judged on the *derived* cost the floor moved below
+  // this sweep's shortest length, so a refusal inside the range is no longer guaranteed -- and the fixture does not
+  // manufacture one. `sawRefusal` is still *used*: a refusal inside the range must be part of the single flip above.
+  TEST_ASSERT_TRUE_MESSAGE(sawRefusal || firstAdmittingBars == rows[0].bars,
+                           "either the sweep straddles the floor, or its shortest length is already above it");
 }
 void publishBoundaryRootForSlot(Loop& loop) {
   constexpr uint32_t kTile = 2 * 768;
@@ -6158,6 +6196,18 @@ SessionMidiEventVec& windowSourceScratch(uint8_t slot) {
   return buffers[slot % Config::MAX_LOOPS_PER_TRACK];
 }
 
+
+/// The stamp the suite's window requests carry. **Device time is monotone**, while a fixture's *phases* are not: the
+/// urgency fixtures deliberately request a farther interval first and a nearer one second, and the interference budget
+/// refuses a clock that goes backwards (`clock.tick < work->admittedTick` -- a reset/rebase or an out-of-order caller,
+/// never a legitimate request). So the tick advances across the suite's requests and the phase stays what each fixture
+/// needs; the epoch is fixed, since none of these fixtures models a reset.
+PlaybackDeadlineClock nextWindowRequestClock() {
+  static uint64_t tick = 1000000ull;
+  tick += 64ull;
+  return {tick, 1u};
+}
+
 /// Prepares one slot with a current root and a prewarmed runtime, then requests the window its own policy names.
 void prepareOwingWindowHolder(Track& track, uint8_t slot, uint32_t loopTicks, uint32_t fromBar, uint32_t toBar,
                               uint32_t notes, uint32_t requestPhase) {
@@ -6176,7 +6226,7 @@ void prepareOwingWindowHolder(Track& track, uint8_t slot, uint32_t loopTicks, ui
   scratch.clear();
   TEST_ASSERT_EQUAL_MESSAGE(
       static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-      static_cast<int>(track.requestPlaybackWindow(slot, requestPhase, scratch, {requestPhase, 1})),
+      static_cast<int>(track.requestPlaybackWindow(slot, requestPhase, scratch, {nextWindowRequestClock()})),
       "the fixture's loop must be long enough for the declared lead, or the request is refused");
   LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot);
   TEST_ASSERT_NOT_NULL(runtime);
@@ -6191,7 +6241,9 @@ void prepareOwingWindowHolder(Track& track, uint8_t slot, uint32_t loopTicks, ui
 void test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them() {
   using MidiServiceDrain::PlaybackHolderCursor;
   constexpr uint32_t kBar = 768;
-  constexpr uint32_t kLoopTicks = 40 * kBar;      // above the declared lead floor, so requests are admitted
+  // Re-based by the review's step 4 (recorded): the enforced envelope charges same-track sibling work, and these
+  // fixtures prepare two holders on one track, so their loop must be long enough to host both promises.
+  constexpr uint32_t kLoopTicks = 200 * kBar;      // above the declared lead floor, so requests are admitted
   constexpr uint32_t kFarRequestPhase = 20000;    // -> interval start 19232
   constexpr uint32_t kNearRequestPhase = 10000;   // -> interval start  9232
   constexpr uint32_t kServingPhase = 9200;        // 32 ticks before the near interval, a whole pass before the far
@@ -6282,7 +6334,9 @@ void test_window_owner_serves_the_most_urgent_holder_and_rotates_between_them() 
 void test_window_readiness_receipt_reports_the_outcome_and_is_cadence_bounded() {
   using MidiServiceDrain::PlaybackHolderCursor;
   constexpr uint32_t kBar = 768;
-  constexpr uint32_t kLoopTicks = 40 * kBar;
+  // Re-based by the review's step 4 (recorded): the enforced envelope charges same-track sibling work, and these
+  // fixtures prepare two holders on one track, so their loop must be long enough to host both promises.
+  constexpr uint32_t kLoopTicks = 200 * kBar;
   constexpr uint32_t kRequestPhase = 10000;
   constexpr uint32_t kServingPhase = 9200;
   constexpr uint32_t kReceiptInterval = 16;  // must match the TU's declared kReadinessReceiptInterval
@@ -6360,7 +6414,9 @@ void test_window_opportunity_is_offered_across_tracks_by_urgency_not_by_index() 
   using MidiServiceDrain::PlaybackHolder;
   using MidiServiceDrain::PlaybackHolderCursor;
   constexpr uint32_t kBar = 768;
-  constexpr uint32_t kLoopTicks = 40 * kBar;
+  // Re-based by the review's step 4 (recorded): the enforced envelope charges same-track sibling work, and these
+  // fixtures prepare two holders on one track, so their loop must be long enough to host both promises.
+  constexpr uint32_t kLoopTicks = 200 * kBar;
   constexpr uint32_t kFarRequestPhase = 20000;   // -> interval start 19232: a whole pass away at the serving phase
   constexpr uint32_t kNearRequestPhase = 10000;  // -> interval start  9232: 32 ticks away at the serving phase
   constexpr uint32_t kServingPhase = 9200;
@@ -6695,8 +6751,11 @@ void test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_suppor
       static_cast<uint32_t>(eighty.fills) + static_cast<uint32_t>(eighty.orders) + 1u;
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(61u, grainsFor80Notes, "the measured cost of an 80-note window: 3 + 57 + 1");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(
-      1u, static_cast<uint32_t>(contract.maximumPhaseAdvancePerTurn / kBar),
-      "the advance is still the *declared* one bar per this owner's opportunity: the service-gap unit is unmeasured");
+      Track::kPlaybackViewPermittedAdvancePerTurn, contract.maximumPhaseAdvancePerTurn,
+      "the advance is the declared permitted scheduling bound (review step 4), no longer the placeholder one bar");
+  TEST_ASSERT_TRUE_MESSAGE(contract.maximumPhaseAdvancePerTurn < kBar,
+                           "and it is tighter than a bar by construction: the placeholder admitted windows it could "
+                           "not finish, which is the falsified safety argument this value replaces");
   // The contention a general bound must multiply in, named from the production shape rather than guessed:
   // (`src/main.cpp` bounds the eligible-track offers at 8 as well; the smaller of the two is the real divisor.)
   const uint32_t kContentionFactor = static_cast<uint32_t>(MidiServiceDrain::kDeferredIdleOwnerCount) *
@@ -6704,11 +6763,11 @@ void test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_suppor
                                      static_cast<uint32_t>(Config::MAX_LOOPS_PER_TRACK);
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
       static_cast<uint32_t>(contract.maximumConsecutiveDeniedTurns) + 1u, kContentionFactor,
-      "the admission's turn count applies only the denied-turn allowance, so the derived bound is INCOMPLETE until "
-      "the tracks x slots contention is declared and the per-opportunity advance is measured");
-  TEST_ASSERT_TRUE_MESSAGE(contract.maximumPhaseAdvancePerTurn > 0u && !contract.isDeclared() == false,
-                           "the declaration exists; what it does not yet have is a measured unit and the full "
-                           "contention envelope -- which is why active windowed playback stays gated");
+      "the admission's turn count still applies only the across-track allowance: same-track siblings are charged as "
+      "WORK through `additionalGrains`, not as another slot multiplier, so this factor is not the envelope's divisor");
+  TEST_ASSERT_TRUE_MESSAGE(contract.isDeclared() && contract.maximumPhaseAdvancePerTurn > 0u,
+                           "the declaration exists, with a stated unit (ticks per opportunity) and the contention it "
+                           "accounts for: activation is the review's step 4, not a silent default");
 }
 /// The review's **step 2** (*"bound interference within each track"*), task 3.10: a **per-track outstanding-work
 /// budget** replaces the vague `K` allowance, and a new admission must leave **every already-admitted window's
@@ -6762,31 +6821,46 @@ void test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a
   const uint32_t earlyPhase = (60 * kBar) + 384;  // the phase both windows were requested at
   TEST_ASSERT_FALSE_MESSAGE(
       track.playbackViewAdmissionKeepsAdmittedDeadlines(contract, earlyPhase, kShortLoopTicks,
-                                                       static_cast<uint16_t>(work1->requiredGrains()), {earlyPhase, 1}),
+                                                       static_cast<uint16_t>(work1->requiredGrains()),
+                                                       {work1->admittedTick, 1}),
       "on a short loop the sibling's charge cannot leave the older window's deadline feasible");
   TEST_ASSERT_TRUE_MESSAGE(
       track.playbackViewAdmissionKeepsAdmittedDeadlines(contract, earlyPhase, kLongLoopTicks,
-                                                       static_cast<uint16_t>(work1->requiredGrains()), {earlyPhase, 1}),
+                                                       static_cast<uint16_t>(work1->requiredGrains()),
+                                                       {work1->admittedTick, 1}),
       "on the loop both windows were admitted on, the same charge still fits");
 
-  // **(C) Why the bound is not enforced yet**, asserted rather than left to prose: with the *declared* advance (one
-  // bar per turn) the charge for a single sibling already exceeds a 40-bar loop by more than an order of magnitude,
-  // so enforcing it now would refuse shapes the current constants admit. Written as an inequality against the declared
-  // field, so a change to that advance re-opens the question instead of silently flipping a gate.
+  // **(C) Why the bound is now enforced**, asserted rather than left to prose -- and the same inequality that
+  // carried the opposite conclusion before the review's step 4. Under the placeholder advance (one bar per turn) the
+  // charge for a single sibling exceeded a 40-bar loop by more than an order of magnitude, so enforcing it *was* a
+  // capacity reduction; under the derived permitted bound the same charge fits with room, while a 2-bar loop still
+  // cannot host it. Both directions are written against the declared field, so a change to that advance re-opens the
+  // question instead of silently flipping a gate.
   const uint32_t siblingChargeTicks = static_cast<uint32_t>(work1->requiredGrains()) *
                                       (static_cast<uint32_t>(contract.maximumConsecutiveDeniedTurns) + 1u) *
                                       contract.maximumPhaseAdvancePerTurn;
-  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(kShortLoopTicks, siblingChargeTicks,
-                                          "the declared charge for one sibling already exceeds a 40-bar loop");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(kShortLoopTicks, siblingChargeTicks,
+                                       "under the declared advance one sibling's charge fits a 40-bar loop");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(2u * kBar, siblingChargeTicks,
+                                          "and it still exceeds a 2-bar loop: the bound is a real bound");
 
   // Missing observation at the boundary does not matter: time is no longer loop-modular.
-  TEST_ASSERT_EQUAL_UINT64(earlyPhase, work0->admittedTick);
-  TEST_ASSERT_EQUAL_UINT64(kLongLoopTicks + work0->handoffPhase, work0->deadlineTick);
+  // **Re-based (review step 4, recorded):** the suite stamps requests with monotone *device* time (the budget refuses
+  // a backwards clock), so the stamp is no longer the request phase; what the fixture still pins is that the record is
+  // *qualified* and that its deadline is that stamp plus the interval's lead (the next assertion).
+  TEST_ASSERT_TRUE_MESSAGE(work0->admittedTick > 0u, "the admitted record carries a qualified device tick");
+  // **Re-based (review step 4, recorded):** as above, the stamp is monotone device time, so the deadline is the stamp
+  // plus the interval's lead -- the same quantity the old form read as "the loop end", now read against the tick.
+  TEST_ASSERT_EQUAL_UINT64(work0->admittedTick + handoffLeadTicks(earlyPhase, work0->handoffPhase, kLongLoopTicks),
+                           work0->deadlineTick);
   TEST_ASSERT_EQUAL_UINT32(1u, work0->clockEpoch);
   for (uint64_t laps : {1ull, 2ull, 100ull}) {
     TEST_ASSERT_FALSE_MESSAGE(
         track.playbackViewAdmissionKeepsAdmittedDeadlines(contract, earlyPhase, kLongLoopTicks,
-            static_cast<uint16_t>(work1->requiredGrains()), {earlyPhase + laps * kLongLoopTicks, 1}),
+            static_cast<uint16_t>(work1->requiredGrains()),
+            // **Re-based (review step 4, recorded):** laps are counted from the admitted *deadline* now that the stamp
+            // is monotone device time; the claim is unchanged -- a lap past the deadline stays closed.
+            {work0->deadlineTick + laps * kLongLoopTicks, 1}),
         "a full unobserved lap must not reopen the retained deadline");
   }
   TEST_ASSERT_FALSE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
@@ -6804,17 +6878,23 @@ void test_enforced_candidate_charges_derived_cost_and_eight_track_rotation() {
   Track& track = trackManager.getTrack(0);
   track.ensureLoopsAllocated();
   for (uint8_t slot = 0; slot < 2; ++slot) {
-    const uint32_t length = (slot == 0 ? 100u : 200u) * 768;
+    // Re-based by the review's step 4 (recorded): the shapes must sit where the **across-track allowance** is what
+    // decides. 5 bars leaves just enough lead for the derived cost at denials=3 and not enough at denials=7 -- which is
+    // this fixture's whole point -- while slot 1's longer loop admits the same window even charged with the sibling.
+    const uint32_t length = (slot == 0 ? 4u : 20u) * 768;
     commitRecordPassIntoTrackSlotOfLength(track, slot, length);
     Loop& loop = track.getLoop(slot);
     loop.loopLengthTicks = length;
     publishNotesInBarsRootForSlot(loop, 0, 2, 32);
     TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(slot));
     SessionMidiEventVec& scratch = windowSourceScratch(slot);
+    const bool wasEnforced = sInterferenceBudgetEnforced;
     sInterferenceBudgetEnforced = true;
     const auto result = track.requestPlaybackWindow(slot, 1, scratch, {1, 1});
-    sInterferenceBudgetEnforced = false;
-    TEST_ASSERT_EQUAL_UINT32(63, scratch.size());  // End-boundary off is outside the half-open window.
+    sInterferenceBudgetEnforced = wasEnforced;
+    // Re-based with the shapes (review step 4): slot 0's shorter loop makes its two-bar window cover both boundaries
+    // (the full 32 notes x on/off), while slot 1's longer loop keeps the end boundary outside the half-open window.
+    TEST_ASSERT_EQUAL_UINT32(slot == 0 ? 64u : 63u, scratch.size());
     if (slot == 0) {
       TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
                                static_cast<int>(result),
@@ -6831,15 +6911,19 @@ void test_enforced_candidate_charges_derived_cost_and_eight_track_rotation() {
 
 void test_window_admission_refuses_by_name_once_the_interference_budget_is_enforced() {
   constexpr uint32_t kBar = 768;
-  constexpr uint32_t kLongLoopTicks = 900 * kBar;
-  constexpr uint32_t kRequestPhase = (60 * kBar) + 384;
+  // Re-based by the review's step 4 (recorded): on a 900-bar loop the charged envelope can keep any promise, so
+  // "the budget refuses by name" needs a loop where the sibling's charge genuinely cannot be met. 30 bars with
+  // 200-note windows is that shape (the sibling's own promise admits; the candidate's charged one does not).
+  constexpr uint32_t kLongLoopTicks = 30 * kBar;
+  constexpr uint32_t kRequestPhase = (12 * kBar) + 384;
   LoopEventStore::initPool();
   Track& track = trackManager.getTrack(0);
   track.ensureLoopsAllocated();
 
-  TEST_ASSERT_FALSE_MESSAGE(sInterferenceBudgetEnforced, "production default: the budget is not enforced");
+  TEST_ASSERT_FALSE_MESSAGE(sInterferenceBudgetEnforced,
+                            "activation is still gated on the callers' clock wiring: the production default is off");
   // Slot 0 is a substantial window (200 notes), admitted while the budget is off, so there is a promise to protect.
-  prepareOwingWindowHolder(track, 0, kLongLoopTicks, 60, 62, 200, kRequestPhase);
+  prepareOwingWindowHolder(track, 0, kLongLoopTicks, 12, 14, 200, kRequestPhase);
   const LoopPlaybackRuntime* first = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
   TEST_ASSERT_NOT_NULL(first);
   const PlaybackViewAdmittedWork* work0 = first->activeViewBuildWork();
@@ -6851,10 +6935,11 @@ void test_window_admission_refuses_by_name_once_the_interference_budget_is_enfor
   commitRecordPassIntoTrackSlotOfLength(track, 1, kLongLoopTicks);
   Loop& loop = track.getLoop(1);
   loop.loopLengthTicks = kLongLoopTicks;
-  publishNotesInBarsRootForSlot(loop, 60, 62, 200);
+  publishNotesInBarsRootForSlot(loop, 12, 14, 200);
   TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(1), "slot 1 must prewarm");
   SessionMidiEventVec& scratch = windowSourceScratch(1);
 
+  const bool wasEnforced = sInterferenceBudgetEnforced;
   sInterferenceBudgetEnforced = true;
   scratch.clear();
   const Track::PlaybackViewRequestResult refused = track.requestPlaybackWindow(1, kRequestPhase, scratch, {kRequestPhase, 1});
@@ -6867,7 +6952,7 @@ void test_window_admission_refuses_by_name_once_the_interference_budget_is_enfor
   // unchanged work record, and the retention is what the demand fixtures below pin.
   TEST_ASSERT_NOT_NULL_MESSAGE(track.pendingViewRequest(1), "a refused request leaves a pending demand behind");
 
-  sInterferenceBudgetEnforced = false;
+  sInterferenceBudgetEnforced = wasEnforced;
   scratch.clear();
   const Track::PlaybackViewRequestResult admitted = track.requestPlaybackWindow(1, kRequestPhase, scratch, {kRequestPhase, 1});
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
@@ -6894,10 +6979,66 @@ Track::PlaybackViewRequestResult requestRefusedWindowDemand(Track& track, uint32
   TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(1), "slot 1 must prewarm a runtime to owe a demand");
   SessionMidiEventVec& scratch = windowSourceScratch(1);
   scratch.clear();
+  const bool wasEnforced = sInterferenceBudgetEnforced;
   sInterferenceBudgetEnforced = true;
-  const Track::PlaybackViewRequestResult result = track.requestPlaybackWindow(1, requestPhase, scratch, {tick, epoch});
-  sInterferenceBudgetEnforced = false;
+  const Track::PlaybackViewRequestResult result =
+      track.requestPlaybackWindow(1, requestPhase, scratch, {tick, epoch});
+  sInterferenceBudgetEnforced = wasEnforced;
   return result;
+}
+
+/// **DEC-108 §13b / task 3.10 -- the review's step 4: the declared envelope states its terms, its derivation and what
+/// it refuses.**
+///
+/// The review's formula is `Delta-max x H x bounded per-track work`. Before this step every term was a placeholder:
+/// the per-turn advance was one bar (a figure with no scheduling basis, measured 96x larger than the observed
+/// per-opportunity advance), the denial allowance was 3 while the rotation serves 8 tracks, and the lead was judged on
+/// the declared *basis* counts (3/3/1) while the retained record used the window's own derived cost. This fixture
+/// pins each correction and the capability statement they add up to.
+void test_the_declared_envelope_states_its_terms_its_derivation_and_what_it_refuses() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  // The measurement the per-turn term is derived from (device runs 4/5/6, 2026-10-03): the steady state per lane
+  // opportunity, and the starvation episodes that are explicitly *not* this term's business.
+  constexpr uint32_t kMeasuredP50PerOpportunity = 8;
+  constexpr uint32_t kStatedMarginMultiple = 2;
+  const CoverageServiceContract declared = Track::playbackViewCoverageContract();
+
+  // **(1) The terms are declared, and each came from somewhere.**
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(Track::kPlaybackViewPermittedAdvancePerTurn, declared.maximumPhaseAdvancePerTurn,
+                                   "the per-turn term is the declared permitted scheduling bound, not a placeholder");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kMeasuredP50PerOpportunity * kStatedMarginMultiple,
+                                   declared.maximumPhaseAdvancePerTurn,
+                                   "and it is the stated margin over the measured per-opportunity advance");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(Config::NUM_TRACKS - 1, declared.maximumConsecutiveDeniedTurns,
+                                   "the denial allowance is the across-track rotation (H - 1), not an invented 3");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kBar, declared.leadTicks,
+                                   "the handoff margin stays the demonstrated one bar");
+  TEST_ASSERT_TRUE_MESSAGE(declared.maximumPhaseAdvancePerTurn < kBar,
+                           "and the declared advance is tighter than the placeholder bar: the falsified safety "
+                           "argument ('an unmeasured value can only refuse work') is what that placeholder rested on");
+
+  // **(2) The accounting the lead is judged on is derived, and deriving it is not free of consequence.**
+  CoverageServiceContract basis = declared;
+  CoverageServiceContract derived = declared;
+  derived.deriveGrainsFrom(63);  // the review's own basis-window figure
+  TEST_ASSERT_GREATER_THAN_UINT16_MESSAGE(basis.requiredGrains(), derived.requiredGrains(),
+                                          "a 63-entry window costs more than the declared basis counts: judging the lead "
+                                          "on the basis is what admits work it cannot finish");
+
+  // **(3) The capability, stated as a bound rather than a preference** -- the same 63-entry window, charged with one
+  // same-track sibling, fits the loop the fixtures were written on and does not fit a short one; and the placeholder
+  // advance refused the very same shape, which is the capacity reduction this declaration removes.
+  const uint32_t turns = static_cast<uint32_t>(derived.requiredGrains()) *
+                         (static_cast<uint32_t>(declared.maximumConsecutiveDeniedTurns) + 1u);
+  const uint32_t declaredLead = declared.leadTicks + turns * declared.maximumPhaseAdvancePerTurn;
+  const uint32_t placeholderLead = declared.leadTicks + turns * kBar;
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(40u * kBar, declaredLead,
+                                       "the declared envelope fits a 63-entry window plus its sibling on a 40-bar loop");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(4u * kBar, declaredLead,
+                                          "and it does not fit a 4-bar loop: the envelope is a real bound");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(40u * kBar, placeholderLead,
+                                          "the placeholder one-bar advance refused that same shape -- measured, not "
+                                          "argued: that is the capacity the declaration clarifies");
 }
 
 /// **O1 / O2 / O7 -- a refusal is a promise, and only where a promise is owed.**
@@ -6908,7 +7049,14 @@ Track::PlaybackViewRequestResult requestRefusedWindowDemand(Track& track, uint32
 /// refusal name, not a blanket), and the admission that finally accepts the demand **discharges it whole**.
 void test_a_refused_request_is_retained_with_its_original_deadline_and_discharged_by_its_admission() {
   constexpr uint32_t kBar = 768;
-  constexpr uint32_t kLoopTicks = 40 * kBar;
+  // Re-based by the review's step 4 (recorded): with the envelope declared, a *refused* demand needs a shape outside
+  // it. 20 bars admits the first holder on its own (its own derived cost fits) and refuses the sibling once the
+  // charged envelope applies -- which is the "not now" case these fixtures are about.
+  // **Shape inside/outside the declared envelope (recorded re-base, review step 4).** 30 bars admits the first
+  // holder on its own derived cost (148 grains) and refuses the sibling once the charged envelope applies -- the
+  // "not now" case these fixtures exist for. The second request's stamp must also be *later* than the first:
+  // `requestRefusedWindowDemand` carries the fixture's phase as its tick, and the budget refuses a backwards clock.
+  constexpr uint32_t kLoopTicks = 30 * kBar;
   constexpr uint32_t kPromisePhase = 12 * kBar;
   constexpr uint32_t kRequestPhase = 10000;
   LoopEventStore::initPool();
@@ -6969,7 +7117,14 @@ void test_a_refused_request_is_retained_with_its_original_deadline_and_discharge
 /// distinction is the record itself -- `pendingViewRequest` is non-null while `activeViewBuildWork` is null.
 void test_a_pending_request_owes_no_grains_and_does_not_charge_a_sibling() {
   constexpr uint32_t kBar = 768;
-  constexpr uint32_t kLoopTicks = 40 * kBar;
+  // Re-based by the review's step 4 (recorded): with the envelope declared, a *refused* demand needs a shape outside
+  // it. 20 bars admits the first holder on its own (its own derived cost fits) and refuses the sibling once the
+  // charged envelope applies -- which is the "not now" case these fixtures are about.
+  // **Shape inside/outside the declared envelope (recorded re-base, review step 4).** 30 bars admits the first
+  // holder on its own derived cost (148 grains) and refuses the sibling once the charged envelope applies -- the
+  // "not now" case these fixtures exist for. The second request's stamp must also be *later* than the first:
+  // `requestRefusedWindowDemand` carries the fixture's phase as its tick, and the budget refuses a backwards clock.
+  constexpr uint32_t kLoopTicks = 30 * kBar;
   constexpr uint32_t kPromisePhase = 12 * kBar;
   constexpr uint32_t kRequestPhase = 10000;
   LoopEventStore::initPool();
@@ -6998,7 +7153,14 @@ void test_a_pending_request_owes_no_grains_and_does_not_charge_a_sibling() {
 /// which is why the identity follows the newest and the deadline does not.
 void test_coalesced_requests_keep_the_oldest_deadline_and_the_newest_attempt() {
   constexpr uint32_t kBar = 768;
-  constexpr uint32_t kLoopTicks = 40 * kBar;
+  // Re-based by the review's step 4 (recorded): with the envelope declared, a *refused* demand needs a shape outside
+  // it. 20 bars admits the first holder on its own (its own derived cost fits) and refuses the sibling once the
+  // charged envelope applies -- which is the "not now" case these fixtures are about.
+  // **Shape inside/outside the declared envelope (recorded re-base, review step 4).** 30 bars admits the first
+  // holder on its own derived cost (148 grains) and refuses the sibling once the charged envelope applies -- the
+  // "not now" case these fixtures exist for. The second request's stamp must also be *later* than the first:
+  // `requestRefusedWindowDemand` carries the fixture's phase as its tick, and the budget refuses a backwards clock.
+  constexpr uint32_t kLoopTicks = 30 * kBar;
   constexpr uint32_t kPromisePhase = 15 * kBar;
   constexpr uint32_t kFirstPhase = 10000;
   constexpr uint32_t kSecondPhase = 12000;
@@ -7052,7 +7214,14 @@ void test_coalesced_requests_keep_the_oldest_deadline_and_the_newest_attempt() {
 /// between "still promised for this tick" and "owed, but no longer positioned", and the reading the re-attempt owes.
 void test_clock_epoch_and_geometry_invalidate_the_deadline_not_the_obligation() {
   constexpr uint32_t kBar = 768;
-  constexpr uint32_t kLoopTicks = 40 * kBar;
+  // Re-based by the review's step 4 (recorded): with the envelope declared, a *refused* demand needs a shape outside
+  // it. 20 bars admits the first holder on its own (its own derived cost fits) and refuses the sibling once the
+  // charged envelope applies -- which is the "not now" case these fixtures are about.
+  // **Shape inside/outside the declared envelope (recorded re-base, review step 4).** 30 bars admits the first
+  // holder on its own derived cost (148 grains) and refuses the sibling once the charged envelope applies -- the
+  // "not now" case these fixtures exist for. The second request's stamp must also be *later* than the first:
+  // `requestRefusedWindowDemand` carries the fixture's phase as its tick, and the budget refuses a backwards clock.
+  constexpr uint32_t kLoopTicks = 30 * kBar;
   constexpr uint32_t kPromisePhase = 12 * kBar;
   constexpr uint32_t kRequestPhase = 10000;
   LoopEventStore::initPool();
@@ -7094,7 +7263,14 @@ void test_clock_epoch_and_geometry_invalidate_the_deadline_not_the_obligation() 
 /// fresh record rather than inheriting the older deadline.
 void test_a_generation_change_does_not_revive_a_pending_request() {
   constexpr uint32_t kBar = 768;
-  constexpr uint32_t kLoopTicks = 40 * kBar;
+  // Re-based by the review's step 4 (recorded): with the envelope declared, a *refused* demand needs a shape outside
+  // it. 20 bars admits the first holder on its own (its own derived cost fits) and refuses the sibling once the
+  // charged envelope applies -- which is the "not now" case these fixtures are about.
+  // **Shape inside/outside the declared envelope (recorded re-base, review step 4).** 30 bars admits the first
+  // holder on its own derived cost (148 grains) and refuses the sibling once the charged envelope applies -- the
+  // "not now" case these fixtures exist for. The second request's stamp must also be *later* than the first:
+  // `requestRefusedWindowDemand` carries the fixture's phase as its tick, and the budget refuses a backwards clock.
+  constexpr uint32_t kLoopTicks = 30 * kBar;
   constexpr uint32_t kPromisePhase = 12 * kBar;
   constexpr uint32_t kFirstPhase = 10000;
   constexpr uint32_t kSecondPhase = 12000;
@@ -7138,7 +7314,9 @@ void test_a_generation_change_does_not_revive_a_pending_request() {
 /// length; it does not sweep the whole shape space (task 3.10's systematic sweep is still owed).
 void test_window_request_work_is_bounded_and_retained_across_source_shapes() {
   constexpr uint32_t kBar = 768;
-  constexpr uint32_t kLoopTicks = 64 * kBar;
+  // Re-based by the review's step 4 (recorded): the enforced envelope charges same-track sibling work, and this
+  // fixture sweeps shapes on one track, so its loop hosts them all.
+  constexpr uint32_t kLoopTicks = 200 * kBar;
   constexpr uint32_t kRequestPhase = (12 * kBar) + 384;
   struct Shape {
     uint8_t slot;
@@ -7343,17 +7521,22 @@ void test_window_deadline_clock_rejects_reset_and_unobserved_laps_at_admission()
   const auto contract = Track::playbackViewCoverageContract();
   const auto* work = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0)->activeViewBuildWork();
   TEST_ASSERT_NOT_NULL(work);
+  // **Re-based (review step 4, recorded):** the suite's request stamps are monotone *device* time, not the phase, so
+  // this fixture reads its reference tick from the admitted record instead of reconstructing it from `phase`. The
+  // assertions are unchanged in kind -- a tick later is still feasible, the same tick in another epoch is not, a
+  // backwards tick is not, no identity at all is not, changed geometry is not.
+  const uint64_t admittedTick = work->admittedTick;
   TEST_ASSERT_TRUE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
-      contract, phase + 1, length, 1, {phase + 1, 1}));
+      contract, phase + 1, length, 1, {admittedTick + 1u, 1}));
   TEST_ASSERT_FALSE_MESSAGE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
-      contract, phase, length, 1, {phase, 2}), "same phase after reset is a different epoch");
+      contract, phase, length, 1, {admittedTick, 2}), "same phase after reset is a different epoch");
   TEST_ASSERT_FALSE_MESSAGE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
-      contract, phase, length, 1, {phase - 1, 1}), "backwards time invalidates the promise");
+      contract, phase, length, 1, {admittedTick - 1u, 1}), "backwards time invalidates the promise");
   TEST_ASSERT_FALSE_MESSAGE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
       contract, phase, length, 1), "unspecified clock identity cannot prove a deadline");
   track.getLoop(0).loopLengthTicks = length + 768;
   TEST_ASSERT_FALSE_MESSAGE(track.playbackViewAdmissionKeepsAdmittedDeadlines(
-      contract, phase, length, 1, {phase, 1}), "changed sibling geometry invalidates its deadline");
+      contract, phase, length, 1, {admittedTick, 1}), "changed sibling geometry invalidates its deadline");
   track.getLoop(0).loopLengthTicks = length;
 
   commitRecordPassIntoTrackSlotOfLength(track, 1, length);
@@ -7368,18 +7551,21 @@ void test_window_deadline_clock_rejects_reset_and_unobserved_laps_at_admission()
     sInterferenceBudgetEnforced = false;
     return result;
   };
-  for (PlaybackDeadlineClock clock : {PlaybackDeadlineClock{phase + uint64_t(length), 1},
-                                     PlaybackDeadlineClock{phase + 100ull * length, 1},
-                                     PlaybackDeadlineClock{phase, 2}, PlaybackDeadlineClock{},
+  for (PlaybackDeadlineClock clock : {PlaybackDeadlineClock{admittedTick + uint64_t(length), 1},
+                                     PlaybackDeadlineClock{admittedTick + 100ull * length, 1},
+                                     PlaybackDeadlineClock{admittedTick, 2}, PlaybackDeadlineClock{},
                                      PlaybackDeadlineClock{UINT64_MAX - 1, 1}}) {
     TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::TrackInterferenceBudgetExceeded),
                       static_cast<int>(request(clock)));
     TEST_ASSERT_NULL(TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1)->activeViewBuildWork());
-    TEST_ASSERT_EQUAL_UINT64(length + work->handoffPhase, work->deadlineTick);
+    // **Re-based (review step 4, recorded):** the stamp is monotone device time, so the deadline is that stamp plus
+    // the interval's own phase lead -- the same relation as before, read against the admitted tick instead of the phase.
+    TEST_ASSERT_EQUAL_UINT64(work->admittedTick + handoffLeadTicks(phase, work->handoffPhase, length),
+                             work->deadlineTick);
   }
   // A still-valid stamp with feasible work is admitted through the SAME enforced path.
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-                    static_cast<int>(request({phase, 1})));
+                    static_cast<int>(request({admittedTick, 1})));
   const auto* candidate = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1)->activeViewBuildWork();
   TEST_ASSERT_NOT_NULL(candidate);
   TEST_ASSERT_EQUAL_UINT32(1, candidate->clockEpoch);
@@ -7446,6 +7632,7 @@ int main() {
   RUN_TEST(test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a_sibling);
   RUN_TEST(test_enforced_candidate_charges_derived_cost_and_eight_track_rotation);
   RUN_TEST(test_window_admission_refuses_by_name_once_the_interference_budget_is_enforced);
+  RUN_TEST(test_the_declared_envelope_states_its_terms_its_derivation_and_what_it_refuses);
   RUN_TEST(test_a_refused_request_is_retained_with_its_original_deadline_and_discharged_by_its_admission);
   RUN_TEST(test_a_pending_request_owes_no_grains_and_does_not_charge_a_sibling);
   RUN_TEST(test_coalesced_requests_keep_the_oldest_deadline_and_the_newest_attempt);

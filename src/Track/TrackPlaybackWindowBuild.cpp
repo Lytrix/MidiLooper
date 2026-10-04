@@ -1584,6 +1584,19 @@ TRACK_COLD_MEM bool Track::tryClearCommittedMidiScratch() {
 // admission arithmetic fixed in advance.
 // ---------------------------------------------------------------------------
 
+// DEC-108 §13b / task 3.10 (the review's step 4): **the envelope is declared, and its activation is gated on the
+// callers' clock wiring -- a blocker this step found by trying it.** The envelope itself is now supported (see
+// `playbackViewCoverageContract`): the declared advance is the measured scheduling bound, the denial allowance is the
+// H-track rotation, and the lead is judged on the window's **derived** cost, so the shape that used to be admitted on
+// the placeholder counts is no longer admitted on theirs. What is *not* yet true is that every caller carries a
+// **qualified clock stamp**: enforced admission fails closed on an unqualified one (increment 22's own rule, DEC-108
+// §13c), so flipping this on refuses every legacy preparation that passes no stamp -- including every fixture in the
+// suite that prepares a window without one. Measured: with the switch on, twelve fixtures that prepare an unqualified
+// window are refused by name (`TrackInterferenceBudgetExceeded`), which is *correct behaviour* for an unqualified
+// demand and *not* a supported production state, because the calling owners (the MIDI edge, the switch preparation and
+// the preview lane) do not pass stamps yet. Activation therefore needs the clock-owner wiring, not a better constant:
+// it is recorded as the step-4 remainder, and the enforced path stays exercised by the fixtures that turn it on.
+// Production requests no window today, so neither state has a production-observable effect yet.
 #if defined(__IMXRT1062__)
 DMAMEM static bool sInterferenceBudgetEnforced = false;
 #else
@@ -1621,21 +1634,47 @@ TRACK_COLD_MEM void CoverageServiceContract::deriveGrainsFrom(size_t windowEvent
   requiredPromotionGrains = 1;
 }
 
+/// DEC-108 §13b / task 3.10 (**the review's step 4**): **the declared service envelope** -- the terms the admission
+/// above is allowed to promise, stated once, with their derivation and with the policy that governs a miss.
+///
+/// The review's formula is `Delta-max x H x bounded per-track work`, where `bounded per-track work` is
+/// `grains x (denied + 1)` read through the contract's own `canCompleteWithinLead`. Each term is now a *declared*
+/// quantity rather than a placeholder:
+///
+/// * **`Delta-max` (the permitted phase advance between two of this owner's opportunities) = 16 ticks.** It is
+///   derived from the measurement, not chosen for comfort: the schema-2 lane sampler measures the *steady-state*
+///   per-opportunity advance at a median of **2.9-5.5 ticks** (p50 8 across runs) with a **tempo-invariant rotation of
+///   7.3-7.5 ms**, and the declared clock basis is 20-300 BPM (768 ticks/bar = 3.2 ticks/s per BPM), so 16 ticks is
+///   **2x the measured p50 and ~2.3x the measured rotation at the fastest declared tempo** (16.7 ms at 300 BPM,
+///   41.7 ms at 120 BPM, 250 ms at 20 BPM -- the allowance gets *safer* as the tempo falls). The margin is kept
+///   tight on purpose: this figure multiplies the whole per-track work, and a loose factor is exactly what the
+///   placeholder one-bar advance got wrong (it admitted windows it could not finish). What it is **not**: a bound
+///   on the seconds-scale **starvation** episodes (2 138 / 4 355 / 8 520 ticks) that the same runs contain. Those are
+///   *lost opportunities*, not one turn's advance, so no per-turn constant can hold them -- which is why the field
+///   keeps its scheduling role (evidence/2026-10-03-s310n-... corrects exactly this conflation) and why the overrun
+///   policy below exists. And it is a **declared permitted value, not a measured WCET**: it is the figure the firmware
+///   claims, it is falsifiable, and the device leg can tighten it.
+/// * **`H = 8` across tracks** (`maximumConsecutiveDeniedTurns = Config::NUM_TRACKS - 1`, the round-robin rotation:
+///   every eligible track is served within H lane turns), and **`K` is charged as sibling *work*, never as a slot
+///   multiplier** -- the same-track siblings' grains are added to the candidate through `additionalGrains`, so a track
+///   with more owing slots pays more work, not a bigger constant.
+/// * **The handoff margin (`leadTicks`) = one bar**, the demonstrated margin the spec's service contract requires: the
+///   admission refuses below `leadTicks` regardless of the work, so a window is never promised with less than a bar of
+///   room to publish.
+/// * **The overrun policy -- what happens when the permitted gap is exceeded.** A window whose traversal deadline
+///   passes is the **lag rule's** (DEC-108 §13a/§13e, task 3.6b): the previous revision serves that traversal once
+///   (`one_pass_late`), the miss is *reported*, a **second** consecutive miss latches the named
+///   `deadlineContractFaultLatched` fault, and the deadline is **never silently re-granted** and never compensated by
+///   an inline rebuild. Containment after a miss is therefore *not* presented as passing normal-operation continuity:
+///   the envelope says what a turn can advance, and the policy says what a miss is called.
+///
+/// The declared basis counts below stay the "basis window" declaration (they are the shape the derivation was written
+/// against); they are no longer what the lead is judged on -- `requestPlaybackViewMaintenance` derives the *actual*
+/// window's cost and judges the lead with it.
 TRACK_COLD_MEM CoverageServiceContract Track::playbackViewCoverageContract() {
-  // Provisional declaration, NOT a qualified service bound. The legacy win_gap sampler
-  // ran only when a track was selected; its maxima may span intervals with no work.
-  // Schema-2 measurement now runs at every main-loop lane dispatch. Neither its
-  // observed maximum nor the legacy typical gap is a guaranteed service limit.
-  // Across tracks Hmax is 8; within a track charge bounded sibling WORK, not a
-  // slot multiplier. Extra Snapshot turns already belong to the measured lane gap.
-  // Keep activation gated until request costs, protected deadlines, pending retries,
-  // permitted service gap and overrun policy are qualified together.
   CoverageServiceContract contract;
-  contract.maximumPhaseAdvancePerTurn = Config::TICKS_PER_BAR;
-  contract.maximumConsecutiveDeniedTurns = 3;
-  // The basis window's cost, **derived** rather than asserted, is kept here as the declaration the admission uses
-  // *until the derivation is enabled*: `applyWindowCostToContract` below is the single source of truth, and calling it
-  // here is the one-line change that enables the derived admission (see `requestPlaybackViewMaintenance`).
+  contract.maximumPhaseAdvancePerTurn = kPlaybackViewPermittedAdvancePerTurn;
+  contract.maximumConsecutiveDeniedTurns = Config::NUM_TRACKS - 1;
   contract.requiredFillGrains = 3;
   contract.requiredOrderGrains = 3;
   contract.requiredPromotionGrains = 1;
@@ -1693,17 +1732,18 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   }
   // The cost of that bounded work is **derived from the entries the fill must inspect**, by the contract's own
   // `deriveGrainsFrom` -- one helper for the admission, the retained record and the fixtures, so none of them can
-  // disagree about what this window costs. Deriving cost is deliberately **not** the same act as changing what may be
-  // admitted: the lead judgement below still uses the **declared** counts, so no shape admitted today is refused by
-  // this step. The lead-side derivation is the review's step 4, and it needs a measured `Delta-max` and the `H x K`
-  // interference bound first.
+  // disagree about what this window costs.
+  //
+  // **DEC-108 §13b / task 3.10, the review's step 4: the derived cost is now what the lead is judged against.** Until
+  // this step the lead used the *declared* basis counts (3/3/1) while the retained record used the derived ones, which
+  // is exactly the "declared versus derived accounting" split the review ordered fixed last: a 63-entry window costs
+  // 20 grains, not 7, and admitting it on the smaller figure is what "admits work it cannot complete" means. The
+  // derivation is therefore unconditional -- it is the *accounting*, not a gate -- and what remains gated is only the
+  // sibling charge below (`sInterferenceBudgetEnforced`), so the envelope change and the interference rule stay
+  // separately falsifiable.
   CoverageServiceContract derived = contract;
   derived.deriveGrainsFrom(sourceCount);
-  if (sInterferenceBudgetEnforced) {
-    contract = derived;
-    // One track grain per lane opportunity; sibling work is charged separately.
-    contract.maximumConsecutiveDeniedTurns = Config::NUM_TRACKS - 1;
-  }
+  contract = derived;
   PlaybackViewAdmittedWork admittedWork;
   admittedWork.sourceEntries = static_cast<uint32_t>(sourceCount);
   admittedWork.retainedEventBound = static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit);

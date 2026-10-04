@@ -1035,3 +1035,28 @@ outlives the build and the lane turn owns none, which is a RAM-shape decision. *
 production requester (qualification blocker 1), the permitted service-gap/overrun policy (blocker 3), enforcement
 activation (awaits `Delta-max`), `H x K` and the sweep. Detail:
 [`evidence/2026-10-04-s310s-pending-request-retained/EXECUTION.md`](evidence/2026-10-04-s310s-pending-request-retained/EXECUTION.md).
+
+**Task 3.10 (increment 25) — the review's step 4: the declared service envelope (native verified; activation gated on the callers' stamps).**
+The review's formula `Delta-max x H x bounded per-track work` now has *declared* terms instead of placeholders: the
+per-turn advance is the permitted **scheduling** bound **16 ticks** (2x the measured p50 of 8, ~2.3x the measured 7.3 ms
+rotation at the fastest declared tempo — derived from the schema-2 lane measurement, not chosen for comfort), the denial
+allowance is the across-track rotation **`Config::NUM_TRACKS - 1`**, the lead is judged on the window's **derived** cost
+(`deriveGrainsFrom`) rather than the declared basis counts, and the **overrun policy is named** where the terms live (the
+lag rule: one-pass-late served and reported, the second consecutive miss latches the named fault, never silently
+re-granted). One new fixture pins the terms, their derivation, the derived-versus-basis accounting and the capability
+statement; seven recorded re-bases moved fixture shapes **inside** the declared envelope or re-pointed a pin at the new
+declared value, and none hides a capacity change — the declaration *is* the capacity statement. **Activation was
+attempted and measured, and is not flipped:** enforced admission fails closed on an unqualified clock stamp (increment
+22's rule, DEC-108 §13c), so with the switch on **twelve fixtures that prepare an unqualified window are refused by
+name** — correct behaviour for an unqualified demand, and unsupported as a production state because the MIDI edge, the
+slot-preparation path and the preview lane **do not pass stamps yet**. Activation therefore needs the **clock-owner
+wiring**, not a better constant; the switch stays off and the enforced path stays exercised by the fixtures that turn it
+on. Verified: focused **90/90** (+1), full native **2,733 / 2,726 succeeded / 7 skipped / 0 failed**, build **SUCCESS**
+with the approved RAM1 line held (`variables 96,192`, no size-pin movement), `git diff --check` clean, `openspec validate
+--strict` valid; **M127** (per-turn term back to the placeholder bar) fails the envelope fixture (`Expected 16 Was 768`)
+and 23 fixtures in total, **M128** (lead judged on the basis counts) and **M129** (denial allowance back to 3) each fail
+their named assertions, all restored byte-identically (`Track.h 5c4a5b0121796179`,
+`TrackPlaybackWindowBuild.cpp f653a2d6559ac744`). No upload, no device claim. **Owed:** activation (the clock wiring),
+increment 24's re-attempt, a production requester, the owner's confirmation of the declared Δmax, and the `H x K` sweep
++ device leg. Detail:
+[`evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md`](evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md).
