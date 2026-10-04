@@ -1641,14 +1641,15 @@ TRACK_COLD_MEM void CoverageServiceContract::deriveGrainsFrom(size_t windowEvent
 /// `grains x (denied + 1)` read through the contract's own `canCompleteWithinLead`. Each term is now a *declared*
 /// quantity rather than a placeholder:
 ///
-/// * **`Delta-max` (the permitted phase advance between two of this owner's opportunities) = 16 ticks.** It is
-///   derived from the measurement, not chosen for comfort: the schema-2 lane sampler measures the *steady-state*
-///   per-opportunity advance at a median of **2.9-5.5 ticks** (p50 8 across runs) with a **tempo-invariant rotation of
-///   7.3-7.5 ms**, and the declared clock basis is 20-300 BPM (768 ticks/bar = 3.2 ticks/s per BPM), so 16 ticks is
-///   **2x the measured p50 and ~2.3x the measured rotation at the fastest declared tempo** (16.7 ms at 300 BPM,
-///   41.7 ms at 120 BPM, 250 ms at 20 BPM -- the allowance gets *safer* as the tempo falls). The margin is kept
-///   tight on purpose: this figure multiplies the whole per-track work, and a loose factor is exactly what the
-///   placeholder one-bar advance got wrong (it admitted windows it could not finish). What it is **not**: a bound
+/// * **`Delta-max` (the permitted phase advance between two of this owner's opportunities) = 64 ticks**, set from the
+///   device measurement of the **scheduling** advance -- the gap across a turn whose predecessor was *eligible*
+///   (schema-2's `eligiblePredecessorMax`), not an idle interval: internal clock p50 0 / p90 9 / p99 15 / **max 17**,
+///   and at the fastest declared tempo (300 BPM, where 64 ticks is 66.7 ms) p50 8 / p90 16 / p99 **48** / **max 48**.
+///   64 is at or above both maxima with a stated margin (1.33x the 300-BPM maximum, 3.8x the internal one). The first
+///   declaration of 16 (2x the p50) was **falsified by that measurement** -- two internal rows and six 300-BPM rows
+///   exceeded it -- which is why the value sits on the measured maximum. It bounds the *scheduling* advance: the
+///   seconds-scale starvation episodes remain the overrun policy's below, because a bound on one turn cannot hold a
+///   run of *lost* turns.
 ///   on the seconds-scale **starvation** episodes (2 138 / 4 355 / 8 520 ticks) that the same runs contain. Those are
 ///   *lost opportunities*, not one turn's advance, so no per-turn constant can hold them -- which is why the field
 ///   keeps its scheduling role (evidence/2026-10-03-s310n-... corrects exactly this conflation) and why the overrun

@@ -100,3 +100,84 @@ to move the shape **inside** the declared envelope, or to re-point a pin at the 
    bounds and its overrun mapping — the owner can confirm it or tighten it, which is now a one-constant change plus the
    fixture pins that mirror it (M127 proves the change is detectable).
 5. The `H x K` *sweep* and the device leg for the scheduling bound.
+
+---
+
+## Addendum (same session): the device leg, and the value set from it — `Delta-max` 16 -> **64**
+
+The owner's ruling on the value was **"prove it on the device first, then set the value"**, so the declared `Delta-max`
+above was treated as provisional and measured. It was **falsified**, and the declaration was raised. Nothing above is
+rewritten; this section is the correction.
+
+### What was measured, and on which image
+Two managed runs of the **authoritative entry point** (`scripts/host_midi_hitl.py run --preset base --track 8
+--loop-slot 4 --midi-channel 8`), canonical stimulus `STIM-BASE-2-2-01@v1` unchanged, no stimulus variant, no captured
+`command.json`:
+
+| Leg | Clock | Capture | Rows | Opportunities | Verdict |
+|---|---|---|---:|---:|---|
+| A | internal, default tempo | `captures/step4-lane-internal-led` | 452 | 68 352 | FAIL (`FIRMWARE_CONTRADICTION`: `persistence_pers_work_slice_too_large`, `persistence_persist_save_slice_too_large` — the large-loop bounds verifier's 100 ms slice declaration, max 104 640 us) |
+| B | host clock, **300 BPM** (`--boot-reset`) | `captures/step4-lane-external300` | 194 | 5 888 | **PASS** |
+
+**Image honesty, stated plainly:** both legs ran the **flashed** image `7c2a1377…`, i.e. the tree at `4a7cef70`
+(increments 22-23) — *not* this increment's tree. That is deliberate and it is checkable: increments 24-25 do not touch
+the measured path — `git diff 4a7cef70..HEAD` shows no change to `src/main.cpp` (the lane dispatcher),
+`include/Utils/PlaybackLaneMeasurement.h` (the sampler) or `Utils/DebugSessionCapture.*` (the row emitter); increment 24
+added a *function* to `TrackPlaybackRuntime.cpp` and increment 25 changed the contract constant and the admission's
+accounting, and **no production path requests a window**, so the admission is never called in this flow and the grain
+steppers are untouched. A run on the increment-25 image is **not claimed**, and no upload was performed (the upload rule
+was not exercised). The content verdicts above are recorded as they came out; the lane measurement does not depend on
+them.
+
+### The quantity, now separated rather than conflated
+The per-turn term bounds the advance across a turn **whose predecessor was eligible** — work was owed and the lane's
+next turn was delayed. `DIAG,win_gap`'s `eligiblePredecessorMax` is that figure; the *all-dispatch* maximum is not (it
+includes idle intervals, the conflation increment 23 withdrew).
+
+| Leg | `eligiblePredecessorMax` p50 / p90 / p99 / **max** | all-dispatch p99 / max | resets | saturated gaps | eligible / progress / denied |
+|---|---|---|---|---:|---:|---|
+| A internal | 0 / 9 / 15 / **17** | 131 / 366 (max with an **ineligible** predecessor = idle) | 6 (excluded, reported) | 0 | 388 / 386 / 2 |
+| B 300 BPM | 8 / 16 / 48 / **48** | 192 / 192 | 12 (excluded, reported) | 0 | 478 / 478 / 0 |
+
+* **The provisional 16 was falsified by this measurement**: two internal rows and six 300-BPM rows exceeded it.
+* The 300-BPM maximum is ~2.8x the internal one, as a tick-denominated unit implies (300/120 = 2.5), and 48 ticks is
+  50 ms of wall-clock at that tempo.
+* The seconds-scale **starvation** episodes (2 138 / 4 355 / 8 520 ticks) did **not** appear in either leg: 0 saturated
+  gaps, and the largest all-dispatch gap (366) had an ineligible predecessor, i.e. it was idle time. They remain the lag
+  rule's, not this term's — a bound on one turn cannot hold a run of *lost* turns.
+
+### The declaration now
+`Track::kPlaybackViewPermittedAdvancePerTurn` = **64 ticks**: at or above **both** measured scheduling maxima with a
+stated margin (1.33x the 300-BPM maximum, 3.8x the internal one), and 66.7 ms at the fastest declared tempo. Capability
+consequence, stated: one 63-entry window charged with one same-track sibling needs **11 008 ticks ≈ 14.3 bars** under
+this declaration (it was 3 328 ≈ 4.3 bars at 16, and 123 648 ≈ 161 bars under the placeholder), so the declared envelope
+supports that shape on a ~15-bar loop and larger windows on proportionally longer loops (measured: a 160-note/320-event
+window needs ~90 bars on its own).
+
+### Fixture re-bases this correction required (recorded, not smoothed)
+The mirroring constant `kWindowOwnerExpectedAdvancePerTurn` 16 -> **64**; the service-gap fixture's wall-clock absolutes
+41/20 ms -> **166/83 ms**; the envelope fixture's margin pin replaced by **measured** pins (it now requires the declared
+value to be >= 48 and within 4/3 of it, and >= the internal 17 — the pin that caught the provisional value); the
+`kWindowOwnerExpectedRequiredLead`-as-handoff-phase sites now compute `declaredRequiredLeadFor(<their count>)`; the
+grain-cost sweep's loops 64 -> **128 bars** (and its loop-length-independence pair 64/32 -> 128/48), because a 160-note
+window needs ~90 bars of lead; the two-holder fixtures 200 -> **300 bars**; the retention fixtures 30 -> **70 bars** with
+100-note windows; the charge fixture 4/20 -> **12/40 bars**; the refusals-by-name fixture 30 -> **70 bars** with 100-note
+windows. Every move is one of the same two kinds as before: a pin re-pointed at the measured declaration, or a shape
+moved **inside** it.
+
+### Verification at the measured value
+- Focused `test_runtime_working_set_ownership`: **90/90**, zero failures.
+- `pio test -e native`: **2,733 cases / 2,726 succeeded / 7 skipped / 0 failed**.
+- `pio run -e teensy41-capture-serial`: **SUCCESS**; RAM1 line **byte-identical** (`variables 96,192`, code 390,472 +
+  padding 2,744) — constants, accounting and comments only.
+- `git diff --check` clean; `openspec validate --strict` valid.
+- **Mutations, re-run at the measured value:** **M127** (per-turn term back to the placeholder bar) -> **19 fixtures**
+  refuse, including the shape fixtures; **M128** (lead judged on the basis counts) -> the charge fixture
+  (*"candidate must charge derived work across all eight tracks"*) and the declares-caps boundary fixture; **M129**
+  (denial allowance back to 3) -> the envelope fixture (*"Expected 7 Was 3. the denial allowance is the across-track
+  rotation (H - 1), not an invented 3"*) and the H-factor fixture. All restored byte-identically: `include/Track.h`
+  **3ae6b899699f2692**, `src/Track/TrackPlaybackWindowBuild.cpp` **1ff579cb96e31498**,
+  `src/Track/TrackPlaybackRuntime.cpp` **35eec9683a0fdfd2**, `include/TrackPlaybackRuntime.h` **2e50b234a0cce56c**.
+- One device run per tempo, an instrumented build, per-block maxima rather than per-dispatch samples: the declaration is
+  set from the worst *measured* scheduling maximum with a stated margin, and the next device leg can tighten it the same
+  way. **No upload; no timing-envelope acceptance claim.**

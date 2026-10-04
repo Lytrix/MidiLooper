@@ -353,14 +353,25 @@ public:
   static constexpr size_t kPlaybackViewOrderQuantum = 48;
   /// DEC-108 §13b / task 3.10 (**the review's step 4**): **`Delta-max`** -- the permitted phase advance between two of
   /// this owner's opportunities, the per-turn term of the review's `Delta-max x H x bounded per-track work` formula.
-  /// Derived from the lane measurement (steady-state median 2.9-5.5 ticks per opportunity, p50 8, tempo-invariant
-  /// rotation 7.3-7.5 ms over a 20-300 BPM basis): 16 ticks is **2x the measured p50** and **~2.3x the measured
-  /// rotation at the fastest declared tempo** (16.7 ms at 300 BPM), and 3-5x the measured median. The tightest
-  /// defensible margin is deliberate: the envelope is a *declared capability*, and a loose factor here is what the
-  /// placeholder one-bar advance got wrong (it admitted work it could not complete). It bounds the **scheduling** advance; the seconds-scale starvation episodes are *lost
-  /// opportunities* and belong to the lag rule's overrun policy, not to this per-turn term. A declared, permitted
-  /// value -- not a measured WCET. Public so the declaration, its fixtures and any reader agree on one figure.
-  static constexpr uint32_t kPlaybackViewPermittedAdvancePerTurn = 16;
+  ///
+  /// **Measured, and set from the measurement** (device leg 2026-10-04, the baseline preset on the authorized track 8
+  /// slots 4/5: 68 352 lane opportunities on the internal clock, 5 888 under the host clock). The quantity this field
+  /// bounds is the advance across a turn **whose predecessor was eligible** -- work was owed and the lane's next turn
+  /// was delayed -- which the schema-2 sampler separates from idle intervals (the conflation that once let a
+  /// "starvation" reading stand for a scheduling gap):
+  ///   * internal clock, default tempo: p50 **0**, p90 **9**, p99 **15**, **max 17** ticks;
+  ///   * host clock at **300 BPM** (the fastest declared tempo): p50 **8**, p90 **16**, p99 **48**, **max 48** ticks
+  ///     -- ~2.8x the internal maximum, as a tick-denominated unit implies, and 66.7 ms of wall-clock.
+  /// The declared value is **64 ticks: at or above both measured maxima with a stated margin** (1.33x the worst, at the
+  /// fastest declared tempo; 3.8x the internal maximum). The first declaration here was 16 (2x the measured p50), and
+  /// **this measurement falsified it** -- two internal rows and six 300-BPM rows exceeded it -- which is why the value
+  /// sits on the measured maximum rather than on a margin over the median.
+  /// The seconds-scale **starvation** episodes (2 138 / 4 355 / 8 520 ticks, earlier runs) did not appear in these two
+  /// (0 saturated gaps; the largest *all-dispatch* gap was 366 ticks with an **ineligible** predecessor, i.e. idle
+  /// time). They remain the lag rule's, not this term's: a bound on one turn cannot hold a run of *lost* turns.
+  /// A declared, permitted value -- not a measured WCET, and one device run per tempo. Public so the declaration, its
+  /// fixtures and any reader agree on one figure.
+  static constexpr uint32_t kPlaybackViewPermittedAdvancePerTurn = 64;
   /// S4b.6: does this slot's **inbound occupancy** (its playback runtime) exist? The switch commit path
   /// asks this instead of allocating: `ensurePlaybackMergedEventsForSlot` intentionally never takes the
   /// runtime, so a switch to a slot without occupancy stays pending until the off-clock provisioning owner

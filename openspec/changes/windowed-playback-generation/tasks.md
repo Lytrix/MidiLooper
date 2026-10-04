@@ -1060,3 +1060,31 @@ their named assertions, all restored byte-identically (`Track.h 5c4a5b0121796179
 increment 24's re-attempt, a production requester, the owner's confirmation of the declared Δmax, and the `H x K` sweep
 + device leg. Detail:
 [`evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md`](evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md).
+
+
+**Task 3.10 (increment 25b) — the declared `Delta-max` set from the device leg (the owner asked for proof first; it falsified the provisional value).**
+The provisional 16 (2x the measured p50) was measured on the card and **falsified**: two managed baseline runs of the
+authoritative entry point (canonical `STIM-BASE-2-2-01@v1`, track 8 slots 4/5) give the **scheduling** maximum —
+`eligiblePredecessorMax`, the gap across a turn whose predecessor was *eligible*, which the schema-2 sampler separates
+from idle intervals — as **17 ticks** on the internal clock (p50 0 / p90 9 / p99 15, 68 352 opportunities) and **48
+ticks** at the fastest declared tempo, 300 BPM (p50 8 / p90 16 / p99 48, 5 888 opportunities): ~2.8x, as a
+tick-denominated unit implies, and 50 ms of wall-clock. Two internal rows and six 300-BPM rows exceeded 16, so the
+declaration moves to **64 ticks** — at or above both measured maxima with a stated margin (1.33x the worst, 3.8x the
+internal one) — and the envelope fixture's pin was replaced with *measured* pins (declared >= 48, <= 4/3 of it, >= 17).
+**Starvation did not appear in either leg** (0 saturated gaps; the largest all-dispatch gap, 366, had an *ineligible*
+predecessor, i.e. it was idle time), and it remains the lag rule's: a bound on one turn cannot hold a run of *lost*
+turns. Image honesty: both legs ran the **flashed** image `7c2a1377…` (the tree at `4a7cef70`), not this incremement's
+tree — the measured path (lane dispatcher, sampler, row emitter) is byte-identical in both, verified by diff, no
+production path requests a window, and **no upload was performed**. Leg A's baseline verdict was FAIL on the large-loop
+bounds verifier's 100 ms slice declaration (max 104 640 us, a pre-existing verdict issue on that image) and leg B's was
+PASS; the lane measurement does not depend on either. Capability consequence: one 63-entry window charged with a
+same-track sibling needs ~14.3 bars of lead under this declaration (4.3 bars at 16; 161 bars under the placeholder).
+Re-bases recorded: the mirroring constant 16 -> 64, the service-gap wall-clock absolutes 41/20 -> 166/83 ms, the
+handoff-phase sites derived per content, the grain-cost sweep's loops 64 -> 128 bars (160-note windows need ~90 bars),
+the two-holder fixtures 200 -> 300 bars, the retention fixtures 30 -> 70 bars with 100-note windows, the charge fixture
+12/40 bars, the refusals-by-name fixture 70 bars. Verified: focused **90/90**, full native **2,733 / 2,726 succeeded /
+7 skipped / 0 failed**, build SUCCESS with the RAM1 line byte-identical, `git diff --check` clean, `openspec validate
+--strict` valid; **M127** (the placeholder bar) now fails **19 fixtures**, **M128** and **M129** their named assertions,
+all restored byte-identically (`Track.h 3ae6b899699f2692`, `TrackPlaybackWindowBuild.cpp 1ff579cb96e31498`). Evidence:
+[`evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md`](evidence/2026-10-04-s310t-declared-envelope/EXECUTION.md)
+§ Addendum.
