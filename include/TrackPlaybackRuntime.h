@@ -289,6 +289,73 @@ struct PlaybackViewAdmittedWork {
     return total > UINT16_MAX ? UINT16_MAX : total;
   }
 };
+/// DEC-108 §13(c) / task 3.10 (increment 24): **why a slot's preparation demand is still pending.** The name is the
+/// reader-visible answer to "the request was refused -- by what?", so a caller can tell a demand the owner will
+/// pick up from one that cannot be served as asked. It is a *reading*: this slice keeps the obligation, it does not
+/// retry it (the re-attempt needs a request-side gather buffer, which is the next increment's decision).
+enum class PlaybackViewPendingReason : uint8_t {
+  /// Nothing is retained: either nothing is owed, or the demand was discharged by an admission.
+  None = 0,
+  /// The interference budget refused it: admitting would break a promise already made to a window on this track.
+  InterferenceBudget,
+  /// The declared contract cannot complete the window before its own handoff.
+  CannotCompleteBeforeHandoff,
+  /// The slot already owes a build, so this demand **coalesces into that obligation** rather than starting a second.
+  BuildInFlight,
+  /// A prepared successor is already waiting and must be adopted or released before another window is prepared.
+  SuccessorAlreadyPrepared,
+  /// The retained positional deadline no longer applies because the **clock epoch** changed (a reset, seek, rebase,
+  /// clock-source or PPQN transition). The obligation survives; only the promise's position is void.
+  DeadlineInvalidatedEpoch,
+  /// ... because the loop's **geometry** changed (a different loop length): the phase the deadline was measured
+  /// against now describes a different loop. The obligation survives too.
+  DeadlineInvalidatedGeometry,
+};
+
+/// DEC-108 §13(c) / task 3.10 (increment 24): **the retained pending preparation request** -- the demand a refused
+/// request leaves behind, so `PlaybackViewRequestResult::TrackInterferenceBudgetExceeded` is a *promise* and not a
+/// dropped request. It stores the demand, never the events: the identity the request was made against, the interval
+/// it serves, the absolute deadline it was promised and the bounded cost that request would owe. The admission path
+/// that refuses it writes it, the admission that accepts it clears it, and it is read through generation-qualified
+/// accessors -- a record retained under an earlier operation generation is never revived (DEC-108 §13(d)).
+struct PlaybackViewPendingRequest {
+  /// The slot owes a demand whose last attempt was refused. Cleared by an admission and by a coalescing successor
+  /// request -- **never** by an epoch or geometry change, which void the deadline, not the obligation.
+  bool active = false;
+  /// The **operation generation** the demand was retained under (DEC-108 §13(d)): a returning slot must not revive
+  /// an earlier operation, so a record whose generation has moved is stale, and a demand made under the new
+  /// generation starts a fresh record instead of inheriting this one's deadline.
+  uint32_t operationGeneration = 0;
+  /// The source identity the requesting caller asked for; newest-wins under coalescing.
+  PlaybackViewSourceIdentity source;
+  /// The coverage interval that identity serves; newest-wins under coalescing.
+  PlaybackCoverageInterval coverage;
+  /// The **oldest outstanding deadline** of this demand (DEC-108 §13(a)): the absolute tick at which the served
+  /// interval's traversal is due, kept from the earliest coalesced request made under the same clock epoch.
+  uint64_t deadlineTick = 0;
+  /// The clock epoch `deadlineTick` is qualified in. Zero means the demand holds **no qualified position** (the
+  /// caller supplied no stamp), which is unqualified rather than expired.
+  uint32_t clockEpoch = 0;
+  /// The loop length the deadline was measured against, so a **geometry** change can be told from an epoch change.
+  uint32_t loopLengthTicks = 0;
+  /// The phase the request was made at -- the origin of the traversal the deadline names.
+  uint32_t requestedPhase = 0;
+  /// Why this demand is still pending: the last refusal by name, or an invalidation the reader has named.
+  PlaybackViewPendingReason reason = PlaybackViewPendingReason::None;
+  /// The bounded cost this demand would owe once admitted, derived exactly as an admitted window's is
+  /// (`CoverageServiceContract::deriveGrainsFrom`), so no reader disagrees about what the demand costs.
+  PlaybackViewAdmittedWork work;
+  /// The reason the retained positional deadline no longer applies, or `None` while it does (and while the demand
+  /// holds no qualified deadline at all). A reading only: it never clears the obligation.
+  PlaybackViewPendingReason deadlineInvalidation(uint32_t currentLoopLengthTicks, uint32_t currentEpoch) const {
+    if (!active || clockEpoch == 0) return PlaybackViewPendingReason::None;
+    if (loopLengthTicks != 0 && currentLoopLengthTicks != loopLengthTicks) {
+      return PlaybackViewPendingReason::DeadlineInvalidatedGeometry;
+    }
+    if (currentEpoch != clockEpoch) return PlaybackViewPendingReason::DeadlineInvalidatedEpoch;
+    return PlaybackViewPendingReason::None;
+  }
+};
 
 struct LoopPlaybackRuntime {
   // --- S3.1 working-set lease -------------------------------------------------------------
@@ -455,6 +522,12 @@ struct LoopPlaybackRuntime {
   /// the build begins. Read it through `activeViewBuildWork()`, which returns null once the build it describes is no
   /// longer active -- a finished build owes nothing, and its record must not be read as outstanding work.
   PlaybackViewAdmittedWork viewBuildWork;
+  /// DEC-108 §13(c) / task 3.10 (increment 24): the slot's **retained pending preparation request** -- the demand a
+  /// refused request leaves behind (see `PlaybackViewPendingRequest`). It is per-slot state in this externally
+  /// allocated object, so the eight-way DTCM `Track` gains nothing; read it through `pendingViewRequest()`, which
+  /// reports nothing once the demand is discharged, and through `activeViewBuildWork()` for the *other* half -- the
+  /// work a build already owes. The two are deliberately distinct: a pending demand owes no grain yet.
+  PlaybackViewPendingRequest pendingViewRequest_;
   /// DEC-108 item 5 / task 3.13: the **preview source contract** for this slot. `previewSourceActive` says the
   /// in-flight or served window belongs to the preview lane, and `previewSourceRevision` is the session revision it
   /// was frozen at -- the lane's own freeze token, never a second committed currency. The flag is how the lane
@@ -853,6 +926,27 @@ struct LoopPlaybackRuntime {
   const PlaybackViewAdmittedWork* activeViewBuildWork() const {
     return viewBuild.active() ? &viewBuildWork : nullptr;
   }
+  /// DEC-108 §13(c) / task 3.10 (increment 24): the slot's **retained pending preparation request** -- the demand a
+  /// refused request left behind -- or null when the slot owes no demand. Generation qualification is the *reader's*
+  /// (see `Track::pendingViewRequest`): this raw view is what the runtime itself keeps.
+  const PlaybackViewPendingRequest* pendingViewRequest() const {
+    return pendingViewRequest_.active ? &pendingViewRequest_ : nullptr;
+  }
+  /// Retain (or **coalesce into**) the slot's pending demand after an attempt was refused by name. One record per
+  /// slot: the **newest** identity, interval, phase and cost win, while the **oldest outstanding deadline** of the
+  /// same operation is kept (DEC-108 §13(a) -- progress toward the oldest deadline is preserved). A deadline from a
+  /// different clock epoch, a different loop length, or an earlier operation generation is **not** carried over: a
+  /// reset voids the promise's position and a returning slot must not inherit an earlier operation's deadline
+  /// (DEC-108 §13(d)). Refusing to retain is never the caller's decision here: only the refusal classes the admission
+  /// path chooses reach this call.
+  void retainViewPendingRequest(const PlaybackViewSourceIdentity& source,
+                                const PlaybackCoverageInterval& coverage, uint32_t requestedPhase,
+                                uint32_t operationGeneration, const PlaybackViewAdmittedWork& work,
+                                uint64_t deadlineTick, uint32_t clockEpoch, uint32_t loopLengthTicks,
+                                PlaybackViewPendingReason reason);
+  /// Discharge the slot's demand: the work it asked for is now owed by a live build, or the demand is gone. The
+  /// record is cleared whole, so a later reader cannot see a discharged demand's deadline.
+  void clearViewPendingRequest() { pendingViewRequest_ = PlaybackViewPendingRequest{}; }
   RuntimePlaybackViewBuildGrain stepCoverageBuildFill(size_t entryQuantum);
   RuntimePlaybackViewBuildGrain stepCoverageBuildOrder(size_t entryQuantum);
   void discardCoverageBuild();

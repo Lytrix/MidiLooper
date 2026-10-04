@@ -6862,7 +6862,10 @@ void test_window_admission_refuses_by_name_once_the_interference_budget_is_enfor
                             static_cast<int>(refused),
                             "with the budget enforced the real admission refuses by name, charging the sibling");
   TEST_ASSERT_NULL_MESSAGE(TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1)->activeViewBuildWork(),
-                           "a refused request retains nothing");
+                           "a refused request owes no build grain");
+  // ... but it is **retained** as a demand (increment 24, DEC-108 §13(c)): this fixture's own observable is the
+  // unchanged work record, and the retention is what the demand fixtures below pin.
+  TEST_ASSERT_NOT_NULL_MESSAGE(track.pendingViewRequest(1), "a refused request leaves a pending demand behind");
 
   sInterferenceBudgetEnforced = false;
   scratch.clear();
@@ -6875,6 +6878,254 @@ void test_window_admission_refuses_by_name_once_the_interference_budget_is_enfor
       TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1)->activeViewBuildWork();
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(candidateGrains, static_cast<uint32_t>(work1->requiredGrains()),
                                    "and the sibling's own work is the charge it would have added");
+}
+
+/// DEC-108 §13(c) / task 3.10 (increment 24): **the retention harness.** Slot 0 holds an admitted promise (200 notes);
+/// slot 1 carries the same window shape, and its own request is issued with the interference budget **enforced** --
+/// the refusal class that must leave a retained demand behind. The flag is always restored, so no fixture inherits it,
+/// and the helper returns the refusal by name so each caller can assert the class it expects.
+Track::PlaybackViewRequestResult requestRefusedWindowDemand(Track& track, uint32_t loopTicks, uint32_t fromBar,
+                                                           uint32_t toBar, uint32_t notes, uint32_t requestPhase,
+                                                           uint64_t tick, uint32_t epoch) {
+  commitRecordPassIntoTrackSlotOfLength(track, 1, loopTicks);
+  Loop& loop = track.getLoop(1);
+  loop.loopLengthTicks = loopTicks;
+  publishNotesInBarsRootForSlot(loop, fromBar, toBar, notes);
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(1), "slot 1 must prewarm a runtime to owe a demand");
+  SessionMidiEventVec& scratch = windowSourceScratch(1);
+  scratch.clear();
+  sInterferenceBudgetEnforced = true;
+  const Track::PlaybackViewRequestResult result = track.requestPlaybackWindow(1, requestPhase, scratch, {tick, epoch});
+  sInterferenceBudgetEnforced = false;
+  return result;
+}
+
+/// **O1 / O2 / O7 -- a refusal is a promise, and only where a promise is owed.**
+///
+/// The interference budget refusing a request must leave the demand behind *with the deadline it was promised*:
+/// without that, turning enforcement on silently discards work instead of deferring it. The same fixture pins both
+/// edges of the retention decision -- a refusal that means "nothing is owed" retains **nothing** (so retention is per
+/// refusal name, not a blanket), and the admission that finally accepts the demand **discharges it whole**.
+void test_a_refused_request_is_retained_with_its_original_deadline_and_discharged_by_its_admission() {
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 40 * kBar;
+  constexpr uint32_t kPromisePhase = 12 * kBar;
+  constexpr uint32_t kRequestPhase = 10000;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 14, 200, kPromisePhase);
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(1), "nothing is pending before the request");
+
+  const Track::PlaybackViewRequestResult refused =
+      requestRefusedWindowDemand(track, kLoopTicks, 12, 14, 200, kRequestPhase, kRequestPhase, 1);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::TrackInterferenceBudgetExceeded),
+                            static_cast<int>(refused),
+                            "the promise on slot 0 is what refuses the sibling, by name");
+  const PlaybackViewPendingRequest* pending = track.pendingViewRequest(1);
+  TEST_ASSERT_NOT_NULL_MESSAGE(pending, "a \"not now\" refusal retains the demand");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PlaybackViewPendingReason::InterferenceBudget),
+                                  static_cast<uint8_t>(pending->reason), "and names why it is pending");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kRequestPhase, pending->requestedPhase,
+                                   "the demand keeps the phase the request was made at");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, pending->clockEpoch, "and the epoch its deadline is qualified in");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kLoopTicks, pending->loopLengthTicks,
+                                   "and the geometry the deadline was measured against");
+  // The **absolute** deadline, by the one shared definition -- the demand carries what an admitted window would.
+  const uint32_t lead = handoffLeadTicks(kRequestPhase, pending->work.handoffPhase, kLoopTicks);
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(static_cast<uint64_t>(kRequestPhase) + lead, pending->deadlineTick,
+                                   "the retained deadline is the one the request was promised, from its own stamp");
+  TEST_ASSERT_NULL_MESSAGE(TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1)->activeViewBuildWork(),
+                           "a refused request still owes no build grain");
+
+  // **O7** -- the admission discharges the demand, so no stale deadline survives it.
+  SessionMidiEventVec& scratch = windowSourceScratch(1);
+  scratch.clear();
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                            static_cast<int>(track.requestPlaybackWindow(1, kRequestPhase, scratch, {kRequestPhase, 1})),
+                            "with the budget off the very same request is admitted");
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(1),
+                           "an admitted demand is discharged whole: no retained deadline survives it");
+
+  // **O2** -- the "nothing is owed" class retains nothing. The slot carries a **live runtime and no content**, so the
+  // refusal is the not-servable one: a mutation that retains unconditionally cannot hide behind an absent runtime.
+  constexpr uint8_t kBareSlot = 3;
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(kBareSlot),
+                           "the fixture needs a live runtime with no content to hold a demand");
+  SessionMidiEventVec& bareScratch = windowSourceScratch(kBareSlot);
+  bareScratch.clear();
+  const Track::PlaybackViewRequestResult nothing =
+      track.requestPlaybackWindow(kBareSlot, kRequestPhase, bareScratch, {kRequestPhase, 1});
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::NotServable),
+                            static_cast<int>(nothing),
+                            "a slot with a runtime but no content is refused in the \"nothing is owed\" class");
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(kBareSlot), "and no demand is retained for it");
+}
+
+/// **O3 -- a retained demand owes no grain, and records none.**
+///
+/// The demand is *not* work: no build has begun, so the per-track budget must not count it (counting it would charge
+/// a sibling for work that may never happen, and would make the coalescing in O4 refuse its own successor). The
+/// distinction is the record itself -- `pendingViewRequest` is non-null while `activeViewBuildWork` is null.
+void test_a_pending_request_owes_no_grains_and_does_not_charge_a_sibling() {
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 40 * kBar;
+  constexpr uint32_t kPromisePhase = 12 * kBar;
+  constexpr uint32_t kRequestPhase = 10000;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 14, 200, kPromisePhase);
+  const LoopPlaybackRuntime* promised = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(promised);
+  TEST_ASSERT_NOT_NULL(promised->activeViewBuildWork());
+
+  (void)requestRefusedWindowDemand(track, kLoopTicks, 12, 14, 200, kRequestPhase, kRequestPhase, 1);
+  const LoopPlaybackRuntime* refusedRuntime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
+  TEST_ASSERT_NOT_NULL(refusedRuntime);
+  TEST_ASSERT_NOT_NULL_MESSAGE(track.pendingViewRequest(1), "the demand is retained");
+  TEST_ASSERT_NULL_MESSAGE(refusedRuntime->activeViewBuildWork(), "a pending demand is not an admitted build");
+  // Excluding slot 0 leaves the retained demand on slot 1 in the sum: it must still contribute nothing.
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, track.playbackViewOutstandingGrains(0),
+                                   "the retained demand owes no grain, so the budget does not count it");
+}
+
+/// **O4 -- coalescing keeps the oldest outstanding deadline and the newest attempt.**
+///
+/// Two refused attempts on one slot, at two phases and two stamps, so their promised deadlines differ. One record
+/// must survive: the **earlier** deadline (DEC-108 §13(a): progress toward the oldest deadline is what may not be
+/// thrown away) while the demand itself is the **later** request -- a later window may satisfy the older obligation,
+/// which is why the identity follows the newest and the deadline does not.
+void test_coalesced_requests_keep_the_oldest_deadline_and_the_newest_attempt() {
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 40 * kBar;
+  constexpr uint32_t kPromisePhase = 15 * kBar;
+  constexpr uint32_t kFirstPhase = 10000;
+  constexpr uint32_t kSecondPhase = 12000;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  // The promise, and slot 1's notes spread wide enough that **both** windows below carry work to be bounded.
+  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 20, 200, kPromisePhase);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::TrackInterferenceBudgetExceeded),
+                            static_cast<int>(requestRefusedWindowDemand(track, kLoopTicks, 12, 20, 200, kFirstPhase,
+                                                                        kFirstPhase, 1)),
+                            "the first attempt is refused by the budget");
+  const PlaybackViewPendingRequest* first = track.pendingViewRequest(1);
+  TEST_ASSERT_NOT_NULL(first);
+  const uint64_t firstDeadline = first->deadlineTick;
+  const uint32_t firstRevision = first->source.playbackRevision;
+
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::TrackInterferenceBudgetExceeded),
+                            static_cast<int>(requestRefusedWindowDemand(track, kLoopTicks, 12, 20, 200, kSecondPhase,
+                                                                        kSecondPhase, 1)),
+                            "the second attempt is refused too, so it coalesces instead of being dropped");
+  const PlaybackViewPendingRequest* coalesced = track.pendingViewRequest(1);
+  TEST_ASSERT_NOT_NULL(coalesced);
+  // The fixture's own precondition, so the row cannot pass by accident: the two attempts must promise **different**
+  // deadlines, and the first must be the earlier of the pair -- otherwise "the oldest survived" proves nothing.
+  const uint64_t secondAttemptDeadline =
+      static_cast<uint64_t>(kSecondPhase) +
+      handoffLeadTicks(kSecondPhase, coalesced->work.handoffPhase, kLoopTicks);
+  TEST_ASSERT_TRUE_MESSAGE(secondAttemptDeadline != firstDeadline,
+                           "the fixture's two attempts must promise different deadlines, or coalescing is untested");
+  TEST_ASSERT_TRUE_MESSAGE(secondAttemptDeadline > firstDeadline,
+                           "and the first attempt must be the earlier promise of the coalesced pair");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(firstDeadline, coalesced->deadlineTick,
+                                   "coalescing keeps the oldest outstanding deadline, never the newest");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(firstDeadline, coalesced->work.deadlineTick,
+                                   "and the retained work record carries that same promise");
+  // The **position** is the retained promise as one coherent set: its origin phase and origin stamp are the earlier
+  // attempt's, which is what the kept deadline names -- so the phase here is *not* the newest attempt's.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kFirstPhase, coalesced->requestedPhase,
+                                   "the retained position keeps the origin phase of the promise it belongs to");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kFirstPhase, coalesced->work.admittedTick,
+                                   "and its origin stamp, so no reader pairs one attempt's tick with another's");
+  TEST_ASSERT_TRUE_MESSAGE(coalesced->source.playbackRevision != firstRevision,
+                           "while the content follows the newest attempt: the coalesced identity is its revision");
+}
+
+/// **O5 / O6 -- an epoch or geometry change voids the deadline, never the obligation.**
+///
+/// DEC-108 §13(c): a changed clock invalidates the **promise to finish in time**, not the content. So the demand
+/// stays readable and named, while the *position* it was promised at stops applying -- which is the difference
+/// between "still promised for this tick" and "owed, but no longer positioned", and the reading the re-attempt owes.
+void test_clock_epoch_and_geometry_invalidate_the_deadline_not_the_obligation() {
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 40 * kBar;
+  constexpr uint32_t kPromisePhase = 12 * kBar;
+  constexpr uint32_t kRequestPhase = 10000;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 14, 200, kPromisePhase);
+  (void)requestRefusedWindowDemand(track, kLoopTicks, 12, 14, 200, kRequestPhase, kRequestPhase, 1);
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(1));
+
+  // The same epoch and geometry: the promise still holds its position.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(PlaybackViewPendingReason::None),
+      static_cast<uint8_t>(track.pendingViewRequestInvalidation(1, {kRequestPhase, 1})),
+      "the deadline still applies in its own epoch and geometry");
+
+  // A reset, seek, rebase or clock-source transition: the position is void, the obligation is not.
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(PlaybackViewPendingReason::DeadlineInvalidatedEpoch),
+      static_cast<uint8_t>(track.pendingViewRequestInvalidation(1, {kRequestPhase, 2})),
+      "a changed epoch voids the positional deadline");
+  TEST_ASSERT_NOT_NULL_MESSAGE(track.pendingViewRequest(1),
+                               "and the obligation survives it: an epoch change is not a cancellation");
+
+  // A geometry change: the phase the deadline was measured at now describes a different loop.
+  track.getLoop(1).loopLengthTicks = kLoopTicks + kBar;
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(PlaybackViewPendingReason::DeadlineInvalidatedGeometry),
+      static_cast<uint8_t>(track.pendingViewRequestInvalidation(1, {kRequestPhase, 1})),
+      "a changed loop length voids the positional deadline too");
+  TEST_ASSERT_NOT_NULL_MESSAGE(track.pendingViewRequest(1),
+                               "and the obligation survives that as well -- neither change erases it");
+}
+
+/// **O9 -- a generation change does not revive a demand, and does not lend it to the next operation.**
+///
+/// DEC-108 §13(d): identity is compared generation-qualified, never by slot number. So a demand retained under an
+/// earlier operation is not this slot's demand any more -- it is not erased (a reset does not erase pending
+/// obligations, DEC-108 §13(a)) but nothing may bind to it, and a demand made under the new generation starts a
+/// fresh record rather than inheriting the older deadline.
+void test_a_generation_change_does_not_revive_a_pending_request() {
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 40 * kBar;
+  constexpr uint32_t kPromisePhase = 12 * kBar;
+  constexpr uint32_t kFirstPhase = 10000;
+  constexpr uint32_t kSecondPhase = 12000;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 20, 200, kPromisePhase);
+  (void)requestRefusedWindowDemand(track, kLoopTicks, 12, 20, 200, kFirstPhase, kFirstPhase, 1);
+  const PlaybackViewPendingRequest* first = track.pendingViewRequest(1);
+  TEST_ASSERT_NOT_NULL(first);
+  const uint64_t firstDeadline = first->deadlineTick;
+
+  // The operation moves (a clear/load/undo identity invalidation reaches exactly this entry point).
+  track.bumpPlaybackGeneration();
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(1),
+                           "a returning slot must not revive a demand from an operation it no longer runs");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(PlaybackViewPendingReason::None),
+      static_cast<uint8_t>(track.pendingViewRequestInvalidation(1, {kFirstPhase, 1})),
+      "and no reader may bind to it, so it reports no invalidation either");
+
+  // The new operation's own demand: retained afresh, and it does **not** inherit the old promise's deadline.
+  const Track::PlaybackViewRequestResult refused =
+      requestRefusedWindowDemand(track, kLoopTicks, 12, 20, 200, kSecondPhase, kSecondPhase, 1);
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(0, static_cast<int>(refused),
+                                "the budget still refuses, so a demand is retained under the new generation");
+  const PlaybackViewPendingRequest* second = track.pendingViewRequest(1);
+  TEST_ASSERT_NOT_NULL(second);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kSecondPhase, second->requestedPhase, "the new demand is the new attempt");
+  TEST_ASSERT_TRUE_MESSAGE(second->deadlineTick != firstDeadline,
+                           "a fresh record takes its own deadline, never the earlier operation's");
 }
 
 /// The review's **step 1** (*"bound the work of each request"*), task 3.10: at admission the requested window's work is
@@ -7195,6 +7446,11 @@ int main() {
   RUN_TEST(test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a_sibling);
   RUN_TEST(test_enforced_candidate_charges_derived_cost_and_eight_track_rotation);
   RUN_TEST(test_window_admission_refuses_by_name_once_the_interference_budget_is_enforced);
+  RUN_TEST(test_a_refused_request_is_retained_with_its_original_deadline_and_discharged_by_its_admission);
+  RUN_TEST(test_a_pending_request_owes_no_grains_and_does_not_charge_a_sibling);
+  RUN_TEST(test_coalesced_requests_keep_the_oldest_deadline_and_the_newest_attempt);
+  RUN_TEST(test_clock_epoch_and_geometry_invalidate_the_deadline_not_the_obligation);
+  RUN_TEST(test_a_generation_change_does_not_revive_a_pending_request);
   RUN_TEST(test_window_deadline_clock_rejects_reset_and_unobserved_laps_at_admission);
   RUN_TEST(test_window_absolute_lead_arithmetic_does_not_overflow);
   RUN_TEST(test_window_request_beyond_the_retained_capacity_is_refused_by_name_and_truncates_nothing);

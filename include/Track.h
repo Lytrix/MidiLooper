@@ -281,6 +281,17 @@ public:
   bool playbackViewAdmissionKeepsAdmittedDeadlines(const CoverageServiceContract& contract, uint32_t currentPhase,
                                                    uint32_t loopLengthTicks, uint16_t candidateGrains,
                                                    PlaybackDeadlineClock clock = {}) const;
+  /// DEC-108 §13(c) / task 3.10 (increment 24): the slot's **retained pending preparation request** -- the demand a
+  /// refused request left behind -- or null when the slot owes none. **Generation-qualified** (DEC-108 §13(d)): a
+  /// record retained under an earlier operation generation is never revived, so a returning slot does not resume a
+  /// demand from an operation it no longer runs. A demand no build owes yet is deliberately **not** counted by
+  /// `playbackViewOutstandingGrains`: it owes no grain until it is admitted.
+  const PlaybackViewPendingRequest* pendingViewRequest(uint8_t slotIndex) const;
+  /// The reason the slot's retained positional deadline no longer applies (`DeadlineInvalidatedEpoch` or
+  /// `DeadlineInvalidatedGeometry`), or `None` while it does. A **reading**: the obligation survives an epoch or a
+  /// geometry change -- only the promise's position is void, and the miss it causes is reported, never compensated by
+  /// an inline rebuild (DEC-108 §13(c)).
+  PlaybackViewPendingReason pendingViewRequestInvalidation(uint8_t slotIndex, PlaybackDeadlineClock clock) const;
   /// DEC-108 §13b / task 3.10: serve **one declared grain** of this track's owed window work. `currentPhase` is
   /// the playhead's phase and `cursor` the caller's rotation position across holders: the selection is the shared
   /// policy (`MidiServiceDrain::selectPlaybackHolder`) -- holders rotate, the earliest outstanding handoff is
@@ -1180,6 +1191,15 @@ private:
   /// so this diagnostic cannot evict the evidence it explains. Event-shaped: called where a readiness outcome is
   /// reached (a denied grain, a completion), never per grain.
   void reportPlaybackWindowReadinessReceipt(uint8_t slotIndex, uint32_t currentPhase);
+  /// DEC-108 §13(c) / task 3.10 (increment 24): the admission path's own retention call -- one shape for every "not
+  /// now" refusal. It derives the demand's bounded cost from the entries the caller gathered (the contract's own
+  /// `deriveGrainsFrom`, never an asserted count), computes the absolute deadline exactly as an admitted window's is,
+  /// and hands both to the slot's runtime to retain or coalesce. It is **not** a scheduler: nothing is retried here.
+  void retainRefusedPlaybackViewRequest(uint8_t slotIndex, LoopPlaybackRuntime* runtime, size_t sourceCount,
+                                        const PlaybackViewSourceIdentity& sourceIdentity,
+                                        const PlaybackCoverageInterval& coverage, uint32_t currentPhase,
+                                        uint32_t handoffPhase, PlaybackDeadlineClock clock,
+                                        PlaybackViewPendingReason reason);
   /// S4.5: finish any stop descriptor the retirement path left un-rearmed and re-arm it, one bounded
   /// grain per idle turn. The ring advances at retirement *before* the source release finishes, so a
   /// release that needs another grain (or a re-reservation that fails that instant) leaves the

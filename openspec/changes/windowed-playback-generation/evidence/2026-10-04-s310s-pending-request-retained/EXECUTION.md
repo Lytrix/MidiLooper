@@ -117,17 +117,82 @@ unaffected, or drive the runtime's own primitives where the turn is not the subj
 - **Device: NOT RUN and not claimed.** No upload, no HITL, no timing-envelope claim. Enforcement
   stays off, so no production behaviour changes.
 
-## Completion record
+## Completion record (2026-10-04 — native verified; **O8 deferred**, recorded below)
 
 | Field | Value |
 |---|---|
-| Scope pinned | NOT RUN (this packet) |
-| Oracle pinned | NOT RUN (this packet) |
-| Fixtures established before the change | NOT RUN |
-| Focused suite | NOT RUN |
-| Full native suite | NOT RUN |
-| Capture build / RAM1 line | NOT RUN |
-| Mutations red-proved and restored | NOT RUN |
-| Size pins re-based (measured) | NOT RUN |
-| Docs closed out (`tasks.md`, `PROJECT_STATE.md`, `CURRENT_WORK.md`) | NOT RUN |
-| Device / HITL | NOT RUN (out of scope) |
+| Scope pinned | DONE (above), with two recorded additions (below) |
+| Oracle pinned | DONE (O1-O10); O8 **deferred**, O1/O2/O4/O5/O6/O7/O9/O10 proved |
+| Fixtures established before the change | DONE - five new fixtures + the retention harness in `test_runtime_working_set_ownership` |
+| Focused suite | 89/89 (was 84/84) |
+| Full native suite | `pio test -e native`: 2,732 cases / 2,725 succeeded / 7 skipped / **0 failed** |
+| Capture build / RAM1 line | `pio run -e teensy41-capture-serial` **SUCCESS**; RAM1 `variables 96,192` **unchanged** (approved line, no re-base), code 390,408 -> 390,472, padding 2,808 -> 2,744, 1,904 B above the floor |
+| Mutations red-proved and restored | **M120-M126**, all restored byte-identically (hashes below) |
+| Size pins re-based (measured) | target `sizeof(LoopPlaybackRuntime)` 6,680 -> **6,792** (+112 B); host pin (now live) **8,624 -> 8,744** (+120 B) |
+| Docs closed out (`tasks.md`, `PROJECT_STATE.md`, `CURRENT_WORK.md`) | DONE |
+| Device / HITL | **NOT RUN** (out of scope); image `89e4d0c1f3080ff8c8ab9c05e93d601888685ef1452e93d2ce7231db155d8d9c` built, **not uploaded** |
+| `git diff --check` / `openspec validate --strict` | clean / valid |
+
+### What landed
+`PlaybackViewPendingRequest` + `PlaybackViewPendingReason` (`include/TrackPlaybackRuntime.h`), the per-slot record on
+`LoopPlaybackRuntime`, `Track::retainRefusedPlaybackViewRequest` / `Track::pendingViewRequest` /
+`Track::pendingViewRequestInvalidation` (`Track.h`, `src/Track/TrackPlaybackWindowBuild.cpp`) and
+`LoopPlaybackRuntime::retainViewPendingRequest` (`src/Track/TrackPlaybackRuntime.cpp`). Retention fires at the four
+"not now" refusals (`BuildInFlight`, `SuccessorAlreadyPrepared`, `TrackInterferenceBudgetExceeded`,
+`CannotCompleteBeforeHandoff`); admission discharges the demand. **No production behaviour changes**: no production
+caller requests a window, the demand is invisible to the per-track budget, the interference switch stays off, and
+nothing in the publication path reads the record.
+
+### Recorded deviations, corrections and defects (mine, not smoothed over)
+1. **O8 (the re-attempt) is NOT implemented and is not claimed.** The retained demand can be *re-issued* only by a
+   caller that owns a gather buffer which outlives the build (`SessionMidiEventVec`, exactly as the O2 fixture and the
+   `windowSourceScratch` note record); the lane turn owns no such buffer, and choosing one (per-slot persistent buffer
+   vs. a bounded transient) is a RAM-shape decision. That is **increment 25**, and it is the same gap the
+   timing-envelope qualification names as blocker 1. Everything else in this packet's oracle is proved.
+2. **The packet's retention table did not enumerate two refusals**: `ContractUndeclared` and `AdmissionRefused` do
+   **not** retain (nothing new can be learned by re-driving the same request without new information). Recorded as an
+   addition, not as an original row.
+3. **A reading added while implementing, and pinned by the O4 fixture:** a demand retained with **no qualified stamp**
+   never overwrites a qualified one it coalesces with -- an unqualified re-attempt must not un-promise a positioned
+   demand.
+4. **Defect found by the O4 fixture, mine, fixed:** the first version of `retainViewPendingRequest` read the retained
+   record through an alias **after** replacing that same record, so the coalesced promise was handed the *newest*
+   attempt's origin stamp while keeping the *oldest* deadline -- a traversal that never existed. Every retained field
+   is now read into a local before the record is replaced, and the reason is in the source comment.
+5. **A wrong fixture precondition of mine, caught by running it:** `firstDeadline < admittedTick + 1` asserted nothing
+   (it compared a deadline against a tick). Replaced by the real precondition -- the two attempts must promise
+   *different* deadlines and the first must be the earlier one -- so the row cannot pass by accident.
+6. **The host ABI size pin was unreachable dead code AND stale.** It sat in the `#else` of a branch whose `#if`
+   already required `__IMXRT1062__`, so no configuration compiled it; the "the host pin is unchanged at 6,544 B"
+   claims in earlier records therefore described an assertion no compiler evaluated. Measured on the clean tree at the
+   previous commit, the host object is **8,624 B**, not 6,544. The pin is live (native) from this slice, re-based on
+   measurement, and that correction is recorded where the pin is.
+7. **Mutation-run cascade, recorded:** under **M120** the first failing fixture aborts before its own flag-restore
+   line, so the interference flag stays enabled for later fixtures in that binary and the helper's
+   "long enough for the declared lead" assertion fails downstream. That is a harness property of the mutation run,
+   not a product finding; the *primary* failure M120 must produce (line 6868, and fixture 1) is the one cited.
+
+### Mutations (guarded replace, unique anchor asserted, byte-identical restores)
+Restore hashes: `src/Track/TrackPlaybackWindowBuild.cpp` **e98595129187ceee**,
+`src/Track/TrackPlaybackRuntime.cpp` **35eec9683a0fdfd2**, `include/TrackPlaybackRuntime.h` **2e50b234a0cce56c**. Every
+case patched, ran the focused suite, was restored from a snapshot and re-hashed to the pre-mutation value.
+
+- **M120** (O1) retention removed at the budget refusal -> *"a refused request leaves a pending demand behind"* (6868)
+  and 5 more demand fixtures.
+- **M121** (O2) retention on the not-servable path -> *"and no demand is retained for it"* (6962).
+- **M122** (O3) the budget counts a pending demand as outstanding work -> *"Expected 0 Was 164. the retained demand
+  owes no grain, so the budget does not count it"* (6990), plus the legacy eight-track fixture at 6824.
+- **M123** (O4) coalescing overwrites the retained deadline -> *"Expected 39952 Was 41952. coalescing keeps the oldest
+  outstanding deadline, never the newest"* (7035).
+- **M124** (O5/O6) the invalidation reading disabled -> *"Expected 5 Was 0. a changed epoch voids the positional
+  deadline"* (7075).
+- **M125** (O7) the admission no longer discharges -> *"an admitted demand is discharged whole: no retained deadline
+  survives it"* (6948).
+- **M126** (O9) the reader drops the generation qualification -> *"a returning slot must not revive a demand from an
+  operation it no longer runs"* (7113).
+
+### Still owed by this task (unchanged by this slice)
+The re-attempt driver (**O8**, increment 25, reason above); a production requester of committed windows
+(qualification blocker 1); the permitted service-gap/overrun policy (blocker 3); enforcement activation (awaits
+`Delta-max`); the `H x K` envelope; the systematic sweep; the device leg. **Task 3.10 stays open** and its checkbox is
+untouched.

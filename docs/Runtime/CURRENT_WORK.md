@@ -4893,19 +4893,21 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
-### Task 3.10 — the retained pending preparation request (increment 24, in scope)
-The gap both landed packets name: a refused request is currently **dropped**, so
-`TrackInterferenceBudgetExceeded` is a named refusal and not yet a promise. Scope, the
-transition oracle (O1-O10), the fixtures and the non-goals are pinned in the packet
+### Task 3.10 — the retained pending preparation request (increment 24): **implemented; O8 deferred**
+The gap both landed packets named — a refused request was **dropped**, so
+`TrackInterferenceBudgetExceeded` was a named refusal and not yet a promise — is closed:
+the per-slot demand, its retention classes per refusal name, coalescing (oldest deadline as
+one coherent position, newest content), deadline invalidation without erasure, the
+generation-qualified reader and the discharge on admission all landed and are proved by
+five fixtures and seven mutations. Verified: focused 89/89, full native 2,732 / 2,725 /
+7 / 0, capture build SUCCESS with the approved RAM1 line held, measured pins only
+(target 6,792, host 8,744). No upload, no device claim, enforcement still off.
+**Still owed here:** **O8, the re-attempt on the lane turn** (increment 25 — re-issuing the
+request needs a gather buffer that outlives the build and the lane turn owns none, a
+RAM-shape decision), then a production requester of committed windows (the qualification's
+blocker 1), the permitted service-gap/overrun policy (blocker 3), enforcement activation
+(awaits `Delta-max`), the `H x K` envelope and the sweep. Packet and completion record:
 [`2026-10-04-s310s-pending-request-retained/EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-04-s310s-pending-request-retained/EXECUTION.md).
-Authority: DEC-108 §13(a)-(c) and the spec's *the request stays pending* scenario — an
-existing decision, not a new one. In scope: the per-slot retained demand (identity,
-interval, absolute deadline, cost), its retention classes per refusal name, coalescing
-(oldest deadline, newest identity), deadline invalidation without erasure, discharge, and
-the re-attempt on the slot's own lane turn with no further gesture. Out of scope: a
-production requester of committed windows (the qualification's blocker 1), the permitted
-service-gap/overrun policy (blocker 3), enabling `sInterferenceBudgetEnforced`, any
-capacity reduction or RAM1 re-base, and the device leg.
 
 ### Task 3.10 — landed 2026-10-04 as `4a7cef70` (increments 22-23)
 Two slices, landed together because they interleave in the same files: the **absolute
@@ -11183,3 +11185,5 @@ record/canonical builders. Thus task 3.10 and timing qualification remain open;
 activation remains gated, no capacity reduced, no RAM1 rebase. Landed as `4a7cef70`
 (increments 22-23, jointly with the absolute-deadline slice).
 Evidence: [timing-envelope qualification](../../openspec/changes/windowed-playback-generation/evidence/timing-envelope-qualification/EXECUTION.md).
+
+**2026-10-04 — `windowed-playback-generation` slice 3.10, increment 24: the retained pending preparation request (native verified; O8 deferred).** The item both landed packets owed — "`TrackInterferenceBudgetExceeded` is a named refusal and becomes a promise only when a caller keeps the pending request and its original deadline; no such caller or store exists yet" — is now in, and the task's soundness hole is closed: **a refused request is deferred, never dropped.** `PlaybackViewPendingRequest` + `PlaybackViewPendingReason` land as per-slot state on the externally allocated `LoopPlaybackRuntime` (no DTCM, no RAM1 `variables`): the source identity, the coverage interval, the **absolute deadline with its clock epoch and loop geometry**, the origin phase and the bounded cost an admitted window would carry. Retention fires at the four "not now" refusals (`BuildInFlight`, `SuccessorAlreadyPrepared`, `TrackInterferenceBudgetExceeded`, `CannotCompleteBeforeHandoff`); the admission that accepts the demand **discharges it whole**; `ContractUndeclared`, `AdmissionRefused`, `NotServable`, `SourceUnavailable`, `SourceNotCurrent`, `WindowExceedsRetainedCapacity` and `NoRuntime` retain nothing, so retention is per refusal name rather than a blanket. **Coalescing** (DEC-108 §13(a)) keeps the **oldest outstanding deadline as one coherent position** — deadline, epoch, geometry, origin phase and origin stamp all from the promise it names — while the content (identity, interval, cost) follows the newest attempt, since a newer window may satisfy the older obligation; an unqualified re-attempt never overwrites a qualified demand. An epoch or geometry change **voids the position and never the obligation** (§13(c)) and is named by the reader; identity is **generation-qualified** (§13(d)) so a returning slot never revives an earlier operation, and a demand under the new generation starts a fresh record rather than inheriting the older deadline. A pending demand is deliberately **not** outstanding work, so the per-track budget does not charge a sibling for it. **Fixtures (5)**: retained-with-original-deadline + discharged-by-admission + the nothing-owed class; the demand owes no grain; coalescing keeps the oldest deadline; epoch/geometry invalidation; the generation change. **Red-proofs M120–M126**, each failing its own named assertion and restored byte-identically (`TrackPlaybackWindowBuild.cpp e98595129187ceee`, `TrackPlaybackRuntime.cpp 35eec9683a0fdfd2`, `TrackPlaybackRuntime.h 2e50b234a0cce56c`). **Defects found by running it, mine and fixed:** the first `retainViewPendingRequest` read the retained record through an alias **after** replacing it, handing the coalesced promise the newest attempt's origin stamp with the oldest deadline (the O4 fixture caught the incoherence; every retained field is now read into a locals set first); a fixture precondition of mine asserted nothing; and the **host-ABI size pin was unreachable dead code** — it sat in the `#else` of a branch whose `#if` already required `__IMXRT1062__`, so the "host pin unchanged at 6,544" claims of earlier records described an assertion no compiler evaluated (measured on the clean previous tree the host object is **8,624 B**); it is live (native) from this slice and re-based on measurement. Verified: focused **89/89** (was 84), full native **2,732 / 2,725 succeeded / 7 skipped / 0 failed**, build **SUCCESS** with the approved RAM1 line held (`variables 96,192` unchanged, code 390,408 -> 390,472, padding 2,808 -> 2,744, 1,904 B above the floor), measured size pins (target 6,680 -> **6,792**; host 8,624 -> **8,744**), `git diff --check` clean, `openspec validate --strict` valid. Image `89e4d0c1…` built, **not uploaded** — no device action and no device claim. **Owed:** **O8, the re-attempt** (increment 25 — re-issuing needs a gather buffer that outlives the build and the lane turn owns none, a RAM-shape decision, and the same gap the qualification calls blocker 1), a production requester, the permitted service-gap/overrun policy, enforcement activation (awaits `Delta-max`), `H x K`, the systematic sweep, the device leg. Evidence: [`evidence/2026-10-04-s310s-pending-request-retained/EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-04-s310s-pending-request-retained/EXECUTION.md).

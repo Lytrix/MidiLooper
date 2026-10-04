@@ -1010,3 +1010,28 @@ record/canonical builders. Thus task 3.10 and timing qualification remain open;
 activation remains gated, no capacity reduced, no RAM1 rebase. Landed as `4a7cef70`
 (increments 22-23, jointly with the absolute-deadline slice).
 Evidence: [timing-envelope qualification](evidence/timing-envelope-qualification/EXECUTION.md).
+
+**Task 3.10 (increment 24) — the retained pending preparation request (DEC-108 §13(c); native verified, O8 deferred).**
+Both landed packets owed the same thing, and it is now in: **a refused request is a promise, not a dropped request.**
+`PlaybackViewPendingRequest` + `PlaybackViewPendingReason` record the demand per slot on `LoopPlaybackRuntime` —
+the identity, the interval, the **absolute deadline with its epoch and geometry**, and the bounded cost an admitted
+window would carry — written by the admission that refuses it (`BuildInFlight`, `SuccessorAlreadyPrepared`,
+`TrackInterferenceBudgetExceeded`, `CannotCompleteBeforeHandoff`), cleared by the admission that accepts it, and read
+through **generation-qualified** accessors so returning to a slot never revives an earlier operation (DEC-108 §13(d)).
+Coalescing keeps the **oldest outstanding deadline** as one coherent position (deadline, epoch, geometry, origin phase
+and origin stamp together) while the content follows the newest attempt (DEC-108 §13(a)); an epoch or geometry change
+**voids the position and never the obligation** (§13(c)); and a pending demand is deliberately **not** outstanding work,
+so the per-track budget does not charge it. **Five fixtures** prove O1/O2/O3/O4/O5/O6/O7/O9 (+O10 by the build), **seven
+mutations** (M120–M126) fail their named assertions and were restored byte-identically
+(`TrackPlaybackWindowBuild.cpp e98595129187ceee`, `TrackPlaybackRuntime.cpp 35eec9683a0fdfd2`,
+`TrackPlaybackRuntime.h 2e50b234a0cce56c`). Verified: focused **89/89** (was 84), full native **2,732 / 2,725 succeeded /
+7 skipped / 0 failed**, `pio run -e teensy41-capture-serial` **SUCCESS** with the approved RAM1 line held
+(`variables 96,192` unchanged; code 390,408 -> 390,472, padding 2,808 -> 2,744, 1,904 B above the floor), measured size
+pins (target 6,680 -> **6,792**, host **8,624 -> 8,744** — the host pin was unreachable dead code carrying a stale
+6,544 and is live from this slice), `git diff --check` clean, `openspec validate --strict` valid. Image
+`89e4d0c1…` built and **not uploaded**; no device claim. **O8 — the re-attempt that would serve the retained demand on
+its own lane turn — is deferred to increment 25 and is not claimed**: re-issuing the request needs a gather buffer that
+outlives the build and the lane turn owns none, which is a RAM-shape decision. **Task 3.10 stays open** on O8, a
+production requester (qualification blocker 1), the permitted service-gap/overrun policy (blocker 3), enforcement
+activation (awaits `Delta-max`), `H x K` and the sweep. Detail:
+[`evidence/2026-10-04-s310s-pending-request-retained/EXECUTION.md`](evidence/2026-10-04-s310s-pending-request-retained/EXECUTION.md).

@@ -1658,6 +1658,11 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
     return PlaybackViewRequestResult::NoRuntime;
   }
   if (runtime->coverageBuildNeedsService()) {
+    // DEC-108 §13(c) / task 3.10 (increment 24): the slot already owes a build, so this demand **coalesces into that
+    // obligation** instead of starting a second one -- and it is retained rather than dropped, because the build in
+    // flight may be serving a different interval than the one this caller asked for.
+    retainRefusedPlaybackViewRequest(slotIndex, runtime, sourceCount, sourceIdentity, coverage, currentPhase,
+                                     handoffPhase, clock, PlaybackViewPendingReason::BuildInFlight);
     return PlaybackViewRequestResult::BuildInFlight;
   }
   {
@@ -1667,6 +1672,10 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
     const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
     if (set != nullptr && set->lifecycle.ready < RuntimePlaybackViewConfig::kViewCount &&
         set->views[set->lifecycle.ready].complete) {
+      // DEC-108 §13(c) / task 3.10 (increment 24): a "not now" refusal retains the demand -- the successor has to
+      // be adopted or released first, and the demand the caller asked for is still owed afterwards.
+      retainRefusedPlaybackViewRequest(slotIndex, runtime, sourceCount, sourceIdentity, coverage, currentPhase,
+                                       handoffPhase, clock, PlaybackViewPendingReason::SuccessorAlreadyPrepared);
       return PlaybackViewRequestResult::SuccessorAlreadyPrepared;
     }
   }
@@ -1722,6 +1731,11 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
       (admittedWork.clockEpoch == 0 ||
        !playbackViewAdmissionKeepsAdmittedDeadlines(contract, currentPhase, coverage.loopLengthTicks,
                                                    static_cast<uint16_t>(admittedWork.requiredGrains()), clock))) {
+    // DEC-108 §13(c) / task 3.10 (increment 24): **a refusal is a promise.** The demand is retained with its own
+    // absolute deadline, so when the interference clears the owner can serve it with no further gesture -- deferred,
+    // never dropped, and no existing window's deadline is traded away to make room for it.
+    retainRefusedPlaybackViewRequest(slotIndex, runtime, sourceCount, sourceIdentity, coverage, currentPhase,
+                                     handoffPhase, clock, PlaybackViewPendingReason::InterferenceBudget);
     return PlaybackViewRequestResult::TrackInterferenceBudgetExceeded;
   }
   // Named separately from the primitive's own answer: the declared gate is what refuses *here*, so the
@@ -1731,6 +1745,11 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
   if (!contract.canCompleteBeforeHandoff(
           currentPhase, handoffPhase, coverage.loopLengthTicks,
           sInterferenceBudgetEnforced ? playbackViewOutstandingGrains(slotIndex) : 0)) {
+    // DEC-108 §13(c) / task 3.10 (increment 24): the declared lead cannot cover this demand **now**, which is a
+    // deferred obligation rather than a lost one -- the same retention the budget refusal above performs, so both
+    // "not now" refusals leave the same promise behind.
+    retainRefusedPlaybackViewRequest(slotIndex, runtime, sourceCount, sourceIdentity, coverage, currentPhase,
+                                     handoffPhase, clock, PlaybackViewPendingReason::CannotCompleteBeforeHandoff);
     return PlaybackViewRequestResult::CannotCompleteBeforeHandoff;
   }
   if (!runtime->beginCoverageBuild(contract, currentPhase, handoffPhase, source, sourceCount, sourceIdentity,
@@ -1738,15 +1757,87 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
     return PlaybackViewRequestResult::AdmissionRefused;
   }
   // The admitted request's **bounded work**, recorded where the build begins -- and only once the build really began,
-  // so a refused request records nothing (the record is read only while the build is active). **A refusal retains no
-  // obligation by itself:** `TrackInterferenceBudgetExceeded` is a *named refusal*, and it becomes a promise only when
-  // a caller actually keeps the pending request and its original deadline. No such caller or pending-request store
-  // exists yet, so that half is **not implemented and not claimed** (recorded as owed).
+  // so a refused request records nothing (the record is read only while the build is active).
   runtime->viewBuildWork = admittedWork;
   // Task 3.11: this build's **operation identity**, recorded where the build begins: a completion that arrives after
   // the generation has moved is late, and the publication guard refuses it.
   runtime->viewBuildOperationGeneration = playbackGeneration;
+  // DEC-108 §13(c) / task 3.10 (increment 24): **the demand is discharged.** The work it asked for is now owed by a
+  // live build -- the admission's own bounded record just above -- so keeping a pending demand beside it would count
+  // the same obligation twice, and a later reader would see a deadline for work that is already being done. A
+  // discharged demand leaves no record at all (a later refusal starts a fresh one).
+  runtime->clearViewPendingRequest();
   return PlaybackViewRequestResult::Admitted;
+}
+
+/// DEC-108 §13(c) / task 3.10 (increment 24): the admission path's own retention call. It is the **one** shape for
+/// every "not now" refusal, so the deadline and the cost a retained demand carries cannot drift from the ones an
+/// admitted window carries: the cost comes from the contract's own `deriveGrainsFrom` over the entries the caller
+/// gathered, and the deadline from the same absolute-stamp arithmetic the admission uses below. A missing stamp or a
+/// timestamp overflow leaves the demand **unqualified** (no position claimed) rather than promising one it cannot
+/// compute -- the same fail-closed direction enforced admission takes.
+TRACK_COLD_MEM void Track::retainRefusedPlaybackViewRequest(
+    uint8_t slotIndex, LoopPlaybackRuntime* runtime, size_t sourceCount,
+    const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
+    uint32_t currentPhase, uint32_t handoffPhase, PlaybackDeadlineClock clock,
+    PlaybackViewPendingReason reason) {
+  if (runtime == nullptr || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return;
+  }
+  // The **declared** contract's derivation, deliberately not the enforced copy: the cost of the work is a property of
+  // the work, not of the gate that refused it, so a demand retained while enforcement is off still carries the figure
+  // it will be charged when enforcement turns on.
+  CoverageServiceContract cost = playbackViewCoverageContract();
+  cost.deriveGrainsFrom(sourceCount);
+  PlaybackViewAdmittedWork work;
+  work.sourceEntries = static_cast<uint32_t>(sourceCount);
+  work.retainedEventBound = static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit);
+  work.fillGrains = cost.requiredFillGrains;
+  work.orderGrains = cost.requiredOrderGrains;
+  work.promotionGrains = cost.requiredPromotionGrains;
+  work.handoffPhase = handoffPhase;
+  work.admittedLoopLength = coverage.loopLengthTicks;
+  work.admittedTick = clock.tick;
+  uint64_t deadlineTick = 0;
+  uint32_t clockEpoch = 0;
+  const uint32_t lead = handoffLeadTicks(currentPhase, handoffPhase, coverage.loopLengthTicks);
+  if (clock.epoch != 0 && lead != 0 && clock.tick <= UINT64_MAX - lead) {
+    deadlineTick = clock.tick + lead;
+    clockEpoch = clock.epoch;
+    work.deadlineTick = deadlineTick;
+    work.clockEpoch = clockEpoch;
+  }
+  runtime->retainViewPendingRequest(sourceIdentity, coverage, currentPhase, playbackGeneration, work, deadlineTick,
+                                    clockEpoch, coverage.loopLengthTicks, reason);
+}
+
+/// DEC-108 §13(c) / task 3.10 (increment 24): the slot's retained demand, **generation-qualified** (DEC-108 §13(d)).
+/// A record retained under an earlier operation generation is not this slot's demand and is not revived -- a reset
+/// does not erase a pending obligation (DEC-108 §13(a)), so the record is left where it is rather than cleared, but
+/// no reader may bind to it and a demand made under the new generation starts a fresh record. That is what makes
+/// "returning to a slot never revives an earlier operation" true here rather than aspirational.
+TRACK_COLD_MEM const PlaybackViewPendingRequest* Track::pendingViewRequest(uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return nullptr;
+  }
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  const PlaybackViewPendingRequest* pending = runtime != nullptr ? runtime->pendingViewRequest() : nullptr;
+  if (pending == nullptr || pending->operationGeneration != playbackGeneration) {
+    return nullptr;
+  }
+  return pending;
+}
+
+/// DEC-108 §13(c) / task 3.10 (increment 24): whether the demand's retained **position** still applies. Only a
+/// reading: an epoch change or a geometry change voids the promise's position, never the obligation, so a caller
+/// (the re-attempt that is still owed) can tell "still promised for this tick" from "owed, but no longer positioned".
+TRACK_COLD_MEM PlaybackViewPendingReason Track::pendingViewRequestInvalidation(uint8_t slotIndex,
+                                                                             PlaybackDeadlineClock clock) const {
+  const PlaybackViewPendingRequest* pending = pendingViewRequest(slotIndex);
+  if (pending == nullptr) {
+    return PlaybackViewPendingReason::None;
+  }
+  return pending->deadlineInvalidation(loopForSlot(slotIndex).loopLengthTicks, clock.epoch);
 }
 
 /// DEC-108 §13b / task 3.10 (the review's step 2): **the interference budget's enforcement switch.** It is a

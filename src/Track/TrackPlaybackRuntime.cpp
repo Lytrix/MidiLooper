@@ -1961,6 +1961,55 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardCoverageBuild()
   viewBuild.discard();
 }
 
+/// DEC-108 §13(a)/(c) / task 3.10 (increment 24): **retain or coalesce the slot's pending preparation demand.** One
+/// record per slot, and the **newest** demand wins its identity, interval, phase and bounded cost -- while the
+/// **oldest outstanding deadline** of the same operation survives (progress toward the oldest deadline is the thing
+/// that may not be thrown away). The deadline is carried over only from the same operation generation, clock epoch and
+/// loop geometry: a reset voids the promise's *position* (DEC-108 §13(c)) and a returning slot must not inherit an
+/// earlier operation's deadline (DEC-108 §13(d)), so those cases start the record fresh instead of keeping a tick that
+/// no longer names anything. A demand retained with no qualified stamp never overwrites a qualified one it coalesces
+/// with: an unqualified re-attempt does not un-promise a positioned demand.
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::retainViewPendingRequest(
+    const PlaybackViewSourceIdentity& source, const PlaybackCoverageInterval& coverage, uint32_t requestedPhase,
+    uint32_t operationGeneration, const PlaybackViewAdmittedWork& work, uint64_t deadlineTick, uint32_t clockEpoch,
+    uint32_t loopLengthTicks, PlaybackViewPendingReason reason) {
+  const PlaybackViewPendingRequest& retained = pendingViewRequest_;
+  const bool sameOperation = retained.active && retained.operationGeneration == operationGeneration;
+  const bool samePosition = sameOperation && retained.clockEpoch != 0 && retained.loopLengthTicks == loopLengthTicks;
+  const bool keepRetainedDeadline =
+      samePosition &&
+      (clockEpoch == 0 || (retained.clockEpoch == clockEpoch && retained.deadlineTick <= deadlineTick));
+  // **Every retained field is read out before the record is replaced.** `retained` is an alias *of* the object written
+  // below, so a read placed after the reset (or after `work` is copied in) would silently observe the new attempt: the
+  // first version of this function did exactly that and handed the retained promise the newest attempt's origin stamp,
+  // which is the incoherence the O4 fixture caught.
+  const uint64_t keptDeadlineTick = keepRetainedDeadline ? retained.deadlineTick : deadlineTick;
+  const uint32_t keptClockEpoch = keepRetainedDeadline ? retained.clockEpoch : clockEpoch;
+  const uint32_t keptLoopLength = keepRetainedDeadline ? retained.loopLengthTicks : loopLengthTicks;
+  const uint32_t keptPhase = keepRetainedDeadline ? retained.requestedPhase : requestedPhase;
+  const uint64_t keptAdmittedTick = keepRetainedDeadline ? retained.work.admittedTick : work.admittedTick;
+  // Nothing of the superseded demand stays readable: the record is replaced whole, so no reader can mix one attempt's
+  // deadline with another's identity. The **content** fields (source identity, interval, bounded cost) are the newest
+  // attempt's -- a coalesced demand is for the newest window, since a newer window may satisfy the older obligation --
+  // while the **position** (deadline, epoch, geometry, origin phase and origin stamp) is the retained promise, kept as
+  // ONE coherent set: pairing a deadline from one attempt with an origin stamp from another would describe a traversal
+  // that never existed. `work` therefore carries the newest attempt's cost with the retained position's stamps.
+  pendingViewRequest_ = PlaybackViewPendingRequest{};
+  pendingViewRequest_.active = true;
+  pendingViewRequest_.operationGeneration = operationGeneration;
+  pendingViewRequest_.source = source;
+  pendingViewRequest_.coverage = coverage;
+  pendingViewRequest_.reason = reason;
+  pendingViewRequest_.work = work;
+  pendingViewRequest_.work.admittedTick = keptAdmittedTick;
+  pendingViewRequest_.work.deadlineTick = keptDeadlineTick;
+  pendingViewRequest_.work.clockEpoch = keptClockEpoch;
+  pendingViewRequest_.deadlineTick = keptDeadlineTick;
+  pendingViewRequest_.clockEpoch = keptClockEpoch;
+  pendingViewRequest_.loopLengthTicks = keptLoopLength;
+  pendingViewRequest_.requestedPhase = keptPhase;
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCaptureOrder(
     uint32_t loopLengthTicks, uint32_t frozenGeneration) {
   CaptureAdmissionStaging* set = captureStagingIfPrewarmed();
@@ -2263,18 +2312,26 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // recorded 6,624 -> 6,640 for the **admitted-work record** retained where a window build begins. The host-ABI figure
 // below is **unchanged** at 6,544: the host layout had 16 B of tail padding there, so the same field costs the host
 // nothing -- which is why only the target pin moves.
-#if defined(__IMXRT1062__)
-// Absolute deadline + clock epoch: target 6,656 -> 6,680 B (compiler size probe).
-// Host remains 6,544 B. This is per-slot external storage, not a RAM1 budget rebase.
-static_assert(sizeof(LoopPlaybackRuntime) == 6680,
-              "S3.0/3.10: target per-slot runtime 6,680 B, including absolute deadline clock identity");
-#else
-static_assert(sizeof(LoopPlaybackRuntime) == 6544,
-              "S3.0/3.6: LoopPlaybackRuntime host-ABI size (6,544 B: +176 B retained sources)");
-#endif
+// Absolute deadline clock identity = 6,680 B; the retained pending preparation demand (increment 24) adds +112 B:
+// **compiler size probe, 6,680 -> 6,792**. The record holds the demand (identity, interval, absolute deadline,
+// bounded cost), never the events, and lives in this externally allocated object: no RAM1 `variables`, no DTCM.
+static_assert(sizeof(LoopPlaybackRuntime) == 6792,
+              "S3.0/3.10: target per-slot runtime 6,792 B, including the retained pending preparation demand");
 static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
               "per-track authority may hide here");
 #endif
-// (the temporary compile-time size probe that measured the figure above has been removed)
+// ---------------------------------------------------------------------------
+// **Host-ABI pin.** It was **unreachable** before this slice: the host assertion sat in the `#else` of a branch whose
+// `#if` already required `__IMXRT1062__`, so no configuration ever compiled it -- and the figure it carried (6,544 B)
+// was stale as well as unchecked: measured on the clean tree at the previous commit, the host object is **8,624 B**,
+// not 6,544. The phrase "the host pin is unchanged" in the earlier records therefore described an assertion no
+// compiler ever evaluated. It is live from here, and this slice's measured host delta is **+120 B** (8,624 -> 8,744)
+// against the target's +112 B: the same record, with the host's 64-bit pointers and its own padding. Native-only --
+// the target figure above is the one charged to RAM1, and the target is the shipped ABI.
+#if defined(PIO_UNIT_TEST_NATIVE)
+static_assert(sizeof(LoopPlaybackRuntime) == 8744,
+              "S3.0/3.10: host-ABI per-slot runtime size (8,744 B, measured; the previous 6,544 B pin was never compiled)");
+#endif
+// (the temporary compile-time size probe that measured both figures above has been removed)
