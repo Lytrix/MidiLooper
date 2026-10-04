@@ -1,7 +1,9 @@
 # Task 3.10 — timing-envelope qualification
 
 ## Identity and scope
-Baseline d08932c5 plus retained uncommitted absolute-deadline correction.
+Baseline d08932c5 plus the retained absolute-deadline correction (the two slices of
+this session landed jointly as `4a7cef70`, increments 22-23, because they interleave
+in the same files).
 Authority: DEC-108 — windowed playback, §13; DEC-043 — execution bounds;
 Architecture/Playback.md and ExecutionBounds.md; task 3.10 — bounded service.
 Historical search: deadline, clock epoch, service gap, DEC-108, DEC-043.

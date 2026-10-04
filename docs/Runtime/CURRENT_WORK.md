@@ -4893,22 +4893,33 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
-### Task 3.10 — timing-envelope qualification continuation
-User authorized continuation to a qualified timing envelope. Extend ClockManager's
-existing tick owner with wrap-safe, reset-qualified stamps; correct the sampler to
-observe every lane dispatch, including idle turns; identify eligible work and grain
-progress; verify native accounting and capture on authorized track 8 slots 4/5.
-No capacity reduction, RAM1 rebasing, new scheduler, or unsupported activation.
-Execution packet: `openspec/changes/windowed-playback-generation/evidence/timing-envelope-qualification/EXECUTION.md`.
-The narrower absolute-deadline slice below is complete; its exclusion of clock
-wiring applies to that previous slice, not this authorized continuation.
+### Task 3.10 — the retained pending preparation request (increment 24, in scope)
+The gap both landed packets name: a refused request is currently **dropped**, so
+`TrackInterferenceBudgetExceeded` is a named refusal and not yet a promise. Scope, the
+transition oracle (O1-O10), the fixtures and the non-goals are pinned in the packet
+[`2026-10-04-s310s-pending-request-retained/EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-04-s310s-pending-request-retained/EXECUTION.md).
+Authority: DEC-108 §13(a)-(c) and the spec's *the request stays pending* scenario — an
+existing decision, not a new one. In scope: the per-slot retained demand (identity,
+interval, absolute deadline, cost), its retention classes per refusal name, coalescing
+(oldest deadline, newest identity), deadline invalidation without erasure, discharge, and
+the re-attempt on the slot's own lane turn with no further gesture. Out of scope: a
+production requester of committed windows (the qualification's blocker 1), the permitted
+service-gap/overrun policy (blocker 3), enabling `sInterferenceBudgetEnforced`, any
+capacity reduction or RAM1 re-base, and the device leg.
 
-### Task 3.10 — absolute deadline identity correction
-User authorized fixing the full-lap reopening defect in the retained window
-admission deadline. Scope and transition oracle:
-[`deadline-clock-identity/EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/deadline-clock-identity/EXECUTION.md).
-Production activation stays gated; clock-owner wiring and pending-request retention
-are not introduced in this slice.
+### Task 3.10 — landed 2026-10-04 as `4a7cef70` (increments 22-23)
+Two slices, landed together because they interleave in the same files: the **absolute
+deadline identity** correction (a phase is not a traversal identity — verified natively,
+activation still gated) and the **timing-envelope qualification continuation** (the
+wrap-safe clock stamp and the all-dispatch sampler, with the earlier "starvation"
+attribution withdrawn; envelope **NOT QUALIFIED**). Device: 300 BPM baseline PASS,
+internal-clock baseline and its fresh-boot retry INCONCLUSIVE_CAPTURE on
+`persistence_active_snapshot_unavailable_during_save`. Packets:
+[`deadline-clock-identity/EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/deadline-clock-identity/EXECUTION.md)
+and
+[`timing-envelope-qualification/EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/timing-envelope-qualification/EXECUTION.md).
+The clock-owner wiring and the pending-request retention the earlier slices excluded are
+**not** excluded from increment 24 above.
 
 ### Timing-path findings 1–4 — the tick edge, the DROID ring, and the per-note trace (2026-10-02)
 
@@ -11169,5 +11180,6 @@ attributions are withdrawn: selected-worker gaps could include no-work time.
 No live committed-window requester, retained retry/projection revalidation or
 permitted-gap/overrun enforcement exists yet, and the baseline exercises shared
 record/canonical builders. Thus task 3.10 and timing qualification remain open;
-activation remains gated, no capacity reduced, no RAM1 rebase, no commit.
+activation remains gated, no capacity reduced, no RAM1 rebase. Landed as `4a7cef70`
+(increments 22-23, jointly with the absolute-deadline slice).
 Evidence: [timing-envelope qualification](../../openspec/changes/windowed-playback-generation/evidence/timing-envelope-qualification/EXECUTION.md).

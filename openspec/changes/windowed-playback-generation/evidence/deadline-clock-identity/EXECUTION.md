@@ -65,7 +65,9 @@ UINT32_MAX remain valid before expiry. No intermediate expiry observation is nee
   reported 82. This slice adds two: 83. The full-suite count rises 2,720 -> 2,722.
 - Firmware build only: no upload, no HITL and no timing/device acceptance claim.
 - `openspec validate windowed-playback-generation --strict`: valid.
-- `git diff --check`: clean. Changes left uncommitted.
+- `git diff --check`: clean. Landed as `4a7cef70` (increments 22-23, jointly with
+  the timing-envelope slice) after this record was written; the same checks were
+  rerun green at that tree.
 
 ### Remaining gates / non-claims
 Task 3.10 — bounded deadline-ordered service remains OPEN. The clock owner must

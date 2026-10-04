@@ -5602,5 +5602,6 @@ attributions are withdrawn: selected-worker gaps could include no-work time.
 No live committed-window requester, retained retry/projection revalidation or
 permitted-gap/overrun enforcement exists yet, and the baseline exercises shared
 record/canonical builders. Thus task 3.10 and timing qualification remain open;
-activation remains gated, no capacity reduced, no RAM1 rebase, no commit.
+activation remains gated, no capacity reduced, no RAM1 rebase. Landed as `4a7cef70`
+(increments 22-23, jointly with the absolute-deadline slice).
 Evidence: [timing-envelope qualification](../../openspec/changes/windowed-playback-generation/evidence/timing-envelope-qualification/EXECUTION.md).
