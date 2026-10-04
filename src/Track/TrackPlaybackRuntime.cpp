@@ -2316,8 +2316,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // (6,680 -> 6,792), and the deadline service (increment 27, blocker 3's half 2) adds +24 B: **compiler size probe,
 // 6,792 -> 6,816** -- the promise's interval length (4 B) plus the per-promise traversal bookkeeping (an 8-byte key and
 // a 2-byte count, 8-byte aligned). Per-slot external storage: no RAM1 `variables`, no DTCM.
-static_assert(sizeof(LoopPlaybackRuntime) == 6816,
-              "S3.0/3.10: target per-slot runtime 6,816 B, including the promised-interval deadline service");
+static_assert(sizeof(LoopPlaybackRuntime) == 6832,
+              "S3.0/3.10: target per-slot runtime 6,832 B, including the promised-interval deadline service");
 static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
@@ -2332,7 +2332,7 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // against the target's +112 B: the same record, with the host's 64-bit pointers and its own padding. Native-only --
 // the target figure above is the one charged to RAM1, and the target is the shipped ABI.
 #if defined(PIO_UNIT_TEST_NATIVE)
-static_assert(sizeof(LoopPlaybackRuntime) == 8768,
-              "S3.0/3.10: host-ABI per-slot runtime size (8,768 B, measured; the previous 6,544 B pin was never compiled)");
+static_assert(sizeof(LoopPlaybackRuntime) == 8784,
+              "S3.0/3.10: host-ABI per-slot runtime size (8,784 B, measured; the previous 6,544 B pin was never compiled)");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

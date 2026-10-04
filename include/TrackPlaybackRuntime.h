@@ -550,9 +550,21 @@ struct LoopPlaybackRuntime {
   /// DEC-108 §13a / task 3.10 (blocker 3, half 2): **which promise** the traversal counts below belong to (its own
   /// admission tick) and **how many of its traversals have been counted as missed**. A new promise starts a new count;
   /// the same promise observed across many turns and many traversals is counted **exactly once per traversal** -- which
-  /// is what keeps a per-turn check from turning one missed traversal into a burst of them.
+  /// is what keeps a per-turn check from turning one missed traversal into a burst of them. This is the *deduplication*:
+  /// the **episode** (the allowance and the breach, `lagState`) belongs to the interval, and increment 28 keeps the two
+  /// apart so a repeated request for an interval cannot re-open its allowance.
   uint64_t countedMissPromiseTick = 0;
   uint16_t countedMissedTraversals = 0;
+  /// DEC-108 §13(c) / task 3.10 (blocker 3, increment 28): the promise whose **clock identity no longer matches the
+  /// live clock** has been revalidated and **named** (an epoch change invalidates the promise, never the content). One
+  /// report per promise, so a sustained mismatch cannot flood the stream.
+  uint64_t invalidatedPromiseTick = 0;
+  /// DEC-108 §13a / task 3.10 (blocker 3, increment 28): a build that **completed** and whose promise has not yet been
+  /// judged with a fresh clock. The lane turn reads its clock *before* the worker grain and a grain can cross a tick, so
+  /// the promise is retained for **one further opportunity** rather than judged only against the pre-worker timestamp.
+  /// Set by the completion, consumed by that one judgement, and **cleared by a new admission** -- so a successor promise
+  /// can never be judged as its predecessor.
+  bool completedPromisePendingJudgement = false;
   /// S4f.19 continuity gate, bounded in DEC-070's shape: grains spent in the `RecordPublished`
   /// retirement wait with an unchanged frozen-window build phase, and that phase. A phase change
   /// is progress and resets the count, so a build its writers are still feeding is never cut; a

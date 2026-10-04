@@ -1230,16 +1230,28 @@ TRACK_COLD_MEM void Track::noteMissedTraversalForSlot(uint8_t slotIndex, Loop& l
 /// judgement, and it is deliberately independent of both completion and revision currency:
 ///
 ///  * **Independent of completion.** It runs on every lane turn for **every slot holding a live promise**, so a build
-///    that has not finished -- the case a completion-time check structurally cannot see -- is judged too.
+///    that has not finished -- the case a completion-time check structurally cannot see -- is judged too, and a promise
+///    that **completes** in the turn it crossed its deadline is retained for one further opportunity
+///    (`completedPromisePendingJudgement`) because the turn's clock is read *before* the worker grain: the record
+///    becomes unreadable exactly when the build completes, so without the retention that last grain would escape.
 ///  * **Independent of revision currency.** The published window carrying the *desired* revision says nothing about
 ///    whether it arrived in time; routing this judgement through `resolvePlaybackLag` would let `Current` mask a late
 ///    arrival, so the promise's own deadline decides and only the *consequence* is shared.
 ///  * **Once per traversal.** Each traversal of the promised interval is counted exactly once, however many turns
 ///    observe it: the promise's own admission tick keys the count and the traversals passed are computed from the clock,
 ///    so a per-turn check cannot turn one missed traversal into a burst.
-///  * **Revalidated, never erased.** A promise is judged only in the **epoch it was qualified in** (a reset, seek or
-///    re-projection leaves it unpositioned: no miss is claimed), and a *new* promise starts a new count -- while the
-///    obligation itself is never dropped for either reason.
+///  * **Revalidated, never erased.** A promise is judged only in the **epoch it was qualified in**: a reset, seek or
+///    re-projection makes the promise unpositioned, so no miss is claimed for it -- but the change is **named**
+///    (`promise_epoch_invalidated`, once per promise), the obligation is retained rather than dropped, the interval's
+///    fault history is untouched, and returning to that clock judges the *same* promise again (an epoch change can never
+///    mint an allowance). The **content** is never invalidated by this: the valid audible source continues and the
+///    completed window still publishes.
+///  * **Request deduplication is not fault history** (§13a *"a later edit never resets an earlier interval's
+///    missed-deadline allowance"*): a new promise starts its own traversal count, while the episode -- the allowance and
+///    the breach -- belongs to the **interval** and is reset only when the interval itself changes.
+///  * **Enforcement is not capture-gated.** The accounting and the latch are unconditional; only the *row* is a capture
+///    observation (the instrumentation rule). A build without session capture contains and latches exactly as a capture
+///    build does.
 ///  * **Enforcement is not capture-gated.** The accounting and the latch are unconditional; only the *row* is a capture
 ///    observation (the instrumentation rule). A build without session capture contains and latches exactly as a capture
 ///    build does.
@@ -1253,12 +1265,32 @@ TRACK_COLD_MEM void Track::serviceAdmittedDeadlineMisses(PlaybackDeadlineClock c
   }
   for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
     LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
-    if (runtime == nullptr || runtime->activeViewBuildWork() == nullptr) {
-      continue;  // no live promise: the record is readable only while the build it describes is active
+    if (runtime == nullptr) {
+      continue;
+    }
+    // The promise is judged while its build is in flight **and for one further opportunity after completion**: the turn's
+    // clock is read before the worker grain, and a grain can cross a tick, so a build that finished a tick late would
+    // otherwise never be judged (the record becomes unreadable exactly when it completes).
+    const bool inFlight = runtime->activeViewBuildWork() != nullptr;
+    if (!inFlight && !runtime->completedPromisePendingJudgement) {
+      continue;
+    }
+    if (!inFlight) {
+      runtime->completedPromisePendingJudgement = false;  // the one further opportunity this promise is retained for
     }
     const PlaybackViewAdmittedWork& work = runtime->viewBuildWork;
-    if (work.clockEpoch == 0 || work.clockEpoch != clock.epoch || work.admittedLoopLength == 0) {
-      continue;  // unqualified, or qualified in another epoch: revalidate, never erase (the obligation survives)
+    if (work.clockEpoch == 0 || work.admittedLoopLength == 0) {
+      continue;  // never positioned: nothing is claimed for it
+    }
+    if (work.clockEpoch != clock.epoch) {
+      // DEC-108 §13(c): a changed clock invalidates the **promise**, not the content -- the request is retained, the valid
+      // audible source continues, and the miss is **reported**. Named once per promise, and deliberately **not** a
+      // traversal miss: the interval's history is untouched, so an epoch change can never mint a fresh allowance.
+      if (runtime->invalidatedPromiseTick != work.admittedTick) {
+        runtime->invalidatedPromiseTick = work.admittedTick;
+        reportPlaybackViewMaintenanceRow(slotIndex, loopForSlot(slotIndex), "promise_epoch_invalidated");
+      }
+      continue;
     }
     if (clock.tick < work.deadlineTick) {
       continue;  // still inside the traversal the promise names
@@ -1272,7 +1304,13 @@ TRACK_COLD_MEM void Track::serviceAdmittedDeadlineMisses(PlaybackDeadlineClock c
       // is per interval *and* per pass).
       runtime->countedMissPromiseTick = work.admittedTick;
       runtime->countedMissedTraversals = 0;
-      runtime->lagState.resetEpisode(work.handoffPhase, work.admittedIntervalLength);
+      // **Request deduplication is not fault history** (DEC-108 §13(a): *"a later edit never resets an earlier interval's
+      // missed-deadline allowance"*). The per-promise traversal count starts at zero -- that is the dedup -- while the
+      // **episode** is reset only when the *interval* changes, so a repeated request for the same interval cannot mint a
+      // fresh first-miss allowance.
+      if (!runtime->lagState.coversInterval(work.handoffPhase, work.admittedIntervalLength)) {
+        runtime->lagState.resetEpisode(work.handoffPhase, work.admittedIntervalLength);
+      }
     }
     if (target > runtime->countedMissedTraversals) {
       const uint16_t before = runtime->countedMissedTraversals;
@@ -1885,8 +1923,11 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackViewMainte
     return PlaybackViewRequestResult::AdmissionRefused;
   }
   // The admitted request's **bounded work**, recorded where the build begins -- and only once the build really began,
-  // so a refused request records nothing (the record is read only while the build is active).
+  // so a refused request records nothing (the record is read only while the build is active). A **new** promise
+  // supersedes any retained completion (increment 28), so the retention is cleared here: only this promise's own
+  // completion can set it, and a successor can never be judged as its predecessor.
   runtime->viewBuildWork = admittedWork;
+  runtime->completedPromisePendingJudgement = false;
   // Task 3.11: this build's **operation identity**, recorded where the build begins: a completion that arrives after
   // the generation has moved is late, and the publication guard refuses it.
   runtime->viewBuildOperationGeneration = playbackGeneration;
@@ -2174,6 +2215,9 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     return PlaybackViewTurnResult::Idle;
   }
   if (result == RuntimePlaybackViewBuildGrain::Complete) {
+    // DEC-108 §13a (blocker 3, increment 28): the promise is **retained through completion** so the next opportunity can
+    // judge it with a fresh clock -- the turn's clock was read before this grain, and the grain can cross a tick.
+    runtime->completedPromisePendingJudgement = runtime->viewBuildWork.clockEpoch != 0;
     // **Publication is atomic** (DEC-108 item 1): the completed build becomes this slot's current interval
     // window inside this turn-step, and the window it replaced stays readable until this call. Nothing a
     // consumer reads changes yet -- 3.4 carries the identity to the consumers, 3.5 makes readiness out of it

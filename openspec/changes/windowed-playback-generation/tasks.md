@@ -1140,3 +1140,30 @@ native **2,737 / 2,730 succeeded / 7 skipped / 0 failed**, build **SUCCESS** wit
 admitted, and the lane's production builds carry `clockEpoch == 0`), but the **policy is enforcement rather than
 telemetry** — R5's own point. Detail:
 [`evidence/2026-10-04-s310v-admitted-deadline-serviced/EXECUTION.md`](evidence/2026-10-04-s310v-admitted-deadline-serviced/EXECUTION.md).
+
+**Task 3.10 (increment 28) — blocker 3: a review's three gaps in that service are closed, and containment is proved rather than counted.**
+A read-only review of increment 27 (independently verified at `5cbd3bb8`) named three correctness gaps and one unproven
+claim, all real. **(1)** `serviceAdmittedDeadlineMisses` reset the lag **episode** on every new `admittedTick`, so a
+repeated request for the **same interval** minted a fresh first-miss allowance — the act DEC-108 §13(a) forbids. Request
+**deduplication** (the per-promise traversal count) is now separate from **fault history** (the episode, reset only when
+the *interval* changes, guarded by `coversInterval`). **(2)** An epoch mismatch `continue`d silently: it now
+**revalidates and names** `promise_epoch_invalidated` (once per promise, per-slot `invalidatedPromiseTick`), claims no
+traversal miss, leaves the interval's history untouched, and retains the obligation **unmodified** so returning to that
+clock judges *that* promise again — an epoch change cannot mint an allowance, and the content still publishes (asserted).
+**(3)** A deadline crossed at the turn's final grain escaped, because the turn's clock is read before the worker grain
+and `activeViewBuildWork()` is null once the build completes: the promise is now **retained through completion**
+(`completedPromisePendingJudgement`, consumed by the next opportunity's fresh clock, cleared by a new admission so a
+successor can never be judged as its predecessor). **(4)** The review's closing point — *"accounting plus a latch does not
+yet prove late-publication containment"* — is now a fixture: after the breach `containmentForSlot` reads
+`ServeLastCoherentRevision` while coverage remains. Three fixtures and **MC1-MC6** red-prove each behaviour (always reset
+the episode; skip the naming; reset on the mismatch; drop the retention gate; drop the retention record; never latch on
+the second miss) with byte-identical restores (`TrackPlaybackWindowBuild.cpp` **377b5041b44a8f9d** before and after each
+case, final **6f4961ef38d9186c**), and the two corrections made while writing them are recorded rather than smoothed (an
+absolute `one_pass_late == 0` expectation that its own earlier turn contradicted; a retention bool cleared at admission
+instead of a `tick != 0` sentinel, since tick 0 is a legal instant). Verified: focused **97/97**, full native
+**2,740 / 2,733 succeeded / 7 skipped / 0 failed**, build **SUCCESS** with the RAM1 line byte-identical and one measured
+size re-base (target 6,816 -> **6,832** B, host 8,768 -> **8,784** B), `git diff --check` clean, `openspec validate
+--strict` valid. No upload, no device claim. **Operationally still open:** on the device the service judges nothing (no
+production requester, `clockEpoch == 0` in production builds, enforcement off), so blocker 3's operational half is the
+production requester's qualified clock stamp — the review's verdict stands where it concerns operation. Detail:
+[`evidence/2026-10-04-s310w-episode-and-epoch-revalidation/EXECUTION.md`](evidence/2026-10-04-s310w-episode-and-epoch-revalidation/EXECUTION.md).
