@@ -10,6 +10,16 @@
 #include "ActiveNoteLedger.h"
 #include "MidiEvent.h"
 
+#ifndef PLAYBACK_WINDOW_ROLLING_ENABLED
+#define PLAYBACK_WINDOW_ROLLING_ENABLED 0
+#endif
+static_assert(PLAYBACK_WINDOW_ROLLING_ENABLED == 0 || PLAYBACK_WINDOW_ROLLING_ENABLED == 1,
+              "rolling playback gate must be 0 or 1");
+#if PLAYBACK_WINDOW_ROLLING_ENABLED && !defined(PIO_UNIT_TEST_NATIVE) && \
+    !(defined(SESSION_CAPTURE) && defined(PLAYBACK_WINDOW_ROLLING_QUALIFICATION))
+#error "rolling playback requires native or an explicit capture qualification build"
+#endif
+
 /// Fixed storage owned by one slot's playback runtime.  The capacities are a
 /// pre-transport admission limit, never a reason to grow a vector from the
 /// MIDI tick.  Active use is wired in task 2.4 after the resumable builder and
@@ -457,6 +467,8 @@ struct RuntimePlaybackView {
   // and coverage happen to repeat after a complete loop cycle.
   uint64_t storageGeneration = 0;
   FixedPlaybackEventStorage storage;
+  // Snapshot fill may use these unqualified halves for an eventId while ordering;
+  // passOriginsReady stays false for that representation (not pass provenance).
   PlaybackPassEventOrigin* passOrigins = nullptr;
   // Position in the complete canonical source merge, independent of window filtering.
   uint16_t* canonicalRanks = nullptr;
@@ -777,7 +789,7 @@ struct RuntimePlaybackViewSet {
   /// loop's `fullTakePlaybackViewAdmissible()` answer; false keeps the three rolling views
   /// and both capture stagings (the windowed lanes and capture admission need them) and
   /// leaves the bridges, their bases and the prepared pair unreserved.
-  bool prewarm(bool reserveWholeTake = true);
+  bool prewarm(bool reserveWholeTake = true, bool reserveCapture = true);
   /// True when the whole-take representation was reserved and can still be published.
   bool wholeTakeViewsReserved() const { return wholeTakeReserved; }
   /// Drop the whole-take representation once the owning loop can no longer publish one.

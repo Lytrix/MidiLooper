@@ -1,3 +1,9 @@
+> Superseded correctness claims: the later completion-clock review found that a
+> completed build stops offering worker service; a next dispatch is not its finish
+> time; epoch-invalidated content requires explicit revalidation before becoming
+> serving content. The same-interval history repair stands. See
+> [completion-clock repair](../completion-clock-repair/EXECUTION.md).
+
 # Task 3.10 (increment 28) — blocker 3: request deduplication vs fault history, epoch revalidation, and the promise retained through completion
 
 Baseline: `5cbd3bb8` (increment 27 landed). Branch `feature/windowed-playback-generation`. Authority: DEC-108 §13(a)

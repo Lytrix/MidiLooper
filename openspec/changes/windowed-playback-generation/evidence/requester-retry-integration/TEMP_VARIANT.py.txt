@@ -1,0 +1,25 @@
+"""TEMP variant of the existing registered-parent slot-switch wrapper; no canonical edits."""
+import sys, json
+from pathlib import Path
+root=Path('/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41')
+sys.path.insert(0,str(root/'scripts'))
+import hitl_s4b8_slot_switch_during_finalization as fixture
+original_transition=fixture.baseline.request_state_transition
+original_main=fixture.main
+def transition(*args,**kw):
+    if kw.get('requested')=='PLAYING_AFTER_OVERDUB_STOP':
+        # The original shortcut reads a process-wide last Track state. On this
+        # multi-track boot it skipped the actual OD-stop gesture as STOPPED.
+        kw['already_satisfied']=lambda lines, baseline: False
+        kw['max_retries']=0
+    return original_transition(*args,**kw)
+def run(args):
+    args=list(args)
+    args[args.index('--stimulus-temp-suffix')+1]='ROOTLESS-LAUNCH-STOP-REQUEST'
+    args[args.index('--stimulus-temp-reason')+1]='Preserve track8 slot5; recreate slot4 and exercise queued long launch. Require one actual overdub-stop request instead of accepting an unrelated process-wide STOPPED row; keep confirmation checks and disable retries.'
+    out=Path(args[args.index('--out-dir')+1])
+    (out/'command.json').write_text(json.dumps(args,indent=2)+'\n')
+    return original_main(args)
+fixture.baseline.request_state_transition=transition
+fixture.main=run
+fixture.run_fixture()

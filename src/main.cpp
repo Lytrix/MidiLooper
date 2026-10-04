@@ -482,7 +482,12 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
         windowTrackCount < kWindowHolderOffers ? windowTrackCount : kWindowHolderOffers;
     MidiServiceDrain::PlaybackHolder offers[kWindowHolderOffers] = {};
     for (uint8_t i = 0; i < offerCount; ++i) {
-      offers[i] = trackManager.getTrack(i).playbackWindowServiceOffer(windowPhase);
+      // Deadlines outlive worker eligibility (completed candidates may await revalidation).
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+      (void)trackManager.getTrack(i).serviceRollingPlaybackWindow(windowClock);
+#endif
+      trackManager.getTrack(i).serviceAdmittedDeadlineMisses(windowClock);
+      offers[i] = trackManager.getTrack(i).playbackWindowServiceOffer(windowPhase, windowClock);
     }
     // The holder here is a **track**: across holders the rule is **round-robin** (the spec's fairness sentence), so the
     // cursor decides which track is served and urgency is deliberately *not* an ordering key -- a track whose interval is
@@ -500,7 +505,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
         MidiServiceDrain::PlaybackHolderSelection::Service) {
       // The turn also consumes the clock: the deadlines the admission promised are serviced there (blocker 3, half 2).
       windowResult =
-          trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase, nullptr, false, windowClock);
+          trackManager.getTrack(chosenTrack).stepPlaybackViewMaintenance(windowPhase, nullptr, false, windowClock,
+              []() { return clockManager.getPlaybackDeadlineClock(); });
     }
 #if defined(SESSION_CAPTURE)
     Track::samplePlaybackLaneOpportunity(windowClock, windowRunning,

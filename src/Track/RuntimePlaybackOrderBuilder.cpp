@@ -16,17 +16,34 @@
 #endif
 
 PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::begin(RuntimePlaybackView& view, uint32_t loopLengthTicks, RuntimePlaybackOrderMode mode) {
-  if (!begin(view.storage, loopLengthTicks, nullptr, mode)) {
+  if (mode == RuntimePlaybackOrderMode::SnapshotCanonical &&
+      (!view.sourceFilled || view.passOrigins == nullptr || view.passOriginsReady)) return false;
+  if (mode == RuntimePlaybackOrderMode::SnapshotPlayback &&
+      (!view.canonicalRanksReady || view.canonicalRanks == nullptr)) return false;
+  const auto storageMode = mode == RuntimePlaybackOrderMode::SnapshotCanonical
+      ? RuntimePlaybackOrderMode::RawPlaybackTick : mode == RuntimePlaybackOrderMode::SnapshotPlayback
+      ? RuntimePlaybackOrderMode::PlaybackPhase : mode;
+  if (!begin(view.storage, loopLengthTicks, nullptr, storageMode)) {
     return false;
   }
-  completionFlag_ = &view.complete;
-  view.complete = complete();
+  orderMode_ = mode;
+  completionFlag_ = mode == RuntimePlaybackOrderMode::SnapshotCanonical ? nullptr : &view.complete;
+  view.complete = completionFlag_ != nullptr && complete();
+  if (mode == RuntimePlaybackOrderMode::SnapshotCanonical) {
+    snapshotEventIds_ = view.passOrigins;
+    phaseOutput_ = nullptr;  // Fill already wrote canonicalOrder, not playback phases.
+  } else if (mode == RuntimePlaybackOrderMode::SnapshotPlayback) {
+    snapshotRanks_ = view.canonicalRanks;
+  }
   return true;
 }
 
 PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::begin(FixedPlaybackEventStorage& storage,
                                         uint32_t loopLengthTicks, const uint32_t* provenance, RuntimePlaybackOrderMode mode) {
   discard();
+  // Snapshot modes require a typed view's metadata; raw storage cannot supply it.
+  if (mode == RuntimePlaybackOrderMode::SnapshotCanonical || mode == RuntimePlaybackOrderMode::SnapshotPlayback)
+    return false;
   storage_ = &storage;
   orderEntries_ = storage.order; scratchEntries_ = storage.mergeScratch; phaseOutput_ = storage.phases;
   provenance_ = provenance;
@@ -37,7 +54,7 @@ PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::begin(FixedPlay
   runWidth_ = 1;
   runStart_ = 0;
   orderedEventCount_ = 0;
-  if (!storage.isPrewarmed() || (mode == RuntimePlaybackOrderMode::PlaybackPhase && loopLengthTicks == 0) || storage.eventCount > storage.capacity) {
+  if (!storage.isPrewarmed() || ((mode == RuntimePlaybackOrderMode::PlaybackPhase || mode == RuntimePlaybackOrderMode::SnapshotPlayback) && loopLengthTicks == 0) || storage.eventCount > storage.capacity) {
     phase_ = Phase::Denied;
     return false;
   }
@@ -95,7 +112,7 @@ PLAYBACK_ORDER_MAINTENANCE_MEM size_t RuntimePlaybackOrderBuilder::workEntriesUp
   for (size_t width = 1; width < eventCount && mergePasses < sizeof(size_t) * 8; width <<= 1) {
     ++mergePasses;
   }
-  const size_t multiplier = 1 + 2 * mergePasses;
+  const size_t multiplier = 1 + mergePasses + (mergePasses & 1u);
   return eventCount > std::numeric_limits<size_t>::max() / multiplier
              ? std::numeric_limits<size_t>::max()
              : eventCount * multiplier;
@@ -111,6 +128,14 @@ PLAYBACK_ORDER_MAINTENANCE_MEM size_t RuntimePlaybackOrderBuilder::requiredGrain
 
 PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::isBefore(uint16_t left, uint16_t right) const {
   const FixedPlaybackEventStorage& storage = *storage_;
+  if (orderMode_ == RuntimePlaybackOrderMode::SnapshotCanonical) {
+    if (storage.phases[left] != storage.phases[right]) return storage.phases[left] < storage.phases[right];
+    const auto& l = snapshotEventIds_[left];
+    const auto& r = snapshotEventIds_[right];
+    if (l.pass != r.pass) return l.pass < r.pass;
+    if (l.event != r.event) return l.event < r.event;
+    return left < right;
+  }
   if (orderMode_ == RuntimePlaybackOrderMode::CanonicalCaptureTick) {
     if (storage.events[left].tick != storage.events[right].tick) {
       return storage.events[left].tick < storage.events[right].tick;
@@ -135,8 +160,11 @@ PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::isBefore(uint16
   if (leftEvent.tick != rightEvent.tick) {
     return leftEvent.tick < rightEvent.tick;
   }
-  if (provenance_ != nullptr && provenance_[left] != provenance_[right])
+  if (orderMode_ == RuntimePlaybackOrderMode::SnapshotPlayback) {
+    if (snapshotRanks_[left] != snapshotRanks_[right]) return snapshotRanks_[left] < snapshotRanks_[right];
+  } else if (provenance_ != nullptr && provenance_[left] != provenance_[right]) {
     return provenance_[left] < provenance_[right];
+  }
   return left < right;
 }
 
@@ -145,7 +173,10 @@ PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::startNextMergeR
   if (runStart_ >= count) {
     runStart_ = 0;
     cursor_ = 0;
-    phase_ = Phase::CopyBack;
+    // A completed level becomes the next input without an N-entry copy-back.
+    mergeReadsScratch_ = !mergeReadsScratch_;
+    runWidth_ *= 2;
+    phase_ = Phase::Merge;
     return false;
   }
   leftCursor_ = runStart_;
@@ -183,7 +214,7 @@ PLAYBACK_ORDER_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackOr
         continue;
       }
       orderEntries_[orderedEventCount_] = static_cast<uint16_t>(sourceIndex);
-      if (phaseOutput_ != nullptr) phaseOutput_[sourceIndex] = orderMode_ == RuntimePlaybackOrderMode::PlaybackPhase
+      if (phaseOutput_ != nullptr) phaseOutput_[sourceIndex] = (orderMode_ == RuntimePlaybackOrderMode::PlaybackPhase || orderMode_ == RuntimePlaybackOrderMode::SnapshotPlayback)
                                     ? IntervalProjection::playbackEventPhase(
                                           storage.events[sourceIndex].tick, loopLengthTicks_)
                                     : storage.events[sourceIndex].tick;
@@ -196,6 +227,11 @@ PLAYBACK_ORDER_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackOr
 
     if (phase_ == Phase::Merge) {
       if (runWidth_ >= orderedEventCount_) {
+        if (mergeReadsScratch_) {
+          cursor_ = 0;
+          phase_ = Phase::CopyBack;
+          continue;
+        }
         phase_ = Phase::Complete;
         if (completionFlag_ != nullptr) {
           *completionFlag_ = true;
@@ -211,11 +247,13 @@ PLAYBACK_ORDER_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackOr
         continue;
       }
       if (remaining == 0) return RuntimePlaybackOrderBuildResult::Pending;
+      const uint16_t* input = mergeReadsScratch_ ? scratchEntries_ : orderEntries_;
+      uint16_t* output = mergeReadsScratch_ ? orderEntries_ : scratchEntries_;
       if (rightCursor_ >= rightEnd_ ||
-          (leftCursor_ < leftEnd_ && isBefore(orderEntries_[leftCursor_], orderEntries_[rightCursor_]))) {
-        scratchEntries_[outputCursor_++] = orderEntries_[leftCursor_++];
+          (leftCursor_ < leftEnd_ && isBefore(input[leftCursor_], input[rightCursor_]))) {
+        output[outputCursor_++] = input[leftCursor_++];
       } else {
-        scratchEntries_[outputCursor_++] = orderEntries_[rightCursor_++];
+        output[outputCursor_++] = input[rightCursor_++];
       }
       --remaining;
       continue;
@@ -223,7 +261,9 @@ PLAYBACK_ORDER_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackOr
 
     if (phase_ == Phase::CopyBack) {
       if (cursor_ == orderedEventCount_) {
-        runWidth_ *= 2;
+        // Only the final normalization is copied. Completion still exposes the
+        // original caller-owned order pointer, never the scratch pointer.
+        mergeReadsScratch_ = false;
         runStart_ = 0;
         leftEnd_ = rightEnd_ = outputCursor_ = 0;
         cursor_ = 0;
@@ -252,5 +292,6 @@ PLAYBACK_ORDER_MAINTENANCE_MEM void RuntimePlaybackOrderBuilder::discard() {
   leftCursor_ = rightCursor_ = leftEnd_ = rightEnd_ = outputCursor_ = 0;
   orderedEventCount_ = 0;
   orderedDuringFill_ = true;
+  mergeReadsScratch_ = false;
   phase_ = Phase::Idle;
 }

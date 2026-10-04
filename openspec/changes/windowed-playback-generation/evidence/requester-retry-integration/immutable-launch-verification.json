@@ -1,0 +1,192 @@
+{
+  "base_commit": "25542299a7e32078a243de0f4ce50c65a73b8199",
+  "dirty_tree": true,
+  "immutable_initial_launch": "production bound; native verified; device unverified",
+  "continuous_two_bar_qualified": false,
+  "native": {
+    "total": 2775,
+    "passed": 2768,
+    "skipped": 7,
+    "failed": 0,
+    "seconds": 177.685
+  },
+  "focused": {
+    "ownership": 122,
+    "prewarm": 196
+  },
+  "build": {
+    "environment": "teensy41-capture-serial",
+    "success": true,
+    "seconds": 41.068,
+    "sha256": "fb73aeedd01262ea283171e0d61f8bd3128bbffb38a6e13f7782b6c1705e9583",
+    "uploaded": false
+  },
+  "ram1": {
+    "variables": 96192,
+    "code": 391512,
+    "padding": 1704,
+    "locals": 34880,
+    "padding_floor": 840
+  },
+  "runtime_size": {
+    "target": 7072,
+    "host": 9096,
+    "pins_unchanged": true
+  },
+  "dense_work": {
+    "source_units": 2178,
+    "fill_turns": 35,
+    "order_and_ranks_turns": 1153,
+    "shared_retirement_turns": 1,
+    "derived_full_lifecycle_turns": 1226,
+    "prior_lifecycle_turns": 2080,
+    "per_holder_turns_supplied_per_two_bars": 3
+  },
+  "mutations": [
+    {
+      "name": "generation",
+      "caught": true,
+      "exit": 1,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8737: test_immutable_launch_requalifies_generation_and_revision_before_binding: Expected FALSE Was TRUE\t[FAILED]"
+      ],
+      "restored_sha256": "f710c6313ce6bcf15bf778bbe9ee762e799e567723c7286fd46a9930ac648b04"
+    },
+    {
+      "name": "consumer",
+      "caught": true,
+      "exit": 1,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:3166: test_launch_retries_an_occupied_target_when_its_source_arrives: Expected 9 Was 12. launch and first target tick must reuse preparation, including empty coverage\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:3166: test_launch_accepts_a_prepared_empty_interval_at_its_own_origin: Expected 12 Was 13. launch and first target tick must reuse preparation, including empty coverage\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:3166: test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn: Expected 13 Was 16. launch and first target tick must reuse preparation, including empty coverage\t[FAILED]"
+      ],
+      "restored_sha256": "dc06862c0c5704fd92b8d0d8c5e8cf21ec712365bb5de5476187ddb331091335"
+    },
+    {
+      "name": "cancel",
+      "caught": true,
+      "exit": 1,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8719: test_immutable_launch_cancellation_drains_every_preparation_phase: Expected NULL\t[FAILED]"
+      ],
+      "restored_sha256": "dbdeed10b1f0dede4ad3c4d10a9e28ec7a10ebeca163edcb812202dca0a69da3"
+    },
+    {
+      "name": "direction",
+      "caught": true,
+      "exit": 1,
+      "failures": [
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:7222: test_dense_snapshot_pipeline_measures_work_after_ping_pong_ordering: Expected 1153 Was 1067. two 555-turn sorts plus 43 rank turns\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:7320: test_snapshot_runtime_binding_matches_gather_and_preserves_canonical_ties: Expected 900 Was 200\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:6160: test_shared_window_fill_filters_before_capacity_and_preserves_loop_end_order: Expected 1536 Was 32\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:2357: test_frozen_canonical_order_receipt_expires_after_audible_discard: Expected TRUE Was FALSE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:2412: test_prepared_frozen_tail_capacity_and_all_filtered_bounds: Expected 1 Was 2\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:2005: test_runtime_canonical_bridge_base_survives_live_ledger_refresh: Expected 1 Was 2\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:2107: test_runtime_canonical_window_prepares_spare_coverage_and_releases_tail_workers: Expected 1 Was 2\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:2264: test_frozen_tail_copies_prepared_canonical_indexes_before_audible_reuse: Expected 0 Was 2\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:2320: test_frozen_tail_uses_private_sort_when_shared_order_is_audible: Expected TRUE Was FALSE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:3919: test_reserved_tail_denies_invalid_identity_and_continues_past_estimate: Expected Not-Equal\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:5745: test_deferred_stop_owner_resumes_canonical_rewrite_and_audible_turns: Expected 4 Was 900\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:5675: test_bridge_safe_boundary_differential_across_admission_and_pair_phases: Expected FALSE Was TRUE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:5590: test_bridge_cross_wrap_replacement_trace_matches_safe_note_instances: Expected FALSE Was TRUE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:5432: test_runtime_bridge_cursor_survives_ticks_and_drains_tail_before_wrap: Expected 4 Was 2\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1677: test_frozen_canonical_pipeline_bridge_matches_materialized_reference: Expected 80 Was 800\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1678: test_per_pass_bridge_generated_capture_maps_match_canonical_reference: Expected 176 Was 144\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1677: test_per_pass_bridge_maximum_base_and_capture_result: Expected 767 Was 768\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:4664: test_ranked_bridge_orders_unchanged_base_and_replacement_ties: Expected TRUE Was FALSE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1677: test_ranked_bridge_batches_match_sequential_reference: Expected 48 Was 336\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:4720: test_ranked_bridge_retains_original_cross_wrap_off: Expected 1736 Was 2937\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:5003: test_runtime_bridge_windows_keep_closure_after_worker_cleanup: Expected TRUE Was FALSE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1677: test_bridge_merge_matches_complete_oracle_with_insert_suppress_replace: Expected 30 Was 15\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1677: test_bridge_merge_differential_varied_sources_and_long_suppression_runs: Expected 629 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1685: test_bridge_replacement_preserves_equal_key_provenance: Expected 1 Was 2\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:416: test_stopped_oracle_publishes_a_fixed_current_view_without_growth: Expected 2 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:659: test_canonical_copy_uses_reserved_output_at_maximum_staging_capacity: Expected 1 Was 2048\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:667: test_canonical_copy_denies_stale_generation_and_replaced_output: Expected TRUE Was FALSE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:689: test_canonical_copy_of_filtered_pair_consumes_no_chunks: Expected TRUE Was FALSE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:723: test_frozen_capture_order_uses_only_fixed_staging_storage: Expected 2 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:777: test_frozen_capture_canonical_order_rewrites_store_in_fixed_grains: Expected 1 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:822: test_runtime_keeps_canonical_and_audible_frozen_orders_serial: Expected 1 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:870: test_runtime_rewrites_frozen_canonical_capture_in_one_declared_quantum: Expected 10 Was 30\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:934: test_ping_pong_order_preserves_permutation_and_private_source: Expected 1 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:960: test_ping_pong_order_measures_dense_work_and_resets_direction: Expected 0 Was 1\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1034: test_order_fill_checks_retained_adjacency_and_resets_sort_detection: Expected 2 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1050: test_order_fill_detects_rank_inversions_at_equal_tick: Expected 1 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1073: test_runtime_order_builder_yields_and_preserves_same_tick_off_before_on: Expected 2 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1091: test_runtime_order_builder_preserves_equal_phase_off_before_on_across_wrap: Expected 1 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1127: test_runtime_view_build_retains_empty_non_note_and_repeated_note_id_instances: Expected 2 Was 1\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1186: test_view_build_keeps_fill_and_order_as_separate_resumable_grains: Expected 1 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:7074: test_frozen_record_source_is_windowed_quantized_and_immutable: Expected 1 Was 0\t[FAILED]"
+      ],
+      "restored_sha256": "64062fd797fdcff3e54edec3d61000726bc7be9c80a42b605d4e8c9001e4067e"
+    },
+    {
+      "name": "normalization",
+      "caught": true,
+      "exit": 1,
+      "failures": [
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:7222: test_dense_snapshot_pipeline_measures_work_after_ping_pong_ordering: Expected 1153 Was 1067. two 555-turn sorts plus 43 rank turns\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:7321: test_snapshot_runtime_binding_matches_gather_and_preserves_canonical_ties: Expected 176 Was 128\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:2412: test_prepared_frozen_tail_capacity_and_all_filtered_bounds: Expected 1 Was 2\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:5675: test_bridge_safe_boundary_differential_across_admission_and_pair_phases: Expected FALSE Was TRUE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:5590: test_bridge_cross_wrap_replacement_trace_matches_safe_note_instances: Expected FALSE Was TRUE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:5432: test_runtime_bridge_cursor_survives_ticks_and_drains_tail_before_wrap: Expected 4 Was 2\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1677: test_frozen_canonical_pipeline_bridge_matches_materialized_reference: Expected 800 Was 35\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1677: test_per_pass_bridge_generated_capture_maps_match_canonical_reference: Expected 768 Was 624\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1677: test_per_pass_bridge_maximum_base_and_capture_result: Expected 1 Was 1536\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1677: test_ranked_bridge_batches_match_sequential_reference: Expected 768 Was 48\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:4720: test_ranked_bridge_retains_original_cross_wrap_off: Expected 1736 Was 2937\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:5003: test_runtime_bridge_windows_keep_closure_after_worker_cleanup: Expected TRUE Was FALSE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1677: test_bridge_merge_matches_complete_oracle_with_insert_suppress_replace: Expected 10 Was 768\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1677: test_bridge_merge_differential_varied_sources_and_long_suppression_runs: Expected 118 Was 117\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1685: test_bridge_replacement_preserves_equal_key_provenance: Expected 1 Was 2\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:659: test_canonical_copy_uses_reserved_output_at_maximum_staging_capacity: Expected 1 Was 1025\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:667: test_canonical_copy_denies_stale_generation_and_replaced_output: Expected TRUE Was FALSE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:689: test_canonical_copy_of_filtered_pair_consumes_no_chunks: Expected TRUE Was FALSE\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:822: test_runtime_keeps_canonical_and_audible_frozen_orders_serial: Expected 1 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:870: test_runtime_rewrites_frozen_canonical_capture_in_one_declared_quantum: Expected 10 Was 30\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:934: test_ping_pong_order_preserves_permutation_and_private_source: Expected 1 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:960: test_ping_pong_order_measures_dense_work_and_resets_direction: Expected 0 Was 1\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1034: test_order_fill_checks_retained_adjacency_and_resets_sort_detection: Expected 2 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1050: test_order_fill_detects_rank_inversions_at_equal_tick: Expected 1 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1091: test_runtime_order_builder_preserves_equal_phase_off_before_on_across_wrap: Expected 1 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1129: test_runtime_view_build_retains_empty_non_note_and_repeated_note_id_instances: Expected 4 Was 3\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:1186: test_view_build_keeps_fill_and_order_as_separate_resumable_grains: Expected 1 Was 0\t[FAILED]",
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:7074: test_frozen_record_source_is_windowed_quantized_and_immutable: Expected 1 Was 0\t[FAILED]"
+      ],
+      "restored_sha256": "64062fd797fdcff3e54edec3d61000726bc7be9c80a42b605d4e8c9001e4067e"
+    }
+  ],
+  "review": {
+    "passes": 1,
+    "concrete_findings": 2,
+    "fixed_and_red_proved": 2
+  },
+  "device": "NOT RUN",
+  "source_sha256": {
+    "include/RuntimePlaybackOrderBuilder.h": "188d67d46e5344a3f45ac79d56467b52ccbe69df75fc174b26d757572357a39f",
+    "include/RuntimePlaybackView.h": "3478816ef5ce4f3776bc064248c290b4a2032132bf53f40d853ad637877f9f01",
+    "include/Track.h": "c67cae6ec88085c4564d09d0e7ca2cb93cdcdeb8617f74cdd612c21bb6590626",
+    "include/TrackPlaybackRuntime.h": "4ed9e38dd761b7439bf7226ba0791a20dfd696dd10558afcf13f58d527c8c1e7",
+    "src/Track/RuntimePlaybackOrderBuilder.cpp": "64062fd797fdcff3e54edec3d61000726bc7be9c80a42b605d4e8c9001e4067e",
+    "src/Track/RuntimePlaybackView.cpp": "f7c2f12e5dc7a4ca0f9da3e3db5c167eb79909a09d9bab3c29f802d077192aa3",
+    "src/Track/TrackPlaybackRuntime.cpp": "81692f27f3408f21f130a9b67ffac8100f16f126b12eb9d0432172d6043877b1",
+    "src/Track/TrackPlaybackWindowBuild.cpp": "f710c6313ce6bcf15bf778bbe9ee762e799e567723c7286fd46a9930ac648b04",
+    "src/Track/TrackPlaybackHotPath.cpp": "dc06862c0c5704fd92b8d0d8c5e8cf21ec712365bb5de5476187ddb331091335",
+    "src/TrackManager/TrackManagerSlotMatrix.cpp": "dbdeed10b1f0dede4ad3c4d10a9e28ec7a10ebeca163edcb812202dca0a69da3",
+    "src/TrackManager/TrackManagerTransportTick.cpp": "0ad5586cedb7bef369ccbb8b070af22eeb02713f7de3f4d6951b813be492e455",
+    "test/test_playback_prewarm/test_playback_prewarm.cpp": "391ddce09f7f0625d1eb1529fa1426a4e9cc4cd53a55955f6171671851bfef5d",
+    "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp": "6435993c6748047abe0dc807db837fa4884ed6bc3c2316e46ed5529332f783ec"
+  },
+  "log_sha256": {
+    "immutable-launch-native-final.log": "5a665a2073ed1e84fc27c64931911130b6e9c79fda6053dde68486436b44f31c",
+    "immutable-launch-build-final.log": "0c6fdd2a1382daea9e9de9e02926cc9e022a4d64ab815998db0998474b42345e",
+    "immutable-launch-review-red.log": "1829f26a5fa6805b5af69223d362d4a829db8787346a745a2d7eef9a53d8003f",
+    "immutable-launch-review-fixed.log": "29758e62a4e956032c526db492d97354ef332da7496c41141330e5b2bf226496",
+    "immutable-launch-stimuli.log": "741a57461c88ea72465f197aaf0301d2d25408262fd9a54759f0beb54833f0a1",
+    "immutable-launch-openspec.log": "eb543f77d604fc495092504c172bc08f39531b34592bc804dc59ad1bb70416c9",
+    "pingpong-focused.log": "2456f61fc2604db11a7d1f79bdde19dfb4876e7cad279138047a707443d61110",
+    "pingpong-dense.log": "6c805f8580a6d5c7d1a43d629477e3294b664a9e63d576784d548a2627c499c6"
+  }
+}

@@ -14,6 +14,47 @@ Verification role before merge, push, or "done" — human or agent.
 - Check OpenSpec `tasks.md` and [DELIVERABLE_TRACKING.md](../DELIVERABLE_TRACKING.md) updated when scope shipped
 - Enforce naming per [NAMING.md](../Authority/NAMING.md)
 
+## Bounded lifecycle review
+
+Use one focused independent review for non-trivial lifecycle changes as part of
+existing verification, not another approval stage. Review the acceptance criterion
+and production path, not only whether individual functions look tidy.
+
+- Pin the slice's base/checkpoint and changed files, including relevant untracked
+  files. Do not repeatedly review the entire accumulated dirty tree. Read unchanged
+  callers/dependencies where necessary to establish reachable behavior.
+- Trace entry → preparation → publication → consumption → retirement. For each
+  waiting/refusal outcome, identify **the owner that changes the condition and the
+  production path that runs that owner**. Waiting with no producer is a defect,
+  not successful fail-closed behavior. Check retry/wakeup and cancellation too.
+- Exercise relevant cold/restored, empty, stale-generation/source, cancelled and
+  contended states. Verify that tests do not manufacture prerequisites production
+  never supplies (for example, injecting a ready root into a restored-slot test).
+- Check boolean contracts: queries such as `isReady()` must not advance state.
+  A command's `bool` is fine for a genuine success/failure contract; when callers
+  must distinguish waiting, progress, completion and rejection, use explicit named
+  outcomes/reasons rather than ambiguous `false` or extra output flags.
+- Assess boolean mode arguments where they hide different operations/lifetimes;
+  prefer a clear existing mode or named operation when justified. Do not split
+  functions merely to eliminate booleans. Many `can...()` wrappers are not a
+  simplification if callers still have to reconstruct the same state machine.
+- Prefer one owner and explicit lifecycle state for mutually exclusive phases.
+  Keep independent facts as booleans; do not mechanically replace them with enums.
+  New flags/helpers must not duplicate state or patch over a missing transition.
+- Each blocking finding needs a location, a reachable failure scenario or explicit
+  authority/invariant violation, consequence, smallest in-scope repair, and a
+  verification case. Do not invent findings. Style preferences and speculative
+  pattern suggestions are non-blocking and normally deferred.
+- Do not impose argument-count limits, ban output parameters, or demand polymorphism
+  instead of enum/switch logic. Respect allocation, ownership and execution bounds.
+- After concrete findings are fixed, retest the affected behavior and required
+  regression gates. Do not restart broad reviews or agent debates unless the user
+  requests more. Report review coverage and missing evidence honestly, including
+  if an independent review could not be performed; do not claim it passed.
+
+Follow the [critical-path rule](../Authority/WORKFLOW_LIFECYCLE.md#critical-path-and-debugging-boundary)
+when a finding belongs to another task: record/defer it rather than silently expand scope.
+
 ## Must reject implementation when
 
 | Condition | Action |
@@ -38,14 +79,17 @@ Verification role before merge, push, or "done" — human or agent.
 
 ```markdown
 ## Violations
-- (none) or list with file:line reference
+- (none) or blocking findings: location, scenario/invariant, consequence, repair, verification case
 
 ## Historical decision check
 - DECISION_REVIEW completed: YES / NO
 - DEC-### compliance: (list IDs checked)
 
 ## Recommendations
-- ...
+- Non-blocking findings; deferred work stays separate from required repairs.
+
+## Coverage
+- Slice/base reviewed, production paths checked, checks performed and remaining evidence gaps.
 
 ## Approval
 APPROVE / REQUEST CHANGES

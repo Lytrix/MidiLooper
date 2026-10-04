@@ -1,0 +1,57 @@
+{
+  "baseline_commit": "25542299",
+  "firmware": {
+    "schema_version": 1,
+    "timestamp": "2026-10-04T14:39:27.926972+00:00",
+    "git_commit": "25542299a7e32078a243de0f4ce50c65a73b8199",
+    "git_dirty": true,
+    "build_env": "teensy41-capture-serial",
+    "firmware_hex": "/Users/eelkejager/Library/Caches/pio-build-250513-215524-teensy41/teensy41-capture-serial/firmware.hex",
+    "firmware_hex_sha256": "dfb21ada3121a92e2eb645448d30372fe6bb134bbdea334dfd12db89a2d5d52d",
+    "preset": "base",
+    "scenario_ids": [
+      "base"
+    ],
+    "track_number": 8,
+    "loop_slot": 4,
+    "midi_channel": 8,
+    "record_bars": 2,
+    "overdub_bars": 2,
+    "capture_serial_port": "/dev/cu.usbmodem154944801",
+    "session_log": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/completion-clock-repair-baseline/session_20261004_163910.log",
+    "out_dir": "/Users/eelkejager/Documents/PlatformIO/Projects/250513-215524-teensy41/captures/completion-clock-repair-baseline"
+  },
+  "report": "captures/completion-clock-repair-baseline/host_midi_automation_baseline_20261004_164038.json",
+  "session_log": "captures/completion-clock-repair-baseline/session_20261004_163910.log",
+  "session_sha256": "ad4e4c306a5691427a32b68aa92d198d75ba07d5da1599f87ede38611b409be9",
+  "overall_ok": true,
+  "hitl_report": {
+    "verdict": "PASS",
+    "capture_complete": true,
+    "stimulus_valid": true,
+    "setup_transitions_confirmed": true,
+    "firmware_contradiction": false,
+    "firmware_assertions_pass": true,
+    "capture_integrity": "COMPLETE",
+    "reason": "",
+    "action_outcomes": [],
+    "issues": []
+  },
+  "tests": {
+    "focused": 101,
+    "native_total": 2744,
+    "native_passed": 2737,
+    "native_skipped": 7,
+    "native_failed": 0
+  },
+  "scratch_logs": {
+    "completion-focused-final.log": "d67667e48b72cd0900cf989ffd77719faf73856cfd40dc64c734d5392a8fba75",
+    "completion-native-final.log": "e04ebfe48181f345a8d7b35334a859d0ad71cd04e6bad3643a456b1043038dd8",
+    "completion-build-final.log": "30eaa5c10b260fde18704e4b420227782acf9bd792b7001eb53809affee159a2",
+    "completion-preview-red.log": "1e9a3372f353a785a542444a29c7ade14406824ecdbe04a083eaccfa18503fb0",
+    "completion-mutation-fresh-clock.log": "9d72ec251a14e80744723fcfc73d65eef1fcb48c52698ae8ab90ab643f3b57c9",
+    "completion-mutation-publication-guard.log": "9093b568dbde459212bc2b40d949c4ef68baf802da56af682a1862936cd64702",
+    "completion-mutation-boundary.log": "03e7c0cefa12000abec08b29025d1c274a16ef7c0cfdc9c9d914b45adfa2a335",
+    "completion-hitl.log": "f0a11576e85a999dd334523df8d38521d847116d99b21e63031616ca348a0390"
+  }
+}

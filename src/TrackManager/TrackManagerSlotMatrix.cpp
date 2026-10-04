@@ -327,6 +327,8 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
 
 void TrackManager::requestSlotSwitch(uint8_t trackIndex, uint8_t slotIndex,
                                      SlotQuantization quantization, uint32_t queuedAtTick) {
+  if (trackIndex < Config::NUM_TRACKS && slotStateMachine.hasPendingSlotSwitch(trackIndex))
+    tracks[trackIndex].cancelPlaybackLaunchForSlot(slotStateMachine.getPendingSlotIndex(trackIndex));
   StorageManager::refreshLoopSlotPayloadOnSdInRam(trackIndex, slotIndex);
   slotStateMachine.requestPendingSlotSwitch(trackIndex, slotIndex, quantization, queuedAtTick);
   // S4b.7 (Rev 20.3/21.7): this is a MIDI-input/action edge, so the inbound occupancy may **not** be taken
@@ -357,15 +359,22 @@ FLASHMEM bool TrackManager::provisionSlotForSwitch(uint8_t trackIndex, uint8_t s
 
 FLASHMEM bool TrackManager::servicePendingSlotProvision() {
   // S4b.7 (Rev 20.3/21.7): one `SlotProvision` turn. It serves the **first** track whose pending switch
-  // needs provisioning -- `slotProvisionNeeded` is the state-driven eligibility, so a switch needs no
-  // request record -- and performs both halves the contract names: the provisioning (`provisionSlotForSwitch`,
-  // idempotent, reporting its own refusal) and the target's merged-window build
-  // (`ensurePlaybackMergedEventsForSlot`), which is what releases the long-loop pending hold. Nothing else
-  // moves here: the commit stays the clock path's own step.
+  // needs provisioning or launch preparation. The pending switch is the request;
+  // occupancy alone does not discharge a demoted target's readiness obligation.
+  // It performs both halves the contract names: provisioning (`provisionSlotForSwitch`,
+  // idempotent, reporting its own refusal) and an unpositioned immutable launch
+  // request. The playback maintenance lane builds/publishes it; this owner does
+  // not publish. Legacy dense overflow and short slots retain their fallback.
+  // The commit remains the clock path's own step.
   //
   // Episode bookkeeping first: a track with no pending switch has no hold, so its report bit clears and a
   // later switch on the same track reports on its own account (once per episode, not once per boot).
   for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+      if (!slotStateMachine.hasPendingSlotSwitch(trackIndex) ||
+          slotStateMachine.getPendingSlotIndex(trackIndex) != slot)
+        tracks[trackIndex].cancelPlaybackLaunchForSlot(slot);
+    }
     if (!slotStateMachine.hasPendingSlotSwitch(trackIndex)) {
       slotSwitchHoldReportedMask_ =
           static_cast<uint8_t>(slotSwitchHoldReportedMask_ & ~(1u << trackIndex));
@@ -383,7 +392,12 @@ FLASHMEM bool TrackManager::servicePendingSlotProvision() {
     }
     Track& track = tracks[trackIndex];
     bool didWork = false;
-    if (MidiServiceDrain::slotProvisionNeeded(true, track.hasPlaybackOccupancyForSlot(targetSlot))) {
+    const bool immutableLaunch = targetSlot != track.getActiveLoopIndex() &&
+        track.getLoop(targetSlot).shouldAvoidFullVisualRebuild(track.getLoop(targetSlot).loopLengthTicks);
+    if (immutableLaunch) {
+      if (!provisionSlotForSwitch(trackIndex, targetSlot)) return false;
+      didWork = track.preparePlaybackLaunchForSlot(targetSlot);
+    } else if (MidiServiceDrain::slotProvisionNeeded(true, track.hasPlaybackOccupancyForSlot(targetSlot))) {
       if (!provisionSlotForSwitch(trackIndex, targetSlot)) {
         return false;  // refused and reported; the switch stays pending for a later turn
       }
@@ -403,7 +417,7 @@ FLASHMEM bool TrackManager::servicePendingSlotProvision() {
         slotSwitchHoldReportedMask_ = static_cast<uint8_t>(slotSwitchHoldReportedMask_ | bit);
       }
     }
-    return didWork;
+    if (didWork) return true; // A blocked/ready earlier target must not hide later work.
   }
   return false;
 }
@@ -430,6 +444,8 @@ void TrackManager::refreshPreviewSlotFocus(uint8_t trackIndex, uint8_t slotIndex
 }
 
 void TrackManager::clearPendingSlotSwitch(uint8_t trackIndex) {
+  if (trackIndex < Config::NUM_TRACKS && slotStateMachine.hasPendingSlotSwitch(trackIndex))
+    tracks[trackIndex].cancelPlaybackLaunchForSlot(slotStateMachine.getPendingSlotIndex(trackIndex));
   slotStateMachine.clearPendingSlotSwitch(trackIndex);
 }
 

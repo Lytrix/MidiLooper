@@ -37,6 +37,43 @@ Playback **does not** own storage or display representations.
 
 ---
 
+## Demoted-target launch during migration
+
+`TrackManager::servicePendingSlotProvision` reserves cold rolling-only storage and
+records an unpositioned immutable launch request for an inactive demoted target.
+`Track::stepPlaybackViewMaintenance` owns bounded source count/fill/order/retirement
+and ready publication. Qualification fills the unpublished build role in one
+bounded source pass, then pauses before ordering/admission; no ready/current view
+is modified. Admitted work excludes that completed fill and preserves its original
+positional promise. The actual switch boundary revalidates current revision,
+operation generation and phase-zero coverage, then binds the complete ready view.
+A successful empty interval is valid no-new-events coverage. A pass-backed target
+without a current root requests the existing on-demand committed-pass republish,
+once while no source job is pending; the Snapshot owner constructs it off-clock.
+This does not enable bulk loaded-slot hydration. The launch waits for that source.
+The initial window's revision stays fixed during its traversal; expiry is sticky,
+so later wraps do not revive it. Capture admission upgrades the same reservation
+without resetting prepared content. Blocked targets do not hide later provisioning.
+
+The mutable fallback remains beyond initial coverage and on the named legacy dense
+overflow route (`launch_legacy_dense`); accepted events are not truncated to fit.
+Task 3.7 — fallback removal and task 3.10 — continuous service qualification remain
+gated. Native launch correctness is verified, but device launch/timing and sustained
+refill are not qualified. Off-clock legacy gathering is not a timing guarantee.
+
+## Gated current-root rolling handoff
+
+The off-clock `serviceRollingPlaybackWindow` prologue selects later two-bar
+coverage through the existing request/maintenance owner. At the exact absolute
+boundary, `resolveRollingPlaybackWindow` validates the frame and complete private
+candidate before adoption and existing MIDI emission. Cursor transfer and physical
+storage generation are part of the handoff; an empty interval means no new events,
+not silence. Stale/late/unsupported transitions retain mutable fallback.
+`PLAYBACK_WINDOW_ROLLING_ENABLED` defaults0; explicit native/capture qualification
+is required to enable it. Later lookahead plus fallback gaps is not continuous
+service. Capacity, service constants and fallback-removal prerequisites are unchanged.
+See the window change's `evidence/requester-retry-integration/ROLLING_HANDOFF.md`.
+
 ## Invariants
 
 1. Sort keys use precomputed `playbackEventPhase` — not allocating projection in comparator.

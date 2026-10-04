@@ -1,0 +1,29 @@
+{
+  "baseline": "25542299 plus uncommitted completion-clock repair",
+  "result": "retry-safety prerequisite verified; live integration incomplete",
+  "focused_passed": 103,
+  "native": {
+    "total": 2746,
+    "passed": 2739,
+    "skipped": 7,
+    "failed": 0
+  },
+  "mutation": {
+    "guard_removed": "both new tests fail Expected 388 Was 0",
+    "restored_source_sha256": "bc651443616b7e35b4a2f106ce053caff047409a6a80f45240c779db680c81d0"
+  },
+  "build": {
+    "environment": "teensy41-capture-serial",
+    "result": "SUCCESS",
+    "ram1_variables": 96192,
+    "ram1_code": 390536,
+    "ram1_padding": 2680,
+    "ram1_locals": 34880,
+    "padding_floor": 840,
+    "firmware_hex_sha256": "c553dbf6afaf0a7d20484a53981ae0cc843ccb310a3c8765e41690a65f5eb243"
+  },
+  "openspec_strict": "PASS",
+  "diff_check": "PASS",
+  "upload": "NOT RUN",
+  "live_timing_qualification": "BLOCKED: bounded source/retry/boundary production path absent"
+}

@@ -7,10 +7,11 @@
 #include <cstdint>
 
 #include "RuntimePlaybackView.h"
+#include "LoopSnapshot.h"
 #include "LoopEventStore.h"
 #include "RuntimeCompanionPasses.h"
 
-enum class RuntimePlaybackViewFillScope : uint8_t { AllSource, PlaybackCoverage, RawCoverage, RecordCoverage };
+enum class RuntimePlaybackViewFillScope : uint8_t { AllSource, PlaybackCoverage, RawCoverage, RecordCoverage, SnapshotWindow };
 
 enum class RuntimePlaybackViewFillResult : uint8_t { Pending, Complete, Denied };
 
@@ -61,13 +62,23 @@ class RuntimePlaybackViewFill {
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
              const LedgerBoundarySummary& ledgerBoundary,
              RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::AllSource);
+  /// Borrows a pinned window cursor; each cursor inspection/transition costs one
+  /// unit. Caller owns its retirement, including denial/cancellation paths.
+  bool begin(RuntimePlaybackView& destination, LoopSnapshot::EventWindowCursor& source,
+             const PlaybackViewSourceIdentity& sourceIdentity,
+             const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
+             const LedgerBoundarySummary& ledgerBoundary);
   RuntimePlaybackViewFillResult step(size_t entryQuantum);
   void discard();
+  size_t copiedEventCount() const { return copied_; }
   bool active() const { return destination_ != nullptr && cursor_ < sourceCount_; }
 
  private:
   RuntimePlaybackView* destination_ = nullptr;
-  const RuntimeCompanionPasses* baseline_ = nullptr;
+  union {
+    const RuntimeCompanionPasses* baseline_ = nullptr;
+    LoopSnapshot::EventWindowCursor* snapshotSource_;
+  };
   uint64_t baselineGeneration_ = 0;
   PlaybackViewSourceIdentity expected_;
   const MidiEvent* source_ = nullptr;

@@ -1,15 +1,15 @@
 ---
-description: Multi-stage bugfix — one root cause per commit; freeze solved layers; evidence-backed sequencing
+description: Multi-stage bugfix — stay on the acceptance path, bound investigation, freeze solved layers and return to the main task
 alwaysApply: true
 ---
 
 # Multi-stage bugfix workflow
 
-Fixing one root cause often **unmasks** the next. That is expected — not a reason to hold commits or bundle unrelated fixes.
+Fixing one root cause often **unmasks** the next. Discovery is not authorization to follow it: apply the [critical-path and debugging boundary](../../docs/Authority/WORKFLOW_LIFECYCLE.md#critical-path-and-debugging-boundary), then resume the main task after the blocking fix is verified.
 
 **Goal:** a sequence of small, evidence-backed commits. Each commit fixes **one** confirmed root cause, strengthens **one** invariant, and improves observability for what remains.
 
-**Does not replace:** [architecture-checkpoint-bugfix](architecture-checkpoint-bugfix.mdc), [Plan-Pre-Implementation-Review.mdc](Plan-Pre-Implementation-Review.mdc), [OpenSpec-Phase-Gate.mdc](OpenSpec-Phase-Gate.mdc).
+**Does not replace:** the [architecture decision ladder](../../docs/Authority/ARCHITECTURE_RULES.md#progress-bias-and-decision-ladder), [Plan-Pre-Implementation-Review.mdc](Plan-Pre-Implementation-Review.mdc), or [OpenSpec-Phase-Gate.mdc](OpenSpec-Phase-Gate.mdc). No additional approval gate.
 
 **Work identity / closeout:** [WORKFLOW_LIFECYCLE.md](../../docs/Authority/WORKFLOW_LIFECYCLE.md); GitHub Bug/RC rules: [GITHUB_WORK_TRACKING.md](../../docs/Authority/GITHUB_WORK_TRACKING.md).
 
@@ -21,11 +21,11 @@ A single capture may show several bugs. **Split by root cause**, not by session.
 |----|-------|
 | One commit per confirmed RC with native test + log anchor | One mega-commit for "weird NOTE_EDIT in capture X" |
 | Freeze the solved investigation doc (FROZEN + misattribution guard) | Reopen a closed RC because a new symptom appeared downstream |
-| Start a new plan doc for the next RC layer | Append unrelated RCs to a frozen bugfix plan |
+| Record/defer the next finding; choose a planning artifact only when it enters scope | Automatically turn every downstream symptom into another fix/plan |
 
 ## Debugging boundary
 
-Draw an explicit boundary in the plan doc before coding the next stage:
+Name the blocked acceptance criterion, the hypothesis/test that distinguishes causes, and the task to resume. Draw the investigation boundary in the existing task/packet (a new plan is not mandatory):
 
 ```
 … → EditSessionAction     ← trust geometry unless pipeline apply fails
@@ -42,8 +42,8 @@ Before landing a stage fix:
 2. **Owner** — extend existing function/module ([Reference-Functions-Not-Lines.mdc](Reference-Functions-Not-Lines.mdc)); no new top-level owner without design session.
 3. **Invariant** — one sentence: what must hold after this commit.
 4. **Test** — native fixture from capture slice when possible; HITL only for what host cannot cover.
-5. **Observability** — one log or guard that makes the *next* failure obvious (e.g. `macro commit skipped: bracket_mismatch`).
-6. **Docs** — mark stage **shipped** in active plan; freeze parent investigation when the RC layer is closed.
+5. **Observability** — reuse existing evidence; add a focused diagnostic only when it distinguishes the active hypothesis. Do not accumulate speculative guards or flags.
+6. **Docs / return** — record the actual verification level, freeze the solved finding, and resume its parent task. Native verification alone is not “shipped.”
 
 Run `pio test -e native` before sharing the commit.
 
@@ -71,11 +71,11 @@ Do not start RC8 recon while RC7 still commits plausible-but-wrong mover rows.
 
 ## When to stop and split
 
-Open a **new** plan or stage when:
-
-- the fix touches a **different owner** than the current stage;
-- the investigation doc would mix two invariants;
-- architecture-checkpoint answers **yes** to ownership or transition change.
+Before following a new root cause, apply the critical-path rule above. If it is
+in scope, separate its invariant from the solved finding and choose the smallest
+[planning artifact required](../../docs/Authority/WORKFLOW_LIFECYCLE.md#8-determine-the-required-planning-artifact).
+An ownership/contract change uses the existing [formal triggers](../../docs/ARCHITECTURE_REASSESSMENT.md#formal-triggers), not a second checkpoint.
+Review non-trivial lifecycle changes with the existing [reviewer checklist](../../docs/Agents/reviewer.md#bounded-lifecycle-review); style findings do not open another fix stage.
 
 ## Example (same capture, three commits)
 
@@ -92,7 +92,7 @@ Open a **new** plan or stage when:
 | State | Location |
 |-------|----------|
 | Closed RC layer | `docs/Plans/*_bugfix.md` — **FROZEN**, final validation section |
-| Active RC | New or sibling plan — debugging boundary at top |
+| Active RC | Existing task/packet or appropriately scoped plan — debugging boundary at top |
 | Index only | Short follow-up doc linking frozen + active work |
 
 Reference: [`note_edit_focus_driver_drift_bugfix.md`](docs/Plans/archive/bugfix/note_edit_focus_driver_drift_bugfix.md) (frozen), [`note_edit_projection_ownership_bugfix.md`](docs/Plans/note_edit_projection_ownership_bugfix.md), [`note_edit_overlap_projection_followup.md`](docs/Plans/note_edit_overlap_projection_followup.md).

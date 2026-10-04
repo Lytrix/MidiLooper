@@ -899,8 +899,10 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::releaseWholeTakeView
   return true;
 }
 
-RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm(bool reserveWholeTake) {
+RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm(bool reserveWholeTake, bool reserveCapture) {
   if (prewarmed) {
+    // Rolling-only launch reservation may later upgrade to capture in place.
+    if (reserveCapture && (!liveCaptureStaging().prewarm() || !frozenCaptureStaging().prewarm())) return false;
     if (!reserveWholeTake) {
       // Windowed-only request on an already-prewarmed slot: the loop is now known to be long,
       // so the whole-take reservation is dead and must be returned rather than held for the
@@ -951,7 +953,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm(bool reserve
     }
     wholeTakeReserved = true;
   }
-  if (!liveCaptureStaging().prewarm() || !frozenCaptureStaging().prewarm()) {
+  if (reserveCapture && (!liveCaptureStaging().prewarm() || !frozenCaptureStaging().prewarm())) {
     for (RuntimePlaybackView& allocated : views) {
       allocated.storage.release();
     }
@@ -1041,12 +1043,12 @@ bool RuntimePlaybackViewSet::selectCandidateBridge(const EmissionCursor& earlies
 size_t RuntimePlaybackViewSet::fixedExternalBytes() const {
   constexpr size_t eventBytes = sizeof(MidiEvent) + sizeof(uint16_t) + sizeof(uint32_t) +
                                 sizeof(uint16_t) + sizeof(uint8_t);
-  // Views and staging are always reserved; the whole-take part is reported only when it was
-  // actually admitted, so this figure is the slot's real reservation (RC-MEM-2 assertion).
+  // Rolling views are reserved; capture staging is counted only when admitted.
+  // A cold launch does not reserve capture or whole-take backing.
   const size_t viewBytes =
       RuntimePlaybackViewConfig::kViewCount * RuntimePlaybackViewConfig::kEventsPerView *
           (eventBytes + sizeof(PlaybackPassEventOrigin) + sizeof(uint16_t)) +
-      RuntimePlaybackViewConfig::kCaptureStagingEvents * eventBytes * captureStagings.size();
+      (captureStagings[0].storage.capacity + captureStagings[1].storage.capacity) * eventBytes;
   if (!wholeTakeReserved) {
     return viewBytes;
   }

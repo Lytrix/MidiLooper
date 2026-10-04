@@ -13,7 +13,7 @@ enum class RuntimePlaybackOrderBuildResult : uint8_t { Pending, Complete, Denied
 /// Playback order projects ticks into a loop phase. Canonical capture order
 /// keeps the original stable tick order so the pass representation remains a
 /// faithful event timeline across a wrap.
-enum class RuntimePlaybackOrderMode : uint8_t { PlaybackPhase, CanonicalCaptureTick, RawPlaybackTick };
+enum class RuntimePlaybackOrderMode : uint8_t { PlaybackPhase, CanonicalCaptureTick, RawPlaybackTick, SnapshotCanonical, SnapshotPlayback };
 
 /// Persistent, allocation-free ordering state for an already filled playback
 /// view.  One `step` consumes no more than its caller's entry quantum.  The
@@ -43,8 +43,8 @@ class RuntimePlaybackOrderBuilder {
                              uint16_t* scratch, size_t indexCapacity);
   RuntimePlaybackOrderBuildResult step(size_t entryQuantum);
   /// Conservative entry-operation count for this bottom-up merge order. It
-  /// includes the initial order fill and every merge/copy-back pass. Already
-  /// ordered retained inputs finish after fill; this worst-case bound is unchanged.
+  /// includes initial fill, one write per merge level, and at most one final
+  /// normalization to the caller's order array. Sorted inputs finish after fill.
   static size_t workEntriesUpperBound(size_t eventCount);
   static size_t requiredGrains(size_t eventCount, size_t entryQuantum);
   bool active() const { return phase_ != Phase::Idle && phase_ != Phase::Complete; }
@@ -59,7 +59,11 @@ class RuntimePlaybackOrderBuilder {
   uint16_t* orderEntries_ = nullptr;
   uint16_t* scratchEntries_ = nullptr;
   uint32_t* phaseOutput_ = nullptr;
-  const uint32_t* provenance_ = nullptr;
+  union {
+    const uint32_t* provenance_ = nullptr;
+    const PlaybackPassEventOrigin* snapshotEventIds_;
+    const uint16_t* snapshotRanks_;
+  };
   bool* completionFlag_ = nullptr;
   uint32_t loopLengthTicks_ = 0;
   RuntimePlaybackOrderMode orderMode_ = RuntimePlaybackOrderMode::PlaybackPhase;
@@ -74,6 +78,7 @@ class RuntimePlaybackOrderBuilder {
   size_t outputCursor_ = 0;
   size_t orderedEventCount_ = 0;
   bool orderedDuringFill_ = true;
+  bool mergeReadsScratch_ = false;
 
   bool startNextMergeRun();
   bool isBefore(uint16_t left, uint16_t right) const;

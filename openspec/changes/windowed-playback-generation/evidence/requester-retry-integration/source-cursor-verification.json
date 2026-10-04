@@ -1,0 +1,52 @@
+{
+  "scope": "LoopSnapshot::EventWindowCursor source-query prerequisite",
+  "status": "verified; live runtime integration outstanding",
+  "baseline": "25542299 plus prior uncommitted completion-clock and retry-safety repairs",
+  "focused": {
+    "suite": "test_loop_event_store",
+    "passed": 47,
+    "failed": 0
+  },
+  "native": {
+    "total": 2750,
+    "passed": 2743,
+    "skipped": 7,
+    "failed": 0
+  },
+  "mutations": [
+    "filter",
+    "pin",
+    "recursive release",
+    "exclusive start",
+    "inclusive end"
+  ],
+  "restored_source_sha256": "5e1db3fc5ef4e5972e8239f2077c35e0bdd6b1575124b5549beebc8183bfbec8",
+  "work": {
+    "maximum_bars": 3,
+    "maximum_read_units": 13059,
+    "maximum_release_units": 13059,
+    "fixture_inspected": 120,
+    "fixture_read_units": 132,
+    "fixture_output_events": 80,
+    "loop_bars_sweep": [
+      16,
+      64,
+      512
+    ]
+  },
+  "build": {
+    "environment": "teensy41-capture-serial",
+    "result": "SUCCESS",
+    "ram1_variables": 96192,
+    "ram1_code": 390536,
+    "ram1_padding": 2680,
+    "ram1_locals": 34880,
+    "padding_floor": 840,
+    "firmware_hex_sha256": "65807395a1add037f663e213c68575f8f5309037a0af277440e3f9556a29ad2b"
+  },
+  "review": "one pass; endpoint test gap fixed and mutation-proved",
+  "openspec_strict": "PASS",
+  "diff_check": "PASS",
+  "upload": "NOT RUN",
+  "timing_qualification": "NOT QUALIFIED: source primitive not bound to runtime requester"
+}

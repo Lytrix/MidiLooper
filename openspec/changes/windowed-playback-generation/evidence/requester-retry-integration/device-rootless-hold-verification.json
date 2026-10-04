@@ -1,0 +1,59 @@
+{
+  "bug": "rootless pass-backed launch did not request its source",
+  "native": {
+    "total": 2776,
+    "passed": 2769,
+    "skipped": 7,
+    "failed": 0,
+    "seconds": 148.997
+  },
+  "focused": 123,
+  "firmware_uploaded_sha256": "5e8a81b1ba9c91e52f566c40a7d4e0101850ea19ccb016f16b80af1878f5723a",
+  "ram1": {
+    "variables": 96192,
+    "code": 391512,
+    "padding": 1704,
+    "locals": 34880,
+    "padding_floor": 840
+  },
+  "device": {
+    "track": 8,
+    "slot": 5,
+    "preserved": true,
+    "stored_events_before": 1144,
+    "stored_events_after": 1144,
+    "length_ticks": 18432,
+    "root_before": false,
+    "root_after": true,
+    "root_current_after": true,
+    "queued_s": 205.973,
+    "commit_s": 233.897,
+    "cold_launch_delay_s": 27.924,
+    "state_after": "STOPPED",
+    "pending_after": 0,
+    "queue_after": "0/4",
+    "specific_hold_resolved": true,
+    "baseline_unmodified": "PASS but switch not sent",
+    "baseline_temp": "FAIL injected held note83 unmatched/out-of-range",
+    "content_parity": "INCONCLUSIVE_CAPTURE: no unique recurring effective anchor",
+    "continuous_two_bar_qualified": false,
+    "cold_launch_deadline_met": false
+  },
+  "capture_sha256": {
+    "captures/immutable-launch-device-switch/metadata.json": "7be5a700055ac2a69db92e265bf24b3251cb8a5b087d67ad1ae6b95552430818",
+    "captures/immutable-launch-device-switch/session_20261004_205541.log": "01c6d952b4f2d149d7ae9fc1502f2f974612a273833fd70926d9e2eeced7c6e9",
+    "captures/immutable-launch-device-stopped-observation/session_20261004_210225.log": "8fd06d4cdd3c883a22d63640e4cc3baaef72f5ced4d1419cce58558fdddd8deb",
+    "captures/immutable-launch-device-switch-fixed/metadata.json": "f2f16320297c60f7afd170a1e4a384d885db924eef94c5ff3c2e7ae1a065678d",
+    "captures/immutable-launch-device-switch-fixed/intervention.jsonl": "53749cdff861a5a345edc860bb8170f6b408c8d91f05766bf0e4d74cad741e8c",
+    "captures/immutable-launch-device-switch-fixed2/metadata.json": "2b8783761271ae20a538616b4c6bb2096483482f0cb5141cff7ea1272e4498df",
+    "captures/immutable-launch-device-switch-fixed2/intervention.jsonl": "02a0af675e5a5425512ed0f24654de7fc1c14fcafba3cec72c27bd337a6a4305",
+    "captures/immutable-launch-device-switch-fixed2/session_20261004_212820.log": "f776ecbdaa6b67d59a74164cb83d5fd34ceec40e1861425a14a589f715b0923c",
+    "captures/immutable-launch-device-target-parity/serial.log": "f1f688d2f55208ecf1603f5b47386bc9619be1e514587984d30159b6a388610d",
+    "captures/immutable-launch-device-target-parity/midi-output.jsonl": "06168573e9ee8e3a06d508e267236a920a4fd6f7f8a6820004c93cc1e43f40b8",
+    "captures/immutable-launch-device-final-observation/session_20261004_213624.log": "d620d5d0f72468ae171ee2108764798b672ca0548e7cc13c31bf459f466d36d0"
+  },
+  "source_sha256": {
+    "src/Track/TrackPlaybackWindowBuild.cpp": "5e9df27b5179f2af62c38e60067854ea133bb3fd410ff75f782d844ed42ec28a",
+    "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp": "41ed205d1b8e939d3eb4738dc4f728c51b90eec62a9345967daf8207da09a9d8"
+  }
+}

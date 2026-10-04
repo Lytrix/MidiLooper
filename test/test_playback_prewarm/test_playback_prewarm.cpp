@@ -41,6 +41,8 @@
 #include "Utils/MidiServiceDrain.h"
 #include "Utils/DisplayWindowUtils.h"
 
+static_assert(PLAYBACK_WINDOW_ROLLING_ENABLED == 0, "default build keeps rolling disabled");
+
 // Production deferred cleanup consumes the admitted job's owned capture preview.
 // These fixtures assert canonical/bridge/undo bookkeeping, so the preview content
 // is irrelevant; one shared buffer keeps the call sites unchanged otherwise.
@@ -887,6 +889,98 @@ void test_prepared_capture_canonicalization_prevents_legacy_sort_at_seal() {
   TEST_ASSERT_FALSE(loop.ensureCaptureEventsSorted());
 }
 
+void test_ping_pong_order_preserves_permutation_and_private_source() {
+  for (size_t count : {0u, 1u, 2u, 3u, 4u, 7u, 8u, 9u, 31u, 32u, 33u, 2048u}) {
+    for (size_t quantum : {1u, 7u, 48u}) {
+      for (unsigned mode = 0; mode < 4; ++mode) {
+        RuntimePlaybackView view;
+        TEST_ASSERT_TRUE(view.prewarm(2048));
+        std::vector<uint16_t> indexes(2048, UINT16_MAX), scratch(2048, UINT16_MAX), expected;
+        std::vector<MidiEvent> input;
+        for (size_t i = 0; i < count; ++i) {
+          const uint32_t tick = mode == 2 ? static_cast<uint32_t>(i * 2654435761u) % 1024
+                                          : static_cast<uint32_t>((count - i) / 2);
+          const auto event = i % 3 == 0 ? MidiEvent::NoteOff(tick, 1, 60)
+                                      : MidiEvent::NoteOn(tick, 1, 60, 90);
+          TEST_ASSERT_TRUE(view.storage.append(event));
+          view.storage.phases[i] = tick;
+          view.storage.order[i] = view.storage.mergeScratch[i] = UINT16_MAX;
+          input.push_back(event);
+          if (mode == 3 && i % 5 == 0) view.storage.discardEvent(i);
+          else expected.push_back(static_cast<uint16_t>(i));
+        }
+        std::stable_sort(expected.begin(), expected.end(), [&](uint16_t a, uint16_t b) {
+          if (input[a].tick != input[b].tick) return input[a].tick < input[b].tick;
+          if (mode != 1 && input[a].isNoteOff() != input[b].isNoteOff()) return input[a].isNoteOff();
+          return a < b;
+        });
+        RuntimePlaybackOrderBuilder order;
+        if (mode == 1) TEST_ASSERT_TRUE(order.beginCanonicalCapture(view.storage));
+        else if (mode == 3) TEST_ASSERT_TRUE(order.beginIndexes(view.storage, indexes.data(), scratch.data(), 4096, nullptr));
+        else TEST_ASSERT_TRUE(order.begin(view, 4096, mode == 2 ? RuntimePlaybackOrderMode::RawPlaybackTick
+                                                               : RuntimePlaybackOrderMode::PlaybackPhase));
+        auto* const output = mode == 3 ? indexes.data() : view.storage.order;
+        auto* const backing = view.storage.events;
+        const size_t limit = RuntimePlaybackOrderBuilder::requiredGrains(count, quantum);
+        size_t turns = 0;
+        while (!order.complete() && turns <= limit) {
+          const auto result = order.step(quantum);
+          TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result);
+          if ((mode == 0 || mode == 2) && result == RuntimePlaybackOrderBuildResult::Pending)
+            TEST_ASSERT_FALSE(view.complete);
+          ++turns;
+        }
+        TEST_ASSERT_TRUE(order.complete());
+        TEST_ASSERT_LESS_OR_EQUAL_UINT32(limit, turns);
+        TEST_ASSERT_EQUAL_UINT32(expected.size(), order.orderedEventCount());
+        for (size_t i = 0; i < expected.size(); ++i) TEST_ASSERT_EQUAL_UINT16(expected[i], output[i]);
+        TEST_ASSERT_EQUAL_PTR(backing, view.storage.events);
+        for (size_t i = 0; i < count; ++i) {
+          TEST_ASSERT_EQUAL_UINT32(input[i].tick, view.storage.events[i].tick);
+          TEST_ASSERT_EQUAL(input[i].type, view.storage.events[i].type);
+          if (mode == 3) {
+            TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, view.storage.order[i]);
+            TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, view.storage.mergeScratch[i]);
+            TEST_ASSERT_EQUAL_UINT32(input[i].tick, view.storage.phases[i]);
+          }
+        }
+      }
+    }
+  }
+}
+
+void test_ping_pong_order_measures_dense_work_and_resets_direction() {
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(2048));
+  RuntimePlaybackOrderBuilder order;
+  for (size_t count : {2u, 4u, 8u, 16u, 1024u, 2048u}) {
+    view.storage.eventCount = 0;
+    for (size_t i = 0; i < count; ++i)
+      TEST_ASSERT_TRUE(view.storage.append(MidiEvent::NoteOn(count - i, 1, 60, 90)));
+    TEST_ASSERT_TRUE(order.beginCanonicalCapture(view.storage));
+    // Interrupt after the first level, when the input direction is scratch.
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, order.step(count * 2));
+    order.discard();
+    TEST_ASSERT_TRUE(order.beginCanonicalCapture(view.storage));
+    size_t units = 0;
+    while (!order.complete() && units < 50000) {
+      TEST_ASSERT_NOT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, order.step(1));
+      ++units;
+    }
+    TEST_ASSERT_TRUE(order.complete());
+    size_t levels = 0;
+    for (size_t n = count; n > 1; n /= 2) ++levels;
+    const size_t expected = count * (1 + levels + levels % 2);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(expected, units, "one write per merge level, at most one final normalization");
+    TEST_ASSERT_EQUAL_UINT32(expected, RuntimePlaybackOrderBuilder::workEntriesUpperBound(count));
+    for (size_t i = 0; i < count; ++i) TEST_ASSERT_EQUAL_UINT16(count - i - 1, view.storage.order[i]);
+    if (count == 2048) {
+      TEST_ASSERT_EQUAL_UINT32(26624, units);
+      TEST_ASSERT_EQUAL_UINT32(555, RuntimePlaybackOrderBuilder::requiredGrains(count, 48));
+    }
+  }
+}
+
 void test_ordered_inputs_finish_in_fill_grains_without_touching_merge_scratch() {
   for (unsigned mode = 0; mode < 3; ++mode) {
     for (size_t quantum : {size_t(1), size_t(32)}) {
@@ -1313,11 +1407,9 @@ void test_pending_stop_orders_only_after_reserved_closures() {
 void test_stop_admission_contract_counts_fixed_order_work() {
   const StopAdmissionContract contract{4, 2, 1, 4};
   TEST_ASSERT_TRUE(contract.isDeclared());
-  // Three entries: each order needs the initial fill plus two merge/copy-back
-  // passes (15 operations, four 4-entry grains). Stop admission also owns a
-  // one-grain rewrite and two chunk-trim turns, so canonical + rewrite +
-  // audible needs eleven fixed grains.
-  TEST_ASSERT_EQUAL_UINT32(11, contract.requiredOrderGrains(3));
+  // Three entries: fill plus two alternating merge passes =9 operations,
+  // three 4-entry grains. Add rewrite1 and trim2 to both sorts: nine grains.
+  TEST_ASSERT_EQUAL_UINT32(9, contract.requiredOrderGrains(3));
   TEST_ASSERT_TRUE(contract.canFinalize(1, 3));
 
   const StopAdmissionContract adequate{4, 11, 1, 4};
@@ -1374,7 +1466,7 @@ void test_stop_reserves_ranked_preparation_separately_and_preserves_stop_precede
   PendingStopAdmission stop;
   const auto ranked = StopAdmissionContract::requiredPreparedRankedTailGrainsForPasses(2048, 2, 2048, 0, 0, 32);
   TEST_ASSERT_TRUE(stop.begin(4, 100, 7, 1, 2048, contract, ranked));
-  TEST_ASSERT_EQUAL_UINT16(6240, stop.remainingRankedPreparationGrains);
+  TEST_ASSERT_EQUAL_UINT16(4960, stop.remainingRankedPreparationGrains);
   TEST_ASSERT_EQUAL_UINT16(contract.requiredOrderGrains(2048), stop.remainingOrderGrains);
   TEST_ASSERT_FALSE(stop.consumeRankedPreparationGrain());
   TEST_ASSERT_TRUE(stop.consumeClosureGrain());
@@ -1382,7 +1474,7 @@ void test_stop_reserves_ranked_preparation_separately_and_preserves_stop_precede
   TEST_ASSERT_FALSE(stop.canCommit(7, PendingStopDestination::Playing));
   TEST_ASSERT_TRUE(stop.consumeRankedPreparationGrain());
   stop.requestTransportStop();
-  TEST_ASSERT_EQUAL_UINT16(6239, stop.remainingRankedPreparationGrains);
+  TEST_ASSERT_EQUAL_UINT16(4959, stop.remainingRankedPreparationGrains);
   while (stop.remainingRankedPreparationGrains) TEST_ASSERT_TRUE(stop.consumeRankedPreparationGrain());
   TEST_ASSERT_TRUE(stop.consumeRankedPreparationGrain()); // Estimate exhaustion is not a work limit.
   TEST_ASSERT_FALSE(stop.canCommit(7, PendingStopDestination::Playing));
@@ -1503,8 +1595,8 @@ void test_prepared_ranked_tail_bound_preserves_other_children_and_invalid_inputs
   TEST_ASSERT_TRUE(StopAdmissionContract::requiredPreparedRankedTailGrainsForPasses(2048, 2, 2048, 0, 0, 32)
       <= StopAdmissionContract::kProvisionalRankedPreparationGrains);
   TEST_ASSERT_TRUE(StopAdmissionContract::requiredRankedTailGrainsForPasses(2048, 2, 2048, 0, 0, 32)
-      > StopAdmissionContract::kProvisionalRankedPreparationGrains);
-  TEST_ASSERT_EQUAL_UINT64(6240,
+      > StopAdmissionContract::requiredPreparedRankedTailGrainsForPasses(2048, 2, 2048, 0, 0, 32));
+  TEST_ASSERT_EQUAL_UINT64(4960,
       StopAdmissionContract::requiredPreparedRankedTailGrainsForPasses(2048, 2, 2048, 0, 0, 32));
   for (size_t capacity : {size_t(1), size_t(16), size_t(2048)}) {
     for (size_t quantum : {size_t(1), size_t(32)}) {
@@ -7052,8 +7144,323 @@ void test_frozen_record_source_rejects_pool_reset_and_failed_row_reads() {
   TEST_ASSERT_FALSE(view.sourceFilled);
 }
 
+ImmutableLoopSnapshotRef bindingSnapshot(Loop& loop, unsigned count = 80) {
+  auto parent = LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, 0, 1, 1);
+  LoopSnapshotChangeSet changes;
+  for (unsigned i = 0; i < count; ++i) {
+    SnapshotEventChange change{};
+    change.kind = SnapshotChangeKind::Add;
+    change.next.loopId = loop.loopId;
+    change.next.eventId = 0x10000u * (1 + (i % 5)) + (count - i);
+    change.next.canonicalOrder = 0x10000u + (count - i) / 4;
+    change.next.value = MidiEvent::ControlChange(i % 7 == 0 ? 900 : 200, 1, 7, i % 128);
+    if (i == 2) change.next.value = MidiEvent::NoteOn(200, 1, 60, 100);
+    if (i == 3) change.next.value = MidiEvent::NoteOff(200, 1, 60, 0);
+    if (i == 4) change.next.value = MidiEvent::ControlChange(99, 1, 7, 4);
+    if (i == 5) change.next.value = MidiEvent::ControlChange(1636, 1, 7, 5);
+    changes.events.push_back(change);
+  }
+  LoopSnapshotConstruction construction(parent, changes);
+  for (unsigned turn = 0; turn < 10000 && !construction.complete(); ++turn)
+    TEST_ASSERT_TRUE(construction.step(64));
+  TEST_ASSERT_TRUE(construction.complete());
+  auto root = construction.freeze();
+  TEST_ASSERT_NOT_NULL(root.get());
+  loop.storePublishedSnapshotForTest(root, loop.playbackRevision);
+  return root;
+}
+
+void retireBindingSource(LoopSnapshot::EventWindowCursor& source) {
+  source.beginRelease();
+  for (unsigned turn = 0; turn < 10000 && !source.idle(); ++turn) source.stepRelease(16);
+  TEST_ASSERT_TRUE(source.idle());
+}
+
+void test_dense_snapshot_pipeline_measures_work_after_ping_pong_ordering() {
+  constexpr size_t count = 2048;
+  Loop loop;
+  loop.loopLengthTicks = 512 * 768;
+  auto parent = LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, 0, 1, 1);
+  LoopSnapshotChangeSet changes;
+  for (size_t i = 0; i < count; ++i) {
+    SnapshotEventChange change{};
+    change.kind = SnapshotChangeKind::Add;
+    change.next.loopId = loop.loopId;
+    change.next.eventId = i + 1;
+    // Each bar's sorted canonical membership interleaves with the other bar.
+    // Raw ticks are intentionally not canonical order, so both sorts do work.
+    change.next.canonicalOrder = count - i;
+    change.next.value = MidiEvent::ControlChange((i % 2) * 768 + (i * 137) % 768, 1, 7, i % 128);
+    changes.events.push_back(change);
+  }
+  LoopSnapshotConstruction construction(parent, changes);
+  for (unsigned i = 0; i < 20000 && !construction.complete(); ++i)
+    TEST_ASSERT_TRUE(construction.step(64));
+  TEST_ASSERT_TRUE(construction.complete());
+  auto root = construction.freeze();
+  TEST_ASSERT_NOT_NULL(root.get());
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmRollingViews());
+  auto& request = runtime.pendingViewRequest_;
+  request.active = true;
+  request.sourceKind = PlaybackViewPendingRequest::SourceKind::CommittedLaunch;
+  request.source = {1, 1, root.get()};
+  request.coverage = {0, 1536, loop.loopLengthTicks};
+  request.loopLengthTicks = loop.loopLengthTicks;
+  auto& source = runtime.coverageSource;
+  auto* set = runtime.viewSetIfPrewarmed();
+  auto& view = set->views[set->lifecycle.build];
+  TEST_ASSERT_TRUE(runtime.beginCoverageQualification(*root));
+  const auto token = source.traversalGeneration();
+  size_t fills = 0, orders = 0;
+  while (runtime.coveragePreparation == LoopPlaybackRuntime::CoveragePreparation::Counting && fills < 300) {
+    const auto before = source.readUnits();
+    TEST_ASSERT_TRUE(runtime.stepCoverageQualification(64));
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(64, source.readUnits() - before);
+    TEST_ASSERT_FALSE(view.complete);
+    TEST_ASSERT_FALSE(view.published);
+    TEST_ASSERT_FALSE(runtime.coverageBuildNeedsService());
+    ++fills;
+  }
+  TEST_ASSERT_TRUE(source.complete());
+  TEST_ASSERT_EQUAL_UINT32(2178, source.readUnits());
+  TEST_ASSERT_EQUAL_UINT32(35, fills);
+  TEST_ASSERT_EQUAL_UINT32(2178, source.qualifiedReleaseUnitBound());
+  TEST_ASSERT_EQUAL_UINT32(count, view.storage.eventCount);
+  TEST_ASSERT_TRUE(view.sourceFilled);
+  CoverageServiceContract contract;
+  contract.deriveSnapshotGrainsFrom(source.readUnits(), count, 64, 48);
+  contract.requiredFillGrains = 0;
+  TEST_ASSERT_TRUE(runtime.beginQualifiedCoverageBuild(contract, {}));
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(token, source.traversalGeneration(), "admission never rewinds qualified source");
+  TEST_ASSERT_EQUAL_UINT32(0, runtime.viewBuildWork.fillGrains);
+  while (runtime.coverageBuildNeedsService() && orders < 3000) {
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Order, runtime.nextCoverageBuildGrain());
+    TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, runtime.stepCoverageBuildOrder(48));
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(2178, source.readUnits(), "ordering never rereads the qualified source");
+    ++orders;
+  }
+  TEST_ASSERT_TRUE(view.complete);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1153, orders, "two 555-turn sorts plus 43 rank turns");
+  TEST_ASSERT_EQUAL_UINT32(1188, fills + orders);
+  std::vector<size_t> expected(count);
+  for (size_t i = 0; i < count; ++i) expected[i] = i;
+  std::sort(expected.begin(), expected.end(), [&](size_t a, size_t b) {
+    const auto& x = changes.events[a].next;
+    const auto& y = changes.events[b].next;
+    if (x.value.tick != y.value.tick) return x.value.tick < y.value.tick;
+    return x.canonicalOrder < y.canonicalOrder;
+  });
+  for (size_t i = 0; i < count; ++i) {
+    const auto& actual = view.storage.events[view.storage.order[i]];
+    const auto& wanted = changes.events[expected[i]].next.value;
+    TEST_ASSERT_EQUAL_UINT32(wanted.tick, actual.tick);
+    TEST_ASSERT_EQUAL_UINT8(wanted.data.ccData.value, actual.data.ccData.value);
+  }
+  source.beginRelease();
+  size_t retirementTurns = 0;
+  while (!source.idle() && retirementTurns < 300) {
+    source.stepRelease(64);
+    ++retirementTurns;
+  }
+  TEST_ASSERT_TRUE(source.idle());
+  TEST_ASSERT_EQUAL_UINT32(1, retirementTurns); // Root still owns the shared heads.
+  // One qualification/fill pass, plus freeze/admit, orders and retirement.
+  const size_t lifecycleTurns = 2 + fills + orders + retirementTurns;
+  TEST_ASSERT_EQUAL_UINT32(1191, lifecycleTurns);
+  TEST_ASSERT_TRUE_MESSAGE(8 * lifecycleTurns * 64 > 1536,
+      "measured bounded work still exceeds continuous two-bar service supply");
+}
+
+void test_qualification_fill_is_private_and_cursor_rewind_denies_without_touching_current() {
+  Loop loop;
+  loop.loopLengthTicks = 512 * 768;
+  auto root = bindingSnapshot(loop);
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmRollingViews());
+  auto* set = runtime.viewSetIfPrewarmed();
+  auto& current = set->views[set->lifecycle.current];
+  TEST_ASSERT_TRUE(current.storage.append(MidiEvent::NoteOn(17, 1, 67, 99)));
+  current.complete = current.published = true;
+  auto& request = runtime.pendingViewRequest_;
+  request.active = true;
+  request.sourceKind = PlaybackViewPendingRequest::SourceKind::CommittedLaunch;
+  request.source = {loop.playbackRevision, 1, root.get()};
+  request.coverage = {100, 1536, loop.loopLengthTicks};
+  auto& candidate = set->views[set->lifecycle.build];
+  TEST_ASSERT_TRUE(runtime.beginCoverageQualification(*root));
+  TEST_ASSERT_TRUE(runtime.stepCoverageQualification(8));
+  TEST_ASSERT_GREATER_THAN_UINT32(0, candidate.storage.eventCount);
+  TEST_ASSERT_FALSE(candidate.sourceFilled);
+  TEST_ASSERT_FALSE(candidate.complete);
+  TEST_ASSERT_FALSE(candidate.published);
+  TEST_ASSERT_FALSE(runtime.viewBuild.admitCoverageQualification());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, runtime.stepCoverageBuildOrder(48));
+  TEST_ASSERT_TRUE(runtime.coverageSource.rewind());
+  TEST_ASSERT_FALSE(runtime.stepCoverageQualification(8));
+  TEST_ASSERT_TRUE(runtime.coverageSource.retiring());
+  TEST_ASSERT_FALSE(candidate.sourceFilled);
+  TEST_ASSERT_FALSE(candidate.complete);
+  TEST_ASSERT_TRUE(current.complete && current.published);
+  TEST_ASSERT_EQUAL_UINT32(17, current.storage.events[0].tick);
+  TEST_ASSERT_EQUAL_UINT32(1, current.storage.eventCount);
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackViewPendingReason::SourceNotCurrent),
+      static_cast<int>(runtime.pendingViewRequest_.reason));
+  for (unsigned i = 0; i < 256 && runtime.ownsCoverageSource(); ++i)
+    runtime.stepCoverageSourceRetirement(64);
+  TEST_ASSERT_FALSE(runtime.ownsCoverageSource());
+}
+
+void test_snapshot_runtime_binding_matches_gather_and_preserves_canonical_ties() {
+  for (size_t quantum : {size_t(1), size_t(7), size_t(64)}) {
+    Loop loop;
+    loop.loopLengthTicks = 300 * 768;
+    auto root = bindingSnapshot(loop);
+    SessionMidiEventVec flat;
+    Loop::SnapshotWindowGatherPath path{};
+    TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(flat, 100, 1536, &path));
+    TEST_ASSERT_EQUAL(Loop::SnapshotWindowGatherPath::Snapshot, path);
+    TEST_ASSERT_EQUAL_UINT32(78, flat.size());
+    const PlaybackCoverageInterval coverage{100, 1536, loop.loopLengthTicks};
+    const PlaybackViewSourceIdentity identity{loop.playbackRevision, 11, root.get()};
+    RuntimePlaybackView reference;
+    TEST_ASSERT_TRUE(reference.prewarm(128));
+    RuntimePlaybackViewBuild referenceBuild;
+    TEST_ASSERT_TRUE(referenceBuild.begin(reference, flat.data(), flat.size(), identity, coverage, {}, {}));
+    for (unsigned turn = 0; turn < 10000 && referenceBuild.active(); ++turn) {
+      if (referenceBuild.nextGrain() == RuntimePlaybackViewBuildGrain::Fill) referenceBuild.stepFill(quantum);
+      else referenceBuild.stepOrder(quantum);
+    }
+    TEST_ASSERT_TRUE(reference.complete);
+
+    LoopSnapshot::EventWindowCursor source;
+    TEST_ASSERT_TRUE(source.begin(*root, 100, 1536));
+    LoopPlaybackRuntime runtime;
+    TEST_ASSERT_TRUE(runtime.prewarmViews());
+    const auto bytes = runtime.viewSetIfPrewarmed()->fixedExternalBytes();
+    CoverageServiceContract contract;
+    contract.maximumPhaseAdvancePerTurn = 1;
+    contract.leadTicks = 1;
+    contract.deriveSnapshotGrainsFrom(LoopSnapshot::EventWindowCursor::kMaximumReadUnits, flat.size(), quantum, quantum);
+    TEST_ASSERT_TRUE(runtime.beginCoverageBuild(contract, 200, 100, source, identity, coverage, {}, {}));
+    const auto* set = runtime.viewSetIfPrewarmed();
+    const auto& view = set->views[set->lifecycle.build];
+    size_t fillTurns = 0;
+    for (; fillTurns < 10000 && runtime.nextCoverageBuildGrain() == RuntimePlaybackViewBuildGrain::Fill; ++fillTurns) {
+      const auto before = source.readUnits();
+      TEST_ASSERT_FALSE(view.complete);
+      runtime.stepCoverageBuildFill(quantum);
+      TEST_ASSERT_TRUE(source.readUnits() - before <= quantum);
+      TEST_ASSERT_FALSE(view.complete); // Not even the final fill grain publishes.
+    }
+    TEST_ASSERT_TRUE(source.complete());
+    TEST_ASSERT_TRUE(view.sourceFilled);
+    TEST_ASSERT_FALSE(view.passOriginsReady);
+    TEST_ASSERT_FALSE(view.canonicalRanksReady);
+    const size_t sourceUnits = source.readUnits();
+    contract.deriveSnapshotGrainsFrom(sourceUnits, flat.size(), quantum, quantum);
+    TEST_ASSERT_EQUAL_UINT32(contract.requiredFillGrains, fillTurns);
+    // The order phase is independent of the root AND the retired query cursor.
+    loop.storePublishedSnapshotForTest({}, 0);
+    root.reset();
+    retireBindingSource(source);
+    size_t orderTurns = 0;
+    for (; orderTurns < 10000 && runtime.coverageBuildNeedsService(); ++orderTurns) {
+      TEST_ASSERT_FALSE(view.complete);
+      runtime.stepCoverageBuildOrder(quantum);
+    }
+    TEST_ASSERT_TRUE(view.complete);
+    TEST_ASSERT_TRUE(orderTurns <= contract.requiredOrderGrains);
+    TEST_ASSERT_TRUE(view.canonicalRanksReady);
+    TEST_ASSERT_FALSE(view.passOriginsReady);
+    TEST_ASSERT_EQUAL_UINT32(flat.size(), view.storage.eventCount);
+    TEST_ASSERT_EQUAL_UINT64(bytes, runtime.viewSetIfPrewarmed()->fixedExternalBytes());
+    for (size_t i = 0; i < flat.size(); ++i) {
+      const auto& actual = view.storage.events[view.storage.order[i]];
+      const auto& expected = reference.storage.events[reference.storage.order[i]];
+      TEST_ASSERT_EQUAL_UINT32(expected.tick, actual.tick);
+      TEST_ASSERT_EQUAL(expected.type, actual.type);
+      TEST_ASSERT_EQUAL(expected.channel, actual.channel);
+      // CC and note payloads are the same two bytes in this fixture.
+      TEST_ASSERT_EQUAL(expected.data.ccData.cc, actual.data.ccData.cc);
+      TEST_ASSERT_EQUAL(expected.data.ccData.value, actual.data.ccData.value);
+    }
+  }
+}
+
+void test_snapshot_binding_denies_rebound_cursor_overflow_and_published_destination() {
+  Loop loop;
+  loop.loopLengthTicks = 300 * 768;
+  auto root = bindingSnapshot(loop);
+  LoopSnapshot::EventWindowCursor source;
+  const PlaybackCoverageInterval coverage{100, 1536, loop.loopLengthTicks};
+  const PlaybackViewSourceIdentity identity{loop.playbackRevision, 11, root.get()};
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(8));
+  RuntimePlaybackViewBuild build;
+  TEST_ASSERT_TRUE(source.begin(*root, 100, 1536));
+  view.published = true;
+  TEST_ASSERT_FALSE(build.begin(view, source, identity, coverage, {}, {}));
+  view.published = false;
+  TEST_ASSERT_TRUE(build.begin(view, source, identity, coverage, {}, {}));
+  // Rewind before the first grain leaves position zero; only the token catches it.
+  TEST_ASSERT_TRUE(source.rewind());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.stepFill(1));
+  TEST_ASSERT_FALSE(view.complete);
+  build.discard();
+  TEST_ASSERT_TRUE(build.begin(view, source, identity, coverage, {}, {}));
+  for (unsigned turn = 0; turn < 1000 && build.active(); ++turn) build.stepFill(3);
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.nextGrain());
+  TEST_ASSERT_FALSE(view.complete);
+  TEST_ASSERT_FALSE(view.sourceFilled);
+  TEST_ASSERT_EQUAL_UINT32(8, view.storage.eventCount); // Refuse, never publish a truncated result.
+  build.discard();
+  retireBindingSource(source);
+  TEST_ASSERT_TRUE(source.begin(*root, 100, 1536));
+  TEST_ASSERT_FALSE(build.begin(view, source, identity, {100, 1536, 400 * 768}, {}, {}));
+  TEST_ASSERT_TRUE(build.begin(view, source, identity, coverage, {}, {}));
+  source.beginRelease();
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.stepFill(1));
+  build.discard();
+  retireBindingSource(source);
+  RuntimePlaybackOrderBuilder order;
+  TEST_ASSERT_FALSE(order.begin(view.storage, loop.loopLengthTicks, nullptr, RuntimePlaybackOrderMode::SnapshotCanonical));
+  TEST_ASSERT_FALSE(order.begin(view.storage, loop.loopLengthTicks, nullptr, RuntimePlaybackOrderMode::SnapshotPlayback));
+}
+
+void test_snapshot_binding_empty_window_completes_and_costs_saturate() {
+  auto root = LoopSnapshot::createEmpty(1, 300 * 768, 0, 1, 1);
+  LoopSnapshot::EventWindowCursor source;
+  TEST_ASSERT_TRUE(source.begin(*root, 100, 1536));
+  RuntimePlaybackView view;
+  TEST_ASSERT_TRUE(view.prewarm(8));
+  RuntimePlaybackViewBuild build;
+  TEST_ASSERT_TRUE(build.begin(view, source, {1, 1, root.get()}, {100, 1536, 300 * 768}, {}, {}));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Order, build.stepFill(64));
+  TEST_ASSERT_FALSE(view.complete);
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.stepOrder(64));
+  TEST_ASSERT_TRUE(view.complete);
+  TEST_ASSERT_EQUAL_UINT32(0, view.storage.eventCount);
+  retireBindingSource(source);
+  CoverageServiceContract cost;
+  cost.deriveSnapshotGrainsFrom(3, 0, 64, 48);
+  TEST_ASSERT_EQUAL_UINT16(1, cost.requiredFillGrains);
+  TEST_ASSERT_EQUAL_UINT16(1, cost.requiredOrderGrains);
+  cost.deriveSnapshotGrainsFrom(SIZE_MAX, SIZE_MAX, 1, 1);
+  TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, cost.requiredFillGrains);
+  TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, cost.requiredOrderGrains);
+  cost.deriveSnapshotGrainsFrom(0, 0, 0, 0);
+  TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, cost.requiredFillGrains);
+  TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, cost.requiredOrderGrains);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_qualification_fill_is_private_and_cursor_rewind_denies_without_touching_current);
+  RUN_TEST(test_dense_snapshot_pipeline_measures_work_after_ping_pong_ordering);
+  RUN_TEST(test_snapshot_runtime_binding_matches_gather_and_preserves_canonical_ties);
+  RUN_TEST(test_snapshot_binding_denies_rebound_cursor_overflow_and_published_destination);
+  RUN_TEST(test_snapshot_binding_empty_window_completes_and_costs_saturate);
   RUN_TEST(test_shared_raw_preparation_rotates_then_returns_only_after_final_binding);
   RUN_TEST(test_shared_raw_window_binds_final_geometry_without_modulo_or_reordering);
   RUN_TEST(test_shared_raw_window_cannot_become_audible_before_binding);
@@ -7199,6 +7606,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_runtime_keeps_canonical_and_audible_frozen_orders_serial);
   RUN_TEST(test_runtime_rewrites_frozen_canonical_capture_in_one_declared_quantum);
   RUN_TEST(test_prepared_capture_canonicalization_prevents_legacy_sort_at_seal);
+  RUN_TEST(test_ping_pong_order_preserves_permutation_and_private_source);
+  RUN_TEST(test_ping_pong_order_measures_dense_work_and_resets_direction);
   RUN_TEST(test_ordered_inputs_finish_in_fill_grains_without_touching_merge_scratch);
   RUN_TEST(test_order_fill_checks_retained_adjacency_and_resets_sort_detection);
   RUN_TEST(test_order_fill_detects_rank_inversions_at_equal_tick);

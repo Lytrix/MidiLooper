@@ -257,6 +257,7 @@ public:
     /// deadline. The request is refused by name, so it can be re-issued when the interference clears; it is never
     /// silently dropped and the existing window's deadline is never traded away.
     TrackInterferenceBudgetExceeded,
+    DeferredSourceQualification,
   };
   enum class PlaybackViewTurnResult : uint8_t { Idle, GrainServed, BuildComplete, GrainDenied };
 
@@ -269,6 +270,16 @@ public:
       const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
       uint32_t currentPhase, uint32_t handoffPhase, PlaybackDeadlineClock clock = {});
   bool hasPendingPlaybackViewMaintenance() const;
+  enum class RollingOutcome : uint8_t { Disabled, Excluded, Busy, Requested, Waiting, Ready, Serving, Expired, Rejected };
+  RollingOutcome serviceRollingPlaybackWindow(PlaybackDeadlineClock clock);
+  struct RollingResolution { RollingOutcome outcome; const RuntimePlaybackView* view; };
+  RollingResolution resolveRollingPlaybackWindow(uint8_t slot, uint32_t tick, PlaybackDeadlineClock clock);
+  void cancelRollingPlaybackWindow(uint8_t slot);
+  // Off-clock initial launch preparation; no absolute promise before binding.
+  bool preparePlaybackLaunchForSlot(uint8_t slotIndex);
+  bool playbackLaunchReadyForSlot(uint8_t slotIndex) const;
+  bool bindPlaybackLaunchForSlot(uint8_t slotIndex, uint32_t tick);
+  void cancelPlaybackLaunchForSlot(uint8_t slotIndex, bool includeBound = false);
   /// DEC-108 §13b / task 3.10 (the review's step 2): the **per-track outstanding-work budget** -- the sum of every
   /// active build's **full** admitted grains on this track. Full, not remaining, is deliberate: it is an **upper
   /// bound** on what is still owed (a served grain is charged again), which is the safe direction for a budget. A
@@ -305,7 +316,14 @@ public:
                                             PlaybackViewTurnResult result, uint32_t workerUs);
   PlaybackViewTurnResult stepPlaybackViewMaintenance(
       uint32_t currentPhase = 0, MidiServiceDrain::PlaybackHolderCursor* cursor = nullptr,
-      bool transportRunning = false, PlaybackDeadlineClock clock = {});
+      bool transportRunning = false, PlaybackDeadlineClock clock = {},
+      PlaybackDeadlineClock (*completionClockReader)() = nullptr);
+  /// Sweep all promises, including completed candidates, independently of worker eligibility.
+  void serviceAdmittedDeadlineMisses(PlaybackDeadlineClock clock);
+  /// Explicit boundary recovery. Keeps the original promise/history; checks the new
+  /// projection, source and operation identity before releasing a completed candidate.
+  bool revalidateCompletedPlaybackWindow(uint8_t slotIndex, uint32_t currentPhase,
+                                         PlaybackDeadlineClock clock);
   /// DEC-108 item 1 / task 3.2: the **interval window the owner published** for a slot -- its identity and the
   /// coverage interval it serves -- or `false` when none is authoritative. Read-only, and deliberately read by
   /// no production consumer yet: adoption is 3.4 (identity on the consumers), 3.5 (readiness predicate) and 3.7
@@ -313,11 +331,12 @@ public:
   /// urgent owing holder (`eligible` + `handoffLeadTicks`), read without serving anything. The production caller
   /// builds every track's offer and lets the shared policy choose **one track** per turn, so the lowest-index track
   /// with work no longer monopolises the turn; the offer is also what a fixture can assert on.
-  MidiServiceDrain::PlaybackHolder playbackWindowServiceOffer(uint32_t currentPhase) const;
+  MidiServiceDrain::PlaybackHolder playbackWindowServiceOffer(uint32_t currentPhase,
+      PlaybackDeadlineClock clock = {}) const;
   /// The holder set the offer and the turn both read: this track's owing slots, each with its urgency. Public only
   /// so the two callers in this owner's own translation unit agree on one description of a holder.
   void fillPlaybackHolders(uint32_t currentPhase,
-                           MidiServiceDrain::PlaybackHolder* holders) const;
+                           MidiServiceDrain::PlaybackHolder* holders, PlaybackDeadlineClock clock = {}) const;
   /// (the consumer switch), so this slice publishes without changing what any existing consumer reads.
   bool publishedPlaybackWindowForSlot(uint8_t slotIndex, PlaybackViewSourceIdentity& identityOut,
                                       PlaybackCoverageInterval& coverageOut) const;
@@ -341,8 +360,21 @@ public:
   /// caller's bounded buffer for the enumeration; the owner neither allocates nor keeps state for it. Returns
   /// `Admitted` when the build is begun (then drive `stepPlaybackViewMaintenance`), or one of the named
   /// refusals above, which are non-destructive.
+  /// Caller scratch is exclusive to this slot and immutable until the build's
+  /// fill completes/cancels. Busy requests retain demand without touching it;
+  /// their pending cost is a capacity bound, recomputed by the next gather.
   PlaybackViewRequestResult requestPlaybackWindow(uint8_t slotIndex, uint32_t playheadPhase,
                                                  SessionMidiEventVec& scratch, PlaybackDeadlineClock clock = {});
+  /// Bounded replayable committed request. Caller supplies a qualified slot phase
+  /// and matching absolute stamp; no gather, allocation, or caller buffer lease.
+  PlaybackViewRequestResult requestCommittedPlaybackWindow(uint8_t slotIndex,
+      const PlaybackCoverageInterval& coverage, uint32_t currentPhase, PlaybackDeadlineClock clock);
+  /// Ordinary active-slot projection only; jam and queued launch require their
+  /// own qualified frame and are refused rather than borrowing the active phase.
+  PlaybackViewRequestResult requestCommittedPlaybackWindow(uint8_t slotIndex,
+      const PlaybackCoverageInterval& coverage, PlaybackDeadlineClock clock);
+  bool committedPlaybackRetryCanProgress(uint8_t slotIndex, PlaybackDeadlineClock clock) const;
+  PlaybackViewTurnResult stepCommittedPlaybackRetry(uint8_t slotIndex, PlaybackDeadlineClock clock);
   /// The declared `CoverageServiceContract` this owner is admitted under. Single-sourced: the declaration,
   /// its derivation and the measurement still owed are recorded where it is defined, and the grain quanta
   /// below are the sizes its declared grain counts come from.
@@ -1217,11 +1249,6 @@ private:
   /// can arrive from: the revision rule and the **deadline the admission promised**. It never publishes, adopts,
   /// rebuilds or extends a deadline.
   void noteMissedTraversalForSlot(uint8_t slotIndex, Loop& loop);
-  /// DEC-108 §13a/§13(c) / task 3.10 (**blocker 3, half 2**): service every **live admitted promise** against the clock:
-  /// each traversal of the promised interval that has passed is counted **once**, independent of completion and of
-  /// revision currency, in the epoch the promise was qualified in, and revalidated rather than erased on a change.
-  /// Unconditional (not capture-gated): only the row it produces is an instrumentation observation.
-  void serviceAdmittedDeadlineMisses(PlaybackDeadlineClock clock);
   /// DEC-108 §13(c) / task 3.10 (increment 24): the admission path's own retention call -- one shape for every "not
   /// now" refusal. It derives the demand's bounded cost from the entries the caller gathered (the contract's own
   /// `deriveGrainsFrom`, never an asserted count), computes the absolute deadline exactly as an admitted window's is,

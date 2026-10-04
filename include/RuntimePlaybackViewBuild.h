@@ -33,6 +33,19 @@ class RuntimePlaybackViewBuild {
              const LedgerBoundarySummary& ledgerBoundary,
              RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::AllSource);
 
+  bool begin(RuntimePlaybackView& destination, LoopSnapshot::EventWindowCursor& source,
+             const PlaybackViewSourceIdentity& sourceIdentity,
+             const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
+             const LedgerBoundarySummary& ledgerBoundary);
+  // Qualification fills only the private candidate, then pauses before ordering.
+  bool beginCoverageQualification(RuntimePlaybackView& destination,
+      LoopSnapshot::EventWindowCursor& source, const PlaybackViewSourceIdentity& identity,
+      const PlaybackCoverageInterval& coverage);
+  RuntimePlaybackViewFillResult stepCoverageQualification(size_t quantum);
+  size_t qualifiedEventCount() const { return fill_.copiedEventCount(); }
+  bool admitCoverageQualification();
+  bool coverageOwned() const { return coverageOwned_; }
+  void markCoverageOwned() { coverageOwned_ = true; }
   RuntimePlaybackViewBuildGrain nextGrain() const;
   RuntimePlaybackViewBuildGrain stepFill(size_t entryQuantum);
   RuntimePlaybackViewBuildGrain stepOrder(size_t entryQuantum);
@@ -42,12 +55,14 @@ class RuntimePlaybackViewBuild {
   void discard(const RuntimePlaybackView* preserveDestination = nullptr);
 
  private:
-  enum class Phase : uint8_t { Idle, Fill, Order, Complete, Denied };
+  enum class Phase : uint8_t { Idle, Fill, Order, Complete, Denied, SnapshotFill, SnapshotCanonicalOrder, SnapshotRanks, SnapshotPlaybackOrder, Qualification };
 
   RuntimePlaybackViewFill fill_;
   RuntimePlaybackOrderBuilder order_;
   RuntimePlaybackView* destination_ = nullptr;
   Phase phase_ = Phase::Idle;
+  uint16_t snapshotRankCursor_ = 0;
+  bool coverageOwned_ = false;
 };
 
 /// The proof inputs for one owner-local long-loop refill. The contract does
@@ -82,6 +97,10 @@ struct CoverageServiceContract {
   /// three grain fields and leaves every other declared field (the advance, the denial allowance, the lead)
   /// untouched -- deriving cost is not the same act as changing what may be admitted.
   void deriveGrainsFrom(size_t windowEventCount);
+  /// Prices inspected source fill + two bounded sorts + rank assignment.
+  /// Source qualification and retirement must be charged separately by the owner.
+  void deriveSnapshotGrainsFrom(size_t sourceUnits, size_t eventCount,
+                                size_t fillQuantum, size_t orderQuantum);
   bool canCompleteBeforeHandoff(uint32_t currentPhase, uint32_t handoffPhase,
                                 uint32_t loopLengthTicks,
                                 uint16_t additionalGrains = 0) const;

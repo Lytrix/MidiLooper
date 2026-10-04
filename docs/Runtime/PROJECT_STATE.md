@@ -1,3 +1,177 @@
+**The declared `H x K` envelope is measured on the composition, and it holds (test-only slice).**
+The `Delta-max x H x bounded per-track work` formula had each multiplier derived and its *composition* never measured:
+one lane turn serves one **track**, a track's sibling slots share that track's turns, and both are paid for out of one
+playhead advance. The sweep (`test/test_support/window_contention_sweep.inc`, three fixtures) drives the production
+composition -- `serviceAdmittedDeadlineMisses` + `playbackWindowServiceOffer` per track, `selectPlaybackHolderRoundRobin`
+across tracks, `stepPlaybackViewMaintenance(phase, nullptr, …)` exactly as `main.cpp` calls it -- at the declared
+permitted advance (64 ticks = one opportunity per turn). **Measured law:** `drainTurns = H x (1 + K) x serviceTurns`, and
+the target completes at `1 + (serviceTurns - 1) x H`; at H=8, K=1, 20 notes the drain is 112 turns against 192 promised,
+and the charge (8 grains) is **serviceTurns + 1** (7), because the promotion grain is charged while its work happens
+inside the completing turn. `K` and `H` are each load-bearing (the drain exceeds the target's own turns, and is linear in
+the competing tracks); density moves the magnitude (2/7/33 service turns at 5/20/80 notes) and the loop's length is not
+an input (identical cost at 17 and 41 bars). **The boundary is predicted then measured:** an 80-note/K=1 shape is ready
+with 0 named misses inside the charge (588 promised turns) and crosses its promise -- named `one_pass_late` -- just
+outside it (312), while each individual request still fits its own derived cost (the unenforced admission), and the
+declaration's own `canCompleteWithinLead` agrees with all three answers; the same inside cell at **2x** the permitted
+advance breaks, so the oracle can fail. **Gate decision unchanged:** activation is the clock-wiring task, not a better
+constant, and this shows *why* -- the admitted shape's promise is kept, the unenforced admission is what permits a shape
+whose promise cannot be. Four mutations (MC1-MC4) red-prove and are restored byte-identically; no production line was
+edited. Focused **135/135** (was 133), full native **2789 / 2782 succeeded / 7 skipped / 0 failed**, capture build
+SUCCESS with the RAM1 line byte-identical (variables 96,192 / padding 1,640, no re-base), strict validation and
+`git diff --check` clean. No upload, no commit, no task checkoff (3.10 service qualification and 6.3's wider sweep stay
+open; this supplies the contention axis). Evidence:
+[`hk-contention-sweep`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md).
+
+**Gated rolling request → preparation → validated handoff → emission verified.**
+`serviceRollingPlaybackWindow` runs off-clock before offers; the existing bounded
+worker prepares the selected current-root interval; `resolveRollingPlaybackWindow`
+validates absolute deadline/epoch, generation, geometry, revision, prior serviced
+tick, completion and retired pins before adoption. The existing emitter/ledger is
+reused; physical view/storage generation guards prevent reuse, and empty windows
+preserve held notes. Refused original debts and unrelated newer demands survive.
+
+`PLAYBACK_WINDOW_ROLLING_ENABLED` defaults0; enabling requires native or explicit
+capture qualification marking. The ordinary `platformio.ini` is unchanged.
+Capacity2048, span1536, fill64/order48, gap64,H8,margin768 remain unchanged. At
+phase0, the selector targets [4608,6144): fallback covers [1536,4608) and resumes
+on expiry. This proves later-window handoffs, NOT contiguous two-bar service.
+
+Verification: focused329/329; full native2,779 passed/7 skipped/0 failed; three
+mutations caught/restored; default and explicit qualification capture builds pass
+RAM1 floor840 (padding1,640/984). Runtime metadata +48 external bytes per holder
+(target7,120/host9,144), no event-buffer growth. No upload/commit. Native covers
+Track caller/worker/emitter; main wiring is build-verified, not native linked.
+Continuous timing, device qualification (including masked flash-boundary duration),
+old-source reconstruction, preview/undo, full recovery/closures and paged enablement
+remain open. Tasks3.10 service qualification and3.7 fallback removal stay unchecked.
+Evidence: `ROLLING_HANDOFF.md` and `rolling-handoff-verification.json` in
+`openspec/changes/windowed-playback-generation/evidence/requester-retry-integration/`.
+
+**Guidance-only update — return to the OpenSpec path after verified blockers.**
+User requested stronger existing guidance, without a `/smell` skill. The work
+lifecycle now owns critical-path triage, bounded discriminating investigation and
+return-to-task rules. The existing reviewer guidance covers progress producers,
+boolean/state contracts, production prerequisites and one bounded independent
+lifecycle review. Agent entry and the bugfix rule point to those owners; references
+to the absent architecture-checkpoint rule were replaced by existing authority.
+No firmware, OpenSpec acceptance criteria, task status or implementation scope
+changed. Current reconciliation and unrelated dirty work are preserved.
+
+**Dependency reconciliation supersedes the earlier no-caller and expiry-request plan.**
+Preview/undo/recovery implementation precedes task3.7 fallback removal. Task4.1
+verifies parity rather than producing source currency; task4.2 still needs a
+content-divergence oracle and does not mandate a format change. Task6.4 profile
+preparation can precede enablement. The RWO S7.5a numeric oracle is upstream of
+window task6.8 evidence, which feeds S7.5b closure/S7.5 acceptance downstream.
+See [RECONCILIATION.md](../../openspec/changes/windowed-playback-generation/RECONCILIATION.md).
+Historical entries below retain their original measurements, not final-tree claims.
+
+**Single-pass private qualification/fill verified; continuous two-bar still NOT QUALIFIED.**
+The runtime now uses the existing typed fill while qualifying the pinned source,
+writing only its private candidate. Admission preserves the original promise and
+starts ordering without rewinding/refilling. Fill is charged zero only after it
+has actually completed; capacity overflow remains named and unpublished, and
+source-token failure/cancellation preserve the current view while retiring pins.
+Dense2048 fixture: one2,178-unit/35-turn source pass +1,153 ordering/rank turns;
+full shared-source lifecycle1,191 turns (was1,226). Eight empty initial windows
+complete in40 lane turns (was48); two-bar lead still refuses without synthetic
+publication or renewed deadlines. Five turns per empty request still exceed the
+three turns/window/holder supplied under H8/gap64. No timing/capacity rebase.
+Focused320/320; full native2,770 passed/7 skipped; three mutations caught/restored;
+capture build, unchanged RAM1/runtime size pins and strict validation pass.
+No device action/upload/commit. The~28s rootless cold-source preparation delay is
+unchanged and remains a separate blocker. Evidence: `SINGLE_PASS_QUALIFICATION.md`
+and `single-pass-verification.json` in the requester-retry evidence directory.
+
+**Device rootless-launch hold fixed and observed on the preserved target.**
+Track8 slot5 had24 bars/1,144 committed events but no published root (LIBOBS kp1,
+kr0,kc0); the new requester waited forever without requesting its source. Explicit
+launch preparation now queues the existing on-demand committed-pass republish only
+when no current root/job exists. Bulk boot hydration stays disabled; construction
+remains on the existing Snapshot owner, not the clock edge.
+Native regression red-proved, focused123/123, full native2,769 passed/7 skipped;
+capture build/RAM1 and strict validation pass. Uploaded image5e8a81b1ba9c91e52f566c40a7d4e0101850ea19ccb016f16b80af1878f5723a.
+Device: queue at205.973s -> commit at233.897s, target length18,432. Post-run readback
+retains1,144 events and now reports kr1/kc1; playback emits channel8 notes and the
+24-bar display is populated. Slot5 was preserved; only authorized slot4 was rebuilt
+for the retest. Final device state STOPPED, pending0, queue0/4.
+Limits: cold source preparation took~27.924s and exceeded the4-bar hold report;
+not timely-launch or continuous-two-bar qualification. Unmodified wrapper baseline
+PASS did not send the switch. TEMP forced-stop-request variant sent it, but generic
+baseline FAIL reflects its injected held note83; content verifier INCONCLUSIVE
+(no unique recurring anchor), not a parity pass. Evidence preserved; no commit.
+Packet/evidence: `evidence/requester-retry-integration/DEVICE_ROOTLESS_HOLD.md` in
+`openspec/changes/windowed-playback-generation/`.
+
+**Immutable initial launch bound; ordering work reduced; continuous two-bar NOT QUALIFIED.**
+SlotProvision now reserves only the three rolling views for a cold demoted target
+and records an explicitly unpositioned launch recipe. The existing playback lane
+counts/fills/orders/retires its pinned source; the completed ready view binds only
+at the real phase-zero switch boundary. Empty intervals are valid, stale identity
+cannot bind, cancellation retires pins, and capture prewarm upgrades in place.
+The first traversal consumes the immutable window without a launch rebuild; expiry
+is sticky. Later coverage stays on the mutable fallback. Legacy dense overflow
+uses the named `launch_legacy_dense` fallback, without truncation or capacity cut.
+A blocked earlier switch no longer hides later tracks; sibling interference waits
+without permanently refusing an unpositioned launch. Both review findings red-proved.
+Ordering alternates existing arrays: dense sort982 ->555 turns at quantum48,
+no extra buffer. Dense snapshot fill35 + order/ranks1,153 =1,188 turns; derived
+shared-source lifecycle1,226 (was2,080). This still cannot meet the3 turns/window/
+holder supplied at H8/gap64. Continuous refill and device qualification stay open.
+Focused ownership122/122, prewarm196/196; full native2,768 passed/7 skipped;
+five mutations caught/restored, strict validation and capture build pass. RAM1
+variables96,192/code391,512/padding1,704/locals34,880, floor840 unchanged. Existing
+runtime size pins still pass (target7,072/host9,096). No upload or commit.
+Evidence: `IMMUTABLE_LAUNCH.md`, `ORDER_WORK.md`, `immutable-launch-verification.json`
+in `openspec/changes/windowed-playback-generation/evidence/requester-retry-integration/`.
+
+**Launch readiness continuation — fallback binding repaired, immutable activation still open.**
+The existing SlotProvision owner now retries an already-occupied demoted target
+when source/coverage/currency readiness is missing. Inactive long targets prepare
+phase-zero coverage, not the outgoing projection. Readiness checks source,
+revision/generation, coverage and completed order; a successfully gathered empty
+launch interval is ready. The commit no longer calls the long-loop builder, and
+native fixtures prove the first target tick reuses preparation without a rebuild.
+Short-loop/capture behavior and mutable fallback remain; this is NOT a production
+immutable-window requester or a bounded replacement for the fallback gather.
+Focused116/116; full native2,759 passed/7 skipped; three mutations caught and
+restored byte-identically; capture build and unchanged RAM1 floor pass
+(code390,856/padding2,360/variables96,192/locals34,880). No upload or commit.
+Continuous two-bar qualification is blocked structurally: H8/gap64 supplies only
+3 turns/window/holder; copying2,048 events alone requires at least32. Initial
+prefill cannot fix that producer-rate deficit. Next: real work reductions and a
+justified service/work contract, not a constant/capacity rebase or gate flip.
+Evidence: `openspec/changes/windowed-playback-generation/evidence/requester-retry-integration/LAUNCH_READINESS.md`.
+
+**Qualification unblocking — topology-qualified retirement verified.**
+The blanket205-grain source-retirement charge is replaced after completed counting
+by a proof from pinned page topology (all16 slots/page plus link/bar work). Empty
+two-bar sources costone retirement turn, not205; nine-page unique retirement
+matches its156-unit bound. Runtime layout and RAM1 unchanged. Native production
+composition at64ticks/opportunity: eight tracks with eight-bar initial lead
+complete8 empty windows in48 lane turns; two-bar lead completes0 and retains all
+original deadlines. This unblocks sparse preparation, not sustained two-bar playback.
+Source47/47, ownership113/113; full native2,756 passed/7 skipped; two mutations,
+capture build, strict OpenSpec and diff checks pass. No upload/activation/commit.
+The pending target's projection only exists at launch; production integration needs
+explicit launch preparation/ready binding, not an invented pre-launch deadline.
+Evidence: `openspec/changes/windowed-playback-generation/evidence/requester-retry-integration/UNBLOCKING.md`.
+
+**Runtime fill/order and retained retries — correctness verified, timing NOT QUALIFIED.**
+Task3.10 — requester/retry continuation now binds window-only snapshot cursors to
+bounded fill, canonical-rank and playback ordering. Runtime-owned freeze/count/
+admit/build/retire runs through the existing lane, including pending-only offers;
+shared builders are excluded, original deadlines retained and newer demand preserved.
+Ownership110/110; full native2,753 passed/7 skipped; five retry mutations and the
+prior three binding mutations fail as intended. Review's stale-source/position
+invalidation defect fixed and regression-proved. Runtime target7,072 (+240)/
+host9,096 (+312) bytes, no extra event buffer; RAM1 limit not rebased.
+No upload or committed-window device claim. Production request/provisioning trigger,
+boundary requalification/adoption and registered HITL remain open. The current
+H8/gap64/margin768 declaration fails even empty two-bar-ahead coverage (2,304>1,536
+ticks before count/release). Mutable fallback and interference gate remain.
+Evidence: [runtime binding/retry packet](../../openspec/changes/windowed-playback-generation/evidence/requester-retry-integration/RUNTIME_BINDING.md).
+
 **2026-10-02 — the timing path's four review items are implemented, natively green and inside the RAM1 budget; the
 device half is owed.** A user-scoped hygiene slice on the fork's *timing path* (`windowed-playback-generation`
 branch), taken from an independent code review's items 1–4 and deliberately outside the window lane's ladder.
@@ -5619,3 +5793,51 @@ Evidence: [timing-envelope qualification](../../openspec/changes/windowed-playba
 **2026-10-04 — `windowed-playback-generation` slice 3.10, increment 27: blocker 3's second half — the admitted deadline is serviced on the live path (and a review's correction of the first half is recorded).** A review of increment 26 (pasted into the session and **independently verified here**) showed that landing claimed too much: the permitted-gap comparison lives inside `#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)`, so it is **capture-lane telemetry**, not live enforcement — the wording is corrected in this entry and in the `s310u` packet (Addendum 3), and the same review supplied the oracle for the half that was still missing. **Increment 27 lands that half**, adopting the review's six requirements verbatim: the promise the admission makes (`PlaybackViewAdmittedWork::deadlineTick`/`clockEpoch`) is now **read where it is kept** — `Track::serviceAdmittedDeadlineMisses(clock)` runs at the **top of every lane turn for every slot holding a live promise**, so a build that has **not finished** is judged too (R1: independent of completion, the case a completion-time check structurally cannot see); each traversal of the promised interval is counted **exactly once**, computed from the clock and keyed on the promise's own admission tick, with only the traversals that still change the policy accounted (R2); the promise is judged only in the **epoch it was qualified in**, so a reset, seek or re-projection claims nothing and **erases nothing**, and a new promise starts its own count on its own interval (R3); the service only accounts and reports — it publishes nothing, adopts nothing and rebuilds nothing, so the previous revision keeps serving for the missed traversal and a late arrival waits for an eligible boundary (R4); the accounting and the latch are **unconditional code**, with only the row behind the capture seam (R5: enforcement, not telemetry — red-proved natively by gating the accounting behind `SESSION_CAPTURE`); and the judgement is **never routed through `resolvePlaybackLag`**, whose `Current` outcome would otherwise mask a late arrival that happens to carry the wanted revision (R6 — the review's sharpest point). What one miss *means* stays in **one implementation** (`Track::noteMissedTraversalForSlot`: the allowance `one_pass_late`, then the named `lag_breach` plus the latch), which `advancePlaybackLagTraversal` now also calls, so the revision rule and the deadline rule share one notion of a miss and differ only in what they judge; the deadline is **never re-positioned**. The promise retains `admittedIntervalLength` (`handoffPhase` is its start), the turn takes the clock the lane dispatcher already holds, and the size pins were re-based **on measurement** (target 6,792 -> **6,816** B, host 8,744 -> **8,768** B — the interval length, an 8-byte promise key and a 2-byte count; per-slot extern storage, so **no RAM1 re-base**, `variables 96,192` unchanged). **Three fixtures** (unfinished-build miss named once per traversal and never re-granted; epoch revalidation without erasure plus a new promise counting from zero; a late arrival named though the served window already carries the wanted revision) and **M134-M139** red-prove the requirements, all restored byte-identically (`TrackPlaybackWindowBuild.cpp` pre-mutation **518728238943f77a**); one defect of mine was caught by the fixtures (the accounting loop called the helper twice per newly missed traversal, so the breach appeared at the first miss). Verified: focused **94/94**, full native **2,737 / 2,730 succeeded / 7 skipped / 0 failed**, build **SUCCESS** with the RAM1 line byte-identical, `git diff --check` clean, `openspec validate --strict` valid. No upload and no device claim: production judges nothing (no production path requests a window, and the lane's production builds carry `clockEpoch == 0`), but the policy now **is** enforcement were a promise admitted. **Blocker 3 verdict:** both halves are in — the limit compared and named in the capture lane, and the admitted deadline serviced, named and latched on the live path independent of capture — while the envelope is still **not** claimed as qualified normal-operation continuity (the blocked gaps the device legs measured are exactly why the policy reports), activation still awaits the callers' qualified clock stamps, and the production requester, the re-attempt (O8) and the `H x K` sweep remain owed. Evidence: [`evidence/2026-10-04-s310v-admitted-deadline-serviced/EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-04-s310v-admitted-deadline-serviced/EXECUTION.md).
 
 **2026-10-04 — `windowed-playback-generation` slice 3.10, increment 28: a review's three correctness gaps in the deadline service are closed, and containment is proved rather than counted.** A read-only review of increment 27 (pasted into the session and **independently verified here at `5cbd3bb8`**) confirmed three gaps and one unproven claim, all real. **(1) Request deduplication had become fault history.** `serviceAdmittedDeadlineMisses` called `lagState.resetEpisode(...)` whenever `admittedTick` changed, so a repeated request for the **same interval** minted a fresh first-miss allowance — exactly what DEC-108 §13(a) forbids (*"a later edit never resets an earlier interval's missed-deadline allowance"*). Now the per-promise traversal count still starts at zero (that *is* the deduplication) while the **episode** is reset only when the *interval* changes (`coversInterval(handoffPhase, admittedIntervalLength)` guards the call), so the interval's second miss is the named breach instead of another allowance. **(2) An epoch mismatch was skipped, not revalidated.** The service `continue`d silently, and publication had no clock-validity step. §13(c) says a changed clock invalidates the *promise*, never the content, and that the miss **is reported**: the mismatch now names `promise_epoch_invalidated` **once per promise** (per-slot `invalidatedPromiseTick`), claims no traversal miss, leaves the interval's history untouched, and retains the obligation **unmodified** (same admission tick, same deadline) so returning to that clock judges *that* promise again — so an epoch change can never mint an allowance. The content still publishes, which is **asserted**, not assumed. **(3) A deadline crossed at/around the final grain escaped.** The turn's clock is read *before* the worker grain and `activeViewBuildWork()` returns null the moment the build completes, so a build finishing a tick late was never judged. The promise is now **retained through completion** (`completedPromisePendingJudgement`, consumed by the next opportunity's fresh clock, and **cleared by a new admission** so a successor can never be judged as its predecessor). **(4) The review's closing point — *"accounting plus a latch does not yet prove late-publication containment"*** — is now a fixture: after the breach, `containmentForSlot(slot, phase)` reads `ContinuityContainment::ServeLastCoherentRevision` while coverage remains, so the policy is **read by containment**, not merely counted. **Fixtures (3, ownership suite):** the repeated-request + containment fixture (the successor promise's miss is the interval's second — named `lag_breach`, latch set, `one_pass_late` still 1); the real-epoch-change fixture (named once, no traversal count moved, obligation retained and re-judged on the return leg, the build **completes in the new epoch** and publishes, and a promise admitted in that epoch that misses is the **breach**); and the completion fixture (finished *inside* the promise, the record then unreadable, and the next opportunity past the deadline still names `one_pass_late` — once). **MC1-MC6** red-prove each behaviour (always reset the episode; skip the naming; reset on the mismatch; drop the retention gate; drop the retention record; never latch on the second miss) with every restore byte-identical (`TrackPlaybackWindowBuild.cpp` **377b5041b44a8f9d** before and after each case; final **6f4961ef38d9186c** after the doc comments, `TrackPlaybackRuntime.h` **c9b5654c266b5138**). Two corrections were recorded rather than smoothed: the epoch fixture's first draft asserted an absolute `one_pass_late == 0` where its own earlier turn legitimately counted the allowance (now a *no-move* comparison), and the retention is a bool cleared at admission rather than a `tick != 0` sentinel, because tick 0 is a legal instant. Verified: focused **97/97** (94/94 at increment 27), full native **2,740 / 2,733 succeeded / 7 skipped / 0 failed**, build **SUCCESS** with the RAM1 line byte-identical (`variables 96,192`, code 390,472 + padding 2,744) and one measured size re-base (target 6,816 -> **6,832** B, host 8,768 -> **8,784** B), `git diff --check` clean, `openspec validate --strict` valid. No upload and no device claim. **The review's verdict stands where it is about operation:** on the device the service still judges nothing (no production requester, the lane's production builds carry `clockEpoch == 0`, `sInterferenceBudgetEnforced` off), so blocker 3's operational half remains the production requester's qualified clock stamp. Evidence: [`evidence/2026-10-04-s310w-episode-and-epoch-revalidation/EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-04-s310w-episode-and-epoch-revalidation/EXECUTION.md).
+
+**Task 3.10 — completion-clock repair: reviewed correctness blockers fixed, timing qualification still open.**
+Completion is judged immediately with a fresh ClockManager stamp, not at the next
+dispatch. Late/invalidated candidates remain unpublished until explicit boundary
+revalidation; their original deadline/history are preserved, and admission cannot
+overwrite them. The dispatcher sweeps deadlines independently of worker eligibility.
+Cancel/reset cleanup includes withheld previews (review-found defect red-proved).
+Focused101/101; full native2,744 / 2,737 passed / 7 skipped / zero failed; capture
+build holds variables96,192 and padding2,680, both runtime size pins unchanged.
+Three guard mutations fail as intended and restore byte-identically. Uploaded image
+dfb21ada3121… passes the registered baseline on authorized track8 slots4/5
+(captures/completion-clock-repair-baseline); complete capture, advisory first-note
+warning retained. No capacity reduction, timing-limit change, RAM1 rebase or commit.
+Live requester/retry, boundary-consumer integration and timing-envelope qualification
+remain open; baseline regression is not a committed-window deadline qualification.
+Evidence: [completion-clock repair](../../openspec/changes/windowed-playback-generation/evidence/completion-clock-repair/EXECUTION.md).
+
+**Task 3.10 — requester retry-safety prerequisite verified; live integration remains open.**
+A refused `requestPlaybackWindow` retry could clear the active builder's borrowed
+scratch before returning `BuildInFlight` (red proof: 388 events became 0). Busy
+builds, held completions and ready successors now refuse before gathering, retaining
+the new demand with a conservative maximum-admissible cost until it is resolved.
+The first build's source, identity/deadline and published content are preserved.
+Focused103/103; full native2,746 / 2,739 passed / 7 skipped / zero failed; guard
+mutation fails both new fixtures, restored byte-identically; capture build succeeds
+with RAM1 unchanged (variables96,192, padding2,680). Strict OpenSpec and whitespace
+checks pass. No upload, no commit, no live activation or timing-envelope claim.
+Still required: bounded effective-source cursor/lifetime and retirement, cold view
+provisioning, pending-only retry service preserving deadlines, shared-builder
+exclusion, paired slot-phase/clock, ahead-of-playhead boundary/closure consumption.
+The synchronous allocating gather cannot simply be placed in a deferred turn.
+Evidence: [requester/retry integration](../../openspec/changes/windowed-playback-generation/evidence/requester-retry-integration/EXECUTION.md).
+
+**Task 3.10 — bounded immutable event-window cursor verified; runtime binding still owed.**
+`LoopSnapshot::EventWindowCursor` pins at most three intersecting event-membership
+chains for the initial two-bar linear window, not a whole-loop root or event-copy
+buffer. Reads charge reference/page/bar work and retain canonical order/event ID;
+retirement reuses the snapshot's one-child/emptied-node release primitive. Root
+retirement, shared readers, cancellation, reuse, exact endpoints and length-independent
+work are native-proved. Worst-case source read/release bound:13,059 units, not a
+wall-clock guarantee; fixture120 references/80 output rows costs132 read units at
+16/64/512 bars. Focused47/47, final native2,743 passed/7 skipped/zero failed; five
+mutations fail and restore byte-identically. One review's endpoint gap fixed.
+Capture build succeeds with RAM1 unchanged (variables96,192, padding2,680); strict
+OpenSpec and diff checks pass. No upload/commit/live activation. Next: bounded
+count/fill/order binding preserving canonical ties, candidate lifecycle/retirement,
+and pending-only retry service; phase/clock, boundary and device timing remain open.
+Evidence: [bounded source cursor](../../openspec/changes/windowed-playback-generation/evidence/requester-retry-integration/SOURCE_CURSOR.md).

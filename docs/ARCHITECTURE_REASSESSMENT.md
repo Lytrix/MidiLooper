@@ -2,7 +2,7 @@
 
 **Default: continue implementation.** Reassess only when a [formal trigger](#formal-triggers) fires. See [progress bias and decision ladder](Authority/ARCHITECTURE_RULES.md#progress-bias-and-decision-ladder).
 
-This document does not replace the mandatory bugfix checkpoint in `.cursor/rules/architecture-checkpoint-bugfix.mdc` — run both when applicable.
+Bugfix scope and investigation follow the [critical-path and debugging boundary](Authority/WORKFLOW_LIFECYCLE.md#critical-path-and-debugging-boundary). These complement the decision ladder; they do not introduce a separate architecture approval gate.
 
 ---
 

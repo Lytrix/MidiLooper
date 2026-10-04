@@ -236,11 +236,11 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
                            kEdgeEffectLog);
           cancelPendingSlotSwitch(i);
         }
-      } else if (!tracks[i].isPlaybackMergedMidiEventsReadyForSlot(targetSlot) &&
+      } else if (!tracks[i].playbackLaunchReadyForSlot(targetSlot) &&
                  tracks[i].getLoop(targetSlot).shouldAvoidFullVisualRebuild(
                      tracks[i].getLoop(targetSlot).loopLengthTicks)) {
-        // Long loop just Committed: do not full-gather on the clock path (210001).
-        // Main prewarms after LoadLoopJob Commit; keep pending until window is ready.
+        // SlotProvision requests the initial immutable window; maintenance owns
+        // its bounded build. Keep outgoing playback until completed readiness.
       } else if (!tracks[i].hasPlaybackOccupancyForSlot(targetSlot)) {
         // S4b.6 (a) / S4b.7: the inbound **occupancy** is absent, so the switch stays **pending** rather
         // than committing into a slot whose runtime does not exist -- `ensurePlaybackMergedEventsForSlot`
@@ -248,12 +248,21 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         // `requestSlotSwitch` already marked the request for the deferred provisioning owner
         // (`provisionSlotForSwitch`), so the next eligible lane turn takes the occupancy off-clock and the
         // commit lands.
+      } else if (tracks[i].getLoop(targetSlot).shouldAvoidFullVisualRebuild(
+                     tracks[i].getLoop(targetSlot).loopLengthTicks) &&
+                 !tracks[i].bindPlaybackLaunchForSlot(targetSlot, currentTick)) {
+        // Ready is revalidated at the real boundary; no outgoing-phase promise.
       } else if (tracks[i].hasDataInSlot(targetSlot)) {
         const uint8_t previousPlaying = getPlayingSlotIndex(i);
         clearPendingSlotSwitch(i);
         // Wire silence before swapping the audible slot (same pattern as overdub→play).
         tracks[i].sendAllNotesOff();
-        tracks[i].ensurePlaybackMergedEventsForSlot(targetSlot);
+        // Demoted targets already proved launch coverage above. Never repeat
+        // their gather/order build on the clock edge (short-loop path unchanged).
+        if (!tracks[i].getLoop(targetSlot).shouldAvoidFullVisualRebuild(
+                tracks[i].getLoop(targetSlot).loopLengthTicks)) {
+          tracks[i].ensurePlaybackMergedEventsForSlot(targetSlot);
+        }
         // S4b.5: the commit is the actor here (the pending switch was just consumed), so it lands the write at
         // the non-re-entrant commit point: the guarded entry could otherwise divert it into a capture switch.
         applyActiveLoopIndex(i, targetSlot);

@@ -353,6 +353,39 @@ GitHub Project **NOW** may feed `CURRENT_WORK`; capability cards on **Work** ans
 
 ---
 
+### Critical path and debugging boundary
+
+These are execution guardrails, not another plan, work queue, or approval gate.
+Record them in the existing task/implementation packet; a short note is enough.
+
+- **Name the destination:** before a slice, identify the active OpenSpec acceptance
+  criterion (or user outcome), the observable result, and the task to resume after
+  any blocking fix. Local test counts are evidence, not a substitute for that result.
+- **Discovery is not scope:** fix a newly found defect now only if it blocks that
+  criterion or presents a concrete immediate correctness, data-loss, or safety risk.
+  Otherwise record its evidence and defer it in the existing work record. A failed
+  required safety/content/timing gate cannot be relabelled cleanup and deferred.
+- **Return to the main task:** once a blocker is fixed and relevant checks pass,
+  freeze that finding and resume the original criterion. Do not automatically chase
+  the next root cause, create its plan, or broaden into adjacent cleanup. A new
+  owner or contract change follows the existing architecture decision ladder.
+- **Make experiments discriminate:** name the hypothesis, competing explanation,
+  test, and what each result changes about the next action. After two consecutive
+  tests/reruns that neither narrow the cause nor add relevant evidence, stop
+  repeating that approach: summarize known/unknown, choose a different discriminating
+  check or report the concrete blocker. This is a strategy checkpoint, not a waiver
+  of verification or a deadline for abandoning a reproducible defect.
+- **Justify optimization by the gap:** estimate whether the proposed reduction can
+  meet the acceptance bound or enable a named necessary next step. If evidence
+  proves the current design cannot meet the contract, surface that design decision
+  instead of indefinitely polishing it. Do not silently shrink capacity, widen
+  timing limits, or treat successful containment as successful normal operation.
+- **Close the loop:** report which criterion advanced, the remaining blocker, and
+  the next end-to-end action. Preserve unrelated dirty work and existing commit
+  permissions; a checkpoint recommendation is not authorization to commit.
+
+---
+
 ## 11. Implementation
 
 Implement the decided work within the established architecture.

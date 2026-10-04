@@ -73,15 +73,27 @@ them. Nothing in this section may stand in for production behaviour with a stub 
 - [ ] 2.2 Land **F-2** (readiness per affected tick inside the deadline) — verify the oracle is the **derived** deadline
   (tempo, quantisation, phase advance, service availability) rather than a bar count or a fixed millisecond figure, and
   that it covers a short and a much longer loop in the same shape
-- [ ] 2.3 Land **F-3** (one pass late, and only that) — verify the previous revision of *that interval* stays
+- [x] 2.3 Land **F-3** (one pass late, and only that) — verify the previous revision of *that interval* stays
   authoritative for the traversal, that a **second** miss is reported as a named breach, that the allowance is not reset
   by a further edit, and that the consumer is never blocked
+  *Checked off 2026-10-04 in [`RECONCILIATION.md`](RECONCILIATION.md) §1:* `test_playback_lag_rule_serves_the_previous_revision_once_and_names_a_second_miss`
+  (registered in `RUN_TEST`) asserts all four clauses and the rule is total by construction, so a consumer cannot be blocked; **M4** (a further edit
+  resets the allowance), **M5** (a published replacement ignored) and **M6** (the once-per-episode guard dropped) are red-proved and restored
+  byte-identically ([`evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md`](evidence/2026-10-02-s36b-lag-rule/EVIDENCE.md)). Nothing in the task remains owed.
 - [ ] 2.4 Land **F-4** (nothing allocates or blocks on the edge) — verify the fixture fails when the commit edge takes
   capacity or builds inline, in the S4b.6/S4b.7 shape
-- [ ] 2.5 Land the **empty-interval readiness** fixture — verify a completed publication over an interval with no events
+- [x] 2.5 Land the **empty-interval readiness** fixture — verify a completed publication over an interval with no events
   is ready and sounds as silence, and that the fixture fails under today's non-empty term
-- [ ] 2.6 Land the **stale deferred completion** fixture — verify a completion arriving after an ownership change is
+  *Checked off 2026-10-04 in [`RECONCILIATION.md`](RECONCILIATION.md) §1:* `test_window_readiness_names_its_holder_and_an_empty_interval_is_ready` (registered)
+  asserts a completed publication over an event-empty interval is `Ready` and that every non-ready answer names its holder; the silence half is asserted
+  on the serving path by `test_cross_generation_closures_are_reconciled_and_an_empty_window_silences_nothing`; the pre-change **non-empty term** is
+  red-proved by two mutations restored byte-identically ([`evidence/2026-10-02-s35-readiness-holder/EVIDENCE.md`](evidence/2026-10-02-s35-readiness-holder/EVIDENCE.md)).
+- [x] 2.6 Land the **stale deferred completion** fixture — verify a completion arriving after an ownership change is
   rejected or re-attributed through the playback generation rather than published
+  *Checked off 2026-10-04 in [`RECONCILIATION.md`](RECONCILIATION.md) §1:* `test_shared_view_transitions_state_the_ownership_rules_and_a_late_completion_publishes_nothing`
+  (registered) asserts the late completion is refused through the operation generation and publishes nothing; **M10** (publication guard dropped),
+  **M11** (identity not invalidated on clear/load) and **M12** are red-proved and restored byte-identically
+  ([`evidence/2026-10-02-s311-shared-view-transitions/EVIDENCE.md`](evidence/2026-10-02-s311-shared-view-transitions/EVIDENCE.md)).
 - [ ] 2.7 Close the measured coverage gap for the demoted shape — verify a fixture **fails** when the window build is
   removed on a demoted slot (RWO recorded that dropping it left every fixture green and pinned that as a harness
   tripwire)
@@ -297,7 +309,7 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   Verify F-7 still passes on the cold path, that no demoted slot
   reaches the removed path (`playMidiEventsForSlot`'s fallback), and that `ExecutionBounds.md` row 2 is re-classed only
   with evidence
-  *Not started 2026-10-02, and the reason is this task's own gate rather than a judgement call:* it requires **3.11**
+  *Historical status at 2026-10-02 (not a current prerequisite claim; later increments implement parts of these dependencies):* it requires **3.11**
   (shared-view ownership and the cancellation transition table), **3.12** (the bounded legacy compatibility path),
   **3.13** (preview publication), **3.14** (undo/redo audible handoff) and **4.5** (fault recovery) to be implemented
   and verified first, and **none of them exists yet**. The ladder's stage (4) is therefore not reachable, and the next
@@ -624,8 +636,8 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   red-proved with byte-identical restores. **OWED in this task:** fixture **2.12**'s integration half (edit while
   playing on a long loop, cross window boundaries, in-session undo/redo, switch the selected track, mutate/exit between
   build grains, then save — needing a suite that links **both** the window lane and the real edit stack) and the
-  production **callers** (the preview requester and the `EditManager` lifecycle hooks), which belong to the same stage
-  that admits the committed requester (3.7). Detail:
+  production **callers** (the preview requester and the `EditManager` lifecycle hooks). Implement these with
+  the serving-path integration in 3.10/3.13 BEFORE 3.7 fallback removal; removal is not their prerequisite. Detail:
   [`evidence/2026-10-02-s313-preview-contract/EVIDENCE.md`](evidence/2026-10-02-s313-preview-contract/EVIDENCE.md).
 
 - [ ] 3.14 **Integrate undo/redo audible handoff** — establish a production-path fixture before changing
@@ -692,7 +704,7 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   buffer but whose authority for a slot at undo time is **unverified**, versus the existing request path's
   caller-owned enumerated scratch, correct but a cold content-sized allocation), and choosing between them is a design
   decision to state here first (3.14c); (b) the between-grains matrix (repeated undo/redo, track/slot switching, stale
-  completion while preparation grains are paused — 3.7's serving path); (c) retained-source lifetime and discharge
+  completion while preparation grains are paused — 3.10/3.14 serving-path integration); (c) retained-source lifetime and discharge
   (3.6a, cited), displayed provenance, and preview-session undo/redo (3.13/2.12, cited). Detail:
   [`evidence/2026-10-02-s314b-committed-pass-source/EVIDENCE.md`](evidence/2026-10-02-s314b-committed-pass-source/EVIDENCE.md).
   *Increment 3.14c landed 2026-10-02 — the **refresh's source question, verified** (no production code changed); the
@@ -705,18 +717,18 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   request path's enumerated scratch) is **measurably gated**: with a served window and a real `TrackUndo::undoForLoop`,
   readiness stops being `Ready` (a rebuild is owed, **named** in the owner's vocabulary) and `requestPlaybackWindow`
   answers **`SourceNotCurrent`** — the lagging root is named, never served as current, which is DEC-073's protection and
-  exactly **4.1**'s lagging-checkpoint outcome. So the refresh's requester belongs to **4.1** (a current root) and then
-  **3.7** (the consumer/traversal lane, which knows the interval and the phase) — an ordering statement backed by two
-  measurements, not a deferral. What this edge owes it already does: advance the currency (revision + generation), settle
+  exactly **4.1**'s lagging-checkpoint outcome. Source currency is produced by the existing Loop publication
+  owner (`requestCommittedPassesRepublish` and its deferred service), not by parity verification in 4.1.
+  The refresh requester belongs to 3.14 with 3.10's consumer/traversal integration, BEFORE 3.7 removal. What this edge owes it already does: advance the currency (revision + generation), settle
   the closures from the change's own identities, keep the ledger (the closure-obligation set), silence nothing and
   enumerate nothing. *Verification:* focused **64/64** (fixture extended again, not added), full native **2695 / 2688
   succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192`
   **unchanged** / `code 392,328 + padding 888` (48 B above the floor; byte-identical to the five previous slices). Three
   mutations red-proved with byte-identical restores, and **two of them deliberately mutate other owners' code** (the
   not-current guard, the revision bump) because those are the facts the handoff rests on — a fixture that only fails when
-  its own slice is undone would not test the claim it states. **OWED in this task:** the refresh's requester (4.1 -> 3.7);
+  its own slice is undone would not test the claim it states. **OWED in this task:** the refresh's requester (source publication -> 3.10/3.14 integration -> 3.7 removal);
   the between-grains matrix (repeated undo/redo, track/slot switching, stale completion while preparation grains are
-  paused — 3.7's serving path); retained-source lifetime and eventual release (3.6a, cited); displayed provenance; and
+  paused — 3.10/3.14 serving-path integration); retained-source lifetime and eventual release (3.6a, cited); displayed provenance; and
   preview-session undo/redo (3.13/2.12, cited). Its **audible** requirement and the red-proof the task demands
   ("restore the blanket silence") are complete. Detail:
   [`evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md`](evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md).
@@ -725,11 +737,17 @@ them. Nothing in this section may stand in for production behaviour with a stub 
 
 - [ ] 4.1 Land **F-5** (checkpoint parity, undo) — verify an undo restores exactly what its entry named, including the
   **lagging** case, whose outcome must be named rather than reported as current
-  *Increment 4.1 landed 2026-10-02 — the parity is **named** (`CheckpointParity` + the pure `resolveCheckpointParity`, and `Loop::checkpointParity()` reading the loop's own three figures: no new state, no pin move), and the **lagging** case is named through the *production* undo path with `publishedSnapshotIdentity()` null — selected, never presented as current. This also answers the question 3.14c left the refresh resting on: whether a root is current is now a **named** outcome (`OwesReconciliation` at the undo edge, measured), so the requester's precondition has a name even though the requester itself stays 3.14 → 3.7. Verified: focused 65/65, full native 2696 / 2689 succeeded / 7 skipped / 0 failed, true clean rebuild with the RAM1 line byte-identical (48 B headroom); four mutations red-proved with byte-identical restores. **The task stays open** on the content-level comparison, whose instrument is 4.3's content-verification pipeline; save parity is **4.2**. No production caller consumes the name yet (4.2 and the readiness/lag reporting will) — stated rather than implied. Detail: [`evidence/2026-10-02-s41-checkpoint-parity/EVIDENCE.md`](evidence/2026-10-02-s41-checkpoint-parity/EVIDENCE.md).*
+  *Increment 4.1 landed 2026-10-02 — the parity is **named** (`CheckpointParity` + the pure `resolveCheckpointParity`, and `Loop::checkpointParity()` reading the loop's own three figures: no new state, no pin move), and the **lagging** case is named through the *production* undo path with `publishedSnapshotIdentity()` null — selected, never presented as current. This also answers the question 3.14c left the refresh resting on: whether a root is current is now a **named** outcome (`OwesReconciliation` at the undo edge, measured), so the requester's precondition has a name even though the requester itself remains 3.14 implementation with 3.10 serving integration, before 3.7 removal. Verified: focused 65/65, full native 2696 / 2689 succeeded / 7 skipped / 0 failed, true clean rebuild with the RAM1 line byte-identical (48 B headroom); four mutations red-proved with byte-identical restores. **The task stays open** on the content-level comparison, whose instrument is 4.3's content-verification pipeline; save parity is **4.2**. No production caller consumes the name yet (4.2 and the readiness/lag reporting will) — stated rather than implied. Detail: [`evidence/2026-10-02-s41-checkpoint-parity/EVIDENCE.md`](evidence/2026-10-02-s41-checkpoint-parity/EVIDENCE.md).*
 - [ ] 4.2 Land **F-6** (checkpoint parity, save) — verify a persisted body is equivalent to the root it was serialized
   from and a restore's outcome is either current **or** named as stale; the fixture must falsify today's
   `storePublishedSnapshot(…, kSnapshotCoverageCurrent)`-without-reconcile path
   *Increment 4.2 landed 2026-10-02 — the **verification** half: through the production writer (`writeLoopPersisted`) and the production restore edge (`applyLoadedLoopSlotBodyCommit`) the installed root is **equivalent** to the root that was serialized and the restore's coverage outcome is **named** (4.1's `CheckpointParity::Current`), which nothing asserted at that edge before. The task's **falsification** clause is answered by measurement, not by a pin: a body whose metadata and root cannot come from one committed state is accepted by the reader and installed as a *named-current* checkpoint (`publishedSnapshotIdentity()` non-null) — today's `storePublishedSnapshot(…, kSnapshotCoverageCurrent)` claims currency on the **writer's** admission, which the body does not record. **The task stays open** on the repair: persisting the root's coverage is a **format decision** (LSV1 v1 is pinned; no provenance field exists), and the cheap cross-check is **refuted by reading the code** (`EditSelectNoteState.cpp:188` → `Loop::allocateNoteId()`, so the note-id figure can advance while a settled root's committed state is unchanged). Verified: focused 52/52 (+1 fixture) + 65/65 + 190/190 (cited pin) + 38/38, full native 2697 / 2690 succeeded / 7 skipped / 0 failed, true clean rebuild with the RAM1 line byte-identical (48 B headroom); four mutations red-proved with byte-identical restores, their bound stated (a positive-outcome fixture cannot falsify an over-claiming parity). Detail: [`evidence/2026-10-02-s42-save-parity/EVIDENCE.md`](evidence/2026-10-02-s42-save-parity/EVIDENCE.md).*
+  **Dependency/evidence correction:** the counter-only `nextNoteId` probe above does not establish divergent
+  committed MIDI content; that counter can legitimately advance without changing a settled root. Establish the
+  content-level oracle before choosing a repair. Persisted provenance is one possible format decision; bounded
+  load reconciliation is another unresolved design option, not permission to change the format. This open parity
+  work does not block unrelated request/handoff implementation with fallback retained.
+
 - [ ] 4.3 Land **F-7** (content parity across a window boundary) — verify the windowed stream equals the whole-loop
   stream across the boundary, including **boundary note closures**, driven through the project's existing
   content-verification pipeline rather than a second one
@@ -857,9 +875,18 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   and the budget line is reported; do **not** flash without asking
 - [ ] 6.3 Run the sweeps — verify loop length, content density, tempo, window span and competing deferred work are each
   varied and reported, and that a single configuration is never presented as the acceptance
+  *Partially supplied 2026-10-05 — the **contention** and **window span** axes and part of **content density** are now
+  measured and reported rather than assumed:* the `H x K` sweep drives the production composition at the declared
+  permitted advance and writes down `drainTurns = H x (1 + K) x serviceTurns` with its grid (H 1/2/4/8 x K 0/1/2), the
+  density axis (5/20/80 notes → 2/7/33 service turns) and the span axis (identical cost at 17 and 41 bars), plus the
+  boundary pair where the declaration predicts a crossed promise and the crossing is named. The task stays **open**:
+  tempo is swept only through the declared advance (not other tempos), chords/same-tick density are not swept, the
+  device leg is not run, and no single configuration is presented as the acceptance — see
+  [`hk-contention-sweep`](evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md).
 - [ ] 6.4 Add a dedicated **windowed HITL profile** through the existing content-verification pipeline (canonical
   stimuli preserved, never edited to chase a condition) — verify the profile is registered, authorized and used for the
-  F-7/F-8 device legs and the AC-8 receipts under a running transport
+  F-7/F-8 device legs and the AC-8 receipts under a running transport. Profile/oracle preparation may precede
+  rolling implementation; registration, authorization, exercise and successful qualification remain distinct
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B
@@ -884,7 +911,8 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   in-envelope capacity refusal, coverage fault, unintended note interruption or involuntary stop. A
   one-pass-late edit is measured as audible-action latency, never hidden as immediate execution. Supply
   evidence to runtime task S7.5b — dependency closure and task S7.5 — combined continuity acceptance;
-  passing this subsystem does not certify the whole runtime. Keep task 4.5's fault-injection results separate.
+  passing this subsystem does not certify the whole runtime. S7.5b/S7.5 are downstream consumers, not
+  prerequisites for producing this handoff; S7.5a's oracle/budget is upstream. Keep task 4.5's fault-injection results separate.
 
   *Increment 3.10 (increment 8) landed 2026-10-02 — **source-lifetime repair, fairness repair, and the derived admission (not enabled)**. Two defects in my own
   earlier increments: (1) the fixture helper gathered the request source into a **stack-local** vector while the build reads `source_[cursor_]` **across turns**
@@ -1167,3 +1195,238 @@ size re-base (target 6,816 -> **6,832** B, host 8,768 -> **8,784** B), `git diff
 production requester, `clockEpoch == 0` in production builds, enforcement off), so blocker 3's operational half is the
 production requester's qualified clock stamp — the review's verdict stands where it concerns operation. Detail:
 [`evidence/2026-10-04-s310w-episode-and-epoch-revalidation/EXECUTION.md`](evidence/2026-10-04-s310w-episode-and-epoch-revalidation/EXECUTION.md).
+
+**Task 3.10 — completion-clock repair: reviewed correctness blockers fixed, timing qualification still open.**
+Completion is judged immediately with a fresh ClockManager stamp, not at the next
+dispatch. Late/invalidated candidates remain unpublished until explicit boundary
+revalidation; their original deadline/history are preserved, and admission cannot
+overwrite them. The dispatcher sweeps deadlines independently of worker eligibility.
+Cancel/reset cleanup includes withheld previews (review-found defect red-proved).
+Focused101/101; full native2,744 / 2,737 passed / 7 skipped / zero failed; capture
+build holds variables96,192 and padding2,680, both runtime size pins unchanged.
+Three guard mutations fail as intended and restore byte-identically. Uploaded image
+dfb21ada3121… passes the registered baseline on authorized track8 slots4/5
+(captures/completion-clock-repair-baseline); complete capture, advisory first-note
+warning retained. No capacity reduction, timing-limit change, RAM1 rebase or commit.
+Live requester/retry, boundary-consumer integration and timing-envelope qualification
+remain open; baseline regression is not a committed-window deadline qualification.
+Evidence: [completion-clock repair](evidence/completion-clock-repair/EXECUTION.md).
+
+**Task 3.10 — requester retry-safety prerequisite verified; live integration remains open.**
+A refused `requestPlaybackWindow` retry could clear the active builder's borrowed
+scratch before returning `BuildInFlight` (red proof: 388 events became 0). Busy
+builds, held completions and ready successors now refuse before gathering, retaining
+the new demand with a conservative maximum-admissible cost until it is resolved.
+The first build's source, identity/deadline and published content are preserved.
+Focused103/103; full native2,746 / 2,739 passed / 7 skipped / zero failed; guard
+mutation fails both new fixtures, restored byte-identically; capture build succeeds
+with RAM1 unchanged (variables96,192, padding2,680). Strict OpenSpec and whitespace
+checks pass. No upload, no commit, no live activation or timing-envelope claim.
+Still required: bounded effective-source cursor/lifetime and retirement, cold view
+provisioning, pending-only retry service preserving deadlines, shared-builder
+exclusion, paired slot-phase/clock, ahead-of-playhead boundary/closure consumption.
+The synchronous allocating gather cannot simply be placed in a deferred turn.
+Evidence: [requester/retry integration](evidence/requester-retry-integration/EXECUTION.md).
+
+**Task 3.10 — bounded immutable event-window cursor verified; runtime binding still owed.**
+`LoopSnapshot::EventWindowCursor` pins at most three intersecting event-membership
+chains for the initial two-bar linear window, not a whole-loop root or event-copy
+buffer. Reads charge reference/page/bar work and retain canonical order/event ID;
+retirement reuses the snapshot's one-child/emptied-node release primitive. Root
+retirement, shared readers, cancellation, reuse, exact endpoints and length-independent
+work are native-proved. Worst-case source read/release bound:13,059 units, not a
+wall-clock guarantee; fixture120 references/80 output rows costs132 read units at
+16/64/512 bars. Focused47/47, final native2,743 passed/7 skipped/zero failed; five
+mutations fail and restore byte-identically. One review's endpoint gap fixed.
+Capture build succeeds with RAM1 unchanged (variables96,192, padding2,680); strict
+OpenSpec and diff checks pass. No upload/commit/live activation. Next: bounded
+count/fill/order binding preserving canonical ties, candidate lifecycle/retirement,
+and pending-only retry service; phase/clock, boundary and device timing remain open.
+Evidence: [bounded source cursor](evidence/requester-retry-integration/SOURCE_CURSOR.md).
+
+
+### Task 3.10 continuation — runtime fill/order and retained retries (verified, not activation)
+- Typed window cursor binding now preserves full canonical/event-ID ties through
+  two bounded sorts and rank assignment in existing prewarmed arrays.
+- Runtime owns cursor pins; separate freeze/count/admit/fill/order/retire turns,
+  pending-only committed recipes and runnable-first offers, original absolute
+  deadline transfer, explicit shared-builder exclusion, bounded cancellation and
+  preservation of newer demand. Clock-derived active-slot phase; jam/queued refusal.
+- Seven new retry fixtures; ownership110/110; full native2,760 total/2,753 passed/
+  7 skipped; five retry mutations restored byte-identically. Previous binding
+  fixtures193/193 and three ordering/token mutations remain part of this slice.
+- One bounded review: source staleness must not invalidate a newer request's clock
+  position. Fixed, exact regression passes, reverted condition fails.
+- Target runtime7,072 B (+240 external), host9,096 (+312). RAM1 not rebased;
+  no upload. See RUNTIME_BINDING.md and retry-verification.json for final build.
+- **Task remains open.** No production request/provisioning trigger, qualified
+  boundary recovery/adoption or registered committed-window HITL. Existing lane
+  dispatches retained recipes correctly in native production-path fixtures; that
+  is not an exercised production workload. Pending expiry is named separately
+  from admitted completion misses, not a claim of complete recovery policy.
+- **Timing NOT QUALIFIED:** empty base build3 grains at H8/gap64 + margin768
+  needs2,304 ticks > two-bar1,536; qualification/release add work. Historical
+  gaps112/168/149 exceed64 and remain observations, not bounds. No capacity cut,
+  fallback removal, gate flip or synthetic device pass.
+Evidence: [runtime fill/order and retry](evidence/requester-retry-integration/RUNTIME_BINDING.md).
+
+
+### Task3.10 — topology-qualified retirement unblocking
+Completed cursor count now derives the pinned-page retirement bound in O(1),
+including all fixed page slots and empty pages. This replaces the blanket205-turn
+surcharge only after qualification; incomplete/rewound cursors keep maximum.
+Empty retirement1 turn, nine-page bound156 units exact after root retirement.
+Eight-track production composition at64ticks/lane turn: initial eight-bar lead
+completes8 empty windows in48 turns; two-bar lead completes0 without regranting.
+Source47/47, ownership113/113; full native2,756 passed/7 skipped; two mutations
+and capture/RAM1/strict validation pass. No size growth, upload, activation or
+fallback removal. Task stays open on qualified launch preparation/binding,
+production trigger, steady-state service throughput and registered device proof.
+Evidence: [unblocking retirement charge](evidence/requester-retry-integration/UNBLOCKING.md).
+
+
+### Task 3.10 — production launch readiness continuation (partial, native verified)
+Demoted-target **fallback** launch now retries readiness after occupancy, prepares
+its own phase-zero interval, accepts successfully gathered empty intervals, checks
+source/revision/generation/order/coverage, and does not rebuild on the commit's
+first target tick. Focused116/116, full native2,759 passed/7 skipped; three mutations
+caught, capture/RAM1 and strict validation pass. No new reservation or size rebase.
+**Not closed:** immutable launch recipe/provisioning/boundary adoption, production
+committed-window requester, continuous refill and device qualification. The lane
+supplies3 turns/window/holder at H8/gap64; dense copying alone needs32. No upload,
+fallback removal, timing-constant change or activation. Existing fallback gather
+remains content-sized; off-clock placement is not a structural timing guarantee.
+[Packet and evidence](evidence/requester-retry-integration/LAUNCH_READINESS.md).
+
+
+### Task 3.10 — immutable initial launch and real ordering-work reduction
+**Immutable initial launch bound; ordering work reduced; continuous two-bar NOT QUALIFIED.**
+SlotProvision now reserves only the three rolling views for a cold demoted target
+and records an explicitly unpositioned launch recipe. The existing playback lane
+counts/fills/orders/retires its pinned source; the completed ready view binds only
+at the real phase-zero switch boundary. Empty intervals are valid, stale identity
+cannot bind, cancellation retires pins, and capture prewarm upgrades in place.
+The first traversal consumes the immutable window without a launch rebuild; expiry
+is sticky. Later coverage stays on the mutable fallback. Legacy dense overflow
+uses the named `launch_legacy_dense` fallback, without truncation or capacity cut.
+A blocked earlier switch no longer hides later tracks; sibling interference waits
+without permanently refusing an unpositioned launch. Both review findings red-proved.
+Ordering alternates existing arrays: dense sort982 ->555 turns at quantum48,
+no extra buffer. Dense snapshot fill35 + order/ranks1,153 =1,188 turns; derived
+shared-source lifecycle1,226 (was2,080). This still cannot meet the3 turns/window/
+holder supplied at H8/gap64. Continuous refill and device qualification stay open.
+Focused ownership122/122, prewarm196/196; full native2,768 passed/7 skipped;
+five mutations caught/restored, strict validation and capture build pass. RAM1
+variables96,192/code391,512/padding1,704/locals34,880, floor840 unchanged. Existing
+runtime size pins still pass (target7,072/host9,096). No upload or commit.
+Evidence: `IMMUTABLE_LAUNCH.md`, `ORDER_WORK.md`, `immutable-launch-verification.json`
+in `openspec/changes/windowed-playback-generation/evidence/requester-retry-integration/`.
+
+No task3.7 fallback-removal checkoff. Initial launch is a wait-for-ready binding,
+not a continuous deadline guarantee; later rolling requests/eligible adoption,
+full continuity/closure integration and registered device qualification remain.
+No new service constants or supported-density claim. Existing limits preserved.
+
+
+### Task 3.10 — device rootless-source hold correction
+**Device rootless-launch hold fixed and observed on the preserved target.**
+Track8 slot5 had24 bars/1,144 committed events but no published root (LIBOBS kp1,
+kr0,kc0); the new requester waited forever without requesting its source. Explicit
+launch preparation now queues the existing on-demand committed-pass republish only
+when no current root/job exists. Bulk boot hydration stays disabled; construction
+remains on the existing Snapshot owner, not the clock edge.
+Native regression red-proved, focused123/123, full native2,769 passed/7 skipped;
+capture build/RAM1 and strict validation pass. Uploaded image5e8a81b1ba9c91e52f566c40a7d4e0101850ea19ccb016f16b80af1878f5723a.
+Device: queue at205.973s -> commit at233.897s, target length18,432. Post-run readback
+retains1,144 events and now reports kr1/kc1; playback emits channel8 notes and the
+24-bar display is populated. Slot5 was preserved; only authorized slot4 was rebuilt
+for the retest. Final device state STOPPED, pending0, queue0/4.
+Limits: cold source preparation took~27.924s and exceeded the4-bar hold report;
+not timely-launch or continuous-two-bar qualification. Unmodified wrapper baseline
+PASS did not send the switch. TEMP forced-stop-request variant sent it, but generic
+baseline FAIL reflects its injected held note83; content verifier INCONCLUSIVE
+(no unique recurring anchor), not a parity pass. Evidence preserved; no commit.
+Packet/evidence: `evidence/requester-retry-integration/DEVICE_ROOTLESS_HOLD.md` in
+`openspec/changes/windowed-playback-generation/`.
+
+No task3.7 removal or continuous timing checkoff; cold-source latency remains open.
+
+
+### Task 3.10 — single-pass qualification/fill
+**Single-pass private qualification/fill verified; continuous two-bar still NOT QUALIFIED.**
+The runtime now uses the existing typed fill while qualifying the pinned source,
+writing only its private candidate. Admission preserves the original promise and
+starts ordering without rewinding/refilling. Fill is charged zero only after it
+has actually completed; capacity overflow remains named and unpublished, and
+source-token failure/cancellation preserve the current view while retiring pins.
+Dense2048 fixture: one2,178-unit/35-turn source pass +1,153 ordering/rank turns;
+full shared-source lifecycle1,191 turns (was1,226). Eight empty initial windows
+complete in40 lane turns (was48); two-bar lead still refuses without synthetic
+publication or renewed deadlines. Five turns per empty request still exceed the
+three turns/window/holder supplied under H8/gap64. No timing/capacity rebase.
+Focused320/320; full native2,770 passed/7 skipped; three mutations caught/restored;
+capture build, unchanged RAM1/runtime size pins and strict validation pass.
+No device action/upload/commit. The~28s rootless cold-source preparation delay is
+unchanged and remains a separate blocker. Evidence: `SINGLE_PASS_QUALIFICATION.md`
+and `single-pass-verification.json` in the requester-retry evidence directory.
+
+No task checkoff for continuous refill or task3.7 fallback removal. Completing
+qualification sooner does not establish a supported sustained service envelope.
+
+## Gated rolling slice closeout (no additional task checkoff)
+
+**Gated rolling request → preparation → validated handoff → emission verified.**
+`serviceRollingPlaybackWindow` runs off-clock before offers; the existing bounded
+worker prepares the selected current-root interval; `resolveRollingPlaybackWindow`
+validates absolute deadline/epoch, generation, geometry, revision, prior serviced
+tick, completion and retired pins before adoption. The existing emitter/ledger is
+reused; physical view/storage generation guards prevent reuse, and empty windows
+preserve held notes. Refused original debts and unrelated newer demands survive.
+
+`PLAYBACK_WINDOW_ROLLING_ENABLED` defaults0; enabling requires native or explicit
+capture qualification marking. The ordinary `platformio.ini` is unchanged.
+Capacity2048, span1536, fill64/order48, gap64,H8,margin768 remain unchanged. At
+phase0, the selector targets [4608,6144): fallback covers [1536,4608) and resumes
+on expiry. This proves later-window handoffs, NOT contiguous two-bar service.
+
+Verification: focused329/329; full native2,779 passed/7 skipped/0 failed; three
+mutations caught/restored; default and explicit qualification capture builds pass
+RAM1 floor840 (padding1,640/984). Runtime metadata +48 external bytes per holder
+(target7,120/host9,144), no event-buffer growth. No upload/commit. Native covers
+Track caller/worker/emitter; main wiring is build-verified, not native linked.
+Continuous timing, device qualification (including masked flash-boundary duration),
+old-source reconstruction, preview/undo, full recovery/closures and paged enablement
+remain open. Tasks3.10 service qualification and3.7 fallback removal stay unchecked.
+Evidence: `ROLLING_HANDOFF.md` and `rolling-handoff-verification.json` in
+`openspec/changes/windowed-playback-generation/evidence/requester-retry-integration/`.
+
+**Task 3.10 / 6.3 — the `H x K` contention sweep: the declared envelope measured on the composition (2026-10-05; test-only).**
+The envelope `Delta-max x H x bounded per-track work` had each multiplier *derived* and the **composition** never
+measured; this slice measures it in the declaration's own currency. `test/test_support/window_contention_sweep.inc`
+(three fixtures in the ownership suite) drives the production composition -- per track `serviceAdmittedDeadlineMisses` +
+`playbackWindowServiceOffer`, `selectPlaybackHolderRoundRobin` across tracks, one grain through
+`stepPlaybackViewMaintenance(phase, nullptr, …)` exactly as `src/main.cpp` calls it -- with the playhead advanced by the
+**declared permitted advance** (64 ticks per lane turn = one opportunity), on loop lengths **sized from the declaration's
+own arithmetic** over the charge the retained records carry. **Measured law:** `drainTurns = H x (1 + K) x serviceTurns`
+and the target completes at `1 + (serviceTurns - 1) x H`; the 20-note grid drains 7/14/28/56/56/112/168 turns for
+H,K = 1,0 / 1,1 / 2,1 / 4,1 / 8,0 / 8,1 / 8,2 against 192 promised turns (228 at K=2) with **zero** named misses, so the
+declaration's `(denied + 1) == NUM_TRACKS` is slack below the full rotation and tight at it. `K` and `H` are each
+**load-bearing by measurement** (the budget and the siblings' records agree, the drain exceeds the target's own turns,
+the H ratio is linear); density moves the magnitude (2/7/33 service turns at 5/20/80 notes) and span is not an input
+(identical cost at 17 and 41 bars). **A measured correction:** the charge is `serviceTurns + 1` (8 grains vs 7 turns at 20
+notes) because the promotion grain is charged while its work happens inside the completing turn and the order **bound** is
+skipped when the input is already ordered -- a *sufficient* bound, never an equality. **The boundary is predicted then
+measured:** the 80-note/K=1 shape is ready with 0 misses inside the charge (50 bars, 588 promised turns) and crosses its
+promise, named `one_pass_late`, just outside it (27 bars, 312), where each individual request still fits its own derived
+cost -- i.e. exactly what the **unenforced** admission permits -- with the declaration's own `canCompleteWithinLead`
+answering true/false/true for those three questions; the control (the same cell at **2x** the permitted advance) breaks and
+names the miss. Four mutations red-prove and are restored byte-identically: **MC1** the sibling charge ignored
+(`playbackViewOutstandingGrains` → 0), **MC2** the placeholder denial allowance (3), **MC3** the within-track tie order
+(equal deadlines to the last holder), **MC4** the order quantum (48 → 96); the production diffstat after the round equals
+the one before it. Verified: focused **135/135** (was 133), full native **2789 / 2782 succeeded / 7 skipped / 0 failed**,
+capture build **SUCCESS** with the RAM1 line byte-identical (`variables 96,192` / `padding 1,640`, floor 840, no re-base),
+strict validation valid, `git diff --check` clean. **No production line was edited**, no gate flipped, no capacity or
+constant moved, no upload, no commit. **Task 3.10 and 6.3 stay open** (device service qualification; chords/same-tick
+density, other tempos and the device leg); this slice supplies the contention axis, the measured cost law and the
+boundary. Detail:
+[`evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md`](evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md).

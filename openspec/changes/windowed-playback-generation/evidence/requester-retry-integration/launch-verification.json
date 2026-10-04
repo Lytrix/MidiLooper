@@ -1,0 +1,77 @@
+{
+  "base_commit": "25542299a7e32078a243de0f4ce50c65a73b8199",
+  "dirty_tree": true,
+  "scope": "demoted fallback launch readiness; NOT immutable activation",
+  "focused": {
+    "passed": 116
+  },
+  "native": {
+    "total": 2766,
+    "passed": 2759,
+    "skipped": 7,
+    "failed": 0,
+    "seconds": 177.023
+  },
+  "build": {
+    "env": "teensy41-capture-serial",
+    "success": true,
+    "seconds": 6.806,
+    "sha256": "97b4e5b88848cdef5a18171c55a015e37b0acfe67371e078cc98eff7a1aa6977",
+    "uploaded": false
+  },
+  "ram1": {
+    "variables": 96192,
+    "code": 390856,
+    "padding": 2360,
+    "locals": 34880,
+    "padding_floor": 840
+  },
+  "mutations": [
+    {
+      "name": "retry",
+      "exit": 1,
+      "caught": true,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:3113: test_launch_retries_an_occupied_target_when_its_source_arrives: an occupied target must retry preparation when its source arrives\t[FAILED]"
+      ],
+      "sha256": "765cf3a8620bf33008415af82f717ddbaae7ab0de1d2a5c0ad333f9a5573d0e1"
+    },
+    {
+      "name": "origin",
+      "exit": 1,
+      "caught": true,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:3118: test_launch_retries_an_occupied_target_when_its_source_arrives: Expected 0 Was 7112. target preparation must cover its own phase-zero launch\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:3118: test_launch_accepts_a_prepared_empty_interval_at_its_own_origin: Expected 0 Was 7112. target preparation must cover its own phase-zero launch\t[FAILED]"
+      ],
+      "sha256": "2c8f159af67f3690288c1c1a32df40e85a87935ed552f4f50fbcb905d26eae59"
+    },
+    {
+      "name": "empty-reuse",
+      "exit": 1,
+      "caught": true,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:3161: test_launch_accepts_a_prepared_empty_interval_at_its_own_origin: Expected 13 Was 14. launch and first target tick must reuse preparation, including empty coverage\t[FAILED]"
+      ],
+      "sha256": "2c8f159af67f3690288c1c1a32df40e85a87935ed552f4f50fbcb905d26eae59"
+    }
+  ],
+  "source_sha256": {
+    "include/TrackInternal.h": "2453156b5256395b2205bef93f183b2fc697694c4872fe688dc0fc4a9ab8d275",
+    "src/Track/TrackPlaybackWindowBuild.cpp": "2c8f159af67f3690288c1c1a32df40e85a87935ed552f4f50fbcb905d26eae59",
+    "src/TrackManager/TrackManagerSlotMatrix.cpp": "765cf3a8620bf33008415af82f717ddbaae7ab0de1d2a5c0ad333f9a5573d0e1",
+    "src/TrackManager/TrackManagerTransportTick.cpp": "5d8b137a9e6b588336547a21bbaf815ae0fd0f5973dfe9fc113057f022f96ecd",
+    "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp": "8347b8335a75081ae01284e5e166b7759a2b23cc3d71ea02e8e0fdf4002d753c"
+  },
+  "continuous_two_bar_qualified": false,
+  "immutable_launch_bound": false,
+  "device_verification": "NOT RUN",
+  "logs": {
+    "launch-red.log": "a643f83fc6334db67f2a726134ad6c72d754558990f3f81be5441744daae42f0",
+    "launch-red-fixed.log": "91b2bdfbbd5e7817443317bee6f4b0e1d2a0ed81df73d1e7edeb763cab596da3",
+    "launch-native-final.log": "fc5abb1eecca61ad135d8de0d4b2963a114fb6fe84a999e72a2012a3cbc99714",
+    "launch-build-final.log": "f4c2a4430f4a8afe9188957fd5ee5c7b9e4a6ac0c140d98bdf5eba7466cc50a1",
+    "launch-restored.log": "f2ead05579b9ad12137ba142fccc9ff5f45ad998aba1263b7450d9f74ce6ab60",
+    "launch-openspec.log": "eb543f77d604fc495092504c172bc08f39531b34592bc804dc59ad1bb70416c9"
+  }
+}

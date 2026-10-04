@@ -1,0 +1,79 @@
+{
+  "slice": "windowed-playback-generation task 3.10 / 6.3 — H x K contention sweep",
+  "kind": "test-only measurement (declared envelope on the composed service)",
+  "packet": "EXECUTION.md",
+  "evidence": "EVIDENCE.md",
+  "git_head": "25542299",
+  "tree": "25542299 plus the preserved cumulative uncommitted work",
+  "production_changes": [],
+  "declaration": {
+    "field": "Track::kPlaybackViewPermittedAdvancePerTurn",
+    "value_ticks": 64,
+    "denial_allowance": 7,
+    "rotation_turns": 8,
+    "lead_ticks": 768
+  },
+  "driver": {
+    "per_track": ["serviceAdmittedDeadlineMisses", "playbackWindowServiceOffer"],
+    "across_tracks": "MidiSessionDrain::selectPlaybackHolderRoundRobin",
+    "turn": "Track::stepPlaybackViewMaintenance(phase, nullptr, false, clock)",
+    "clock_advance_per_turn": 64,
+    "main_pointer": "src/main.cpp runDeferredIdleMaintenance(PlaybackViewMaintenance)"
+  },
+  "artifacts": {
+    "fixture": {"path": "test/test_support/window_contention_sweep.inc", "sha256_16": "8b10402590dad557"},
+    "suite": {"path": "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp", "sha256_16": "26ff165ae5264545"},
+    "production_hashes_unchanged": {
+      "src/Track/TrackPlaybackWindowBuild.cpp": "75c23a3f1849d15a",
+      "include/Utils/MidiServiceDrain.h": "9656c7b4b5496811",
+      "include/Track.h": "b9d0ef22549c2c66"
+    }
+  },
+  "cost_law": "drainTurns == H x (1 + K) x serviceTurns; target completes at 1 + (serviceTurns - 1) x H",
+  "grid": [
+    {"H": 1, "K": 0, "notes": 20, "trackGrains": 8, "drainTurns": 7, "targetCompletionTurns": 7, "promisedTurns": 192, "missRows": 0},
+    {"H": 1, "K": 1, "notes": 20, "trackGrains": 16, "drainTurns": 14, "targetCompletionTurns": 7, "promisedTurns": 192, "missRows": 0},
+    {"H": 2, "K": 1, "notes": 20, "trackGrains": 16, "drainTurns": 28, "targetCompletionTurns": 15, "promisedTurns": 192, "missRows": 0},
+    {"H": 4, "K": 1, "notes": 20, "trackGrains": 16, "drainTurns": 56, "targetCompletionTurns": 29, "promisedTurns": 192, "missRows": 0},
+    {"H": 8, "K": 0, "notes": 20, "trackGrains": 8, "drainTurns": 56, "targetCompletionTurns": 49, "promisedTurns": 192, "missRows": 0},
+    {"H": 8, "K": 1, "notes": 20, "trackGrains": 16, "drainTurns": 112, "targetCompletionTurns": 49, "promisedTurns": 192, "missRows": 0},
+    {"H": 8, "K": 2, "notes": 20, "trackGrains": 24, "drainTurns": 168, "targetCompletionTurns": 49, "promisedTurns": 228, "missRows": 0}
+  ],
+  "density_and_span": [
+    {"H": 8, "K": 1, "notes": 5, "events": 10, "chargedGrains": 4, "serviceTurns": 2, "drainTurns": 32, "loopBars": 17, "promisedTurns": 192},
+    {"H": 8, "K": 1, "notes": 20, "events": 40, "chargedGrains": 8, "serviceTurns": 7, "drainTurns": 112, "loopBars": 17, "promisedTurns": 192},
+    {"H": 8, "K": 1, "notes": 80, "events": 160, "chargedGrains": 34, "serviceTurns": 33, "drainTurns": 528, "loopBars": 52, "promisedTurns": 576},
+    {"H": 8, "K": 1, "notes": 20, "events": 40, "chargedGrains": 8, "serviceTurns": 7, "drainTurns": 112, "loopBars": 41, "promisedTurns": 480, "note": "long span: identical cost, longer promise"}
+  ],
+  "boundary": {
+    "shape": {"notes": 80, "K": 1, "H": 8, "serviceTurns": 33, "drainTurns": 528, "trackGrains": 68},
+    "inside": {"loopBars": 50, "leadTicks": 37632, "promisedTurns": 588, "missRows": 0, "allWindowsReadyBeforePromise": true},
+    "outside": {"loopBars": 27, "leadTicks": 19968, "promisedTurns": 312, "missRows_gt_0": true, "lastWindowLate": true},
+    "declaration_predicate": {
+      "canCompleteWithinLead_insideLead_withSiblingCharge": true,
+      "canCompleteWithinLead_outsideLead_withSiblingCharge": false,
+      "canCompleteWithinLead_outsideLead_ownOnly": true
+    },
+    "control_doubled_advance": {"advance": 128, "sameLoopBars": 50, "sameTrackGrains": 68, "missRows_gt_0": true, "late": true}
+  },
+  "mutations": [
+    {"id": "MC1", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "playbackViewOutstandingGrains returns 0 (sibling charge ignored)", "caught_by": "all three new fixtures: per-track budget vs siblings' records", "restored_sha256_16": "75c23a3f1849d15a"},
+    {"id": "MC2", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "maximumConsecutiveDeniedTurns = 3 (the placeholder allowance)", "caught_by": "density/span fixture (promise retention) and the boundary fixture (inside cell becomes late)", "restored_sha256_16": "75c23a3f1849d15a"},
+    {"id": "MC3", "file": "include/Utils/MidiServiceDrain.h", "change": "playbackHolderDeadlineIsEarlier: equal deadlines win for the last holder", "caught_by": "grid fixture: target completion law (Expected 7 Was 14)", "restored_sha256_16": "9656c7b4b5496811"},
+    {"id": "MC4", "file": "include/Track.h", "change": "kPlaybackViewOrderQuantum 48 -> 96", "caught_by": "grid fixture's measured charged-grain pin (Expected 8 Was 5)", "restored_sha256_16": "b9d0ef22549c2c66"}
+  ],
+  "verification": {
+    "focused": {"command": "pio test -e native -f test_runtime_working_set_ownership", "cases": 135, "passed": 135, "failed": 0, "seconds": 5.96},
+    "full_native": {"command": "pio test -e native", "cases": 2789, "succeeded": 2782, "skipped": 7, "failed": 0, "seconds": 84.9},
+    "capture_build": {"command": "pio run -e teensy41-capture-serial", "status": "SUCCESS", "ram1_variables": 96192, "ram1_code": 391576, "ram1_padding": 1640, "ram1_floor": 840, "rebased": false},
+    "strict_openspec": {"command": "openspec validate windowed-playback-generation --strict", "result": "valid"},
+    "git_diff_check": "clean",
+    "device": "NOT RUN"
+  },
+  "not_claimed": [
+    "continuous two-bar service qualification",
+    "production activation (sInterferenceBudgetEnforced stays off; PLAYBACK_WINDOW_ROLLING_ENABLED stays 0)",
+    "device enforcement or timing measurement",
+    "checkoff of task 3.10 or 6.3"
+  ]
+}

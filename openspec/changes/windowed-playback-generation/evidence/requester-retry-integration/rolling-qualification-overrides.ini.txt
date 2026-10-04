@@ -1,0 +1,14 @@
+[platformio]
+build_dir = /Users/eelkejager/.pi-desktop/scratch/98e5e759-92e5-4720-bbb6-ccd5212d1b8f/rolling-qualification-build
+
+[env:teensy41-capture-serial]
+build_flags =
+  ${env:teensy41.build_flags}
+  -D SESSION_CAPTURE=1
+  -D PERF_TELEMETRY=1
+  -D EXTERNAL_POOL_WRAP=1
+  -Wl,--wrap=extmem_malloc
+  -Wl,--wrap=extmem_free
+  -D SESSION_CAPTURE_DROID_QUEUE=0
+  -D PLAYBACK_WINDOW_ROLLING_ENABLED=1
+  -D PLAYBACK_WINDOW_ROLLING_QUALIFICATION=1

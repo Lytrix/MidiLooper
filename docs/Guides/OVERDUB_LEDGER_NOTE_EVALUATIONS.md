@@ -281,3 +281,33 @@ Example that is **correct** once A's Length-167 DisplayNote is preserved (`endTi
 | 312 | `{A}` (Off@264 closed B; Off@360 not yet applied) | `{}` if A is Length-167 and B is `168–264` | A covering `s < 167`; B covering `s < 264`. Neither covers 312. **`a=0` does not mean the ledger is wrong.** Do not write a hold-312 occupy oracle that expects B covering 312 |
 
 Mismatch logs (CAP `n=` ≠ `a=`) are diagnostics. They are not a license to patch occupy collect, stamp Offs, or couple ledger Entries to source-view spans.
+
+## Committed snapshot window ordering — deferred preparation gate
+
+The windowed-playback-generation continuation binds window event-membership
+cursors to the existing runtime builders. Membership traversal is not global
+canonical order: bounded ordering first uses full32-bit `(canonicalOrder,eventId)`
+keys, assigns canonical ranks, then uses normal phase/Off-before-On/raw-tick order
+with canonical-rank ties. Temporary event-ID metadata never qualifies as pass
+provenance (`passOriginsReady` stays false). This does not alter overdub overlap,
+open-ledger identity or closure authority. Initial demoted launches now consume a
+completed immutable window; later coverage keeps the mutable fallback. Native parity uses the production
+snapshot gather plus existing flat playback builder as its reference.
+Evidence: `openspec/changes/windowed-playback-generation/evidence/requester-retry-integration/RUNTIME_BINDING.md`.
+
+Ordering work now alternates the existing order/merge arrays, with at most one
+final normalization into the caller's order array. Comparison keys are unchanged:
+canonical/event-ID sorting, rank assignment, then phase/Off-before-On/raw-tick/rank.
+Borrowed-index sources remain read-only. At2,048 entries the measured worst-case
+sort is26,624 entry steps (555 turns at48), not47,104 (982). The complete dense
+snapshot fixture still exceeds the continuous two-bar service supply. This is a
+work reduction, not a ledger/closure policy change or a timing qualification.
+Evidence: `evidence/requester-retry-integration/ORDER_WORK.md` in the window change.
+
+Snapshot qualification now uses the same typed fill to encode canonical keys and
+full event IDs directly into the private build role. It pauses before ordering;
+no new comparison/ledger/closure rule is introduced. Admission does not rewind or
+copy those events again. The existing rank and playback-order passes run only
+after the original deadline/source checks. Dense lifecycle1,226->1,191 turns;
+this remains far above the continuous two-bar service supply.
+Evidence: `evidence/requester-retry-integration/SINGLE_PASS_QUALIFICATION.md`.

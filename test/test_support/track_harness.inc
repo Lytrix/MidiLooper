@@ -100,6 +100,8 @@ EditManager::EditManager() {}
 EditManager editManager;
 LooperStateManager looperState;
 uint32_t ClockManager::getCurrentTick() const { return currentTick; }
+PlaybackDeadlineClock nativePlaybackDeadlineClock{};
+PlaybackDeadlineClock ClockManager::getPlaybackDeadlineClock() const { return nativePlaybackDeadlineClock; }
 void ClockManager::assignCurrentTickSilently(uint32_t tick) { currentTick = tick; }
 // P1 control (DEC-080): the transport-running boundary is test-controlled instead of
 // hardcoded true, so a case can stop the transport and then drive the *production*

@@ -1626,3 +1626,101 @@ LOOP_SNAPSHOT_COLD_MEM bool LoopSnapshot::stepRelease(
   }
   return cursor.complete();
 }
+
+LOOP_SNAPSHOT_COLD_MEM bool LoopSnapshot::EventWindowCursor::begin(
+    const LoopSnapshot& snapshot, uint32_t startTick, uint32_t lengthTicks) {
+  if (!idle() || traversalGeneration_ == UINT64_MAX || lengthTicks == 0 || lengthTicks > kMaximumWindowTicks ||
+      startTick >= snapshot.loopLengthTicks() ||
+      lengthTicks > snapshot.loopLengthTicks() - startTick) return false;
+  const uint32_t firstBar = startTick / Config::TICKS_PER_BAR;
+  const uint32_t lastBar = (startTick + lengthTicks - 1) / Config::TICKS_PER_BAR;
+  const size_t count = lastBar - firstBar + 1;
+  if (count > memberships_.size()) return false;
+  // Fixed <=3 directory lookups; pin every intersecting bar BEFORE the caller
+  // can replace/retire its root. Later grains never dereference that root.
+  for (size_t i = 0; i < count; ++i)
+    memberships_[i] = snapshot.eventMembership(firstBar + static_cast<uint32_t>(i));
+  loopLengthTicks_ = snapshot.loopLengthTicks();
+  startTick_ = startTick;
+  endTick_ = startTick + lengthTicks;  // Validated by subtraction above.
+  barCount_ = static_cast<uint8_t>(count);
+  releasePositions_.fill(0);
+  releaseUnits_ = 0;
+  phase_ = Phase::Reading;
+  return rewind();
+}
+
+LOOP_SNAPSHOT_COLD_MEM bool LoopSnapshot::EventWindowCursor::rewind() {
+  if ((phase_ != Phase::Reading && phase_ != Phase::Complete) || traversalGeneration_ == UINT64_MAX) return false;
+  ++traversalGeneration_;
+  bar_ = 0;
+  entry_ = 0;
+  inspected_ = 0;
+  readUnits_ = 0;
+  page_ = memberships_[0].get();
+  phase_ = Phase::Reading;
+  return true;
+}
+
+LOOP_SNAPSHOT_COLD_MEM LoopSnapshot::EventWindowCursor::ReadResult
+LoopSnapshot::EventWindowCursor::step(LoopSnapshotEvent& out) {
+  if (phase_ == Phase::Complete) return ReadResult::Complete;
+  if (phase_ != Phase::Reading) return ReadResult::Inactive;
+  ++readUnits_;
+  if (page_ == nullptr) {
+    ++bar_;
+    if (bar_ == barCount_) {
+      phase_ = Phase::Complete;
+      return ReadResult::Complete;
+    }
+    page_ = memberships_[bar_].get();
+    entry_ = 0;
+    return ReadResult::Progress;
+  }
+  if (entry_ == page_->count) {
+    page_ = page_->next.get();
+    entry_ = 0;
+    return ReadResult::Progress;
+  }
+  const auto& reference = page_->references[entry_++];
+  ++inspected_;  // Rejected/null references still consume their own unit.
+  if (!reference || reference->value.tick < startTick_ || reference->value.tick >= endTick_)
+    return ReadResult::Progress;
+  out = *reference;
+  return ReadResult::Event;
+}
+
+LOOP_SNAPSHOT_COLD_MEM size_t LoopSnapshot::EventWindowCursor::qualifiedReleaseUnitBound() const {
+  if (!complete()) return kMaximumReleaseUnits;
+  // A complete read charges each inspected reference, page link, and bar exit.
+  // Immutable membership topology cannot acquire extra pages after qualification.
+  const size_t pages = readUnits_ - inspected_ - barCount_;
+  return pages * (kSnapshotMembershipPageCapacity + 1u) + barCount_;
+}
+
+LOOP_SNAPSHOT_COLD_MEM void LoopSnapshot::EventWindowCursor::beginRelease() {
+  if (idle() || retiring()) return;
+  // No owning reference is dropped on the cancellation edge.
+  page_ = nullptr;
+  bar_ = 0;
+  entry_ = 0;
+  phase_ = Phase::Retiring;
+}
+
+LOOP_SNAPSHOT_COLD_MEM bool LoopSnapshot::EventWindowCursor::stepRelease(size_t maximumUnits) {
+  if (idle()) return true;
+  if (!retiring()) return false;
+  for (size_t unit = 0; unit < maximumUnits && retiring(); ++unit) {
+    ++releaseUnits_;
+    // Reuse root retirement's one-child/emptied-node primitive, including its
+    // shared-descendant guard and sideways (non-recursive) membership-tail move.
+    if (releaseSnapshotReference(memberships_[bar_], releasePositions_, 0)) {
+      ++bar_;
+      if (bar_ == barCount_) {
+        barCount_ = 0;
+        phase_ = Phase::Idle;
+      }
+    }
+  }
+  return idle();
+}

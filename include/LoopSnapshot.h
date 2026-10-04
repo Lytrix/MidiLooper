@@ -312,6 +312,66 @@ class LoopSnapshot {
   /// directory or linked membership tail. Zero quantum performs no work.
   static bool stepRelease(ReleaseCursor& cursor, size_t maximumUnits);
 
+  /// Immutable, linear event-window query for the initial two-bar playback span.
+  /// Pins only intersecting event membership, never the snapshot root or notes.
+  /// Output carries canonicalOrder/eventId; page traversal is NOT global order.
+  /// Before destruction on active transport, beginRelease and drain stepRelease.
+  /// No reader/weak resurrection may acquire retired nodes (ReleaseCursor rule).
+  class EventWindowCursor {
+   public:
+    static constexpr uint32_t kMaximumWindowTicks = 2 * Config::TICKS_PER_BAR;
+    static constexpr size_t kMaximumBars = 3;
+    // Every possible reference, each page link, and one exit per bar. Includes
+    // empty pages left by edits; construction caps PAGES, not just live rows.
+    static constexpr size_t kMaximumReadUnits = kMaximumBars *
+        (kSnapshotMembershipMaxPages * (kSnapshotMembershipPageCapacity + 1) + 1);
+    // Retirement visits all fixed reference slots plus an emptied-page move,
+    // followed by the final null head; shared heads can finish earlier.
+    static constexpr size_t kMaximumReleaseUnits = kMaximumReadUnits;
+    enum class ReadResult : uint8_t { Inactive, Progress, Event, Complete };
+    EventWindowCursor() = default;
+    EventWindowCursor(const EventWindowCursor&) = delete;
+    EventWindowCursor& operator=(const EventWindowCursor&) = delete;
+    bool begin(const LoopSnapshot& snapshot, uint32_t startTick, uint32_t lengthTicks);
+    /// Exactly one reference inspection or page/bar advance per active call.
+    /// Non-event results leave out unchanged. No allocation and no hidden scan.
+    ReadResult step(LoopSnapshotEvent& out);
+    bool rewind();
+    void beginRelease();
+    bool stepRelease(size_t maximumUnits);
+    bool idle() const { return phase_ == Phase::Idle; }
+    bool complete() const { return phase_ == Phase::Complete; }
+    bool retiring() const { return phase_ == Phase::Retiring; }
+    uint64_t traversalGeneration() const { return traversalGeneration_; }
+    uint32_t loopLengthTicks() const { return loopLengthTicks_; }
+    uint32_t startTick() const { return startTick_; }
+    uint32_t lengthTicks() const { return endTick_ - startTick_; }
+    size_t inspectedReferences() const { return inspected_; }
+    size_t readUnits() const { return readUnits_; }
+    size_t releaseUnits() const { return releaseUnits_; }
+    /// Tight topology bound only after a COMPLETE read; otherwise maximum.
+    /// Includes every fixed slot of every page, not only live/output events.
+    /// Independent of reference sharing; rewind invalidates the qualification.
+    size_t qualifiedReleaseUnitBound() const;
+    size_t pinnedBars() const { return barCount_; }
+   private:
+    enum class Phase : uint8_t { Idle, Reading, Complete, Retiring };
+    std::array<SnapshotMembershipRef<LoopSnapshotEventRef>, kMaximumBars> memberships_{};
+    std::array<size_t, 5> releasePositions_{};
+    const SnapshotMembership<LoopSnapshotEventRef>* page_ = nullptr;
+    uint32_t loopLengthTicks_ = 0;
+    uint32_t startTick_ = 0;
+    uint32_t endTick_ = 0;
+    uint64_t traversalGeneration_ = 0;
+    size_t inspected_ = 0;
+    size_t readUnits_ = 0;
+    size_t releaseUnits_ = 0;
+    uint8_t barCount_ = 0;
+    uint8_t bar_ = 0;
+    uint8_t entry_ = 0;
+    Phase phase_ = Phase::Idle;
+  };
+
   LoopSnapshot() = default;
   LoopSnapshot(LoopId loopId, uint32_t loopLengthTicks, uint32_t loopStartTick,
                uint32_t nextNoteId, uint32_t nextEventId);

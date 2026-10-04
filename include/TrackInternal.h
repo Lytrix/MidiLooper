@@ -114,7 +114,8 @@ TRACK_INTERNAL_MEM void reanchorFixedPlaybackIndex(Loop& loop,
 TRACK_INTERNAL_MEM bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop,
                                                             LoopPlaybackRuntime& runtime,
                                                             bool allowHeavyBuild,
-                                                            uint32_t currentTick);
+                                                            uint32_t currentTick,
+                                                            bool prepareLaunch = false);
 
 TRACK_INTERNAL_MEM void reconcilePlaybackLedgerAfterFullLoopRebuild(Loop& loop,
                                                                     LoopPlaybackRuntime& runtime);

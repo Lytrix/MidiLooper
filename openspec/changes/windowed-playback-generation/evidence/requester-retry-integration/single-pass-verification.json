@@ -1,0 +1,105 @@
+{
+  "base_commit": "25542299a7e32078a243de0f4ce50c65a73b8199",
+  "dirty_tree": true,
+  "native": {
+    "total": 2777,
+    "passed": 2770,
+    "skipped": 7,
+    "failed": 0,
+    "seconds": 195.369
+  },
+  "focused": {
+    "ownership": 123,
+    "prewarm": 197
+  },
+  "build": {
+    "environment": "teensy41-capture-serial",
+    "success": true,
+    "seconds": 44.494,
+    "sha256": "62139ab1c5118d0024e9d8b3f34dba689ca1f1e0b90642143be8bd2ee15347f8",
+    "uploaded": false
+  },
+  "ram1": {
+    "variables": 96192,
+    "code": 391512,
+    "padding": 1704,
+    "locals": 34880,
+    "padding_floor": 840
+  },
+  "runtime_sizes_unchanged": {
+    "target": 7072,
+    "host": 9096
+  },
+  "work": {
+    "dense_events": 2048,
+    "source_units": 2178,
+    "qualification_and_fill_turns": 35,
+    "ordering_and_ranks_turns": 1153,
+    "shared_retirement_turns": 1,
+    "setup_and_admission_turns": 2,
+    "dense_lifecycle_turns": 1191,
+    "prior_dense_lifecycle_turns": 1226,
+    "empty_lifecycle_turns": 5,
+    "eight_empty_initial_turns": 40,
+    "continuous_turns_available_per_holder": 3
+  },
+  "continuous_two_bar_qualified": false,
+  "device_verification": "NOT RUN",
+  "cold_root_delay_repaired": false,
+  "mutations": [
+    {
+      "name": "candidate",
+      "exit": 1,
+      "caught": true,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8568: test_committed_retry_capacity_refusal_counts_bounded_source_without_partial_publication: Expected 9 Was 8\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8337: test_committed_retry_counts_then_admits_original_promise_and_publishes_without_second_request: Expected 61 Was 0. qualification fills private rows instead of discarding and rereading them\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8695: test_rootless_restored_launch_requests_its_source_once_and_becomes_ready: launch did not reach completed readiness\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8695: test_immutable_launch_source_wait_does_not_hide_a_later_track: launch did not reach completed readiness\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8695: test_immutable_launch_sibling_interference_is_a_temporary_wait: launch did not reach completed readiness\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8695: test_immutable_launch_requalifies_generation_and_revision_before_binding: launch did not reach completed readiness\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8695: test_immutable_launch_cold_reservation_upgrades_without_resetting_ready_content: launch did not reach completed readiness\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8695: test_immutable_launch_legacy_dense_overflow_retains_untruncated_fallback: launch did not reach completed readiness\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:3130: test_launch_retries_an_occupied_target_when_its_source_arrives: Expected TRUE Was FALSE\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:3130: test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn: Expected TRUE Was FALSE\t[FAILED]"
+      ],
+      "restored_sha256": "70a892fb00ddc18f017a4551bb57675134839c6c59d55207da57b42e273e69bf"
+    },
+    {
+      "name": "rewind",
+      "exit": 1,
+      "caught": true,
+      "failures": [
+        "test/test_playback_prewarm/test_playback_prewarm.cpp:7233: test_dense_snapshot_pipeline_measures_work_after_ping_pong_ordering: Expected 1 Was 2. admission never rewinds qualified source\t[FAILED]"
+      ],
+      "restored_sha256": "70a892fb00ddc18f017a4551bb57675134839c6c59d55207da57b42e273e69bf"
+    },
+    {
+      "name": "duplicate-fill-charge",
+      "exit": 1,
+      "caught": true,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8595: test_committed_retry_prices_actual_pinned_topology_not_maximum_retirement: empty source must pay its two null bars, not 768 possible pages\t[FAILED]"
+      ],
+      "restored_sha256": "bb758e46328ca8af5a1c1e2af9b81a94a6e26709bdae1503de2b5a7552edbc0a"
+    }
+  ],
+  "source_sha256": {
+    "include/RuntimePlaybackViewBuild.h": "8ceaeb7da82d5b07996385c07c6b1eab8fb74ef002dce12124e6ed886b220b45",
+    "include/RuntimePlaybackViewFill.h": "a12b9b8319b41edb4fa71e8c511d684f8445397d9f42189117074168c1a65a0d",
+    "src/Track/RuntimePlaybackViewBuild.cpp": "885c14cacec3bf684426386b2e7f9f3b319aeec46a4d7f8198f3b781031610fb",
+    "src/Track/RuntimePlaybackViewFill.cpp": "268d15740fcf06d79628f46b2ebfb549423b7760424392831e8bea8db2625322",
+    "src/Track/TrackPlaybackRuntime.cpp": "70a892fb00ddc18f017a4551bb57675134839c6c59d55207da57b42e273e69bf",
+    "src/Track/TrackPlaybackWindowBuild.cpp": "bb758e46328ca8af5a1c1e2af9b81a94a6e26709bdae1503de2b5a7552edbc0a",
+    "test/test_playback_prewarm/test_playback_prewarm.cpp": "49b7ab8b57d6087d080e049c52fd0d637547a7f293e5254691c62d4545e598d1",
+    "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp": "44b410a1bb1d7ee80cd2c86239ec7fe77d2c4b54dc4cfd831b8f96a6264744b3"
+  },
+  "log_sha256": {
+    "single-pass-first.log": "50a39e30426073c8ea875f723bd9a4552c4145ff6298a5f35e85fa41d00f5d75",
+    "single-pass-focused.log": "0d6a08dc7651e3eec95c7b7421af790ccf7f87796b08091ce15a74ce29a9ec2c",
+    "single-pass-admission.log": "9e8b254813e7cc280033356d15f79c55debfb1240a7f24b069a48e5d937d6bf4",
+    "single-pass-native.log": "197679386dfb3e4cc7eec26d036e1f38a3f5a50f25d5c657fbc52636f3923531",
+    "single-pass-build.log": "a92b55657deff9595f072b15267060cd7d8192f0ccc1900411a170272bb09cc1",
+    "single-pass-openspec.log": "eb543f77d604fc495092504c172bc08f39531b34592bc804dc59ad1bb70416c9"
+  }
+}

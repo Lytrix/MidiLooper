@@ -228,6 +228,22 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
           : fixedViewEligible ? runtime.publishedFullLoopView(expectedFixedSource, loop.loopLengthTicks)
                               : nullptr;
 
+  if (fixedView == nullptr && fixedViewEligible && !isJamPlaybackActive() && !isJamming()) {
+    const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+        currentTick, projectionCycleStartTick, loop.loopLengthTicks);
+    fixedView = runtime.boundLaunchView(expectedFixedSource, loop.loopLengthTicks, phase, currentTick);
+  }
+
+  const RuntimePlaybackView* rollingView = nullptr;
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (fixedView == nullptr && fixedViewEligible) {
+    const auto resolved = resolveRollingPlaybackWindow(slotIndex, currentTick,
+        clockManager.getPlaybackDeadlineClock());
+    rollingView = resolved.view;
+    if (rollingView != nullptr) fixedView = rollingView;
+  }
+#endif
+
   if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
     // A fixed view already proved its exact generation and source. Do not
     // erase it merely because the legacy runtime cache has not been touched
@@ -240,9 +256,10 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
         !runtime.hasBoundRecordReturnWindowForPendingJob()) {
       if (!runtime.reset(true)) return;
     }
-    loop.nextEventIndex = 0;
-    if (isActive) {
-      loop.captureNextEventIndex = 0;
+    // A bound rolling interval retains its cursor/version until its end.
+    if (rollingView == nullptr) {
+      loop.nextEventIndex = 0;
+      if (isActive) loop.captureNextEventIndex = 0;
     }
     runtime.syncRevision(loop.playbackRevision, playbackGeneration);
   }
@@ -313,7 +330,11 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
           : (fixedView != nullptr
                  ? fixedView->storage.eventCount
                  : (livePair != nullptr ? livePair->eventCount : mergedEvents->size()));
-  if (eventCount == 0 && fixedBridge == nullptr) {
+  if (eventCount == 0 && fixedBridge == nullptr
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+      && runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle
+#endif
+  ) {
     return;
   }
 

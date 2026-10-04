@@ -17,6 +17,8 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
     const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
     RuntimePlaybackViewFillScope scope) {
+  if (active()) return false;
+  coverageOwned_ = false;
   destination_ = nullptr;
   phase_ = Phase::Denied;
   if (!fill_.begin(destination, baseline, sourceIdentity, coverage, cursorAnchor,
@@ -31,6 +33,8 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
     const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
     RuntimePlaybackViewFillScope scope) {
+  if (active()) return false;
+  coverageOwned_ = false;
   destination_ = nullptr;
   phase_ = Phase::Denied;
   if (!fill_.begin(destination, source, sourceCount, sourceIdentity, coverage, cursorAnchor,
@@ -47,6 +51,8 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
     const PlaybackViewSourceIdentity& sourceIdentity,
     const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
     const LedgerBoundarySummary& ledgerBoundary, RuntimePlaybackViewFillScope scope) {
+  if (active()) return false;
+  coverageOwned_ = false;
   destination_ = nullptr;
   phase_ = Phase::Denied;
   if (!fill_.begin(destination, source, sourceIdentity, coverage, cursorAnchor,
@@ -56,15 +62,62 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
   return true;
 }
 
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
+    RuntimePlaybackView& destination, LoopSnapshot::EventWindowCursor& source,
+    const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
+    const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary) {
+  if (active()) return false;
+  coverageOwned_ = false;
+  destination_ = nullptr;
+  phase_ = Phase::Denied;
+  if (!fill_.begin(destination, source, sourceIdentity, coverage, cursorAnchor, ledgerBoundary)) return false;
+  destination_ = &destination;
+  snapshotRankCursor_ = 0;
+  phase_ = Phase::SnapshotFill;
+  return true;
+}
+
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::beginCoverageQualification(
+    RuntimePlaybackView& destination, LoopSnapshot::EventWindowCursor& source,
+    const PlaybackViewSourceIdentity& identity, const PlaybackCoverageInterval& coverage) {
+  if (!begin(destination, source, identity, coverage, {}, {})) return false;
+  phase_ = Phase::Qualification;
+  coverageOwned_ = true;
+  return true;
+}
+
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewFillResult
+RuntimePlaybackViewBuild::stepCoverageQualification(size_t quantum) {
+  if (phase_ != Phase::Qualification || destination_ == nullptr)
+    return RuntimePlaybackViewFillResult::Denied;
+  const auto result = fill_.step(quantum);
+  if (result == RuntimePlaybackViewFillResult::Denied) phase_ = Phase::Denied;
+  return result; // Even completed fill remains paused and unpublished.
+}
+
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::admitCoverageQualification() {
+  if (phase_ != Phase::Qualification || !coverageOwned_ || destination_ == nullptr ||
+      !destination_->sourceFilled || destination_->published || destination_->complete) return false;
+  if (!order_.begin(*destination_, destination_->coverage.loopLengthTicks,
+                    RuntimePlaybackOrderMode::SnapshotCanonical)) return false;
+  phase_ = order_.complete() ? Phase::SnapshotRanks : Phase::SnapshotCanonicalOrder;
+  return true;
+}
+
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewBuildGrain
 RuntimePlaybackViewBuild::nextGrain() const {
   switch (phase_) {
     case Phase::Fill:
+    case Phase::SnapshotFill:
       return RuntimePlaybackViewBuildGrain::Fill;
     case Phase::Order:
+    case Phase::SnapshotCanonicalOrder:
+    case Phase::SnapshotRanks:
+    case Phase::SnapshotPlaybackOrder:
       return RuntimePlaybackViewBuildGrain::Order;
     case Phase::Complete:
       return RuntimePlaybackViewBuildGrain::Complete;
+    case Phase::Qualification:
     case Phase::Idle:
     case Phase::Denied:
       return RuntimePlaybackViewBuildGrain::Denied;
@@ -74,7 +127,7 @@ RuntimePlaybackViewBuild::nextGrain() const {
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewBuildGrain
 RuntimePlaybackViewBuild::stepFill(size_t entryQuantum) {
-  if (phase_ != Phase::Fill) {
+  if (phase_ != Phase::Fill && phase_ != Phase::SnapshotFill) {
     return nextGrain();
   }
   const RuntimePlaybackViewFillResult result = fill_.step(entryQuantum);
@@ -84,6 +137,15 @@ RuntimePlaybackViewBuild::stepFill(size_t entryQuantum) {
   }
   if (result == RuntimePlaybackViewFillResult::Pending) {
     return RuntimePlaybackViewBuildGrain::Fill;
+  }
+  if (phase_ == Phase::SnapshotFill) {
+    if (!order_.begin(*destination_, destination_->coverage.loopLengthTicks,
+                      RuntimePlaybackOrderMode::SnapshotCanonical)) {
+      phase_ = Phase::Denied;
+      return nextGrain();
+    }
+    phase_ = order_.complete() ? Phase::SnapshotRanks : Phase::SnapshotCanonicalOrder;
+    return nextGrain();
   }
   if (!order_.begin(*destination_, destination_->coverage.loopLengthTicks,
       destination_->rawCoveragePrepared ? RuntimePlaybackOrderMode::RawPlaybackTick
@@ -97,22 +159,39 @@ RuntimePlaybackViewBuild::stepFill(size_t entryQuantum) {
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewBuildGrain
 RuntimePlaybackViewBuild::stepOrder(size_t entryQuantum) {
-  if (phase_ != Phase::Order) {
+  if (phase_ == Phase::SnapshotRanks) {
+    if (entryQuantum == 0) return nextGrain();
+    auto& view = *destination_;
+    for (size_t unit = 0; unit < entryQuantum && snapshotRankCursor_ < view.storage.eventCount; ++unit) {
+      view.canonicalRanks[view.storage.order[snapshotRankCursor_]] = snapshotRankCursor_;
+      ++snapshotRankCursor_;
+    }
+    if (snapshotRankCursor_ == view.storage.eventCount) {
+      view.canonicalRanksReady = true;
+      if (!order_.begin(view, view.coverage.loopLengthTicks, RuntimePlaybackOrderMode::SnapshotPlayback))
+        phase_ = Phase::Denied;
+      else phase_ = order_.complete() ? Phase::Complete : Phase::SnapshotPlaybackOrder;
+    }
     return nextGrain();
   }
+  if (phase_ != Phase::Order && phase_ != Phase::SnapshotCanonicalOrder && phase_ != Phase::SnapshotPlaybackOrder)
+    return nextGrain();
+  const bool canonical = phase_ == Phase::SnapshotCanonicalOrder;
   const RuntimePlaybackOrderBuildResult result = order_.step(entryQuantum);
   if (result == RuntimePlaybackOrderBuildResult::Denied) {
     phase_ = Phase::Denied;
     return RuntimePlaybackViewBuildGrain::Denied;
   }
   if (result == RuntimePlaybackOrderBuildResult::Complete) {
-    phase_ = Phase::Complete;
+    phase_ = canonical ? Phase::SnapshotRanks : Phase::Complete;
   }
   return nextGrain();
 }
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::active() const {
-  return phase_ == Phase::Fill || phase_ == Phase::Order;
+  return phase_ == Phase::Qualification || phase_ == Phase::Fill || phase_ == Phase::Order || phase_ == Phase::SnapshotFill ||
+      phase_ == Phase::SnapshotCanonicalOrder || phase_ == Phase::SnapshotRanks ||
+      phase_ == Phase::SnapshotPlaybackOrder;
 }
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM void RuntimePlaybackViewBuild::discard(
@@ -126,6 +205,7 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM void RuntimePlaybackViewBuild::discard(
   }
   destination_ = nullptr;
   phase_ = Phase::Idle;
+  coverageOwned_ = false;
 }
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool CoverageServiceContract::isDeclared() const {
@@ -157,4 +237,18 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool CoverageServiceContract::canCompleteWithinL
   // Divide the available lead instead of multiplying by phase advance: no uint64 overflow
   // can turn an impossible deadline into a successful admission.
   return turns <= (availableTicks - leadTicks) / maximumPhaseAdvancePerTurn;
+}
+
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM void CoverageServiceContract::deriveSnapshotGrainsFrom(
+    size_t sourceUnits, size_t eventCount, size_t fillQuantum, size_t orderQuantum) {
+  const auto grains = [](size_t work, size_t quantum) -> size_t {
+    return quantum == 0 ? SIZE_MAX : work == 0 ? 1 : 1 + (work - 1) / quantum;
+  };
+  const size_t fills = grains(sourceUnits, fillQuantum);
+  const size_t sort = RuntimePlaybackOrderBuilder::requiredGrains(eventCount, orderQuantum);
+  const size_t ranks = grains(eventCount, orderQuantum);
+  const size_t orders = sort > (SIZE_MAX - ranks) / 2 ? SIZE_MAX : 2 * sort + ranks;
+  requiredFillGrains = static_cast<uint16_t>(fills > UINT16_MAX ? UINT16_MAX : fills);
+  requiredOrderGrains = static_cast<uint16_t>(orders > UINT16_MAX ? UINT16_MAX : orders);
+  requiredPromotionGrains = 1;
 }

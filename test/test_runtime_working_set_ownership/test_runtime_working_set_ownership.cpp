@@ -1,5 +1,6 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
+#define PLAYBACK_WINDOW_ROLLING_ENABLED 1
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -514,6 +515,7 @@ constexpr uint8_t kLiveCaptureBit = static_cast<uint8_t>(WorkingSetRole::LiveCap
 }  // namespace
 
 void setUp() {
+  nativePlaybackDeadlineClock = {};
   nativeTransportRunning = true;
   g_nativeSilenceTrackCalls = 0;
   g_nativeAdoptedMasterLength = 0;
@@ -2989,11 +2991,11 @@ void commitBarSpacedPassIntoTrackSlot(Track& track, uint8_t slot, uint32_t bars)
 /// *restored* slot has (SD load publishes a root) and the only source the merged-window build gathers from
 /// (`Loop::tryGatherPublishedSnapshotEventsInWindow`); a hand-committed slot has none, which is the
 /// `GatherMissHoldEmpty` case. Same recipe as `test_loop_take_survival`'s root fixtures.
-void publishBarSpacedRootForSlot(Loop& loop, uint32_t bars) {
+void publishBarSpacedRootForSlot(Loop& loop, uint32_t bars, uint32_t firstBar = 0) {
   auto empty = std::make_shared<const LoopSnapshot>(
       LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
   LoopSnapshotChangeSet changes;
-  for (uint32_t bar = 0; bar < bars; ++bar) {
+  for (uint32_t bar = firstBar; bar < bars; ++bar) {
     SnapshotNoteChange add{};
     add.kind = SnapshotChangeKind::Add;
     add.next.loopId = loop.loopId;
@@ -3045,7 +3047,8 @@ void publishBarSpacedRootForSlot(Loop& loop, uint32_t bars) {
 ///   * without a root — the occupancy is taken but the window can never become ready, so the switch is
 ///     **reported once per episode** at the bound and left exactly as it was: bounded, never silent, never
 ///     dropped (DEC-078 item 1's "the user never re-issues" survives).
-void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot) {
+void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot, bool lateRoot = false,
+                                                   bool emptyLaunch = false) {
   SlotProvisionHold::resetReportRecordForTest();
   LoopEventStore::initPool();
   Track& track = trackManager.getSelectedTrack();
@@ -3056,8 +3059,8 @@ void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot) {
   constexpr uint32_t kBar = 768;
   commitRecordPassIntoTrackSlot(track, kPlaying);
   commitBarSpacedPassIntoTrackSlot(track, kTarget, kTargetBars);
-  if (withRoot) {
-    publishBarSpacedRootForSlot(track.getLoop(kTarget), kTargetBars);
+  if (withRoot && !lateRoot) {
+    publishBarSpacedRootForSlot(track.getLoop(kTarget), kTargetBars, emptyLaunch ? 2 : 0);
   }
   TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kPlaying, true));
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget),
@@ -3079,8 +3082,10 @@ void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot) {
   }
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsLiveFinalization(track, kPlaying));
 
+  // Launch preparation must not borrow this far-from-zero outgoing projection.
+  const uint32_t pressTick = (lateRoot || emptyLaunch) ? 10 * kBar + 200 : 200;
   // Press the demoted target through the production edge: queued, nothing taken inline.
-  clockManager.assignCurrentTickSilently(200);
+  clockManager.assignCurrentTickSilently(pressTick);
   TrackCaptureStopTestAccess::toggleRecordForSlot(kTarget);
   TEST_ASSERT_TRUE_MESSAGE(trackManager.hasPendingSlotSwitch(0),
                            "the press must queue the switch");
@@ -3089,7 +3094,7 @@ void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot) {
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget));
 
   // The clock lane may not commit it: the demoted hold waits for the merged window.
-  for (uint32_t tick = clockManager.getCurrentTick() + 1; tick <= 200 + kBar; ++tick) {
+  for (uint32_t tick = clockManager.getCurrentTick() + 1; tick <= pressTick + kBar; ++tick) {
     clockManager.assignCurrentTickSilently(tick);
     trackManager.updateAllTracks(tick);
   }
@@ -3097,22 +3102,56 @@ void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot) {
                                   "a demoted target may not commit before its window is built");
   TEST_ASSERT_TRUE(trackManager.hasPendingSlotSwitch(0));
 
-  // The provisioning turn takes the occupancy **and** builds the window -- the two halves of the contract.
-  TEST_ASSERT_TRUE_MESSAGE(trackManager.servicePendingSlotProvision(),
-                           "the turn must take the demoted switch as its work");
-  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::runtimeAllocated(track, kTarget));
-  // The **legacy** merged-buffer term is what the switch commit still holds on here, so it keeps its own assertion.
-  TEST_ASSERT_EQUAL_MESSAGE(withRoot, track.isPlaybackMergedMidiEventsReadyForSlot(kTarget),
-                            "the turn's build is only ready when the slot has a published root");
-  // Task 3.5 re-point: readiness is the window this change **published**, and this slot has none -- the
-  // `SlotProvision` turn built the *live merged* window, and no production caller requests a window yet (that
-  // requester is 3.7's). So readiness is not Ready for either shape, and it names who owes the window instead of
-  // leaving the caller to infer it from an empty buffer: with a root the **window-build owner** owes a window it
-  // could gather, and without one the **source** owes the root no build can supply.
-  TEST_ASSERT_EQUAL_MESSAGE(withRoot ? static_cast<int>(Track::PlaybackWindowReadiness::OwesBuild)
-                                     : static_cast<int>(Track::PlaybackWindowReadiness::OwesSource),
-                            static_cast<int>(track.playbackWindowReadinessForSlot(kTarget)),
-                            "readiness names who owes the window");
+  const auto buildsBeforeProvision = Track::playbackOrderHotRebuildCount();
+  TEST_ASSERT_TRUE(trackManager.servicePendingSlotProvision());
+  TEST_ASSERT_EQUAL_UINT32(buildsBeforeProvision, Track::playbackOrderHotRebuildCount());
+  auto* launchRuntime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, kTarget);
+  TEST_ASSERT_NOT_NULL(launchRuntime);
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(kTarget));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, track.pendingViewRequest(kTarget)->clockEpoch,
+      "inactive launch has no fabricated absolute position");
+  TEST_ASSERT_EQUAL_UINT64(0, track.pendingViewRequest(kTarget)->deadlineTick);
+  TEST_ASSERT_FALSE(track.playbackLaunchReadyForSlot(kTarget));
+  TEST_ASSERT_FALSE(launchRuntime->viewSetIfPrewarmed()->liveCaptureStaging().storage.isPrewarmed());
+  TEST_ASSERT_FALSE(launchRuntime->viewSetIfPrewarmed()->wholeTakeReserved);
+  if (lateRoot) {
+    TEST_ASSERT_FALSE(trackManager.servicePendingSlotProvision());
+    TEST_ASSERT_FALSE(track.playbackWindowServiceOffer(0, {1000, 1}).canProgress);
+    publishBarSpacedRootForSlot(track.getLoop(kTarget), kTargetBars);
+    TEST_ASSERT_FALSE(trackManager.servicePendingSlotProvision()); // recipe already retained
+    TEST_ASSERT_TRUE_MESSAGE(track.playbackWindowServiceOffer(0, {1000, 1}).canProgress,
+        "an occupied target must retry preparation when its source arrives");
+  }
+  if (withRoot) {
+    nativePlaybackDeadlineClock = {1000, 1};
+    for (unsigned turn = 0; turn < 1000 && !track.playbackLaunchReadyForSlot(kTarget); ++turn) {
+      nativePlaybackDeadlineClock.tick += 64;
+      track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    }
+    TEST_ASSERT_TRUE(track.playbackLaunchReadyForSlot(kTarget));
+    auto* set = launchRuntime->viewSetIfPrewarmed();
+    auto& ready = set->views[set->lifecycle.ready];
+    TEST_ASSERT_TRUE(ready.complete);
+    TEST_ASSERT_FALSE(ready.published);
+    TEST_ASSERT_EQUAL_UINT32(0, ready.coverage.startPhase);
+    TEST_ASSERT_EQUAL_UINT32(2 * kBar, ready.coverage.lengthTicks);
+    TEST_ASSERT_EQUAL_UINT32(emptyLaunch ? 0 : 4, ready.storage.eventCount);
+    const auto revision = ready.source.playbackRevision;
+    ready.source.playbackRevision = revision + 1;
+    TEST_ASSERT_FALSE(track.playbackLaunchReadyForSlot(kTarget));
+    ready.source.playbackRevision = revision;
+    ready.coverage.startPhase = kBar;
+    TEST_ASSERT_FALSE(track.playbackLaunchReadyForSlot(kTarget));
+    ready.coverage.startPhase = 0;
+    ready.complete = false;
+    TEST_ASSERT_FALSE(track.playbackLaunchReadyForSlot(kTarget));
+    ready.complete = true;
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(buildsBeforeProvision, Track::playbackOrderHotRebuildCount(),
+        "bounded immutable preparation must not invoke the mutable gather/order path");
+  }
+  TEST_ASSERT_EQUAL_MESSAGE(withRoot, track.playbackLaunchReadyForSlot(kTarget),
+      "only completed current immutable launch coverage is ready");
+  TEST_ASSERT_FALSE(track.isPlaybackMergedMidiEventsReadyForSlot(kTarget));
 
   const uint32_t holdBoundTicks = SlotProvisionHold::boundTicksFor(768);
   if (withRoot) {
@@ -3121,7 +3160,13 @@ void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot) {
       const uint32_t base = clockManager.getCurrentTick();
       for (uint32_t tick = base + 1; tick <= base + kBar; ++tick) {
         clockManager.assignCurrentTickSilently(tick);
+        const uint32_t buildsBefore = Track::playbackOrderHotRebuildCount();
         trackManager.updateAllTracks(tick);
+        if (track.getActiveLoopIndex() == kTarget) {
+          TEST_ASSERT_EQUAL_UINT32_MESSAGE(buildsBefore, Track::playbackOrderHotRebuildCount(),
+              "launch and first target tick must reuse preparation, including empty coverage");
+          break;
+        }
       }
     }
     TEST_ASSERT_EQUAL_UINT8_MESSAGE(kTarget, TrackCaptureStopTestAccess::activeLoopIndex(track),
@@ -3174,6 +3219,14 @@ void assert_s4b_7_a_demoted_target_through_the_turn(bool withRoot) {
 
 /// A **restored** demoted slot (a published root exists): the turn's build makes the window ready and the
 /// switch commits -- the evidence the first slice had to record as missing.
+void test_launch_retries_an_occupied_target_when_its_source_arrives() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true, true);
+}
+
+void test_launch_accepts_a_prepared_empty_interval_at_its_own_origin() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true, false, true);
+}
+
 void test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn() {
   assert_s4b_7_a_demoted_target_through_the_turn(/*withRoot=*/true);
 }
@@ -6309,7 +6362,8 @@ SessionMidiEventVec& windowSourceScratch(uint8_t slot) {
 PlaybackDeadlineClock nextWindowRequestClock() {
   static uint64_t tick = 1000000ull;
   tick += 64ull;
-  return {tick, 1u};
+  nativePlaybackDeadlineClock = {tick, 1u};
+  return nativePlaybackDeadlineClock;
 }
 
 /// Prepares one slot with a current root and a prewarmed runtime, then requests the window its own policy names.
@@ -6414,47 +6468,27 @@ void test_an_admitted_deadline_miss_is_serviced_per_turn_once_per_traversal_and_
 /// own epoch the same promise is judged normally. A **new** promise starts its own count: the missed-traversal count
 /// belongs to the promise and its interval, not to the slot.
 void test_an_admitted_deadline_is_revalidated_across_an_epoch_change_and_a_new_promise_counts_from_zero() {
-  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
   LoopEventStore::initPool();
   Track& track = trackManager.getTrack(0);
   track.ensureLoopsAllocated();
-  constexpr uint32_t kLoopTicks = 300 * kBar;
-  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 14, 400, 12 * kBar);
-  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
-  TEST_ASSERT_NOT_NULL(runtime);
-  const PlaybackViewAdmittedWork* work = runtime->activeViewBuildWork();
-  TEST_ASSERT_NOT_NULL(work);
-  const uint64_t promisedDeadline = work->deadlineTick;
+  prepareOwingWindowHolder(track, 0, 300 * bar, 12, 14, 400, 12 * bar);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  const auto original = *runtime->activeViewBuildWork();
   PlaybackPathRows::reset();
-
-  // (i) A **different epoch**: the promise is unpositioned there, so nothing is judged -- and nothing is erased.
-  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {promisedDeadline + 1u, 2});
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
-                                   "a promise is not judged in an epoch it was not qualified in");
+  track.serviceAdmittedDeadlineMisses({original.deadlineTick + 1, 2});
+  TEST_ASSERT_TRUE(runtime->admittedPromiseInvalidated);
   TEST_ASSERT_EQUAL_UINT8(0, track.playbackLagMissedTraversalsForSlot(0));
-  TEST_ASSERT_FALSE(track.deadlineContractFaultLatchedForSlot(0));
-  TEST_ASSERT_NOT_NULL_MESSAGE(runtime->activeViewBuildWork(), "and the obligation survives the change");
-
-  // (ii) The same promise, in its own epoch: the epoch guard revalidates, it does not forgive.
-  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {promisedDeadline + 1u, 1});
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
-                                   "in its own epoch the same promise is named late");
-
-  // (iii) A **new promise**, on another slot: its own count starts at zero, so one turn judges both promises and the
-  // newer one's first miss is the allowance -- not a breach inherited from its sibling.
-  prepareOwingWindowHolder(track, 1, kLoopTicks, 12, 14, 400, 12 * kBar);
-  LoopPlaybackRuntime* sibling = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
-  TEST_ASSERT_NOT_NULL(sibling);
-  const PlaybackViewAdmittedWork* siblingWork = sibling->activeViewBuildWork();
-  TEST_ASSERT_NOT_NULL(siblingWork);
-  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {siblingWork->deadlineTick + 1u, 1});
-  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagMissedTraversalsForSlot(1),
-                                  "a new promise's first missed traversal is its own first miss");
-  TEST_ASSERT_FALSE_MESSAGE(track.deadlineContractFaultLatchedForSlot(1), "so nothing is latched on the sibling");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
-                                   "each promise contributes one named allowance");
-  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagMissedTraversalsForSlot(0),
-                                  "while the older promise stays at the traversal it had: once per traversal");
+  track.serviceAdmittedDeadlineMisses({original.deadlineTick + 1, 1});
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, track.playbackLagMissedTraversalsForSlot(0),
+      "returning an old epoch cannot revalidate a positional promise");
+  TEST_ASSERT_EQUAL_UINT64(original.deadlineTick, runtime->viewBuildWork.deadlineTick);
+  // A different slot's independent promise still gets its own first miss.
+  prepareOwingWindowHolder(track, 1, 300 * bar, 12, 14, 400, 12 * bar);
+  auto* sibling = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
+  track.serviceAdmittedDeadlineMisses({sibling->viewBuildWork.deadlineTick, 1});
+  TEST_ASSERT_EQUAL_UINT8(1, track.playbackLagMissedTraversalsForSlot(1));
+  TEST_ASSERT_FALSE(track.deadlineContractFaultLatchedForSlot(1));
 }
 /// **Blocker 3, half 2 — revision currency does not excuse a late arrival.**
 ///
@@ -6543,8 +6577,11 @@ void test_a_new_promise_for_the_same_interval_does_not_reset_the_intervals_miss_
   TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagMissedTraversalsForSlot(0),
                                   "judging the completed promise adds no traversal");
   PlaybackWindowIdentity published{};
-  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, published),
-                           "and the completed window is published: the content is never blocked by the policy");
+  TEST_ASSERT_FALSE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, published),
+                           "late content remains a candidate, not serving content");
+  TEST_ASSERT_TRUE(track.revalidateCompletedPlaybackWindow(0, intervalStart,
+      {firstDeadline + kLoopTicks, 1}));
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, published));
 
   // A **new promise for the same interval**: its own traversal count starts at zero, the interval's history does not.
   SessionMidiEventVec& scratch = windowSourceScratch(0);
@@ -6580,119 +6617,203 @@ void test_a_new_promise_for_the_same_interval_does_not_reset_the_intervals_miss_
 /// (once per promise), it is **not** counted as a lost traversal (the interval's history is untouched, so an epoch change
 /// cannot hand out a fresh allowance), and the content still publishes.
 void test_an_epoch_change_invalidates_and_names_the_promise_without_minting_an_allowance() {
-  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
-  constexpr uint32_t kLoopTicks = 300 * kBar;
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  constexpr uint32_t length = 300 * bar;
   LoopEventStore::initPool();
   Track& track = trackManager.getTrack(0);
   track.ensureLoopsAllocated();
-  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 14, 400, 12 * kBar);
-  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
-  TEST_ASSERT_NOT_NULL(runtime);
-  const PlaybackViewAdmittedWork* first = runtime->activeViewBuildWork();
-  TEST_ASSERT_NOT_NULL(first);
-  const uint64_t firstDeadline = first->deadlineTick;
+  prepareOwingWindowHolder(track, 0, length, 12, 14, 400, 12 * bar);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  const auto original = *runtime->activeViewBuildWork();
   PlaybackPathRows::reset();
-
-  // One missed traversal in the promise's own epoch: the allowance.
-  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {firstDeadline + 1u, 1});
+  track.serviceAdmittedDeadlineMisses({original.deadlineTick, 1});
   TEST_ASSERT_EQUAL_UINT8(1, track.playbackLagMissedTraversalsForSlot(0));
-  const uint32_t lateBeforeTheChange = static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late"));
-  TEST_ASSERT_EQUAL_UINT32(1, lateBeforeTheChange);
-
-  // A **real epoch change**: the promise is revalidated by name, it is not a traversal miss, and nothing is erased.
-  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {firstDeadline + 1u, 2});
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("promise_epoch_invalidated")),
-                                   "a changed epoch names the promise it invalidated");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(lateBeforeTheChange,
-                                   static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
-                                   "and it is not a lost traversal: the promise no longer applies in this epoch, so "
-                                   "the count does not move");
-  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagMissedTraversalsForSlot(0),
-                                  "the interval's history is untouched by the change");
-  // **Retained until revalidation** (§13(a)): the obligation is neither dropped nor re-positioned by the mismatch --
-  // it keeps the promise it was admitted under, so returning to that clock judges *this* promise and not a new one.
-  const PlaybackViewAdmittedWork* retained = runtime->activeViewBuildWork();
-  TEST_ASSERT_NOT_NULL_MESSAGE(retained, "and the obligation survives it");
-  TEST_ASSERT_EQUAL_UINT64_MESSAGE(first->admittedTick, retained->admittedTick,
-                                   "the mismatch neither re-admits nor re-positions the promise");
-  TEST_ASSERT_EQUAL_UINT64_MESSAGE(firstDeadline, retained->deadlineTick, "its deadline is untouched");
-  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {firstDeadline + 1u, 2});
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("promise_epoch_invalidated")),
-                                   "named once per promise, not once per turn");
-  // ... and the return leg is the revalidation: back on the promise's own clock it is judged again, still as the
-  // promise's *first* missed traversal -- no second allowance is minted by the round trip.
-  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {firstDeadline + 1u, 1});
-  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagMissedTraversalsForSlot(0),
-                                  "revalidation judges the retained promise, and one traversal is still counted once");
-  TEST_ASSERT_EQUAL_UINT64_MESSAGE(retained->admittedTick, runtime->countedMissPromiseTick,
-                                   "and the count the return leg reads is *this* promise's own: the mismatch suspended "
-                                   "judgement, it did not re-admit or erase the promise");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(lateBeforeTheChange,
-                                   static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
-                                   "so the round trip mints neither a miss nor an allowance");
-
-  // The build still completes in the new epoch, and the **content** still publishes (revalidation is not a block).
-  for (size_t turn = 0; turn < 4096 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
-    (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {firstDeadline + 1u, 2});
-  }
+  nativePlaybackDeadlineClock = {500, 2};
+  for (unsigned turn = 0; turn < 4096 && track.hasPendingPlaybackViewMaintenance(); ++turn)
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
   TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  TEST_ASSERT_TRUE(runtime->completedPromisePendingJudgement);
+  TEST_ASSERT_TRUE(runtime->admittedPromiseInvalidated);
+  TEST_ASSERT_EQUAL_UINT32(1, PlaybackPathRows::countOf("promise_epoch_invalidated"));
   PlaybackWindowIdentity published{};
-  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, published),
-                           "the valid audible source continues: the window publishes in the new epoch");
-
-  // A promise admitted **in the new epoch** for the same interval: its first miss is the interval's **second**, so the
-  // epoch change minted no allowance.
-  SessionMidiEventVec& scratch = windowSourceScratch(0);
-  scratch.clear();
-  const uint64_t newEpochTick = nextWindowRequestClock().tick;
-  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-                            static_cast<int>(track.requestPlaybackWindow(0, 12 * kBar, scratch,
-                                                                        {newEpochTick, 2})),
-                            "a promise admitted in the new epoch");
-  const PlaybackViewAdmittedWork* second = runtime->activeViewBuildWork();
-  TEST_ASSERT_NOT_NULL(second);
-  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {second->deadlineTick + 1u, 2});
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("lag_breach")),
-                                   "its miss is the interval's second consecutive one: the epoch change minted no "
-                                   "fresh allowance");
-  TEST_ASSERT_EQUAL_UINT8(2, track.playbackLagMissedTraversalsForSlot(0));
-  TEST_ASSERT_TRUE(track.deadlineContractFaultLatchedForSlot(0));
+  TEST_ASSERT_FALSE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, published),
+      "epoch-invalidated candidate must not become serving content");
+  TEST_ASSERT_FALSE(track.adoptPreparedPlaybackWindow(0));
+  const auto before = runtime->viewBuildWork;
+  // No worker is eligible; the dispatch sweep must still see the retained candidate.
+  TEST_ASSERT_FALSE(track.playbackWindowServiceOffer(0).eligible);
+  track.serviceAdmittedDeadlineMisses({1000, 2});
+  TEST_ASSERT_TRUE(runtime->completedPromisePendingJudgement);
+  TEST_ASSERT_EQUAL_UINT8(1, track.playbackLagMissedTraversalsForSlot(0));
+  TEST_ASSERT_FALSE(track.revalidateCompletedPlaybackWindow(0, original.handoffPhase + 1, {1000,2}));
+  TEST_ASSERT_FALSE(track.revalidateCompletedPlaybackWindow(0, original.handoffPhase, {}));
+  TEST_ASSERT_FALSE(track.revalidateCompletedPlaybackWindow(0, original.handoffPhase,
+      {original.deadlineTick + length, 1}));
+  track.getLoop(0).loopLengthTicks += bar;
+  TEST_ASSERT_FALSE(track.revalidateCompletedPlaybackWindow(0, original.handoffPhase, {1000,2}));
+  track.getLoop(0).loopLengthTicks = length;
+  ++track.getLoop(0).playbackRevision;
+  TEST_ASSERT_FALSE(track.revalidateCompletedPlaybackWindow(0, original.handoffPhase, {1000,2}));
+  --track.getLoop(0).playbackRevision;
+  TEST_ASSERT_TRUE_MESSAGE(track.revalidateCompletedPlaybackWindow(0, original.handoffPhase, {1000,2}),
+      "qualified new-epoch boundary releases matching completed content");
+  TEST_ASSERT_FALSE(runtime->completedPromisePendingJudgement);
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, published));
+  TEST_ASSERT_EQUAL_UINT64(before.deadlineTick, runtime->viewBuildWork.deadlineTick);
+  TEST_ASSERT_EQUAL_UINT32(before.clockEpoch, runtime->viewBuildWork.clockEpoch);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, track.playbackLagMissedTraversalsForSlot(0),
+      "revalidation does not erase the interval's fault history");
 }
 
 /// **Blocker 3, increment 28 — a promise that completes at/after its deadline is still judged.**
 ///
-/// The lane turn reads its clock **before** the worker grain, and the promise's record becomes unreadable the moment the
-/// build completes -- so a deadline crossed by the final grain would otherwise escape judgement entirely. The promise is
-/// therefore retained through completion and judged at the next opportunity with a fresh clock.
+/// Dispatch and completion have separate controlled clocks. Crossing D in the final
+/// grain is judged immediately, even if the track never offers another worker turn.
 void test_a_promise_that_completes_at_its_deadline_is_still_judged() {
-  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
-  constexpr uint32_t kLoopTicks = 300 * kBar;
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  constexpr uint32_t length = 300 * bar;
   LoopEventStore::initPool();
   Track& track = trackManager.getTrack(0);
   track.ensureLoopsAllocated();
-  prepareOwingWindowHolder(track, 0, kLoopTicks, 12, 14, 400, 12 * kBar);
-  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
-  TEST_ASSERT_NOT_NULL(runtime);
-  const uint64_t deadline = runtime->activeViewBuildWork()->deadlineTick;
+  prepareOwingWindowHolder(track, 0, length, 12, 14, 400, 12 * bar);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  const auto work = *runtime->activeViewBuildWork();
   PlaybackPathRows::reset();
-
-  // Finish the build with a clock **inside** the promise: nothing is late yet.
-  for (size_t turn = 0; turn < 4096 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
-    (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {deadline - 1u, 1});
-  }
+  // Dispatch at D-1. ClockManager's independently controlled completion read is D.
+  nativePlaybackDeadlineClock = {work.deadlineTick, work.clockEpoch};
+  for (unsigned turn = 0; turn < 4096 && track.hasPendingPlaybackViewMaintenance(); ++turn)
+    track.stepPlaybackViewMaintenance(12 * bar, nullptr, false, {work.deadlineTick - 1, work.clockEpoch});
   TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
-                                   "a build finished inside its promise is not late");
-  TEST_ASSERT_NULL_MESSAGE(runtime->activeViewBuildWork(), "the record is unreadable once the build completes");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, PlaybackPathRows::countOf("one_pass_late"),
+      "final-grain crossing must be judged before any subsequent dispatch");
+  TEST_ASSERT_TRUE(runtime->completedPromisePendingJudgement);
+  PlaybackWindowIdentity published{};
+  TEST_ASSERT_FALSE(track.publishedPlaybackWindowIdentityForSlot(0, published));
+  TEST_ASSERT_FALSE(track.revalidateCompletedPlaybackWindow(0, work.handoffPhase,
+      {work.deadlineTick, work.clockEpoch}));
+  // Re-admission cannot destroy a retained completed candidate.
+  const auto* set = runtime->viewSetIfPrewarmed();
+  const auto identity = set->views[set->lifecycle.build].source;
+  SessionMidiEventVec scratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::BuildInFlight),
+      static_cast<int>(track.requestPlaybackWindow(0, 12 * bar, scratch, {work.deadlineTick, work.clockEpoch})));
+  TEST_ASSERT_TRUE(runtime->completedPromisePendingJudgement);
+  TEST_ASSERT_TRUE(identity == set->views[set->lifecycle.build].source);
+  TEST_ASSERT_TRUE(track.revalidateCompletedPlaybackWindow(0, work.handoffPhase,
+      {work.deadlineTick + length, work.clockEpoch}));
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, published));
+}
 
-  // The next opportunity, with a fresh clock past the deadline: the retained promise is judged.
-  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {deadline + 1u, 1});
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
-                                   "a promise that completed at its own deadline is still named late");
-  TEST_ASSERT_EQUAL_UINT8(1, track.playbackLagMissedTraversalsForSlot(0));
-  (void)track.stepPlaybackViewMaintenance(12 * kBar, nullptr, false, {deadline + 1u, 1});
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
-                                   "and it is judged once: the retention is one opportunity, not a standing promise");
+void test_invalidated_successor_preserves_serving_content_until_boundary_revalidation() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  constexpr uint32_t length = 300 * bar;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  prepareOwingWindowHolder(track, 0, length, 12, 14, 32, 12 * bar);
+  for (unsigned i=0; i<4096 && track.hasPendingPlaybackViewMaintenance(); ++i)
+    track.stepPlaybackViewMaintenance();
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  auto* set = runtime->viewSetIfPrewarmed();
+  PlaybackWindowIdentity before{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, before));
+  const auto servingRole = set->lifecycle.current;
+  ++track.getLoop(0).playbackRevision;
+  publishNotesInBarsRootForSlot(track.getLoop(0), 12, 14, 40);
+  auto& scratch = windowSourceScratch(0);
+  const auto admitted = nextWindowRequestClock();
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+      static_cast<int>(track.requestPlaybackWindow(0, 12 * bar, scratch, admitted)));
+  const auto promise = runtime->viewBuildWork;
+  // Epoch changes only on the final-grain completion read, not at entry.
+  nativePlaybackDeadlineClock = {123, 2};
+  for (unsigned i=0; i<4096 && track.hasPendingPlaybackViewMaintenance(); ++i)
+    track.stepPlaybackViewMaintenance(12 * bar, nullptr, false, admitted);
+  TEST_ASSERT_TRUE(runtime->completedPromisePendingJudgement);
+  TEST_ASSERT_TRUE(runtime->admittedPromiseInvalidated);
+  TEST_ASSERT_FALSE(track.adoptPreparedPlaybackWindow(0));
+  PlaybackWindowIdentity after{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, after));
+  TEST_ASSERT_EQUAL_UINT32(before.playbackRevision, after.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT8(servingRole, set->lifecycle.current);
+  TEST_ASSERT_FALSE(track.revalidateCompletedPlaybackWindow(0, promise.handoffPhase + 1, {200,2}));
+  TEST_ASSERT_TRUE(track.revalidateCompletedPlaybackWindow(0, promise.handoffPhase, {200,2}));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(servingRole, set->lifecycle.current,
+      "release prepares a successor; it must not implicitly adopt over serving content");
+  TEST_ASSERT_TRUE(track.adoptPreparedPlaybackWindow(0));
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, after));
+  TEST_ASSERT_EQUAL_UINT32(track.getLoop(0).playbackRevision, after.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT64(promise.deadlineTick, runtime->viewBuildWork.deadlineTick);
+}
+
+void test_cancelling_withheld_preview_unblocks_next_admission() {
+  constexpr uint32_t length = 300 * Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlotOfLength(track, 0, length);
+  track.getLoop(0).loopLengthTicks = length;
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0));
+  MidiEvent events[] = {MidiEvent::NoteOn(10, 1, 60, 100), MidiEvent::NoteOff(20, 1, 60, 0)};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+      static_cast<int>(track.requestPreviewWindow(0, 1, events, 2, 1, {0,1})));
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  nativePlaybackDeadlineClock = {1,2};
+  PlaybackPathRows::reset();
+  for (unsigned i=0; i<4096 && track.hasPendingPlaybackViewMaintenance(); ++i)
+    track.stepPlaybackViewMaintenance(1, nullptr, false, {0,1});
+  TEST_ASSERT_TRUE(runtime->completedPromisePendingJudgement);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, PlaybackPathRows::countOf("promise_epoch_invalidated"),
+      "tick-zero promise is invalidated and reported, not mistaken for an unset sentinel");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PreviewCancelOutcome::BuildCancelledAndHandoffOwed),
+      static_cast<int>(track.cancelPreviewWindowForSlot(0, Track::PreviewWindowCancelReason::SessionExited)));
+  TEST_ASSERT_FALSE(runtime->completedPromisePendingJudgement);
+  TEST_ASSERT_FALSE(runtime->previewSourceActive);
+  TEST_ASSERT_TRUE(track.previewWindowHandoffOwedForSlot(0));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+      static_cast<int>(track.requestPreviewWindow(0, 2, events, 2, 1, {2,2})));
+}
+
+void test_retained_completion_cancellation_clears_only_candidate_obligation() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  prepareOwingWindowHolder(track, 0, 300 * bar, 12, 14, 32, 12 * bar);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  const auto promise = runtime->viewBuildWork;
+  nativePlaybackDeadlineClock = {50, 2};
+  for (unsigned i=0; i<4096 && track.hasPendingPlaybackViewMaintenance(); ++i)
+    track.stepPlaybackViewMaintenance(12 * bar, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(runtime->completedPromisePendingJudgement);
+  track.applyPlaybackViewTransition(0, PlaybackViewTransition::ClearOrLoad);
+  TEST_ASSERT_FALSE(runtime->completedPromisePendingJudgement);
+  TEST_ASSERT_FALSE(track.revalidateCompletedPlaybackWindow(0, promise.handoffPhase, {100,2}));
+  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  TEST_ASSERT_EQUAL_UINT32(0, runtime->viewBuildWork.clockEpoch);
+}
+
+void test_on_time_completion_is_not_made_late_by_next_dispatch() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  prepareOwingWindowHolder(track, 0, 300 * bar, 12, 14, 400, 12 * bar);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  const auto work = *runtime->activeViewBuildWork();
+  PlaybackPathRows::reset();
+  nativePlaybackDeadlineClock = {work.deadlineTick - 1, work.clockEpoch};
+  for (unsigned turn = 0; turn < 4096 && track.hasPendingPlaybackViewMaintenance(); ++turn)
+    track.stepPlaybackViewMaintenance(12 * bar, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  TEST_ASSERT_FALSE(runtime->completedPromisePendingJudgement);
+  PlaybackWindowIdentity published{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, published));
+  TEST_ASSERT_FALSE(track.playbackWindowServiceOffer(0).eligible);
+  track.serviceAdmittedDeadlineMisses({work.deadlineTick + 2 * work.admittedLoopLength, work.clockEpoch});
+  TEST_ASSERT_EQUAL_UINT8(0, track.playbackLagMissedTraversalsForSlot(0));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, PlaybackPathRows::countOf("one_pass_late"),
+      "later idle dispatch cannot turn on-time completion into a miss");
 }
 
 /// DEC-108 §13b / task 3.10 — the **wiring's own fixture**, and the one the increment owed: with the scan routed
@@ -7103,9 +7224,10 @@ void test_window_service_keeps_one_turn_per_rotation_and_no_owner_loses_a_turn()
   // grain/denial allowance, so that declaration does not bound this work shape. This assertion is deliberately the
   // *violation* -- deriving the envelope properly (3.10's own owed item) is expected to invert it, which is why it is
   // here rather than in prose only.
-  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
-      kGrainsWithDenials, laneTurnsToCompletion,
-      "recorded: the declared 7 grains x 4 turns does not bound this shape -- derive the envelope (task 3.10)");
+  // Ping-pong ordering makes this particular batch fit the declared placeholder;
+  // the dense/two-bar fixtures separately retain the unsupported-throughput finding.
+  TEST_ASSERT_EQUAL_UINT32(35, laneTurnsToCompletion);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT32(kGrainsWithDenials, laneTurnsToCompletion);
 }
 
 /// DEC-108 §13b / task 3.10 — **the grain-cost model, measured, and the supported window derived from it.** Increment 6
@@ -7192,10 +7314,10 @@ void test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_suppor
   // Equality where the merge actually runs: a window that must be merged costs the bound exactly (measured 11/25/57/127
   // for 40/80/160/320 events, i.e. 20/40/80/160 notes -- the earlier fixture called the note count "events").
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(
-      11u, twenty.orders, "20 notes = 40 events: the bound is tight where a merge runs");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(25u, forty.orders, "40 notes = 80 events");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(57u, eighty.orders, "80 notes = 160 events");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(127u, oneSixty.orders, "160 notes = 320 events");
+      6u, twenty.orders, "20 notes = 40 events: the bound is tight where a merge runs");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(15u, forty.orders, "40 notes = 80 events");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(30u, eighty.orders, "80 notes = 160 events");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(74u, oneSixty.orders, "160 notes = 320 events");
   // The bound is not a size threshold: an already-ordered window skips the merge (10 notes = 20 events measured 1 while
   // the bound is 5), and the *sparse* window (6 events) is the cheap case -- the earlier "one turn" claim for it was an
   // artefact of the dangling source this fixture now avoids.
@@ -7215,7 +7337,7 @@ void test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_suppor
   const CoverageServiceContract contract = Track::playbackViewCoverageContract();
   const uint32_t grainsFor80Notes =
       static_cast<uint32_t>(eighty.fills) + static_cast<uint32_t>(eighty.orders) + 1u;
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(61u, grainsFor80Notes, "the measured cost of an 80-note window: 3 + 57 + 1");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(34u, grainsFor80Notes, "the measured cost after ping-pong ordering: 3 + 30 + 1");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       Track::kPlaybackViewPermittedAdvancePerTurn, contract.maximumPhaseAdvancePerTurn,
       "the advance is the declared permitted scheduling bound (review step 4), no longer the placeholder one bar");
@@ -7347,7 +7469,7 @@ void test_enforced_candidate_charges_derived_cost_and_eight_track_rotation() {
     // Re-based by the review's step 4 (recorded): the shapes must sit where the **across-track allowance** is what
     // decides. 5 bars leaves just enough lead for the derived cost at denials=3 and not enough at denials=7 -- which is
     // this fixture's whole point -- while slot 1's longer loop admits the same window even charged with the sibling.
-    const uint32_t length = (slot == 0 ? 12u : 40u) * 768;
+    const uint32_t length = (slot == 0 ? 7u : 40u) * 768;
     commitRecordPassIntoTrackSlotOfLength(track, slot, length);
     Loop& loop = track.getLoop(slot);
     loop.loopLengthTicks = length;
@@ -7370,7 +7492,7 @@ void test_enforced_candidate_charges_derived_cost_and_eight_track_rotation() {
       TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted), static_cast<int>(result));
       const auto* work = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot)->activeViewBuildWork();
       TEST_ASSERT_NOT_NULL(work);
-      TEST_ASSERT_EQUAL_UINT32(20, work->requiredGrains());
+      TEST_ASSERT_EQUAL_UINT32(12, work->requiredGrains());
     }
   }
 }
@@ -8063,6 +8185,104 @@ void test_window_deadline_clock_rejects_reset_and_unobserved_laps_at_admission()
       contract, phase, length, 0, {extendedTick + length, 7}));
 }
 
+void test_window_retry_preserves_borrowed_source_before_gather() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  prepareOwingWindowHolder(track, 0, 300 * bar, 12, 14, 400, 12 * bar);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const auto original = *runtime->activeViewBuildWork();
+  auto& scratch = windowSourceScratch(0);
+  const auto expected = scratch;
+  const MidiEvent* const borrowed = scratch.data();
+  TEST_ASSERT_GREATER_THAN_UINT32(Track::kPlaybackViewFillQuantum, scratch.size());
+  track.stepPlaybackViewMaintenance(12 * bar, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(runtime->coverageBuildNeedsService());
+
+  // A disjoint interval has no rows. The old requester clears the first build's
+  // source before returning BuildInFlight, so a mere refusal corrupts that build.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::BuildInFlight),
+      static_cast<int>(track.requestPlaybackWindow(0, 30 * bar, scratch, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(expected.size(), scratch.size(),
+      "a refused retry must not clear the active builder's borrowed source");
+  TEST_ASSERT_EQUAL_PTR(borrowed, scratch.data());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(expected[i].tick, scratch[i].tick);
+    TEST_ASSERT_EQUAL(expected[i].type, scratch[i].type);
+    TEST_ASSERT_EQUAL(expected[i].data.noteData.note, scratch[i].data.noteData.note);
+    TEST_ASSERT_EQUAL(expected[i].data.noteData.velocity, scratch[i].data.noteData.velocity);
+  }
+  TEST_ASSERT_EQUAL_UINT64(original.deadlineTick, runtime->activeViewBuildWork()->deadlineTick);
+  const auto* pending = track.pendingViewRequest(0);
+  TEST_ASSERT_NOT_NULL(pending);
+  TEST_ASSERT_NOT_EQUAL(original.handoffPhase, pending->coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(RuntimePlaybackViewConfig::kWindowAdmissionLimit, pending->work.sourceEntries);
+  for (unsigned turn = 0; turn < 4096 && track.hasPendingPlaybackViewMaintenance(); ++turn)
+    track.stepPlaybackViewMaintenance(12 * bar, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  TEST_ASSERT_EQUAL_UINT32(expected.size(), track.playbackWindowEventCountForSlot(0));
+  for (const MidiEvent& event : expected) {
+    unsigned matches = 0;
+    for (uint16_t i = 0; i < expected.size(); ++i) {
+      MidiEvent published;
+      TEST_ASSERT_TRUE(track.playbackWindowEventAtForSlot(0, i, published));
+      if (published.tick == event.tick && published.type == event.type &&
+          published.channel == event.channel &&
+          published.data.noteData.note == event.data.noteData.note &&
+          published.data.noteData.velocity == event.data.noteData.velocity) ++matches;
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, matches, "the original content publishes exactly once");
+  }
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(0));
+}
+
+void test_window_retry_preserves_scratch_for_held_completion_and_ready_successor() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  prepareOwingWindowHolder(track, 0, 300 * bar, 12, 14, 400, 12 * bar);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  const auto work = *runtime->activeViewBuildWork();
+  nativePlaybackDeadlineClock = {work.deadlineTick + 1, work.clockEpoch};
+  for (unsigned turn = 0; turn < 4096 && track.hasPendingPlaybackViewMaintenance(); ++turn)
+    track.stepPlaybackViewMaintenance(12 * bar, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(runtime->completedPromisePendingJudgement);
+  auto& scratch = windowSourceScratch(0);
+  const size_t count = scratch.size();
+  const MidiEvent* const data = scratch.data();
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::BuildInFlight),
+      static_cast<int>(track.requestPlaybackWindow(0, 30 * bar, scratch, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL_UINT32(count, scratch.size());
+  TEST_ASSERT_EQUAL_PTR(data, scratch.data());
+  TEST_ASSERT_TRUE(runtime->completedPromisePendingJudgement);
+  TEST_ASSERT_EQUAL_UINT64(work.deadlineTick, runtime->viewBuildWork.deadlineTick);
+
+  // Boundary recovery publishes the first window; the next completed window is
+  // a ready successor, not serving content. Another request cannot overwrite it.
+  nativePlaybackDeadlineClock = {work.deadlineTick + 300 * bar, work.clockEpoch};
+  TEST_ASSERT_TRUE(track.revalidateCompletedPlaybackWindow(0, work.handoffPhase, nativePlaybackDeadlineClock));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+      static_cast<int>(track.requestPlaybackWindow(0, 12 * bar, scratch, nativePlaybackDeadlineClock)));
+  for (unsigned turn = 0; turn < 4096 && track.hasPendingPlaybackViewMaintenance(); ++turn)
+    track.stepPlaybackViewMaintenance(12 * bar, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  TEST_ASSERT_LESS_THAN_UINT8(RuntimePlaybackViewConfig::kViewCount, set->lifecycle.ready);
+  const auto ready = set->lifecycle.ready;
+  TEST_ASSERT_TRUE(set->views[ready].complete);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::SuccessorAlreadyPrepared),
+      static_cast<int>(track.requestPlaybackWindow(0, 30 * bar, scratch, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL_UINT32(count, scratch.size());
+  TEST_ASSERT_EQUAL_PTR(data, scratch.data());
+  TEST_ASSERT_EQUAL_UINT8(ready, set->lifecycle.ready);
+  TEST_ASSERT_TRUE(set->views[ready].complete);
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(0));
+}
+
 void test_window_absolute_lead_arithmetic_does_not_overflow() {
   CoverageServiceContract contract;
   contract.maximumPhaseAdvancePerTurn = 1;
@@ -8076,11 +8296,912 @@ void test_window_absolute_lead_arithmetic_does_not_overflow() {
   TEST_ASSERT_FALSE(contract.canCompleteWithinLead(UINT64_MAX, UINT16_MAX));
 }
 
+// Retained committed requests are driven exclusively through the production lane.
+LoopPlaybackRuntime* prepareCommittedRetrySlot(Track& track, uint8_t slot, uint32_t notes = 32) {
+  constexpr uint32_t length = 512 * Config::TICKS_PER_BAR;
+  commitRecordPassIntoTrackSlotOfLength(track, slot, length);
+  auto& loop = track.getLoop(slot);
+  loop.loopLengthTicks = length;
+  publishNotesInBarsRootForSlot(loop, 12, 14, notes);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(slot));
+  return TrackCaptureStopTestAccess::runtimeIfAllocated(track, slot);
+}
+
+void test_committed_retry_counts_then_admits_original_promise_and_publishes_without_second_request() {
+  LoopEventStore::initPool();
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = prepareCommittedRetrySlot(track, 0, 80);
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  const PlaybackCoverageInterval coverage{12 * bar, 2 * bar, 512 * bar};
+  nativePlaybackDeadlineClock = {1000, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+      static_cast<int>(track.requestCommittedPlaybackWindow(0, coverage, 13 * bar, nativePlaybackDeadlineClock)));
+  const auto original = *track.pendingViewRequest(0);
+  TEST_ASSERT_TRUE(track.hasPendingPlaybackViewMaintenance());
+  TEST_ASSERT_FALSE(runtime->coverageBuildNeedsService());
+  auto offer = track.playbackWindowServiceOffer(0, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(offer.eligible && offer.canProgress);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
+      static_cast<int>(track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_NULL(track.pendingViewRequest(0));
+  TEST_ASSERT_TRUE(runtime->frozenViewRequest.active);
+  TEST_ASSERT_TRUE(runtime->viewBuild.active());
+  TEST_ASSERT_FALSE(runtime->coverageBuildNeedsService());
+  TEST_ASSERT_EQUAL_UINT32(0, runtime->coverageSource.readUnits());
+  const auto* set = runtime->viewSetIfPrewarmed();
+  const auto buildIndex = set->lifecycle.build;
+  TEST_ASSERT_EQUAL_UINT32(0, set->views[buildIndex].storage.eventCount);
+  nativePlaybackDeadlineClock.tick += 321; // This time is never gifted back at admission.
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_UINT32(Track::kPlaybackViewFillQuantum, runtime->coverageSource.readUnits());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(61, set->views[buildIndex].storage.eventCount,
+      "qualification fills private rows instead of discarding and rereading them");
+  TEST_ASSERT_FALSE(set->views[buildIndex].complete);
+  TEST_ASSERT_FALSE(set->views[buildIndex].published);
+  // A later demand arrives while an older frozen request owns qualification.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+      static_cast<int>(track.requestCommittedPlaybackWindow(0, {14 * bar, bar, 512 * bar}, 13 * bar,
+          nativePlaybackDeadlineClock)));
+  const auto newer = *track.pendingViewRequest(0);
+  for (unsigned i = 0; i < 100 && !runtime->coverageBuildNeedsService(); ++i)
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(runtime->coverageBuildNeedsService());
+  TEST_ASSERT_EQUAL_UINT64(original.deadlineTick, runtime->viewBuildWork.deadlineTick);
+  TEST_ASSERT_EQUAL_UINT64(original.work.admittedTick, runtime->viewBuildWork.admittedTick);
+  TEST_ASSERT_EQUAL_UINT32(original.clockEpoch, runtime->viewBuildWork.clockEpoch);
+  TEST_ASSERT_EQUAL_UINT32(runtime->coverageEventCount, runtime->viewBuildWork.sourceEntries);
+  TEST_ASSERT_EQUAL_UINT32(0, runtime->viewBuildWork.fillGrains);
+  TEST_ASSERT_TRUE(runtime->coverageSource.complete());
+  TEST_ASSERT_EQUAL_UINT64(newer.deadlineTick, track.pendingViewRequest(0)->deadlineTick);
+  PlaybackWindowIdentity published{};
+  TEST_ASSERT_FALSE(track.publishedPlaybackWindowIdentityForSlot(0, published));
+  for (unsigned i = 0; i < 4096 && runtime->coverageBuildNeedsService(); ++i)
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, published));
+  TEST_ASSERT_EQUAL_UINT32(coverage.startPhase, published.interval.startPhase);
+  TEST_ASSERT_TRUE(runtime->coverageSource.retiring());
+  TEST_ASSERT_FALSE(track.noLiveOwnerForSlot(0));
+  // Do not freeze the newer request while checking only the older one's retirement.
+  while (runtime->ownsCoverageSource())
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(0));
+  TEST_ASSERT_EQUAL_UINT64(newer.deadlineTick, track.pendingViewRequest(0)->deadlineTick);
+  TEST_ASSERT_EQUAL_UINT32(newer.coverage.startPhase, track.pendingViewRequest(0)->coverage.startPhase);
+  const auto& current = set->views[set->lifecycle.current];
+  SessionMidiEventVec expected;
+  TEST_ASSERT_TRUE(track.getLoop(0).tryGatherPublishedSnapshotEventsInWindow(expected, coverage.startPhase,
+      coverage.lengthTicks));
+  TEST_ASSERT_EQUAL_UINT32(expected.size(), current.storage.eventCount);
+  RuntimePlaybackView reference;
+  TEST_ASSERT_TRUE(reference.prewarm(expected.size()));
+  RuntimePlaybackViewBuild referenceBuild;
+  TEST_ASSERT_TRUE(referenceBuild.begin(reference, expected.data(), expected.size(), current.source, coverage, {}, {}));
+  for (unsigned turn = 0; turn < 4096 && referenceBuild.active(); ++turn) {
+    if (referenceBuild.nextGrain() == RuntimePlaybackViewBuildGrain::Fill) referenceBuild.stepFill(64);
+    else referenceBuild.stepOrder(48);
+  }
+  TEST_ASSERT_TRUE(reference.complete);
+  for (size_t i = 0; i < expected.size(); ++i) {
+    const auto& event = reference.storage.events[reference.storage.order[i]];
+    const auto& actual = current.storage.events[current.storage.order[i]];
+    TEST_ASSERT_EQUAL_UINT32(event.tick, actual.tick);
+    TEST_ASSERT_EQUAL_UINT8(event.type, actual.type);
+    TEST_ASSERT_EQUAL_UINT8(event.channel, actual.channel);
+    TEST_ASSERT_EQUAL_UINT8(event.data.noteData.note, actual.data.noteData.note);
+    TEST_ASSERT_EQUAL_UINT8(event.data.noteData.velocity, actual.data.noteData.velocity);
+  }
+}
+
+void test_committed_retry_shared_owner_and_blocked_slot_do_not_hide_runnable_sibling() {
+  LoopEventStore::initPool();
+  auto& track = trackManager.getTrack(0);
+  auto* first = prepareCommittedRetrySlot(track, 0, 0);
+  auto* second = prepareCommittedRetrySlot(track, 1, 0);
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  const PlaybackCoverageInterval coverage{12 * bar, 2 * bar, 512 * bar};
+  nativePlaybackDeadlineClock = {1000, 1};
+  // Generic shared-builder work has no window-lane ownership.
+  auto* set = first->viewSetIfPrewarmed();
+  TEST_ASSERT_TRUE(first->viewBuild.begin(set->views[set->lifecycle.build], nullptr, 0, {}, coverage, {}, {}));
+  TEST_ASSERT_FALSE(first->coverageBuildNeedsService());
+  TEST_ASSERT_FALSE(track.hasPendingPlaybackViewMaintenance());
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+      static_cast<int>(track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL(static_cast<int>(RuntimePlaybackViewBuildGrain::Fill), static_cast<int>(first->viewBuild.nextGrain()));
+  track.requestCommittedPlaybackWindow(0, coverage, 11 * bar, nativePlaybackDeadlineClock);
+  track.requestCommittedPlaybackWindow(1, coverage, 13 * bar, nativePlaybackDeadlineClock);
+  MidiServiceDrain::PlaybackHolder holders[Config::MAX_LOOPS_PER_TRACK] = {};
+  track.fillPlaybackHolders(0, holders, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(holders[0].eligible && !holders[0].canProgress);
+  TEST_ASSERT_TRUE(holders[1].eligible && holders[1].canProgress);
+  const auto offer = track.playbackWindowServiceOffer(0, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(offer.eligible && offer.canProgress);
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(second->frozenViewRequest.active);
+  TEST_ASSERT_FALSE(first->ownsCoverageSource());
+  // A generic begin cannot overwrite the qualification reservation.
+  auto* otherSet = second->viewSetIfPrewarmed();
+  TEST_ASSERT_FALSE(second->viewBuild.begin(otherSet->views[otherSet->lifecycle.build], nullptr, 0,
+      {}, coverage, {}, {}));
+  TEST_ASSERT_TRUE(second->frozenViewRequest.active);
+  second->discardCoverageBuild();
+  while (second->ownsCoverageSource()) second->stepCoverageSourceRetirement(64);
+  first->viewBuild.discard();
+}
+
+void test_committed_retry_cancel_drains_source_and_epoch_invalidation_never_regrants() {
+  LoopEventStore::initPool();
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = prepareCommittedRetrySlot(track, 0, 80);
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  const PlaybackCoverageInterval coverage{12 * bar, 2 * bar, 512 * bar};
+  nativePlaybackDeadlineClock = {1000, 1};
+  track.requestCommittedPlaybackWindow(0, coverage, 13 * bar, nativePlaybackDeadlineClock);
+  const auto original = *track.pendingViewRequest(0);
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(runtime->ownsCoverageSource());
+  // Retire the root: the cursor now owns its membership pages, not the full root.
+  track.getLoop(0).storePublishedSnapshotForTest({}, 0);
+  runtime->discardCoverageBuild();
+  TEST_ASSERT_TRUE(runtime->coverageSource.retiring());
+  TEST_ASSERT_FALSE(track.noLiveOwnerForSlot(0));
+  size_t turns = 0;
+  while (runtime->ownsCoverageSource() && turns++ < 4096) {
+    const auto before = runtime->coverageSource.releaseUnits();
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    const auto after = runtime->coverageSource.releaseUnits();
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(64, after - before);
+  }
+  TEST_ASSERT_FALSE(runtime->ownsCoverageSource());
+  TEST_ASSERT_GREATER_THAN_UINT32(1, turns);
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(0));
+  track.serviceAdmittedDeadlineMisses({1000, 2});
+  TEST_ASSERT_TRUE(track.pendingViewRequest(0)->positionInvalidated);
+  TEST_ASSERT_EQUAL_UINT64(original.deadlineTick, track.pendingViewRequest(0)->deadlineTick);
+  TEST_ASSERT_FALSE(track.playbackWindowServiceOffer(0, {1000, 1}).canProgress);
+  TEST_ASSERT_EQUAL_UINT64(original.work.admittedTick, track.pendingViewRequest(0)->work.admittedTick);
+}
+
+void test_committed_retry_residual_lead_and_empty_two_bar_envelope_refuse_without_new_lap() {
+  LoopEventStore::initPool();
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = prepareCommittedRetrySlot(track, 0, 0);
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  const PlaybackCoverageInterval coverage{12 * bar, 2 * bar, 512 * bar};
+  nativePlaybackDeadlineClock = {1000, 1};
+  track.requestCommittedPlaybackWindow(0, coverage, 13 * bar, nativePlaybackDeadlineClock);
+  const auto original = *track.pendingViewRequest(0);
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock); // freeze
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock); // count
+  nativePlaybackDeadlineClock.tick = original.deadlineTick - 1;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainDenied),
+      static_cast<int>(track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock)));
+  while (runtime->ownsCoverageSource()) track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(0));
+  TEST_ASSERT_EQUAL_UINT64(original.deadlineTick, track.pendingViewRequest(0)->deadlineTick);
+  TEST_ASSERT_FALSE(runtime->coverageBuildNeedsService());
+  PlaybackWindowIdentity published{};
+  TEST_ASSERT_FALSE(track.publishedPlaybackWindowIdentityForSlot(0, published));
+  track.serviceAdmittedDeadlineMisses({original.deadlineTick + 512 * bar, 1});
+  TEST_ASSERT_TRUE(track.pendingViewRequest(0)->positionInvalidated);
+  TEST_ASSERT_EQUAL_UINT64(original.deadlineTick, track.pendingViewRequest(0)->deadlineTick);
+  auto contract = Track::playbackViewCoverageContract();
+  contract.deriveSnapshotGrainsFrom(0, 0, 64, 48);
+  TEST_ASSERT_EQUAL_UINT16(3, contract.requiredGrains());
+  TEST_ASSERT_FALSE(contract.canCompleteWithinLead(2 * bar));
+  TEST_ASSERT_TRUE(contract.canCompleteWithinLead(3 * bar));
+}
+
+void test_committed_retry_clock_stamp_projects_nonzero_slot_origin() {
+  LoopEventStore::initPool();
+  auto& track = trackManager.getTrack(0);
+  prepareCommittedRetrySlot(track, 0, 0);
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  const PlaybackCoverageInterval coverage{12 * bar, 2 * bar, 512 * bar};
+  track.setProjectionCycleStartTick(7000);
+  const PlaybackDeadlineClock clock{7000 + 13 * bar, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+      static_cast<int>(track.requestCommittedPlaybackWindow(0, coverage, clock)));
+  const auto* request = track.pendingViewRequest(0);
+  TEST_ASSERT_NOT_NULL(request);
+  TEST_ASSERT_EQUAL_UINT32(13 * bar, request->requestedPhase);
+  TEST_ASSERT_EQUAL_UINT64(clock.tick + 511 * bar, request->deadlineTick);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::NotServable),
+      static_cast<int>(track.requestCommittedPlaybackWindow(1, coverage, clock)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::NotServable),
+      static_cast<int>(track.requestCommittedPlaybackWindow(0, coverage, PlaybackDeadlineClock{})));
+}
+
+void test_committed_retry_stale_frozen_source_keeps_newer_request_position_runnable() {
+  LoopEventStore::initPool();
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = prepareCommittedRetrySlot(track, 0, 32);
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  const PlaybackCoverageInterval older{12 * bar, 2 * bar, 512 * bar};
+  const PlaybackCoverageInterval newer{14 * bar, 2 * bar, 512 * bar};
+  nativePlaybackDeadlineClock = {1000, 1};
+  track.requestCommittedPlaybackWindow(0, older, 20 * bar, nativePlaybackDeadlineClock);
+  const auto original = *track.pendingViewRequest(0);
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(runtime->frozenViewRequest.active);
+  auto& loop = track.getLoop(0);
+  ++loop.playbackRevision;
+  publishNotesInBarsRootForSlot(loop, 14, 16, 32);
+  nativePlaybackDeadlineClock.tick += 100;
+  track.requestCommittedPlaybackWindow(0, newer, 20 * bar, nativePlaybackDeadlineClock);
+  const auto latest = *track.pendingViewRequest(0);
+  TEST_ASSERT_GREATER_THAN_UINT32(original.deadlineTick, latest.deadlineTick);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainDenied),
+      static_cast<int>(track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock)));
+  while (runtime->ownsCoverageSource())
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  const auto* request = track.pendingViewRequest(0);
+  TEST_ASSERT_NOT_NULL(request);
+  TEST_ASSERT_FALSE_MESSAGE(request->positionInvalidated, "source replacement is not clock invalidation");
+  TEST_ASSERT_EQUAL_UINT32(latest.source.playbackRevision, request->source.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT32(newer.startPhase, request->coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT64(original.deadlineTick, request->deadlineTick);
+  TEST_ASSERT_EQUAL_UINT64(original.work.admittedTick, request->work.admittedTick);
+  TEST_ASSERT_TRUE(track.playbackWindowServiceOffer(0, nativePlaybackDeadlineClock).canProgress);
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(runtime->frozenViewRequest.active);
+  TEST_ASSERT_EQUAL_UINT32(latest.source.playbackRevision, runtime->frozenViewRequest.source.playbackRevision);
+  runtime->discardCoverageBuild();
+  while (runtime->ownsCoverageSource()) runtime->stepCoverageSourceRetirement(64);
+}
+
+void test_committed_retry_capacity_refusal_counts_bounded_source_without_partial_publication() {
+  LoopEventStore::initPool();
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = prepareCommittedRetrySlot(track, 0, 1200);
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  nativePlaybackDeadlineClock = {1000, 1};
+  track.requestCommittedPlaybackWindow(0, {12 * bar, 2 * bar, 512 * bar}, 20 * bar, nativePlaybackDeadlineClock);
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  for (unsigned i = 0; i < 100 && !runtime->coverageSource.retiring(); ++i) {
+    const size_t before = runtime->coverageSource.readUnits();
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(64, runtime->coverageSource.readUnits() - before);
+  }
+  TEST_ASSERT_TRUE(runtime->coverageSource.retiring());
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(0));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackViewPendingReason::WindowExceedsRetainedCapacity),
+      static_cast<int>(track.pendingViewRequest(0)->reason));
+  TEST_ASSERT_EQUAL_UINT32(RuntimePlaybackViewConfig::kWindowAdmissionLimit + 1, runtime->coverageEventCount);
+  PlaybackWindowIdentity published{};
+  TEST_ASSERT_FALSE(track.publishedPlaybackWindowIdentityForSlot(0, published));
+  while (runtime->ownsCoverageSource()) track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_FALSE(track.playbackWindowServiceOffer(0, nativePlaybackDeadlineClock).canProgress);
+}
+
+void test_committed_retry_prices_actual_pinned_topology_not_maximum_retirement() {
+  LoopEventStore::initPool();
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = prepareCommittedRetrySlot(track, 0, 0);
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  const PlaybackCoverageInterval coverage{12 * bar, 2 * bar, 512 * bar};
+  nativePlaybackDeadlineClock = {1000, 1};
+  // Four bars of lead: far below the old 205-grain retirement surcharge, but
+  // enough for the actual empty pinned topology at the UNCHANGED declaration.
+  track.requestCommittedPlaybackWindow(0, coverage, 8 * bar, nativePlaybackDeadlineClock);
+  const auto original = *track.pendingViewRequest(0);
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock); // freeze
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock); // count
+  TEST_ASSERT_EQUAL_UINT32(2, runtime->coverageSource.qualifiedReleaseUnitBound());
+  // Remaining lead2500 fits remaining order/promotion/retirement2304, but not
+  // the old duplicate-fill charge2816. Never regrant the original deadline.
+  nativePlaybackDeadlineClock.tick += 572;
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock); // admit
+  TEST_ASSERT_TRUE_MESSAGE(runtime->coverageBuildNeedsService(),
+      "empty source must pay its two null bars, not 768 possible pages");
+  TEST_ASSERT_EQUAL_UINT32(2, runtime->viewBuildWork.promotionGrains); // promotion + one retirement turn
+  TEST_ASSERT_EQUAL_UINT64(original.deadlineTick, runtime->viewBuildWork.deadlineTick);
+  TEST_ASSERT_EQUAL_UINT64(original.work.admittedTick, runtime->viewBuildWork.admittedTick);
+  for (unsigned i = 0; i < 32 && runtime->coverageBuildNeedsService(); ++i)
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  PlaybackWindowIdentity published{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, published));
+  while (runtime->ownsCoverageSource()) track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_UINT32(2, runtime->coverageSource.releaseUnits());
+  auto contract = Track::playbackViewCoverageContract();
+  contract.deriveSnapshotGrainsFrom(2, 0, 64, 48);
+  contract.requiredPromotionGrains = 2;
+  TEST_ASSERT_FALSE(contract.canCompleteWithinLead(2 * bar));
+}
+
+void test_two_bar_service_cannot_supply_even_dense_copy_work() {
+  const auto contract = Track::playbackViewCoverageContract();
+  const uint32_t span = 2 * Config::TICKS_PER_BAR;
+  const uint32_t turnsPerWindow = span / contract.maximumPhaseAdvancePerTurn;
+  const uint32_t perHolder = turnsPerWindow / Config::NUM_TRACKS;
+  const uint32_t copyTurns = (RuntimePlaybackViewConfig::kWindowAdmissionLimit +
+      Track::kPlaybackViewFillQuantum - 1) / Track::kPlaybackViewFillQuantum;
+  TEST_ASSERT_EQUAL_UINT32(24, turnsPerWindow);
+  TEST_ASSERT_EQUAL_UINT32(3, perHolder);
+  TEST_ASSERT_EQUAL_UINT32(32, copyTurns);
+  TEST_ASSERT_TRUE_MESSAGE(copyTurns > perHolder,
+      "initial prefill cannot fix a producer rate slower than sustained consumption");
+  TEST_ASSERT_EQUAL_UINT32(1, (span - contract.leadTicks) /
+      (Config::NUM_TRACKS * contract.maximumPhaseAdvancePerTurn));
+}
+
+void exercise_committed_retry_eight_track_lead(uint32_t leadBars, bool expectComplete) {
+  using namespace MidiServiceDrain;
+  LoopEventStore::initPool();
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  const PlaybackCoverageInterval coverage{12 * bar, 2 * bar, 512 * bar};
+  nativePlaybackDeadlineClock = {1000, 1};
+  uint64_t deadlines[Config::NUM_TRACKS] = {};
+  uint32_t serviced[Config::NUM_TRACKS] = {};
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    auto& track = trackManager.getTrack(i);
+    prepareCommittedRetrySlot(track, 0, 0);
+    track.requestCommittedPlaybackWindow(0, coverage, (12 - leadBars) * bar, nativePlaybackDeadlineClock);
+    deadlines[i] = track.pendingViewRequest(0)->deadlineTick;
+  }
+  PlaybackHolderCursor cursor{};
+  uint32_t completions = 0, turns = 0;
+  for (; turns < 256; ++turns) {
+    PlaybackHolder offers[Config::NUM_TRACKS] = {};
+    for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+      auto& track = trackManager.getTrack(i);
+      track.serviceAdmittedDeadlineMisses(nativePlaybackDeadlineClock);
+      offers[i] = track.playbackWindowServiceOffer(0, nativePlaybackDeadlineClock);
+    }
+    uint8_t chosen = kNoPlaybackHolder;
+    if (selectPlaybackHolderRoundRobin(cursor, offers, Config::NUM_TRACKS, chosen) != PlaybackHolderSelection::Service)
+      break;
+    ++serviced[chosen];
+    const auto result = trackManager.getTrack(chosen).stepPlaybackViewMaintenance(
+        0, nullptr, false, nativePlaybackDeadlineClock);
+    if (result == Track::PlaybackViewTurnResult::BuildComplete) ++completions;
+    nativePlaybackDeadlineClock.tick += Track::kPlaybackViewPermittedAdvancePerTurn;
+  }
+  TEST_ASSERT_LESS_THAN_UINT32(256, turns);
+  TEST_ASSERT_EQUAL_UINT32(expectComplete ? Config::NUM_TRACKS : 0, completions);
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    auto& track = trackManager.getTrack(i);
+    auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+    TEST_ASSERT_FALSE(runtime->ownsCoverageSource());
+    PlaybackWindowIdentity published{};
+    TEST_ASSERT_EQUAL(expectComplete, track.publishedPlaybackWindowIdentityForSlot(0, published));
+    if (expectComplete) {
+      TEST_ASSERT_NULL(track.pendingViewRequest(0));
+      TEST_ASSERT_EQUAL_UINT64(deadlines[i], runtime->viewBuildWork.deadlineTick);
+      TEST_ASSERT_EQUAL_UINT32(5, serviced[i]); // freeze/qualify+fill/admit/rank+publish/retire
+      TEST_ASSERT_TRUE(nativePlaybackDeadlineClock.tick < deadlines[i]);
+    } else {
+      TEST_ASSERT_NOT_NULL(track.pendingViewRequest(0));
+      TEST_ASSERT_EQUAL_UINT64(deadlines[i], track.pendingViewRequest(0)->deadlineTick);
+      TEST_ASSERT_FALSE(track.playbackWindowServiceOffer(0, nativePlaybackDeadlineClock).canProgress);
+    }
+  }
+}
+
+void test_committed_retry_eight_tracks_prepare_empty_windows_with_eight_bar_lead() {
+  exercise_committed_retry_eight_track_lead(8, true);
+}
+
+void test_committed_retry_eight_tracks_refuse_two_bar_lead_without_synthetic_completion() {
+  exercise_committed_retry_eight_track_lead(2, false);
+}
+
+void drainImmutableLaunch(Track& track, uint8_t slot) {
+  nativePlaybackDeadlineClock = {1000, 1};
+  for (unsigned turn = 0; turn < 5000 && !track.playbackLaunchReadyForSlot(slot); ++turn) {
+    trackManager.servicePendingSlotProvision();
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    nativePlaybackDeadlineClock.tick += 64;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(track.playbackLaunchReadyForSlot(slot), "launch did not reach completed readiness");
+}
+
+void setupImmutableLaunch(Track& track) {
+  LoopEventStore::initPool();
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  commitBarSpacedPassIntoTrackSlot(track, 2, 24);
+  publishBarSpacedRootForSlot(track.getLoop(2), 24);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  track.forceSetState(TRACK_PLAYING);
+  trackManager.requestSlotSwitch(0, 2, SlotQuantization::LoopEnd, 100);
+  TEST_ASSERT_TRUE(trackManager.servicePendingSlotProvision());
+}
+
+void test_immutable_launch_cancellation_drains_every_preparation_phase() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_TRUE(track.hasPendingPlaybackViewMaintenance());
+  for (unsigned turns : {0u, 1u, 2u, 3u, 4u, 6u, 20u}) {
+    if (!trackManager.hasPendingSlotSwitch(0)) {
+      trackManager.requestSlotSwitch(0, 2, SlotQuantization::LoopEnd, 100);
+      TEST_ASSERT_TRUE(trackManager.servicePendingSlotProvision());
+    }
+    for (unsigned i = 0; i < turns; ++i)
+      track.stepPlaybackViewMaintenance(0, nullptr, false, {1000 + i * 64, 1});
+    TEST_ASSERT_FALSE(track.noLiveOwnerForSlot(2));
+    trackManager.cancelPendingSlotSwitch(0);
+    TEST_ASSERT_FALSE(track.playbackLaunchReadyForSlot(2));
+    TEST_ASSERT_FALSE(track.bindPlaybackLaunchForSlot(2, 2000));
+    TEST_ASSERT_NULL(track.pendingViewRequest(2));
+    for (unsigned i = 0; i < 256 && runtime->ownsCoverageSource(); ++i)
+      track.stepPlaybackViewMaintenance(0, nullptr, false, {3000 + i * 64, 1});
+    TEST_ASSERT_FALSE(runtime->ownsCoverageSource());
+    TEST_ASSERT_TRUE(track.noLiveOwnerForSlot(2));
+    TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::LaunchPreparation::None),
+        static_cast<int>(runtime->launchPreparation));
+  }
+}
+
+void test_immutable_launch_requalifies_generation_and_revision_before_binding() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);
+  drainImmutableLaunch(track, 2);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  auto* set = runtime->viewSetIfPrewarmed();
+  const auto oldGeneration = set->views[set->lifecycle.ready].source.sourceGeneration;
+  track.bumpPlaybackGeneration();
+  TEST_ASSERT_FALSE(track.bindPlaybackLaunchForSlot(2, 2000));
+  drainImmutableLaunch(track, 2);
+  TEST_ASSERT_NOT_EQUAL(oldGeneration, set->views[set->lifecycle.ready].source.sourceGeneration);
+  auto& loop = track.getLoop(2);
+  ++loop.playbackRevision;
+  TEST_ASSERT_FALSE(track.playbackLaunchReadyForSlot(2));
+  trackManager.servicePendingSlotProvision();
+  TEST_ASSERT_FALSE(track.playbackWindowServiceOffer(0, {3000, 2}).canProgress);
+  publishBarSpacedRootForSlot(loop, 24);
+  drainImmutableLaunch(track, 2);
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, set->views[set->lifecycle.ready].source.playbackRevision);
+  const auto length = loop.loopLengthTicks;
+  loop.loopLengthTicks += 768;
+  TEST_ASSERT_FALSE(track.bindPlaybackLaunchForSlot(2, 2000));
+  loop.loopLengthTicks = length;
+  TEST_ASSERT_TRUE(track.bindPlaybackLaunchForSlot(2, 2000));
+  const auto& served = set->views[set->lifecycle.current];
+  TEST_ASSERT_TRUE(served.published);
+  TEST_ASSERT_NOT_NULL(runtime->boundLaunchView(served.source, length, 0, 2000));
+  auto edited = served.source;
+  ++edited.playbackRevision;
+  TEST_ASSERT_NOT_NULL_MESSAGE(runtime->boundLaunchView(edited, length, 1, 2001),
+      "a bound interval keeps its version through the traversal");
+  TEST_ASSERT_NULL(runtime->boundLaunchView(served.source, length, 1536, 3536));
+  TEST_ASSERT_NULL_MESSAGE(runtime->boundLaunchView(served.source, length, 0, 2000),
+      "expired launch cannot revive when an old modular position returns");
+  TEST_ASSERT_NULL_MESSAGE(runtime->boundLaunchView(served.source, length, 0, 2000 + length),
+      "the initial launch window must not resurrect on a later lap");
+  ++edited.sourceGeneration;
+  TEST_ASSERT_NULL(runtime->boundLaunchView(edited, length, 1, 2001));
+}
+
+void test_immutable_launch_cold_reservation_upgrades_without_resetting_ready_content() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);
+  drainImmutableLaunch(track, 2);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  auto* set = runtime->viewSetIfPrewarmed();
+  const auto readyIndex = set->lifecycle.ready;
+  const auto* events = set->views[readyIndex].storage.events;
+  const auto count = set->views[readyIndex].storage.eventCount;
+  const auto bytes = set->fixedExternalBytes();
+  TEST_ASSERT_FALSE(set->captureStagings[0].storage.isPrewarmed());
+  TEST_ASSERT_FALSE(set->captureStagings[1].storage.isPrewarmed());
+  TEST_ASSERT_EQUAL_UINT32(0, runtime->frozenCaptureCompanions.capacity());
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(2, true));
+  TEST_ASSERT_TRUE(set->captureStagings[0].storage.isPrewarmed());
+  TEST_ASSERT_TRUE(set->captureStagings[1].storage.isPrewarmed());
+  TEST_ASSERT_GREATER_THAN_UINT32(bytes, set->fixedExternalBytes());
+  TEST_ASSERT_EQUAL_PTR(events, set->views[readyIndex].storage.events);
+  TEST_ASSERT_EQUAL_UINT32(count, set->views[readyIndex].storage.eventCount);
+  TEST_ASSERT_EQUAL_UINT8(readyIndex, set->lifecycle.ready);
+  TEST_ASSERT_TRUE(track.playbackLaunchReadyForSlot(2));
+  runtime->releaseFrozenRecordWindow();
+  TEST_ASSERT_TRUE_MESSAGE(track.playbackLaunchReadyForSlot(2), "shared record cleanup cannot erase a ready launch");
+}
+
+void test_immutable_launch_legacy_dense_overflow_retains_untruncated_fallback() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);
+  publishNotesInBarsRootForSlot(track.getLoop(2), 0, 2, 1200);
+  drainImmutableLaunch(track, 2);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::LaunchPreparation::Fallback),
+      static_cast<int>(runtime->launchPreparation));
+  TEST_ASSERT_GREATER_THAN_UINT32(RuntimePlaybackViewConfig::kWindowAdmissionLimit,
+      runtime->mergedMidiEvents.mergedEvents.size());
+  TEST_ASSERT_FALSE(runtime->ownsCoverageSource());
+  TEST_ASSERT_TRUE(track.bindPlaybackLaunchForSlot(2, 3000));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::LaunchPreparation::FallbackBound),
+      static_cast<int>(runtime->launchPreparation));
+}
+
+void test_immutable_launch_source_wait_does_not_hide_a_later_track() {
+  LoopEventStore::initPool();
+  for (uint8_t i = 0; i < 2; ++i) {
+    auto& track = trackManager.getTrack(i);
+    track.ensureLoopsAllocated();
+    commitRecordPassIntoTrackSlot(track, 0);
+    commitBarSpacedPassIntoTrackSlot(track, 2, 24);
+    if (i == 1) publishBarSpacedRootForSlot(track.getLoop(2), 24);
+    TrackCaptureStopTestAccess::selectSlot(track, 0);
+    track.forceSetState(TRACK_PLAYING);
+    trackManager.requestSlotSwitch(i, 2, SlotQuantization::LoopEnd, 100);
+  }
+  TEST_ASSERT_TRUE(trackManager.servicePendingSlotProvision()); // Track0 occupancy/request.
+  TEST_ASSERT_FALSE(trackManager.getTrack(0).playbackWindowServiceOffer(0, {1000, 1}).canProgress);
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.servicePendingSlotProvision(),
+      "a source-blocked lower track must not hide later launch provisioning");
+  TEST_ASSERT_NOT_NULL(trackManager.getTrack(1).pendingViewRequest(2));
+  drainImmutableLaunch(trackManager.getTrack(1), 2);
+  TEST_ASSERT_TRUE(trackManager.hasPendingSlotSwitch(0));
+  TEST_ASSERT_FALSE(trackManager.getTrack(0).playbackLaunchReadyForSlot(2));
+}
+
+void test_immutable_launch_sibling_interference_is_a_temporary_wait() {
+  auto& track = trackManager.getTrack(0);
+  setupImmutableLaunch(track);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  track.stepCommittedPlaybackRetry(2, {1000, 1}); // Freeze.
+  track.stepCommittedPlaybackRetry(2, {1064, 1}); // Count.
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::CoveragePreparation::AwaitAdmission),
+      static_cast<int>(runtime->coveragePreparation));
+  const auto units = runtime->coverageSource.readUnits();
+  prepareOwingWindowHolder(track, 1, 512 * 768, 12, 13, 1, 10000);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  TEST_ASSERT_GREATER_THAN_UINT32(0, track.playbackViewOutstandingGrains(2));
+  track.stepCommittedPlaybackRetry(2, {1128, 1});
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::CoveragePreparation::AwaitAdmission),
+      static_cast<int>(runtime->coveragePreparation), "unpositioned launch waits; it cannot expire on sibling interference");
+  TEST_ASSERT_TRUE(runtime->frozenViewRequest.active);
+  TEST_ASSERT_EQUAL_UINT32(units, runtime->coverageSource.readUnits());
+  auto* sibling = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 1);
+  nativePlaybackDeadlineClock = {sibling->viewBuildWork.admittedTick, sibling->viewBuildWork.clockEpoch};
+  for (unsigned i = 0; i < 500 && sibling->coverageBuildNeedsService(); ++i)
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_FALSE(sibling->coverageBuildNeedsService());
+  drainImmutableLaunch(track, 2);
+}
+
+void test_rootless_restored_launch_requests_its_source_once_and_becomes_ready() {
+  LoopEventStore::initPool();
+  auto& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  commitBarSpacedPassIntoTrackSlot(track, 2, 24);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  track.forceSetState(TRACK_PLAYING);
+  auto& target = track.getLoop(2);
+  // Finish the seeding helper's record job, then emulate a pass-only restore:
+  // committed passes remain, but no root and no publication request exist.
+  for (unsigned i = 0; i < 20000 && target.hasPendingSnapshotPublish(); ++i)
+    target.stepPendingSnapshotPublish(2, true, 0);
+  TEST_ASSERT_TRUE(target.publishedSnapshotIsCurrent());
+  target.storePublishedSnapshotForTest({}, 0);
+  TEST_ASSERT_NULL(target.publishedSnapshot().get());
+  TEST_ASSERT_FALSE(target.hasPendingSnapshotPublish());
+  trackManager.requestSlotSwitch(0, 2, SlotQuantization::LoopEnd, 100);
+  TEST_ASSERT_TRUE(trackManager.servicePendingSlotProvision());
+  TEST_ASSERT_TRUE_MESSAGE(target.hasPendingSnapshotPublish(),
+      "pass-backed launch must request its missing source, not wait forever");
+  TEST_ASSERT_FALSE_MESSAGE(target.pendingSnapshotFromLoadedPasses(),
+      "explicit launch preparation must not enable blanket loaded hydration");
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(2));
+  for (unsigned turn = 0; turn < 20000 && !target.publishedSnapshotIsCurrent(); ++turn) {
+    // Same Loop publication owner and unit used by the Snapshot maintenance lane.
+    target.stepPendingSnapshotPublish(2, true, 0);
+    trackManager.servicePendingSlotProvision(); // Must not restart the source job.
+  }
+  TEST_ASSERT_TRUE(target.publishedSnapshotIsCurrent());
+  drainImmutableLaunch(track, 2);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_EQUAL_UINT32(4, set->views[set->lifecycle.ready].storage.eventCount);
+  TEST_ASSERT_TRUE(trackManager.hasPendingSlotSwitch(0));
+  TEST_ASSERT_EQUAL_UINT8(0, track.getActiveLoopIndex());
+}
+
+void rollingTestTick(Track& track, uint64_t tick, bool service = true) {
+  nativePlaybackDeadlineClock = {tick, 1};
+  clockManager.assignCurrentTickSilently(static_cast<uint32_t>(tick));
+  if (service) {
+    track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    track.stepPlaybackViewMaintenance(static_cast<uint32_t>(tick), nullptr, false, nativePlaybackDeadlineClock);
+  }
+  trackManager.updateAllTracks(static_cast<uint32_t>(tick));
+}
+
+void test_rolling_request_worker_handoff_emission_keeps_fallback_and_exact_notes() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  const uint64_t origin = clockManager.getCurrentTick();
+  nativePlaybackDeadlineClock = {origin, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+      static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL_UINT32(6 * 768, runtime->rolling.startPhase);
+  TEST_ASSERT_EQUAL_UINT64(origin + 6 * 768, runtime->rolling.deadlineTick);
+  TEST_ASSERT_EQUAL_UINT32(2 * 768, track.pendingViewRequest(2)->coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(7, Track::playbackViewCoverageContract().maximumConsecutiveDeniedTurns);
+  const uint8_t initial = runtime->viewSetIfPrewarmed()->lifecycle.current;
+  MidiSendCapture::reset();
+  for (uint32_t delta = 1; delta <= 16 * 768 + 48; ++delta) {
+    const auto before = MidiSendCapture::count();
+    const auto builds = Track::playbackOrderHotRebuildCount();
+    const auto roleBefore = runtime->viewSetIfPrewarmed()->lifecycle.current;
+    rollingTestTick(track, origin + delta, delta % 64 == 0);
+    const bool on = delta % 768 == 0;
+    const bool off = delta % 768 == 48;
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(before + (on || off ? 1 : 0), MidiSendCapture::count(),
+        "exact event timing across fallback -> immutable -> fallback");
+    if (on || off) {
+      const auto event = MidiSendCapture::at(before);
+      TEST_ASSERT_EQUAL(on, event.isNoteOn());
+      TEST_ASSERT_EQUAL(off, event.isNoteOff());
+      TEST_ASSERT_EQUAL_UINT8(48, event.data.noteData.note);
+    }
+    if (delta == 4 * 768) {
+      TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready), static_cast<int>(runtime->rolling.phase));
+      TEST_ASSERT_EQUAL_UINT8(initial, runtime->viewSetIfPrewarmed()->lifecycle.current);
+    }
+    if (delta == 6 * 768 || delta == 14 * 768) {
+      TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving), static_cast<int>(runtime->rolling.phase));
+      TEST_ASSERT_NOT_EQUAL(roleBefore, runtime->viewSetIfPrewarmed()->lifecycle.current);
+      TEST_ASSERT_EQUAL_UINT32_MESSAGE(builds, Track::playbackOrderHotRebuildCount(), "no mutable build at handoff");
+      const auto count = MidiSendCapture::count();
+      rollingTestTick(track, origin + delta, false);
+      TEST_ASSERT_EQUAL_UINT32(count, MidiSendCapture::count());
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(33, MidiSendCapture::count());
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle), static_cast<int>(runtime->rolling.phase));
+}
+
+void test_rolling_selector_preserves_existing_adjacent_refusal_and_deadline() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  const uint64_t origin = clockManager.getCurrentTick();
+  nativePlaybackDeadlineClock = {origin, 1};
+  track.requestCommittedPlaybackWindow(2, {1536, 1536, 24 * 768}, nativePlaybackDeadlineClock);
+  const auto original = *track.pendingViewRequest(2);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Busy),
+      static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  for (unsigned i = 0; i < 16; ++i) {
+    nativePlaybackDeadlineClock.tick = origin + i * 64;
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  }
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(2));
+  TEST_ASSERT_EQUAL_UINT64(original.deadlineTick, track.pendingViewRequest(2)->deadlineTick);
+  TEST_ASSERT_EQUAL_UINT32(original.clockEpoch, track.pendingViewRequest(2)->clockEpoch);
+  TEST_ASSERT_EQUAL_UINT32(original.coverage.startPhase, track.pendingViewRequest(2)->coverage.startPhase);
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackViewPendingReason::CannotCompleteBeforeHandoff),
+      static_cast<int>(track.pendingViewRequest(2)->reason));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle), static_cast<int>(runtime->rolling.phase));
+}
+
+void test_rolling_boundary_rejects_stale_epoch_geometry_source_and_missed_tick() {
+  for (unsigned scenario = 0; scenario < 5; ++scenario) {
+    if (scenario) setUp();
+    assert_s4b_7_a_demoted_target_through_the_turn(true);
+    auto& track = trackManager.getTrack(0);
+    auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+    const uint64_t origin = clockManager.getCurrentTick();
+    nativePlaybackDeadlineClock = {origin, 1};
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+        static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+    const uint64_t deadline = runtime->rolling.deadlineTick;
+    for (uint64_t tick = origin + 1; tick < deadline; ++tick)
+      rollingTestTick(track, tick, (tick - origin) % 64 == 0);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready), static_cast<int>(runtime->rolling.phase));
+    const auto current = runtime->viewSetIfPrewarmed()->lifecycle.current;
+    const auto index = track.getLoop(2).nextEventIndex;
+    PlaybackDeadlineClock clock{deadline, 1};
+    if (scenario == 0) clock.epoch = 2;
+    if (scenario == 1) track.getLoop(2).loopLengthTicks += 768;
+    if (scenario == 2) ++track.getLoop(2).playbackRevision;
+    if (scenario == 3) ++clock.tick;
+    if (scenario == 4) track.bumpPlaybackGeneration();
+    const auto result = track.resolveRollingPlaybackWindow(2, static_cast<uint32_t>(clock.tick), clock);
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Rejected), static_cast<int>(result.outcome));
+    TEST_ASSERT_NULL(result.view);
+    TEST_ASSERT_EQUAL_UINT8(current, runtime->viewSetIfPrewarmed()->lifecycle.current);
+    TEST_ASSERT_EQUAL_UINT16(index, track.getLoop(2).nextEventIndex);
+    TEST_ASSERT_EQUAL_UINT64(deadline, runtime->viewBuildWork.deadlineTick);
+    // Returning the original stamp must not revive the rejected candidate.
+    TEST_ASSERT_NULL(track.resolveRollingPlaybackWindow(2, static_cast<uint32_t>(deadline), {deadline, 1}).view);
+    track.cancelRollingPlaybackWindow(2);
+  }
+}
+
+void test_rolling_cancellation_retires_only_its_owned_request() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  const uint64_t origin = clockManager.getCurrentTick();
+  nativePlaybackDeadlineClock = {origin, 1};
+  track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  TEST_ASSERT_TRUE(runtime->ownsCoverageSource());
+  track.requestCommittedPlaybackWindow(2, {12 * 768, 1536, 24 * 768}, 0, {origin + 1, 1});
+  const auto newer = *track.pendingViewRequest(2);
+  track.cancelRollingPlaybackWindow(2);
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(2));
+  TEST_ASSERT_EQUAL_UINT64(newer.deadlineTick, track.pendingViewRequest(2)->deadlineTick);
+  TEST_ASSERT_EQUAL_UINT32(newer.coverage.startPhase, track.pendingViewRequest(2)->coverage.startPhase);
+  for (unsigned i = 0; i < 256 && runtime->ownsCoverageSource(); ++i) runtime->stepCoverageSourceRetirement(64);
+  TEST_ASSERT_FALSE(runtime->ownsCoverageSource());
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle), static_cast<int>(runtime->rolling.phase));
+}
+
+void test_rolling_handoff_across_natural_wrap_uses_absolute_frame() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  const uint64_t origin = clockManager.getCurrentTick();
+  const uint32_t length = track.getLoop(2).loopLengthTicks;
+  // No rolling demand yet. Legacy/launch emission runs until this request point.
+  for (uint32_t delta = 1; delta <= length - 6 * 768; ++delta)
+    rollingTestTick(track, origin + delta, false);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+      static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL_UINT32(0, runtime->rolling.startPhase);
+  TEST_ASSERT_EQUAL_UINT64(origin + length, runtime->rolling.deadlineTick);
+  for (uint32_t delta = length - 6 * 768 + 1; delta < length; ++delta)
+    rollingTestTick(track, origin + delta, delta % 64 == 0);
+  const auto builds = Track::playbackOrderHotRebuildCount();
+  MidiSendCapture::reset();
+  rollingTestTick(track, origin + length, false);
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving), static_cast<int>(runtime->rolling.phase));
+  TEST_ASSERT_EQUAL_UINT32(builds, Track::playbackOrderHotRebuildCount());
+  TEST_ASSERT_EQUAL_UINT32(1, MidiSendCapture::count());
+  TEST_ASSERT_TRUE(MidiSendCapture::at(0).isNoteOn());
+  for (uint32_t delta = 1; delta <= 48; ++delta) rollingTestTick(track, origin + length + delta, false);
+  TEST_ASSERT_EQUAL_UINT32(2, MidiSendCapture::count());
+  TEST_ASSERT_TRUE(MidiSendCapture::at(1).isNoteOff());
+  // A reused physical role is not the same reader even if its interval repeats.
+  auto* set = runtime->viewSetIfPrewarmed();
+  ++set->views[set->lifecycle.current].storageGeneration;
+  TEST_ASSERT_NULL(track.resolveRollingPlaybackWindow(2, static_cast<uint32_t>(origin + length + 49),
+      {origin + length + 49, 1}).view);
+  track.cancelRollingPlaybackWindow(2);
+}
+
+void test_rolling_empty_interval_preserves_sustain_and_fallback_closure() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto& loop = track.getLoop(2);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  const uint64_t origin = clockManager.getCurrentTick();
+  auto empty = LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, 0, 1, 1);
+  LoopSnapshotChangeSet changes;
+  SnapshotNoteChange note{};
+  note.kind = SnapshotChangeKind::Add;
+  note.next.loopId = loop.loopId; note.next.noteId = 9001;
+  note.next.pitch = 70; note.next.velocity = 100;
+  note.next.startTick = 6 * 768 - 20; note.next.endTick = 8 * 768 + 48;
+  changes.notes.push_back(note);
+  for (unsigned i = 0; i < 2; ++i) {
+    SnapshotEventChange event{};
+    event.kind = SnapshotChangeKind::Add;
+    event.next.loopId = loop.loopId; event.next.eventId = 18000 + i; event.next.canonicalOrder = i;
+    event.next.value = i == 0 ? MidiEvent::NoteOn(note.next.startTick, 1, 70, 100)
+                              : MidiEvent::NoteOff(note.next.endTick, 1, 70);
+    event.next.value.noteId = 9001;
+    changes.events.push_back(event);
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  for (unsigned i = 0; i < 1000 && !construction.complete(); ++i) TEST_ASSERT_TRUE(construction.step(64));
+  TEST_ASSERT_TRUE(construction.complete());
+  ++loop.playbackRevision;
+  loop.storePublishedSnapshotForTest(construction.freeze(), loop.playbackRevision);
+  nativePlaybackDeadlineClock = {origin, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+      static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  MidiSendCapture::reset();
+  for (uint32_t delta = 1; delta <= 8 * 768 + 48; ++delta) {
+    rollingTestTick(track, origin + delta, delta % 64 == 0);
+    if (delta == 6 * 768 || delta == 8 * 768 - 1) {
+      TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving), static_cast<int>(runtime->rolling.phase));
+      TEST_ASSERT_EQUAL_UINT32(0, runtime->viewSetIfPrewarmed()->views[runtime->viewSetIfPrewarmed()->lifecycle.current].storage.eventCount);
+      TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 2, 70));
+    }
+  }
+  unsigned ons = 0, offs = 0;
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const auto event = MidiSendCapture::at(i);
+    if ((event.isNoteOn() || event.isNoteOff()) && event.data.noteData.note == 70) {
+      ons += event.isNoteOn(); offs += event.isNoteOff();
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, ons); TEST_ASSERT_EQUAL_UINT32(1, offs);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 2, 70));
+}
+
+void test_rolling_stop_or_slot_exit_releases_the_episode_off_clock() {
+  for (unsigned scenario = 0; scenario < 2; ++scenario) {
+    if (scenario) setUp();
+    assert_s4b_7_a_demoted_target_through_the_turn(true);
+    auto& track = trackManager.getTrack(0);
+    auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+    nativePlaybackDeadlineClock = {clockManager.getCurrentTick(), 1};
+    track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    TEST_ASSERT_TRUE(runtime->ownsCoverageSource());
+    if (scenario == 0) track.stopPlaying();
+    else trackManager.setActiveLoopIndex(0, 0);
+    track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+    TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle), static_cast<int>(runtime->rolling.phase));
+    for (unsigned i = 0; i < 256 && runtime->ownsCoverageSource(); ++i)
+      track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    TEST_ASSERT_FALSE(runtime->ownsCoverageSource());
+  }
+}
+
+void test_rolling_queued_zero_start_keeps_the_original_debt() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  nativePlaybackDeadlineClock = {clockManager.getCurrentTick(), 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Requested),
+      static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  const auto original = *track.pendingViewRequest(2);
+  track.queuePlaybackStartAtGrid(0, static_cast<uint32_t>(nativePlaybackDeadlineClock.tick));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RollingOutcome::Excluded),
+      static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)));
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(2));
+  TEST_ASSERT_EQUAL_UINT64(original.deadlineTick, track.pendingViewRequest(2)->deadlineTick);
+  TEST_ASSERT_EQUAL_UINT32(original.clockEpoch, track.pendingViewRequest(2)->clockEpoch);
+  TEST_ASSERT_EQUAL_UINT32(original.coverage.startPhase, track.pendingViewRequest(2)->coverage.startPhase);
+  track.clearQueuedPlaybackStart();
+  track.cancelRollingPlaybackWindow(2);
+}
+
+PlaybackDeadlineClock changeRollingGenerationAtCompletion() {
+  trackManager.getTrack(0).bumpPlaybackGeneration();
+  return nativePlaybackDeadlineClock;
+}
+
+void test_rolling_generation_change_at_completion_publishes_nothing() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  nativePlaybackDeadlineClock = {clockManager.getCurrentTick(), 1};
+  track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  const auto originalGeneration = track.getPlaybackGeneration();
+  for (unsigned i = 0; i < 128 && track.getPlaybackGeneration() == originalGeneration; ++i) {
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock,
+        changeRollingGenerationAtCompletion);
+    nativePlaybackDeadlineClock.tick += 64;
+  }
+  TEST_ASSERT_NOT_EQUAL(originalGeneration, track.getPlaybackGeneration());
+  auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_FALSE_MESSAGE(set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete,
+      "old-operation completion must not publish a rolling ready candidate");
+  for (unsigned i = 0; i < 256 && runtime->ownsCoverageSource(); ++i)
+    runtime->stepCoverageSourceRetirement(64);
+  TEST_ASSERT_FALSE(runtime->ownsCoverageSource());
+}
+
+
+// DEC-108 §13b / task 3.10 + 6.3: the `H x K` contention sweep (the declared envelope, measured on the composition).
+#include "../test_support/window_contention_sweep.inc"
 int main() {
 
 
 
   UNITY_BEGIN();
+  RUN_TEST(test_committed_retry_eight_tracks_prepare_empty_windows_with_eight_bar_lead);
+  RUN_TEST(test_committed_retry_eight_tracks_refuse_two_bar_lead_without_synthetic_completion);
+  RUN_TEST(test_committed_retry_prices_actual_pinned_topology_not_maximum_retirement);
+  RUN_TEST(test_committed_retry_stale_frozen_source_keeps_newer_request_position_runnable);
+  RUN_TEST(test_committed_retry_capacity_refusal_counts_bounded_source_without_partial_publication);
+  RUN_TEST(test_committed_retry_clock_stamp_projects_nonzero_slot_origin);
+  RUN_TEST(test_committed_retry_counts_then_admits_original_promise_and_publishes_without_second_request);
+  RUN_TEST(test_committed_retry_shared_owner_and_blocked_slot_do_not_hide_runnable_sibling);
+  RUN_TEST(test_committed_retry_cancel_drains_source_and_epoch_invalidation_never_regrants);
+  RUN_TEST(test_committed_retry_residual_lead_and_empty_two_bar_envelope_refuse_without_new_lap);
+
+  RUN_TEST(test_window_retry_preserves_borrowed_source_before_gather);
+  RUN_TEST(test_window_retry_preserves_scratch_for_held_completion_and_ready_successor);
   // S4b.1 check 7 (repeated same-track switches): accepted, bounded, nothing stolen, executes on capacity.
   RUN_TEST(test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once_capacity_frees);
   // S4b.1 (a): the uncommitted switch whose stop was denied on capacity still retains the start.
@@ -8119,6 +9240,25 @@ int main() {
   RUN_TEST(test_window_request_beyond_the_retained_capacity_is_refused_by_name_and_truncates_nothing);
   // slice 3.10 increment 11: the service-gap unit, sampled from the lane's own opportunities.
   RUN_TEST(test_window_service_gap_sample_reports_the_measured_phase_advance_per_opportunity);
+  RUN_TEST(test_two_bar_service_cannot_supply_even_dense_copy_work);
+  RUN_TEST(test_rolling_generation_change_at_completion_publishes_nothing);
+  RUN_TEST(test_rolling_queued_zero_start_keeps_the_original_debt);
+  RUN_TEST(test_rolling_stop_or_slot_exit_releases_the_episode_off_clock);
+  RUN_TEST(test_rolling_handoff_across_natural_wrap_uses_absolute_frame);
+  RUN_TEST(test_rolling_empty_interval_preserves_sustain_and_fallback_closure);
+  RUN_TEST(test_rolling_request_worker_handoff_emission_keeps_fallback_and_exact_notes);
+  RUN_TEST(test_rolling_selector_preserves_existing_adjacent_refusal_and_deadline);
+  RUN_TEST(test_rolling_boundary_rejects_stale_epoch_geometry_source_and_missed_tick);
+  RUN_TEST(test_rolling_cancellation_retires_only_its_owned_request);
+  RUN_TEST(test_rootless_restored_launch_requests_its_source_once_and_becomes_ready);
+  RUN_TEST(test_immutable_launch_source_wait_does_not_hide_a_later_track);
+  RUN_TEST(test_immutable_launch_sibling_interference_is_a_temporary_wait);
+  RUN_TEST(test_immutable_launch_cancellation_drains_every_preparation_phase);
+  RUN_TEST(test_immutable_launch_requalifies_generation_and_revision_before_binding);
+  RUN_TEST(test_immutable_launch_cold_reservation_upgrades_without_resetting_ready_content);
+  RUN_TEST(test_immutable_launch_legacy_dense_overflow_retains_untruncated_fallback);
+  RUN_TEST(test_launch_retries_an_occupied_target_when_its_source_arrives);
+  RUN_TEST(test_launch_accepts_a_prepared_empty_interval_at_its_own_origin);
   RUN_TEST(test_s4b_7_a_demoted_target_with_a_published_root_commits_through_the_turn);
   RUN_TEST(test_s4b_7_a_demoted_target_without_a_root_is_reported_once_at_its_bound);
   // S4b.5 (B4): one active-slot write authority -- a direct write (the undo route) cancels a queued switch,
@@ -8201,6 +9341,10 @@ int main() {
   RUN_TEST(test_a_new_promise_for_the_same_interval_does_not_reset_the_intervals_miss_history);
   RUN_TEST(test_an_epoch_change_invalidates_and_names_the_promise_without_minting_an_allowance);
   RUN_TEST(test_a_promise_that_completes_at_its_deadline_is_still_judged);
+  RUN_TEST(test_on_time_completion_is_not_made_late_by_next_dispatch);
+  RUN_TEST(test_invalidated_successor_preserves_serving_content_until_boundary_revalidation);
+  RUN_TEST(test_retained_completion_cancellation_clears_only_candidate_obligation);
+  RUN_TEST(test_cancelling_withheld_preview_unblocks_next_admission);
   // windowed-playback-generation slice 3.6c: the interval index over pinned bodies -- interval-directed skipping,
   // edit destinations folded in, and named refusals instead of stale or partial answers.
   RUN_TEST(test_retained_interval_index_is_interval_directed_and_refuses_stale_revisions);
@@ -8232,5 +9376,10 @@ int main() {
   RUN_TEST(test_windowed_stream_concatenates_to_the_whole_loop_stream_across_a_boundary);
   // windowed-playback-generation slice 4.4: length-independent residency, swept over lengths (F-8).
   RUN_TEST(test_demoted_slot_residency_is_length_independent_swept_over_lengths);
+  // windowed-playback-generation task 3.10 / 6.3: the `H x K` contention sweep -- the declared envelope measured on
+  // the composed service (per-track offers, the across-track rotation, one grain per turn).
+  RUN_TEST(test_window_contention_sweep_measures_the_composed_cost_across_h_and_k);
+  RUN_TEST(test_window_contention_sweep_scales_with_density_and_is_span_independent);
+  RUN_TEST(test_window_contention_boundary_is_predicted_by_the_declaration_and_named_when_crossed);
   return UNITY_END();
 }

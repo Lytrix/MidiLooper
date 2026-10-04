@@ -315,6 +315,10 @@ enum class PlaybackViewPendingReason : uint8_t {
   /// ... because the loop's **geometry** changed (a different loop length): the phase the deadline was measured
   /// against now describes a different loop. The obligation survives too.
   DeadlineInvalidatedGeometry,
+  AwaitingSourceQualification,
+  SourceNotCurrent,
+  WindowExceedsRetainedCapacity,
+  DeadlineExpired,
 };
 
 /// DEC-108 §13(c) / task 3.10 (increment 24): **the retained pending preparation request** -- the demand a refused
@@ -327,6 +331,10 @@ struct PlaybackViewPendingRequest {
   /// The slot owes a demand whose last attempt was refused. Cleared by an admission and by a coalescing successor
   /// request -- **never** by an epoch or geometry change, which void the deadline, not the obligation.
   bool active = false;
+  enum class SourceKind : uint8_t { Borrowed, CommittedSnapshot, CommittedLaunch };
+  SourceKind sourceKind = SourceKind::Borrowed;
+  bool positionInvalidated = false;
+  uint16_t countedMisses = 0;
   /// The **operation generation** the demand was retained under (DEC-108 §13(d)): a returning slot must not revive
   /// an earlier operation, so a record whose generation has moved is stale, and a demand made under the new
   /// generation starts a fresh record instead of inheriting this one's deadline.
@@ -348,7 +356,9 @@ struct PlaybackViewPendingRequest {
   /// Why this demand is still pending: the last refusal by name, or an invalidation the reader has named.
   PlaybackViewPendingReason reason = PlaybackViewPendingReason::None;
   /// The bounded cost this demand would owe once admitted, derived exactly as an admitted window's is
-  /// (`CoverageServiceContract::deriveGrainsFrom`), so no reader disagrees about what the demand costs.
+  /// (`CoverageServiceContract::deriveGrainsFrom`). A high-level busy request cannot
+  /// gather into a borrowed source: its cost is the maximum admissible window's
+  /// bound, not an observed count. Resolve/count again before actual admission.
   PlaybackViewAdmittedWork work;
   /// The reason the retained positional deadline no longer applies, or `None` while it does (and while the demand
   /// holds no qualified deadline at all). A reading only: it never clears the obligation.
@@ -531,8 +541,49 @@ struct LoopPlaybackRuntime {
   /// refused request leaves behind (see `PlaybackViewPendingRequest`). It is per-slot state in this externally
   /// allocated object, so the eight-way DTCM `Track` gains nothing; read it through `pendingViewRequest()`, which
   /// reports nothing once the demand is discharged, and through `activeViewBuildWork()` for the *other* half -- the
-  /// work a build already owes. The two are deliberately distinct: a pending demand owes no grain yet.
+  /// work a build already owes. Only committed recipes may enter bounded qualification;
+  /// borrowed requests cannot be replayed without their original caller.
   PlaybackViewPendingRequest pendingViewRequest_;
+  // One experimental episode, not a second active-slot or source-currency owner.
+  enum class RollingPhase : uint8_t { Idle, Requested, Ready, Serving, Blocked };
+  struct RollingFrame {
+    RollingPhase phase = RollingPhase::Idle;
+    uint8_t boundView = RuntimePlaybackViewLifecycle::kNoView;
+    uint32_t epoch = 0;
+    uint32_t generation = 0;
+    uint32_t loopLength = 0;
+    int32_t projectionStart = 0;
+    uint32_t startPhase = 0;
+    uint64_t deadlineTick = 0;
+    uint64_t lastTick = 0;
+    uint64_t boundStorageGeneration = 0;
+  } rolling;
+  // Window-only pins; never a root lease or another event buffer. Destruction on
+  // active transport is forbidden until the lane drains explicit retirement.
+  LoopSnapshot::EventWindowCursor coverageSource;
+  PlaybackViewPendingRequest frozenViewRequest;
+  enum class CoveragePreparation : uint8_t { Idle, Counting, AwaitAdmission, Building, Retiring };
+  CoveragePreparation coveragePreparation = CoveragePreparation::Idle;
+  enum class LaunchPreparation : uint8_t { None, Requested, Building, Ready, Bound, Fallback, FallbackBound };
+  LaunchPreparation launchPreparation = LaunchPreparation::None;
+  uint32_t launchBoundTick = 0;
+  bool ownsLaunchPreparation() const {
+    return launchPreparation == LaunchPreparation::Requested || launchPreparation == LaunchPreparation::Building ||
+        launchPreparation == LaunchPreparation::Ready || launchPreparation == LaunchPreparation::Fallback;
+  }
+  bool prewarmRollingViews();
+  const RuntimePlaybackView* boundLaunchView(const PlaybackViewSourceIdentity& source,
+      uint32_t loopLength, uint32_t phase, uint32_t tick);
+  uint32_t coverageEventCount = 0;
+  uint32_t coverageSourceUnits = 0;
+  bool ownsCoverageSource() const { return !coverageSource.idle(); }
+  bool beginCoverageQualification(const LoopSnapshot& snapshot);
+  bool stepCoverageQualification(size_t quantum);
+  bool beginQualifiedCoverageBuild(const CoverageServiceContract& contract, PlaybackDeadlineClock clock);
+  void retireCoverageSource();
+  bool stepCoverageSourceRetirement(size_t quantum);
+  bool coverageRoleAvailable() const;
+
   /// DEC-108 item 5 / task 3.13: the **preview source contract** for this slot. `previewSourceActive` says the
   /// in-flight or served window belongs to the preview lane, and `previewSourceRevision` is the session revision it
   /// was frozen at -- the lane's own freeze token, never a second committed currency. The flag is how the lane
@@ -555,16 +606,12 @@ struct LoopPlaybackRuntime {
   /// apart so a repeated request for an interval cannot re-open its allowance.
   uint64_t countedMissPromiseTick = 0;
   uint16_t countedMissedTraversals = 0;
-  /// DEC-108 §13(c) / task 3.10 (blocker 3, increment 28): the promise whose **clock identity no longer matches the
-  /// live clock** has been revalidated and **named** (an epoch change invalidates the promise, never the content). One
-  /// report per promise, so a sustained mismatch cannot flood the stream.
+  /// Last invalidated promise stamp, diagnostic only; the bool handles legal tick zero.
   uint64_t invalidatedPromiseTick = 0;
-  /// DEC-108 §13a / task 3.10 (blocker 3, increment 28): a build that **completed** and whose promise has not yet been
-  /// judged with a fresh clock. The lane turn reads its clock *before* the worker grain and a grain can cross a tick, so
-  /// the promise is retained for **one further opportunity** rather than judged only against the pre-worker timestamp.
-  /// Set by the completion, consumed by that one judgement, and **cleared by a new admission** -- so a successor promise
-  /// can never be judged as its predecessor.
+  /// Completed candidate retained until qualified boundary recovery. Not an extra
+  /// worker grain and never judged using a later timestamp as its completion time.
   bool completedPromisePendingJudgement = false;
+  bool admittedPromiseInvalidated = false;
   /// S4f.19 continuity gate, bounded in DEC-070's shape: grains spent in the `RecordPublished`
   /// retirement wait with an unchanged frozen-window build phase, and that phase. A phase change
   /// is progress and resets the count, so a build its writers are still feeding is never cut; a
@@ -857,6 +904,11 @@ struct LoopPlaybackRuntime {
                           const PlaybackCoverageInterval& coverage,
                           const EmissionCursor& cursorAnchor,
                           const LedgerBoundarySummary& ledgerBoundary);
+  bool beginCoverageBuild(const CoverageServiceContract& contract, uint32_t currentPhase,
+                          uint32_t handoffPhase, LoopSnapshot::EventWindowCursor& source,
+                          const PlaybackViewSourceIdentity& sourceIdentity,
+                          const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
+                          const LedgerBoundarySummary& ledgerBoundary);
   // Establish an empty raw bar-1 view before first-record input. This uses the
   // same fill/order/lifecycle buffers as ordinary playback.
   bool prepareFirstRecordingBar(uint32_t ticksPerBar);
@@ -938,16 +990,20 @@ struct LoopPlaybackRuntime {
   /// committed replacement exists. Idempotent; the bar-1 return window is left alone because
   /// it is served until a replacement view is handed off.
   void releaseFrozenRecordWindow();
-  /// True while this slot owes the window owner a grain: a coverage build that is **begun and unfinished**.
-  /// The build's own unfinished state is the obligation (DEC-108 item 1), so no separate request record is
-  /// involved and a slot with no build owes nothing. The term the eligibility predicate and the owner share.
-  bool coverageBuildNeedsService() const { return viewBuild.active(); }
+  /// Only an admitted coverage build belongs to this lane. Generic shared-builder
+  /// owners are excluded; snapshot qualification and retirement are classified
+  /// separately by the Track holder scan.
+  bool coverageBuildNeedsService() const {
+    return viewBuild.coverageOwned() && viewBuild.active() &&
+        coveragePreparation != CoveragePreparation::Counting &&
+        coveragePreparation != CoveragePreparation::AwaitAdmission;
+  }
   RuntimePlaybackViewBuildGrain nextCoverageBuildGrain() const;
   /// DEC-108 §13b / task 3.10 (the review's step 1): the work this slot's **admitted** request was bounded to, valid
   /// only while the build it describes is active. Null once the build has completed or been discarded, so a reader
   /// (a per-track budget, a fixture) can never count a finished build as outstanding work.
   const PlaybackViewAdmittedWork* activeViewBuildWork() const {
-    return viewBuild.active() ? &viewBuildWork : nullptr;
+    return coverageBuildNeedsService() ? &viewBuildWork : nullptr;
   }
   /// DEC-108 §13(c) / task 3.10 (increment 24): the slot's **retained pending preparation request** -- the demand a
   /// refused request left behind -- or null when the slot owes no demand. Generation qualification is the *reader's*

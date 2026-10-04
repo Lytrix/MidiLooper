@@ -40,7 +40,13 @@ here; read the relevant file on demand using the map at the bottom of this file.
    and record verification evidence before checkoff. Use [EXECUTION_PACKET.md](docs/Templates/EXECUTION_PACKET.md).
    This applies to future steps of existing changes; scale checks to risk, with no extra approval gate.
 
-**Default: continue implementation.** Stop only on a formal reassessment
+Follow [critical-path and debugging boundaries](docs/Authority/WORKFLOW_LIFECYCLE.md#critical-path-and-debugging-boundary):
+name the acceptance criterion, fix only its blockers or concrete immediate risks,
+and return to the main task after verification. For non-trivial lifecycle changes,
+obtain one focused independent review using [reviewer guidance](docs/Agents/reviewer.md)
+as part of existing verification; fix/retest concrete findings without a broad review loop.
+
+**Default: continue the approved implementation, not every discovered issue.** Stop only on a formal reassessment
 trigger or an authority conflict (OpenSpec vs architecture). State the preferred
 path and confidence when alternatives exist; do not block on vagueness.
 `docs/Runtime/ROADMAP.md` and `docs/Plans/**` are never implementation authority.

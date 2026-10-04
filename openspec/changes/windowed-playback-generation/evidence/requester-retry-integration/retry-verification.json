@@ -1,0 +1,153 @@
+{
+  "baseline": "25542299a7e32078a243de0f4ce50c65a73b8199",
+  "dirty": true,
+  "committed": false,
+  "uploaded": false,
+  "firmware_hex_sha256": "15708c731b549a4f21c2d83e0cfed2e361cc51af7c2cded629ce3e4f1d44818f",
+  "source_sha256": {
+    "include/LoopSnapshot.h": "685f4fe5bd0c20274ce274ed1c931cb0e657419cfa2efc120f3caca1e34bda45",
+    "src/Loop/LoopSnapshot.cpp": "bb0d65214279b4b74312a704a02e8c4cea9c083c0eec82a5811b89148b5296a7",
+    "include/RuntimePlaybackViewFill.h": "11e662cc6a66d0f1c88dfd959f79f188ec8f0e1bc9ebb6fb5131631bd27db711",
+    "src/Track/RuntimePlaybackViewFill.cpp": "9f2a6ceabd03ad5ca9e6dff80077485ef2d58c22b251b1d1c63c53a5b81ac330",
+    "include/RuntimePlaybackOrderBuilder.h": "be826aff86fb446932a3a39a7a8579fc2088680c2bbb6bcd72490771383b86e9",
+    "src/Track/RuntimePlaybackOrderBuilder.cpp": "1009c59c04545142f23421711cb79faaf2509480ae0ab6b3830ff841742827e3",
+    "include/RuntimePlaybackViewBuild.h": "1134126398ac82f32f286235309bb9c3bb6e2376c5b41247d681dd315942d651",
+    "src/Track/RuntimePlaybackViewBuild.cpp": "92cfd715f737261c39285ee2f3e121959c58698b93cb4e77361fbe4825cc732a",
+    "include/TrackPlaybackRuntime.h": "f5fe3fbe0f59a3569f7d1202db9902c2800979085197e3ea642b5168c9063e9f",
+    "src/Track/TrackPlaybackRuntime.cpp": "6aa1875cf6c29a44bd7eb89972b7389cb989653f4f786b04ed4d32fffd60fb27",
+    "include/Track.h": "b99057c2703212d92bd76142622829da79718b4a64ceb6fd7122cef26291402c",
+    "src/Track/TrackPlaybackWindowBuild.cpp": "55825ed1f08a93fff2dd8c25574d08ccb90ffec5c90e3b8d6208900c702b85ea",
+    "src/main.cpp": "fc9c5548981686b083c0aefc27af632850a254918e5e3cf381cd95ac44953a12",
+    "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp": "78b441d6f47e62729a3533ff9baa50f9abd4ecb11c89a263abb3244e63adf6a6",
+    "test/test_playback_prewarm/test_playback_prewarm.cpp": "00cbd451410eabcc307b1ed4e16021c032c87f9dbad061fe0f101d9c3c0d7d00"
+  },
+  "checks": {
+    "ownership": {
+      "passed": 110
+    },
+    "prewarm": {
+      "passed": 193
+    },
+    "full_native": {
+      "command": "pio test -e native",
+      "total": 2760,
+      "passed": 2753,
+      "skipped": 7,
+      "failed": 0,
+      "seconds": 169.504
+    },
+    "capture_build": {
+      "command": "pio run -e teensy41-capture-serial",
+      "result": "PASS",
+      "seconds": 40.13
+    },
+    "openspec": {
+      "command": "openspec validate windowed-playback-generation --strict",
+      "result": "PASS"
+    },
+    "diff_check": "PASS"
+  },
+  "runtime_bytes": {
+    "target_before": 6832,
+    "target_after": 7072,
+    "host_before": 8784,
+    "host_after": 9096,
+    "eight_target_runtime_delta": 1920
+  },
+  "ram1": {
+    "variables": 96192,
+    "code": 390728,
+    "padding": 2488,
+    "locals": 34880,
+    "approved_padding_floor": 840,
+    "rebased": false
+  },
+  "mutations": [
+    {
+      "name": "original-origin",
+      "returncode": 1,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8294: test_committed_retry_counts_then_admits_original_promise_and_publishes_without_second_request: Expected 1000 Was 1321\t[FAILED]"
+      ],
+      "source_sha256": "99306f3206d950bdbe9e16a0b19b9a7e9a91c1cef80414afbdee597c5080cd6d",
+      "restored": true
+    },
+    {
+      "name": "shared-owner",
+      "returncode": 1,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8348: test_committed_retry_shared_owner_and_blocked_slot_do_not_hide_runnable_sibling: Expected FALSE Was TRUE\t[FAILED]"
+      ],
+      "source_sha256": "8dd6dc3fe2080826b6c7a31d956c20bef4cae8dd651662221f3cf40304a11c86",
+      "restored": true
+    },
+    {
+      "name": "runnable-offer",
+      "returncode": 1,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8360: test_committed_retry_shared_owner_and_blocked_slot_do_not_hide_runnable_sibling: Expected TRUE Was FALSE\t[FAILED]"
+      ],
+      "source_sha256": "8c43ed8324cc4f9e095dd89572255ff41059697c41eacbd7d421c66ea65597ac",
+      "restored": true
+    },
+    {
+      "name": "release-quantum",
+      "returncode": 1,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8395: test_committed_retry_cancel_drains_source_and_epoch_invalidation_never_regrants: Expected 65 to be less than or equal to 64\t[FAILED]"
+      ],
+      "source_sha256": "99306f3206d950bdbe9e16a0b19b9a7e9a91c1cef80414afbdee597c5080cd6d",
+      "restored": true
+    },
+    {
+      "name": "source-not-position",
+      "returncode": 1,
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8482: test_committed_retry_stale_frozen_source_keeps_newer_request_position_runnable: source replacement is not clock invalidation\t[FAILED]"
+      ],
+      "source_sha256": "8c43ed8324cc4f9e095dd89572255ff41059697c41eacbd7d421c66ea65597ac",
+      "restored": true
+    }
+  ],
+  "review": {
+    "passes": 1,
+    "finding": "Source staleness invalidated newer pending clock position after cancellation.",
+    "resolution": "Separate content invalidity from positional invalidity; exact regression and reverted-condition mutation verified."
+  },
+  "qualification": {
+    "status": "NOT_QUALIFIED",
+    "base_empty_grains": 3,
+    "tracks": 8,
+    "permitted_gap_ticks": 64,
+    "margin_ticks": 768,
+    "base_empty_required_ticks": 2304,
+    "two_bar_lookahead_ticks": 1536,
+    "count_max_units": 13059,
+    "release_max_units": 13059,
+    "count_and_release_quantum": 64,
+    "maximum_grains_each": 205,
+    "observed_prior_dispatch_gaps_ticks": [
+      112,
+      168,
+      149
+    ],
+    "new_device_runs": 0,
+    "blockers": [
+      "No production request/provisioning trigger invokes committed snapshot recipes.",
+      "No registered committed-window HITL stimulus.",
+      "Base empty build alone exceeds two-bar lookahead under current declaration.",
+      "Boundary requalification/adoption and full continuity containment remain gated."
+    ],
+    "not_claimed": [
+      "audible activation",
+      "operational normal-continuity timing bound",
+      "fallback removal",
+      "device parity for committed requester"
+    ]
+  },
+  "recorded_failures": [
+    "Initial compiler pins measured host9096 and target7072; updated external-runtime pins, never RAM1 limits.",
+    "New parity test initially compared playback order with canonical gather order; corrected oracle uses existing flat playback builder.",
+    "Initial full native tool invocation timed out at240seconds without reported test failure; completed full rerun at169.504seconds."
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "outcome": "Topology-qualified retirement implemented; steady-state activation remains NOT_QUALIFIED",
+  "checks": {
+    "source": 47,
+    "ownership": 113,
+    "native_total": 2763,
+    "native_passed": 2756,
+    "native_skipped": 7,
+    "native_failed": 0,
+    "native_seconds": 288.166,
+    "capture_build": "PASS",
+    "capture_build_seconds": 56.92,
+    "strict_openspec": "PASS",
+    "diff_check": "PASS"
+  },
+  "mutations": [
+    {
+      "name": "page-slots",
+      "failures": [
+        "test/test_loop_event_store/test_loop_event_store.cpp:1257: test_snapshot_window_cursor_pins_only_window_and_preserves_effective_rows: Expected 156 Was 132\t[FAILED]"
+      ],
+      "restored_sha256": "17127f2259d82577d937dfad4a183c3fe36c1583a5ab572dd15d58ed7429e143"
+    },
+    {
+      "name": "qualified-charge",
+      "failures": [
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8585: test_committed_retry_eight_tracks_prepare_empty_windows_with_eight_bar_lead: Expected 8 Was 0\t[FAILED]",
+        "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8536: test_committed_retry_prices_actual_pinned_topology_not_maximum_retirement: empty source must pay its two null bars, not 768 possible pages\t[FAILED]"
+      ],
+      "restored_sha256": "343391cc959009626dd1f426a1b2ac5e2686da38feef016d6bfcc433eb61fc61"
+    }
+  ],
+  "measurements": {
+    "qualified_nine_page_release_units": 156,
+    "empty_two_bar_release_units": 2,
+    "empty_release_grains_before": 205,
+    "empty_release_grains_after": 1,
+    "controlled_eight_track_positive_lead_bars": 8,
+    "positive_completions": 8,
+    "positive_lane_turns": 48,
+    "controlled_eight_track_negative_lead_bars": 2,
+    "negative_completions": 0
+  },
+  "runtime_bytes": {
+    "target": 7072,
+    "host": 9096,
+    "changed": false
+  },
+  "ram1": {
+    "variables": 96192,
+    "code": 390728,
+    "padding": 2488,
+    "locals": 34880,
+    "floor": 840,
+    "rebased": false
+  },
+  "uploaded": false,
+  "committed": false,
+  "firmware_hex_sha256": "0ae39cde163b3ef7b5825b50b1ef68f74299d2434776211c9938422153f5c791"
+}

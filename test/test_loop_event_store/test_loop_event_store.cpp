@@ -1149,8 +1149,267 @@ void test_pass_chunk_conversion_bounds_the_pinned_footprint() {
   LoopEventStore::resetPoolForTests();
 }
 
+LoopSnapshotChangeSet windowCursorChanges() {
+  LoopSnapshotChangeSet changes;
+  for (uint32_t bar = 0; bar < 3; ++bar) {
+    for (uint32_t i = 0; i < 40; ++i) {
+      SnapshotEventChange event{};
+      event.kind = SnapshotChangeKind::Add;
+      event.next.loopId = 7;
+      event.next.eventId = 1 + bar * 40 + i;
+      // Equal ranks and reverse order cross page boundaries: the source must
+      // retain both order fields rather than claiming traversal is sorted.
+      event.next.canonicalOrder = (121 - event.next.eventId) / 2;
+      event.next.value = MidiEvent::ControlChange(bar * 768 + i * 16, 1, 7, i);
+      changes.events.push_back(event);
+    }
+  }
+  SnapshotEventChange outside{};
+  outside.kind = SnapshotChangeKind::Add;
+  outside.next.loopId = 7;
+  outside.next.eventId = 1000;
+  outside.next.value = MidiEvent::ControlChange(8 * 768, 1, 11, 90);
+  changes.events.push_back(outside);
+  changes.notes.push_back(addSnapshotNote(2000, 60, 10, 100));
+  return changes;
+}
+
+void drainWindowCursor(LoopSnapshot::EventWindowCursor& cursor, size_t quantum = 7) {
+  cursor.beginRelease();
+  for (size_t turn = 0; turn < 10000 && !cursor.idle(); ++turn) {
+    const size_t before = cursor.releaseUnits();
+    cursor.stepRelease(quantum);
+    TEST_ASSERT_TRUE(cursor.releaseUnits() > before);
+    TEST_ASSERT_TRUE(cursor.releaseUnits() - before <= quantum);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(cursor.idle(), "window cursor retirement must terminate");
+  TEST_ASSERT_TRUE(cursor.releaseUnits() <= LoopSnapshot::EventWindowCursor::kMaximumReleaseUnits);
+}
+
+void test_snapshot_window_cursor_pins_only_window_and_preserves_effective_rows() {
+  using Cursor = LoopSnapshot::EventWindowCursor;
+  const auto changes = windowCursorChanges();
+  auto root = buildSnapshotForTests(changes, 64 * 768);
+  std::weak_ptr<const LoopSnapshot> rootWeak = root;
+  std::weak_ptr<const LoopSnapshotNote> noteWeak = root->findNoteAtPitch(2000, 60);
+  std::weak_ptr<const LoopSnapshotEvent> outsideWeak = root->eventMembership(8)->references[0];
+  std::weak_ptr<const LoopSnapshotEvent> insideWeak = root->eventMembership(1)->references[0];
+  const auto allocations = snapshotAllocNodeCount();
+  Cursor cursor;
+  TEST_ASSERT_TRUE(cursor.begin(*root, 100, 2 * 768));
+  TEST_ASSERT_EQUAL_UINT32(3, cursor.pinnedBars());
+  TEST_ASSERT_EQUAL(1, root.use_count());
+  TEST_ASSERT_FALSE(cursor.begin(*root, 0, 768));
+  TEST_ASSERT_FALSE(cursor.stepRelease(100)); // Explicit cancellation required.
+  TEST_ASSERT_EQUAL_UINT32(0, cursor.releaseUnits());
+  LoopSnapshot::ReleaseCursor rootRelease;
+  TEST_ASSERT_TRUE(LoopSnapshot::beginRelease(rootRelease, root));
+  for (size_t turn = 0; turn < 10000 && !rootRelease.complete(); ++turn)
+    LoopSnapshot::stepRelease(rootRelease, 7);
+  TEST_ASSERT_TRUE(rootRelease.complete());
+  TEST_ASSERT_TRUE(rootWeak.expired());
+  TEST_ASSERT_TRUE(noteWeak.expired());
+  TEST_ASSERT_TRUE(outsideWeak.expired());
+  TEST_ASSERT_FALSE(insideWeak.expired());
+
+  for (unsigned pass = 0; pass < 2; ++pass) {
+    if (pass) TEST_ASSERT_TRUE(cursor.rewind());
+    TEST_ASSERT_EQUAL_UINT32(Cursor::kMaximumReleaseUnits, cursor.qualifiedReleaseUnitBound());
+    std::array<unsigned, 121> seen{};
+    unsigned events = 0;
+    bool sawDescendingOrder = false;
+    uint32_t previousOrder = 0;
+    for (size_t turn = 0; turn < 1000 && !cursor.complete(); ++turn) {
+      LoopSnapshotEvent out{};
+      out.eventId = 9999;
+      const size_t before = cursor.readUnits();
+      const auto result = cursor.step(out);
+      TEST_ASSERT_EQUAL_UINT32(before + 1, cursor.readUnits());
+      if (result != Cursor::ReadResult::Event) {
+        TEST_ASSERT_EQUAL_UINT32(9999, out.eventId);
+        continue;
+      }
+      TEST_ASSERT_TRUE(out.eventId > 0 && out.eventId <= 120);
+      const auto& expected = changes.events[out.eventId - 1].next;
+      TEST_ASSERT_EQUAL_UINT32(expected.canonicalOrder, out.canonicalOrder);
+      TEST_ASSERT_EQUAL_UINT32(expected.loopId, out.loopId);
+      TEST_ASSERT_EQUAL_UINT32(expected.value.tick, out.value.tick);
+      TEST_ASSERT_EQUAL(expected.value.type, out.value.type);
+      TEST_ASSERT_EQUAL(expected.value.channel, out.value.channel);
+      TEST_ASSERT_EQUAL(expected.value.data.ccData.cc, out.value.data.ccData.cc);
+      TEST_ASSERT_EQUAL(expected.value.data.ccData.value, out.value.data.ccData.value);
+      TEST_ASSERT_TRUE(out.value.tick >= 100 && out.value.tick < 1636);
+      if (events && out.canonicalOrder < previousOrder) sawDescendingOrder = true;
+      previousOrder = out.canonicalOrder;
+      ++events;
+      ++seen[out.eventId];
+    }
+    TEST_ASSERT_TRUE(cursor.complete());
+    TEST_ASSERT_EQUAL_UINT32(80, events);
+    TEST_ASSERT_TRUE_MESSAGE(sawDescendingOrder, "metadata, not a hidden global sort, defines canonical order");
+    for (size_t id = 1; id <= 120; ++id) {
+      const auto tick = changes.events[id - 1].next.value.tick;
+      TEST_ASSERT_EQUAL_UINT32(tick >= 100 && tick < 1636 ? 1 : 0, seen[id]);
+    }
+    TEST_ASSERT_EQUAL_UINT32(120, cursor.inspectedReferences());
+    // 120 references, 9 page links, 3 bar exits -- includes rejected work.
+    TEST_ASSERT_EQUAL_UINT32(132, cursor.readUnits());
+    TEST_ASSERT_EQUAL_UINT32(9 * 17 + 3, cursor.qualifiedReleaseUnitBound());
+    LoopSnapshotEvent untouched{};
+    TEST_ASSERT_EQUAL(Cursor::ReadResult::Complete, cursor.step(untouched));
+    TEST_ASSERT_EQUAL_UINT32(132, cursor.readUnits());
+  }
+  const size_t releaseBound = cursor.qualifiedReleaseUnitBound();
+  drainWindowCursor(cursor);
+  TEST_ASSERT_EQUAL_UINT32(releaseBound, cursor.releaseUnits());
+  TEST_ASSERT_TRUE(insideWeak.expired());
+  TEST_ASSERT_EQUAL(allocations, snapshotAllocNodeCount());
+}
+
+void test_snapshot_window_cursor_cancel_and_retirement_release_at_most_one_leaf_per_unit() {
+  using Cursor = LoopSnapshot::EventWindowCursor;
+  auto root = buildSnapshotForTests(windowCursorChanges(), 64 * 768);
+  std::vector<std::weak_ptr<const LoopSnapshotEvent>> leaves;
+  for (uint32_t bar = 0; bar < 3; ++bar)
+    forEachSnapshotMembershipReference(root->eventMembership(bar).get(),
+        [&](const LoopSnapshotEventRef& ref) { leaves.push_back(ref); });
+  Cursor cursor;
+  TEST_ASSERT_TRUE(cursor.begin(*root, 100, 1536));
+  LoopSnapshot::ReleaseCursor rootRelease;
+  TEST_ASSERT_TRUE(LoopSnapshot::beginRelease(rootRelease, root));
+  for (size_t turn = 0; turn < 10000 && !rootRelease.complete(); ++turn)
+    LoopSnapshot::stepRelease(rootRelease, 32);
+  TEST_ASSERT_TRUE(rootRelease.complete());
+  LoopSnapshotEvent out{};
+  for (unsigned step = 0; step < 20; ++step) cursor.step(out);
+  TEST_ASSERT_FALSE(cursor.complete());
+  auto other = LoopSnapshot::createEmpty(9, 768, 0, 1, 1);
+  cursor.beginRelease();
+  TEST_ASSERT_TRUE(cursor.retiring());
+  TEST_ASSERT_FALSE(cursor.rewind());
+  TEST_ASSERT_FALSE(cursor.begin(*other, 0, 768));
+  TEST_ASSERT_EQUAL(Cursor::ReadResult::Inactive, cursor.step(out));
+  TEST_ASSERT_FALSE(cursor.stepRelease(0));
+  TEST_ASSERT_EQUAL_UINT32(0, cursor.releaseUnits());
+  for (const auto& leaf : leaves) TEST_ASSERT_FALSE(leaf.expired());
+  size_t expired = 0;
+  for (unsigned turn = 0; turn < 10000 && !cursor.idle(); ++turn) {
+    const size_t before = cursor.releaseUnits();
+    cursor.stepRelease(1);
+    TEST_ASSERT_EQUAL_UINT32(before + 1, cursor.releaseUnits());
+    size_t nowExpired = 0;
+    for (const auto& leaf : leaves) nowExpired += leaf.expired();
+    TEST_ASSERT_TRUE_MESSAGE(nowExpired - expired <= 1,
+        "one unit cannot recursively destroy a membership's remaining event chain");
+    expired = nowExpired;
+    cursor.beginRelease(); // Idempotent: must not restart retirement.
+  }
+  TEST_ASSERT_TRUE(cursor.idle());
+  TEST_ASSERT_EQUAL_UINT32(120, expired);
+  TEST_ASSERT_TRUE(cursor.begin(*other, 0, 768));
+  TEST_ASSERT_EQUAL(Cursor::ReadResult::Complete, cursor.step(out));
+  drainWindowCursor(cursor);
+}
+
+void test_snapshot_window_cursor_shared_reader_survives_every_retirement_grain() {
+  using Cursor = LoopSnapshot::EventWindowCursor;
+  auto root = buildSnapshotForTests(windowCursorChanges(), 64 * 768);
+  Cursor retiring, reader;
+  TEST_ASSERT_TRUE(retiring.begin(*root, 100, 1536));
+  TEST_ASSERT_TRUE(reader.begin(*root, 100, 1536));
+  LoopSnapshot::ReleaseCursor rootRelease;
+  TEST_ASSERT_TRUE(LoopSnapshot::beginRelease(rootRelease, root));
+  for (size_t turn = 0; turn < 10000 && !rootRelease.complete(); ++turn)
+    LoopSnapshot::stepRelease(rootRelease, 32);
+  TEST_ASSERT_TRUE(rootRelease.complete());
+  retiring.beginRelease();
+  unsigned events = 0;
+  for (unsigned turn = 0; turn < 1000 && !reader.complete(); ++turn) {
+    retiring.stepRelease(1);
+    LoopSnapshotEvent out{};
+    if (reader.step(out) == Cursor::ReadResult::Event) ++events;
+  }
+  TEST_ASSERT_TRUE(retiring.idle());
+  TEST_ASSERT_EQUAL_UINT32(3, retiring.releaseUnits()); // One shared head per bar.
+  TEST_ASSERT_TRUE(reader.complete());
+  TEST_ASSERT_EQUAL_UINT32(80, events);
+  drainWindowCursor(reader);
+}
+
+void test_snapshot_window_cursor_validates_geometry_and_work_is_length_independent() {
+  using Cursor = LoopSnapshot::EventWindowCursor;
+  Cursor cursor;
+  auto empty = LoopSnapshot::createEmpty(7, 10 * 768, 0, 1, 1);
+  for (auto invalid : {std::pair<uint32_t, uint32_t>{0, 0}, {0, 1537},
+                        {10 * 768, 1}, {10 * 768 - 10, 11}, {UINT32_MAX, 2}}) {
+    TEST_ASSERT_FALSE(cursor.begin(*empty, invalid.first, invalid.second));
+    TEST_ASSERT_TRUE(cursor.idle());
+  }
+  TEST_ASSERT_TRUE(cursor.begin(*empty, 100, 1536));
+  LoopSnapshotEvent out{};
+  TEST_ASSERT_EQUAL(Cursor::ReadResult::Progress, cursor.step(out));
+  TEST_ASSERT_EQUAL(Cursor::ReadResult::Progress, cursor.step(out));
+  TEST_ASSERT_EQUAL(Cursor::ReadResult::Complete, cursor.step(out));
+  TEST_ASSERT_EQUAL_UINT32(3, cursor.readUnits());
+  TEST_ASSERT_EQUAL_UINT32(3, cursor.qualifiedReleaseUnitBound());
+  TEST_ASSERT_EQUAL_UINT32(0, cursor.inspectedReferences());
+  drainWindowCursor(cursor);
+  // Exact endpoints: coverage is [start, end), even across bar membership.
+  LoopSnapshotChangeSet endpoints;
+  for (uint32_t tick : {99u, 100u, 1635u, 1636u}) {
+    SnapshotEventChange change{};
+    change.kind = SnapshotChangeKind::Add;
+    change.next.loopId = 7;
+    change.next.eventId = tick;
+    change.next.canonicalOrder = tick;
+    change.next.value = MidiEvent::ControlChange(tick, 1, 7, 64);
+    endpoints.events.push_back(change);
+  }
+  auto endpointRoot = buildSnapshotForTests(endpoints, 10 * 768);
+  TEST_ASSERT_TRUE(cursor.begin(*endpointRoot, 100, 1536));
+  unsigned atStart = 0, beforeEnd = 0, unexpected = 0;
+  for (unsigned turn = 0; turn < 100 && !cursor.complete(); ++turn) {
+    if (cursor.step(out) != Cursor::ReadResult::Event) continue;
+    if (out.value.tick == 100) ++atStart;
+    else if (out.value.tick == 1635) ++beforeEnd;
+    else ++unexpected;
+  }
+  TEST_ASSERT_TRUE(cursor.complete());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, atStart, "the exact start is included");
+  TEST_ASSERT_EQUAL_UINT32(1, beforeEnd);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, unexpected, "the exact end and earlier rows are excluded");
+  TEST_ASSERT_EQUAL_UINT32(4, cursor.inspectedReferences());
+  drainWindowCursor(cursor);
+
+  size_t firstWork = 0;
+  for (uint32_t bars : {16u, 64u, 512u}) {
+    auto root = buildSnapshotForTests(windowCursorChanges(), bars * 768);
+    const auto allocations = snapshotAllocNodeCount();
+    TEST_ASSERT_TRUE(cursor.begin(*root, 100, 1536));
+    for (unsigned turn = 0; turn < 1000 && !cursor.complete(); ++turn) cursor.step(out);
+    TEST_ASSERT_TRUE(cursor.complete());
+    if (!firstWork) firstWork = cursor.readUnits();
+    TEST_ASSERT_EQUAL_UINT32(firstWork, cursor.readUnits());
+    TEST_ASSERT_EQUAL_UINT32(120, cursor.inspectedReferences());
+    drainWindowCursor(cursor);
+    TEST_ASSERT_EQUAL(allocations, snapshotAllocNodeCount());
+  }
+  // Subtraction validation must reject overflow even for a maximum-length root.
+  auto maximum = LoopSnapshot::createEmpty(7, UINT32_MAX, 0, 1, 1);
+  TEST_ASSERT_FALSE(cursor.begin(*maximum, UINT32_MAX - 5, 6));
+  TEST_ASSERT_TRUE(cursor.begin(*maximum, UINT32_MAX - 5, 5));
+  for (unsigned turn = 0; turn < 4 && !cursor.complete(); ++turn) cursor.step(out);
+  TEST_ASSERT_TRUE(cursor.complete());
+  drainWindowCursor(cursor);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_snapshot_window_cursor_pins_only_window_and_preserves_effective_rows);
+  RUN_TEST(test_snapshot_window_cursor_cancel_and_retirement_release_at_most_one_leaf_per_unit);
+  RUN_TEST(test_snapshot_window_cursor_shared_reader_survives_every_retirement_grain);
+  RUN_TEST(test_snapshot_window_cursor_validates_geometry_and_work_is_length_independent);
+
   RUN_TEST(test_pass_chunk_conversion_bounds_the_pinned_footprint);
   RUN_TEST(test_snapshot_batch_reuses_private_index_nodes);
   RUN_TEST(test_snapshot_reused_membership_preserves_capacity_limit);
