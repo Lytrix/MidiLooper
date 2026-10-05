@@ -26,6 +26,7 @@ from hitl.stimuli import (
     STIM_NE_OD_COMPOSE_03,
     STIM_NE_RESELECT_STACKED_01,
     STIM_OCCUPY_PAINT_01,
+    STIM_WINDOW_CONTENT_01,
     format_hitl_header,
     get_stimulus,
     prepend_hitl_header,
@@ -37,6 +38,7 @@ from hitl.stimuli import (
     validate_stimulus,
 )
 from hitl.stimuli.cli import default_temp_parent_id, write_temporary_sidecar
+from hitl.registry import list_scenarios
 from hitl.stimuli.yaml_view import export_registry_yaml
 from hitl.verify.note_edit_overdub_compose import verify_note_edit_overdub_compose
 from test_note_edit_overdub_compose_serial_verify import _pass_lines
@@ -143,6 +145,53 @@ class StimulusRegistryTests(unittest.TestCase):
         self.assertIn("committed content verified", spec.description)
         # And it is *not* the record leg's or the overdub leg's profile, even though it shares their bench.
         self.assertNotIn(spec.stimulus_id, (STIM_BASE_2_2_01.stimulus_id, STIM_BASE_2_ONE_OD_01.stimulus_id))
+
+    def test_the_windowed_leg_has_a_registered_profile_and_no_driver_yet(self) -> None:
+        """Task 6.4: the windowed profile is *registered and authorized*; its driver is a separate step.
+
+        The task separates registration, authorization, exercise and qualification on purpose. This test pins the
+        half that exists: the profile's identity, its recipe shape (a loop far longer than the served window, with a
+        running transport), its **declared oracle** and its **declared target scope** -- and, as the reminder that
+        the other half is still owed, that no preset resolves the scenario which would drive it.
+        """
+        spec = stimulus_for_scenario("windowed_content_parity")
+        self.assertIsNotNone(spec)
+        assert spec is not None
+        self.assertIs(spec, STIM_WINDOW_CONTENT_01)
+        self.assertEqual(get_stimulus("STIM-WINDOW-CONTENT-01"), STIM_WINDOW_CONTENT_01)
+        self.assertEqual(1, spec.version)
+        self.assertEqual("canonical", spec.kind)
+        self.assertEqual("scenario:windowed_content_parity", spec.generator)
+        # The recipe shape is the point, not a bar count for its own sake: the loop is far longer than the two-bar
+        # span the lane serves, so a window is a strict sub-interval, and it carries a second revision.
+        self.assertEqual(16, spec.base_bars)
+        self.assertEqual(1, len(spec.overdubs))
+        self.assertEqual(16, spec.overdubs[0].bars)
+        self.assertIn("transport_running_across_window_boundary", spec.interactions)
+        # No provenance link is claimed: no registered profile shares this recipe shape.
+        self.assertIsNone(spec.base_stimulus_id)
+        # The declared oracle names the F-7 / F-8 / AC-8 outcomes themselves, not a naming.
+        self.assertEqual(
+            (
+                "content_parity_across_window_boundary",
+                "root_demoted_residency_over_loop_lengths",
+                "readiness_receipts_under_transport",
+                "windowed_service_coverage_under_transport",
+            ),
+            spec.must_prove,
+        )
+        # Its target scope is declared with the recipe, so a run pointed outside it is refused before it mutates
+        # anything -- the profile is authorized, not merely named.
+        declared = spec.authorization
+        self.assertIsNotNone(declared)
+        assert declared is not None
+        self.assertEqual("track 8 slots 4,5", declared.targets_text())
+        self.assertIn("2026-09-30", declared.source)
+        # **And it is not exercisable yet.** The scenario that would drive it is not registered, so no preset
+        # resolves it: this pin is the reminder, and it turns red the day the driver lands.
+        self.assertNotIn("windowed_content_parity", list_scenarios())
+        with self.assertRaises(ValueError):
+            resolve_scenarios(preset="windowed_content_parity", scenario_ids=None)
 
     def test_occupy_header_requires_two_overdubs_and_undo(self) -> None:
         lines = prepend_hitl_header(

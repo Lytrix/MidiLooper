@@ -887,6 +887,21 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   stimuli preserved, never edited to chase a condition) — verify the profile is registered, authorized and used for the
   F-7/F-8 device legs and the AC-8 receipts under a running transport. Profile/oracle preparation may precede
   rolling implementation; registration, authorization, exercise and successful qualification remain distinct
+
+  *Partially supplied 2026-10-05 — the **registration and authorization** half:* `STIM-WINDOW-CONTENT-01@v1`
+  (`windowed_content_parity`) is registered in the canonical registry with a **profile of its own** — a 16-bar loop with
+  one committed 16-bar revision against the lane's two-bar span, so a window is a strict sub-interval and the transport
+  keeps running across boundaries — and it carries its **declared target authorization** (`track 8 slots 4,5`, source the
+  standing 2026-09-30 grant narrowed to the bench target; `base_stimulus_id` is deliberately `None`, since no registered
+  profile shares its recipe shape). Its **oracle is declared, not assumed**: `must_prove` names
+  `content_parity_across_window_boundary` (F-7), `root_demoted_residency_over_loop_lengths` (F-8),
+  `readiness_receipts_under_transport` and `windowed_service_coverage_under_transport` (AC-8's `DIAG,win_readiness`
+  receipts under transport and the `DIAG,win_gap` coverage blocks). The task stays **open**: the scenario that would
+  **drive** the leg is deliberately not registered (`PRESET_SCENARIOS` has no entry, so `resolve_scenarios` refuses it),
+  and the pin `test_the_windowed_leg_has_a_registered_profile_and_no_driver_yet` asserts that absence on purpose — it
+  turns red the day the driver lands. Red-proofed by MR-6.4a (declared scope widened to 4,5,6) and MR-6.4b
+  (`base_bars` 16 → 2), each leaving the pin the only failing test and the file restored byte-identically. See
+  [`s64-windowed-hitl-profile`](evidence/2026-10-05-s64-windowed-hitl-profile/EVIDENCE.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B

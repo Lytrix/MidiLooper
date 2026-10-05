@@ -1,3 +1,27 @@
+**2026-10-05 — `windowed-playback-generation` 6.4 (registration half): the windowed HITL profile is registered and
+authorized, and its driver is deliberately still owed (host tooling only; no firmware, no device, no upload).**
+[`EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s64-windowed-hitl-profile/EXECUTION.md)
+fixed the oracle before the edits. `STIM-WINDOW-CONTENT-01@v1` (`windowed_content_parity`) lands in the canonical
+registry as a profile of its own -- not a reuse of a 2-bar leg -- because its **recipe shape** is what the F-7/F-8 legs
+are about: a 16-bar loop against the lane's two-bar span with a running transport across the boundaries, one committed
+16-bar revision, `base_stimulus_id=None` (no provenance is claimed, since no registered profile shares the shape). It
+carries its **declared target authorization** (bench scope `track 8 slots 4,5`; a session needing more forks the profile
+rather than widening the canonical declaration) and a **declared oracle** whose `must_prove` terms name real surfaces:
+`content_parity_across_window_boundary` (F-7), `root_demoted_residency_over_loop_lengths` (F-8),
+`readiness_receipts_under_transport` and `windowed_service_coverage_under_transport` (AC-8's `DIAG,win_readiness`
+receipts -- emitted directly when USB has room, because the ring is retained under transport -- and the `DIAG,win_gap`
+coverage blocks). **The absent half is asserted, not hidden:** no scenario/driver is registered and `PRESET_SCENARIOS` has
+no entry, so `resolve_scenarios(preset="windowed_content_parity")` raises; the new pin
+`test_the_windowed_leg_has_a_registered_profile_and_no_driver_yet` checks that on purpose (it turns red when the driver
+lands). Red-proofs: **MR-6.4a** (declared scope widened to 4,5,6) and **MR-6.4b** (`base_bars` 16 -> 2), each leaving
+the pin the only failing test and the file restored byte-identically (`sha256 e90a637e35bf3cfb…`). Verification: eight
+registry-touching host suites green (26 / 24 / 3 / 40 / 194 / 45 / 3 / 15 tests; run from `scripts/` with `PYTHONPATH=.`
+-- the `scripts.`-prefixed invocation fails to import `hitl` and is a path artifact, recorded), native **2796 / 2789
+succeeded / 7 skipped / 0 failed**, strict validation and `git diff --check` clean, no device action. **6.4 stays open**
+(exercise and qualification are distinct in the task's own words), and 6.5's hardware half stays NOT RUN.
+**Next:** the `windowed_content_parity` driver (scenario `run`/`verify` + preset entry), then 6.5's hardware half after
+upload authorization.
+
 **2026-10-05 — `windowed-playback-generation` 6.5 (native half): the two interleaving forces the suite did not force are
 now forced on the playing chain (test-only slice; no production line edited, no device action).**
 Slice 6.5 asks for the ten interleavings forced natively on the real request→worker→publication→consumption path, and

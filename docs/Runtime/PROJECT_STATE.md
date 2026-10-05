@@ -1,3 +1,22 @@
+**Task 6.4's windowed HITL profile is registered and authorized; its driver is deliberately not (host tooling only).**
+`STIM-WINDOW-CONTENT-01@v1` (`windowed_content_parity`) is now a canonical profile of its own: a 16-bar loop with one
+committed 16-bar revision against the lane's two-bar span (so a window is a strict sub-interval), the transport running
+across boundaries, a declared target authorization (`track 8 slots 4,5`, source the standing 2026-09-30 grant narrowed to
+the bench target) and a **declared oracle** whose four `must_prove` terms name outcomes the firmware and the pipeline
+already produce -- F-7's content parity across a boundary, F-8's root-demoted residency over loop lengths, and AC-8's
+`DIAG,win_readiness` receipts plus `DIAG,win_gap` coverage blocks under transport. `base_stimulus_id` stays `None`: no
+registered profile shares this recipe shape. **What is deliberately absent:** the scenario that would drive the leg is not
+registered and `PRESET_SCENARIOS` has no entry, so `resolve_scenarios` refuses it and no run can read as though the leg
+had been exercised -- and the new pin
+`test_the_windowed_leg_has_a_registered_profile_and_no_driver_yet` asserts exactly that, so it turns red the day the
+driver lands. Red-proofed **MR-6.4a** (declared scope widened to 4,5,6) and **MR-6.4b** (`base_bars` 16 -> 2), each
+leaving the pin the only failing test in the suite and the file restored byte-identically. Verification: the eight host
+suites that touch the registry are green (26 / 24 / 3 / 40 / 194 / 45 / 3 / 15), the native suite is unchanged at **2796 /
+2789 succeeded / 7 skipped / 0 failed**, strict validation and `git diff --check` are clean, and **no device action** was
+taken. **Not claimed:** exercise, qualification, and anything about 6.5's hardware half -- 6.4 and 6.5 both stay open.
+Evidence:
+[`s64-windowed-hitl-profile`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s64-windowed-hitl-profile/EVIDENCE.md).
+
 **Task 6.5's native half lands: the two interleaving forces the suite did not force are now forced on the playing chain
 (test-only slice).**
 **A→B→A view-slot reuse with the first completion arriving last:** A's build begins under its own operation identity and

@@ -175,8 +175,14 @@ NOT task3.7 removal and NOT a supported contiguous two-bar envelope.
 - 4.2 needs an actual content-divergence oracle. A nextNoteId mismatch alone may be
   legitimate. Format provenance and load reconciliation are unresolved alternatives;
   neither is silently selected or treated as a prerequisite for unrelated work.
-- 6.4 profile/oracle preparation can proceed now; qualification waits for an exercised
-  path and the shared oracle. 6.8 supplies evidence downstream to RWO acceptance.
+- 6.4's profile/oracle preparation is now done: `STIM-WINDOW-CONTENT-01@v1`
+  (`windowed_content_parity`) is registered with its own recipe shape (a 16-bar loop
+  against the two-bar span, transport running across boundaries) and its declared
+  target authorization, and its `must_prove` names the F-7 / F-8 / AC-8 outcomes
+  (`evidence/2026-10-05-s64-windowed-hitl-profile/`). Qualification still waits for
+  an exercised path and the shared oracle: the driver/scenario is deliberately not
+  registered, and the pin asserts that absence. 6.8 supplies evidence downstream to
+  RWO acceptance.
 
 The pre-edit [slice packet](evidence/requester-retry-integration/ROLLING_HANDOFF.md) names its exact selector, frame/state
 lifetime, caller order, fallback intervals, cancellation and positive/negative traces.

@@ -375,6 +375,57 @@ STIM_EDIT_OD_DURING_NE_01 = StimulusSpec(
     ),
 )
 
+#: The **windowed** leg's profile (task 6.4): the dedicated HITL profile this change's F-7/F-8 device legs and the
+#: AC-8 receipts are meant to be driven through. It is a profile of its own rather than a reuse of any 2-bar leg's,
+#: because its **recipe shape** is what those legs are about: the loop is far longer than the served window (*16
+#: bars* against a two-bar span, so the served window is a strict sub-interval), it carries a second committed
+#: revision, and the transport keeps running **across** the boundaries -- which is the only way a boundary can be
+#: crossed at all. `base_stimulus_id` is deliberately `None`: no registered profile shares this recipe, and naming
+#: one would be a provenance claim the tree does not support.
+#:
+#: **The oracle is declared here; the driver is a separate step.** Task 6.4 separates *registration*,
+#: *authorization*, *exercise* and *qualification* on purpose. This profile is **registered**, carries its
+#: **target authorization**, and declares a `must_prove` list whose terms name outcomes the firmware and the
+#: content pipeline already produce: `DIAG,win_readiness,...` receipts (AC-8, delivered *while* the transport
+#: runs), the `DIAG,win_gap` service-coverage blocks, the content pipeline's parity verdict across a boundary
+#: (F-7), and the per-slot residency statement for a demoted root (F-8). The scenario that *drives* it is not
+#: registered and `PRESET_SCENARIOS` carries no entry for it, so no run can select this leg and read as though it
+#: had been exercised.
+STIM_WINDOW_CONTENT_01 = StimulusSpec(
+    stimulus_id="STIM-WINDOW-CONTENT-01",
+    version=1,
+    kind=KIND_CANONICAL,
+    scenario_id="windowed_content_parity",
+    description=(
+        "Task 6.4's windowed leg: a 16-bar loop with a committed overdub revision, played with the transport "
+        "running across window boundaries -- F-7's content parity across a boundary, F-8's root-demoted "
+        "residency swept over loop lengths, and the AC-8 readiness receipts under transport"
+    ),
+    generator="scenario:windowed_content_parity",
+    base_bars=16,
+    base_pattern="WINDOW-LONG-16",
+    base_stimulus_id=None,
+    overdubs=(
+        OverdubRecipe(name="OD1", bars=16, pattern="BASELINE_OVERDUB", note_low=24, note_high=39),
+    ),
+    interactions=(
+        "transport_running_across_window_boundary",
+        "loop_length_sweep_4_16",
+        "windowed_playback_under_transport",
+    ),
+    must_prove=(
+        "content_parity_across_window_boundary",
+        "root_demoted_residency_over_loop_lengths",
+        "readiness_receipts_under_transport",
+        "windowed_service_coverage_under_transport",
+    ),
+    human_checks=(
+        "windowed playback is audibly identical to the whole-loop path across a boundary",
+        "no tear, dropout or restart at a window boundary",
+    ),
+    authorization=_bench_authorization(),
+)
+
 _STIMULI: dict[str, StimulusSpec] = {
     STIM_BASE_2_ONE_OD_01.stimulus_id: STIM_BASE_2_ONE_OD_01,
     STIM_BASE_2_2_01.stimulus_id: STIM_BASE_2_2_01,
@@ -387,6 +438,7 @@ _STIMULI: dict[str, StimulusSpec] = {
     STIM_OCCUPY_PAINT_01.stimulus_id: STIM_OCCUPY_PAINT_01,
     STIM_EDIT_OD_DURING_NE_01.stimulus_id: STIM_EDIT_OD_DURING_NE_01,
     STIM_NE_RESELECT_STACKED_01.stimulus_id: STIM_NE_RESELECT_STACKED_01,
+    STIM_WINDOW_CONTENT_01.stimulus_id: STIM_WINDOW_CONTENT_01,
 }
 
 SCENARIO_STIMULUS: dict[str, str] = {
@@ -397,6 +449,9 @@ SCENARIO_STIMULUS: dict[str, str] = {
     "edit_overdub_during_note_edit": STIM_EDIT_OD_DURING_NE_01.stimulus_id,
     "note_edit_reselect_stacked": STIM_NE_RESELECT_STACKED_01.stimulus_id,
     "base": STIM_BASE_2_2_01.stimulus_id,
+    # Task 6.4: the windowed leg's profile is bound to its own scenario id, so the F-7/F-8 leg is addressed by
+    # the scenario it *is* -- the driver that will run it is the next step, and no preset resolves it yet.
+    "windowed_content_parity": STIM_WINDOW_CONTENT_01.stimulus_id,
 }
 
 
