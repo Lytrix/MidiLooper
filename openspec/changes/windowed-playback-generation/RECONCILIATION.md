@@ -187,7 +187,14 @@ NOT task3.7 removal and NOT a supported contiguous two-bar envelope.
   deferred to other owners (the parity verdict to the content pipeline; the
   residency term to an unidentified row set), and every verdict carries
   `oracle_complete: False` so a green run is not read as F-7/F-8 qualification.
-  6.8 supplies evidence downstream to RWO acceptance.
+  Its **first authorized device run** (2026-10-05) then established the prerequisite
+  rather than the qualification: with the rolling lane compiled off, a plain
+  record-and-play owes no window work, the lane dispatched with zero eligible turns,
+  and the leg's own row set (44 `win_gap` blocks, no receipt, no publication) is what
+  the verifier now names first as `window_demand_observed`
+  (`evidence/2026-10-05-s64-s65-device-leg-01/`). What closes 6.4/6.5 is therefore a
+  **demand**: the owner's enablement decision for the rolling lane, or a leg that
+  drives a demoted switch. 6.8 supplies evidence downstream to RWO acceptance.
 
 The pre-edit [slice packet](evidence/requester-retry-integration/ROLLING_HANDOFF.md) names its exact selector, frame/state
 lifetime, caller order, fallback intervals, cancellation and positive/negative traces.

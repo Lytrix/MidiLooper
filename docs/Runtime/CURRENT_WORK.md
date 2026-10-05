@@ -1,3 +1,22 @@
+**2026-10-05 — `windowed-playback-generation` 6.4/6.5: the windowed leg ran on the device for the first time
+(owner-authorized upload) and the run corrected the oracle instead of qualifying it.**
+Built `teensy41-capture-serial` (RAM1 unchanged) and flashed image `1337956a05c4aeda…` from git `abdbca63`; a read-only
+census (`hitl_boot_census.py --library-observe`) and an explicit slot selection (track 8, slot 6) preceded the leg, so the
+run's target was named and empty rather than inherited. The leg drove the shape it exists for -- `Recording stopped ...
+length=18432`, a 24-bar take -- and the device's own row confirms nothing was destroyed (`Clear removed persisted slot 6
+payload (absent)`); the bench slots that hold content (4 and 5) were never touched. **Measured lane rows:** 44 `win_gap`
+blocks, all `running=0`, `permitted=64`, schema `3`, **zero** eligible/progress/denied turns; **zero** `win_readiness`;
+**zero** `build_complete`; one legacy `playback_build` row on another track. Because `PLAYBACK_WINDOW_ROLLING_ENABLED`
+defaults to `0`, a plain record-and-play owes no window work -- so the honest reading is an **unexercised leg**, and the
+verifier now says so first (`window_demand_observed`, red-proved by MR-6.4e). The run **validated the row parser on real
+rows** (`permitted` field 16, schema `3` at 19, `running` at 7). Findings: **F-11** the reused leg's display oracle is
+stale against the emitted DISP schema (12 fields vs the 14 it parses; that leg's business, and it blocks this composition
+since the verdict ANDs both halves); **F-12** the lane's dispatch stopped once the transport started (44 blocks idle, none
+across ~97 s of recording/playing; the deferred-idle-owner explanation is a hypothesis) -- relevant to 3.10 because F-2's
+deadline is 16-31 ms. **Not claimed:** the lane was not exercised, F-7/F-8/AC-8 are unverified on hardware, 6.5's four
+hardware claims are NOT RUN, and nothing in the firmware changed. **Next is a decision:** enable the rolling lane
+(3.10 activation) or make the leg drive a demoted switch so a demand exists today.
+
 **2026-10-05 — `windowed-playback-generation` 6.4 (exercise half, off-device): the windowed profile has a driver, and
 the driver is the pipeline's own long-loop leg (host tooling only; no firmware, no device, no upload).**
 [`EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s64-windowed-leg-driver/EXECUTION.md)

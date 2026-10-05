@@ -399,7 +399,10 @@ STIM_WINDOW_CONTENT_01 = StimulusSpec(
     description=(
         "Task 6.4's windowed leg: a 16-bar loop with a committed overdub revision, played with the transport "
         "running across window boundaries -- F-7's content parity across a boundary, F-8's root-demoted "
-        "residency swept over loop lengths, and the AC-8 readiness receipts under transport"
+        "residency swept over loop lengths, and the AC-8 readiness receipts under transport. "
+        "The lane is only *exercised* when a window demand exists -- the rolling lane enabled, or a launch/retry in "
+        "flight -- because its rows are event-shaped: a plain record-and-play owes no window work and produces "
+        "dispatches with nothing to report (measured on hardware, 2026-10-05)"
     ),
     generator="scenario:windowed_content_parity",
     base_bars=16,

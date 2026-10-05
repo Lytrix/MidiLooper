@@ -923,6 +923,24 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   at a window boundary has never been observed, so the first authorized run may correct this oracle rather than the
   firmware. **6.4 stays open.** See
   [`s64-windowed-leg-driver`](evidence/2026-10-05-s64-windowed-leg-driver/EVIDENCE.md).
+
+  *First **authorized device run** 2026-10-05 (owner authorized the upload this session):* the windowed leg ran on
+  hardware — image `1337956a05c4aeda…` from git `abdbca63`, RAM1 unchanged — and it drove the target shape (a 24-bar take,
+  `Recording stopped … length=18432`) on the **empty** bench slot 6, with the device's own row confirming nothing was
+  removed (`Clear removed persisted slot 6 payload (absent)`); slots 4 and 5 (which do hold content) were never touched.
+  **What the run corrects, rather than what it claims:** the lane produced 44 `win_gap` blocks — *all* with `running=0`,
+  `permitted=64`, schema `3`, and **zero** eligible/progress/denied turns — plus **zero** `win_readiness` rows and **zero**
+  `build_complete` publications, so `window_demand_observed` is now the verifier's **first** named check: the leg's real
+  prerequisite is a **demand** (the rolling lane enabled, or a launch/retry in flight), not a running transport, because a
+  plain record-and-play owes no window work and the lane's rows are event-shaped (red-proved by **MR-6.4e**). The run also
+  validates the row reading on real rows (`permitted` in field 16, schema `3` in 19 — the parser is no longer a
+  synthetic-rows-only claim) and records two findings: **F-11** the reused long-loop leg's *display* oracle is stale
+  against the emitted DISP schema (12 fields vs the 14 it parses — that leg's business, and it blocks this composition
+  because the verdict ANDs both halves), and **F-12** the lane's dispatch stopped entirely once the transport started
+  (44 blocks idle, none across ~97 s of recording/playing; the deferred-idle-owner explanation is recorded as a
+  hypothesis), which matters for 3.10 because F-2's deadline is 16–31 ms. **Not claimed:** the lane was **not exercised**;
+  F-7/F-8/AC-8 remain unverified on hardware; no firmware was changed and no oracle was bent to fit an observation. See
+  [`s64-s65-device-leg-01`](evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B
@@ -948,6 +966,15 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   not releasing the demand / not discarding its owned build) red-prove the fixtures; **MR-A** is recorded as a
   non-red-proof (the operation identity is stamped on more than one path). See
   [`s65-native-verification-split`](evidence/2026-10-05-s65-native-verification-split/EVIDENCE.md).
+
+  *Hardware half, first authorized run 2026-10-05:* the device was built, flashed and driven (see 6.4's note and
+  [`s64-s65-device-leg-01`](evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md)). What it hands back is a **prerequisite
+  finding rather than a measurement of the hardware claims**: with `PLAYBACK_WINDOW_ROLLING_ENABLED` at its default `0`,
+  a plain record-and-play owes no window work, so the lane dispatched with nothing to report — the four hardware claims
+  (grain duration and maximum service gaps, sustained multi-track playback under capture/persistence contention,
+  external-clock behaviour, memory high-water marks with content parity) are **still NOT RUN**, and the run says why:
+  they need a **demand** (the owner's enablement decision for the rolling lane, or a leg that drives a demoted switch).
+  The task stays open on all four.
 - [ ] 6.6 Update RWO's dependency records now that the sibling exists and carries its DEC and reassessment — verify RWO
   `tasks.md` (S2.9/F) and `design.md:812` point at this change, and that S2.3's `N` and `S7 gates` status are restated
   accurately under [`docs/Authority/DOCUMENTATION_CLOSEOUT.md`](../../../docs/Authority/DOCUMENTATION_CLOSEOUT.md)

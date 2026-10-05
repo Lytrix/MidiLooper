@@ -179,10 +179,38 @@ def _check(name: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"name": name, "ok": ok, "detail": detail}
 
 
+def window_demand_observed(lines: list[str]) -> bool:
+    """Was any window *work owed* in this capture?
+
+    The lane dispatches on the deferred **idle** owner and its rows are event-shaped: a dispatch with no eligible
+    holder reports zero eligible turns and emits no receipt, and no completion can publish. So the leg's own
+    prerequisite is a **demand** -- a slot owing a window build -- not merely a running transport. Task 6.4's first
+    authorized device run established this on hardware: 44 `win_gap` blocks, every one with `eligible=progress=denied=0`
+    and `running=0`, and **no** `win_readiness` receipt at all, on an image where the rolling lane is compiled off and
+    no launch was owed. Reporting that as "three lane checks failed" would blame the lane for not being asked.
+    """
+    for row in gap_rows(lines):
+        if row["eligible_turns"] != "0" or row["progress_turns"] != "0":
+            return True
+    return bool(readiness_rows(lines))
+
+
 def verify_windowed_lane(lines: list[str]) -> dict[str, Any]:
     """Judge the declared oracle's judgeable half, and name the rest."""
     intervals = running_intervals(lines)
     checks: list[dict[str, Any]] = []
+    demand = window_demand_observed(lines)
+    checks.append(
+        _check(
+            "window_demand_observed",
+            demand,
+            "the lane was asked for window work in this capture"
+            if demand
+            else "no eligible/progress turn and no readiness receipt in the whole capture: no slot owed a window "
+                 "build, so this run did not exercise the lane (a demand needs the rolling lane enabled, or a "
+                 "launch/retry in flight -- a plain record-and-play owes none)",
+        )
+    )
 
     # **AC-8: the receipt must arrive while the transport runs.** A receipt that only reaches the stream after the
     # stop is exactly what the direct-when-USB-has-room path exists to avoid, so it is a failure and not a pass.

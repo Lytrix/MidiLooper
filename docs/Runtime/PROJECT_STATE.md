@@ -1,3 +1,27 @@
+**Task 6.4/6.5: the windowed leg's first authorized device run happened, and it handed back a prerequisite rather than a
+qualification (device + host tooling; no firmware line changed, nothing destroyed).**
+The board was built (`teensy41-capture-serial`, RAM1 unchanged at `variables 96,192` / `padding 1,640`) and flashed
+(image `1337956a05c4aeda…` from git `abdbca63`), a read-only census and an explicit slot selection preceded the leg, and
+the leg drove the target shape -- a **24-bar** take (`Recording stopped ... length=18432`) on the **empty** bench slot 6,
+with the device's own row proving nothing was removed (`Clear removed persisted slot 6 payload (absent)`); the two bench
+slots that do hold content (4 and 5) were never touched. **What the lane produced, measured:** 44 `win_gap` blocks, *all*
+with `running=0`, `permitted=64`, schema `3` and **zero** eligible/progress/denied turns, **zero** `win_readiness` rows,
+**zero** `build_complete` publications and one legacy `playback_build` row on another track. Read against the profile's
+declared oracle that is not three lane defects but an **unexercised leg**: with `PLAYBACK_WINDOW_ROLLING_ENABLED` at its
+default `0`, a plain record-and-play owes no window work and the lane's rows are event-shaped, so "no work" and "no rows"
+are the same observation -- and `window_demand_observed` is now the verifier's **first** named check (red-proved by
+**MR-6.4e**, file restored byte-identically). The run also **validated the row reading on real rows** (`permitted` in
+field 16, schema `3` in 19, `running` in 7), so that parser is no longer only a synthetic-rows claim. **Findings
+recorded:** F-11 the reused long-loop leg's *display* oracle is stale against the emitted DISP schema (the device emits 12
+fields, that verifier parses 14 -- it belongs to the display-window leg, and because the profile's verdict ANDs both halves
+it also blocks this composition); F-12 the lane's dispatch stopped entirely once the transport started (44 blocks in the
+idle phase, none across ~97 s of recording/playing), whose deferred-idle-owner explanation is recorded as a *hypothesis*
+and which matters for 3.10 because F-2's deadline is 16-31 ms. **Not claimed:** the lane was **not exercised**; F-7, F-8
+and AC-8 are unverified on hardware; the four hardware claims of 6.5 are **NOT RUN**; no firmware was changed and no oracle
+was bent to fit an observation; 6.4 and 6.5 both stay open. **What closes them is a decision, not more code:** enable the
+rolling lane (3.10's activation), or make the leg drive a demoted switch so a demand exists today. Evidence:
+[`s64-s65-device-leg-01`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md).
+
 **Task 6.4's exercise half, off-device: the windowed profile now has a driver, and the driver is the pipeline's own
 leg (host tooling only).**
 `STIM-WINDOW-CONTENT-01`'s scenario `windowed_content_parity` is registered and resolves from its own preset, but it adds

@@ -1,0 +1,84 @@
+# Device row extract: the first authorized windowed-leg run (2026-10-05, image 1337956a05c4aeda, git abdbca63)
+# Source: captures/s64-window-leg-01/host_midi_hitl_long_loop_display_serial_20261005_102335.log (2688 lines)
+# Kept: the transport edges, the 24-bar record's own rows, every lane row class, and the clear row.
+
+== phase and transport rows ==
+693: #CAP,177708584,ST,Track,STOPPED,ARMED
+960: [190.588] [DEBUG] [TRACK] Recording started @ tick 0 (startLoopTick=0 loopStart=0)
+961: [190.591] [INFO] Transport started
+983: [190.961] [DEBUG] [TRACK] Recording stopped (to STOPPED) @ tick 268 (recStart=0 length=768)
+986: [190.994] [INFO] Transport stopped
+995: #CAP,190588101,ST,Track,ARMED,RECORDING
+999: #CAP,190591356,DIAG,record_length,ticks=768
+1161: #CAP,190961046,ST,Track,RECORDING,STOPPED_RECORDING
+1162: #CAP,190961055,ST,Track,STOPPED_RECORDING,STOPPED
+1271: [191.958] [INFO] MIDI: Clear removed persisted slot 6 payload (absent)
+1377: [200.371] [INFO] Loop 6: Start Recording
+1380: #CAP,200371885,ST,Track,STOPPED,ARMED
+1618: [211.501] [DEBUG] [TRACK] Recording started @ tick 0 (startLoopTick=0 loopStart=0)
+1619: [211.503] [INFO] Transport started
+2511: [260.442] [DEBUG] [TRACK] Recording stopped @ tick 348 (recStart=0 length=18432)
+
+== lane rows (all classes) ==
+win_gap blocks: 44 (indices 46..1552)
+  distinct running=['0'] permitted=['64'] schema=['3']
+  blocks with any eligible/progress turn: 0
+  first block: #CAP,116902617,DIAG,win_gap,0,11776,0,0,0,0,0,0,0,0,1,0,64,0,0,3
+  last  block: #CAP,210594083,DIAG,win_gap,0,22784,268,0,0,0,0,0,0,0,2,0,64,0,0,3
+win_readiness rows: 0
+win_gap_overrun rows: 0
+playback_build rows: 1 -> [('snapshot', '2', '0')]
+
+== transport intervals (stream order) ==
+[(961, 986), (1619, 2688)]
+
+== the corrected verifier's verdict on this capture ==
+{
+  "ok": false,
+  "checks": [
+    {
+      "name": "window_demand_observed",
+      "ok": false,
+      "detail": "no eligible/progress turn and no readiness receipt in the whole capture: no slot owed a window build, so this run did not exercise the lane (a demand needs the rolling lane enabled, or a launch/retry in flight -- a plain record-and-play owes none)"
+    },
+    {
+      "name": "readiness_receipts_under_transport",
+      "ok": false,
+      "detail": "receipts=0 under_transport=0"
+    },
+    {
+      "name": "windowed_service_coverage_under_transport",
+      "ok": false,
+      "detail": "blocks=44 under_transport=0 with_opportunities=0"
+    },
+    {
+      "name": "no_windowed_overrun_under_transport",
+      "ok": true,
+      "detail": "overrun_rows=0 under_transport=0"
+    },
+    {
+      "name": "window_boundaries_crossed_under_transport",
+      "ok": false,
+      "detail": "build_complete_under_transport=0"
+    }
+  ],
+  "issues": [
+    "window_demand_observed: no eligible/progress turn and no readiness receipt in the whole capture: no slot owed a window build, so this run did not exercise the lane (a demand needs the rolling lane enabled, or a launch/retry in flight -- a plain record-and-play owes none)",
+    "readiness_receipts_under_transport: receipts=0 under_transport=0",
+    "windowed_service_coverage_under_transport: blocks=44 under_transport=0 with_opportunities=0",
+    "window_boundaries_crossed_under_transport: build_complete_under_transport=0"
+  ],
+  "deferred": [
+    {
+      "term": "content_parity_across_window_boundary",
+      "judged": "the boundary crossings (successive `build_complete` publications under transport)",
+      "verdict_owner": "the existing content pipeline (`hitl/content_deduction.py`, `scripts/hitl/mixed_content_report.py`)"
+    },
+    {
+      "term": "root_demoted_residency_over_loop_lengths",
+      "judged": "nothing",
+      "verdict_owner": "unidentified row set: the library-observation path (`!LIB_OBSERVE`) is the candidate, and this is recorded as unknown rather than guessed"
+    }
+  ],
+  "oracle_complete": false
+}

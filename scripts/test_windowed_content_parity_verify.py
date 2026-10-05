@@ -23,6 +23,12 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+from hitl.control_constants import CONTROL_CHANNEL_1BASED, LOOP_SELECT_NOTE_BASE
+from hitl.scenarios.windowed_content_parity import (
+    run_windowed_content_parity,
+    select_loop_slot,
+    split_loop_slot_flag,
+)
 from hitl.verify.windowed_lane import (
     gap_rows,
     overrun_rows,
@@ -154,6 +160,7 @@ class WindowedLaneTests(unittest.TestCase):
         names = [check["name"] for check in result["checks"]]
         self.assertEqual(
             [
+                "window_demand_observed",
                 "readiness_receipts_under_transport",
                 "windowed_service_coverage_under_transport",
                 "no_windowed_overrun_under_transport",
@@ -202,6 +209,39 @@ class WindowedLaneTests(unittest.TestCase):
             any(issue.startswith("windowed_service_coverage_under_transport") for issue in result["issues"])
         )
 
+    def test_a_capture_without_a_window_demand_names_the_unexercised_leg(self) -> None:
+        """The first authorized device run's shape: dispatches with nothing owed are not three separate lane defects.
+
+        With no eligible turn and no receipt anywhere, the leg was never asked for window work -- the rolling lane is
+        compiled off on that image and no launch was owed on a plain record-and-play. The verifier says that first, so a
+        reader does not conclude the lane misbehaved.
+        """
+        lines = [
+            "Transport started",
+            _gap(1100, opportunities=11776, running=0, eligible=0, progress=0, denied=0),
+            _gap(1200, opportunities=22784, running=0, eligible=0, progress=0, denied=0),
+            "Transport stopped",
+        ]
+        result = verify_windowed_lane(lines)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["issues"][0].startswith("window_demand_observed"), result["issues"])
+        names = [check["name"] for check in result["checks"]]
+        self.assertEqual("window_demand_observed", names[0])
+
+    def test_a_single_eligible_turn_is_enough_to_call_the_lane_exercised(self) -> None:
+        lines = [
+            "Transport started",
+            _gap(1100, opportunities=4, running=1, eligible=1, progress=1),
+            _receipt(1200),
+            _build(1300),
+            _build(1400),
+            "Transport stopped",
+        ]
+        result = verify_windowed_lane(lines)
+        demand = next(check for check in result["checks"] if check["name"] == "window_demand_observed")
+        self.assertTrue(demand["ok"])
+        self.assertTrue(result["ok"], result["issues"])
+
     def test_one_publication_is_not_a_boundary_crossing(self) -> None:
         result = verify_windowed_lane(_lane_lines(completions=1))
         self.assertFalse(result["ok"])
@@ -224,6 +264,46 @@ class WindowedLaneTests(unittest.TestCase):
         lane_only = verify_windowed_content_parity(_lane_lines(), args)
         self.assertFalse(lane_only["ok"], lane_only["issues"])
         self.assertTrue(any(issue.startswith("leg: ") for issue in lane_only["issues"]), lane_only["issues"])
+
+
+class _StubPort:
+    """A MIDI out port that records what it was asked to send (the `test_record_target_precondition` pattern)."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[int, int]] = []
+
+    def send(self, message: object) -> None:
+        self.sent.append((int(message.note), int(message.channel)))  # type: ignore[attr-defined]
+
+
+class WindowedTargetTests(unittest.TestCase):
+    """The wrapper owns exactly one thing: which slot the reused leg will clear and record on."""
+
+    def test_the_slot_flag_is_taken_out_of_the_legacy_args(self) -> None:
+        slot, remaining = split_loop_slot_flag(["--track-number", "8", "--loop-slot", "6", "--midi-channel", "8"])
+        self.assertEqual(6, slot)
+        # The leg's parser is strict and has no slot flag: leaving it in is how the run would fail to start.
+        self.assertNotIn("--loop-slot", remaining)
+        self.assertEqual(["--track-number", "8", "--midi-channel", "8"], remaining)
+
+    def test_a_repeated_slot_flag_is_not_silently_ignored(self) -> None:
+        slot, remaining = split_loop_slot_flag(["--loop-slot", "6", "--loop-slot", "7"])
+        self.assertEqual(6, slot)
+        self.assertEqual(["--loop-slot", "7"], remaining)
+
+    def test_a_run_without_a_named_slot_is_refused_before_any_device_contact(self) -> None:
+        class _Args:
+            legacy_args: list[str] = []
+
+        self.assertEqual(2, run_windowed_content_parity(_Args()))
+
+    def test_the_slot_select_presses_that_slots_own_control(self) -> None:
+        port = _StubPort()
+        select_loop_slot(port, 6, press_ms=1)
+        self.assertEqual(
+            [(LOOP_SELECT_NOTE_BASE + 5, CONTROL_CHANNEL_1BASED - 1)] * 2,
+            port.sent,
+        )
 
 
 if __name__ == "__main__":
