@@ -1018,6 +1018,12 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   [`switch-leg-demand`](evidence/2026-10-05-switch-leg-demand/EVIDENCE.md). **Not claimed:** the lane was **not exercised**;
   F-7/F-8/AC-8 remain unverified on hardware; no firmware was changed and no oracle was bent to fit an observation. See
   [`s64-s65-device-leg-01`](evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md).
+  *Update 2026-10-05 (selector fix, switch leg):* the launch's source publication is no longer an open blocker for the
+  switch leg -- `Track::loopWithPendingSnapshotPublish` now ranks in-flight > startable > other pending work (active loop
+  wins ties; native fixtures red-proved against `60767dbe`), and the leg completed end to end on hardware twice
+  (`captures/s64-switch-12`, `-13`: `launch_requested → launch_ready`, no hold). **Parked:** the *starved* shape (a
+  rootless, pending demoted target) was never produced on device and is not pursued unless it shows up as a real defect.
+  6.4 stays open on its device-oracle items; nothing here claims F-7/F-8/AC-8.
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B
