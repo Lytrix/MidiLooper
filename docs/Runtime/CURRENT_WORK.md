@@ -5182,13 +5182,38 @@ bridge's verify path) are unrelated and unchanged. See
 
 ### Route D — rootless effective-content window investigation (2026-10-05)
 
-**Authorized next slice: DEC-108 3.12 — bounded legacy compatibility, fixture 5.5 only (test-only).** The admission accounting,
-`WindowPagedStream` ring/cursor, and `Track::recordMidiEvents` gate already landed. This slice adds an adversarial native fixture
-for over-capacity legacy content: same-tick density, a loop-wrap interval, and note closures crossing page boundaries. It will
-exercise the existing `WindowPagedStream::produce/consume` and `CommittedEventRange` production primitives and assert bounded
-page count, ordered/exactly-once events and no tick delay/truncation. **Not included:** production lane integration, device timing
-claims or changes to the page/ring policy. The paged production consumer is coupled to 3.7's fallback migration; 3.12 remains
-open after the fixture until that consumer path and timing envelope are verified.
+**3.12 — legacy paged compatibility, fixture 5.5 increment landed 2026-10-05 (test-only).** `test/test_window_paged_legacy/` now pins over-capacity same-tick ordering across two source lists (2,400 events), explicit `RingFull`/page reuse, wrap-window filtering and a NoteOn/NoteOff pair spanning multiple pages. M-RING (no release of drained pages) fails all three cases to terminate; restoration was confirmed diff-clean. Focused 3/3, full native **2810 / 7 skipped / 2803 succeeded / 0 failed**, strict OpenSpec valid. Evidence: `openspec/changes/windowed-playback-generation/evidence/2026-10-05-s312-fixture-55/EVIDENCE.md`. **Not claimed:** device timing, no-tick-delay under real load, or production consumption. Task 3.12 stays open; the paged consumer is coupled to 3.7, and fixture 5.5's timing envelope still needs measurement.
+
+The proposed source is a **hypothesis**, not yet a firmware contract: make a bounded playback window without requiring a
+`LoopSnapshot` root. Read-only code trace (the implementation-investigator delegate failed from provider credit exhaustion;
+I completed the trace directly): `Loop::tryGatherPublishedSnapshotEventsInWindow` returns `false` immediately when
+`publishedSnapshot()` is absent (`src/Loop/LoopSnapshotPlayback.cpp:182-201`). Its existing `Overlay` is specifically a
+**stale-root** overlay: collect session/pending unpublished pass IDs, gather those chunks in the requested window, then
+apply unpublished companion edit rows (`:220-327`). `buildMergedPlaybackFallbackCold` turns a failed gather into an empty
+buffer (`src/Track/TrackPlaybackWindowBuild.cpp:272-277`), the measured silence path (`GatherMissHoldEmpty`).
+
+**Differential characterization added:** `test_rootless_window_filter_then_delete_loses_predecessor_note_context` in
+`test/test_rootless_window_resolution/` compares (a) Delete with full note context then windowing against (b) filtering raw
+window events first then applying the same ID-based edit. With a NoteOn at tick 100, NoteOff at 500 and window [400,600),
+path (a) has no event; path (b) retains the Off because the NoteOn needed by the edit is outside the window. The fixture
+**does not claim** path (a) is the audible answer: a sounding-note ledger may owe a targeted closure Off. It proves the
+rootless candidate must carry note identity/context or explicitly transfer closure responsibility to the ledger. Verified:
+focused new suite **1/1**, existing Overlay/effective-content suite `test_loop_take_survival` **143/143**, full native **2,807
+cases / 7 skipped / 2,800 succeeded / 0 failed**.
+
+Other constraints VERIFIED: `LoopEventStore::append` allows out-of-order ticks and only marks the bar index dirty
+(`src/LoopEventStore.cpp:560-576`); chunk `firstTick`/`lastTick` are append endpoints, so chunk lists/spans do **not** yet
+establish a binary-seek invariant. Current `CommittedEventRange::appendWindowBudgeted` examines each chunk's span and is
+O(chunks) per pass (`src/CommittedEventRange.cpp:207-265`). Existing materialization (`Loop::copyEffectiveCommittedEventsInRange`,
+`src/Loop/LoopMaterialization.cpp:170-265`) is already window-filtered, but applies active edits per pass layer and still
+walks chunk lists; that's an existing fallback behavior, not proof of bounded seek latency.
+
+**Authority conflict / not decided:** the active spec's *One pass late is the only stale authority* requires the effective-
+content resolver over a selected `LoopSnapshot` and says raw committed chunks alone do not apply edit passes (`spec.md:174-193`;
+DEC-108 at `docs/DECISION_LOG.md`). Route D therefore needs an owner-ratified authority amendment before any production
+change. Remaining UNKNOWNs: parity for overlap/Hide/Shorten and same-tick cross-pass order; closure semantics at both window
+edges through actual `playMidiEventsForSlot` + ledger output; how active/committed edit history is bounded; and measured
+window-build latency under maximum passes/density. **No production source change or Route D decision is made.**
 
 The proposed source is a **hypothesis**, not yet a firmware contract: make a bounded playback window without requiring a
 `LoopSnapshot` root. Read-only code trace (the implementation-investigator delegate failed from provider credit exhaustion;
