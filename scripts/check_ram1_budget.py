@@ -121,6 +121,11 @@ def _check(actual, baseline):
             f"RAM1 variables changed: {actual['variables']:,} B vs approved "
             f"{baseline['ram1_variables']:,} B ({delta:+,} B). DTCM growth comes out of the "
             f"local allowance."
+            + (" A change that is an exact multiple of 4,096 B with code unchanged is the DTCM "
+               "align-edge snap, usually from a few new string literals (capture tags, holder "
+               "names): see .cursor/rules/Teensy-RAM1-Bank-Overflow.mdc -- put the literals in a "
+               "TU that already has a `.rodata.str*` carve-out in the linker script, or add one, "
+               "instead of re-basing." if delta % 4096 == 0 else "")
         )
     if actual["locals_free"] != baseline["locals_free"]:
         delta = actual["locals_free"] - baseline["locals_free"]

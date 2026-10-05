@@ -11,8 +11,10 @@ hardware iteration each:
            `#CAP,<micros>,` header is counted at the 10-digit micros worst case?
            (`headRecordIsTierAText` in src/Utils/DebugSessionCapture.cpp reads 47 bytes.)
 
-The Tier-A prefix list is parsed from include/Utils/CaptureLineTier.h, which stays the single
-source of truth; nothing is duplicated here.
+The Tier-A prefixes are parsed from the two places the firmware decides them -- `isTierALine` in
+include/Utils/CaptureLineTier.h and `isTierATextLine` in src/Utils/DebugSessionCapture.cpp -- so
+nothing is duplicated here. New tags belong in the .cpp list: every literal in the header is
+instantiated in every including TU and one more was measured to snap DTCM by +4,096 B.
 
 Usage:
   python3 scripts/check_marker_contract.py 'DIAG,my_event,' 'RECS,'
@@ -30,6 +32,9 @@ from typing import Iterable, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 TIER_HEADER = ROOT / "include" / "Utils" / "CaptureLineTier.h"
+# Tier-A is decided in TWO places: the header's `isTierALine` and `isTierATextLine` here, which adds
+# prefixes that would otherwise be instantiated in every TU that includes the header.
+TIER_SOURCE = ROOT / "src" / "Utils" / "DebugSessionCapture.cpp"
 SOURCE_DIRS = (ROOT / "src", ROOT / "include")
 
 # Mirrors `char line[48]` (47 usable bytes) in headRecordIsTierAText.
@@ -42,8 +47,40 @@ _PREFIX_RE = re.compile(r'strncmp\(\s*tag\s*,\s*"([^"]+)"')
 _FN_START = "inline bool isTierALine("
 
 
-def tier_a_prefixes(text: Optional[str] = None) -> tuple[list[str], list[str]]:
-    """(accepted prefixes, excluded prefixes) from isTierALine's body."""
+_SOURCE_FN_START = "bool isTierATextLine("
+_SOURCE_FN_END = "bool isCriticalTextLine("
+_SOURCE_PREFIX_RE = re.compile(r'tagStartsWith\(\s*line\s*,\s*"([^"]+)"')
+
+
+def source_tier_a_prefixes(text: Optional[str] = None) -> list[str]:
+    """Extra Tier-A prefixes from `isTierATextLine` in DebugSessionCapture.cpp (empty if absent)."""
+    if text is None:
+        try:
+            text = TIER_SOURCE.read_text(encoding="utf-8")
+        except OSError:
+            return []
+    start = text.find(_SOURCE_FN_START)
+    if start < 0:
+        return []
+    end = text.find(_SOURCE_FN_END, start)
+    body = text[start:end if end > start else len(text)]
+    prefixes: list[str] = []
+    for line in body.splitlines():
+        if line.strip().startswith("//"):
+            continue
+        prefixes.extend(_SOURCE_PREFIX_RE.findall(line))
+    return prefixes
+
+
+def tier_a_prefixes(text: Optional[str] = None,
+                    source_text: Optional[str] = None) -> tuple[list[str], list[str]]:
+    """(accepted prefixes, excluded prefixes) from the header's isTierALine plus the .cpp's list."""
+    accepted, excluded = _header_prefixes(text)
+    accepted.extend(p for p in source_tier_a_prefixes(source_text) if p not in accepted)
+    return accepted, excluded
+
+
+def _header_prefixes(text: Optional[str] = None) -> tuple[list[str], list[str]]:
     text = TIER_HEADER.read_text(encoding="utf-8") if text is None else text
     start = text.find(_FN_START)
     if start < 0:
@@ -69,6 +106,13 @@ def classify(tag: str, accepted: Iterable[str], excluded: Iterable[str]) -> Opti
     return max(matches, key=len) if matches else None
 
 
+def _is_comment_or_classifier(line: str) -> bool:
+    """Doc comments and the tier lists themselves mention a tag without emitting it."""
+    stripped = line.strip()
+    return (stripped.startswith(("//", "*", "/*")) or "tagStartsWith(" in stripped
+            or "strncmp(tag" in stripped)
+
+
 def emitted(tag: str, dirs: Iterable[Path] = SOURCE_DIRS) -> Optional[str]:
     """First `file:line` whose text holds the tag (trailing comma ignored), else None."""
     needle = tag.rstrip(",")
@@ -78,7 +122,7 @@ def emitted(tag: str, dirs: Iterable[Path] = SOURCE_DIRS) -> Optional[str]:
                 continue
             try:
                 for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-                    if needle in line:
+                    if needle in line and not _is_comment_or_classifier(line):
                         return f"{path.relative_to(ROOT)}:{number}"
             except OSError:
                 continue
@@ -92,8 +136,9 @@ def check_tag(tag: str, accepted: list[str], excluded: list[str]) -> tuple[bool,
     if where is None:
         problems.append("EMITTED=no (no string literal in src/ or include/; firmware never emits it)")
     if prefix is None:
-        problems.append("TIER-A=no (add a prefix in CaptureLineTier.h and a test_capture_line_tier case; "
-                        "otherwise it is shed silently under transport)")
+        problems.append("TIER-A=no (add the prefix to `isTierATextLine` in DebugSessionCapture.cpp -- NOT the "
+                        "CaptureLineTier.h list, whose literals cost DTCM in every TU -- and pin both "
+                        "boundaries in test_capture_ring; otherwise it is shed silently under transport)")
     elif len(prefix) > MAX_PREFIX_LEN:
         problems.append(f"FIT=no (prefix {len(prefix)} bytes > {MAX_PREFIX_LEN}; late in a session the "
                         f"47-byte head read truncates it and it is treated as non-Tier-A)")

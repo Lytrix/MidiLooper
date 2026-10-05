@@ -281,7 +281,12 @@ def maybe_build_upload(args: argparse.Namespace) -> int:
     if result.returncode != 0:
         print(f"[hitl] build-upload failed (exit {result.returncode})")
         return result.returncode
-    print("[hitl] build-upload complete")
+    print("[hitl] build-upload complete; waiting for the board's MIDI ports to re-enumerate")
+    from hitl.midi_io import wait_for_midi_ports
+
+    if not wait_for_midi_ports("Teensy", timeout_s=30.0):
+        print("[hitl] WARNING: no Teensy MIDI input+output within 30 s of the flash; the run will fail at "
+              "port open. Flash and run are two steps: re-run without --build-upload once the port is back.")
     return 0
 
 

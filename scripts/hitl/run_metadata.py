@@ -143,4 +143,32 @@ def write_run_metadata(
     metadata = run_identity(out_dir=out, **identity)  # type: ignore[arg-type]
     path = out / "metadata.json"
     path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    write_invocation(out)
+    return path
+
+
+def write_invocation(out_dir: Path, argv: Optional[list[str]] = None) -> Path:
+    """Record the exact command line next to the evidence (`invocation.json`).
+
+    Without it a later reader has to reconstruct arguments from rows, and operator indices (1-based
+    `--slot-a`, `--loop-slot`) differ from the firmware's 0-based rows. Evidence only: never execute it.
+    Best-effort and idempotent: an existing file from the first write is kept.
+    """
+    import sys
+
+    path = Path(out_dir) / "invocation.json"
+    if path.exists():
+        return path
+    commit, _dirty = git_identity(_REPO_ROOT)
+    record = {
+        "argv": list(sys.argv if argv is None else argv),
+        "cwd": os.getcwd(),
+        "written_utc": datetime.now(timezone.utc).isoformat(),
+        "git_commit": commit,
+        "note": "evidence only; do not execute. CLI slot/track numbers are 1-based, firmware rows 0-based.",
+    }
+    try:
+        path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
     return path

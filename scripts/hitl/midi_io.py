@@ -14,6 +14,27 @@ except ImportError as exc:  # pragma: no cover - import guard
     ) from exc
 
 
+def wait_for_midi_ports(name_substring: str = "Teensy", timeout_s: float = 30.0, *,
+                        get_inputs=None, get_outputs=None, sleep=time.sleep, now=time.monotonic) -> bool:
+    """After a flash the board re-enumerates over USB; wait until BOTH its MIDI ports are back.
+
+    True when an input and an output matching `name_substring` exist. Never raises: the caller decides
+    whether a missing port is fatal (opening it later still raises with the available-port list).
+    """
+    lowered = name_substring.lower()
+    get_inputs = get_inputs or mido.get_input_names
+    get_outputs = get_outputs or mido.get_output_names
+    deadline = now() + max(timeout_s, 0.0)
+    while True:
+        have_in = any(lowered in n.lower() for n in get_inputs())
+        have_out = any(lowered in n.lower() for n in get_outputs())
+        if have_in and have_out:
+            return True
+        if now() >= deadline:
+            return False
+        sleep(0.25)
+
+
 def _find_midi_port(name_substring: str, is_input: bool, timeout_s: float = 5.0) -> str:
     lowered = name_substring.lower()
     deadline = time.monotonic() + max(timeout_s, 0.0)

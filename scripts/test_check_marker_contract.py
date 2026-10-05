@@ -44,6 +44,44 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(cmc.classify("DIAG,unknown,1", accepted, excluded))
 
 
+SOURCE = '''
+SC_MEM_ATTR bool isTierATextLine(const char* line) {
+  // CaptureLineTier::tagStartsWith(line, "DIAG,commented_out,")
+  if (CaptureLineTier::isTierALine(line)) { return true; }
+  return CaptureLineTier::tagStartsWith(line, "DIAG,win_gap,") ||
+         CaptureLineTier::tagStartsWith(line, "DIAG,launch_gate,");
+}
+
+SC_MEM_ATTR bool isCriticalTextLine(const char* line) {
+  return CaptureLineTier::tagStartsWith(line, "NOT_TIER_A,");
+}
+'''
+
+
+class SourceListTests(unittest.TestCase):
+    def test_source_prefixes_are_parsed_and_bounded_to_the_function(self) -> None:
+        self.assertEqual(cmc.source_tier_a_prefixes(SOURCE), ["DIAG,win_gap,", "DIAG,launch_gate,"])
+
+    def test_merged_list_classifies_a_source_only_family(self) -> None:
+        accepted, excluded = cmc.tier_a_prefixes(HEADER, SOURCE)
+        self.assertEqual(cmc.classify("DIAG,launch_gate,1", accepted, excluded), "DIAG,launch_gate,")
+        header_only, _ = cmc.tier_a_prefixes(HEADER, "")
+        self.assertIsNone(cmc.classify("DIAG,launch_gate,1", header_only, excluded))
+
+    def test_classifier_and_comment_lines_do_not_count_as_emission(self) -> None:
+        self.assertTrue(cmc._is_comment_or_classifier('  return tagStartsWith(line, "DIAG,x,");'))
+        self.assertTrue(cmc._is_comment_or_classifier(" *  Wire form: DIAG,x,<slot>."))
+        self.assertFalse(cmc._is_comment_or_classifier('  emitCapPrintf("#CAP,%lu,DIAG,x,%u\\r\\n", a, b);'))
+
+    def test_real_source_list_is_nonempty(self) -> None:
+        self.assertIn("DIAG,win_gap,", cmc.source_tier_a_prefixes())
+
+    def test_not_tier_a_hint_points_at_the_source_list_not_the_header(self) -> None:
+        accepted, excluded = cmc.tier_a_prefixes()
+        _ok, message = cmc.check_tag("DIAG,zz_no_such_marker_zz,", accepted, excluded)
+        self.assertIn("isTierATextLine", message)
+
+
 class ContractTests(unittest.TestCase):
     def test_fit_limit_matches_head_read(self) -> None:
         self.assertEqual(cmc.MAX_PREFIX_LEN, 31)

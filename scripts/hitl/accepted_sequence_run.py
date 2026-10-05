@@ -212,6 +212,11 @@ def run_accepted_sequence(request: RunRequest) -> int:
             print(f"[s4f13] upload attempt {attempt} failed (rc={proc.returncode}); tail:\n{tail}")
             time.sleep(request.upload_retry_delay_s)
         report["upload_attempts"] = attempts
+        if upload_ok:
+            from hitl.midi_io import wait_for_midi_ports
+
+            if not wait_for_midi_ports("Teensy", timeout_s=30.0):
+                print("[s4f13] WARNING: no Teensy MIDI input+output within 30 s of the flash")
         if not upload_ok:
             report["result"] = "UPLOAD_FAILED"
             report["session_log"] = None
