@@ -1516,6 +1516,14 @@ LOOP_COLD_MEM bool Loop::hasPendingWrapJournal() const {
 }
 
 #if defined(PIO_UNIT_TEST_NATIVE)
+bool Loop::queueLastCommittedPassForPublishForTest() {
+  if (lastCommittedPassId_ == kInvalidPassId) return false;
+  clearPendingSnapshotPublish();
+  pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  pendingSnapshotPublishBox_->queuedPassIds.push_back(lastCommittedPassId_);
+  return true;
+}
+
 const LoopSnapshotChangeSet* Loop::pendingWrapJournalChangesForTest() const {
   if (!pendingSnapshotPublishBox_ || pendingSnapshotPublishBox_->queuedWrapJournals.empty()) {
     return nullptr;

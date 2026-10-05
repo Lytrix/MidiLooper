@@ -841,6 +841,10 @@ struct Loop {
     storePublishedSnapshot(std::move(snapshot), revision, coveredPassRevision);
   }
   const LoopSnapshotChangeSet* pendingWrapJournalChangesForTest() const;
+  /// Queue the last committed pass for publication **without** a session exit, wrap journal or construction -- the
+  /// pending shape the owner's gate cannot start on a playing track (a live-overdub pass id awaiting its turn).
+  /// Selector fixtures only: no production path can build it without a live overdub session.
+  bool queueLastCommittedPassForPublishForTest();
   /// Fingerprint of the authoritative (committed) pass-change fragment
   /// progress. DEC-047 transaction fixture: it must be unchanged across a
   /// failed fragment and advance only after successful incorporation.

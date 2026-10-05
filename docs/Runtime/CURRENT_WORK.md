@@ -1,3 +1,14 @@
+**Follow-up (same day):** the *unstartable-active* shape is now pinned natively --
+`test_snapshot_owner_serves_a_startable_slot_behind_an_unstartable_active_loop` (active loop owes a queued pass id only,
+via the native-only seam `Loop::queueLastCommittedPassForPublishForTest`; the startable demoted slot is selected and
+served to a current root); both new fixtures fail against the previous selector (`60767dbe`), full native 2,800 / 7
+skipped / 2,793 succeeded / 0 failed, both capture builds SUCCESS, RAM1 variables 96,192 unchanged. **Device
+(`captures/s64-switch-12`, qualification build flashed with the fix, track 8, record slot 5, switch target slot 6):** the
+switch completed the whole launch chain on the new selector (`launch_requested → building_match → ready_owns_source →
+ready`, then `a=5` active) with no hold; but the target was already root-backed (`root=1`), so **the starved shape was
+not exercised on device** and nothing is claimed about the fix from it. The leg's own display oracle reported
+`ok=False` (`missing_bounded_window_disp_rows`) -- not investigated, not attributed.
+
 **2026-10-05 — `windowed-playback-generation`: the `Snapshot` owner's slot selector no longer gives the active loop absolute priority (firmware fix + native proof).**
 `Track::loopWithPendingSnapshotPublish` now ranks pending loops: 0 = construction already in flight, 1 = startable
 (session exit queued or wrap journal), 2 = other pending; lowest rank wins, ties go to the active loop, then slot order
