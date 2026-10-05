@@ -428,6 +428,21 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
                            "the named overrun row survives the timing-critical flush");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gap_overrunx,1"),
                             "and a longer subtag is not swept in");
+  // ...and the launch path's **gate row** with them, for the same reason and by its own boundary: the launch's decision
+  // is taken under transport (a queued switch is prepared by the off-clock `SlotProvision` turn while the track plays),
+  // so a non-Tier-A gate row is shed exactly where it is needed. Measured on device before this entry: the build carried
+  // the row and the capture delivered none.
+  TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,112456330,DIAG,launch_gate,t=7,s=4,x=launch_role_unavailable,len=18432"),
+                           "the launch gate row survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,launch_gatex,1"),
+                            "and a longer subtag is not swept in");
+  // ...and the publication owner's gate row beside it: the refusal it names is taken in the same regime (the Snapshot
+  // owner's turn runs while the track plays), so it needs the same survival, with its own exact boundary.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,112456330,DIAG,snap_gate,t=7,s=5,a=5,u=2,p=1,sep=0,fc=0,wj=0,hp=1,lr=0,vc=0,elig=0"),
+      "the snapshot gate row survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,snap_gatex,1"),
+                            "and a longer subtag is not swept in");
 }
 void test_rejected_critical_rows_are_replayed_at_stopped_flush() {
   sCaptureRing.capacity = 1;

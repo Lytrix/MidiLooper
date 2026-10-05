@@ -1,3 +1,61 @@
+**2026-10-05 — `windowed-playback-generation`: the `Snapshot` owner's gate row names the publication side, and its red-proved fixture pins the **active-loop preference** as the starvation mechanism; the device episode lost its target shape to a re-flash (firmware diagnostic + native proof + one episode).**
+`DIAG,snap_gate,t=<track>,s=<selected slot>,a=<active slot>,u=<units>,p=,sep=,fc=,wj=,hp=,lr=,vc=,rec=,play=,od=,step=,cl=,idle=,elig=`
+is emitted from the `Snapshot` branch of `Track::processDeferredIdleMaintenance`, **once per state change** per track,
+**qualification-only** (the renamed `SC_QUALIFICATION_ROWS_ENABLED` gate), Tier-A, and directly when USB has room -- the
+same seam, cadence rule and delivery rules as the launch row. `s` is the loop `Track::loopWithPendingSnapshotPublish`
+**selected**, printed beside the active slot, and `step`/`cl`/`idle`/`elig` are the turn's own verdicts, so the refusing
+gate is read off the row instead of inferred (the reserve gate is not a candidate: `kSnapshotIdleReserveYieldEnabled` is
+a `false` constexpr). **The mechanism is pinned natively with a red proof:**
+`test_snapshot_owner_selects_the_active_loop_and_starves_a_pending_slot` drives the **production turn** on a demoted
+non-active target (slot 2, accepted request, no root) with the active loop at slot **3** owing its own publication, and
+the target is never selected, its request never served, while the contrast track (active owing nothing) selects the
+pending slot -- and removing the active-loop preference fails it (`Expected 3 Was 2`, file restored byte-identically,
+`TrackSlotPool.cpp` sha256 `1bc5db42d3f2d9f5…`). *The first draft of that fixture did not discriminate* (its active slot
+was 0, so the walk's own order returned it too) and the mutation survived it -- recorded, not glossed. **The episode**
+(`captures/s64-switch-11`, exit 0) shows the row working and discriminating: owed **and** playing → `step=1,idle=1,elig=1`
+(the owner is served under transport, one loop at a time); nothing owed and playing → `step=0` (self-refused, harmless).
+Its own first row also says why it could not reproduce the starvation: the switch target was a **2-bar, root-backed**
+slot (`len=1536, root=1, avoid=0` → `x=launch_not_reached_occupied`), because two flashes rebuilt the runtime from the
+card and lane slot 4 is no longer the 24-bar body run 09 switched to (read-only observation
+`captures/s64-census-02`: track 7 slot 4 = 1536 ticks / 2 passes / root current; the only rootless long body, 18432
+ticks / 5 passes, is on track 4 slot 0). Run 10 aborted at the leg's own `clear failed` precondition (setup flake, no
+capture, no gesture beyond the clear). **A reading rule the run produced:** `s == a` with `p=0` is *not* starvation.
+Verified: `test_shared_capture_finalization` **61/61**, `test_capture_ring` Tier-A boundary pin, ownership suite
+**143/143**, full native **2,798 / 2,791 succeeded / 7 skipped / 0 failed**, both capture builds **SUCCESS** with RAM1
+byte-identical, marker audit 0 over the 31-byte limit. **Not claimed:** the device has not yet been observed starving a
+pending non-active slot (that needs a demoted rootless target on the driven track, i.e. a bench write outside the
+authorized range plus a reboot), no fix of the selector, no 6.4/6.5 or parity claim. Evidence:
+[`evidence/2026-10-05-snapshot-owner-gate/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-snapshot-owner-gate/EVIDENCE.md).
+
+**2026-10-05 — `windowed-playback-generation`: the launch path's gate row names its silent exits, and the switch leg's first failed transition is the **source publication**, not any guard the trace suspected (firmware diagnostic + one authorized episode).**
+A qualification-only row family (`DIAG,launch_gate`, one row per **state change**, with the target's identity) now names
+what `Track::preparePlaybackLaunchForSlot` and its caller decide: `x=launch_requested / launch_requested_match /
+launch_role_unavailable / launch_prewarm_refused / launch_build_owned_by_capture / launch_provision_refused /
+launch_not_reached_legacy / launch_not_reached_occupied`, with `len`, `prep`, `root`, `pend`, `role`, `own`, `dem`,
+`bld`, `cpm`, `avoid`, `cmt` and `req` (0 not attempted, 1 accepted, 2 refused). It is compiled only where the capture
+build also opens the rolling lane's gate (`SC_LAUNCH_GATE_ENABLED`), so every other image keeps its approved line and
+its behaviour; `Track::reportPlaybackLaunchGateRow` is the one place that reads the state, and nothing is admitted,
+refused or reordered by it. Two delivery rules were earned on device (the first two episodes carried the row in the
+firmware and delivered **none**): the tag is **Tier-A** (`isTierATextLine`), and the row is written **directly when USB
+has room** before falling back to the ring -- the save-completion receipt's own rule. The episode
+(`captures/s64-switch-09`, track 8 (lane 7), target lane slot 4, `len=18432`, NOTE_EDIT closed in the same capture)
+reads: `x=launch_requested ... root=0,role=1,own=0,dem=0,bld=0,avoid=1,cmt=1,req=1`, then `x=launch_requested_match,
+prep=1,dem=1,req=0`, and **no further state change** to the end of the capture. So the launch was reached, provisioning
+did not refuse, every role/build/pending guard was **open**, and the launch asked for its missing source **successfully**
+-- what never happened is that the **source publication became current** while the switch was pending. **The trace's four
+readings are corrected** (`evidence/2026-10-05-launch-path-trace/EVIDENCE.md`): `playback_build,snapshot` is the merged
+representation's rebuild path and not lane work; `RRQ,...terminal,none,committed` is the restore's terminal and says
+nothing about a root being current; the republish request precedes the prewarm guard; and another slot's `note_edit`
+activity cannot establish a target-slot role conflict -- the episode measured `role=1` on the target with the session
+still open. The remaining candidate mechanism is the publication owner's slot selector
+(`Track::loopWithPendingSnapshotPublish`: the active loop wins absolutely) with the idle snapshot turn's own gate, and
+naming which of the two refuses needs **one more row** (`SESSION_CAPTURE_SNAPSHOT_IDLE` is 0 here; the window's ring rows
+were shed: `RING,tier_a_evicted,3,first=132125944`, `RING,shed,56863`). Verified: focused suites **143/143** and
+**159/159**, full native **2,797 / 2,790 succeeded / 7 skipped / 0 failed**, both capture builds **SUCCESS** with RAM1
+byte-identical (`variables 96,192`; qualification `code 392,232 + padding 984`), marker audit 0 over the 31-byte limit,
+`git diff --check` clean. **Not claimed:** no fix of the publication priority, no 6.4/6.5, F-7/F-8/AC-8 or content-parity
+claim. Evidence: [`evidence/2026-10-05-launch-path-diagnostic/EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-launch-path-diagnostic/EVIDENCE.md).
+
 **2026-10-05 — `windowed-playback-generation`: the windowed leg drives a slot switch; the gesture is proven safe on
 hardware, and the missing demand is traced into the launch path's silent exits -- not to the root and not to the lane (host
 tooling + authorized device runs; no firmware change).**

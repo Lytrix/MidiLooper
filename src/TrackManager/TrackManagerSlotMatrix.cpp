@@ -395,14 +395,27 @@ FLASHMEM bool TrackManager::servicePendingSlotProvision() {
     const bool immutableLaunch = targetSlot != track.getActiveLoopIndex() &&
         track.getLoop(targetSlot).shouldAvoidFullVisualRebuild(track.getLoop(targetSlot).loopLengthTicks);
     if (immutableLaunch) {
-      if (!provisionSlotForSwitch(trackIndex, targetSlot)) return false;
+      if (!provisionSlotForSwitch(trackIndex, targetSlot)) {
+        // Refused (and reported as `#MEM_DENIED,op=slot_switch`); the launch gate row adds the target's identity,
+        // which the admission refusal does not carry.
+        track.reportPlaybackLaunchCallerExit(targetSlot, Track::PlaybackLaunchCallerExit::ProvisionRefused);
+        return false;
+      }
       didWork = track.preparePlaybackLaunchForSlot(targetSlot);
     } else if (MidiServiceDrain::slotProvisionNeeded(true, track.hasPlaybackOccupancyForSlot(targetSlot))) {
       if (!provisionSlotForSwitch(trackIndex, targetSlot)) {
+        track.reportPlaybackLaunchCallerExit(targetSlot, Track::PlaybackLaunchCallerExit::ProvisionRefused);
         return false;  // refused and reported; the switch stays pending for a later turn
       }
       track.ensurePlaybackMergedEventsForSlot(targetSlot);
+      // The immutable launch was never asked for -- the target is the active slot, or its runtime length is below the
+      // demotion bound (`length=0` was the 2-bar slot's answer in run 01) -- so the legacy merged path carried the
+      // switch. Reported because this branch used to be silent for a *filled* target like every other exit.
+      track.reportPlaybackLaunchCallerExit(targetSlot, Track::PlaybackLaunchCallerExit::NotReachedLegacy);
       didWork = true;
+    } else {
+      // Not an immutable launch and the legacy path already owes nothing: the launch path was never reached at all.
+      track.reportPlaybackLaunchCallerExit(targetSlot, Track::PlaybackLaunchCallerExit::NotReachedOccupied);
     }
     // The bounded hold, checked **whether or not** this turn could make progress: the case the bound exists
     // for is precisely a switch whose occupancy was taken and which still cannot commit (a demoted target

@@ -1,0 +1,52 @@
+{
+  "slice": "launch-path-diagnostic",
+  "date": "2026-10-05",
+  "change": "windowed-playback-generation",
+  "device_image": "teensy41-capture-serial-window-qualification",
+  "ram1_line": "variables 96,192 / code 392,232 + padding 984 / locals 34,880",
+  "captures": {
+    "episode_01": "captures/s64-switch-07",
+    "episode_02": "captures/s64-switch-08",
+    "episode_03_authoritative": "captures/s64-switch-09"
+  },
+  "leg": {
+    "command": "host_midi_hitl.py run --preset windowed_content_parity --track 8 --loop-slot 6 --midi-channel 8 --record-bars 24 --switch-target-slot 5 --serial-port /dev/cu.usbmodem154944801 --out-dir captures/s64-switch-09",
+    "track_lane_index": 7,
+    "leg_loop_slot": 5,
+    "switch_target_lane_slot": 4,
+    "operator_label": "Loop 5"
+  },
+  "rows": {
+    "switch_queued": "[139.357] Loop 5: Queued playback switch",
+    "edit_closed": "[140.207] MIDI Encoder: Long press - exited edit mode",
+    "hold": "[147.319] Slot switch hold slot_switch_hold_exceeded track=7 target=4 age=3074 ticks",
+    "transport_stopped": "[161.361]",
+    "gate": [
+      "#CAP,139443092,DIAG,launch_gate,t=7,s=4,x=launch_requested,len=18432,prep=0,root=0,pend=1,role=1,own=0,dem=0,bld=0,cpm=0,avoid=1,cmt=1,req=1",
+      "#CAP,139479670,DIAG,launch_gate,t=7,s=4,x=launch_requested_match,len=18432,prep=1,root=0,pend=1,role=1,own=0,dem=1,bld=0,cpm=0,avoid=1,cmt=1,req=0"
+    ],
+    "gate_row_count": 2,
+    "target_rows_after_request": 0
+  },
+  "reading": {
+    "launch_reached": true,
+    "provisioning_refused": false,
+    "source_request": "accepted (req=1)",
+    "role_build_pending_guards": "all open at the decision (role=1, own=0, dem=0, bld=0, cpm=0)",
+    "first_failed_transition": "the source publication never became current: root=0 and pend=1 hold from 139.48 s to the end of the capture, with no further gate row",
+    "excluded": [
+      "provisioning (#MEM_DENIED absent, no launch_provision_refused)",
+      "the edit session (role=1 at 139.443 s, and the hold continued after NOTE_EDIT was closed at 140.207 s)",
+      "the prewarm guard (exit is past TrackPlaybackWindowBuild.cpp:2167)",
+      "a positioned demand or another prepared owner (dem=0, own=0, bld=0, cpm=0)"
+    ],
+    "candidate_mechanism": "Track::loopWithPendingSnapshotPublish gives the active loop absolute priority over every other slot's pending publish, and the Snapshot owner's turn is bound to that loop (TrackDeferredMaintenance.cpp:1022)",
+    "needs_one_more_row": "which of the idle snapshot gates refuses (SESSION_CAPTURE_SNAPSHOT_IDLE is 0 in this build; the window's ring rows were shed anyway: RING,tier_a_evicted,3,first=132125944 and RING,shed,56863)"
+  },
+  "corrections_to_the_earlier_trace": [
+    "playback_build,snapshot is the merged representation's rebuild path, not immutable-lane work",
+    "RRQ terminal committed is the restore's completion, not a snapshot publication or currentness",
+    "the republish request precedes prewarmRollingViews() (TrackPlaybackWindowBuild.cpp:2151-2152 before :2167)",
+    "another slot's NOTE_EDIT activity cannot establish a target-slot role conflict (coverageRoleAvailable reads only the target's own runtime)"
+  ]
+}

@@ -20,6 +20,17 @@
 #include <cstddef>
 #include <cstdint>
 
+/// Are the **qualification-only diagnostic rows** (`DIAG,launch_gate`, `DIAG,snap_gate`) compiled at all? They are
+/// **qualification-only**: a capture build that also opens the rolling lane's gate, and a native suite, which is where
+/// their contracts are checked. Every other image -- the shared capture env, the plain firmware -- compiles neither the
+/// rows nor the state that bounds their cadence, so "preserve the default-off enablement" is a property of the build,
+/// not a promise about runtime flags.
+#if defined(PIO_UNIT_TEST_NATIVE) || (defined(SESSION_CAPTURE) && defined(PLAYBACK_WINDOW_ROLLING_QUALIFICATION))
+#define SC_QUALIFICATION_ROWS_ENABLED 1
+#else
+#define SC_QUALIFICATION_ROWS_ENABLED 0
+#endif
+
 #include "Utils/DiagnosticsTypes.h"
 
 #ifdef SESSION_CAPTURE
@@ -274,6 +285,57 @@ SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
  *  resort. */
 SC_MEM_ATTR void playbackBuildRow(uint8_t track, uint8_t slot, uint32_t loopLengthTicks, uint32_t revision,
                                   const char* path);
+/// The launch path's **gate row** (`DIAG,launch_gate`) — **qualification-only**: the emitter exists only when the
+/// capture build also opens the rolling lane's qualification gate, so every other image (the shared capture env
+/// included) carries neither the row nor its state. `#ifndef`-guarded so a native suite can substitute its own
+/// recorder (the `SC_PLAYBACK_BUILD_ROW` pattern).
+/** `SC_LAUNCH_GATE`'s emitter: one row per **state change** on a pending slot switch's launch path — never one per
+ *  turn. `Track::reportPlaybackLaunchGateRow` assembles the flags from the target slot's own state, so a call site
+ *  names the exit and (only where it alone knows them) the two republish facts.
+ *  Wire form: `DIAG,launch_gate,t=<track>,s=<slot>,x=<exit>,len=<loopLengthTicks>,prep=<0..6>,root=<0|1>,pend=<0|1>,`
+ *  `role=<0|1>,own=<0|1>,dem=<0|1>,bld=<0|1|2>,cpm=<0|1>,avoid=<0|1>,cmt=<0|1>,req=<0 none|1 accepted|2 refused>`.
+ *  The flag bits: 0 `publishedSnapshotIsCurrent`, 1 `hasPendingSnapshotPublish`, 2 `coverageRoleAvailable`,
+ *  3 `ownsCoverageSource`, 4 `pendingViewRequest_.active`, 5 `viewBuild.active()`, 6 `viewBuild.coverageOwned()`,
+ *  7 `completedPromisePendingJudgement`, 8 `shouldAvoidFullVisualRebuild`, 9 `hasCommittedPasses`,
+ *  10 republish attempted, 11 republish accepted. `bld` prints 5/6 as its three readable states (2 = coverage-owned).
+ *  `x` names the transition of **this turn** — the exit the call reached, or the branch its caller decided:
+ *  `launch_not_reached_legacy` / `launch_not_reached_occupied` (the caller never asked: not an immutable-launch
+ *  target, and whether the legacy path still owed work), `launch_provision_refused`, `launch_slot_not_eligible`,
+ *  `launch_no_runtime`, `launch_not_demoted_content`, `launch_dense_blocked_by_source`, `launch_fallback_dense`,
+ *  `launch_prewarm_refused`, `launch_build_owned_by_capture`, `launch_ready`, `launch_ready_owns_source`,
+ *  `launch_building_match`, `launch_requested_match`, `launch_pending_demand`, `launch_role_unavailable`,
+ *  `launch_requested`. `prep` is the target's `LaunchPreparation` ordinal (0 None, 1 Requested, 2 Building, 3 Ready,
+ *  4 Bound, 5 Fallback, 6 FallbackBound). `len` carries the **runtime** loop length the branch read — the value whose
+ *  absence (`length=0` vs `18432`) misclassified the earlier runs. The source-publication question is answered by
+ *  three fields: `root=1` the published root is current, `pend=1` a publish is in flight, `req` this turn's
+ *  `requestCommittedPassesRepublish` (0 not attempted, 1 accepted — the source is now owed, 2 refused — the silent
+ *  `queueAllCommittedPassesInto` failure). They are read **before** the exit, so a request that failed is named on the
+ *  row of the turn that follows it, even when a later guard is what returned. */
+SC_MEM_ATTR void launchGateRow(uint8_t track, uint8_t slot, const char* exit, uint16_t flags,
+                               uint32_t loopLengthTicks, uint8_t launchPreparation);
+/** The `Snapshot` deferred owner's **gate row** (`DIAG,snap_gate`) — the same qualification-only, state-change-emitted
+ *  instrument as `launch_gate`, one owner further upstream. It answers the question the launch gate could only raise:
+ *  **which loop the publication owner was about to work on, and which of its gates refused.**
+ *  Wire form: `DIAG,snap_gate,t=<track>,s=<selected slot>,a=<active slot>,u=<construction units this call>,p=<0|1>,`
+ *  `sep=<0|1>,fc=<0|1>,wj=<0|1>,hp=<0|1>,lr=<0|1>,vc=<0|1>,rec=<0|1>,play=<0|1>,od=<0|1>,step=<0|1>,cl=<0|1>,`
+ *  `idle=<0|1>,elig=<0|1>`.
+ *  `s` is the loop `Track::loopWithPendingSnapshotPublish` returned — **not** the track's active loop unless it won the
+ *  selector, and `a` is printed beside it so a reader sees that without knowing the code. `p`/`sep`/`fc`/`wj`/`hp` are
+ *  that loop's `hasPendingSnapshotPublish` / `pendingSnapshotSessionExitQueued` /
+ *  `hasInFlightSnapshotConstruction` / `hasPendingWrapJournal` / "a published root exists at all"; `lr` is
+ *  `liveRecordPastFirstBar`, `vc` is `visualCacheNeedsFirstPaint`; `rec`/`play`/`od` are the track's state at the turn;
+ *  `step` is `allowSnapshotIdleStep`, `cl` its four-term clause (`liveRecordPastFirstBar ||
+ *  hasInFlightSnapshotConstruction || hasWrapJournal || pendingSnapshotSessionExitQueued`), `idle` their conjunction
+ *  (`snapshotIdleAllowed`) and `elig` the composed `snapshotEligible`. The reserve/yield gate is **not** a candidate in
+ *  this build (`kSnapshotIdleReserveYieldEnabled` is a `false` constexpr), which is why it has no field: the refusal is
+ *  always one of the two printed above.
+ *  Flag bits are packed by the caller (`Track::reportSnapshotOwnerGateRow`) so the cadence can be compared without
+ *  formatting: 0 `hasPendingSnapshotPublish`, 1 `pendingSnapshotSessionExitQueued`, 2 `hasInFlightSnapshotConstruction`,
+ *  3 `hasPendingWrapJournal`, 4 `publishedSnapshot` non-null, 5 `liveRecordPastFirstBar`,
+ *  6 `visualCacheNeedsFirstPaint`, 7 `isRecording`, 8 `isPlaying`, 9 `isOverdubbing`, 10 `allowSnapshotIdleStep`,
+ *  11 the four-term clause, 12 `snapshotIdleAllowed`, 13 `snapshotEligible`. */
+SC_MEM_ATTR void snapshotGateRow(uint8_t track, uint8_t selectedSlot, uint8_t activeSlot, uint16_t verdicts,
+                                 uint8_t constructionUnits);
 /** Playback-order rebuild on the same tick as gather: DIAG,playback_order,<durationUs>,<eventCount> (Tier-A). */
 SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount);
 /** The deferred predecessor stop has frozen its interval and handed the live capture role
@@ -548,6 +610,33 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_PLAYBACK_BUILD_ROW(track, slot, loopLengthTicks, revision, path) \
   DebugSessionCapture::playbackBuildRow(track, slot, loopLengthTicks, revision, path)
 #endif
+/// The launch path's **gate row** — **qualification-only** (see `SC_QUALIFICATION_ROWS_ENABLED` above): the emitter exists only
+/// where that gate is open, and it expands to nothing everywhere else. `#ifndef`-guarded so a native suite can
+/// substitute its own recorder (the `SC_PLAYBACK_BUILD_ROW` pattern); the **cadence** that bounds the row is production
+/// state, not this macro's, so a substituted recorder observes exactly the rows the device would emit.
+#if SC_QUALIFICATION_ROWS_ENABLED
+#ifndef SC_LAUNCH_GATE
+#define SC_LAUNCH_GATE(track, slot, exit, flags, loopLengthTicks, launchPreparation) \
+  DebugSessionCapture::launchGateRow(track, slot, exit, flags, loopLengthTicks, launchPreparation)
+#endif
+#else
+#ifndef SC_LAUNCH_GATE
+#define SC_LAUNCH_GATE(track, slot, exit, flags, loopLengthTicks, launchPreparation) ((void)0)
+#endif
+#endif
+/// The `Snapshot` owner's **gate row** — the same **qualification-only** gate and the same `#ifndef` substitution seam as
+/// `SC_LAUNCH_GATE`, and the same rule: the **cadence** (which rows are owed) is production state
+/// (`Track::reportSnapshotOwnerGateRow`), so a substituted recorder observes exactly the rows the device would emit.
+#if SC_QUALIFICATION_ROWS_ENABLED
+#ifndef SC_SNAPSHOT_GATE
+#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits) \
+  DebugSessionCapture::snapshotGateRow(track, selectedSlot, activeSlot, verdicts, constructionUnits)
+#endif
+#else
+#ifndef SC_SNAPSHOT_GATE
+#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits) ((void)0)
+#endif
+#endif
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
 /// `#ifndef`-guarded so a native suite can substitute its own recorder (the `SC_ACCEPTED_LATCH` pattern).
@@ -708,6 +797,14 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #endif
 #ifndef SC_PLAYBACK_BUILD_ROW
 #define SC_PLAYBACK_BUILD_ROW(track, slot, loopLengthTicks, revision, path) ((void)0)
+#endif
+// The launch path's gate row is qualification-only; outside a qualification capture build there is no emitter at all.
+// `#ifndef`-guarded so a native suite can substitute its own recorder.
+#ifndef SC_LAUNCH_GATE
+#define SC_LAUNCH_GATE(track, slot, exit, flags, loopLengthTicks, launchPreparation) ((void)0)
+#endif
+#ifndef SC_SNAPSHOT_GATE
+#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits) ((void)0)
 #endif
 #ifndef SC_WINDOW_SERVICE_GAP
 #define SC_WINDOW_SERVICE_GAP(sample, phase, running, epoch) ((void)0)

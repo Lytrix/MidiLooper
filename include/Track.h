@@ -273,6 +273,9 @@ public:
   enum class RollingOutcome : uint8_t { Disabled, Excluded, Busy, Requested, Waiting, Ready, Serving, Expired, Rejected };
   RollingOutcome serviceRollingPlaybackWindow(PlaybackDeadlineClock clock);
   struct RollingResolution { RollingOutcome outcome; const RuntimePlaybackView* view; };
+  /// The **slot index of a loop this track owns** (`255` when it owns none of them), so a caller that holds a `Loop&`
+  /// -- the deferred owners do, through their selectors -- can name it on a row without duplicating the address walk.
+  uint8_t playbackSlotIndexForLoop(const Loop& loop) const;
   RollingResolution resolveRollingPlaybackWindow(uint8_t slot, uint32_t tick, PlaybackDeadlineClock clock);
   void cancelRollingPlaybackWindow(uint8_t slot);
   // Off-clock initial launch preparation; no absolute promise before binding.
@@ -280,6 +283,38 @@ public:
   bool playbackLaunchReadyForSlot(uint8_t slotIndex) const;
   bool bindPlaybackLaunchForSlot(uint8_t slotIndex, uint32_t tick);
   void cancelPlaybackLaunchForSlot(uint8_t slotIndex, bool includeBound = false);
+  /// windowed-playback-generation, the switch leg's launch-path diagnostic: the **launch gate row** for one target
+  /// slot and one exit token. Every exit of `preparePlaybackLaunchForSlot` (and the decisions its caller takes before
+  /// reaching it) used to return silently, which is why five device runs could not tell "nothing was owed"
+  /// from "the source was refused"; this reports the exit **once per state change** with the target's identity and the
+  /// inputs that decided it. The flags are assembled here, from this slot's own state, so a call site names the exit
+  /// and (only where it alone knows them) the two republish bits.
+  /// **Qualification-only**: `SC_LAUNCH_GATE` is the emitter seam and expands to nothing unless the capture build also
+  /// opens the rolling lane's gate. It observes; it never admits, refuses or reorders anything.
+  void reportPlaybackLaunchGateRow(uint8_t slotIndex, const char* exit, bool sourceRequestAttempted = false,
+                                   bool sourceRequestAccepted = false);
+  /// The three decisions `TrackManager::servicePendingSlotProvision` takes **before** reaching
+  /// `preparePlaybackLaunchForSlot`, named as an enum so the caller's exit tokens are owned by the reporting TU exactly
+  /// like every other exit's are. Not cosmetic: the tokens are DTCM string literals, and three of them added from the
+  /// slot matrix's translation unit crossed the linker's `ALIGN(1024)` edge and cost 4 KB of the RAM1 local allowance
+  /// (the pattern `.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc` records; that TU has no progmem carve-out).
+  enum class PlaybackLaunchCallerExit : uint8_t {
+    ProvisionRefused,  ///< the target's inbound occupancy was refused; the switch stays pending.
+    NotReachedLegacy,  ///< not an immutable-launch target (the active slot, or a runtime length below the bound).
+    NotReachedOccupied,///< not an immutable launch, and the legacy merged path already owed nothing: never reached.
+  };
+  void reportPlaybackLaunchCallerExit(uint8_t slotIndex, PlaybackLaunchCallerExit exit);
+  /// The `Snapshot` deferred owner's **gate row** (the same qualification-only instrument as the launch gate, one owner
+  /// upstream): which loop `loopWithPendingSnapshotPublish` selected, what that loop's own pending terms are, and which
+  /// of the turn's gates refused. It reports **once per state change** for this track, like the launch gate, and reads
+  /// only state that decided the turn -- it neither admits nor refuses anything.
+  /// `selectedSlot` is the slot the caller passed to `reportSnapshotOwnerGateRow` (the loop the selector returned, bound
+  /// beside `activeLoopIndex` so a reader sees whether the target slot ever got the turn); `stepAdmits` is
+  /// `allowSnapshotIdleStep`, `clauseAdmits` its four-term clause, `idleAllowed` their conjunction and `eligible` the
+  /// composed `snapshotEligible`.
+  void reportSnapshotOwnerGateRow(uint8_t selectedSlot, uint8_t activeSlot, uint8_t constructionUnits,
+                                  bool liveRecordPastFirstBar, bool visualCacheNeedsFirstPaint, bool stepAdmits,
+                                  bool clauseAdmits, bool idleAllowed, bool eligible);
   /// DEC-108 §13b / task 3.10 (the review's step 2): the **per-track outstanding-work budget** -- the sum of every
   /// active build's **full** admitted grains on this track. Full, not remaining, is deliberate: it is an **upper
   /// bound** on what is still owed (a served grain is charged again), which is the safe direction for a budget. A

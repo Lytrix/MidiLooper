@@ -1070,6 +1070,25 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
         !MidiServiceDrain::allowLoadedSnapshotHydration(
             false, StorageManager::isBootTitleLoadDrain(),
             StorageManager::bootInteractiveReady()));
+#if SC_QUALIFICATION_ROWS_ENABLED
+  // windowed-playback-generation, the switch leg's second diagnostic: the **which loop, and which gate** row. The launch
+  // gate proved the demoted target's on-demand republish request was accepted and then never serviced; this names the
+  // owner turn that decides it -- the loop `loopWithPendingSnapshotPublish` selected (printed beside the active slot, so
+  // a starving selector shows as `s != a`) and the two gates that can refuse it. Observes only: the booleans below are
+  // the ones the turn itself uses, read at the same instant, and nothing is recomputed or reordered.
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot) {
+    reportSnapshotOwnerGateRow(
+        playbackSlotIndexForLoop(snapshotLoop), activeLoopIndex, snapshotConstructionUnits, liveRecordPastFirstBar,
+        visualCacheNeedsFirstPaint,
+        MidiServiceDrain::allowSnapshotIdleStep(
+            isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
+            snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint, hasWrapJournal,
+            snapshotPending),
+        liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction() || hasWrapJournal ||
+            snapshotLoop.pendingSnapshotSessionExitQueued(),
+        snapshotIdleAllowed, snapshotEligible);
+  }
+#endif
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
       snapshotEligible) {
     const bool timingCritical =

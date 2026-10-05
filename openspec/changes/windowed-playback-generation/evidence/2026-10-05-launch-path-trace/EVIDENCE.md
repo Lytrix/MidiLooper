@@ -132,3 +132,30 @@ the switch was pending, the state run 05 first raised and that `coverageRoleAvai
    single measurement the silent exits cannot otherwise give. That is a firmware
    instrumentation change (its own execution packet, RAM1 check and stimulus), **not**
    started by this slice.
+
+## CORRECTED 2026-10-05 by the launch-path diagnostic (this trace's own next step 2)
+
+The diagnostic was built and one episode was run. Four readings in this file are **wrong**; they are corrected here
+rather than rewritten in place, because the two rows that supersede them are the evidence a reader needs.
+
+1. **`playback_build,snapshot` was never the lane.** `snapshot` is the **merged representation's** rebuild path
+   (`Loop`'s `sourceOrigin`, `RuntimeTimingTelemetry`'s path name) — a gather from a published root. The six rows of
+   finding 5 do **not** show the windowed lane serving a demoted slot, so finding 5's conclusion is withdrawn; lane
+   work is read from the lane's own rows (`grain_denied`, `build_complete`, …).
+2. **`RRQ,…,terminal,none,committed` is the restore's terminal**, not a publication: it says the load job finished and
+   nothing about a root being published or current. Finding 4's "the boot publication completed" is therefore not
+   established — the episode measured the opposite fact: the target is `root=0` at switch time.
+3. **The republish request precedes the prewarm guard** (`TrackPlaybackWindowBuild.cpp:2151-2152` before `:2167`), so a
+   refused or skipped request silently precedes every later exit; the exit table's rows are open in that order.
+4. **Another slot's `note_edit` activity cannot establish a target-slot role conflict**: `coverageRoleAvailable()`
+   reads only the target slot's own runtime. The leading hypothesis (finding 7) is withdrawn, and the episode measured
+   `role=1` on the target at the decision, with the loop-edit session still open.
+
+**What the episode found** (`evidence/2026-10-05-launch-path-diagnostic/EVIDENCE.md`):
+`DIAG,launch_gate,t=7,s=4,x=launch_requested,len=18432,root=0,role=1,own=0,dem=0,bld=0,avoid=1,cmt=1,req=1` followed by
+`x=launch_requested_match,prep=1,dem=1,req=0` and **no further state change** for the rest of the episode. The first
+failed transition is therefore **not** inside `preparePlaybackLaunchForSlot`: the launch asked for its source and the
+request was accepted, and the **source publication never became current** while the switch was pending. The remaining
+candidate mechanism is the publication owner's slot selector (`Track::loopWithPendingSnapshotPublish`, which gives the
+active loop absolute priority) together with the idle snapshot turn's own gate; naming which of the two refuses needs
+one more row (`SESSION_CAPTURE_SNAPSHOT_IDLE` is 0 in this build), not another episode.

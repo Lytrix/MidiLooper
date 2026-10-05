@@ -7,6 +7,7 @@
 #include <Arduino.h>
 #include <algorithm>
 #include <vector>
+#include <cstring>
 
 #include "ClockManager.h"
 #include "EditManager.h"
@@ -2140,16 +2141,33 @@ TRACK_COLD_MEM void Track::cancelPlaybackLaunchForSlot(uint8_t slotIndex, bool i
 }
 
 TRACK_COLD_MEM bool Track::preparePlaybackLaunchForSlot(uint8_t slotIndex) {
-  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || slotIndex == activeLoopIndex || !loopsAllocated()) return false;
+  // Every exit below used to return with no row at all, which is why five switch runs could not tell "nothing was
+  // owed" from "the source was refused" (F-16). Each one now names itself through `reportPlaybackLaunchGateRow`,
+  // **once per state change** of that target, and the flags that decided it travel with the name. Reporting observes:
+  // no guard, no order and no fallback below is changed by it.
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || slotIndex == activeLoopIndex || !loopsAllocated()) {
+    reportPlaybackLaunchGateRow(slotIndex, "launch_slot_not_eligible");
+    return false;
+  }
   auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
-  if (!runtime) return false;
+  if (!runtime) {
+    reportPlaybackLaunchGateRow(slotIndex, "launch_no_runtime");
+    return false;
+  }
   auto& loop = loopForSlot(slotIndex);
-  if (!loop.hasCommittedPasses() || !loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) return false;
+  if (!loop.hasCommittedPasses() || !loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) {
+    reportPlaybackLaunchGateRow(slotIndex, "launch_not_demoted_content");
+    return false;
+  }
   // A legacy pass-only restore has no root producer. Request only this launch
   // target through the existing on-demand publication owner, never bulk boot
   // hydration, and never restart a source job that already owns its progress.
-  const bool sourceRequested = !loop.publishedSnapshotIsCurrent() &&
-      !loop.hasPendingSnapshotPublish() && loop.requestCommittedPassesRepublish();
+  // The two guards are read separately so the row can say *why* nothing was requested: an already-current root
+  // (`root=1`), a publish already in flight (`pend=1`), or a request this turn that the owner refused (`req=2`).
+  const bool sourceCurrent = loop.publishedSnapshotIsCurrent();
+  const bool sourcePublishPending = loop.hasPendingSnapshotPublish();
+  const bool sourceRequestNeeded = !sourceCurrent && !sourcePublishPending;
+  const bool sourceRequested = sourceRequestNeeded && loop.requestCommittedPassesRepublish();
   if (runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Fallback) {
     if (isPlaybackMergedMidiEventsReadyForSlot(slotIndex)) return false;
     ensurePlaybackMergedEventsForSlot(slotIndex);
@@ -2157,35 +2175,62 @@ TRACK_COLD_MEM bool Track::preparePlaybackLaunchForSlot(uint8_t slotIndex) {
   }
   if (runtime->pendingViewRequest_.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch &&
       runtime->pendingViewRequest_.reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity) {
-    if (runtime->ownsCoverageSource()) return false;
+    if (runtime->ownsCoverageSource()) {
+      reportPlaybackLaunchGateRow(slotIndex, "launch_dense_blocked_by_source", sourceRequestNeeded, sourceRequested);
+      return false;
+    }
+    reportPlaybackLaunchGateRow(slotIndex, "launch_fallback_dense", sourceRequestNeeded, sourceRequested);
     cancelPlaybackLaunchForSlot(slotIndex);
     runtime->launchPreparation = LoopPlaybackRuntime::LaunchPreparation::Fallback;
     reportPlaybackViewMaintenanceRow(slotIndex, loop, "launch_legacy_dense");
     ensurePlaybackMergedEventsForSlot(slotIndex);
     return true; // Legacy dense material is never truncated or silently made unlaunchable.
   }
-  if (!runtime->prewarmRollingViews()) return false;
-  if (runtime->viewBuild.active() && !runtime->viewBuild.coverageOwned()) return false;
+  if (!runtime->prewarmRollingViews()) {
+    reportPlaybackLaunchGateRow(slotIndex, "launch_prewarm_refused", sourceRequestNeeded, sourceRequested);
+    return false;
+  }
+  if (runtime->viewBuild.active() && !runtime->viewBuild.coverageOwned()) {
+    reportPlaybackLaunchGateRow(slotIndex, "launch_build_owned_by_capture", sourceRequestNeeded, sourceRequested);
+    return false;
+  }
   const auto matches = [&](const PlaybackViewSourceIdentity& source, const PlaybackCoverageInterval& coverage) {
     return source.playbackRevision == loop.playbackRevision && source.sourceGeneration == playbackGeneration &&
         source.origin == PlaybackWindowOrigin::Committed && coverage.startPhase == 0 &&
         coverage.lengthTicks == 2 * Config::TICKS_PER_BAR && coverage.loopLengthTicks == loop.loopLengthTicks;
   };
-  if (runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Ready && playbackLaunchReadyForSlot(slotIndex)) return false;
-  if (runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Ready && runtime->ownsCoverageSource()) return false;
+  if (runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Ready && playbackLaunchReadyForSlot(slotIndex)) {
+    reportPlaybackLaunchGateRow(slotIndex, "launch_ready", sourceRequestNeeded, sourceRequested);
+    return false;
+  }
+  if (runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Ready && runtime->ownsCoverageSource()) {
+    reportPlaybackLaunchGateRow(slotIndex, "launch_ready_owns_source", sourceRequestNeeded, sourceRequested);
+    return false;
+  }
   if (runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Building) {
     const auto* set = runtime->viewSetIfPrewarmed();
     if (set->lifecycle.build < set->views.size() && matches(set->views[set->lifecycle.build].source,
-        set->views[set->lifecycle.build].coverage)) return false;
+        set->views[set->lifecycle.build].coverage)) {
+      reportPlaybackLaunchGateRow(slotIndex, "launch_building_match", sourceRequestNeeded, sourceRequested);
+      return false;
+    }
   }
   if (runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Requested) {
     const auto& request = runtime->frozenViewRequest.active ? runtime->frozenViewRequest : runtime->pendingViewRequest_;
-    if (request.active && matches(request.source, request.coverage)) return sourceRequested;
+    if (request.active && matches(request.source, request.coverage)) {
+      reportPlaybackLaunchGateRow(slotIndex, "launch_requested_match", sourceRequestNeeded, sourceRequested);
+      return sourceRequested;
+    }
   }
   if (runtime->launchPreparation != LoopPlaybackRuntime::LaunchPreparation::None)
     cancelPlaybackLaunchForSlot(slotIndex, true);
   // Do not overwrite an independent positioned demand or another prepared owner.
-  if (runtime->pendingViewRequest_.active || (!runtime->ownsCoverageSource() && !runtime->coverageRoleAvailable())) return false;
+  if (runtime->pendingViewRequest_.active || (!runtime->ownsCoverageSource() && !runtime->coverageRoleAvailable())) {
+    reportPlaybackLaunchGateRow(slotIndex, runtime->pendingViewRequest_.active ? "launch_pending_demand"
+                                                                              : "launch_role_unavailable",
+                                sourceRequestNeeded, sourceRequested);
+    return false;
+  }
   PlaybackViewPendingRequest request{};
   request.active = true;
   request.sourceKind = PlaybackViewPendingRequest::SourceKind::CommittedLaunch;
@@ -2197,6 +2242,7 @@ TRACK_COLD_MEM bool Track::preparePlaybackLaunchForSlot(uint8_t slotIndex) {
   request.work.admittedIntervalLength = request.coverage.lengthTicks;
   request.work.retainedEventBound = RuntimePlaybackViewConfig::kWindowAdmissionLimit;
   request.reason = PlaybackViewPendingReason::AwaitingSourceQualification;
+  reportPlaybackLaunchGateRow(slotIndex, "launch_requested", sourceRequestNeeded, sourceRequested);
   runtime->acquireWorkingSetLease(WorkingSetRole::PlaybackWindow);
   runtime->pendingViewRequest_ = request;
   runtime->launchPreparation = LoopPlaybackRuntime::LaunchPreparation::Requested;
@@ -3376,6 +3422,183 @@ TRACK_COLD_MEM void Track::reportPlaybackViewMaintenanceRow(uint8_t slotIndex, L
   (void)path;
   SC_PLAYBACK_BUILD_ROW(playbackRebuildTrackIndex(*this), playbackRebuildSlotIndex(*this, loop), loop.loopLengthTicks,
                         loop.playbackRevision, path);
+}
+
+namespace {
+
+/// The launch gate row's **last emitted state** for one (track, slot) target: the row is a *transition* record, so a
+/// pending switch that sits on the same exit for hundreds of deferred turns costs one row while every move is still
+/// named (a row per turn would evict the evidence it explains -- the reason `TelemetryCadence` exists for the readiness
+/// receipt). `DMAMEM` on the target is RAM2: off-clock state, read by the deferred-idle turn alone, never DTCM.
+struct LaunchGateLastState {
+  const char* exit = nullptr;
+  uint32_t loopLengthTicks = 0;
+  uint16_t flags = 0;
+  uint8_t launchPreparation = 0;
+};
+
+constexpr size_t kLaunchGateSlotCount = Config::NUM_TRACKS * Config::MAX_LOOPS_PER_TRACK;
+#if defined(__IMXRT1062__)
+DMAMEM LaunchGateLastState sLaunchGateLast[kLaunchGateSlotCount];
+#else
+LaunchGateLastState sLaunchGateLast[kLaunchGateSlotCount];
+#endif
+
+}  // namespace
+
+TRACK_COLD_MEM void Track::reportPlaybackLaunchGateRow(uint8_t slotIndex, const char* exit, bool sourceRequestAttempted,
+                                                      bool sourceRequestAccepted) {
+  // The launch path's **state-change record**, assembled from this target slot's own state so that every otherwise
+  // silent exit of `preparePlaybackLaunchForSlot` (and the decisions its caller takes before reaching it) names itself
+  // once. Nothing here admits, refuses, retires or reorders: the guards above have already decided, and this reads the
+  // same state they read. Everything below is **qualification-only** (`SC_QUALIFICATION_ROWS_ENABLED`: a capture build that
+  // opens the rolling lane's gate, or a native suite) -- the other images carry neither the row nor this table.
+#if SC_QUALIFICATION_ROWS_ENABLED
+  if (exit == nullptr || slotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  const Loop& loop = loopForSlot(slotIndex);
+  const auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  uint16_t flags = 0;
+  if (loop.publishedSnapshotIsCurrent()) flags |= 1u << 0;
+  if (loop.hasPendingSnapshotPublish()) flags |= 1u << 1;
+  if (loop.hasCommittedPasses()) flags |= 1u << 9;
+  if (loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) flags |= 1u << 8;
+  uint8_t preparation = 0;
+  if (runtime) {
+    if (runtime->coverageRoleAvailable()) flags |= 1u << 2;
+    if (runtime->ownsCoverageSource()) flags |= 1u << 3;
+    if (runtime->pendingViewRequest_.active) flags |= 1u << 4;
+    if (runtime->viewBuild.active()) flags |= 1u << 5;
+    if (runtime->viewBuild.coverageOwned()) flags |= 1u << 6;
+    if (runtime->completedPromisePendingJudgement) flags |= 1u << 7;
+    preparation = static_cast<uint8_t>(runtime->launchPreparation);
+  }
+  if (sourceRequestAttempted) flags |= 1u << 10;
+  if (sourceRequestAccepted) flags |= 1u << 11;
+  const uint8_t trackIndex = playbackRebuildTrackIndex(*this);
+  LaunchGateLastState& last = sLaunchGateLast[static_cast<size_t>(trackIndex) * Config::MAX_LOOPS_PER_TRACK + slotIndex];
+  // The token is compared by **content**, not by pointer: the same exit is named from more than one place, and literal
+  // merging is not a contract. Bounded, off-clock work on a deferred turn.
+  if (last.exit != nullptr && std::strcmp(last.exit, exit) == 0 && last.loopLengthTicks == loop.loopLengthTicks &&
+      last.flags == flags && last.launchPreparation == preparation) {
+    return;
+  }
+  last.exit = exit;
+  last.loopLengthTicks = loop.loopLengthTicks;
+  last.flags = flags;
+  last.launchPreparation = preparation;
+  SC_LAUNCH_GATE(trackIndex, slotIndex, exit, flags, loop.loopLengthTicks, preparation);
+#else
+  (void)slotIndex;
+  (void)exit;
+  (void)sourceRequestAttempted;
+  (void)sourceRequestAccepted;
+#endif
+}
+TRACK_COLD_MEM uint8_t Track::playbackSlotIndexForLoop(const Loop& loop) const {
+  return playbackRebuildSlotIndex(*this, loop);
+}
+namespace {
+
+/// The `Snapshot` owner's gate row, **last emitted state** per track: the packed verdicts, the selected and active slot
+/// and the unit allowance. The row is a *transition* record -- a Snapshot turn comes around every
+/// `kDeferredIdleOwnerCount` turns and a track's gate tuple rarely moves, so an unconditional row would be a flood --
+/// and comparing the packed tuple is exact, with no formatting. `DMAMEM` is RAM2: off-clock state read by the
+/// deferred-idle turn alone, never DTCM.
+struct SnapshotGateLastState {
+  uint16_t verdicts = 0;
+  uint8_t selectedSlot = 0;
+  uint8_t activeSlot = 0;
+  uint8_t constructionUnits = 0;
+  bool seen = false;
+};
+
+constexpr size_t kSnapshotGateTrackCount = Config::NUM_TRACKS;
+#if defined(__IMXRT1062__)
+DMAMEM SnapshotGateLastState sSnapshotGateLast[kSnapshotGateTrackCount];
+#else
+SnapshotGateLastState sSnapshotGateLast[kSnapshotGateTrackCount];
+#endif
+
+/// The row's bit order, in one place so the caller and the emitter cannot drift (the emitter prints one named field per
+/// bit; the list is in the capture header's declaration).
+uint16_t snapshotGateVerdicts(bool hasPendingPublish, bool sessionExitQueued, bool inFlightConstruction,
+                              bool wrapJournal, bool havePublishedSnapshot, bool liveRecordPastFirstBar,
+                              bool visualCacheNeedsFirstPaint, bool recording, bool playing, bool overdubbing,
+                              bool stepAdmits, bool clauseAdmits, bool idleAllowed, bool eligible) {
+  uint16_t bits = 0;
+  if (hasPendingPublish) bits |= 1u << 0;
+  if (sessionExitQueued) bits |= 1u << 1;
+  if (inFlightConstruction) bits |= 1u << 2;
+  if (wrapJournal) bits |= 1u << 3;
+  if (havePublishedSnapshot) bits |= 1u << 4;
+  if (liveRecordPastFirstBar) bits |= 1u << 5;
+  if (visualCacheNeedsFirstPaint) bits |= 1u << 6;
+  if (recording) bits |= 1u << 7;
+  if (playing) bits |= 1u << 8;
+  if (overdubbing) bits |= 1u << 9;
+  if (stepAdmits) bits |= 1u << 10;
+  if (clauseAdmits) bits |= 1u << 11;
+  if (idleAllowed) bits |= 1u << 12;
+  if (eligible) bits |= 1u << 13;
+  return bits;
+}
+
+}  // namespace
+
+TRACK_COLD_MEM void Track::reportSnapshotOwnerGateRow(uint8_t selectedSlot, uint8_t activeSlot,
+                                                      uint8_t constructionUnits, bool liveRecordPastFirstBar,
+                                                      bool visualCacheNeedsFirstPaint, bool stepAdmits, bool clauseAdmits,
+                                                      bool idleAllowed, bool eligible) {
+  // The selected loop's own pending terms are read here rather than passed, so the call site cannot disagree with the
+  // loop it named. Everything below is **qualification-only** (`SC_QUALIFICATION_ROWS_ENABLED`); other images carry
+  // neither the row nor this table.
+#if SC_QUALIFICATION_ROWS_ENABLED
+  const uint8_t trackIndex = playbackRebuildTrackIndex(*this);
+  if (trackIndex >= kSnapshotGateTrackCount || selectedSlot >= Config::MAX_LOOPS_PER_TRACK) return;
+  const Loop& selected = loopForSlot(selectedSlot);
+  const uint16_t verdicts =
+      snapshotGateVerdicts(selected.hasPendingSnapshotPublish(), selected.pendingSnapshotSessionExitQueued(),
+                           selected.hasInFlightSnapshotConstruction(), selected.hasPendingWrapJournal(),
+                           static_cast<bool>(selected.publishedSnapshot()), liveRecordPastFirstBar,
+                           visualCacheNeedsFirstPaint, isRecording(), isPlaying(), isOverdubbing(), stepAdmits,
+                           clauseAdmits, idleAllowed, eligible);
+  SnapshotGateLastState& last = sSnapshotGateLast[trackIndex];
+  if (last.seen && last.verdicts == verdicts && last.selectedSlot == selectedSlot && last.activeSlot == activeSlot &&
+      last.constructionUnits == constructionUnits) {
+    return;
+  }
+  last.verdicts = verdicts;
+  last.selectedSlot = selectedSlot;
+  last.activeSlot = activeSlot;
+  last.constructionUnits = constructionUnits;
+  last.seen = true;
+  SC_SNAPSHOT_GATE(trackIndex, selectedSlot, activeSlot, verdicts, constructionUnits);
+#else
+  (void)selectedSlot;
+  (void)activeSlot;
+  (void)constructionUnits;
+  (void)liveRecordPastFirstBar;
+  (void)visualCacheNeedsFirstPaint;
+  (void)stepAdmits;
+  (void)clauseAdmits;
+  (void)idleAllowed;
+  (void)eligible;
+#endif
+}
+TRACK_COLD_MEM void Track::reportPlaybackLaunchCallerExit(uint8_t slotIndex, PlaybackLaunchCallerExit exit) {
+  // The caller's three exits, named here rather than at the call site: this TU's string literals are routed to FLASH by
+  // the linker script, while the slot matrix's are not -- three tokens added there were enough to cross the 4 KB
+  // `ALIGN(1024)` edge (measured: `variables` 96,192 -> 100,288 with the ITCM `code` figure byte-identical). An if/else
+  // chain and no table, for the `.data` reason the readiness names below record.
+  if (exit == PlaybackLaunchCallerExit::ProvisionRefused) {
+    reportPlaybackLaunchGateRow(slotIndex, "launch_provision_refused");
+    return;
+  }
+  if (exit == PlaybackLaunchCallerExit::NotReachedLegacy) {
+    reportPlaybackLaunchGateRow(slotIndex, "launch_not_reached_legacy");
+    return;
+  }
+  reportPlaybackLaunchGateRow(slotIndex, "launch_not_reached_occupied");
 }
 TRACK_COLD_MEM const char* Track::playbackWindowReadinessLabel(PlaybackWindowReadiness readiness) {
   // No name table and no `switch`: either is `.data` on this target (the RAM1 rule's finding), and this TU's string

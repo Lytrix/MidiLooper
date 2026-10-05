@@ -114,6 +114,41 @@ inline size_t countOf(const char* path) {
 }  // namespace PlaybackPathRows
 #define SC_PLAYBACK_BUILD_ROW(track, slot, loopLengthTicks, revision, path) \
   PlaybackPathRows::record(track, slot, loopLengthTicks, revision, path)
+// windowed-playback-generation (the switch leg's launch-path diagnostic): the **gate row**, through the same
+// substitutable-seam pattern. The row is qualification-only by construction, so without this recorder a claim about it
+// could not be checked anywhere -- and what is checked here is the row's own contract: it names the exit, it carries
+// the target's identity and the inputs that decided it, and it is emitted on a **state change** rather than on every
+// turn (`per turn` would be the flood that evicts the evidence it explains).
+namespace LaunchGateRows {
+struct Row {
+  uint8_t track = 0;
+  uint8_t slot = 0;
+  const char* exit = nullptr;
+  uint16_t flags = 0;
+  uint32_t loopLengthTicks = 0;
+  uint8_t preparation = 0;
+};
+inline Row rows[64];
+inline size_t count = 0;
+inline void reset() { count = 0; }
+inline void record(uint8_t track, uint8_t slot, const char* exit, uint16_t flags, uint32_t loopLengthTicks,
+                   uint8_t preparation) {
+  if (count < sizeof(rows) / sizeof(rows[0])) {
+    rows[count] = Row{track, slot, exit, flags, loopLengthTicks, preparation};
+  }
+  ++count;
+}
+inline const Row* last() { return count == 0 ? nullptr : &rows[count - 1]; }
+inline size_t countOf(const char* exit) {
+  size_t seen = 0;
+  for (size_t i = 0; i < count && i < sizeof(rows) / sizeof(rows[0]); ++i) {
+    if (rows[i].exit != nullptr && strcmp(rows[i].exit, exit) == 0) ++seen;
+  }
+  return seen;
+}
+}  // namespace LaunchGateRows
+#define SC_LAUNCH_GATE(track, slot, exit, flags, loopLengthTicks, launchPreparation) \
+  LaunchGateRows::record(track, slot, exit, flags, loopLengthTicks, launchPreparation)
 //
 // **S3 gate — `runtime-working-set-ownership` acceptance suite.** The stage's unit contracts live in
 // `test_working_set_lease` (the vocabulary) and `test_continuous_capture` (the per-owner-kind matrix
@@ -179,12 +214,12 @@ void resetSlotChangeObservation() { slotChangeObservation() = SlotChangeObservat
 // boundaries already get above.
 #define HARNESS_OBSERVABLE_TRACK_SELECT
 // S4b.1 check 7 (cleared target): driving a **cleared** slot through `Track::clear()` reaches the
+// S4b.1 check 7 (cleared target): driving a **cleared** slot through `Track::clear()` reaches the
 // note-edit revert the clear performs. That revert is a note-edit neighbour, so it stays observable here
 // rather than failing closed; nothing in this suite asserts on it.
 #define HARNESS_OBSERVABLE_SLOT_CLEAR
 // The production **record-stop commit** route. One fixture drives `TrackManager::handleTransportStop()` and
 // asserts the take commits with nonzero length and content -- the device failure this encodes is a successor
-// whose take finalised at length 0 while a start marker made it look successful. That route's implementations
 // live in the two TUs included below, so the four stubs that shadow them are lifted by this macro. It changes
 // nothing for the fixtures above: none of them reached `handleTransportStop`, `stopRecordingToStopped`,
 // `stopRecording` or `commitCaptureForStop`, all of which were fail-closed until now.
@@ -8910,6 +8945,112 @@ void rollingTestTick(Track& track, uint64_t tick, bool service = true) {
   trackManager.updateAllTracks(static_cast<uint32_t>(tick));
 }
 
+/// **The launch-path diagnostic's own contract** (windowed-playback-generation, the switch leg's F-16). Five device runs
+/// could not tell "nothing was owed" from "the source was refused", because every exit of
+/// `Track::preparePlaybackLaunchForSlot` returned without a row. This drives the production turn on the shape run 06
+/// held -- a demoted 24-bar target whose restore completed without installing a root -- and then asks, directly, the
+/// exits the turn cannot be made to reach on demand. What is pinned is **the row**: its exit's name, the target's
+/// identity, the inputs that decided it, and the **state-change** cadence (a row per turn would evict the evidence it
+/// explains, which is the failure mode the evidence practice already recorded for `win_gap`).
+void test_launch_gate_rows_name_the_silent_exits_once_per_state_change() {
+  constexpr uint16_t kRootCurrent = 1u << 0;
+  constexpr uint16_t kPublishPending = 1u << 1;
+  constexpr uint16_t kDemandLive = 1u << 4;
+  constexpr uint16_t kAvoidFullRebuild = 1u << 8;
+  constexpr uint16_t kCommittedPasses = 1u << 9;
+  constexpr uint16_t kRequestAttempted = 1u << 10;
+  constexpr uint16_t kRequestAccepted = 1u << 11;
+  LoopEventStore::initPool();
+  auto& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  commitBarSpacedPassIntoTrackSlot(track, 2, 24);  // 24 bars: above the demotion bound, so the launch is the vehicle
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  track.forceSetState(TRACK_PLAYING);
+  auto& target = track.getLoop(2);
+  for (unsigned i = 0; i < 20000 && target.hasPendingSnapshotPublish(); ++i)
+    target.stepPendingSnapshotPublish(2, true, 0);
+  // The pass-only restore run 06's target showed: committed passes, **no** root, and no request in flight.
+  target.storePublishedSnapshotForTest({}, 0);
+  TEST_ASSERT_FALSE(target.publishedSnapshotIsCurrent());
+  LaunchGateRows::reset();
+  trackManager.requestSlotSwitch(0, 2, SlotQuantization::LoopEnd, 100);
+  TEST_ASSERT_TRUE(trackManager.servicePendingSlotProvision());
+  // The turn's own decision, named -- this is the row the switch leg reads instead of inferring a cause from the
+  // absence of every other family.
+  TEST_ASSERT_EQUAL_UINT32(1, LaunchGateRows::count);
+  TEST_ASSERT_EQUAL_STRING("launch_requested", LaunchGateRows::last()->exit);
+  TEST_ASSERT_EQUAL_UINT8(0, LaunchGateRows::last()->track);
+  TEST_ASSERT_EQUAL_UINT8(2, LaunchGateRows::last()->slot);
+  TEST_ASSERT_EQUAL_UINT32(24 * 768, LaunchGateRows::last()->loopLengthTicks);
+  TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kRequestAttempted) != 0);
+  TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kRequestAccepted) != 0);
+  TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kCommittedPasses) != 0);
+  TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kAvoidFullRebuild) != 0);
+  TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kRootCurrent) == 0);     // no current root: the source was owed
+  // The flags are the state **at the exit**, so `pend` here is the request this very turn just queued -- which is what
+  // makes `req=1` plus `pend=1` the row's way of saying "requested, not yet published". A request that was already in
+  // flight instead shows `req=0` with the same `pend=1`: the pair, not either bit, is the reading.
+  TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kPublishPending) != 0);
+  // The state moved (preparation `Requested`, a demand live), so the next turn is a new row -- and the two after it,
+  // holding that same state, are not: the cadence rule, measured rather than asserted by construction.
+  trackManager.servicePendingSlotProvision();
+  TEST_ASSERT_EQUAL_UINT32(2, LaunchGateRows::count);
+  TEST_ASSERT_EQUAL_STRING("launch_requested_match", LaunchGateRows::last()->exit);
+  TEST_ASSERT_EQUAL_UINT8(1, LaunchGateRows::last()->preparation);
+  TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kDemandLive) != 0);
+  TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kRequestAttempted) == 0);
+  // A third and fourth identical turn are **not** state changes: the row is a transition record, not a heartbeat.
+  trackManager.servicePendingSlotProvision();
+  trackManager.servicePendingSlotProvision();
+  TEST_ASSERT_EQUAL_UINT32(2, LaunchGateRows::count);
+  TEST_ASSERT_EQUAL_STRING("launch_requested_match", LaunchGateRows::last()->exit);
+  // The source lands. Its outcome was invisible before (`RRQ,…committed` is the **restore's** terminal, not a
+  // publication): here the arrival is a state change of this row's own flags.
+  for (unsigned i = 0; i < 20000 && !target.publishedSnapshotIsCurrent(); ++i) {
+    target.stepPendingSnapshotPublish(2, true, 0);
+    trackManager.servicePendingSlotProvision();
+  }
+  TEST_ASSERT_TRUE(target.publishedSnapshotIsCurrent());
+  bool sawCurrentRoot = false;
+  for (size_t i = 0; i < LaunchGateRows::count && i < sizeof(LaunchGateRows::rows) / sizeof(LaunchGateRows::rows[0]); ++i) {
+    if (LaunchGateRows::rows[i].slot == 2 && (LaunchGateRows::rows[i].flags & kRootCurrent) != 0) sawCurrentRoot = true;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(sawCurrentRoot, "the source's arrival must be visible as a state change of the gate row");
+  // The exits the production turn cannot be asked for on demand, reached directly. Each names itself and carries the
+  // target: none of them returned a row of any family before this.
+  LaunchGateRows::reset();
+  TEST_ASSERT_FALSE(track.preparePlaybackLaunchForSlot(track.getActiveLoopIndex()));
+  TEST_ASSERT_EQUAL_STRING("launch_slot_not_eligible", LaunchGateRows::last()->exit);
+  const uint8_t emptySlot = static_cast<uint8_t>(Config::MAX_LOOPS_PER_TRACK - 1);
+  TEST_ASSERT_FALSE(track.preparePlaybackLaunchForSlot(emptySlot));
+  TEST_ASSERT_EQUAL_STRING("launch_no_runtime", LaunchGateRows::last()->exit);
+  TEST_ASSERT_EQUAL_UINT8(emptySlot, LaunchGateRows::last()->slot);
+  // The caller's own exit first, because it is also what gives the short target its occupancy: a switch to a 3-bar
+  // filled slot never asks for a launch, and now says so. Which of the two caller tokens it is depends on whether that
+  // occupancy was already taken -- both mean "the launch path was never reached" to a reader, so either satisfies the
+  // assertion while the row's `len` carries the discriminator.
+  commitBarSpacedPassIntoTrackSlot(track, 1, 3);  // 3 bars: below the demotion bound, so no window is owed
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  LaunchGateRows::reset();
+  trackManager.requestSlotSwitch(0, 1, SlotQuantization::LoopEnd, 200);
+  trackManager.servicePendingSlotProvision();
+  TEST_ASSERT_NOT_NULL(LaunchGateRows::last());
+  const char* callerExit = LaunchGateRows::last()->exit;
+  TEST_ASSERT_TRUE_MESSAGE(strcmp(callerExit, "launch_not_reached_legacy") == 0 ||
+                               strcmp(callerExit, "launch_not_reached_occupied") == 0,
+      "a short filled target must name the launch path as not reached");
+  TEST_ASSERT_EQUAL_UINT8(1, LaunchGateRows::last()->slot);
+  TEST_ASSERT_EQUAL_UINT32(3 * 768, LaunchGateRows::last()->loopLengthTicks);
+  // With the occupancy that turn took, the launch's own refusal can be asked for directly: content present, and a
+  // length below the demotion bound.
+  LaunchGateRows::reset();
+  TEST_ASSERT_FALSE(track.preparePlaybackLaunchForSlot(1));
+  TEST_ASSERT_EQUAL_STRING("launch_not_demoted_content", LaunchGateRows::last()->exit);
+  TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kCommittedPasses) != 0);
+  TEST_ASSERT_TRUE((LaunchGateRows::last()->flags & kAvoidFullRebuild) == 0);
+}
+
 void test_rolling_request_worker_handoff_emission_keeps_fallback_and_exact_notes() {
   assert_s4b_7_a_demoted_target_through_the_turn(true);
   auto& track = trackManager.getTrack(0);
@@ -9830,6 +9971,7 @@ int main() {
   RUN_TEST(test_rolling_path_reuses_the_view_slot_after_a_refused_completion);
   RUN_TEST(test_rolling_path_cancellation_between_every_preparation_grain_recovers);
   RUN_TEST(test_rootless_restored_launch_requests_its_source_once_and_becomes_ready);
+  RUN_TEST(test_launch_gate_rows_name_the_silent_exits_once_per_state_change);
   RUN_TEST(test_immutable_launch_source_wait_does_not_hide_a_later_track);
   RUN_TEST(test_immutable_launch_sibling_interference_is_a_temporary_wait);
   RUN_TEST(test_immutable_launch_cancellation_drains_every_preparation_phase);

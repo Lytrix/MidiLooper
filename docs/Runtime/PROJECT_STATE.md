@@ -6076,3 +6076,43 @@ OpenSpec and diff checks pass. No upload/commit/live activation. Next: bounded
 count/fill/order binding preserving canonical ties, candidate lifecycle/retirement,
 and pending-only retry service; phase/clock, boundary and device timing remain open.
 Evidence: [bounded source cursor](../../openspec/changes/windowed-playback-generation/evidence/requester-retry-integration/SOURCE_CURSOR.md).
+
+**2026-10-05 — `windowed-playback-generation`: the switch leg's first failed transition is named — the launch asks for its source successfully and the **publication** never becomes current (firmware diagnostic + one authorized episode; RAM1 byte-identical).**
+The launch path's every exit used to return without a row, which is why five earlier runs could not tell "nothing was
+owed" from "the source was refused" (F-16). A qualification-only row (`DIAG,launch_gate`, one row per **state change**,
+carrying the target's identity and the deciding inputs) now names them, and the authorized episode
+(`captures/s64-switch-09`, track 8 lane 7, target lane slot 4, `len=18432`, NOTE_EDIT closed before the switch's
+preparation continued) reads `x=launch_requested,root=0,role=1,own=0,dem=0,bld=0,avoid=1,cmt=1,req=1` followed by
+`x=launch_requested_match,prep=1,dem=1,req=0` and **no further change**: the launch was reached, provisioning did not
+refuse, every role/build/pending guard was open, and the republish request was **accepted** — the source publication is
+what never became current while the switch stayed pending. The four readings of the preceding trace are corrected
+(`playback_build,snapshot` is the merged representation's path, not lane work; the `RRQ` terminal is the restore's
+completion, not a publication; the republish request precedes the prewarm guard; another slot's `note_edit` activity
+cannot establish a target-slot role conflict — measured `role=1` on the target). The remaining candidate mechanism is
+the publication owner's slot selector (`Track::loopWithPendingSnapshotPublish` prefers the active loop absolutely) with
+the idle snapshot turn's own gate; one more row (`SESSION_CAPTURE_SNAPSHOT_IDLE` is 0 here) names which. Verified:
+focused **143/143** and **159/159**, full native **2,797 / 2,790 succeeded / 7 skipped / 0 failed**, both capture builds
+**SUCCESS** with RAM1 unchanged (`variables 96,192`), marker audit clean; two device episodes before the authoritative
+one are recorded with what they failed at (post-flash MIDI enumeration; a bad capture-ring head delivering no rows).
+No fix of the publication priority, no upload claim beyond the qualification image, and no 6.4/6.5 or content-parity
+claim. Evidence: [`evidence/2026-10-05-launch-path-diagnostic/`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-launch-path-diagnostic/EVIDENCE.md).
+
+**2026-10-05 — `windowed-playback-generation`: the publication owner's gate row names which loop it serves and which gate refuses; the starvation mechanism is pinned natively with a red proof, and the device episode lost its target shape to a re-flash (firmware diagnostic + one episode).**
+`DIAG,snap_gate` (`t`,`s` = the *selected* slot, `a` = the active slot, `u`, then `p,sep,fc,wj,hp,lr,vc,rec,play,od` and
+the turn's own `step,cl,idle,elig` verdicts) is emitted from the `Snapshot` branch of
+`Track::processDeferredIdleMaintenance` once per state change, qualification-only, Tier-A and directly when USB has room.
+**The mechanism is proven natively, not argued:** `test_snapshot_owner_selects_the_active_loop_and_starves_a_pending_slot`
+drives the production turn on a demoted non-active target (accepted republish request, no root) with the active loop at a
+**higher** slot index owing its own publication — the target is never selected and its request never served, while the
+contrast track (active owing nothing) selects the pending slot; removing the active-loop preference fails the fixture
+(`Expected 3 Was 2`, `TrackSlotPool.cpp` restored byte-identically, sha256 `1bc5db42d3f2d9f5…`). The first draft did
+**not** discriminate and the mutation survived it — recorded. The episode (`captures/s64-switch-11`, exit 0) shows the
+row working and discriminating on hardware (owed + playing → `step=1,idle=1,elig=1`; nothing owed + playing → `step=0`,
+harmless), and its own first row explains why the starvation was not reproduced there: the switch target is now a
+**2-bar root-backed** slot (`x=launch_not_reached_occupied, len=1536, root=1, avoid=0`), the bench having been rebuilt
+from the card by two flashes (read-only observation `captures/s64-census-02`: track 7 slot 4 = 1536/2 passes/root
+current; the only rootless long body — 18432 ticks, 5 passes — is on track 4 slot 0). Verified: focused suites
+**61/61**, **143/143** and the Tier-A boundary pin; full native **2,798 / 2,791 succeeded / 7 skipped / 0 failed**; both
+capture builds SUCCESS with RAM1 byte-identical; marker audit clean. **Not claimed:** device-level starvation (it needs
+a demoted rootless target on the driven track — a bench write plus a reboot), no fix of the selector, no 6.4/6.5 or
+parity claim. Evidence: [`evidence/2026-10-05-snapshot-owner-gate/`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-snapshot-owner-gate/EVIDENCE.md).

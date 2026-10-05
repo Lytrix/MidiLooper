@@ -301,8 +301,14 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
   // silently. Without this the one row that reports an exceedance was the one dropped where exceedances happen. The
   // boundary is exact and pinned in `test_capture_ring`, the suite that asks **this** predicate (the header's
   // `CaptureLineTier::isTierALine` cannot see this family by construction -- see the note above).
+  // ...and so are the two **qualification-only gate rows**: a launch's decision is taken while the track plays, and the
+  // snapshot owner's refusal is taken in the same regime -- the budget-8 shed path is exactly where both are needed.
+  // Measured: the first device runs of the launch row carried it in the firmware and delivered **none** of them.
   return CaptureLineTier::tagStartsWith(line, "DIAG,win_gap,") ||
-         CaptureLineTier::tagStartsWith(line, "DIAG,win_gap_overrun,");
+         CaptureLineTier::tagStartsWith(line, "DIAG,win_gap_overrun,") ||
+         CaptureLineTier::tagStartsWith(line, "DIAG,launch_gate,") ||
+         CaptureLineTier::tagStartsWith(line, "DIAG,snap_gate,");
+         CaptureLineTier::tagStartsWith(line, "DIAG,launch_gate,");
 }
 
 SC_MEM_ATTR bool isCriticalTextLine(const char* line) {
@@ -1369,6 +1375,98 @@ SC_MEM_ATTR void playbackBuildRow(uint8_t track, uint8_t slot, uint32_t loopLeng
   // seam existed; `windowStartTick` and `rebuildCount` stay 0 because the lane does not track them.
   playbackRebuild(0, loopLengthTicks, 0, revision, track, slot, 0, path);
 }
+
+#if SC_QUALIFICATION_ROWS_ENABLED
+namespace {
+
+/// The row's flag bits. 10 and 11 are the ones a **call site** supplies through
+/// `Track::reportPlaybackLaunchGateRow`'s two booleans: this turn attempted `requestCommittedPassesRepublish`, and
+/// whether that request was accepted -- `queueAllCommittedPassesInto` returning false is the silent failure that made
+/// five device runs indistinguishable from "nothing was owed".
+constexpr uint16_t kLaunchGateRequestAttempted = 1u << 10;
+constexpr uint16_t kLaunchGateRequestAccepted = 1u << 11;
+
+/// One `0|1` field for a flag bit, so the row reads without a legend.
+unsigned launchGateBit(uint16_t flags, unsigned bit) {
+  return (flags & static_cast<uint16_t>(1u << bit)) != 0 ? 1u : 0u;
+}
+
+/// `req` as the wire's three states: 0 nothing attempted, 1 accepted (the source is now owed), 2 refused.
+unsigned launchGateRequestCode(uint16_t flags) {
+  if ((flags & kLaunchGateRequestAttempted) == 0) return 0u;
+  return (flags & kLaunchGateRequestAccepted) != 0 ? 1u : 2u;
+}
+
+}  // namespace
+
+SC_MEM_ATTR void launchGateRow(uint8_t track, uint8_t slot, const char* exit, uint16_t flags,
+                              uint32_t loopLengthTicks, uint8_t launchPreparation) {
+  // The **row** and nothing else: which rows are owed -- the cadence -- is the caller's own state
+  // (`Track::reportPlaybackLaunchGateRow`), so the bound is production logic a native suite can observe rather than a
+  // property of this transport.
+  // Flag bits: 0 root, 1 pend, 2 role, 3 own, 4 dem, 5 build-active, 6 build-coverage-owned, 7 completed-promise,
+  // 8 avoid-full-rebuild, 9 has-committed-passes, 10 request-attempted, 11 request-accepted. `bld` is printed as its
+  // three readable states rather than as two bits.
+  const unsigned buildState = launchGateBit(flags, 6) != 0 ? 2u : launchGateBit(flags, 5);
+  // **Two rules, the save-completion receipt's own** (`readinessReceiptImmediate`): emitted **directly when USB has
+  // room**, and enqueued on the ring otherwise, so the row is **delayed rather than lost**. It needs the direct path
+  // for the same measured reason the receipt did: the decision it reports is taken **under transport** (a queued switch
+  // is prepared by the off-clock `SlotProvision` turn while the track plays), and the ring is **retained by design**
+  // while a transport runs -- so a row merely enqueued during a leg arrives only after the transport stops, after the
+  // launch it explains. This is not a precaution: two device episodes carried the row in the firmware and delivered
+  // **none** of them (the Tier-A classification alone did not save them).
+  if (serialWriteRoom(160)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,launch_gate,t=%u,s=%u,x=%s,len=%lu,prep=%u,root=%u,pend=%u,role=%u,own=%u,"
+                         "dem=%u,bld=%u,cpm=%u,avoid=%u,cmt=%u,req=%u\r\n"),
+                  static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
+                  static_cast<unsigned>(slot), exit == nullptr ? "?" : exit,
+                  static_cast<unsigned long>(loopLengthTicks), static_cast<unsigned>(launchPreparation),
+                  launchGateBit(flags, 0), launchGateBit(flags, 1), launchGateBit(flags, 2), launchGateBit(flags, 3),
+                  launchGateBit(flags, 4), buildState, launchGateBit(flags, 7), launchGateBit(flags, 8),
+                  launchGateBit(flags, 9), launchGateRequestCode(flags));
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,launch_gate,t=%u,s=%u,x=%s,len=%lu,prep=%u,root=%u,pend=%u,role=%u,own=%u,"
+                       "dem=%u,bld=%u,cpm=%u,avoid=%u,cmt=%u,req=%u\r\n"),
+                static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
+                static_cast<unsigned>(slot), exit == nullptr ? "?" : exit,
+                static_cast<unsigned long>(loopLengthTicks), static_cast<unsigned>(launchPreparation),
+                launchGateBit(flags, 0), launchGateBit(flags, 1), launchGateBit(flags, 2), launchGateBit(flags, 3),
+                launchGateBit(flags, 4), buildState, launchGateBit(flags, 7), launchGateBit(flags, 8),
+                launchGateBit(flags, 9), launchGateRequestCode(flags));
+}
+
+SC_MEM_ATTR void snapshotGateRow(uint8_t track, uint8_t selectedSlot, uint8_t activeSlot, uint16_t verdicts,
+                                uint8_t constructionUnits) {
+  // The same **two delivery rules** as `launchGateRow` (and as the save-completion receipt), for the same measured
+  // reason: this row is raised while the transport runs, and the ring is retained by design then. The row exists only
+  // where its caller does -- which rows are owed, and on which state change, is production state
+  // (`Track::reportSnapshotOwnerGateRow`). Bit order: see the declaration in the header.
+  if (serialWriteRoom(160)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,snap_gate,t=%u,s=%u,a=%u,u=%u,p=%u,sep=%u,fc=%u,wj=%u,hp=%u,lr=%u,vc=%u,"
+                         "rec=%u,play=%u,od=%u,step=%u,cl=%u,idle=%u,elig=%u\r\n"),
+                  static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
+                  static_cast<unsigned>(selectedSlot), static_cast<unsigned>(activeSlot),
+                  static_cast<unsigned>(constructionUnits),
+                  launchGateBit(verdicts, 0), launchGateBit(verdicts, 1), launchGateBit(verdicts, 2),
+                  launchGateBit(verdicts, 3), launchGateBit(verdicts, 4), launchGateBit(verdicts, 5),
+                  launchGateBit(verdicts, 6), launchGateBit(verdicts, 7), launchGateBit(verdicts, 8),
+                  launchGateBit(verdicts, 9), launchGateBit(verdicts, 10), launchGateBit(verdicts, 11),
+                  launchGateBit(verdicts, 12), launchGateBit(verdicts, 13));
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,snap_gate,t=%u,s=%u,a=%u,u=%u,p=%u,sep=%u,fc=%u,wj=%u,hp=%u,lr=%u,vc=%u,"
+                       "rec=%u,play=%u,od=%u,step=%u,cl=%u,idle=%u,elig=%u\r\n"),
+                static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
+                static_cast<unsigned>(selectedSlot), static_cast<unsigned>(activeSlot),
+                static_cast<unsigned>(constructionUnits),
+                launchGateBit(verdicts, 0), launchGateBit(verdicts, 1), launchGateBit(verdicts, 2),
+                launchGateBit(verdicts, 3), launchGateBit(verdicts, 4), launchGateBit(verdicts, 5),
+                launchGateBit(verdicts, 6), launchGateBit(verdicts, 7), launchGateBit(verdicts, 8),
+                launchGateBit(verdicts, 9), launchGateBit(verdicts, 10), launchGateBit(verdicts, 11),
+                launchGateBit(verdicts, 12), launchGateBit(verdicts, 13));
+}
+#endif  // SC_QUALIFICATION_ROWS_ENABLED
 
 SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount) {
   emitCapPrintf("#CAP,%lu,DIAG,playback_order,%lu,%lu\r\n", (unsigned long)micros(),

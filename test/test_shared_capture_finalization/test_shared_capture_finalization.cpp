@@ -7,6 +7,44 @@
 // the Record stop may still publish inline is exactly the regression this suite exists to catch.
 #define HARNESS_REAL_PLAYBACK_HOT_PATH
 #define HARNESS_REAL_CAPTURE_STOP
+
+// windowed-playback-generation (the switch leg's second diagnostic): the `Snapshot` deferred owner's **gate row**,
+// substituted through the `#ifndef`-guarded `SC_SNAPSHOT_GATE` seam exactly as the capture suites substitute their
+// others. This suite is the one that already drives the real `processDeferredIdleMaintenance` (with the storage owners
+// linked), so it is where the row's contract is checked rather than described: **which loop the publication owner
+// selected** and **which gate refused** it. The cadence that bounds the row is production state, so a substituted
+// recorder counts exactly the rows the device would emit.
+#include <cstddef>
+#include <cstdint>
+namespace SnapshotGateRows {
+struct Row {
+  uint8_t track = 0;
+  uint8_t selectedSlot = 0;
+  uint8_t activeSlot = 0;
+  uint16_t verdicts = 0;
+  uint8_t constructionUnits = 0;
+};
+inline Row rows[64];
+inline size_t count = 0;
+inline void reset() { count = 0; }
+inline void record(uint8_t track, uint8_t selectedSlot, uint8_t activeSlot, uint16_t verdicts,
+                   uint8_t constructionUnits) {
+  if (count < sizeof(rows) / sizeof(rows[0])) {
+    rows[count] = Row{track, selectedSlot, activeSlot, verdicts, constructionUnits};
+  }
+  ++count;
+}
+inline const Row* last() { return count == 0 ? nullptr : &rows[count - 1]; }
+inline size_t countSelecting(uint8_t slot) {
+  size_t seen = 0;
+  for (size_t i = 0; i < count && i < sizeof(rows) / sizeof(rows[0]); ++i) {
+    if (rows[i].selectedSlot == slot) ++seen;
+  }
+  return seen;
+}
+}  // namespace SnapshotGateRows
+#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits) \
+  SnapshotGateRows::record(track, selectedSlot, activeSlot, verdicts, constructionUnits)
 #include "../test_support/capture_storage_harness.inc"
 #include <cstdlib>
 #if BYPASS_STOP_UNDO_SAVE
@@ -2711,6 +2749,94 @@ void test_job_pass_staging_denial_and_receipt_binding() {
   TEST_ASSERT_TRUE(pass.committedChunkIds.empty());
   TEST_ASSERT_FALSE(loop.canTransferCapturePassWithoutAllocation(pass));
   source.store.clear();
+
+}
+
+/// **The publication owner's own gate row** (windowed-playback-generation, the switch leg's second diagnostic). The
+/// launch gate proved the demoted target's republish request was **accepted** and then never serviced; this pins the
+/// mechanism one owner upstream. `Track::loopWithPendingSnapshotPublish` returns the **active** loop whenever it has any
+/// pending publication, and the Snapshot owner's turn is bound to that one loop -- so a demoted, non-active target's
+/// accepted request waits behind it. The fixture drives the **production turn** (`processDeferredIdleMaintenance`,
+/// Snapshot owner, one unit): the earlier regression stepped the publication primitive by hand on the target, which is
+/// precisely the seam that hides the loop choice on hardware.
+void test_snapshot_owner_selects_the_active_loop_and_starves_a_pending_slot() {
+  Track& t = trackManager.getTrack(0);
+  t.ensureLoopsAllocated();
+  // The demoted, non-active target (index 2): committed content, no published root -- the shape the switch leg reads.
+  Loop& target = t.getLoop(2);
+  t.setActiveLoopIndex(2);  // selected only long enough to be written
+  target.loopLengthTicks = 24 * 768;
+  target.beginCapture(CapturePhase::Record);
+  for (uint32_t bar = 0; bar < 24; ++bar) {
+    TEST_ASSERT_TRUE(target.appendCaptureEvent(MidiEvent::NoteOn(bar * 768, 1, 48, 100)));
+    TEST_ASSERT_TRUE(target.appendCaptureEvent(MidiEvent::NoteOff(bar * 768 + 48, 1, 48, 0)));
+  }
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, target.sealCapture(24 * 768, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(target.commitPendingCapturePass());
+  for (unsigned i = 0; i < 20000 && target.hasPendingSnapshotPublish(); ++i)
+    target.stepPendingSnapshotPublish(4, true, 0);
+  target.storePublishedSnapshotForTest({}, 0);
+  TEST_ASSERT_FALSE(target.publishedSnapshotIsCurrent());
+  // The operator's own (active) slot -- **index 3, deliberately after the target's 2 in the selector's walk**, so the
+  // fixture discriminates the active-loop preference from the walk's own order. A 24-bar commit is many construction
+  // units, so the selector has work to prefer for the whole phase.
+  Loop& active = t.getLoop(3);
+  t.setActiveLoopIndex(3);
+  active.loopLengthTicks = 24 * 768;
+  active.beginCapture(CapturePhase::Record);
+  for (uint32_t bar = 0; bar < 24; ++bar) {
+    TEST_ASSERT_TRUE(active.appendCaptureEvent(MidiEvent::NoteOn(bar * 768, 1, 50, 100)));
+    TEST_ASSERT_TRUE(active.appendCaptureEvent(MidiEvent::NoteOff(bar * 768 + 48, 1, 50, 0)));
+  }
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, active.sealCapture(24 * 768, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(active.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(active.requestCommittedPassesRepublish());
+  TEST_ASSERT_TRUE(target.requestCommittedPassesRepublish());
+  SnapshotGateRows::reset();
+  for (unsigned turn = 0; turn < 8; ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+    TEST_ASSERT_NOT_NULL(SnapshotGateRows::last());
+    // Every turn names the **active** loop -- index 3, *after* the pending target at index 2 -- with the active slot
+    // printed beside it and the pending-publication bit that keeps the selector on it: that pair is what the device row
+    // is read for.
+    TEST_ASSERT_EQUAL_UINT8(0, SnapshotGateRows::last()->track);
+    TEST_ASSERT_EQUAL_UINT8(3, SnapshotGateRows::last()->selectedSlot);
+    TEST_ASSERT_EQUAL_UINT8(3, SnapshotGateRows::last()->activeSlot);
+    TEST_ASSERT_EQUAL_UINT8(1, SnapshotGateRows::last()->constructionUnits);
+    TEST_ASSERT_TRUE((SnapshotGateRows::last()->verdicts & (1u << 0)) != 0);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, SnapshotGateRows::countSelecting(2),
+                                   "the non-active target must not be selected while the active loop owes work");
+  // The row is a **transition record**, not a heartbeat: eight turns of one state do not produce eight rows. The
+  // cadence lives in production code, which is why a substituted recorder can count it at all.
+  TEST_ASSERT_TRUE_MESSAGE(SnapshotGateRows::count < 8, "the gate row must be emitted on state changes, not per turn");
+  // The consequence, asserted as state: the target's accepted request is still unserved and its root is still absent.
+  TEST_ASSERT_TRUE(target.hasPendingSnapshotPublish());
+  TEST_ASSERT_FALSE(target.publishedSnapshotIsCurrent());
+  // **The contrast, and the discriminator the episode is read for:** a track whose active loop owes nothing selects the
+  // pending slot instead (`s != a`), so "the target never got the turn" is a property of the selector, not of the row.
+  Track& other = trackManager.getTrack(1);
+  other.ensureLoopsAllocated();
+  Loop& otherTarget = other.getLoop(3);
+  other.setActiveLoopIndex(3);
+  otherTarget.loopLengthTicks = 768;
+  otherTarget.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(otherTarget.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 52, 100)));
+  TEST_ASSERT_TRUE(otherTarget.appendCaptureEvent(MidiEvent::NoteOff(48, 1, 52, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, otherTarget.sealCapture(768, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(otherTarget.commitPendingCapturePass());
+  for (unsigned i = 0; i < 20000 && otherTarget.hasPendingSnapshotPublish(); ++i)
+    otherTarget.stepPendingSnapshotPublish(4, true, 0);
+  other.setActiveLoopIndex(1);  // an empty slot: nothing of its own is owed
+  TEST_ASSERT_FALSE(other.getLoop(1).hasPendingSnapshotPublish());
+  TEST_ASSERT_TRUE(otherTarget.requestCommittedPassesRepublish());
+  SnapshotGateRows::reset();
+  other.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+  TEST_ASSERT_NOT_NULL(SnapshotGateRows::last());
+  TEST_ASSERT_EQUAL_UINT8(1, SnapshotGateRows::last()->track);
+  TEST_ASSERT_EQUAL_UINT8(3, SnapshotGateRows::last()->selectedSlot);
+  TEST_ASSERT_EQUAL_UINT8(1, SnapshotGateRows::last()->activeSlot);
+  TEST_ASSERT_TRUE((SnapshotGateRows::last()->verdicts & (1u << 0)) != 0);
 }
 
 int main() {
@@ -2750,6 +2876,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_slot_clear_during_a_record_finalization_does_not_republish);
   RUN_TEST(test_retained_record_stop_admits_stopped_once_the_transport_is_not_running);
   RUN_TEST(test_two_tracks_each_serve_their_own_deferred_window);
+  RUN_TEST(test_snapshot_owner_selects_the_active_loop_and_starves_a_pending_slot);
   RUN_TEST(test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source);
   RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);
   RUN_TEST(test_stalled_frozen_window_build_does_not_park_the_record_job);
