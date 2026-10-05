@@ -45,6 +45,9 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     # `ScenarioSpec`), so the preset drives them in order through the wrapper's own sessions, one leg per
     # boot anchor.
     "accepted_sequence": ("accepted_sequence_rec", "accepted_sequence_od", "accepted_sequence_mixed"),
+    # Task 6.4: the windowed profile's leg. It reuses the existing long-loop content-verification leg (a loop far
+    # longer than the served window, transport running) and adds the windowed lane's own checks to that leg's oracle.
+    "windowed_content_parity": ("windowed_content_parity",),
 }
 
 
@@ -75,6 +78,12 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     from hitl.scenarios.accepted_sequence import (
         run_accepted_sequence,
         verify_accepted_sequence,
+    )
+    # Task 6.4: the windowed leg's profile reuses the long-loop leg's run and pairs it with the windowed lane's
+    # checks, so the driver is the pipeline's rather than a second one.
+    from hitl.scenarios.windowed_content_parity import (
+        run_windowed_content_parity,
+        verify_windowed_content_parity_leg,
     )
 
     return {
@@ -182,6 +191,19 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             run=run_accepted_sequence,
             verify=verify_accepted_sequence,
             owns_capture=True,
+        ),
+        # Task 6.4: the windowed profile's leg. The **run** is the existing long-loop leg's, unchanged -- task
+        # 6.4 feeds the content-verification pipeline and does not replace it -- and the **verify** is that leg's
+        # oracle plus the windowed lane's checks.
+        "windowed_content_parity": ScenarioSpec(
+            scenario_id="windowed_content_parity",
+            description=(
+                "Task 6.4's windowed leg: the reused long-loop leg (a loop far longer than the "
+                "served two-bar window, transport running across the boundaries), read for the "
+                "windowed lane's readiness receipts and service coverage"
+            ),
+            run=run_windowed_content_parity,
+            verify=verify_windowed_content_parity_leg,
         ),
     }
 

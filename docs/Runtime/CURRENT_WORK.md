@@ -1,3 +1,27 @@
+**2026-10-05 — `windowed-playback-generation` 6.4 (exercise half, off-device): the windowed profile has a driver, and
+the driver is the pipeline's own long-loop leg (host tooling only; no firmware, no device, no upload).**
+[`EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s64-windowed-leg-driver/EXECUTION.md)
+fixed the oracle before the edits. `windowed_content_parity` is registered and resolves from its own preset, adding **no**
+driver logic: `run_windowed_content_parity` delegates to `run_long_loop_display_window` unchanged -- it records a loop far
+longer than the two-bar window (`--record-bars`, default 24, and the run refuses `<= 16`) with the transport running
+across the boundaries -- and `verify_windowed_content_parity` pairs that leg's oracle with the windowed lane's checks in
+`hitl/verify/windowed_lane.py` (pure over capture lines; "under transport" is read from the **stream's order** between
+`Transport started` and the following `Transport stopped`, since the row families share no unit). Judged:
+`readiness_receipts_under_transport` (AC-8 -- a post-stop-only receipt fails), `windowed_service_coverage_under_transport`
+(`win_gap` with `running=1` and opportunities > 0), `no_windowed_overrun_under_transport` (the **named** `win_gap_overrun`
+under transport), `window_boundaries_crossed_under_transport` (>= 2 `build_complete` under transport). Deferred with their
+owners: the parity **verdict** to the content pipeline, `root_demoted_residency_over_loop_lengths` to an **unidentified
+row set** (recorded as unknown, not guessed) -- and `oracle_complete: False` always, so a green run is not F-7/F-8
+qualification. **Recorded rather than smoothed:** the first parser read `win_gap`'s declaration fields one late and the
+field-position test caught it (16/17, literal schema `3` at 19); the stimulus pin's absence clause **inverted** because
+its reminder fired as designed; the exact-preset guard failed on the new preset and now names it. Red-proofs
+**MR-6.4c**/**MR-6.4d** each fail exactly their own test, file restored byte-identically (`f92f043fc671e426…`).
+Verification: host suites green (new 8, plus 26 / 24 / 3 / 6 / 40 / 39 / 9 / 2 / 45), native unchanged **2796 / 2789
+succeeded / 7 skipped / 0 failed**, strict validation and `git diff --check` clean, `src include` diff empty. **Not
+claimed:** the leg has never run on a device, so the first authorized run may correct the oracle instead of the firmware;
+**6.4 stays open** and 6.5's hardware half stays NOT RUN. **Next:** 6.5's hardware half under a dedicated HITL preset,
+after upload authorization.
+
 **2026-10-05 — `windowed-playback-generation` 6.4 (registration half): the windowed HITL profile is registered and
 authorized, and its driver is deliberately still owed (host tooling only; no firmware, no device, no upload).**
 [`EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s64-windowed-hitl-profile/EXECUTION.md)

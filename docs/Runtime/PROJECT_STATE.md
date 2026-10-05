@@ -1,3 +1,29 @@
+**Task 6.4's exercise half, off-device: the windowed profile now has a driver, and the driver is the pipeline's own
+leg (host tooling only).**
+`STIM-WINDOW-CONTENT-01`'s scenario `windowed_content_parity` is registered and resolves from its own preset, but it adds
+**no** new driver: `run_windowed_content_parity` delegates to `run_long_loop_display_window` unchanged -- a leg that
+records a loop far longer than the served two-bar window (and refuses `<= 16` bars itself) with the transport running
+across the boundaries, which is the only way a boundary can be crossed -- exactly as `design.md` row 145 and `S4C45`
+require ("fed the windowed/demoted cases ... not replaced"). Its verifier pairs that leg's oracle with the windowed
+lane's own checks over the emitters' rows: `readiness_receipts_under_transport` (AC-8 -- a receipt arriving only after
+the stop fails, which is what the direct-when-USB-has-room path exists to avoid),
+`windowed_service_coverage_under_transport` (`win_gap` blocks with `running=1` and opportunities > 0),
+`no_windowed_overrun_under_transport` (the **named** exceedance is a failure, not a smoothed number) and
+`window_boundaries_crossed_under_transport` (>= 2 `build_complete` publications under transport). Two of the four
+declared terms stay **deferred with the surface that owns each verdict** -- the parity verdict to the content pipeline,
+`root_demoted_residency_over_loop_lengths` to an **unidentified row set** recorded as unknown -- and every result carries
+`oracle_complete: False`, so a green run is never read as F-7/F-8 qualification. **Recorded, not smoothed:** the pin's
+first parser read `win_gap`'s declaration fields one late and the field-position test caught it (16/17, with the literal
+schema `3` at 19); the stimulus pin's own absence clause **inverted** because the reminder fired as designed; and the
+exact-preset guard failed on the new preset and now names it. Red-proofed **MR-6.4c** (any receipt counts) and
+**MR-6.4d** (the named overrun no longer fails), each failing exactly its own test with the file restored
+byte-identically. Verification: host suites green (new 8, plus 26 / 24 / 3 / 6 / 40 / 39 / 9 / 2 / 45), native unchanged
+at **2796 / 2789 succeeded / 7 skipped / 0 failed**, strict validation and `git diff --check` clean. **Not claimed:** the
+leg has **not run on a device**, so the lane's inventory at a window boundary is unobserved and the **first authorized
+run may correct this oracle rather than the firmware**; F-7/F-8 and AC-8 remain unverified, 6.4 stays open, and 6.5's
+hardware half stays NOT RUN. Evidence:
+[`s64-windowed-leg-driver`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s64-windowed-leg-driver/EVIDENCE.md).
+
 **Task 6.4's windowed HITL profile is registered and authorized; its driver is deliberately not (host tooling only).**
 `STIM-WINDOW-CONTENT-01@v1` (`windowed_content_parity`) is now a canonical profile of its own: a 16-bar loop with one
 committed 16-bar revision against the lane's two-bar span (so a window is a strict sub-interval), the transport running

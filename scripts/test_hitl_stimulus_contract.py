@@ -146,13 +146,13 @@ class StimulusRegistryTests(unittest.TestCase):
         # And it is *not* the record leg's or the overdub leg's profile, even though it shares their bench.
         self.assertNotIn(spec.stimulus_id, (STIM_BASE_2_2_01.stimulus_id, STIM_BASE_2_ONE_OD_01.stimulus_id))
 
-    def test_the_windowed_leg_has_a_registered_profile_and_no_driver_yet(self) -> None:
+    def test_the_windowed_leg_has_a_registered_profile_and_an_exercisable_driver(self) -> None:
         """Task 6.4: the windowed profile is *registered and authorized*; its driver is a separate step.
 
         The task separates registration, authorization, exercise and qualification on purpose. This test pins the
-        half that exists: the profile's identity, its recipe shape (a loop far longer than the served window, with a
-        running transport), its **declared oracle** and its **declared target scope** -- and, as the reminder that
-        the other half is still owed, that no preset resolves the scenario which would drive it.
+        registration half: the profile's identity, its recipe shape (a loop far longer than the served window, with a
+        running transport), its **declared oracle** and its **declared target scope** -- plus the fact that the driver
+        that exercises it is the reused long-loop leg rather than a second pipeline.
         """
         spec = stimulus_for_scenario("windowed_content_parity")
         self.assertIsNotNone(spec)
@@ -187,11 +187,14 @@ class StimulusRegistryTests(unittest.TestCase):
         assert declared is not None
         self.assertEqual("track 8 slots 4,5", declared.targets_text())
         self.assertIn("2026-09-30", declared.source)
-        # **And it is not exercisable yet.** The scenario that would drive it is not registered, so no preset
-        # resolves it: this pin is the reminder, and it turns red the day the driver lands.
-        self.assertNotIn("windowed_content_parity", list_scenarios())
-        with self.assertRaises(ValueError):
-            resolve_scenarios(preset="windowed_content_parity", scenario_ids=None)
+        # **And it is exercisable**: the previous revision of this pin asserted the opposite on purpose, as the
+        # reminder that the driver was owed. The driver landed (task 6.4's exercise half) and this is that reminder
+        # doing its job -- the clause is inverted rather than deleted, so a *removed* driver would fail here too.
+        self.assertIn("windowed_content_parity", list_scenarios())
+        self.assertEqual(
+            ["windowed_content_parity"],
+            resolve_scenarios(preset="windowed_content_parity", scenario_ids=None),
+        )
 
     def test_occupy_header_requires_two_overdubs_and_undo(self) -> None:
         lines = prepend_hitl_header(

@@ -555,7 +555,9 @@ class UnchangedClassicBehaviourTests(unittest.TestCase):
         self.assertEqual(
             {"base", "edit_full", "overdub_occupy_paint", "note_edit_overdub_compose",
              "note_edit_overdub_compose_last_bar_shorten", "note_edit_overdub_compose_last_bar_reopen",
-             "edit_overdub_during_note_edit", "note_edit_reselect_stacked", "accepted_sequence"},
+             "edit_overdub_during_note_edit", "note_edit_reselect_stacked", "accepted_sequence",
+             # Task 6.4's windowed leg -- added deliberately, and pinned here so the set cannot drift unnoticed.
+             "windowed_content_parity"},
             set(PRESET_SCENARIOS))
 
     def test_every_registered_spec_agrees_with_its_registry_key(self):

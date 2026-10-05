@@ -179,10 +179,15 @@ NOT task3.7 removal and NOT a supported contiguous two-bar envelope.
   (`windowed_content_parity`) is registered with its own recipe shape (a 16-bar loop
   against the two-bar span, transport running across boundaries) and its declared
   target authorization, and its `must_prove` names the F-7 / F-8 / AC-8 outcomes
-  (`evidence/2026-10-05-s64-windowed-hitl-profile/`). Qualification still waits for
-  an exercised path and the shared oracle: the driver/scenario is deliberately not
-  registered, and the pin asserts that absence. 6.8 supplies evidence downstream to
-  RWO acceptance.
+  (`evidence/2026-10-05-s64-windowed-hitl-profile/`), and the profile is now **selectable**:
+  its driver is the existing long-loop content-verification leg, not a second
+  pipeline, paired with the windowed lane's own checks
+  (`evidence/2026-10-05-s64-windowed-leg-driver/`). Qualification still waits for an
+  **exercised** path: the leg has not run on a device, two declared terms are
+  deferred to other owners (the parity verdict to the content pipeline; the
+  residency term to an unidentified row set), and every verdict carries
+  `oracle_complete: False` so a green run is not read as F-7/F-8 qualification.
+  6.8 supplies evidence downstream to RWO acceptance.
 
 The pre-edit [slice packet](evidence/requester-retry-integration/ROLLING_HANDOFF.md) names its exact selector, frame/state
 lifetime, caller order, fallback intervals, cancellation and positive/negative traces.

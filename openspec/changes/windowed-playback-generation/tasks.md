@@ -902,6 +902,27 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   turns red the day the driver lands. Red-proofed by MR-6.4a (declared scope widened to 4,5,6) and MR-6.4b
   (`base_bars` 16 → 2), each leaving the pin the only failing test and the file restored byte-identically. See
   [`s64-windowed-hitl-profile`](evidence/2026-10-05-s64-windowed-hitl-profile/EVIDENCE.md).
+
+  *Also supplied 2026-10-05 — the **exercise** half, off-device:* the profile is now selectable by its own preset and
+  read by a verifier, and the driver is the **existing content-verification leg, not a second pipeline** — as
+  `design.md` and `S4C45` require. `run_windowed_content_parity` delegates to `run_long_loop_display_window` unchanged (a
+  loop far longer than the served two-bar window, transport running across the boundaries; the run itself refuses
+  `<= 16` bars), and `verify_windowed_content_parity` pairs that leg's oracle with the windowed lane's own checks:
+  `readiness_receipts_under_transport` (AC-8 — a receipt that only arrives after the stop fails),
+  `windowed_service_coverage_under_transport` (`win_gap` blocks with `running=1` and opportunities > 0),
+  `no_windowed_overrun_under_transport` (the **named** exceedance, not a smoothed number) and
+  `window_boundaries_crossed_under_transport` (≥2 `build_complete` publications under transport). Two of the profile's
+  four declared terms stay **deferred with their verdict's owner** — the parity verdict to the content pipeline, and
+  `root_demoted_residency_over_loop_lengths` to an **unidentified row set** recorded as unknown — and every result
+  carries `oracle_complete: False`, so a green run is never read as F-7/F-8 qualification. Red-proofed by **MR-6.4c**
+  (any receipt counts) and **MR-6.4d** (the named overrun no longer fails), each failing exactly its own test with the
+  file restored byte-identically; the pin also **inverted** its own absence clause (the reminder that the driver was owed
+  fired) and the exact-preset guard now names the new preset. Host suites green (new 8, plus 26 / 24 / 3 / 6 / 40 / 39 /
+  9 / 2 / 45), native unchanged at **2796 / 2789 succeeded / 7 skipped / 0 failed**, strict validation and
+  `git diff --check` clean. **Still owed, and not claimed:** the leg has **not run on a device** — the lane's inventory
+  at a window boundary has never been observed, so the first authorized run may correct this oracle rather than the
+  firmware. **6.4 stays open.** See
+  [`s64-windowed-leg-driver`](evidence/2026-10-05-s64-windowed-leg-driver/EVIDENCE.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B
