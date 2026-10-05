@@ -323,10 +323,16 @@ void assertServedWindowIsSessionProjection(Track& track, uint8_t slot, const cha
 uint32_t publishSessionPreviewAt(Track& track, uint8_t slot, uint32_t revision) {
   const MidiEventVec& projection = sessionProjection();
   TEST_ASSERT_FALSE_MESSAGE(projection.empty(), "the session has a projection to publish");
-  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
-                            static_cast<int>(track.requestPreviewWindow(
-                                slot, revision, projection.data(), projection.size(), kPlayhead)),
-                            "the preview lane admits the session's projection");
+  // Task 3.7a (I3): the production seams now request the session's preview themselves (the open and every revision
+  // advance), so the lane may already hold this revision -- as a prepared successor or a served window. The helper
+  // drives the same state to a served window either way, and a request that *was* admitted is still admissible: what it
+  // asserts is the state, not which caller asked first.
+  const Track::PlaybackViewRequestResult requested = track.requestPreviewWindow(
+      slot, revision, projection.data(), projection.size(), kPlayhead);
+  TEST_ASSERT_TRUE_MESSAGE(requested == Track::PlaybackViewRequestResult::Admitted ||
+                               requested == Track::PlaybackViewRequestResult::SuccessorAlreadyPrepared ||
+                               requested == Track::PlaybackViewRequestResult::BuildInFlight,
+                           "the preview lane admits the session's projection, or already holds it");
   drainLane(track, kPlayhead);
   WindowIdentity identity{};
   TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(slot, identity));
@@ -644,10 +650,12 @@ static void test_the_session_exit_owes_the_committed_handoff_and_the_preview_kee
   editManager.closeNoteEditSession(track);
   TEST_ASSERT_FALSE_MESSAGE(editManager.isNoteEditActive(), "the production exit closed the session");
 
-  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PreviewCancelOutcome::HandoffOwed),
-                            static_cast<int>(track.cancelPreviewWindowForSlot(
-                                0, Track::PreviewWindowCancelReason::SessionExited)),
-                            "the exit makes the committed successor owed");
+  // Task 3.7a (I3): the exit now **performs** the handoff -- the session's owner calls the lane's cancel -- so the
+  // obligation is asserted directly and the fixture's own call below is the *repeated* exit, which the lane names
+  // rather than treating as a second handoff. (Re-pointed from the pre-I3 shape, where only this fixture's call made
+  // the handoff owed; recorded in the slice's evidence.)
+  TEST_ASSERT_TRUE_MESSAGE(track.previewWindowHandoffOwedForSlot(0),
+                           "the production exit makes the committed successor owed");
   TEST_ASSERT_TRUE(track.previewWindowHandoffOwedForSlot(0));
   TEST_ASSERT_TRUE_MESSAGE(track.servedPlaybackWindowIsPreviewForSlot(0),
                            "the preview window keeps serving across the handoff boundary -- never a gap");
@@ -684,6 +692,139 @@ static void test_the_session_exit_owes_the_committed_handoff_and_the_preview_kee
   TEST_ASSERT_FALSE(track.servedPlaybackWindowIsPreviewForSlot(0));
 }
 
+/// Task 3.7a (I3) / task 3.13: **the maintenance turn is the requester**. The session's own revision is the lane's
+/// currency, and the production focus-lane turn is what observes it: no fixture here calls `requestPreviewWindow`, so
+/// a published preview window can only come from the firmware's own caller.
+static void test_3_7a_i3_the_focus_lane_turn_requests_the_sessions_preview() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(track, 0);
+  TEST_ASSERT_FALSE_MESSAGE(track.playbackWindowServesSlot(0), "control: nothing serves the slot before the session");
+
+  editManager.openNoteEditSession(track);
+  TEST_ASSERT_TRUE(editManager.isNoteEditActive());
+  const uint32_t revision = editManager.sessionPlaybackPreviewRevision();
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, revision);
+
+  // The seam did it: opening the session advances its preview revision, and the owner of that revision (the session
+  // stack, at that seam) asked the lane for it. Nothing here calls the requester.
+  drainLane(track, kPlayhead);
+
+  WindowIdentity identity{};
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, identity),
+                           "the firmware's own turn requested and published the session's preview");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PlaybackWindowOrigin::Preview),
+                                  static_cast<uint8_t>(identity.origin), "and it is identified as preview");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(revision, identity.playbackRevision,
+                                   "at the session's own revision as the freeze token");
+  TEST_ASSERT_EQUAL_UINT32(kLongLoopTicks, identity.interval.loopLengthTicks);
+  assertServedWindowIsSessionProjection(track, 0, "the served preview is the session's projection");
+  // Idempotent per revision: more turns request nothing further, so nothing is re-prepared.
+  const uint32_t eventsServed = track.playbackWindowEventCountForSlot(0);
+  drainLane(track, kPlayhead);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(eventsServed, track.playbackWindowEventCountForSlot(0),
+                                   "a second drive of the same revision changes nothing");
+}
+
+/// Task 3.7a (I3): **the mutation edge is the firmware's**. A mutation advances the session's preview revision through
+/// the production deferred-refresh flush, and the focus-lane turn cancels the superseded preparation by name and
+/// requests the new revision -- the served preview is the new projection, never a mix of the two.
+static void test_3_7a_i3_the_mutation_edge_requests_the_new_revision_through_the_turn() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(track, 0);
+  editManager.openNoteEditSession(track);
+  drainLane(track, kPlayhead);
+  WindowIdentity first{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, first));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PlaybackWindowOrigin::Preview), static_cast<uint8_t>(first.origin));
+
+  // **Two** mutations through the production refresh edge, with **no drain between them**: the first leaves a build in
+  // flight for the revision it requested, and the second arrives while that build is still preparing. This is the shape
+  // where the supersession cancel is load-bearing -- without it the first build completes and publishes, and the second
+  // revision's request is then refused as a prepared successor, so the slot would end up serving stale content.
+  const uint32_t intermediate = mutateSessionAndFlush(track, 3000, 72);
+  const uint32_t next = mutateSessionAndFlush(track, 3100, 74);
+  TEST_ASSERT_TRUE(intermediate != first.playbackRevision);
+  TEST_ASSERT_TRUE(next != intermediate);
+
+  // The flush seam observed each move: the superseded preparation is cancelled by name (nothing stale may publish) and
+  // the newest revision is requested. The successor waits for its boundary, which the serving path owns.
+  drainLane(track, kPlayhead);
+  WindowIdentity afterTurn{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, afterTurn));
+  if (afterTurn.playbackRevision != next) {
+    TEST_ASSERT_TRUE_MESSAGE(track.adoptPreparedPlaybackWindow(0),
+                             "the new revision is prepared and adopted at the boundary");
+    TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, afterTurn));
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(next, afterTurn.playbackRevision,
+                                   "the firmware requested the session's new revision");
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PlaybackWindowOrigin::Preview), static_cast<uint8_t>(afterTurn.origin));
+  assertServedWindowIsSessionProjection(track, 0, "the served preview is the post-mutation projection, never a mix");
+}
+
+/// Task 3.7a (I3): **the exit through the production path**, with a preview window served: the session's owner yields
+/// the source and owes the committed handoff, the served preview stays readable across the boundary, and the lane does
+/// not re-request a preview afterwards. (The admission's committed-only read is asserted in the suite that links the
+/// capture admission.)
+static void test_3_7a_i3_the_exit_owes_the_handoff_and_never_re_requests_a_preview() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(track, 0);
+  editManager.openNoteEditSession(track);
+  drainLane(track, kPlayhead);
+  TEST_ASSERT_TRUE(track.servedPlaybackWindowIsPreviewForSlot(0));
+  TEST_ASSERT_TRUE(track.playbackWindowEventCountForSlot(0) > 0);
+  // The admission's **committed-only** question is asserted where the capture admission is linked
+  // (`test_runtime_working_set_ownership`: `test_3_7a_i3_the_admission_counts_committed_windows_only`), because this
+  // suite's link set deliberately excludes the capture-admission boundary.
+
+  // The production exit performs the handoff; the served preview keeps serving across the boundary.
+  WindowIdentity servedPreview{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, servedPreview));
+  editManager.closeNoteEditSession(track);
+  TEST_ASSERT_FALSE(editManager.isNoteEditActive());
+  TEST_ASSERT_TRUE_MESSAGE(track.previewWindowHandoffOwedForSlot(0),
+                           "the session's owner made the committed successor owed");
+  TEST_ASSERT_TRUE_MESSAGE(track.servedPlaybackWindowIsPreviewForSlot(0),
+                           "and the preview window keeps serving: the handoff is a boundary, never a gap");
+  WindowIdentity atHandoff{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, atHandoff));
+  TEST_ASSERT_TRUE(atHandoff == servedPreview);
+  // Turn-driven again: with the session gone the turn must not re-request a preview.
+  drainLane(track, kPlayhead);
+  TEST_ASSERT_TRUE(track.previewWindowHandoffOwedForSlot(0));
+  TEST_ASSERT_TRUE(track.servedPlaybackWindowIsPreviewForSlot(0));
+}
+
+/// Task 3.7a (I3): **the re-focus hook**. Selecting another track yields the departing track's preview by its own
+/// lifecycle event, and a re-focus is not an exit: nothing becomes owed.
+static void test_3_7a_i3_a_refocus_yields_the_preview_without_owing_a_handoff() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  commitLongLoop(track, 0, kLongLoopTicks, 6);
+  readyLongLoopPlaying(track, 0);
+  editManager.openNoteEditSession(track);
+  drainLane(track, kPlayhead);
+  TEST_ASSERT_TRUE(track.servedPlaybackWindowIsPreviewForSlot(0));
+  // The focus change **itself** must yield the departing track's preview: asserted before anything else runs, so the
+  // requester's own non-selected backstop cannot stand in for the hook (measured: a fixture that only drove the
+  // requester passed with the hook removed, which is what made this read necessary).
+  trackManager.setSelectedTrack(1);
+  TEST_ASSERT_FALSE_MESSAGE(track.previewWindowSourceActiveForSlot(0),
+                            "the focus hook yielded the departing track's preview");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PreviewCancelOutcome::NothingToCancel),
+                            static_cast<int>(track.cancelPreviewWindowForSlot(
+                                0, Track::PreviewWindowCancelReason::SelectedTrackChanged)),
+                            "and a repeated re-focus is named, not treated as a second yield");
+  TEST_ASSERT_FALSE_MESSAGE(track.previewWindowHandoffOwedForSlot(0),
+                            "a re-focus is not an exit: nothing is owed");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_the_session_owns_the_preview_source_and_its_revision_is_the_lane_currency);
@@ -691,5 +832,11 @@ int main(int, char**) {
   RUN_TEST(test_an_in_session_undo_and_redo_advance_the_preview_revision_and_the_served_content);
   RUN_TEST(test_a_selected_track_change_cancels_the_departing_tracks_preview_by_its_own_lifecycle);
   RUN_TEST(test_the_session_exit_owes_the_committed_handoff_and_the_preview_keeps_serving);
+  // Task 3.7a (I3) / task 3.13's owed production callers: the firmware's own focus-lane turn requests and cancels the
+  // session's preview (no fixture call to the requester), and the admission counts committed content only.
+  RUN_TEST(test_3_7a_i3_the_focus_lane_turn_requests_the_sessions_preview);
+  RUN_TEST(test_3_7a_i3_the_mutation_edge_requests_the_new_revision_through_the_turn);
+  RUN_TEST(test_3_7a_i3_the_exit_owes_the_handoff_and_never_re_requests_a_preview);
+  RUN_TEST(test_3_7a_i3_a_refocus_yields_the_preview_without_owing_a_handoff);
   return UNITY_END();
 }

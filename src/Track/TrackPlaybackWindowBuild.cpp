@@ -3440,6 +3440,112 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPreviewWindow(uint
   }
   return result;
 }
+/// Task 3.7a (I3) / task 3.13: **the preview lane's production requester**, run on the focus lane's own deferred turn.
+///
+/// The seam is the *session's own revision*: the preview lane's currency is `sessionPlaybackPreviewRevision()`, and the
+/// session bumps it when its content advances (an edit, or an in-session undo/redo) -- the `EditManager`'s deferred
+/// display refresh is what flushes that advance. This caller therefore only compares, and acts on the two transitions
+/// the contract names:
+///
+/// * the revision moved past the one this lane froze (`previewSourceActive && previewSourceRevision != revision`) --
+///   the **mutation edge**: the superseded preparation is cancelled by name (`SourceMutated`, which is what makes a
+///   stale completion publish nothing) and the session's new projection is requested;
+/// * nothing is frozen and no preview window serves the revision -- the **first** request of the session's preview.
+///
+/// A session that has ended yields the source and **owes** the committed handoff; a track that is no longer the
+/// selected one yields it without owing anything (a re-focus is not an exit). Both are the same two calls the exit and
+/// re-focus hooks make, so a hook that did not run leaves no half-state: this is idempotent by construction.
+///
+/// It deliberately does **not** touch the merged NOTE_EDIT preview path (the fallback that serves editing today), does
+/// not adopt a prepared successor (the swap belongs to the serving path's boundary, which the default build does not
+/// run -- named as owed), and asks for nothing when the lane is already preparing work.
+TRACK_COLD_MEM void Track::servicePreviewWindowForNoteEditSession() {
+  if (!loopsAllocated()) {
+    return;
+  }
+  const uint8_t slot = getActiveLoopIndex();
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  if (runtime == nullptr) {
+    return;
+  }
+  if (!trackManager.isSelectedTrack(*this)) {
+    // Only the selected track is previewed. A leftover source is yielded by name, and a re-focus owes nothing.
+    if (runtime->previewSourceActive) {
+      cancelPreviewWindowForSlot(slot, PreviewWindowCancelReason::SelectedTrackChanged);
+    }
+    return;
+  }
+  if (!editManager.isNoteEditActive()) {
+    // The session ended: the source yields and the committed successor becomes owed (the handoff). A source that is
+    // already inactive means the exit hook performed it, and the handoff is not re-requested.
+    if (runtime->previewSourceActive) {
+      cancelPreviewWindowForSlot(slot, PreviewWindowCancelReason::SessionExited);
+    }
+    return;
+  }
+  const Loop& loop = loopForSlot(slot);
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0 ||
+      !loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks)) {
+    // The window lane serves the **demoted** shape; a short loop keeps the merged NOTE_EDIT preview path (named
+    // residual: a whole-loop preview window for it would need the display consumer this slice does not wire).
+    return;
+  }
+  const uint32_t previewRevision = editManager.sessionPlaybackPreviewRevision();
+  if (previewRevision == 0) {
+    return;
+  }
+  const MidiEventVec& projection = editManager.sessionMidiEvents();
+  if (projection.empty()) {
+    // A preview with no content is not a preview: publishing emptiness would replace a served preview with a window
+    // that claims "no events" for content the session is editing. The requester refuses this too; not asking keeps the
+    // lane's own state untouched.
+    return;
+  }
+  if (runtime->previewHandoffOwed) {
+    // The session's exit has already yielded the source and the **committed** successor is owed. Requesting a preview
+    // now would discharge that obligation (a preview request clears it), so the handoff wins: this lane has nothing to
+    // prepare until the committed successor is adopted.
+    return;
+  }
+  if (runtime->previewSourceActive && runtime->previewSourceRevision == previewRevision) {
+    return;  // this revision is what the lane already froze
+  }
+  PlaybackWindowIdentity served{};
+  if (publishedPlaybackWindowIdentityForSlot(slot, served) &&
+      served.origin == PlaybackWindowOrigin::Preview && served.playbackRevision == previewRevision) {
+    return;  // and nothing owes a rebuild while it is served
+  }
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  const bool successorPrepared = set != nullptr && set->lifecycle.ready < RuntimePlaybackViewConfig::kViewCount &&
+                                 set->views[set->lifecycle.ready].complete;
+  if (successorPrepared &&
+      set->views[set->lifecycle.ready].source.origin == PlaybackWindowOrigin::Preview &&
+      set->views[set->lifecycle.ready].source.playbackRevision == previewRevision) {
+    return;  // prepared and waiting for its boundary: asking again would only churn the lane
+  }
+  if (successorPrepared) {
+    // A prepared successor for a revision the session has **left**: the shared-view row that releases a candidate,
+    // retires a prepared successor and invalidates the operation identity states exactly this transition, and the served
+    // window stays readable (the invariant every row carries). Without it the newest revision could never be prepared --
+    // the request would be refused as a successor already waiting, and the slot would keep the stale one.
+    applyPlaybackViewTransition(slot, PlaybackViewTransition::ClearOrLoad);
+  }
+  if (runtime->previewSourceActive) {
+    // **The mutation edge.** The lane's frozen revision is gone, so the superseded preparation is cancelled by name
+    // before a new one is requested -- a cancellation is what makes a stale completion publish nothing. This happens
+    // whether or not the lane is busy: a build in flight for the old revision is exactly what must not land.
+    cancelPreviewWindowForSlot(slot, PreviewWindowCancelReason::SourceMutated);
+  }
+  if (runtime->viewBuild.active() || runtime->ownsCoverageSource() ||
+      runtime->completedPromisePendingJudgement) {
+    return;  // the lane is still busy for another reason; the next seam re-checks rather than stacking a demand
+  }
+  const PlaybackDeadlineClock clock = clockManager.getPlaybackDeadlineClock();
+  const uint32_t tickNow = clock.epoch != 0 ? static_cast<uint32_t>(clock.tick) : clockManager.getCurrentTick();
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      getEffectivePlaybackTick(tickNow), getProjectionCycleStartTick(), loop.loopLengthTicks);
+  (void)requestPreviewWindow(slot, previewRevision, projection.data(), projection.size(), phase, clock);
+}
 
 TRACK_COLD_MEM Track::PreviewCancelOutcome Track::cancelPreviewWindowForSlot(
     uint8_t slotIndex, PreviewWindowCancelReason reason) {
@@ -3492,6 +3598,11 @@ TRACK_COLD_MEM bool Track::servedPlaybackWindowIsPreviewForSlot(uint8_t slotInde
 TRACK_COLD_MEM bool Track::previewWindowHandoffOwedForSlot(uint8_t slotIndex) const {
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   return runtime != nullptr && runtime->previewHandoffOwed;
+}
+
+TRACK_COLD_MEM bool Track::previewWindowSourceActiveForSlot(uint8_t slotIndex) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  return runtime != nullptr && runtime->previewSourceActive;
 }
 TRACK_COLD_MEM bool Track::publishedPlaybackWindowIdentityForSlot(uint8_t slotIndex,
                                                                   PlaybackWindowIdentity& out) const {

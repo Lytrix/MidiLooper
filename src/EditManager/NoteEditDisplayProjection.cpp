@@ -286,6 +286,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::flushDeferredNoteEditDisplayRefresh(Trac
     bumpSessionPlaybackPreviewRevision();
     track.getActiveLoop().playbackOrderDirty = true;
     track.invalidatePlaybackCaches();
+    // Task 3.7a (I3) / task 3.13: **the preview requester's production caller at the revision-advance seam.** The
+    // revision just moved, so the lane's frozen preview source (the previous revision) is superseded: the track cancels
+    // it by name and requests the new one from the session's own projection. O(1) when nothing changed, and the
+    // service's own guards keep it from stacking work on a busy lane or after an exit.
+    track.servicePreviewWindowForNoteEditSession();
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::processDeferredNoteEditDisplayRefresh(Track& track) {

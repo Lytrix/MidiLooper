@@ -754,10 +754,31 @@ const RuntimePlaybackView* servedPlaybackWindowView(const LoopPlaybackRuntime* r
   }
   return &view;
 }
+
+/// The view a **committed** completed, published window with a valid interval occupies for the slot, or `nullptr` when
+/// no committed window serves it. The purpose is the *presence* question: an empty interval is a legitimately Ready
+/// window, so an absent window and an empty one must not be confused.
+///
+/// **Task 3.7a (I3): the origin is part of the question.** The admission asks what the window serving this slot already
+/// holds -- "the interval's inherited content" -- which is *committed* content by definition. A **preview** window holds
+/// the note-edit session's uncommitted projection (task 3.13), and the identity's origin is what says so without
+/// inspecting the window's events; counting it here would charge a take for content the session has not committed.
+const RuntimePlaybackView* committedServedPlaybackWindowView(const LoopPlaybackRuntime* runtime) {
+  const RuntimePlaybackView* view = servedPlaybackWindowView(runtime);
+  if (view == nullptr) {
+    return nullptr;
+  }
+  return view->source.origin == PlaybackWindowOrigin::Committed ? view : nullptr;
+}
 }  // namespace
 
 TRACK_CAPTURE_ADMISSION_MEM bool Track::playbackWindowServesSlot(uint8_t slotIndex) const {
   return servedPlaybackWindowView(playbackRuntime.slotIfAllocated(slotIndex)) != nullptr;
+}
+
+/// Task 3.7a (I3): the **committed** form of the same question -- what the admission's accounting may count.
+TRACK_CAPTURE_ADMISSION_MEM bool Track::committedPlaybackWindowServesSlot(uint8_t slotIndex) const {
+  return committedServedPlaybackWindowView(playbackRuntime.slotIfAllocated(slotIndex)) != nullptr;
 }
 
 TRACK_CAPTURE_ADMISSION_MEM size_t Track::playbackWindowEventCountForSlot(uint8_t slotIndex) const {
@@ -765,11 +786,18 @@ TRACK_CAPTURE_ADMISSION_MEM size_t Track::playbackWindowEventCountForSlot(uint8_
   return window != nullptr ? window->storage.eventCount : 0;
 }
 
+TRACK_CAPTURE_ADMISSION_MEM size_t Track::committedPlaybackWindowEventCountForSlot(uint8_t slotIndex) const {
+  const RuntimePlaybackView* window = committedServedPlaybackWindowView(playbackRuntime.slotIfAllocated(slotIndex));
+  return window != nullptr ? window->storage.eventCount : 0;
+}
+
 TRACK_CAPTURE_ADMISSION_MEM RuntimePlaybackViewConfig::WindowAdmissionAccounting
 Track::captureIntervalAdmissionForSlot(uint8_t slotIndex) const {
   RuntimePlaybackViewConfig::WindowAdmissionAccounting accounting;
-  // What the window serving this slot already holds: the interval's inherited content.
-  accounting.acceptedEffectiveEvents = playbackWindowEventCountForSlot(slotIndex);
+  // What the window serving this slot already holds: the interval's **committed** inherited content. Task 3.7a (I3):
+  // a preview window (the note-edit session's uncommitted projection) is not inherited content, so it is excluded by
+  // origin -- the identity's own statement -- rather than by inspecting its events.
+  accounting.acceptedEffectiveEvents = committedPlaybackWindowEventCountForSlot(slotIndex);
   if (slotIndex < Config::MAX_LOOPS_PER_TRACK) {
     const Loop& loop = loopForSlot(slotIndex);
     if (loop.captureActive()) {
@@ -937,7 +965,7 @@ TRACK_CAPTURE_ADMISSION_MEM __attribute__((noinline)) bool Track::recordMidiEven
     // whole-take record take is not served by the 2048-event window -- its playback storage is the whole-take view --
     // and is therefore deliberately not capped here: the invariant is "a window holds the intervals it serves", never
     // "a take may not exceed one window".
-    if (type != midi::NoteOff && playbackWindowServesSlot(activeLoopIndex)) {
+    if (type != midi::NoteOff && committedPlaybackWindowServesSlot(activeLoopIndex)) {
       const RuntimePlaybackViewConfig::WindowAdmissionAccounting admission =
           captureIntervalAdmissionForSlot(activeLoopIndex);
       if (!admission.admitsNewEvent(type == midi::NoteOn)) {

@@ -727,6 +727,11 @@ public:
   /// is what a window must hold, so this is the presence question its gate asks -- and it is not the same as a
   /// non-zero event count, because an empty interval is a legitimately ready window.
   bool playbackWindowServesSlot(uint8_t slotIndex) const;
+  /// Task 3.7a (I3): the same presence question for **committed** content only -- what the capture admission's
+  /// accounting may count as the interval's inherited content. A preview window (the note-edit session's uncommitted
+  /// projection, task 3.13) is excluded by its identity's origin, and a take is therefore never charged for content the
+  /// session has not committed.
+  bool committedPlaybackWindowServesSlot(uint8_t slotIndex) const;
   /// DEC-108 item 5 / task 3.13: why the preview lane is being cancelled. The spec's four lifecycle events are three
   /// reasons because an in-session undo/redo is a **session mutation** whose result is a new preview revision.
   enum class PreviewWindowCancelReason : uint8_t {
@@ -764,12 +769,26 @@ public:
   bool servedPlaybackWindowIsPreviewForSlot(uint8_t slotIndex) const;
   /// True when the exit handoff is owed for a slot: the preview source has yielded and a committed window is required.
   bool previewWindowHandoffOwedForSlot(uint8_t slotIndex) const;
+  /// Task 3.7a (I3): whether the preview lane still holds this slot's preview source -- a live in-flight or superseded
+  /// preview preparation. It is what "the re-focus yielded the preview" is asserted with: the **lifecycle hook** yields
+  /// it at the focus change, and the requester's own non-selected branch is the backstop for a skipped hook, so a fixture
+  /// that only drove the requester could not tell the two apart.
+  bool previewWindowSourceActiveForSlot(uint8_t slotIndex) const;
   size_t playbackWindowEventCountForSlot(uint8_t slotIndex) const;
+  /// Task 3.7a (I3): the committed-only count (see `committedPlaybackWindowServesSlot`).
+  size_t committedPlaybackWindowEventCountForSlot(uint8_t slotIndex) const;
   /// DEC-108 item 1 / task 4.3: **the ordered event stream the served window holds**, in emission order --
   /// `storage.events[storage.order[cursor]]`, the same rendering the fixed-view emission path uses (`cursor` is a
   /// position in that order, `0 .. playbackWindowEventCountForSlot()-1`). It reads the window that is **served**,
   /// never a prepared successor, and it is read-only, allocation-free and O(1). Nothing in production consumes it
   /// yet: the emission path is task 3.7's switch, so this exists to let the parity proof read what the lane
+  /// Task 3.7a (I3) / task 3.13: **the preview requester's production caller** -- the revision-advance seam. Run on the
+  /// focus lane's own deferred turn for the **selected** track: when a note-edit session is active on a demoted loop
+  /// and the session's preview revision has moved past the one this lane froze, the superseded preparation is cancelled
+  /// **by name** (`SourceMutated`) and the new revision is requested from the session's own projection. A session that
+  /// has ended yields the source and **owes** the committed handoff; a track that is no longer the selected one yields
+  /// it without owing anything. O(1) when nothing changed: one revision comparison, no allocation, no clock read.
+  void servicePreviewWindowForNoteEditSession();
   /// actually produced instead of inferring it from the identity.
   bool playbackWindowEventAtForSlot(uint8_t slotIndex, uint16_t cursor, MidiEvent& out) const;
   /// The window admission accounting for a slot's **live capture interval**: the window's content, plus the rows

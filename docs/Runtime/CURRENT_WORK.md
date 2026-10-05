@@ -5182,6 +5182,50 @@ bridge's verify path) are unrelated and unchanged. See
 
 **DEC-114 — active implementation direction:** DEC-113's interval-root proposal is withdrawn and retained only as historical audit. DEC-108 governs: the whole-loop `LoopSnapshot` remains checkpoint/effective-content authority; playback windows are derived from the retained pinned-source revision and `RetainedIntervalIndex`. The task sequence is 3.7a production consumer/index integration with the mutable fallback retained, then finish 3.14 undo/redo and 4.5 closure/recovery against that real handoff, and only then 3.7b fallback removal after parity, timing and compatibility gates. No production consumer integration or fallback removal is claimed here. 3.7a needs its own G2 execution packet and production-path fixtures before implementation.
 
+### 3.7a (I3) — the preview lane's production callers: the requester and its three lifecycle hooks are firmware code (2026-10-06; firmware + tests)
+
+**Increment I3 of 3.7a landed; the task stays open** (I3b the paged legacy consumer, I4/I5 parity + timing), and
+**3.13 stays open for its save clause** — what landed is the production-caller clause its own text owed. Packet written
+**before** the edit:
+[`evidence/2026-10-06-s37a-i3-preview-wiring/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i3-preview-wiring/EXECUTION.md).
+
+**Before this slice** the only call sites of `requestPreviewWindow` / `cancelPreviewWindowForSlot` were the tests
+(measured). **Now** they are the seams that own the transitions: the **revision-advance seam**
+(`EditManager::flushDeferredNoteEditDisplayRefresh` — the function that bumps `sessionPlaybackPreviewRevision()` — plus
+the session open) calls `Track::servicePreviewWindowForNoteEditSession()`, which cancels a superseded preparation by
+name (`SourceMutated`, whether or not the lane is busy), releases a prepared successor belonging to a revision the
+session has left (through the `ClearOrLoad` shared-view row), and requests the session's own projection for the newest
+revision; the **exit** (`closeNoteEditSession`, before its own flush) yields the source and owes the committed handoff;
+the **re-focus** (`beforeSelectedTrackChange`) yields the departing track's preview without owing anything. The capture
+admission counts **committed** windows only (`committedPlaybackWindowServesSlot` /
+`committedPlaybackWindowEventCountForSlot`): a served preview is the session's uncommitted projection and is never
+"the interval's inherited content". `previewWindowSourceActiveForSlot` was added because the re-focus rule had no
+observable at all.
+
+**Verified.** Focused preview **9/9**, focused working-set **151/151**, full native **2,825 cases / 7 skipped / 2,818
+succeeded / 0 failed**, capture build **SUCCESS** with the RAM1 line **byte-identical to I2's** (`variables 96,192`;
+`code 391,832 + padding 1,384`) — no ITCM cost, no re-base; strict validation and `git diff --check` clean; four
+mutations red-proved with byte-identical restores (**MR-I** the seam call, **MR-J** the supersession cancel, **MR-K**
+the admission's committed read, **MR-L** the re-focus hook).
+
+**Recorded, not smoothed over.** (1) **The packet's seam was wrong and is corrected**: the packet put the requester on
+the deferred idle turn, and driving that turn from the preview suite drags in the whole deferred stop/persistence
+boundary (measured: `completeAdmittedRecordStop`, `requestLoopSlotPersistAndSaveState`, `StorageManager::*`,
+`SlotLoadSession::isActive`, `PersistenceWorkQueue::*`, `RecordStopLength::*`); the implemented seam is the flush that
+owns the revision, which is 3.13's own wording. The deferred-turn call was written, measured and removed. (2) **MR-L
+was first a non-red-proof**: the requester's own "not the selected track" branch performed the yield as a backstop, so
+the fixture could not tell hook from backstop — fixed by the new read and an assertion made *at* the focus change; the
+redundancy is deliberate and documented. (3) **The supersession fixture needed two mutations with no drain between** to
+make the cancel load-bearing (one mutation passed without it). (4) The stale finished successor now needs the
+`ClearOrLoad` row to be released, because otherwise the newest revision could never be prepared.
+
+**Not claimed.** No paged (over-`L`) consumer (I3b), no display consumer, no short-loop preview window (the requester is
+gated on the demoted shape; a short loop keeps the merged NOTE_EDIT preview path), no production adoption boundary for a
+preview successor, no edited-content/long-window/same-tick parity (I4/4.3), no timing envelope, **no device run**, no
+fallback removal (3.7b). Evidence:
+[`evidence/2026-10-06-s37a-i3-preview-wiring/EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i3-preview-wiring/EVIDENCE.md).
+
+
 ### 3.7a (I2) — the deferred lane turn serves a rootless demand: the launch chain now completes with no root (2026-10-06; firmware + tests)
 
 **Increment I2 of 3.7a landed; the task stays open** (I3 the 3.12 paged consumer and 3.13 preview hooks; I4

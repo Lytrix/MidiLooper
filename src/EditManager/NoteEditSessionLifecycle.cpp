@@ -274,6 +274,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
 #endif
     bumpSessionPreviewRevision();
     bumpSessionPlaybackPreviewRevision();
+    // Task 3.7a (I3): the session's **first** preview revision is the other end of the same seam -- the lane is asked
+    // for it here rather than by a fixture, so a session that opens on a demoted loop has its preview requested by the
+    // firmware that opened it.
+    track.servicePreviewWindowForNoteEditSession();
     DIAG_EVENT(Diagnostics::Edit::NoteEditOpenExit);
     logger.debug("EditSession opened editPass=0");
 }
@@ -377,6 +381,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditSession(Track& track) {
     if (!editSession.active) {
         return;
     }
+    // Task 3.7a (I3) / task 3.13's exit hook: the session is ending, so its preview source **yields** and the committed
+    // successor becomes owed -- the handoff the spec names, performed here by the owner of the session. The served
+    // preview window keeps serving until that successor is adopted (the handoff is a boundary, never a gap).
+    (void)track.cancelPreviewWindowForSlot(track.getActiveLoopIndex(),
+                                           Track::PreviewWindowCancelReason::SessionExited);
     flushDeferredNoteEditDisplayRefresh(track);
     closeNoteEditPass(track);
     Loop& loop = trackManager.getSelectedLoop(track);

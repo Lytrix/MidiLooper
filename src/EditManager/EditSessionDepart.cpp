@@ -125,6 +125,10 @@ EDIT_MANAGER_IMPL_MEM void EditManager::reenterEditSessionForFocusChange(Track& 
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::beforeSelectedTrackChange(Track& departingTrack) {
+    // Task 3.7a (I3) / task 3.13's re-focus hook: the track that is leaving the focus has no live preview source any
+    // more, so its preview yields **by name**. A re-focus is not a session exit: nothing becomes owed.
+    (void)departingTrack.cancelPreviewWindowForSlot(
+        departingTrack.getActiveLoopIndex(), Track::PreviewWindowCancelReason::SelectedTrackChanged);
     commitEditSessionOnDepart(departingTrack);
 }
 

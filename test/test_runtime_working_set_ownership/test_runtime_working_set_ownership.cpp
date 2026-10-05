@@ -10506,6 +10506,56 @@ void test_3_7a_i2_a_refused_or_cancelled_gather_keeps_the_demand() {
   TEST_ASSERT_FALSE(track.publishedPlaybackWindowIdentityForSlot(0, none));
 }
 
+/// 3.7a (I3): **the capture admission counts committed windows only.** A served **preview** window holds the note-edit
+/// session's uncommitted projection (task 3.13); the admission's question -- what the interval already holds -- is about
+/// *committed* content, and the identity's origin is what says so without inspecting the window's events. The committed
+/// contrast is asserted too, so the rule cannot pass by counting nothing at all.
+void test_3_7a_i3_the_capture_admission_counts_committed_windows_only() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 0, 24);
+  Loop& loop = track.getLoop(0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0));
+  TEST_ASSERT_FALSE(track.playbackWindowServesSlot(0));
+  TEST_ASSERT_FALSE(track.committedPlaybackWindowServesSlot(0));
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(track.captureIntervalAdmissionForSlot(0).acceptedEffectiveEvents));
+
+  // A **preview** window served for the slot: the generic presence question is true, the committed one is not.
+  MidiEvent previewSource[6];
+  const size_t previewCount = buildWindowOwnerSource(previewSource, 6);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPreviewWindow(0, 7, previewSource, previewCount,
+                                                                2 * Config::TICKS_PER_BAR)));
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  TEST_ASSERT_TRUE_MESSAGE(track.servedPlaybackWindowIsPreviewForSlot(0), "the preview serves the slot");
+  TEST_ASSERT_TRUE(track.playbackWindowServesSlot(0));
+  TEST_ASSERT_TRUE(track.playbackWindowEventCountForSlot(0) > 0);
+  TEST_ASSERT_FALSE_MESSAGE(track.committedPlaybackWindowServesSlot(0),
+                            "a preview window is not committed content");
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(track.committedPlaybackWindowEventCountForSlot(0)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.captureIntervalAdmissionForSlot(0).acceptedEffectiveEvents),
+                                   "and the admission inherits nothing from the session's projection");
+
+  // The committed contrast: this is what the accounting counts.
+  publishBarSpacedRootForSlot(loop, 2);
+  SessionMidiEventVec scratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, kWindowOwnerExpectedRequiredLead, scratch)));
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  TEST_ASSERT_TRUE_MESSAGE(track.adoptPreparedPlaybackWindow(0), "the committed successor is adopted at the boundary");
+  TEST_ASSERT_TRUE(track.committedPlaybackWindowServesSlot(0));
+  TEST_ASSERT_FALSE(track.servedPlaybackWindowIsPreviewForSlot(0));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(scratch.size()), track.committedPlaybackWindowEventCountForSlot(0));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(scratch.size()),
+                                   static_cast<uint32_t>(track.captureIntervalAdmissionForSlot(0).acceptedEffectiveEvents),
+                                   "the committed window's events are the interval's inherited content");
+}
+
 int main() {
 
 
@@ -10688,6 +10738,9 @@ int main() {
   RUN_TEST(test_3_7a_i2_a_rootless_committed_demand_is_served_from_the_retained_revision);
   RUN_TEST(test_3_7a_i2_a_rootless_launch_target_binds_from_the_retained_revision);
   RUN_TEST(test_3_7a_i2_a_refused_or_cancelled_gather_keeps_the_demand);
+  // windowed-playback-generation slice 3.7a (I3): the capture admission counts **committed** windows only, so a served
+  // preview (the session's uncommitted projection) inherits nothing.
+  RUN_TEST(test_3_7a_i3_the_capture_admission_counts_committed_windows_only);
   RUN_TEST(test_the_retained_source_gather_refuses_by_name_where_it_must);
   // windowed-playback-generation slice 3.11: the shared-view ownership rules as one transition table, an operation
   // that is never retargeted, a late completion that publishes nothing, and storage reuse by the last owner.

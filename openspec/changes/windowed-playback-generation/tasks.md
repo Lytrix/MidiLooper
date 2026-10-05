@@ -324,6 +324,29 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   3.12/3.13's consumer clauses remain owed to I3. Detail:
   [`evidence/2026-10-06-s37a-production-consumer/EVIDENCE.md`](evidence/2026-10-06-s37a-production-consumer/EVIDENCE.md).
 
+  **Increment I3 landed 2026-10-06 (firmware + tests; the task stays open).** The **preview lane's production callers**
+  — the clause task 3.13 owed — are firmware code now: `Track::servicePreviewWindowForNoteEditSession()` runs at the
+  **revision-advance seam** (`EditManager::flushDeferredNoteEditDisplayRefresh`, the function that bumps
+  `sessionPlaybackPreviewRevision()`, plus the session open), cancelling a superseded preparation by name
+  (`SourceMutated`, whether or not the lane is busy), releasing a prepared successor that belongs to a revision the
+  session has left (through the `ClearOrLoad` shared-view row), and requesting the session's own projection for the
+  newest revision; the **exit** (`closeNoteEditSession`, before its own flush) yields the source and owes the committed
+  handoff; the **re-focus** (`beforeSelectedTrackChange`) yields the departing track's preview without owing anything.
+  The capture admission now counts **committed** windows only (`committedPlaybackWindowServesSlot` /
+  `committedPlaybackWindowEventCountForSlot`), so a served preview — the session's uncommitted projection — is never
+  inherited content. `Track::previewWindowSourceActiveForSlot` was added because the re-focus rule had no observable.
+  **Verified:** focused preview **9/9**, focused working-set **151/151**, full native **2,825 / 7 skipped / 2,818
+  succeeded / 0 failed**, capture build **SUCCESS** with the RAM1 line **byte-identical to I2's** (`variables 96,192`;
+  `code 391,832 + padding 1,384`), strict validation and `git diff --check` clean, four mutations red-proved with
+  byte-identical restores. **Recorded, not smoothed over:** the packet's named seam (the deferred idle turn) was written,
+  measured and **removed** — it drags the whole deferred stop/persistence boundary into the preview suite's link set —
+  and the implemented seam is the flush that owns the revision; the re-focus mutation was first a **non-red-proof**
+  because the requester's own non-selected branch masked the hook (fixed by the new read and a stronger assertion); and
+  the supersession fixture needed **two mutations with no drain between** to make the cancel load-bearing. **Not
+  claimed:** no paged (over-L) consumer (I3b), no display consumer, no short-loop preview window (the requester is gated
+  on the demoted shape), no production adoption boundary for a preview successor, no timing envelope, no device run.
+  Detail: [`evidence/2026-10-06-s37a-i3-preview-wiring/EVIDENCE.md`](evidence/2026-10-06-s37a-i3-preview-wiring/EVIDENCE.md).
+
   **Increment I2 landed 2026-10-06 (firmware + tests; the task stays open).** The deferred lane's **production turn**
   now serves a demand for a slot with no current published root — the shape the device legs measured as
   `launch_requested … root=0 …` never reaching readiness. `LoopPlaybackRuntime` owns one **retained-source gather**
@@ -667,7 +690,7 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   committed successor is owed, and the obligation is discharged at the **adoption** boundary, with a repeated exit
   answering `AlreadyHandedOff`. *Verification:* focused **61/61**, full native **2692 / 2685 succeeded / 7 skipped / 0 failed**, capture build SUCCESS with RAM1 variables 96,192 unchanged / code 392,328 + padding 888 (48 B above the floor); target size pin measured/rebased 6,512 → 6,624 (+112 B), host 6,544. Five mutations red-proved with byte-identical restores.
   **OWED in this task:** fixture 2.12's integration half and production callers — preview requester at the revision-advance seam and `EditManager` mutation/re-focus/exit hooks — through the serving path in 3.7a with fallback retained. The `then save` clause belongs to the storage harness. Evidence: [`evidence/2026-10-02-s313-preview-contract/EVIDENCE.md`](evidence/2026-10-02-s313-preview-contract/EVIDENCE.md).
-  *Increment 3.13 integration half landed 2026-10-05 — test-only + host tooling; no production line changed; task remains open for production callers and the save clause.* `test/test_windowed_preview_integration/` links the real note-edit owner and window lane. Five fixtures cover session source ownership, mutation between build grains, in-session undo/redo, selected-track cancellation and committed handoff on exit. Verified: focused 5/5; full native 2,815 / 2,808 succeeded / 7 skipped / 0 failed; capture build SUCCESS with RAM1 unchanged; three mutations red-proved and restored byte-identically. **Still owed:** production preview requester/lifecycle hooks through 3.7a with fallback retained and fixture 2.12's save clause in the storage harness. Evidence: [`evidence/2026-10-05-s313-preview-integration/EVIDENCE.md`](evidence/2026-10-05-s313-preview-integration/EVIDENCE.md).
+  *Increment 3.13 integration half landed 2026-10-05 — test-only + host tooling; no production line changed; task remains open for production callers and the save clause.* `test/test_windowed_preview_integration/` links the real note-edit owner and window lane. Five fixtures cover session source ownership, mutation between build grains, in-session undo/redo, selected-track cancellation and committed handoff on exit. Verified: focused 5/5; full native 2,815 / 2,808 succeeded / 7 skipped / 0 failed; capture build SUCCESS with RAM1 unchanged; three mutations red-proved and restored byte-identically. **Production callers DELIVERED by 3.7a I3 (2026-10-06):** the requester runs at the revision-advance seam and the three lifecycle hooks (supersession/mutation, exit, re-focus) are the `EditManager`'s own, each with its own fixture and its own red-proof (`evidence/2026-10-06-s37a-i3-preview-wiring/EVIDENCE.md`). **Still owed:** fixture 2.12's **save** clause in the storage harness (why this task stays open) and the display consumer of a preview window. Evidence: [`evidence/2026-10-05-s313-preview-integration/EVIDENCE.md`](evidence/2026-10-05-s313-preview-integration/EVIDENCE.md).
 
 - [ ] 3.14 **Integrate undo/redo audible handoff** — establish a production-path fixture before changing
   `refreshPlaybackAfterCapturePassStateChange` and its capture/overdub undo/redo callers. Extend the existing
