@@ -1,3 +1,15 @@
+**2026-10-05 — `switch-trace` (`captures/s64-trace-01`) re-read: "no publication unit serviced under transport" is NOT established.**
+The capture's own ring shed the window (`RING,tier_a_evicted,3,first=139330174`, `RING,shed,60413`), so the absence of
+`snapshot_unit` rows between 146.5 s and 168.5 s is the shed, not non-service (the same caveat the earlier episode
+recorded); the 66 rows bucketed at 160-170 s are all at/after the transport stop (168.5 s). The one in-window signal
+disagrees with "idle producer": the target's `snap_gate` rows toggle `fc` (construction in flight) 0/1 repeatedly while
+selected (135 rows, mean gap 245 ms), i.e. work was starting and finishing. A native probe,
+`test_snapshot_owner_serves_a_rootless_pending_slot_while_the_track_plays` (track PLAYING, active loop rooted, rootless
+24-bar target with a republish request, production turn), **passes without a code change**: a playing track serves the
+pending slot to a current root. So no firmware fix is justified by this episode; the open question is *rate* (2 units per
+turn against the switch's ~3,072-tick hold bound), which needs a progress counter on the gate row rather than ring rows.
+Not implemented; not claimed.
+
 **Device episode 2 (`captures/s64-switch-13`, rebooted by re-upload so the demoted long slot restored from the card; leg
 `ok=True`, record slot 6, target slot 5):** the switch again completed the full chain (`launch_requested → ready`) with
 `root=1,pend=0` on the target -- a rebooted demoted slot is still root-backed here -- so **the starved shape was again not

@@ -2932,6 +2932,42 @@ void test_snapshot_owner_serves_a_startable_slot_behind_an_unstartable_active_lo
   TEST_ASSERT_TRUE(target.publishedSnapshotIsCurrent());
 }
 
+/// The device episode that followed the selector fix (`switch-trace`): the owner selected the rootless demoted target
+/// on 135/136 rows with `elig=1` while the track PLAYS, yet no publication unit was serviced for 22 s. Drives the same
+/// production turn **with the track playing** and the active loop already rooted.
+void test_snapshot_owner_serves_a_rootless_pending_slot_while_the_track_plays() {
+  Track& t = trackManager.getTrack(4);
+  t.ensureLoopsAllocated();
+  const auto commitTake = [&t](uint8_t slot, uint8_t note) -> Loop& {
+    Loop& l = t.getLoop(slot);
+    t.setActiveLoopIndex(slot);
+    l.loopLengthTicks = 24 * 768;
+    l.beginCapture(CapturePhase::Record);
+    for (uint32_t bar = 0; bar < 24; ++bar) {
+      TEST_ASSERT_TRUE(l.appendCaptureEvent(MidiEvent::NoteOn(bar * 768, 1, note, 100)));
+      TEST_ASSERT_TRUE(l.appendCaptureEvent(MidiEvent::NoteOff(bar * 768 + 48, 1, note, 0)));
+    }
+    TEST_ASSERT_EQUAL(SealOutcome::Ok, l.sealCapture(24 * 768, CommitReason::RecordStop));
+    TEST_ASSERT_TRUE(l.commitPendingCapturePass());
+    for (unsigned i = 0; i < 20000 && l.hasPendingSnapshotPublish(); ++i) l.stepPendingSnapshotPublish(4, true, 0);
+    return l;
+  };
+  Loop& target = commitTake(5, 48);
+  target.storePublishedSnapshotForTest({}, 0);
+  Loop& active = commitTake(4, 50);
+  t.setActiveLoopIndex(4);
+  TEST_ASSERT_TRUE(static_cast<bool>(active.publishedSnapshot()));
+  TEST_ASSERT_TRUE(target.requestCommittedPassesRepublish());
+  t.forceSetState(TRACK_PLAYING);
+  TEST_ASSERT_TRUE(t.isPlaying());
+  TEST_ASSERT_TRUE(&t.loopWithPendingSnapshotPublish() == &target);
+  for (unsigned turn = 0; turn < 20000 && target.hasPendingSnapshotPublish(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(target.hasPendingSnapshotPublish(), "a playing track must still serve the pending slot");
+  TEST_ASSERT_TRUE(target.publishedSnapshotIsCurrent());
+}
+
 int main() {
   UNITY_BEGIN();
       RUN_TEST(test_record_normalization_orders_and_identity_completes_the_merged_store);
@@ -2972,6 +3008,7 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_snapshot_owner_prefers_the_active_loop_on_a_tie);
   RUN_TEST(test_snapshot_owner_resumes_an_in_flight_slot_behind_the_active_loop);
   RUN_TEST(test_snapshot_owner_serves_a_startable_slot_behind_an_unstartable_active_loop);
+  RUN_TEST(test_snapshot_owner_serves_a_rootless_pending_slot_while_the_track_plays);
   RUN_TEST(test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source);
   RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);
   RUN_TEST(test_stalled_frozen_window_build_does_not_park_the_record_job);
