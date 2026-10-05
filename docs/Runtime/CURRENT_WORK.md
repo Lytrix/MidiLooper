@@ -5182,6 +5182,14 @@ bridge's verify path) are unrelated and unchanged. See
 
 ### Route D — rootless effective-content window investigation (2026-10-05)
 
+**Authorized next slice: DEC-108 3.12 — bounded legacy compatibility, fixture 5.5 only (test-only).** The admission accounting,
+`WindowPagedStream` ring/cursor, and `Track::recordMidiEvents` gate already landed. This slice adds an adversarial native fixture
+for over-capacity legacy content: same-tick density, a loop-wrap interval, and note closures crossing page boundaries. It will
+exercise the existing `WindowPagedStream::produce/consume` and `CommittedEventRange` production primitives and assert bounded
+page count, ordered/exactly-once events and no tick delay/truncation. **Not included:** production lane integration, device timing
+claims or changes to the page/ring policy. The paged production consumer is coupled to 3.7's fallback migration; 3.12 remains
+open after the fixture until that consumer path and timing envelope are verified.
+
 The proposed source is a **hypothesis**, not yet a firmware contract: make a bounded playback window without requiring a
 `LoopSnapshot` root. Read-only code trace (the implementation-investigator delegate failed from provider credit exhaustion;
 I completed the trace directly): `Loop::tryGatherPublishedSnapshotEventsInWindow` returns `false` immediately when
