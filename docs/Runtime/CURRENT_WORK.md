@@ -1,3 +1,32 @@
+**2026-10-05 — `windowed-playback-generation` 6.5 (native half): the two interleaving forces the suite did not force are
+now forced on the playing chain (test-only slice; no production line edited, no device action).**
+Slice 6.5 asks for the ten interleavings forced natively on the real request→worker→publication→consumption path, and
+separately for the hardware half. The packet
+([`EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s65-native-verification-split/EXECUTION.md))
+inventoried the ten: two were **gaps**, and both are implemented.
+`test_rolling_path_reuses_the_view_slot_after_a_refused_completion` forces **A→B→A view-slot reuse with the first A
+completion arriving last**: A's build begins under its own operation identity and its completion is delivered after
+ownership moved (the reader bumps the playback generation inside the final grain), so it publishes nothing (no ready
+candidate, served view untouched, 0 events), the episode ends Idle, and the stale identity is *retained* — the refusal is
+the guard, not a clean-up. B then takes the **same view slot** (which still carried A's identity), builds under the
+**current** identity, and is **served**: 1536 serving ticks, 22 events = 11 note-ons + 11 closures, no foreign note.
+`test_rolling_path_cancellation_between_every_preparation_grain_recovers` cancels at **every** preparation grain (k = 0..5,
+at least one before the build began and at least one inside it) and asserts the same recovered state each time (frame Idle,
+no pending/frozen demand, no builder, no candidate, served view untouched, 0 events, coverage source retired), then serves
+one clean episode — the slot is **reusable**, not merely free. **Recorded rather than smoothed:** the explicit off-clock
+cancellation after a late completion is a **no-op by measurement** (the completion already ended the episode, so
+idempotence is what the fixture pins); the operation identity is stamped on **more than one path**, so mutation **MR-A**
+(the build begin's stamp) is a **non-red-proof** while **MR-B** red-proves the ordering claim and **MR-C1/MR-C2** red-prove
+the cancellation sweep, each restored byte-identically; and a fixture that forces a begin and then rewinds the clock kills
+the episode (the drive must stay monotone). **Open by construction:** the interval A/B **revision trace** stays partial
+(shared-view fixtures; no rolling-chain trace) and the whole **hardware** half is **NOT RUN** — it needs **6.4**'s
+registered profile plus an authorized upload. Verification: focused **142/142**, full native **2796 / 2789 succeeded / 7
+skipped / 0 failed**, capture build SUCCESS with the RAM1 line byte-identical, strict validation and `git diff --check`
+clean. Evidence:
+[`EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s65-native-verification-split/EVIDENCE.md).
+**Next:** 6.4 (registered device profile, host-only), then 6.5's hardware half under a dedicated HITL preset, after
+authorization.
+
 **Guidance-only update — return to the OpenSpec path after verified blockers.**
 User requested stronger existing guidance, without a `/smell` skill. The work
 lifecycle now owns critical-path triage, bounded discriminating investigation and

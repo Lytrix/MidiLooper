@@ -9497,6 +9497,265 @@ void test_rolling_path_budget_charges_qualification_and_retirement_work() {
                             "with the charge released the same request is admitted: the charge was the refusal");
 }
 
+/// **Task 6.5 — the native force "A→B→A view-slot reuse with the first A completion arriving last".**
+///
+/// The ordering rule under test, on the *playing* chain: a completion that arrives **after** ownership moved publishes
+/// nothing, ends its own episode, and leaves its view slot **reusable** by a later operation whose operation identity is
+/// distinct. That is the window lane's half of what the lease fixtures force for the lease: A's completion is delivered
+/// late (the completion reader bumps the playback generation *inside* the final grain), and B then builds the *same*
+/// interval into the *same* view slot under a new identity and is served from it.
+///
+/// Two facts the probe of this slice established and this fixture therefore pins rather than assumes: the late
+/// completion ends the episode **by itself** (the frame's ownership-moved branch), so the off-clock cancellation that
+/// follows finds nothing to cancel — cancellation is idempotent by construction, not a second release; and the stale
+/// operation identity is *retained* on the runtime, so the refusal is the publication guard's
+/// (`viewBuildOperationGeneration != playbackGeneration`) rather than a silent cleanup.
+void test_rolling_path_reuses_the_view_slot_after_a_refused_completion() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const uint64_t origin = clockManager.getCurrentTick();
+  const uint32_t servedBefore = set->lifecycle.current;
+  // The fixture's own epoch: an operation's identity is the generation it was admitted in, and this fixture is about the
+  // **move** between two of them, so start away from zero where "stamped" and "unstamped" are indistinguishable.
+  track.bumpPlaybackGeneration();
+  const uint32_t generationA = track.getPlaybackGeneration();
+
+  // ---- A: the interval's demand opens, and its build begins under A's own identity.
+  nativePlaybackDeadlineClock = {origin, 1};
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "A opens the interval's demand");
+  const uint8_t slotA = set->lifecycle.build;
+  const uint32_t startPhaseA = runtime->rolling.startPhase;
+  uint32_t begunAt = 0;
+  for (uint32_t turn = 0; turn < 512 && !runtime->coverageBuildNeedsService(); ++turn) {
+    nativePlaybackDeadlineClock = {origin + turn * 64 + 1, 1};
+    (void)track.stepPlaybackViewMaintenance(static_cast<uint32_t>(origin), nullptr, false,
+                                            nativePlaybackDeadlineClock);
+    begunAt = turn + 1;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(runtime->coverageBuildNeedsService(), "A's build is in flight");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(generationA, runtime->viewBuildOperationGeneration,
+                                   "and it carries A's operation identity, stamped where the build began");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(runtime->rolling.deadlineTick, runtime->viewBuildWork.deadlineTick,
+                                   "with the admitted work owing the promise the frame made");
+
+  // ---- The completion arrives **after** ownership moved: the reader moves the generation inside the final grain.
+  MidiSendCapture::reset();
+  PlaybackPathRows::reset();
+  Track::PlaybackViewTurnResult lastA = Track::PlaybackViewTurnResult::Idle;
+  for (uint32_t turn = 0; turn < 512; ++turn) {
+    nativePlaybackDeadlineClock = {origin + (begunAt + turn + 1) * 64 + 1, 1};
+    lastA = track.stepPlaybackViewMaintenance(static_cast<uint32_t>(origin), nullptr, false,
+                                              nativePlaybackDeadlineClock, changeRollingGenerationAtCompletion);
+    if (lastA == Track::PlaybackViewTurnResult::BuildComplete) break;
+    if (track.getPlaybackGeneration() != generationA) break;
+  }
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewTurnResult::BuildComplete),
+                            static_cast<int>(lastA), "A's build reached its completion grain");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(generationA, track.getPlaybackGeneration(),
+                                "and ownership moved before it could publish");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, MidiSendCapture::count(),
+                                   "a completion that arrives late publishes nothing");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(servedBefore, set->lifecycle.current, "the served view is untouched");
+  TEST_ASSERT_TRUE_MESSAGE(set->lifecycle.ready >= set->views.size() ||
+                               !set->views[set->lifecycle.ready].complete,
+                           "and no prepared successor was created from it");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "an operation that publishes nothing crosses no promise");
+  // The episode ends **because** the completion was late: the frame keeps no debt.
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle),
+                            static_cast<int>(runtime->rolling.phase),
+                            "the late completion ends the episode rather than leaving it owed");
+  TEST_ASSERT_FALSE_MESSAGE(runtime->viewBuild.active(), "the builder is released");
+  // Its identity is **retained**, and that is what makes a later publication from it impossible; a clean-up that
+  // happened to zero it would leave the same outcome for the wrong reason.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(generationA, runtime->viewBuildOperationGeneration,
+                                   "the stale identity stays recorded: the guard is the refusal, not a cleanup");
+  // Cancellation is idempotent: there is no live episode left for the off-clock owner to cancel.
+  track.cancelRollingPlaybackWindow(2);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle),
+                            static_cast<int>(runtime->rolling.phase),
+                            "cancelling an episode the completion already ended is a no-op");
+  // The slot's **source** is the other owner's work, and it is released by its own retirement -- not by the refusal.
+  for (uint32_t turn = 0; turn < 16384 && runtime->ownsCoverageSource(); ++turn)
+    runtime->stepCoverageSourceRetirement(64);
+  TEST_ASSERT_FALSE_MESSAGE(runtime->ownsCoverageSource(),
+                            "the refused operation's coverage source retires normally");
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(2),
+                           "and the discharge from its admission is still the only record: nothing was retained back");
+
+  // ---- B: the same interval, the same view slot, a **new** identity, built and served by the same playing chain.
+  const uint64_t bOrigin = origin + 40000;
+  nativePlaybackDeadlineClock = {bOrigin, 1};
+  clockManager.assignCurrentTickSilently(static_cast<uint32_t>(bOrigin));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "B opens the same demand");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(slotA, set->lifecycle.build,
+                                  "and it is offered the very view slot A was building in");
+  const uint32_t generationB = track.getPlaybackGeneration();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(generationA + 1, generationB, "B's own epoch is the moved generation");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(generationB, runtime->rolling.generation, "and its frame carries it");
+  const uint32_t startPhaseB = runtime->rolling.startPhase;
+  // The premise of the reuse: the slot is not fresh -- it still carries the identity of the operation whose completion
+  // was refused there, which is what makes "reused" a statement about the same slot rather than about a new one.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(generationA, set->views[slotA].source.sourceGeneration,
+                                   "the slot A built in still carries A's identity, not a clean one");
+  uint32_t servingTicks = 0;
+  bool sawBBuilder = false;
+  uint32_t reusedSlotGeneration = 0;
+  uint32_t reusedSlotStartPhase = 0;
+  uint32_t reusedSlotFramePhase = 0;
+  for (uint32_t delta = 1; delta <= 10 * 768 + 48; ++delta) {
+    rollingTestTick(track, bOrigin + delta, delta % 64 == 0);
+    if (!sawBBuilder && set->views[slotA].source.sourceGeneration == generationB &&
+        runtime->viewBuildOperationGeneration == generationB) {
+      // The very slot A built in now carries the current operation's identity: B's build re-populated it.
+      sawBBuilder = true;
+      reusedSlotGeneration = set->views[slotA].source.sourceGeneration;
+      reusedSlotStartPhase = set->views[slotA].coverage.startPhase;
+      reusedSlotFramePhase = runtime->rolling.startPhase;
+    }
+    if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving && track.playbackWindowServesSlot(2))
+      ++servingTicks;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(sawBBuilder, "B's build ran in flight on that chain");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(generationB, runtime->viewBuildOperationGeneration,
+                                   "re-stamped with B's identity: the slot belongs to the current operation");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(generationA, runtime->viewBuildOperationGeneration,
+                                "so nothing of A's operation can be revived through this slot");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(generationB, reusedSlotGeneration,
+                                   "the reused slot was re-populated under the new identity");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(reusedSlotFramePhase, reusedSlotStartPhase,
+                                   "holding the interval the frame itself projected when that build ran");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(startPhaseA, reusedSlotStartPhase,
+                                "and not the interval A left behind in the same slot");
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(startPhaseB, reusedSlotStartPhase,
+                                              "the projection only moves forward from the request's interval");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, servingTicks,
+                                          "and the reused slot's window is served on the playing chain");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "the reuse crossed no promise");
+  const uint32_t total = MidiSendCapture::count();
+  uint32_t ons = 0;
+  uint32_t offs = 0;
+  uint32_t foreign = 0;
+  for (size_t i = 0; i < total; ++i) {
+    const auto event = MidiSendCapture::at(i);
+    if (event.data.noteData.note != 48) ++foreign;
+    else if (event.isNoteOn()) ++ons;
+    else ++offs;
+  }
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(8u, ons, "B's drive emitted the interval's own note-ons");
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(7u, offs, "with their closures");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, foreign,
+                                   "and nothing else: no stale A content and no silence across the reuse");
+}
+
+/// **Task 6.5 — the native force "cancellation between every preparation grain recovers".**
+///
+/// Cancelling an episode is only as good as its *worst* grain: the demand, the qualification, the declared work record and
+/// the in-flight builder each own a piece of the same promise, and a cancellation that misses any one of them leaves a
+/// slot that can never be prepared again. This fixture cancels at every grain of a preparation -- k = 0 (the demand is
+/// retained, nothing has begun) through the last grain before completion (the builder is in flight) -- and asserts the
+/// **same** recovered state each time: no live demand, no builder, no candidate, the served view untouched, nothing
+/// emitted. The last act is the one that matters for a slot that must be *reusable*: after every one of those grains, one
+/// clean episode still runs and is served on the playing chain.
+void test_rolling_path_cancellation_between_every_preparation_grain_recovers() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const uint64_t origin = clockManager.getCurrentTick();
+  const uint32_t servedBefore = set->lifecycle.current;
+  uint32_t cancelledBeforeBuild = 0;
+  uint32_t cancelledInsideBuild = 0;
+  constexpr uint32_t kLastGrain = 5;
+
+  for (uint32_t k = 0; k <= kLastGrain; ++k) {
+    const uint64_t base = origin + 20000 + static_cast<uint64_t>(k) * 3000;
+    MidiSendCapture::reset();
+    PlaybackPathRows::reset();
+    nativePlaybackDeadlineClock = {base, 1};
+    clockManager.assignCurrentTickSilently(static_cast<uint32_t>(base));
+    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                              static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                              "each cycle opens its own demand");
+    for (uint32_t turn = 0; turn < k; ++turn) {
+      nativePlaybackDeadlineClock = {base + (turn + 1) * 64, 1};
+      clockManager.assignCurrentTickSilently(static_cast<uint32_t>(nativePlaybackDeadlineClock.tick));
+      (void)track.stepPlaybackViewMaintenance(static_cast<uint32_t>(nativePlaybackDeadlineClock.tick), nullptr, false,
+                                              nativePlaybackDeadlineClock);
+    }
+    const bool buildInFlight = runtime->coverageBuildNeedsService() || runtime->viewBuild.active();
+    if (buildInFlight) ++cancelledInsideBuild;
+    else ++cancelledBeforeBuild;
+
+    track.cancelRollingPlaybackWindow(2);
+    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle),
+                              static_cast<int>(runtime->rolling.phase),
+                              "cancellation ends the episode, at whatever grain it was in");
+    TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(2),
+                             "and whoever held the demand -- the retention or the admitted work -- released it");
+    TEST_ASSERT_FALSE_MESSAGE(runtime->frozenViewRequest.active, "with no frozen demand left beside it");
+    TEST_ASSERT_FALSE_MESSAGE(runtime->viewBuild.active(), "and no builder still in flight");
+    TEST_ASSERT_TRUE_MESSAGE(set->lifecycle.ready >= set->views.size() ||
+                                 !set->views[set->lifecycle.ready].complete,
+                             "no candidate was published from a cancelled episode");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(servedBefore, set->lifecycle.current,
+                                     "the served view was never touched");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, MidiSendCapture::count(),
+                                     "and nothing was emitted by a preparation that never completed");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                     "a cancellation crosses no promise");
+    for (uint32_t turn = 0; turn < 16384 && runtime->ownsCoverageSource(); ++turn)
+      runtime->stepCoverageSourceRetirement(64);
+    TEST_ASSERT_FALSE_MESSAGE(runtime->ownsCoverageSource(),
+                              "the cancelled preparation's coverage source retires: the slot is reusable");
+  }
+  // The sweep has to have actually swept: at least one cancellation before the build began and at least one inside it.
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, cancelledBeforeBuild, "k = 0 cancels a retained demand");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, cancelledInsideBuild, "and the later cycles cancel a live builder");
+
+  // ---- The slot is reusable after every one of those grains: one clean episode, built and served by the lane.
+  const uint64_t cleanBase = origin + 20000 + static_cast<uint64_t>(kLastGrain + 1) * 3000;
+  nativePlaybackDeadlineClock = {cleanBase, 1};
+  clockManager.assignCurrentTickSilently(static_cast<uint32_t>(cleanBase));
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the slot accepts a demand after every cancelled grain");
+  MidiSendCapture::reset();
+  PlaybackPathRows::reset();
+  uint32_t servingTicks = 0;
+  for (uint32_t delta = 1; delta <= 10 * 768 + 48; ++delta) {
+    rollingTestTick(track, cleanBase + delta, delta % 64 == 0);
+    if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving && track.playbackWindowServesSlot(2))
+      ++servingTicks;
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, servingTicks,
+                                          "and an uncancelled episode is served from the recovery slot");
+  const uint32_t total = MidiSendCapture::count();
+  uint32_t ons = 0;
+  uint32_t offs = 0;
+  uint32_t foreign = 0;
+  for (size_t i = 0; i < total; ++i) {
+    const auto event = MidiSendCapture::at(i);
+    if (event.data.noteData.note != 48) ++foreign;
+    else if (event.isNoteOn()) ++ons;
+    else ++offs;
+  }
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(8u, ons, "with the interval's own note-ons");
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(7u, offs, "and their closures");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, foreign, "and no foreign note: recovery, not residue");
+}
+
 int main() {
 
 
@@ -9568,6 +9827,8 @@ int main() {
   RUN_TEST(test_rolling_path_admissible_shape_repeats_handoffs_under_enforcement);
   RUN_TEST(test_rolling_path_refused_shape_is_named_retained_and_falls_back);
   RUN_TEST(test_rolling_path_budget_charges_qualification_and_retirement_work);
+  RUN_TEST(test_rolling_path_reuses_the_view_slot_after_a_refused_completion);
+  RUN_TEST(test_rolling_path_cancellation_between_every_preparation_grain_recovers);
   RUN_TEST(test_rootless_restored_launch_requests_its_source_once_and_becomes_ready);
   RUN_TEST(test_immutable_launch_source_wait_does_not_hide_a_later_track);
   RUN_TEST(test_immutable_launch_sibling_interference_is_a_temporary_wait);

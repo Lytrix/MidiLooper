@@ -1,3 +1,29 @@
+**Task 6.5's native half lands: the two interleaving forces the suite did not force are now forced on the playing chain
+(test-only slice).**
+**A→B→A view-slot reuse with the first completion arriving last:** A's build begins under its own operation identity and
+its completion is delivered after ownership moved (the reader bumps the playback generation inside the final grain) — it
+publishes **nothing** (no ready candidate, served view untouched, **0 events**), the episode ends **Idle**, and the stale
+identity is **retained** (that is the refusal, not a clean-up). B then requests the same interval, is offered **the very
+view slot A was building in** (which still carried A's identity), builds there under the **current** identity — its
+interval is the frame's own projection at build time, forward of the request's and different from A's — and is **served**:
+1536 serving ticks with 22 events = 11 note-ons + 11 closures and **no foreign note**. **Cancellation at every
+preparation grain:** seven cycles (`k = 0..5`) cancel a retained demand *and* a live builder, each leaving frame **Idle**,
+no pending/frozen demand, no builder, no candidate, the served view untouched, **0 events** and the coverage source
+retired — and then one clean episode still runs and is served, so the slot is **reusable**, not merely free. **Findings
+recorded, not smoothed:** the explicit off-clock cancellation after a late completion is a **no-op by measurement** (the
+completion already ended the episode, so the fixture pins idempotence rather than a second release); the operation
+identity is stamped on **more than one path**, so mutation **MR-A** (the build begin's stamp) is recorded as a
+**non-red-proof** while **MR-B** (the late completion not recognised) red-proves the ordering claim and **MR-C1/MR-C2**
+(the demand not released / the owned build not discarded) red-prove the cancellation sweep; and the fixture drive must
+stay **monotone** after a forced begin or the episode dies before the lane can serve it. **Not claimed:** the interval A/B
+**revision trace** stays partial (shared-view fixtures only, no rolling-chain trace), the whole **hardware** half of 6.5
+is **NOT RUN** (it needs 6.4's registered profile and an authorized upload), **no device action** was taken, and 6.5 stays
+**open**. Verification: focused **142/142** (was 140), full native **2796 / 2789 succeeded / 7 skipped / 0 failed**,
+capture build SUCCESS with the RAM1 line byte-identical (variables 96,192 / padding 1,640), strict validation and
+`git diff --check` clean, every mutation restored byte-identically (`src include` diff empty — no production line
+edited). Evidence:
+[`s65-native-verification-split`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s65-native-verification-split/EVIDENCE.md).
+
 **The rolling path's admission boundary is proved on the playing chain, and the earlier anomalous failure now has a
 named culprit (test-only slice).**
 Driving the lane's own composition (`rollingTestTick`: selector + one worker turn every 64 ticks, transport every tick) for

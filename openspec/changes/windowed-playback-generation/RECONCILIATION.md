@@ -84,9 +84,13 @@ density and span tables, and the boundary pair) — see
 [`hk-contention-sweep`](evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md); what the task still owes is the
 **clock/tempo** axis beyond the declared advance, chords and same-tick density, and the **device** leg. `6.4` separates
 profile preparation/registration, authorization, actual exercise and qualification;
-profile work can precede rolling enablement. `6.5` is partial: initial-launch device
-observations exist (`DEVICE_ROOTLESS_HOLD.md`), but sustained rolling timing and full
-content parity are unqualified. `6.6` and `6.7` documentation reconciliation can proceed
+profile work can precede rolling enablement. `6.5`'s **native** half has since forced its two gaps on the playing chain
+— A→B→A view-slot reuse with the first completion arriving last, and cancellation at every preparation grain with
+recovery (`evidence/2026-10-05-s65-native-verification-split/`; mutations MR-B, MR-C1 and MR-C2 red-prove them, MR-A
+recorded as a non-red-proof) — while the **interval A/B revision trace** stays partial (shared-view fixtures only) and the
+**hardware** half stays unqualified: initial-launch device observations exist (`DEVICE_ROOTLESS_HOLD.md`), but sustained
+rolling timing, the contention legs and full content parity are **NOT RUN** (they need 6.4's registered profile and an
+authorized upload). `6.6` and `6.7` documentation reconciliation can proceed
 without claiming shipped capability. For `6.8`, RWO **S7.5a** provides the upstream
 numeric oracle and shared budget before qualification/affected enablement. The
 window evidence is an INPUT to **S7.5b** dependency closure and **S7.5** combined

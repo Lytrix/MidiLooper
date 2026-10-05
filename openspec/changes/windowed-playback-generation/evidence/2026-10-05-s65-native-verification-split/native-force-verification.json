@@ -1,0 +1,54 @@
+{
+  "slice": "windowed-playback-generation task 6.5 — the native half: the two interleaving forces the suite did not force",
+  "kind": "test-only verification on the playing production chain (no production line changed; mutations are the evidence)",
+  "packet": "EXECUTION.md",
+  "evidence": "EVIDENCE.md",
+  "production_changes": [],
+  "fixtures": {
+    "S1": "test_rolling_path_reuses_the_view_slot_after_a_refused_completion",
+    "S2": "test_rolling_path_cancellation_between_every_preparation_grain_recovers"
+  },
+  "driver": "stepPlaybackViewMaintenance at the retry/begin boundary, then rollingTestTick (selector + one worker turn per 64 ticks, transport per tick) for the served half",
+  "measured": {
+    "S1": {
+      "epoch": {"generation_before": 0, "bumped_to": 1, "completion_bump_to": 2},
+      "A": {"begin_after_turns": 3, "admitted_work_deadline_equals_frame_deadline": true, "completion_result": "BuildComplete", "generation_moved_inside_final_grain": true, "frame_after": "Idle", "ready_candidate_published": false, "served_view_unchanged": true, "emitted_events": 0, "identity_retained": true, "explicit_cancel": "no-op (episode already ended)"},
+      "B": {"outcome": "Requested", "build_role_index_reused": true, "frame_generation": 2, "slot_re_populated_generation": 2, "slot_interval": 15360, "frame_projection_at_that_build": 15360, "requested_interval": 7680, "interval_A_left_behind": 4608, "serving_ticks": 1536, "events": 22, "ons": 11, "offs": 11, "foreign_notes": 0, "one_pass_late": 0}
+    },
+    "S2": {
+      "grain_cycles": 7,
+      "cancelled_before_build_gt": 0,
+      "cancelled_inside_build_gt": 0,
+      "per_cycle": {"frame": "Idle", "pending_demand_survives": false, "frozen_demand_survives": false, "builder_in_flight": false, "ready_candidate": false, "served_view_unchanged": true, "emitted_events": 0, "one_pass_late": 0, "coverage_source_owned_after_retirement": false},
+      "clean_episode_after": {"serving_ticks_gt": 0, "ons_gte": 8, "offs_gte": 7, "foreign_notes": 0}
+    }
+  },
+  "findings": {
+    "F-5": "the late completion ends its own episode (the frame's ownership-moved branch); the off-clock cancellation that follows returns early at Idle, so the fixture pins cancellation as idempotent rather than as a second release",
+    "F-6": "the operation identity is stamped on more than one path (the admitted build begin and the freeze path), so removing the build-begin stamp alone fails no test — mutation MR-A recorded as a non-red-proof, and the fixture's identity assertion is therefore not a claim about that one line",
+    "F-7": "a fixture that forces a build to begin through the retry path and then rewinds the clock kills the episode before the lane can serve it (the drive must continue monotonically after the begin loop)",
+    "F-8": "the frame projects forward between the request and the build it begins, so a build's coverage interval is the frame's projection at build time, not the request's interval"
+  },
+  "mutations": [
+    {"id": "MR-A", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "the admitted build begin does not re-stamp viewBuildOperationGeneration (line 1941)", "result": "no test failed — recorded as F-6 (not a clean red-proof)", "restored_sha256_16": "75c23a3f1849d15a"},
+    {"id": "MR-B", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "the rolling completion branch does not recognise the moved generation as late (publishes A's completion as a ready successor)", "result": "S1 fails at 'and no prepared successor was created from it'; the pre-existing test_rolling_generation_change_at_completion_publishes_nothing fails too", "restored_sha256_16": "75c23a3f1849d15a"},
+    {"id": "MR-C1", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "cancellation does not clear the retained demand", "result": "S2 fails at 'whoever held the demand -- the retention or the admitted work -- released it'; S1 unaffected", "restored_sha256_16": "75c23a3f1849d15a"},
+    {"id": "MR-C2", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "cancellation does not discard a coverage build it owns", "result": "S2 fails at 'and no builder still in flight'; S1 fails at B's request (the surviving builder occupies the slot); test_rolling_cancellation_retires_only_its_owned_request fails", "restored_sha256_16": "75c23a3f1849d15a"}
+  ],
+  "verification": {
+    "focused": {"command": "pio test -e native -f test_runtime_working_set_ownership", "cases": 142, "passed": 142, "failed": 0},
+    "full_native": {"command": "pio test -e native", "cases": 2796, "succeeded": 2789, "skipped": 7, "failed": 0},
+    "capture_build": {"command": "pio run -e teensy41-capture-serial", "status": "SUCCESS", "ram1_variables": 96192, "ram1_code": 391576, "ram1_padding": 1640, "ram1_floor": 840, "rebased": false},
+    "strict_openspec": {"command": "openspec validate windowed-playback-generation --strict", "result": "valid", "node": "v24.21.0"},
+    "git_diff_check": "clean",
+    "src_include_diff": "empty (production restored byte-identically after every mutation)",
+    "device": "NOT RUN"
+  },
+  "not_claimed": [
+    "the hardware half of task 6.5 (grain duration and maximum service gaps; sustained multi-track playback under capture/persistence contention; external-clock behaviour; memory high-water marks with content parity) — needs task 6.4's registered profile and an authorized upload",
+    "the interval A/B revision trace as a *rolling-path* force (force 2 stays partial: it is covered on the shared-view path by test_invalidated_successor_preserves_serving_content_until_boundary_revalidation, test_a_late_arrival_is_named_even_when_the_served_window_carries_the_wanted_revision and test_windowed_stream_concatenates_to_the_whole_loop_stream_across_a_boundary)",
+    "activation in production",
+    "any checkoff of task 6.5 while its hardware half is unrun"
+  ],
+  "next_steps": ["task 6.4 — the registered device profile (host-only)", "task 6.5's hardware half under a dedicated HITL preset, after authorization"]
+}

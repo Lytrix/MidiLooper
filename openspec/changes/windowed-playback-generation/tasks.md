@@ -896,6 +896,22 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   capture and persistence contention, external-clock behaviour, and memory high-water marks with boundary content parity
   — and record that reproducing the exact A→B→A race on hardware is **not** required once the native ordering proof
   exists (native cannot establish physical timing; hardware is not a substitute for the ordering proof)
+
+  *Partially supplied 2026-10-05 — the **native** half's two gaps are now forced on the real
+  request→worker→publication→consumption path:* **A→B→A view-slot reuse with the first A completion arriving last**
+  (`test_rolling_path_reuses_the_view_slot_after_a_refused_completion`: the late completion publishes nothing, retains its
+  stale identity, ends its own episode, and the slot it built in is re-populated by the next episode under the *current*
+  identity and served — 1536 serving ticks, 22 events = 11 note-ons + 11 closures, no foreign note) and **cancellation
+  between every preparation grain** (`test_rolling_path_cancellation_between_every_preparation_grain_recovers`: seven
+  grain cycles cancel a retained demand and a live builder, each leaving no demand, no builder, no candidate, nothing
+  emitted, and the coverage source retired — then one clean episode is served). The task stays **open**: the **interval
+  A/B revision trace** is still only *partial* (shared-view fixtures, no rolling-chain trace), and the **hardware** half
+  (grain duration and maximum service gaps, sustained multi-track playback under capture/persistence contention,
+  external-clock behaviour, memory high-water marks with content parity) is **NOT RUN** — it needs 6.4's registered
+  profile and an authorized upload. Mutations **MR-B** (late completion not recognised) and **MR-C1/MR-C2** (cancellation
+  not releasing the demand / not discarding its owned build) red-prove the fixtures; **MR-A** is recorded as a
+  non-red-proof (the operation identity is stamped on more than one path). See
+  [`s65-native-verification-split`](evidence/2026-10-05-s65-native-verification-split/EVIDENCE.md).
 - [ ] 6.6 Update RWO's dependency records now that the sibling exists and carries its DEC and reassessment — verify RWO
   `tasks.md` (S2.9/F) and `design.md:812` point at this change, and that S2.3's `N` and `S7 gates` status are restated
   accurately under [`docs/Authority/DOCUMENTATION_CLOSEOUT.md`](../../../docs/Authority/DOCUMENTATION_CLOSEOUT.md)
