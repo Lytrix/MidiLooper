@@ -1,5 +1,6 @@
-**The windowed leg now drives a slot switch, the gesture is proven safe on hardware, and the reason the lane still has no
-work is measured (host tooling + one authorized device run; no firmware line changed).**
+**The windowed leg now drives a slot switch, the gesture is proven safe on hardware, and the lane's missing demand is
+traced to the demoted target's missing whole-loop root -- a prerequisite outside the lane (host tooling + one authorized
+device run; no firmware line changed).**
 `run_windowed_content_parity` gained a **switch leg** — select a filled, non-active target, press its record control, wait,
 then the existing stop-and-drain — absent by default and gated on the transport actually running. Its press **order** is
 the safety argument and a code fact, not a hope: in `MidiButtonActions.cpp` the recording branch is unreachable while the
@@ -40,7 +41,9 @@ needed), with the S4b legs — whose switches *did* prepare and commit on this b
 already playing — as the comparison. Evidence:
 [`switch-leg-demand`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-switch-leg-demand/EVIDENCE.md).
 
-**The measurement was taken (2026-10-05) and it classifies the blocker:** the 2-bar slot's runtime length reads **0** (not resident) while the **24-bar** slot's reads **18 432** — so run 06's switch did satisfy the routing condition and the lane *was* called. What stops it is the **root**: both demand paths refuse a source whose whole-loop root is not current (`TrackPlaybackWindowBuild.cpp:2374` `RollingOutcome::Excluded`, `:2861` `SourceUnavailable`), and a demoted slot has no root at all (`has_root_content=false` for both 24-bar slots) — this change's own `shouldAvoidFullVisualRebuild` policy. **Neither closure work nor a defect of this change** — it is RWO's recorded **S4b.7 published-root question** on hardware, and it exposes a tension with this change's **F-8** claim. Two resolutions, both decisions: the restore edge installs the root as current (RWO), or the demand paths stop requiring a whole-loop root for a demoted interval (a DEC-108 decision here). **F-16:** the refusals are unobservable on device (a typed enum with no row) — the very distinction five runs spent. **F-13 was wrong, F-14 is real and fixed, and the device finally shows the windowed lane serving under transport.**
+**The measurement was taken (2026-10-05) and it classifies the blocker:** the 2-bar slot's runtime length reads **0** (not resident) while the **24-bar** slot's reads **18 432** — so run 06's switch did satisfy the routing condition and the lane *was* called. What stops it is the **root**: both demand paths refuse a source whose whole-loop root is not current (`TrackPlaybackWindowBuild.cpp:2374` `RollingOutcome::Excluded`, `:2861` `SourceUnavailable`), and a demoted slot has no root at all (`has_root_content=false` for both 24-bar slots) — this change's own `shouldAvoidFullVisualRebuild` policy. **Neither closure work nor a defect of this change** — it is RWO's recorded **S4b.7 published-root question** on hardware, and it exposes a tension with this change's **F-8** claim. Two resolutions, both decisions: the restore edge installs the root as current (RWO), or the demand paths stop requiring a whole-loop root for a demoted interval (a DEC-108 decision here). **F-16:** the refusals are unobservable on device (a typed enum with no row) — the very distinction five runs spent.
+
+**F-13 was wrong, F-14 is real and fixed, and the device finally shows the windowed lane serving under transport.**
 Reading the code before editing refuted the previous entry: `DIAG,win_gap,` **is** already Tier-A, classified in
 `src/Utils/DebugSessionCapture.cpp` (with its own recorded RAM1 reason for not living in the header) and pinned by
 `test_capture_ring`. The real gap was the family's **named overrun row**: `DIAG,win_gap_overrun,` does not share its
