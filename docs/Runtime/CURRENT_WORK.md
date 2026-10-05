@@ -5185,7 +5185,8 @@ bridge's verify path) are unrelated and unchanged. See
 **G2 red team (2026-10-05): BLOCKED for 7.3/7.4** — five blockers (B1 no path to a turn for the interval phase; B2 two more
 whole-root sites incl. a MIDI-edge one; B3 stale-root Launch eligibility — **owner decision pending**; B4 interval box not
 tied to `resetPassTimeline`/`clearPublishedSnapshot`; B5 Rolling admission has no release on an active-slot change) and ten
-tightenings, recorded in `tasks.md` item 7.2a and a DEC-113 amendment. **Slice 7.3 must not start until they are applied.**
+tightenings, recorded in `tasks.md` item 7.2a and a DEC-113 amendment. **B3 decided 2026-10-05 (owner): keep the launch republish request
+for stale roots; interval roots serve only the rootless case.** **Slice 7.3 must not start until B1, B2, B4, B5 and the tightenings are applied.**
 The red team also found the unaligned playhead-centred demand has no production caller (Rolling starts are multiples of
 1536), so slice 7.2 is correct but not acceptance-critical.
 

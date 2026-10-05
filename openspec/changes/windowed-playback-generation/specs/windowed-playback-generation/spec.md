@@ -150,7 +150,8 @@ readiness requirement, and the completion state SHALL NOT become a second revisi
 failure SHALL name the holder that owes the window; an unnamed failure SHALL NOT be reported. The windowed lane's source
 obligation SHALL be named **without reference to a whole root**: the holder for a demand not yet covered by any usable
 source is the **interval-root owner** (`interval_root_owner`), and no windowed consumer SHALL wait for, or request, a
-whole-loop root publication (DEC-113).
+whole-loop root publication **for a slot that has no published root** (DEC-113). A slot whose published root exists but is
+not current keeps the existing republish request (decided 2026-10-05: interval roots serve the rootless case only).
 
 #### Scenario: A prepared empty interval is ready
 

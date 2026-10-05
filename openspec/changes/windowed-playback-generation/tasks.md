@@ -1682,9 +1682,13 @@ true for the lane only once 7.3/7.4 land and 7.6 supplies the row.
   deadline miss recovers.
   **B3 — a stale-but-present root on a Launch target has no producer:** eligibility is "no *current* root", not "rootless".
   `requestPlaybackWindow` refuses stale roots and the launch no longer republishes, so a stale demoted slot could never
-  commit. **Owner decision needed** (stale case: serve it from an interval root with the §2C empty-parent content
-  consequence stated, or keep the launch republish request there); record the choice in DEC-113. Fixture: stale root,
-  `pend=0`, nothing queued ⇒ `launch_ready`; edit-pass Hide on a stale-root slot checked against the Overlay.
+  commit. **DECIDED 2026-10-05 (owner): keep the launch republish request for stale roots.** Interval-root eligibility is
+  "**no published root at all**" (`!publishedSnapshot()`); a published-but-stale root keeps `requestCommittedPassesRepublish`
+  in `preparePlaybackLaunchForSlot` (so edit-pass content stays on the whole-root path); the resolver's step (4) raises an
+  interval request only for the rootless case. Consequence: the stale launch still waits on a whole-root build — an accepted,
+  named limitation, not a regression. Fixture: stale root,
+  `pend=0`, nothing queued ⇒ the launch republish request is raised (not an interval request) and `launch_ready` follows
+  once the whole root is current; rootless ⇒ interval request, no republish.
   **B4 — identity survives slot destruction:** `Loop::resetPassTimeline` sets `playbackRevision = 0` and clears the
   published snapshot without a Track generation bump (`SlotReset.cpp:23`, `CurrentSetBootLoad.cpp:36`, …), so a new take can
   reach the same revision and an old interval root would look current. Clear the interval box inside

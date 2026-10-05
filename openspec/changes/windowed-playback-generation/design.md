@@ -132,7 +132,8 @@ fallback so it is delayed rather than lost, and diagnostic cadence is bounded th
 diagnostic cannot evict the evidence it explains.
 
 **D11 — The interval root is the lane's source; the whole-loop root is the checkpoint authority only (DEC-113).** The
-windowed lane never requires, waits for or requests a whole-loop root. Where no usable published root exists (the
+windowed lane never requires, waits for or requests a whole-loop root **for a slot that has no published root**; a slot
+whose root exists but is stale keeps today's launch republish request (owner decision 2026-10-05). Where no published root exists (the
 measured demoted/rootless switch: a 24-bar body needed well over 30 s of whole-root construction against an ~8 s hold,
 `captures/s64-progress-01`), the lane is served by an **interval root**: a `LoopSnapshot` for one **linear, not
 necessarily bar-aligned** served interval, built on the existing publisher's fragment path from an empty parent with

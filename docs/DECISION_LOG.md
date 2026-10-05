@@ -6606,3 +6606,10 @@ generation is Track-wide (T1); a restored demoted slot no longer receives a whol
 save and display remain on their no-root paths (T5); interval parity is also checked against `LoopContentResolution` truth
 (T8). Decision 1's "stale-root Overlay keeps serving" applies to the *playing* slot only; it does not exist for a Launch
 target.
+
+**Owner ruling 2026-10-05 on (B3):** interval-root eligibility is **"no published root at all"**. A slot whose published root
+exists but is not current keeps the existing launch republish request (`requestCommittedPassesRepublish` in
+`preparePlaybackLaunchForSlot`), so edited content stays on the whole-root path and the empty-parent companion limitation
+is not widened to slots that already have a root. Decision 1 above is read accordingly ("never requires, waits for or
+requests a whole-loop root" applies to the rootless slot); the stale-root Launch case still waits on a whole-root build,
+recorded as an accepted limitation. The follow-up retirement programme (decision 12) is where that wait is removed.
