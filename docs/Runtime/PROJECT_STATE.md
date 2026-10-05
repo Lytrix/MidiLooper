@@ -1,3 +1,23 @@
+**The owner took task 3.10's enablement decision: the rolling lane is now open in a dedicated qualification build, and
+driving it corrected the previous run's finding (device; firmware gate opened in one env only, nothing shipped).**
+`[env:teensy41-capture-serial-window-qualification]` extends the capture env with `PLAYBACK_WINDOW_ROLLING_ENABLED=1` and
+`PLAYBACK_WINDOW_ROLLING_QUALIFICATION=1` -- the shape the firmware's own guard demands for hardware
+(`include/RuntimePlaybackView.h`), so normal capture builds and normal operation keep the lane off. The RAM1 guard
+refused the new env until a baseline was recorded deliberately: measured `variables 96,192`, ITCM `393,216`
+(`code 392,232` + `padding 984`), locals `34,880` -- **+656 B of ITCM code** for the rolling path, 144 B above the 840
+floor, banks and RAM1 variables unchanged. The image was flashed (`597ab7675a83d7cc…`) and the windowed leg driven
+again. **It reproduced the row picture and forced a correction:** 13 `win_gap` blocks, all `running=0`, then exactly **one**
+`#CAP` row across the remaining ~262 s of transport -- because `flushCaptureBuffer` sheds **non-Tier-A** head records at the
+timing-critical budget of 8, and `win_gap`/`win_gap_overrun` are not Tier-A while `playback_build`/`playback_order`/
+`win_readiness` are. **F-12 is therefore withdrawn** (it read a capture-regime property as a dispatch property) and
+**F-13** takes its place: the lane's coverage and overrun rows are shed silently in the very regime they exist to measure,
+so 6.5's hardware claims -- and the "operationally reported" permitted-advance envelope -- cannot be measured until that
+tier entry exists. That is a separate decision: the authorization for this path was the lane's **enablement**, not an
+instrument change. `win_readiness` remains Tier-A plus direct-when-room, so its absence in both runs is still evidence
+(no receipt was produced). **Not claimed:** the lane was not exercised in either run; F-7/F-8/AC-8 remain unverified on
+hardware; nothing was shipped and no default changed. Evidence:
+[`s64-s65-device-leg-01`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md).
+
 **Task 6.4/6.5: the windowed leg's first authorized device run happened, and it handed back a prerequisite rather than a
 qualification (device + host tooling; no firmware line changed, nothing destroyed).**
 The board was built (`teensy41-capture-serial`, RAM1 unchanged at `variables 96,192` / `padding 1,640`) and flashed
@@ -14,9 +34,14 @@ are the same observation -- and `window_demand_observed` is now the verifier's *
 field 16, schema `3` in 19, `running` in 7), so that parser is no longer only a synthetic-rows claim. **Findings
 recorded:** F-11 the reused long-loop leg's *display* oracle is stale against the emitted DISP schema (the device emits 12
 fields, that verifier parses 14 -- it belongs to the display-window leg, and because the profile's verdict ANDs both halves
-it also blocks this composition); F-12 the lane's dispatch stopped entirely once the transport started (44 blocks in the
-idle phase, none across ~97 s of recording/playing), whose deferred-idle-owner explanation is recorded as a *hypothesis*
-and which matters for 3.10 because F-2's deadline is 16-31 ms. **Not claimed:** the lane was **not exercised**; F-7, F-8
+it also blocks this composition); F-12 (the lane's dispatch stopped once the transport started) was recorded as a
+hypothesis and is **withdrawn by the same session's qualification run**, which measured why: `flushCaptureBuffer` sheds
+**non-Tier-A** head records at the timing-critical budget of 8, and the lane's `win_gap`/`win_gap_overrun` families are not
+in `CaptureLineTier.h` (while `playback_build`, `playback_order` and `win_readiness` are) -- so the second run carried
+exactly **one** `#CAP` row across ~262 s of transport. That is new finding **F-13**, and it is the reason 6.5's hardware
+envelope claims cannot be measured yet: the rows that would measure the permitted advance are shed in the regime they exist
+for. `win_readiness` is Tier-A **and** direct-when-room, so its absence in both runs stays evidence that no receipt was
+produced. **Not claimed:** the lane was **not exercised**; F-7, F-8
 and AC-8 are unverified on hardware; the four hardware claims of 6.5 are **NOT RUN**; no firmware was changed and no oracle
 was bent to fit an observation; 6.4 and 6.5 both stay open. **What closes them is a decision, not more code:** enable the
 rolling lane (3.10's activation), or make the leg drive a demoted switch so a demand exists today. Evidence:

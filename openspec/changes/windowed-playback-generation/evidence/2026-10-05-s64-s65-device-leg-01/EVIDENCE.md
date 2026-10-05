@@ -94,3 +94,49 @@ The lane's device evidence needs a **window demand**, and on the current image t
    to the leg's gestures (its driver), not to the firmware.
 
 Both are decisions for the owner; this run does not take either.
+
+---
+
+## Correction, same session — the qualification image, and what the absence of `win_gap` rows actually means
+
+The owner chose the enablement decision, so the lane was opened **in a dedicated qualification build** rather than in the
+shared default, which is what the firmware's own guard demands (`include/RuntimePlaybackView.h`: rolling needs native, or
+`SESSION_CAPTURE` **and** `PLAYBACK_WINDOW_ROLLING_QUALIFICATION`). The new env
+`teensy41-capture-serial-window-qualification` extends the capture env with `-D PLAYBACK_WINDOW_ROLLING_ENABLED=1
+-D PLAYBACK_WINDOW_ROLLING_QUALIFICATION=1`, and the RAM1 guard refused it until a baseline was recorded **deliberately**
+— measured on the linked image: `variables 96,192`, ITCM `393,216` (`code 392,232` + `padding 984`), locals `34,880`, i.e.
+**+656 B of ITCM code** for the rolling path, padding still 144 B above the 840 floor, banks and RAM1 variables unchanged.
+The entry and its reason are in `scripts/ram1_budget.json`. The image was built and flashed
+(`firmware.hex sha256 597ab7675a83d7cc…`), and the leg was driven again (`captures/s64-window-leg-02/`).
+
+**The second run reproduced the first run's row picture, and that is what forced this correction.** It produced 13
+`win_gap` blocks (all `running=0`, `permitted=64`, schema `3`, zero eligible/progress turns) whose last block sits at
+`#CAP,42751221,…` — immediately before the record's transport start at 43.2 s — and then **exactly one** `#CAP` row for
+the remaining ~262 s of the run (a `PERS,result` from the *immediate* path). F-12's earlier framing, *"the lane's dispatch
+stopped entirely once the transport started"*, is **withdrawn**: it read a capture-regime property as a dispatch
+property, and the code says which regime it is.
+
+**What the code says.** `DebugSessionCapture::flushCaptureBuffer` sheds **non-Tier-A** head records when the budget is the
+timing-critical 8 (`while … if (headRecordIsTierAText()) break; discardOldestRecord(TimingShed)`), and `main.cpp` flushes
+with `SC_CAPTURE_FLUSH(timingCriticalTrackActive ? 8 : 64)` while a track plays. `include/Utils/CaptureLineTier.h` lists
+`DIAG,playback_build,`, `DIAG,playback_order,` and `DIAG,win_readiness,` as Tier-A — and **not** `DIAG,win_gap,` or
+`DIAG,win_gap_overrun,`. So under transport the lane's **coverage and overrun rows are shed silently by design**, which is
+exactly the shape this capture shows: the instrument went blind for the whole playing session, and every `win_gap` block we
+can see is from the idle phase.
+
+**F-13 (new, actionable, and the reason 6.5's hardware claims cannot be measured yet).** The lane's declared
+"operationally reported" permitted-advance envelope is carried by `win_gap`/`win_gap_overrun` — the two families that are
+**not** Tier-A — so the rows that would measure the envelope are the ones dropped in the regime they exist for. This is a
+deliberate firmware change (a tier entry, with its own boundary fixture), not a verification step, so it is recorded here
+and **not** made in this slice: the authorization for this path was the lane's **enablement**, and an instrument change is
+a separate decision.
+
+**What survives unchanged as device evidence.** `win_readiness` is Tier-A **and** has the direct-when-USB-has-room
+delivery, so its complete absence in both runs is evidence rather than a blind spot: **no readiness receipt was produced**
+— consistent with "no window work was owed during the observable phases" (the idle phase cannot owe one: the rolling
+request declines while a slot is not playing). F-11 stands exactly as recorded.
+
+**Corrected summary of what the two device runs say.** With the lane off: no lane rows owed, nothing observable. With the
+lane on: the same, plus the discovery that the instrument itself sheds the lane's coverage rows under transport. Neither
+run exercises the lane, so F-7, F-8 and AC-8 remain unverified on hardware — and the next step is no longer only the
+enablement decision but F-13's tier entry, without which the envelope cannot be observed at all.

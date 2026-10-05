@@ -938,7 +938,18 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   against the emitted DISP schema (12 fields vs the 14 it parses — that leg's business, and it blocks this composition
   because the verdict ANDs both halves), and **F-12** the lane's dispatch stopped entirely once the transport started
   (44 blocks idle, none across ~97 s of recording/playing; the deferred-idle-owner explanation is recorded as a
-  hypothesis), which matters for 3.10 because F-2's deadline is 16–31 ms. **Not claimed:** the lane was **not exercised**;
+  hypothesis -- **withdrawn in the same session**: F-12 read a capture-regime property as a dispatch property, and the
+  qualification run corrected it (see below), which matters for 3.10). **Then the owner took the enablement decision:** the
+  lane was opened in a dedicated qualification build (`teensy41-capture-serial-window-qualification`, the shape the
+  firmware's own guard requires; RAM1 baseline recorded deliberately at `code 392,232 + padding 984`, +656 B of ITCM code,
+  144 B above the floor), flashed (`597ab7675a83d7cc…`) and driven again — and the second run **corrected F-12 and found
+  F-13**: post-transport the capture carried exactly **one** `#CAP` row in ~262 s, because `flushCaptureBuffer` sheds
+  **non-Tier-A** head records at the timing-critical budget of 8, and `CaptureLineTier.h` lists `playback_build`/
+  `playback_order`/`win_readiness` — but **not** `win_gap`/`win_gap_overrun`. So the lane's coverage and overrun rows are
+  shed silently in the very regime they exist to measure: 6.5's hardware envelope claims **cannot be measured** until that
+  tier entry exists, which is a separate decision (the authorization here was the lane's enablement, not an instrument
+  change). `win_readiness` is Tier-A **and** direct-when-room, so its absence in both runs remains evidence — no receipt
+  was produced. **Not claimed:** the lane was **not exercised**;
   F-7/F-8/AC-8 remain unverified on hardware; no firmware was changed and no oracle was bent to fit an observation. See
   [`s64-s65-device-leg-01`](evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on

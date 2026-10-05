@@ -3,41 +3,140 @@
   "kind": "device run (owner-authorized upload) + host verification; no firmware line changed, nothing destroyed on the card",
   "evidence": "EVIDENCE.md",
   "row_extract": "device-lane-rows.txt",
-  "authorization": {"grant": "owner authorization for the upload, this session; standing 2026-09-30 grant narrowed to the bench target", "declared_scope": "track 8 slots 4,5", "target_used": "track 8 slot 6 (empty; slots 4 and 5 held content and were never touched)"},
+  "authorization": {
+    "grant": "owner authorization for the upload, this session; standing 2026-09-30 grant narrowed to the bench target",
+    "declared_scope": "track 8 slots 4,5",
+    "target_used": "track 8 slot 6 (empty; slots 4 and 5 held content and were never touched)"
+  },
   "device": {
     "git": "abdbca63ab9ae9f1f6b2d61f92675bb528b881f4",
     "firmware_hex_sha256_16": "1337956a05c4aeda",
-    "build": {"command": "pio run -e teensy41-capture-serial", "status": "SUCCESS", "ram1_variables": 96192, "ram1_code": 391576, "ram1_padding": 1640, "ram1_floor": 840, "rebased": false},
-    "flash": {"command": "pio run -e teensy41-capture-serial -t upload", "status": "SUCCESS"},
-    "pre_run_census": {"command": "scripts/hitl_boot_census.py --library-observe", "post_restore_free_chunks": 404, "readiness": {"admission_complete": 1, "interactive_ready": 1, "undo_hydrated": 1, "transport_stopped": 1}, "observation_complete": true, "slots_observed": 64},
-    "target_probe": {"gestures": "track 8 select + slot 6 select", "rows": ["Selected track 8", "Button press: Loop 6 (short)", "Sent loop length CC feedback: length=0 -> CC=0 (1 bar default)"]},
-    "leg": {"command": "host_midi_hitl.py run --preset windowed_content_parity --track 8 --loop-slot 6 --midi-channel 8 --serial-port /dev/cu.usbmodem154944801", "capture": "captures/s64-window-leg-01/host_midi_hitl_long_loop_display_serial_20261005_102335.log", "capture_lines": 2688, "clear_row": "MIDI: Clear removed persisted slot 6 payload (absent)", "record_row": "Recording stopped @ tick 348 (recStart=0 length=18432)"}
+    "build": {
+      "command": "pio run -e teensy41-capture-serial",
+      "status": "SUCCESS",
+      "ram1_variables": 96192,
+      "ram1_code": 391576,
+      "ram1_padding": 1640,
+      "ram1_floor": 840,
+      "rebased": false
+    },
+    "flash": {
+      "command": "pio run -e teensy41-capture-serial -t upload",
+      "status": "SUCCESS"
+    },
+    "pre_run_census": {
+      "command": "scripts/hitl_boot_census.py --library-observe",
+      "post_restore_free_chunks": 404,
+      "readiness": {
+        "admission_complete": 1,
+        "interactive_ready": 1,
+        "undo_hydrated": 1,
+        "transport_stopped": 1
+      },
+      "observation_complete": true,
+      "slots_observed": 64
+    },
+    "target_probe": {
+      "gestures": "track 8 select + slot 6 select",
+      "rows": [
+        "Selected track 8",
+        "Button press: Loop 6 (short)",
+        "Sent loop length CC feedback: length=0 -> CC=0 (1 bar default)"
+      ]
+    },
+    "leg": {
+      "command": "host_midi_hitl.py run --preset windowed_content_parity --track 8 --loop-slot 6 --midi-channel 8 --serial-port /dev/cu.usbmodem154944801",
+      "capture": "captures/s64-window-leg-01/host_midi_hitl_long_loop_display_serial_20261005_102335.log",
+      "capture_lines": 2688,
+      "clear_row": "MIDI: Clear removed persisted slot 6 payload (absent)",
+      "record_row": "Recording stopped @ tick 348 (recStart=0 length=18432)"
+    },
+    "qualification_env": {
+      "env": "teensy41-capture-serial-window-qualification",
+      "flags": [
+        "-D PLAYBACK_WINDOW_ROLLING_ENABLED=1",
+        "-D PLAYBACK_WINDOW_ROLLING_QUALIFICATION=1"
+      ],
+      "why": "the firmware's own guard requires SESSION_CAPTURE plus PLAYBACK_WINDOW_ROLLING_QUALIFICATION for a hardware rolling build; opening it in one env keeps the shared default (and normal operation) unchanged",
+      "ram1": {
+        "variables": 96192,
+        "itcm_bytes": 393216,
+        "code": 392232,
+        "padding": 984,
+        "locals_free": 34880,
+        "floor": 840,
+        "delta_code_vs_capture_serial": 656
+      },
+      "baseline_recorded_in": "scripts/ram1_budget.json",
+      "firmware_hex_sha256_16": "597ab7675a83d7cc",
+      "second_run_capture": "captures/s64-window-leg-02/host_midi_hitl_long_loop_display_serial_20261005_103413.log"
+    }
   },
   "lane_rows_measured": {
     "win_gap_blocks": 44,
-    "win_gap_index_range": [46, 1552],
-    "win_gap_running_values": ["0"],
-    "win_gap_permitted_values": ["64"],
-    "win_gap_schema_values": ["3"],
+    "win_gap_index_range": [
+      46,
+      1552
+    ],
+    "win_gap_running_values": [
+      "0"
+    ],
+    "win_gap_permitted_values": [
+      "64"
+    ],
+    "win_gap_schema_values": [
+      "3"
+    ],
     "win_gap_blocks_with_any_eligible_progress_turn": 0,
     "win_gap_first_row": "#CAP,116902617,DIAG,win_gap,0,11776,0,0,0,0,0,0,0,0,1,0,64,0,0,3",
     "win_gap_last_row": "#CAP,210594083,DIAG,win_gap,0,22784,268,0,0,0,0,0,0,0,2,0,64,0,0,3",
     "win_readiness_rows": 0,
     "win_gap_overrun_rows": 0,
-    "playback_build_rows": [{"path": "snapshot", "track": "2", "slot": "0"}],
-    "transport_intervals": [[961, 986], [1619, 2688]]
+    "playback_build_rows": [
+      {
+        "path": "snapshot",
+        "track": "2",
+        "slot": "0"
+      }
+    ],
+    "transport_intervals": [
+      [
+        961,
+        986
+      ],
+      [
+        1619,
+        2688
+      ]
+    ]
   },
   "verdict_on_device_capture": {
-    "window_demand_observed": {"ok": false, "detail": "no eligible/progress turn and no readiness receipt in the whole capture"},
-    "readiness_receipts_under_transport": {"ok": false, "detail": "receipts=0 under_transport=0"},
-    "windowed_service_coverage_under_transport": {"ok": false, "detail": "blocks=44 under_transport=0 with_opportunities=0"},
-    "no_windowed_overrun_under_transport": {"ok": true, "detail": "overrun_rows=0 under_transport=0"},
-    "window_boundaries_crossed_under_transport": {"ok": false, "detail": "build_complete_under_transport=0"},
+    "window_demand_observed": {
+      "ok": false,
+      "detail": "no eligible/progress turn and no readiness receipt in the whole capture"
+    },
+    "readiness_receipts_under_transport": {
+      "ok": false,
+      "detail": "receipts=0 under_transport=0"
+    },
+    "windowed_service_coverage_under_transport": {
+      "ok": false,
+      "detail": "blocks=44 under_transport=0 with_opportunities=0"
+    },
+    "no_windowed_overrun_under_transport": {
+      "ok": true,
+      "detail": "overrun_rows=0 under_transport=0"
+    },
+    "window_boundaries_crossed_under_transport": {
+      "ok": false,
+      "detail": "build_complete_under_transport=0"
+    },
     "oracle_complete": false
   },
   "findings": {
     "F-11": "the reused long-loop leg's display oracle is stale against the emitted DISP schema (device emits 12 fields, that verifier parses 14); it belongs to the display-window leg, and because the profile's verdict ANDs both halves it also blocks this composition",
-    "F-12": "the lane's dispatch stopped entirely once the transport started (44 win_gap blocks in the idle phase, none across ~97 s of recording/playing); the consistent explanation is that PlaybackViewMaintenance is a deferred idle owner with nothing owed, recorded as a hypothesis, and it matters for 3.10 because F-2's deadline is 16-31 ms"
+    "F-12": "WITHDRAWN in the same session: 'the lane's dispatch stopped once the transport started' read a capture-regime property as a dispatch property. The qualification run measured the real reason (see F-13).",
+    "F-13": "the lane's coverage/overrun rows (DIAG,win_gap / DIAG,win_gap_overrun) are not Tier-A in CaptureLineTier.h, so flushCaptureBuffer sheds them silently at the timing-critical budget of 8 -- i.e. exactly while a track plays. The declared 'operationally reported' permitted-advance envelope therefore cannot be observed under transport until that tier entry exists (a separate decision: the authorization here was the lane's enablement, not an instrument change). Measured: one #CAP row reached the host across ~262 s of transport in the qualification run."
   },
   "oracle_correction": {
     "what_changed": "the verifier now reports window_demand_observed as its first named check: the leg's real prerequisite is a demand (rolling lane enabled, or a launch/retry in flight), not a running transport",
@@ -45,7 +144,10 @@
     "restored_sha256_16": "c66f1f0afcf5e5d5"
   },
   "host_verification": {
-    "test_windowed_content_parity_verify": {"tests": 14, "result": "OK"},
+    "test_windowed_content_parity_verify": {
+      "tests": 14,
+      "result": "OK"
+    },
     "note": "the full registry/scenario host set plus the native suite were run for this commit"
   },
   "not_claimed": [
@@ -55,7 +157,26 @@
     "checkoff of 6.4 or 6.5"
   ],
   "next_decisions": [
-    "owner's enablement decision for PLAYBACK_WINDOW_ROLLING_ENABLED (task 3.10 activation), which would give the leg the demand its oracle expects",
-    "or exercise a demand that exists today by making the leg drive a demoted slot switch (a driver change, not firmware)"
+    "F-13's tier entry (a deliberate firmware change with its own boundary fixture), without which 6.5's hardware envelope claims cannot be measured at all",
+    "then re-drive the leg on the qualification image and read the receipts/coverage that the tier entry makes observable"
+  ],
+  "lane_rows_measured_qualification_run": {
+    "win_gap_blocks": 13,
+    "win_gap_running_values": [
+      "0"
+    ],
+    "win_gap_blocks_with_any_eligible_progress_turn": 0,
+    "win_readiness_rows": 0,
+    "win_gap_overrun_rows": 0,
+    "playback_build_rows": 2,
+    "playback_build_paths": [
+      "snapshot"
+    ],
+    "cap_rows_after_transport_start": 1,
+    "note": "one #CAP row (a direct-path PERS,result) reached the host across the remaining ~262 s of transport"
+  },
+  "what_survives_as_device_evidence": [
+    "win_readiness is Tier-A and has the direct-when-USB-has-room path, so its absence in both runs is evidence that no readiness receipt was produced (consistent with no window work owed during the observable idle phases)",
+    "F-11 stands: the reused long-loop leg's display oracle is stale against the emitted DISP schema"
   ]
 }

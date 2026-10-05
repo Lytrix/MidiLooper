@@ -11,9 +11,16 @@ defaults to `0`, a plain record-and-play owes no window work -- so the honest re
 verifier now says so first (`window_demand_observed`, red-proved by MR-6.4e). The run **validated the row parser on real
 rows** (`permitted` field 16, schema `3` at 19, `running` at 7). Findings: **F-11** the reused leg's display oracle is
 stale against the emitted DISP schema (12 fields vs the 14 it parses; that leg's business, and it blocks this composition
-since the verdict ANDs both halves); **F-12** the lane's dispatch stopped once the transport started (44 blocks idle, none
-across ~97 s of recording/playing; the deferred-idle-owner explanation is a hypothesis) -- relevant to 3.10 because F-2's
-deadline is 16-31 ms. **Not claimed:** the lane was not exercised, F-7/F-8/AC-8 are unverified on hardware, 6.5's four
+since the verdict ANDs both halves). The owner then chose **the enablement decision**, so the lane was opened in a
+dedicated qualification build (`teensy41-capture-serial-window-qualification`, `PLAYBACK_WINDOW_ROLLING_ENABLED=1` +
+`PLAYBACK_WINDOW_ROLLING_QUALIFICATION=1`, RAM1 baseline recorded deliberately: `code 392,232 + padding 984`, +656 B ITCM,
+144 B above the floor), flashed (`597ab7675a83d7cc…`) and driven again -- which **withdrew F-12 and found F-13**: with the
+lane open, the capture carried exactly **one** `#CAP` row across ~262 s of transport, because `flushCaptureBuffer` sheds
+non-Tier-A head records at the timing-critical budget of 8 and `win_gap`/`win_gap_overrun` are not Tier-A (while
+`playback_build`, `playback_order` and `win_readiness` are). So the lane's own coverage/overrun rows -- the instrument for
+the declared permitted advance -- are shed in the regime they exist for: **6.5's hardware envelope claims cannot be
+measured** until that tier entry exists, which is a separate decision. `win_readiness` is Tier-A **and**
+direct-when-room, so its absence in both runs stays evidence that no receipt was produced. **Not claimed:** the lane was not exercised, F-7/F-8/AC-8 are unverified on hardware, 6.5's four
 hardware claims are NOT RUN, and nothing in the firmware changed. **Next is a decision:** enable the rolling lane
 (3.10 activation) or make the leg drive a demoted switch so a demand exists today.
 
