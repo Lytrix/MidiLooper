@@ -57,8 +57,45 @@ PUBLISHED_RANGE_MEM bool CommittedEventRange::chunkIntersectsWindow(uint32_t fir
   if (windowLength >= loopLengthTicks) {
     return true;
   }
-  return DisplayWindowUtils::noteIntersectsWindow(firstTick, lastTick, windowStart, windowLength,
-                                                  loopLengthTicks);
+  // Exact half-open modular span overlap (DEC-113, slice 7.2). The chunk covers the inclusive span [firstTick, lastTick];
+  // a span with firstTick > lastTick crosses the loop wrap and covers [firstTick, loop) and [0, lastTick]. The window is
+  // the half-open [windowStart, windowStart + windowLength), likewise split at the wrap. Each side is at most two linear
+  // segments, so the answer is the overlap of any pair. The previous gate sampled the span every TICKS_PER_16TH_STEP and
+  // could skip a chunk that holds a served event when the window is shorter than a step; this gate cannot, and it
+  // accepts everything that gate accepted (a probe inside the window implies a span tick inside it).
+  const uint32_t first = firstTick % loopLengthTicks;
+  const uint32_t last = lastTick % loopLengthTicks;
+  const uint32_t start = windowStart % loopLengthTicks;
+  struct Segment {
+    uint32_t begin;
+    uint32_t end;  // exclusive
+  };
+  Segment chunkSegments[2];
+  size_t chunkCount = 0;
+  if (first <= last) {
+    chunkSegments[chunkCount++] = {first, last + 1u};
+  } else {
+    chunkSegments[chunkCount++] = {first, loopLengthTicks};
+    chunkSegments[chunkCount++] = {0u, last + 1u};
+  }
+  Segment windowSegments[2];
+  size_t windowCount = 0;
+  const uint32_t windowEnd = start + windowLength;  // windowLength < loopLengthTicks here
+  if (windowEnd <= loopLengthTicks) {
+    windowSegments[windowCount++] = {start, windowEnd};
+  } else {
+    windowSegments[windowCount++] = {start, loopLengthTicks};
+    windowSegments[windowCount++] = {0u, windowEnd - loopLengthTicks};
+  }
+  for (size_t c = 0; c < chunkCount; ++c) {
+    for (size_t w = 0; w < windowCount; ++w) {
+      if (chunkSegments[c].begin < windowSegments[w].end &&
+          windowSegments[w].begin < chunkSegments[c].end) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 namespace {
@@ -219,6 +256,7 @@ CommittedEventRange::appendWindowBudgeted(const CommittedChunkIdList* const* lis
       stepStartUs = micros();
 #endif
 
+      ++result.chunksCopied;
       chunkEvents.clear();
       windowEvents.clear();
       LoopEventStore::appendChunkRefEvent(chunkId, chunkEvents);

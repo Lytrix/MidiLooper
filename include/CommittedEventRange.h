@@ -27,6 +27,9 @@ class CommittedEventRange {
     size_t eventsAppended = 0;
     bool complete = false;
     bool resumed = false;
+    /// Chunks copied out of the store and filtered this call (the gate's admitted chunks). The span read that decides
+    /// admission is O(1) per chunk; the copy is the cost that must stay proportional to the window (DEC-113, 7.2).
+    size_t chunksCopied = 0;
   };
 
   /// Full committed traversal — appends every event from the listed chunk id lists.

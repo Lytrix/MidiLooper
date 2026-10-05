@@ -866,10 +866,11 @@ LOOP_COLD_MEM void refillPassChangeBatch(const Loop& loop, PendingPassChangeProg
     return;
   }
   const CommittedChunkIdList* lists[] = {chunks};
-  CommittedEventRange::appendWindowBudgeted(lists, 1, loop.loopLengthTicks, 0,
-                                            loop.loopLengthTicks,
-                                            kSnapshotWrapJournalMaxChanges, progress.cursor,
-                                            progress.batch);
+  const bool wholeLoop = progress.windowLengthTicks == 0;
+  CommittedEventRange::appendWindowBudgeted(
+      lists, 1, loop.loopLengthTicks, wholeLoop ? 0u : progress.windowStartTick,
+      wholeLoop ? loop.loopLengthTicks : progress.windowLengthTicks, kSnapshotWrapJournalMaxChanges,
+      progress.cursor, progress.batch);
 }
 
 LOOP_COLD_MEM __attribute__((noinline)) bool appendNextPassChangeFragment(

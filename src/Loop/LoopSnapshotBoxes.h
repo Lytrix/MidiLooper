@@ -35,6 +35,10 @@ struct PendingPassChangeProgress {
   bool storeWindowComplete = false;
   size_t nextStoreIndex = 0;
   uint32_t includeUntil = 0;
+  /// The enumeration window for committed-pass chunks (DEC-113, slice 7.2). `windowLengthTicks == 0` means the whole loop
+  /// (today's only behaviour); an interval-root build supplies its exact served range verbatim, with no rounding.
+  uint32_t windowStartTick = 0;
+  uint32_t windowLengthTicks = 0;
 
   void reset() { *this = PendingPassChangeProgress{}; }
 

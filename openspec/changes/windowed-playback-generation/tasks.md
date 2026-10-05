@@ -1653,7 +1653,7 @@ true for the lane only once 7.3/7.4 land and 7.6 supplies the row.
 - [x] 7.1 Authority (docs only) — DEC-113 appended; NAMING *Interval root* row and the *Published root* qualification; the
   four spec amendments; design D11, owners row, failure behaviour and owed measurements; this section. No code touched.
   Verify: `openspec validate windowed-playback-generation --strict`; the artifacts agree.
-- [ ] 7.2 Windowed enumeration with an **exact** chunk gate (no behaviour change for existing consumers) — verify the
+- [x] 7.2 *(landed 2026-10-05; see § Now implementing)* Windowed enumeration with an **exact** chunk gate (no behaviour change for existing consumers) — verify the
   sub-step short-window fixture **fails** with the sampled gate restored (chunk `[0,100]`, event at tick 8, one-tick window
   at tick 8). **Entry criterion (round 7, F1):** the exact overlap is *modular* — a wrapped chunk (`firstTick > lastTick`)
   and a wrapped window are each tested as a tail segment and a head segment — with both-direction fixtures (wrapped chunk

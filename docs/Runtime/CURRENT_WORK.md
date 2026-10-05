@@ -5180,7 +5180,23 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
-### Route A — the lane is served by interval roots (DEC-113; `tasks.md` §7) — slice 7.1 landed, 7.2 next
+### Route A — the lane is served by interval roots (DEC-113; `tasks.md` §7) — slices 7.1–7.2 landed, 7.3 next
+
+**Slice 7.2 landed 2026-10-05 (native-first; no firmware behaviour change for existing consumers).**
+`CommittedEventRange::chunkIntersectsWindow` is now an **exact, modular, half-open span overlap** (wrapped chunks and
+wrapped windows each split into two segments) instead of the sampled `noteIntersectsWindow` delegation;
+`PendingPassChangeProgress` gained `windowStartTick/windowLengthTicks` (0 length = whole loop, today's behaviour) and
+`refillPassChangeBatch` passes them; `WindowTraversalResult` gained `chunksCopied`. **Red-proof:** with the sampled gate the
+mandated fixture fails ("chunk skipped although it holds a served event": chunk `[0,100]`, event at tick 8, one-tick window
+at tick 8) — it passed only after the change; a property test over 4,000 random spans/windows asserts the exact gate is
+sound against the span overlap and a superset of the previous gate for real spans. **Finding recorded:** the previous gate
+over-admitted a single-tick span (`firstTick == lastTick`) as a full loop; the exact gate answers it precisely, and event
+output is unchanged because events are still filtered per tick. **Honest correction to the plan:** the walk still reads the
+span of every chunk (O(chunks), cheap); what the gate bounds is the *copy* (`chunksCopied`), so oracle (b) is stated as
+copies, not walks. Verified: `test_committed_event_range` 10/10, full native 2,806 / 7 skipped / 2,799 succeeded / 0 failed,
+both capture builds SUCCESS with RAM1 unchanged (`variables 96,192`; qualification `code 392,232 + padding 984`).
+**Not claimed:** any interval-root behaviour (7.3 onward); the equality oracle over the Overlay/materialization callers is
+covered by the full native suite, not by a dedicated differential fixture.
 
 **Slice 7.1 (authority, docs only) landed 2026-10-05; no code, build or device action.** DEC-113 — *the windowed lane is
 served by interval roots and never requires the whole-loop root* is appended (DEC-108 extension, owner-directed, **not
