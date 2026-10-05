@@ -64,11 +64,7 @@ system SHALL NOT introduce a second validity counter. The playback generation SH
 deferred completions rather than currency, and a snapshot identity SHALL be source provenance and lifetime protection
 rather than another definition of "current". A window whose revision is not the loop's current playback revision SHALL
 be reported through the existing coverage vocabulary (`wrapTargetRevision`, `coveredPassRevision`, or current), and an
-overlay SHALL pin its actual source dependencies rather than relying on a null identity. For a root whose membership
-covers a bounded interval (an *interval root*, DEC-113), *current* is asked **with an interval**: the same single rule
-(`coveredPassRevision == committedPassRevision()`) **plus containment** of the **linear** interval the consumer needs.
-The interval SHALL NOT be required to be bar-aligned, containment is judged against the exact served tick range, and
-**every consumer SHALL apply that containment**. Containment is not a second validity counter.
+overlay SHALL pin its actual source dependencies rather than relying on a null identity.
 
 #### Scenario: Current window
 
@@ -147,11 +143,7 @@ window carry the identity the consumer requires, and is its coverage sufficient?
 interval SHALL count as ready, and serving it SHALL **emit no new events** — empty coverage is never a readiness failure
 and SHALL NOT silence a note that is legitimately sustained across that interval. Non-empty content SHALL NOT be a
 readiness requirement, and the completion state SHALL NOT become a second revision counter. When readiness fails, the
-failure SHALL name the holder that owes the window; an unnamed failure SHALL NOT be reported. The windowed lane's source
-obligation SHALL be named **without reference to a whole root**: the holder for a demand not yet covered by any usable
-source is the **interval-root owner** (`interval_root_owner`), and no windowed consumer SHALL wait for, or request, a
-whole-loop root publication **for a slot that has no published root** (DEC-113). A slot whose published root exists but is
-not current keeps the existing republish request (decided 2026-10-05: interval roots serve the rootless case only).
+failure SHALL name the holder that owes the window; an unnamed failure SHALL NOT be reported.
 
 #### Scenario: A prepared empty interval is ready
 
@@ -215,11 +207,6 @@ lifetimes, not additional whole-loop copies, and a still-needed source SHALL NOT
 Publication SHALL be revalidated against the clock assumptions it was admitted under (see *Clock revalidation*), and a
 failed revalidation SHALL retain the request and continue the valid audible source rather than rebuilding inline.
 
-An **interval root** is itself a `LoopSnapshot` and is authoritative for the **events** inside its served interval
-only: it SHALL NOT be treated as a note-row or closure authority, and a sustained note whose onset lies outside the
-served interval remains the sounding-note ledger's business, exactly as for every window today. An interval root SHALL
-be linear (never crossing the loop wrap), its content judged against the exact served tick range, and it SHALL be
-published only after the owning `Track` has accepted it under its live playback generation (DEC-113).
 
 #### Scenario: A transport stop does not forgive a miss
 
@@ -435,9 +422,7 @@ failures SHALL still follow the approved fault-containment policy, because a sto
 
 ### Requirement: Checkpoint parity for undo and save
 
-The **whole-loop** published root SHALL remain the immutable checkpoint authority for undo and save. An interval root
-SHALL NOT be consulted by undo or save, SHALL NOT be reachable through the existing published-root accessors, and SHALL
-NOT be published for the checkpoint authority's sake. A checkpoint's parity SHALL be
+The published root SHALL remain the immutable checkpoint authority for undo and save. A checkpoint's parity SHALL be
 judged against the loop's **current** revision, and a checkpoint that lags the committed passes SHALL be named in the
 readiness/lag vocabulary and SHALL NOT be presented as current. Undo parity and save parity are one requirement on two
 consumers: an undo SHALL restore the geometry and content its entry named, a persisted body SHALL be equivalent to the

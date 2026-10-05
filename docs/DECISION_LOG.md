@@ -6613,3 +6613,18 @@ exists but is not current keeps the existing launch republish request (`requestC
 is not widened to slots that already have a root. Decision 1 above is read accordingly ("never requires, waits for or
 requests a whole-loop root" applies to the rootless slot); the stale-root Launch case still waits on a whole-root build,
 recorded as an accepted limitation. The follow-up retirement programme (decision 12) is where that wait is removed.
+
+## DEC-114 — Withdraw DEC-113; continue DEC-108's retained-source interval-index path
+
+**Date:** 2026-10-05
+**Status:** **Accepted by owner; supersedes and withdraws DEC-113's interval-root implementation contract.** DEC-113 remains in the log as historical audit, but has no active implementation authority. No code implementing its interval-root box/publisher was landed.
+**Owner:** Existing `Track::stepPlaybackViewMaintenance` / `TrackPlaybackRuntime` window owner, consuming `RetainedPlaybackSource` plus `RetainedIntervalIndex`; `Loop::publishedSnapshot*` remains checkpoint authority.
+**Follows:** DEC-108 items 4, 5, 12(c), 13 and 14(c); tasks 3.6 and 3.7 of `windowed-playback-generation`. Supersedes DEC-113; it does not supersede DEC-108 or introduce a new content authority, publisher, scheduler or `LoopSnapshot` type.
+
+**Decision.** Continue DEC-108's existing design: the windowed playback consumer resolves requested intervals against a generation-qualified retained source revision backed by pinned pass bodies and `RetainedIntervalIndex`. Do not create a separate partial `LoopSnapshot` interval root or a second publication lifecycle. The whole-loop `LoopSnapshot` remains the checkpoint/effective-content authority; the playback window is a derived representation over the retained revision. The exact modular `CommittedEventRange` gate landed in slice 7.2 is retained as shared correctness hardening, not as evidence for DEC-113.
+
+**3.7 staging.** (a) Wire the retained-source index and effective-content resolver into the production window request/build/consume path while keeping the live merged-window fallback available as compatibility and cold parity reference. This integration supplies the remaining production-consumer/caller clauses of 3.12 (paged legacy stream) and 3.13 (preview). Then finish the real serving-path handoff checks in 3.14 and 4.5. (b) Remove the merged-window fallback only after 3.12, 3.13, 3.14, 4.5, F-7/F-8, timing and compatibility gates pass; keep a cold parity reference.
+
+**Rationale.** DEC-108 task 3.6c already implemented a bounded per-bar coverage descriptor over pinned bodies, edit-destination-aware, atomically stamped to a source revision, and specifically rejected `TickIndex`'s whole-history event-copy storage. Its remaining gap is the production consumer path (task 3.7), not the absence of an interval-root object. DEC-113's separate `LoopSnapshot` publisher duplicated that direction and accrued lifecycle blockers without solving continuous coverage; withdrawing it avoids a parallel root authority and keeps implementation inside existing owners.
+
+**Not claimed:** no 3.7 production consumer, no active windowed playback admission, no timing envelope, no device qualification, and no whole-root retirement. The Route A G2 red-team reports apply to the withdrawn DEC-113 mechanism, not to the DEC-108 retained-source consumer integration; new 3.7a work receives its own G2 packet/review.

@@ -585,14 +585,20 @@ on the existing frame and state-driven eligibility — **no second publication s
 - Red-proof: **NOT APPLICABLE** to a note.
 - Task IDs eligible for checkoff: **3.8**.
 
-### Slice 3.7 — not started, and its own gate is the reason (2026-10-02)
+### Slice 3.7a — production consumer integration; fallback retained (DEC-108)
 
-3.7 requires **3.11** (shared-view ownership and the cancellation transition table), **3.12** (the bounded legacy
-compatibility path), **3.13** (preview publication), **3.14** (undo/redo audible handoff) and **4.5** (fault recovery)
-to be implemented and verified **before** it removes the live mutable merged-window build, and none of them exists
-yet. The ladder's stage (4) is therefore not reachable, and the next slices are those dependencies — **3.11 first**,
-since the shared-view transition table is what the removal's correctness rests on. Recorded here and in `tasks.md`
-under 3.7 so the gate is visible where the task is read.
+**Status:** not implemented. Owner remains `Track::stepPlaybackViewMaintenance`; source is the retained revision plus `RetainedIntervalIndex`/effective-content resolver, not an interval-root `LoopSnapshot`. The mutable merged-window fallback remains available as the parity/cold reference.
+
+- **Scope:** wire the committed window requester, deferred owner, retained-index query and `RuntimePlaybackViewFill`/consumer to serve the indexed pinned-source interval. Integrate `WindowPagedStream` for over-L legacy content and wire the 3.13 preview requester/lifecycle hooks into the same serving contract. No new publisher, scheduler, source authority, LoopSnapshot sub-root or per-bar durable format.
+- **Preserve:** current fallback and whole-loop checkpoint/snapshot consumers; `activeLoopIndex` remains activation authority; MIDI edge only reads/admission checks, resolution/preparation remains off-clock; same-tick order, ledger closure and one-pass-late rules.
+- **Entry dependencies:** 3.6 retained bodies/index, 3.11 shared-view transitions, 3.12 admission/pages + fixture 5.5 content cases, 3.13 preview contract + integration fixtures. The production-consumer clauses for 3.12/3.13 are delivered at this integration seam; their timing/save gates remain explicit and must pass before their own checkoff.
+- **Transition oracle:** root-demoted slot demand → retained-source interval resolved → window build completes/adopts atomically while fallback remains selectable as a cold oracle. Assert no rootless `GatherMissHoldEmpty`; compare selected output to effective-content truth; force stale revision, miss, wrap, page backpressure, preview mutation/exit, ledger closure and cancellation. No fallback call is removed in this slice.
+- **Red-proofs:** disable retained-index query (rootless request returns named refusal / fixture fails); bypass effective edits (content oracle fails); route page stream with stale revision or duplicate cursor (exact-once fixture fails); allow fallback removal during the slice (compatibility differential control fails).
+- **Validation:** focused production-turn/runtime, paged legacy and preview integration suites; full native, timing-cost ledger for indexed lookup plus page production, RAM1/PSRAM/LoopPool bound, strict validation. Device leg only after measured envelope and user-approved upload.
+
+### Slice 3.7b — remove live mutable merged-window fallback (final ladder stage 4)
+
+First implement/enable 3.7a with fallback retained. Then complete tasks 3.14 and 4.5 against the real production handoff, with their interleaving, closure and recovery proofs. Remove the fallback only after those proofs and tasks 3.12/3.13, F-7/F-8, timing and compatibility gates pass. Keep a cold reference path for parity tests; assert no supported slot reaches the removed `playMidiEventsForSlot` fallback, and reclassify `ExecutionBounds.md` row 2 only with evidence. Rollback before 3.7b keeps today's fallback.
 
 ### Slice 3.11 — shared-view ownership and the transition table (DEC-108 §13d) (2026-10-02)
 
