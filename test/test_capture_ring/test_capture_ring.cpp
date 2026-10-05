@@ -421,6 +421,13 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
   TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gap,5000,32,123456"),
                            "the service-gap sample survives the timing-critical flush");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gapx,1"), "and a longer subtag is not swept in");
+  // ...and the family's **named overrun row** with it: the row that reports an *exceedance* of the permitted advance can
+  // only be raised while the lane serves (i.e. under transport, the budget-8 regime), so it is the one that must survive
+  // most -- and it does not share its sibling's prefix, which is why it needs its own entry and its own boundary.
+  TEST_ASSERT_TRUE_MESSAGE(isTierATextLine("#CAP,112456330,DIAG,win_gap_overrun,64,3,9,1,2"),
+                           "the named overrun row survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gap_overrunx,1"),
+                            "and a longer subtag is not swept in");
 }
 void test_rejected_critical_rows_are_replayed_at_stopped_flush() {
   sCaptureRing.capacity = 1;

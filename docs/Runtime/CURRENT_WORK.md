@@ -1,3 +1,22 @@
+**2026-10-05 — `windowed-playback-generation`: F-13 retracted, F-14 fixed, the leg now drains after the stop, and the
+windowed lane is measured serving under transport for the first time.**
+Reading the code first refuted F-13: `DIAG,win_gap,` **is** already Tier-A (classified in `DebugSessionCapture.cpp` for a
+recorded RAM1 reason, pinned by `test_capture_ring`). The real gap was the family's **named overrun row** —
+`DIAG,win_gap_overrun,` does not share its sibling's prefix, so it was not Tier-A, and the row that reports an
+*exceedance* can only be raised while the lane serves, i.e. under transport, where the budget-8 flush sheds non-Tier-A
+heads silently. One entry beside its sibling fixes it (M1 removes it → the ring fixture fails; M2 widens it → the boundary
+assertion fails; both restored byte-identically). The tier suite could not host the fixture (it asks the *header*
+predicate; the family deliberately lives in the production one) — recorded rather than forced. The wrapper now ends the
+leg with a transport **stop** and a 12 s **drain**, and the verifier's "under transport" rule moved from stream position
+to **device time**, because a retained row is delivered after the stop; two host defects were found by the first run with
+a drain (the port lives in the leg's arguments; the stop press is a toggle and must be gated on the transport running).
+**Device (run 04, qualification image `e6526831ef6c8bce…`):** 54 `win_gap` blocks, **50 with `running=1`** and rising
+phase — the lane *is* dispatched under transport — every block `permitted=64`, `overruns=0`, and every block
+`eligible=progress=0`, so nothing was owed (no receipt/publication/boundary; `win_readiness` is Tier-A and
+direct-when-room, so its absence is evidence). **Not claimed:** the hardware envelope (grain duration, service gaps under
+load, contention, external clock, residency) — the lane was never given work; F-7/F-8/AC-8 stay unverified; 3.10, 6.4 and
+6.5 stay open. **Next:** a leg whose gestures create a demand (a demoted slot switch) — a driver change, the owner's call.
+
 **2026-10-05 — `windowed-playback-generation` 6.4/6.5: the windowed leg ran on the device for the first time
 (owner-authorized upload) and the run corrected the oracle instead of qualifying it.**
 Built `teensy41-capture-serial` (RAM1 unchanged) and flashed image `1337956a05c4aeda…` from git `abdbca63`; a read-only

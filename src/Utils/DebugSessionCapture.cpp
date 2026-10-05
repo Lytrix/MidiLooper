@@ -294,7 +294,15 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
   if (CaptureLineTier::isTierALine(line)) {
     return true;
   }
-  return CaptureLineTier::tagStartsWith(line, "DIAG,win_gap,");
+  // ...and so is the family's **named overrun row** (task 3.10 / DEC-108 §13b, blocker 3): the row that says the
+  // permitted advance was *exceeded*. It does not start with `DIAG,win_gap,` -- the 13th byte is `_`, not `,` -- so it
+  // needs its own prefix, and it needs it more than the sample does: an overrun can only be raised while the lane is
+  // serving, i.e. under transport, which is exactly the budget-8 regime whose shed path drops non-Tier-A head records
+  // silently. Without this the one row that reports an exceedance was the one dropped where exceedances happen. The
+  // boundary is exact and pinned in `test_capture_ring`, the suite that asks **this** predicate (the header's
+  // `CaptureLineTier::isTierALine` cannot see this family by construction -- see the note above).
+  return CaptureLineTier::tagStartsWith(line, "DIAG,win_gap,") ||
+         CaptureLineTier::tagStartsWith(line, "DIAG,win_gap_overrun,");
 }
 
 SC_MEM_ATTR bool isCriticalTextLine(const char* line) {

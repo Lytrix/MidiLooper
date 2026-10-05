@@ -1,3 +1,27 @@
+**F-13 was wrong, F-14 is real and fixed, and the device finally shows the windowed lane serving under transport.**
+Reading the code before editing refuted the previous entry: `DIAG,win_gap,` **is** already Tier-A, classified in
+`src/Utils/DebugSessionCapture.cpp` (with its own recorded RAM1 reason for not living in the header) and pinned by
+`test_capture_ring`. The real gap was the family's **named overrun row**: `DIAG,win_gap_overrun,` does not share its
+sibling's prefix, so it was **not** Tier-A — and the row that reports an *exceedance* of the declared permitted advance
+can only be raised while the lane serves, i.e. under transport, the budget-8 regime whose shed path drops non-Tier-A head
+records silently. **F-14 is fixed** with one entry beside its sibling (proved by M1 removing it and M2 widening it, with
+byte-identical restores; the misplacement of the first fixture attempt in `test_capture_line_tier` is recorded rather than
+forced — that suite asks the *header* predicate while the family deliberately lives in the production one, and
+`native_test_link.py` links the production TU only into `test_capture_ring`). Two host defects were found by the first run
+that had a drain to do: the serial port lives in the leg's arguments rather than on `args`, and the stop press must be
+gated on the transport actually running (it is a toggle). The verifier's "under transport" rule was also wrong for
+**retained** rows — it read stream position, and a retained row is delivered *after* the stop — so it now reads **device
+time** from either family's own stamp. **The device result (run 04, qualification image `e6526831ef6c8bce…`):** 54
+`win_gap` blocks, **50 with `running=1`** and a rising phase — the lane *is* dispatched under transport on hardware, which
+the earlier runs could not show and which F-12 had guessed the opposite of — every block `permitted=64` with
+`overruns=0`, and every block `eligible=progress=0`, so **nothing was owed** (no receipt, no publication, no boundary
+crossing; `win_readiness` is Tier-A *and* direct-when-room, so its absence is evidence rather than a blind spot). That is
+the change's **first real measurement of the lane on hardware** and **not** the envelope: the profile's oracle stays
+unmet, and the next step is a leg whose gestures create a demand (a demoted slot switch). Verification: native **2796 /
+2789 succeeded / 7 skipped / 0 failed** (both capture suites PASSED), the windowed verifier suite **17/17**, both capture
+envs build through the RAM1 guard with byte-identical lines, and 3.10/6.4/6.5 all stay open. Evidence:
+[`f14-overrun-tier`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-f14-overrun-tier/EVIDENCE.md).
+
 **The owner took task 3.10's enablement decision: the rolling lane is now open in a dedicated qualification build, and
 driving it corrected the previous run's finding (device; firmware gate opened in one env only, nothing shipped).**
 `[env:teensy41-capture-serial-window-qualification]` extends the capture env with `PLAYBACK_WINDOW_ROLLING_ENABLED=1` and

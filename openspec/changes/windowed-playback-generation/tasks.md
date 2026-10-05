@@ -949,7 +949,18 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   shed silently in the very regime they exist to measure: 6.5's hardware envelope claims **cannot be measured** until that
   tier entry exists, which is a separate decision (the authorization here was the lane's enablement, not an instrument
   change). `win_readiness` is Tier-A **and** direct-when-room, so its absence in both runs remains evidence — no receipt
-  was produced. **Not claimed:** the lane was **not exercised**;
+  was produced.
+  *Corrected and extended 2026-10-05 (F-14):* F-13 was **wrong** — `DIAG,win_gap,` **is** Tier-A already, classified in
+  `DebugSessionCapture.cpp` for a recorded RAM1 reason, and pinned by `test_capture_ring`. The real gap was
+  narrower: the **named overrun row** `DIAG,win_gap_overrun,` did not share its sibling's prefix and so was not Tier-A —
+  the row that reports an *exceedance* was the row shed in the regime exceedances happen. Fixed with one entry beside its
+  sibling (M1/M2 red-proved, restored byte-identically). The wrapper also now ends the leg with a transport **stop** and a
+  12 s **drain**, because the ring is retained under transport and the earlier runs stopped reading while it was still
+  running; and the verifier's "under transport" rule was corrected from stream position to **device time** so a retained
+  row keeps its own time. **The device then said something positive for the first time:** 54 `win_gap` blocks, **50 with
+  `running=1`** and rising phase — the lane *is* dispatched under transport — every block `permitted=64`, `overruns=0`,
+  and every block `eligible=progress=0`, so the lane still owed nothing. That is a real measurement of service under
+  transport and **not** the envelope; the next step is a leg whose gestures create a demand (a demoted slot switch). **Not claimed:** the lane was **not exercised**;
   F-7/F-8/AC-8 remain unverified on hardware; no firmware was changed and no oracle was bent to fit an observation. See
   [`s64-s65-device-leg-01`](evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on

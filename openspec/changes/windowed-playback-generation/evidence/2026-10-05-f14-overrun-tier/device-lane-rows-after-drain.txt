@@ -1,0 +1,69 @@
+# Device rows: the qualification image, the F-14 fix, and the post-stop drain (2026-10-05, run 04)
+# Sources: captures/s64-window-leg-04/host_midi_hitl_long_loop_display_serial_20261005_105237.log
+#          captures/s64-window-leg-04/host_midi_hitl_windowed_post_stop_drain_20261005_105250.log
+
+combined lines: 29416
+running intervals (device us, from both families' own stamps): [(170232000, 254458000)]
+win_gap blocks: 54 | with running=1: 50 | with any eligible/progress turn: 0
+permitted advance in every block: ['64'] | overruns: ['0']
+win_readiness receets: 0 | win_gap_overrun rows: 0
+playback_build rows: 4996 | paths: ['compatibility', 'note_edit', 'snapshot']
+
+== the lane's service blocks under transport (the first positive device observation of this change) ==
+  us=44848397 phase=792 opportunities=3328 running=1 eligible=0 progress=0 permitted=64 overruns=0 schema=3
+  us=47166325 phase=1682 opportunities=3584 running=1 eligible=0 progress=0 permitted=64 overruns=0 schema=3
+  us=49511108 phase=2581 opportunities=3840 running=1 eligible=0 progress=0 permitted=64 overruns=0 schema=3
+  us=51890219 phase=3494 opportunities=4096 running=1 eligible=0 progress=0 permitted=64 overruns=0 schema=3
+  us=54287585 phase=4414 opportunities=4352 running=1 eligible=0 progress=0 permitted=64 overruns=0 schema=3
+  us=56681929 phase=5333 opportunities=4608 running=1 eligible=0 progress=0 permitted=64 overruns=0 schema=3
+  ... 44 further blocks with running=1, all with eligible=progress=0 and overruns=0
+
+== the corrected verifier's verdict on the combined capture ==
+{
+  "ok": false,
+  "checks": [
+    {
+      "name": "window_demand_observed",
+      "ok": false,
+      "detail": "no eligible/progress turn and no readiness receipt in the whole capture: no slot owed a window build, so this run did not exercise the lane (a demand needs the rolling lane enabled, or a launch/retry in flight -- a plain record-and-play owes none)"
+    },
+    {
+      "name": "readiness_receipts_under_transport",
+      "ok": false,
+      "detail": "receipts=0 under_transport=0"
+    },
+    {
+      "name": "windowed_service_coverage_under_transport",
+      "ok": true,
+      "detail": "blocks=54 under_transport=21 with_opportunities=21 permitted=64"
+    },
+    {
+      "name": "no_windowed_overrun_under_transport",
+      "ok": true,
+      "detail": "overrun_rows=0 under_transport=0"
+    },
+    {
+      "name": "window_boundaries_crossed_under_transport",
+      "ok": false,
+      "detail": "build_complete_under_transport=0"
+    }
+  ],
+  "issues": [
+    "window_demand_observed: no eligible/progress turn and no readiness receipt in the whole capture: no slot owed a window build, so this run did not exercise the lane (a demand needs the rolling lane enabled, or a launch/retry in flight -- a plain record-and-play owes none)",
+    "readiness_receipts_under_transport: receipts=0 under_transport=0",
+    "window_boundaries_crossed_under_transport: build_complete_under_transport=0"
+  ],
+  "deferred": [
+    {
+      "term": "content_parity_across_window_boundary",
+      "judged": "the boundary crossings (successive `build_complete` publications under transport)",
+      "verdict_owner": "the existing content pipeline (`hitl/content_deduction.py`, `scripts/hitl/mixed_content_report.py`)"
+    },
+    {
+      "term": "root_demoted_residency_over_loop_lengths",
+      "judged": "nothing",
+      "verdict_owner": "unidentified row set: the library-observation path (`!LIB_OBSERVE`) is the candidate, and this is recorded as unknown rather than guessed"
+    }
+  ],
+  "oracle_complete": false
+}

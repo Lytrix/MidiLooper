@@ -23,14 +23,18 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from hitl.control_constants import CONTROL_CHANNEL_1BASED, LOOP_SELECT_NOTE_BASE
+from hitl.control_constants import CONTROL_CHANNEL_1BASED, GLOBAL_TRANSPORT_NOTE, LOOP_SELECT_NOTE_BASE
 from hitl.scenarios.windowed_content_parity import (
+    last_transport_row_running,
+    serial_port_from,
+    press_global_transport_stop,
     run_windowed_content_parity,
     select_loop_slot,
     split_loop_slot_flag,
 )
 from hitl.verify.windowed_lane import (
     gap_rows,
+    row_us,
     overrun_rows,
     readiness_rows,
     running_intervals,
@@ -126,21 +130,32 @@ def _lane_lines(*, receipts: int = 1, gaps: int = 1, overruns: int = 0, completi
     """A running-transport interval with the requested lane rows inside it."""
     lines = ["[1.000] [INFO] Transport started"]
     for index in range(receipts):
-        lines.append(_receipt(1000 + index, revision=1))
+        lines.append(_receipt(2_000_000 + index, revision=1))
     for index in range(gaps):
-        lines.append(_gap(1100 + index))
+        lines.append(_gap(2_100_000 + index))
     for index in range(overruns):
-        lines.append(_overrun(1200 + index))
+        lines.append(_overrun(2_200_000 + index))
     for index in range(completions):
-        lines.append(_build(1300 + index))
+        lines.append(_build(2_300_000 + index))
     lines.append("[9.000] [INFO] Transport stopped")
     return lines
 
 
 class WindowedLaneTests(unittest.TestCase):
-    def test_transport_intervals_are_read_from_the_stream_order(self) -> None:
-        lines = ["Transport started", "row", "Transport stopped", "after", "Transport started", "still running"]
-        self.assertEqual([(0, 2), (4, 6)], running_intervals(lines))
+    def test_transport_intervals_are_read_from_device_time(self) -> None:
+        """The edge stamps are the clock: both families share it, so a **retained** row keeps its own time."""
+        lines = [
+            "[1.000] [INFO] Transport started",
+            "#CAP,1500000,DIAG,win_gap,0,4,0,1,0,0,0,0,0,0,1,0,64,0,0,3",
+            "[2.500] [INFO] Transport stopped",
+            "[3.000] [INFO] Transport started",
+            "#CAP,4000000,DIAG,win_gap,0,4,0,1,0,0,0,0,0,0,1,0,64,0,0,3",
+        ]
+        self.assertEqual([(1_000_000, 2_500_000), (3_000_000, 4_000_000)], running_intervals(lines))
+        # A retained row delivered after the stop is still "under transport": that is what the drain is for.
+        self.assertEqual(4_000_000, row_us("#CAP,4000000,DIAG,win_gap"))
+        self.assertEqual(2_500_000, row_us("[2.500] [INFO] Transport stopped"))
+        self.assertIsNone(row_us("plain text"))
 
     def test_row_parsers_read_the_emitted_field_positions(self) -> None:
         lines = [_receipt(1000, readiness="OwesBuild", holder="WindowBuild", revision=7, lead=64)]
@@ -178,7 +193,8 @@ class WindowedLaneTests(unittest.TestCase):
 
     def test_a_receipt_only_after_the_transport_stopped_fails(self) -> None:
         """AC-8: the receipt is emitted where it is produced, so a post-stop arrival is not a pass."""
-        lines = ["Transport started", _gap(1100), _build(1200), _build(1300), "Transport stopped", _receipt(9000)]
+        lines = ["[1.000] [INFO] Transport started", _gap(2_100_000), _build(2_300_000), _build(2_400_000),
+                 "[9.000] [INFO] Transport stopped", _receipt(9_500_000)]
         result = verify_windowed_lane(lines)
         self.assertFalse(result["ok"])
         self.assertIn("readiness_receipts_under_transport", result["issues"][0])
@@ -190,18 +206,19 @@ class WindowedLaneTests(unittest.TestCase):
         self.assertTrue(any(issue.startswith("no_windowed_overrun_under_transport") for issue in result["issues"]))
         # The same row **after** the transport stopped is not an under-transport exceedance: the check reads the
         # interval, not the mere presence of the row.
-        lines = _lane_lines() + ["Transport started", "Transport stopped", _overrun(9000, running=0)]
+        lines = _lane_lines() + ["[20.000] [INFO] Transport started", "[20.500] [INFO] Transport stopped",
+                                 _overrun(21_000_000, running=0)]
         quiet = verify_windowed_lane(lines)
         self.assertTrue(quiet["ok"], quiet["issues"])
 
     def test_coverage_blocks_without_opportunities_are_not_coverage(self) -> None:
         lines = [
-            "Transport started",
-            _receipt(1000),
-            _gap(1100, opportunities=0),
-            _build(1200),
-            _build(1300),
-            "Transport stopped",
+            "[1.000] [INFO] Transport started",
+            _receipt(2_000_000),
+            _gap(2_100_000, opportunities=0),
+            _build(2_300_000),
+            _build(2_400_000),
+            "[9.000] [INFO] Transport stopped",
         ]
         result = verify_windowed_lane(lines)
         self.assertFalse(result["ok"])
@@ -217,10 +234,10 @@ class WindowedLaneTests(unittest.TestCase):
         reader does not conclude the lane misbehaved.
         """
         lines = [
-            "Transport started",
-            _gap(1100, opportunities=11776, running=0, eligible=0, progress=0, denied=0),
-            _gap(1200, opportunities=22784, running=0, eligible=0, progress=0, denied=0),
-            "Transport stopped",
+            "[1.000] [INFO] Transport started",
+            _gap(2_100_000, opportunities=11776, running=0, eligible=0, progress=0, denied=0),
+            _gap(2_200_000, opportunities=22784, running=0, eligible=0, progress=0, denied=0),
+            "[9.000] [INFO] Transport stopped",
         ]
         result = verify_windowed_lane(lines)
         self.assertFalse(result["ok"])
@@ -230,12 +247,12 @@ class WindowedLaneTests(unittest.TestCase):
 
     def test_a_single_eligible_turn_is_enough_to_call_the_lane_exercised(self) -> None:
         lines = [
-            "Transport started",
-            _gap(1100, opportunities=4, running=1, eligible=1, progress=1),
-            _receipt(1200),
-            _build(1300),
-            _build(1400),
-            "Transport stopped",
+            "[1.000] [INFO] Transport started",
+            _gap(2_100_000, opportunities=4, running=1, eligible=1, progress=1),
+            _receipt(2_200_000),
+            _build(2_300_000),
+            _build(2_400_000),
+            "[9.000] [INFO] Transport stopped",
         ]
         result = verify_windowed_lane(lines)
         demand = next(check for check in result["checks"] if check["name"] == "window_demand_observed")
@@ -296,6 +313,34 @@ class WindowedTargetTests(unittest.TestCase):
             legacy_args: list[str] = []
 
         self.assertEqual(2, run_windowed_content_parity(_Args()))
+
+    def test_the_serial_port_is_found_wherever_the_runner_kept_it(self) -> None:
+        class _Direct:
+            serial_port = "/dev/cu.direct"
+
+        class _Legacy:
+            legacy_args = ["--track-number", "8", "--serial-port", "/dev/cu.legacy"]
+
+        class _Neither:
+            legacy_args = ["--track-number", "8"]
+
+        self.assertEqual("/dev/cu.direct", serial_port_from(_Direct()))
+        self.assertEqual("/dev/cu.legacy", serial_port_from(_Legacy()))
+        self.assertIsNone(serial_port_from(_Neither()))
+
+    def test_the_transport_edge_is_read_from_the_last_one_in_the_capture(self) -> None:
+        """The stop press is a toggle: sending it to a stopped transport would start one, the opposite of a drain."""
+        self.assertIsNone(last_transport_row_running(["nothing here"]))
+        self.assertTrue(last_transport_row_running(["Transport started", "x", "Transport stopped", "Transport started"]))
+        self.assertFalse(last_transport_row_running(["Transport started", "x", "Transport stopped"]))
+
+    def test_the_transport_stop_press_uses_the_global_transport_control(self) -> None:
+        port = _StubPort()
+        press_global_transport_stop(port, press_ms=1)
+        self.assertEqual(
+            [(GLOBAL_TRANSPORT_NOTE, CONTROL_CHANNEL_1BASED - 1)] * 2,
+            port.sent,
+        )
 
     def test_the_slot_select_presses_that_slots_own_control(self) -> None:
         port = _StubPort()
