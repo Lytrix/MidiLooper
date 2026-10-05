@@ -1660,6 +1660,55 @@ true for the lane only once 7.3/7.4 land and 7.6 supplies the row.
   vs linear window `[50,100]`, linear chunk vs wrapped window), or the exact gate is an interval-path-only parameter;
   and the equality oracle over every existing `CommittedEventRange::inWindow` caller (`LoopSnapshotPlayback.cpp` Overlay,
   `LoopMaterialization.cpp`, visual cache) must be written *before* the gate changes.
+- [ ] 7.2a **G2 red team (2026-10-05): BLOCKED for 7.3/7.4 until the contract carries these changes** (full report:
+  session scratch `delegations/…/report.md`; severities as reported; each needs the named validation before Apply).
+  **B1 — the interval phase has no path to a turn:** the Snapshot owner steps only `loopWithPendingSnapshotPublish()`
+  (`TrackDeferredMaintenance.cpp:1022-1137`, `TrackSlotPool.cpp`), gated by `snapshotIdleAllowed` and
+  `allowSnapshotConstructionStart` (`MidiServiceDrain.h:438-445`), and `stepPendingSnapshotPublish` returns at
+  `LoopSnapshotPublish.cpp:2142-2145` with nothing pending. 7.3 must name the interval request as an explicit input to the
+  selector, the idle-step gate and the construction-start gate, add those files, state interval-vs-checkpoint priority
+  (within one `Loop` and across slots; a rank-0 whole-root build must not starve it), dispatch the interval phase before the
+  `:2142` early return, route it through `admitSnapshotPublicationTurn`, and say where its `LoopSnapshotConstruction`
+  lives — without making it `hasPendingSnapshotPublish()` (that distorts `hasSnapshotPublicationBacklogOnAnySlot`, the
+  extra-Snapshot rotation, `main.cpp:533`, save/undo gates). Fixture: rootless target + a running whole-root build on the
+  active slot + Launch demand ⇒ the interval root completes within N owner turns; red-proof: selector unchanged.
+  **B2 — more sites need the whole root than the plan listed:** `rollingCandidateReadyAtBoundary` (`:2330`, reached from the
+  MIDI edge via `resolveRollingPlaybackWindow`) and `revalidateCompletedPlaybackWindow` (`:3120-3121`, plus the
+  `snapshotIdentity == publishedSnapshotIdentity()` compare) both require `publishedSnapshotIsCurrent()`; with no whole root
+  every Rolling boundary is rejected and deadline-miss recovery never validates. Add both and `serviceRollingPlaybackWindow`
+  (`:2444`) to the single resolver (O(1) metadata on the hot path) and define the identity the view carries — compare
+  `(coveredPassRevision, generation, served interval)`, not a snapshot pointer (`PlaybackViewSourceIdentity::operator==`
+  includes it). Fixtures: a rootless Rolling slot adopts at the boundary through the real `playMidiEventsForSlot`; a forced
+  deadline miss recovers.
+  **B3 — a stale-but-present root on a Launch target has no producer:** eligibility is "no *current* root", not "rootless".
+  `requestPlaybackWindow` refuses stale roots and the launch no longer republishes, so a stale demoted slot could never
+  commit. **Owner decision needed** (stale case: serve it from an interval root with the §2C empty-parent content
+  consequence stated, or keep the launch republish request there); record the choice in DEC-113. Fixture: stale root,
+  `pend=0`, nothing queued ⇒ `launch_ready`; edit-pass Hide on a stale-root slot checked against the Overlay.
+  **B4 — identity survives slot destruction:** `Loop::resetPassTimeline` sets `playbackRevision = 0` and clears the
+  published snapshot without a Track generation bump (`SlotReset.cpp:23`, `CurrentSetBootLoad.cpp:36`, …), so a new take can
+  reach the same revision and an old interval root would look current. Clear the interval box inside
+  `Loop::clearPublishedSnapshot`; add `loopLengthTicks` and `canonicalStorageGeneration` to the box identity and the currency
+  check; discard on length change. Fixture: accepted interval root → `resetLoopSlotToEmpty` + re-load at the same revision with
+  an unchanged Track generation ⇒ unusable.
+  **B5 — no release on an active-slot change:** the A→B commit does not bump the generation, so a Rolling admission record
+  `{slot=A}` would refuse B's Rolling demand (and is a second copy of "which slot is active"). Add the release term "no
+  longer the active slot / pending target" at `serviceRollingPlaybackWindow` `:2380-2381`; derive roles from
+  `activeLoopIndex` at use time, never store them. Fixture: A active, B launched, both rootless ⇒ B's first Rolling demand is
+  admitted.
+  **Tightenings to carry:** T1 the generation is Track-wide (any slot's reset bumps it; state the livelock cost or use a
+  per-slot identity); T2 readiness must validate what the view stamped (revision + interval), not the box, and not pointer
+  identity; T3 hard invariant that the interval-charged lookahead keeps the first Rolling boundary within the 1536-tick
+  launch window, else the gap is **silence** (`GatherMissHoldEmpty`); T4 the playhead-centred `requestPlaybackWindow` has no
+  production caller and Rolling starts are multiples of 1536, so the unaligned fixtures and the 7.2 gate are not acceptance-
+  critical (the gate fix stays: it is correct and shared readers are unaffected), and the walk is O(all chunks) per interval
+  — measure it; T5 a restored demoted slot now never gets a whole root (note-edit open, save, display stay on their no-root
+  paths) — record in DEC-113 with one display/note-edit oracle; T6 the in-flight `LoopSnapshotConstruction` is not in the RAM2
+  admission table — add a hard refusal tied to `admitSnapshotPublicationTurn`; T7 "raise/replace" must be idempotent (replace
+  only when the demand or identity changes; `preparePlaybackLaunchForSlot` runs every provision turn); T8 compare parity
+  against `LoopContentResolution` truth as well as the whole-root build; T9 release on transport stop / lease release; T10
+  re-verify every plan file:line before the 7.3 packet is signed.
+
 - [ ] 7.3 Interval-root construction (empty parent, exact served range, window-filtered companions, two-phase
   generation-gated acceptance, wrap-journal refusal) — verify content parity against today's rootless whole-root build for
   the served ticks, and that the whole-root publisher's progress does not advance for the lane. **Entry criterion (round 7,

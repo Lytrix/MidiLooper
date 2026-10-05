@@ -6590,3 +6590,19 @@ residency statement becomes measurable once the slice-7.6 row exists.
 **Not claimed.** The interval-root grain cost, arena residency, the exact gate's inspected-work delta, content parity for
 the served range, and the device leg — until their fixtures and leg pass. Slices and entry criteria:
 `openspec/changes/windowed-playback-generation/tasks.md` §7.
+
+**Amendment 2026-10-05 (G2 red team — BLOCKED for 7.3/7.4 until applied; DEC-113 otherwise stands).** The independent
+implementation red team found five blockers and ten tightenings in the not-yet-implemented contract, recorded as
+`tasks.md` §7 item 7.2a: (B1) the interval phase needs an explicit path to an owner turn and a stated priority against
+checkpoint construction, without becoming `hasPendingSnapshotPublish()`; (B2) `rollingCandidateReadyAtBoundary` (a MIDI-edge
+site) and `revalidateCompletedPlaybackWindow` also require a current whole root, and the view identity must compare
+`(coveredPassRevision, generation, served interval)` rather than a snapshot pointer; (B3) interval-root eligibility is
+"no *current* root", and the stale-root Launch case is an open owner decision (serve from an interval root with the §2C
+companion consequence, or keep the launch republish request); (B4) the interval box must be cleared in
+`Loop::clearPublishedSnapshot` and carry `loopLengthTicks` and `canonicalStorageGeneration`, because `resetPassTimeline`
+restarts `playbackRevision` without a Track generation bump; (B5) the Rolling admission record needs a release on an
+active-slot change, with roles derived from `activeLoopIndex` and never stored. Recorded consequences: the playback
+generation is Track-wide (T1); a restored demoted slot no longer receives a whole root from the launch, so note-edit open,
+save and display remain on their no-root paths (T5); interval parity is also checked against `LoopContentResolution` truth
+(T8). Decision 1's "stale-root Overlay keeps serving" applies to the *playing* slot only; it does not exist for a Launch
+target.

@@ -5182,6 +5182,13 @@ bridge's verify path) are unrelated and unchanged. See
 
 ### Route A — the lane is served by interval roots (DEC-113; `tasks.md` §7) — slices 7.1–7.2 landed, 7.3 next
 
+**G2 red team (2026-10-05): BLOCKED for 7.3/7.4** — five blockers (B1 no path to a turn for the interval phase; B2 two more
+whole-root sites incl. a MIDI-edge one; B3 stale-root Launch eligibility — **owner decision pending**; B4 interval box not
+tied to `resetPassTimeline`/`clearPublishedSnapshot`; B5 Rolling admission has no release on an active-slot change) and ten
+tightenings, recorded in `tasks.md` item 7.2a and a DEC-113 amendment. **Slice 7.3 must not start until they are applied.**
+The red team also found the unaligned playhead-centred demand has no production caller (Rolling starts are multiples of
+1536), so slice 7.2 is correct but not acceptance-critical.
+
 **Slice 7.2 landed 2026-10-05 (native-first; no firmware behaviour change for existing consumers).**
 `CommittedEventRange::chunkIntersectsWindow` is now an **exact, modular, half-open span overlap** (wrapped chunks and
 wrapped windows each split into two segments) instead of the sampled `noteIntersectsWindow` delegation;
