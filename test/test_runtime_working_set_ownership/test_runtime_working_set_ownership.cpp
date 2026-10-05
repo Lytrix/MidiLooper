@@ -4993,6 +4993,247 @@ void test_retained_interval_index_is_interval_directed_and_refuses_stale_revisio
                                                                             longLoop.playbackRevision, covered, skipped)));
 }
 
+/// 3.7a (I1): the **retained revision is the source for a slot with no published root** (DEC-108 §10), so the
+/// production requester answers the interval from that revision's pinned bodies, directed by the interval index. The
+/// answer is compared against the fallback's **own** effective-content gather over the same revision (the differential
+/// oracle: `Loop::copyEffectiveCommittedEventsInRange`), never against a hand-written expectation, and the window is
+/// published by the production turn with no root at all -- readiness names the **build** owner for such a slot,
+/// because the window is buildable where the published root cannot answer.
+void test_retained_source_window_serves_a_rootless_interval_and_the_index_bounds_the_lookup() {
+  Track& track = prepareWindowOwnerSlot(0);
+  Loop& loop = track.getLoop(0);
+  const uint32_t retainedRevision = loop.playbackRevision;
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                            "the fixture's shape is a slot with **no** published root");
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(nullptr, loop.publishedSnapshotIdentity(),
+                                "and no root identity to date a window by");
+  SessionMidiEventVec scratch;
+  // A playhead inside the loop's first bar but **not** at the handoff itself: the resolver centres the two-bar window
+  // on it (start 0) and the handoff is a lap away, which is the shape the admission requires to admit at all.
+  constexpr uint32_t kPlayhead = 500;
+  // The named refusal 3.6c's fixture pins still holds while no revision is retained: nothing else is a source.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::SourceUnavailable),
+                    static_cast<int>(track.requestPlaybackWindow(0, kPlayhead, scratch)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, retainedRevision, 41)));
+  // W-37a-5, the positive half: the obligation moves from the source to the **build**, because the retained revision is
+  // the current one and a window can be gathered from it.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::OwesBuild),
+                    static_cast<int>(track.playbackWindowReadinessForSlot(0)));
+  TEST_ASSERT_EQUAL_STRING("window_build_owner", Track::playbackWindowReadinessHolder(
+                                                    track.playbackWindowReadinessForSlot(0)));
+
+  // The gather's own answer for the interval the resolver names, one bounded slice at a time.
+  PlaybackCoverageInterval interval{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks, true, kPlayhead, interval));
+  CommittedEventRange::WindowTraversalCursor cursor{};
+  CommittedEventRange::resetWindowTraversalCursor(cursor);
+  SessionMidiEventVec gathered;
+  const Track::RetainedWindowGather gather = track.gatherRetainedSourceWindowForSlot(
+      0, interval.startPhase, interval.lengthTicks, retainedRevision, cursor, gathered);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served), static_cast<int>(gather.result));
+  TEST_ASSERT_TRUE(gather.complete);
+  TEST_ASSERT_FALSE(gather.indexAnsweredEmpty);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, gather.indexedBars, "the committed body's own bar is indexed");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, gather.skippedBars, "the window's other bar carries nothing");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, gather.pinnedLists, "the pinned record pass contributes its bodies");
+  TEST_ASSERT_EQUAL_UINT32(0u, gather.pinnedPassesMissing);
+  TEST_ASSERT_TRUE(gather.inspectedChunks > 0);
+
+  // **Differential fallback oracle**: the same revision and the same window, through the path the merged-window
+  // fallback already uses. Ticks are compared pairwise; the two events are at distinct ticks, so this says nothing
+  // about same-tick order (that parity is task 4.3's own gate, not a tolerance granted here).
+  SessionMidiEventVec oracle;
+  loop.copyEffectiveCommittedEventsInRange(oracle, interval.startPhase, interval.lengthTicks);
+  TEST_ASSERT_FALSE_MESSAGE(oracle.empty(), "the fallback's effective gather has the revision's content");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(oracle.size()), static_cast<uint32_t>(gathered.size()),
+                                   "the retained answer is exactly the fallback's effective content");
+  for (size_t i = 0; i < oracle.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(oracle[i].tick, gathered[i].tick);
+  }
+
+  // The production requester now answers, and the production turn publishes -- with no published root anywhere.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, kPlayhead, scratch)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(gathered.size()), static_cast<uint32_t>(scratch.size()),
+                                   "the requester serves the retained revision's content");
+  for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  PlaybackViewSourceIdentity identityOut{};
+  PlaybackCoverageInterval coverageOut{};
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut),
+                           "the production turn publishes the rootless window");
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackWindowOrigin::Committed), static_cast<int>(identityOut.origin));
+  TEST_ASSERT_EQUAL_UINT32(retainedRevision, identityOut.playbackRevision);
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(loop.publishedSnapshotIdentity(), identityOut.snapshotIdentity,
+                                "the window carries the root it read: none, by construction");
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "and the slot is still rootless afterwards");
+  TEST_ASSERT_EQUAL_UINT32(interval.startPhase, coverageOut.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(interval.lengthTicks, coverageOut.lengthTicks);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::Ready),
+                    static_cast<int>(track.playbackWindowReadinessForSlot(0)));
+
+  // W-37a-2: an interval the index proves empty is **served empty at no chunk-inspection cost** -- the lookup bound the
+  // index exists for, and a served answer rather than a refusal (task 3.5: an empty interval is still ready).
+  constexpr uint32_t kDeepPlayhead = 40 * 768;
+  CommittedEventRange::WindowTraversalCursor emptyCursor{};
+  CommittedEventRange::resetWindowTraversalCursor(emptyCursor);
+  SessionMidiEventVec emptyScratch;
+  const Track::RetainedWindowGather empty = track.gatherRetainedSourceWindowForSlot(
+      0, kDeepPlayhead, 2 * 768, retainedRevision, emptyCursor, emptyScratch);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served), static_cast<int>(empty.result));
+  TEST_ASSERT_TRUE(empty.complete);
+  TEST_ASSERT_TRUE(empty.indexAnsweredEmpty);
+  TEST_ASSERT_EQUAL_UINT32(0u, empty.indexedBars);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, empty.skippedBars, "both of the interval's bars are skipped by the index");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, empty.inspectedChunks,
+                                   "the index alone answered: not one chunk was inspected");
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(emptyScratch.size()));
+  SessionMidiEventVec deepOracle;
+  loop.copyEffectiveCommittedEventsInRange(deepOracle, kDeepPlayhead, 2 * 768);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(deepOracle.size()),
+                                   "and the fallback agrees the interval holds nothing");
+
+  // W-37a-3: the revision the index was not built for is refused **by name**, and nothing is inspected for it.
+  CommittedEventRange::WindowTraversalCursor staleCursor{};
+  CommittedEventRange::resetWindowTraversalCursor(staleCursor);
+  SessionMidiEventVec staleScratch;
+  const Track::RetainedWindowGather stale = track.gatherRetainedSourceWindowForSlot(
+      0, interval.startPhase, interval.lengthTicks, retainedRevision + 1, staleCursor, staleScratch);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::RevisionMismatch),
+                    static_cast<int>(stale.result));
+  TEST_ASSERT_FALSE(stale.complete);
+  TEST_ASSERT_EQUAL_UINT32(0u, stale.inspectedChunks);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(staleScratch.size()));
+
+  // The loop's revision advances (what an edit does to the revision a window is dated by) while the retained source
+  // keeps describing the revision it was admitted for: the requester asks for the **current** revision, so it refuses
+  // rather than serving the older one -- the one-pass-late allowance is the lag rule's consumer (task 3.6b), never the
+  // requester's. The retained revision itself is still answerable to a caller that asks for exactly it.
+  loop.playbackRevision = retainedRevision + 1;
+  SessionMidiEventVec advancedScratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::SourceUnavailable),
+                    static_cast<int>(track.requestPlaybackWindow(0, kPlayhead, advancedScratch)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::OwesCurrency),
+                    static_cast<int>(track.playbackWindowReadinessForSlot(0)));
+  CommittedEventRange::WindowTraversalCursor laggingCursor{};
+  CommittedEventRange::resetWindowTraversalCursor(laggingCursor);
+  SessionMidiEventVec laggingScratch;
+  const Track::RetainedWindowGather lagging = track.gatherRetainedSourceWindowForSlot(
+      0, interval.startPhase, interval.lengthTicks, retainedRevision, laggingCursor, laggingScratch);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served), static_cast<int>(lagging.result));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(gathered.size()), static_cast<uint32_t>(laggingScratch.size()));
+
+  // W-37a-5, the negative half on its own slot: with no retained revision the holder is the **source**, and retaining
+  // the current revision moves it to the build owner -- one line of vocabulary, two owners, told apart by the source.
+  LoopEventStore::initPool();
+  Track& pair = prepareWindowOwnerSlot(1);
+  TEST_ASSERT_FALSE(pair.getLoop(0).publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackWindowReadiness::OwesSource),
+                    static_cast<int>(pair.playbackWindowReadinessForSlot(0)));
+  TEST_ASSERT_EQUAL_STRING("published_source", Track::playbackWindowReadinessHolder(
+                                                   pair.playbackWindowReadinessForSlot(0)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(pair.retainPlaybackSourceForSlot(0, pair.getLoop(0).playbackRevision, 7)));
+  TEST_ASSERT_EQUAL_STRING("window_build_owner", Track::playbackWindowReadinessHolder(
+                                                    pair.playbackWindowReadinessForSlot(0)));
+}
+
+/// 3.7a (I1): every refusal the retained-source gather can answer with is **named**, and each name is a reason no body
+/// was read: no retention at all, a loop outside the indexed range, pinned Active note-edit rows whose resolution must
+/// be per pass layer, and a revision that owns bodies none of which is reachable. Serving an empty window in any of
+/// those states would be indistinguishable from silence -- the failure mode this change exists to remove.
+void test_the_retained_source_gather_refuses_by_name_where_it_must() {
+  // (a) Rootless and nothing retained: there is no revision to serve from, so the source is what is owed.
+  Track& bare = prepareWindowOwnerSlot(0);
+  Loop& bareLoop = bare.getLoop(0);
+  SessionMidiEventVec bareScratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::SourceUnavailable),
+                    static_cast<int>(bare.requestPlaybackWindow(0, 0, bareScratch)));
+  CommittedEventRange::WindowTraversalCursor cursor{};
+  CommittedEventRange::resetWindowTraversalCursor(cursor);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::NoRetainedSource),
+                    static_cast<int>(bare
+                                         .gatherRetainedSourceWindowForSlot(0, 0, Config::TICKS_PER_BAR,
+                                                                            bareLoop.playbackRevision, cursor,
+                                                                            bareScratch)
+                                         .result));
+
+  // (b) Beyond `kRetainedIndexMaxBars`: the index was refused for this loop, so the gather refuses rather than
+  // presenting a complete scan as window-bounded.
+  LoopEventStore::initPool();
+  Track& longTrack = trackManager.getTrack(1);
+  longTrack.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlotOfLength(longTrack, 0, 513 * 768u);
+  TEST_ASSERT_TRUE(longTrack.prewarmPlaybackForSlot(0, true));
+  Loop& longLoop = longTrack.getLoop(0);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(longTrack.retainPlaybackSourceForSlot(0, longLoop.playbackRevision, 42)));
+  CommittedEventRange::WindowTraversalCursor longCursor{};
+  CommittedEventRange::resetWindowTraversalCursor(longCursor);
+  SessionMidiEventVec longScratch;
+  const Track::RetainedWindowGather longGather = longTrack.gatherRetainedSourceWindowForSlot(
+      0, 0, Config::TICKS_PER_BAR, longLoop.playbackRevision, longCursor, longScratch);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::BarsUnsupported),
+                    static_cast<int>(longGather.result));
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(longScratch.size()));
+
+  // (c) The retained revision pins an Active note-edit row: per-layer resolution has not landed, and a merged-flat
+  // application would be a *different* answer (the reason `Loop::copyEffectiveCommittedEventsInRange` applies each
+  // committed list and then merges), so the revision is refused rather than served unfaithfully.
+  LoopEventStore::initPool();
+  Track& editTrack = trackManager.getTrack(2);
+  editTrack.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(editTrack, 0);
+  editTrack.getLoop(0).loopLengthTicks = kWindowOwnerLoopTicks;
+  TEST_ASSERT_TRUE(editTrack.prewarmPlaybackForSlot(0, true));
+  Loop& editLoop = editTrack.getLoop(0);
+  EditPass pinnedRow{};
+  pinnedRow.id = 91;
+  pinnedRow.state = EditPassState::Active;
+  pinnedRow.passType = EditPassType::Note;
+  pinnedRow.startTick = 0;
+  pinnedRow.endTick = 48;
+  editLoop.passes.editPasses.push_back(pinnedRow);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(editTrack.retainPlaybackSourceForSlot(0, editLoop.playbackRevision, 43)));
+  CommittedEventRange::WindowTraversalCursor editCursor{};
+  CommittedEventRange::resetWindowTraversalCursor(editCursor);
+  SessionMidiEventVec editScratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::PinnedEditRowsUnsupported),
+                    static_cast<int>(editTrack
+                                         .gatherRetainedSourceWindowForSlot(0, 0, 2 * Config::TICKS_PER_BAR,
+                                                                            editLoop.playbackRevision, editCursor,
+                                                                            editScratch)
+                                         .result));
+
+  // (d) The revision **owns bodies** (the retention took the store's references) and none of them is reachable through
+  // the pass set: refused by name, because an empty window would be served as silence for content it demonstrably has.
+  LoopEventStore::initPool();
+  Track& pinless = trackManager.getTrack(3);
+  pinless.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(pinless, 0);
+  pinless.getLoop(0).loopLengthTicks = kWindowOwnerLoopTicks;
+  TEST_ASSERT_TRUE(pinless.prewarmPlaybackForSlot(0, true));
+  Loop& pinlessLoop = pinless.getLoop(0);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(pinless.retainPlaybackSourceForSlot(0, pinlessLoop.playbackRevision, 44)));
+  // The pass set moves on while the retention still owns the revision's bodies: the pinned pass id is no longer the
+  // one the set carries, so no pinned list resolves -- and `hasCommittedPasses()` stays true (the slot is servable),
+  // which is what makes this a body-reachability refusal rather than the earlier `NotServable` gate.
+  pinlessLoop.passes.recordPass.id = 4242;
+  CommittedEventRange::WindowTraversalCursor pinlessCursor{};
+  CommittedEventRange::resetWindowTraversalCursor(pinlessCursor);
+  SessionMidiEventVec pinlessScratch;
+  const Track::RetainedWindowGather pinlessGather = pinless.gatherRetainedSourceWindowForSlot(
+      0, 0, 2 * Config::TICKS_PER_BAR, pinlessLoop.playbackRevision, pinlessCursor, pinlessScratch);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::PinnedBodiesUnavailable),
+                    static_cast<int>(pinlessGather.result));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, pinlessGather.pinnedLists, "no pinned body was enumerated");
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(pinlessScratch.size()));
+}
+
 /// 3.11 (DEC-108 §13d): the **shared-view ownership rules** as one transition table, applied through the seam, with the
 /// four scenarios the spec names: a builder keeps its own work, a late completion publishes nothing, returning to a
 /// slot revives nothing, and storage is reusable only after the last owner releases it.
@@ -10226,6 +10467,11 @@ int main() {
   // windowed-playback-generation slice 3.6c: the interval index over pinned bodies -- interval-directed skipping,
   // edit destinations folded in, and named refusals instead of stale or partial answers.
   RUN_TEST(test_retained_interval_index_is_interval_directed_and_refuses_stale_revisions);
+  // windowed-playback-generation slice 3.7a (I1): the retained revision as the source for a slot with **no published
+  // root** -- the production requester serves it, the index bounds the lookup, and the differential fallback oracle
+  // agrees; plus every refusal the gather owes by name.
+  RUN_TEST(test_retained_source_window_serves_a_rootless_interval_and_the_index_bounds_the_lookup);
+  RUN_TEST(test_the_retained_source_gather_refuses_by_name_where_it_must);
   // windowed-playback-generation slice 3.11: the shared-view ownership rules as one transition table, an operation
   // that is never retargeted, a late completion that publishes nothing, and storage reuse by the last owner.
   RUN_TEST(test_shared_view_transitions_state_the_ownership_rules_and_a_late_completion_publishes_nothing);

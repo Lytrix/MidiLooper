@@ -21,12 +21,23 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/ExternalPoolAccounting.h"
 #include "Utils/RuntimeTimingTelemetry.h"
-#include "PlaybackMergedMidiEvents.h"
 #include "Utils/CommittedMidiScratch.h"
+#include "WindowPagedStream.h"  // task 3.7a (I1): the paged stream's page capacity is the gather's slice size
+#include "PlaybackMergedMidiEvents.h"
 
 extern TrackManager trackManager;
 
 namespace {
+
+/// Task 3.7a (I1): one bounded slice of a retained interval is **one page** -- the same capacity the legacy paged
+/// stream produces with (`kWindowPageCapacity`), so the retained-source gather and the page producer cannot answer
+/// with two different granularities, and a caller's per-turn inspected work is a page rather than the interval.
+constexpr size_t kRetainedGatherSliceEvents = kWindowPageCapacity;
+
+/// The request path's own bound on that primitive: a window cannot hold more than the admission limit, so one page per
+/// slice covers it with margin -- and an interval that still is not traversed is refused rather than truncated.
+constexpr uint32_t kRetainedGatherMaxSlices =
+    static_cast<uint32_t>(RuntimePlaybackViewConfig::kWindowAdmissionLimit / kWindowPageCapacity) + 2u;
 
 size_t mergedPlaybackStreamSize(const void* ctx) {
   return static_cast<const MergedPlaybackStreamCtx*>(ctx)->order->size();
@@ -956,11 +967,19 @@ TRACK_COLD_MEM Track::PlaybackWindowReadiness Track::playbackWindowReadinessForS
   // one-pass-late allowance that would accept an older revision is task 3.6's rule.
   PlaybackWindowIdentity published{};
   if (!publishedPlaybackWindowIdentityForSlot(slotIndex, published)) {
-    // Nothing is published. **Who owes it** turns on whether a build could succeed at all: the enumeration needs a
-    // *current* published root (`requestPlaybackWindow` refuses `SourceUnavailable` / `SourceNotCurrent`), so a
-    // rootless or not-current slot owes the **source**, and only a sourced one owes the window-build owner.
-    return loop.publishedSnapshotIsCurrent() ? PlaybackWindowReadiness::OwesBuild
-                                            : PlaybackWindowReadiness::OwesSource;
+    // Nothing is published. **Who owes it** turns on whether a build could succeed at all, and a slot has *two* source
+    // authorities: the published whole-loop root and -- task 3.6/3.7a -- the retained revision, which is what a demoted
+    // slot's window is built from when no root is resident (DEC-108 §10). So a rootless slot whose retained source is
+    // the **current** revision owes the **build**, not the source: naming `published_source` there would name an owner
+    // with nothing to do. A rootless slot with no retained revision (or a lagging one) owes the source, unchanged.
+    if (loop.publishedSnapshotIsCurrent()) {
+      return PlaybackWindowReadiness::OwesBuild;
+    }
+    RetainedPlaybackSource retained{};
+    if (retainedPlaybackSourceForSlot(slotIndex, retained) && retained.revision == loop.playbackRevision) {
+      return PlaybackWindowReadiness::OwesBuild;
+    }
+    return PlaybackWindowReadiness::OwesSource;
   }
   if (published.playbackRevision != loop.playbackRevision) {
     return PlaybackWindowReadiness::OwesCurrency;
@@ -1524,6 +1543,180 @@ TRACK_COLD_MEM Track::RetainedIntervalQueryResult Track::queryRetainedIntervalFo
     }
   }
   return RetainedIntervalQueryResult::Indexed;
+}
+
+/// Task 3.7a (I1): the interval answered from the **retained revision's pinned bodies**. The index answers first (how
+/// many bars the pinned bodies cover and how many cost no inspection at all), and only a covered interval is
+/// enumerated -- through the same resumable body primitive `WindowPagedStream` already uses, one bounded slice per
+/// call, so the inspected work is the slice's own and a caller can resume across deferred turns.
+///
+/// What this deliberately does **not** do yet (named, not smoothed over): the retained revision's Active note-edit
+/// rows are per-*layer* resolution (`Loop::copyEffectiveCommittedEventsInRange` applies each committed list, then
+/// merges, and says why: merged-then-apply lets a LIFO delete pair a hidden On with another pass's Off). Applying them
+/// in one merged pass here would be a *different* answer, so such a revision is refused by name until the consumer
+/// integration lands that resolution.
+TRACK_COLD_MEM Track::RetainedWindowGather Track::gatherRetainedSourceWindowForSlot(
+    uint8_t slotIndex, uint32_t startPhase, uint32_t lengthTicks, uint32_t expectedRevision,
+    CommittedEventRange::WindowTraversalCursor& cursor, SessionMidiEventVec& out) {
+  RetainedWindowGather gather{};
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    gather.result = RetainedWindowGatherResult::NoRuntime;
+    return gather;
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0 || lengthTicks == 0) {
+    gather.result = RetainedWindowGatherResult::NotServable;
+    return gather;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  const RetainedPlaybackSource* source = nullptr;
+  if (runtime != nullptr) {
+    for (const RetainedPlaybackSource& entry : runtime->retainedSources) {
+      if (entry.isRetained()) {
+        source = &entry;
+        break;
+      }
+    }
+  }
+  if (source == nullptr) {
+    // No revision is retained: there is nothing to serve from, and the **source** is what the slot owes.
+    gather.result = RetainedWindowGatherResult::NoRetainedSource;
+    return gather;
+  }
+  if (source->revision != expectedRevision) {
+    // Answered by name: the one-pass-late allowance is the caller's rule, and no reader may bind this revision to
+    // another revision's bodies.
+    gather.result = RetainedWindowGatherResult::RevisionMismatch;
+    return gather;
+  }
+  const uint32_t bars = (loop.loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+  if (bars == 0 || bars > kRetainedIndexMaxBars) {
+    // Outside the indexed range by construction: the index was refused for this loop, so claiming a window-directed
+    // answer here would present a complete scan as bounded.
+    gather.result = RetainedWindowGatherResult::BarsUnsupported;
+    return gather;
+  }
+  uint32_t coveredBars = 0;
+  uint32_t skippedBars = 0;
+  const RetainedIntervalQueryResult query = queryRetainedIntervalForSlot(
+      slotIndex, startPhase, lengthTicks, expectedRevision, coveredBars, skippedBars);
+  gather.indexedBars = coveredBars;
+  gather.skippedBars = skippedBars;
+  if (query == RetainedIntervalQueryResult::RevisionMismatch) {
+    gather.result = RetainedWindowGatherResult::RevisionMismatch;
+    return gather;
+  }
+  if (query == RetainedIntervalQueryResult::BarsUnsupported) {
+    gather.result = RetainedWindowGatherResult::BarsUnsupported;
+    return gather;
+  }
+  if (query == RetainedIntervalQueryResult::NoIndex) {
+    // No published index for this revision: the skip cannot be claimed, and a full scan is not an interval-directed
+    // answer. (A 513-bar loop reaches here *and* the ceiling above; both refuse by name, and the caller accounts the
+    // scan it now owes.)
+    gather.result = RetainedWindowGatherResult::NoIndex;
+    return gather;
+  }
+  // The retained revision's own Active note-edit rows: refused by name (see the note above), never merged flat.
+  for (const EditPassId pinnedId : source->pins.editPassIds) {
+    for (const EditPass& row : loop.passes.editPasses) {
+      if (row.id == pinnedId && row.state == EditPassState::Active && row.passType == EditPassType::Note) {
+        gather.result = RetainedWindowGatherResult::PinnedEditRowsUnsupported;
+        gather.complete = cursor.complete;
+        return gather;
+      }
+    }
+  }
+  if (coveredBars == 0) {
+    // **The index alone answers**: every bar of the interval is one the pinned bodies do not cover, so the interval is
+    // served *empty* at no chunk-inspection cost. This is the lookup bound the index exists for, and it is a served
+    // answer rather than a refusal -- an interval that legitimately holds no events is still ready (task 3.5).
+    out.clear();
+    gather.result = RetainedWindowGatherResult::Served;
+    gather.complete = true;
+    gather.indexAnsweredEmpty = true;
+    return gather;
+  }
+  // The pinned passes are the revision's **membership**, read from the pin rather than from the live states: a pass a
+  // later revision disabled is exactly the lag the retention exists to serve. A pin whose body is no longer reachable
+  // is counted, and serving an empty window in that state would be indistinguishable from silence -- so it is refused.
+  std::vector<const CommittedChunkIdList*> lists;
+  lists.reserve(source->pins.capturePassIds.size());
+  uint32_t missing = 0;
+  for (const PassId pinnedId : source->pins.capturePassIds) {
+    const CommittedChunkIdList* list = nullptr;
+    if (loop.passes.hasRecordPass() && loop.passes.recordPass.id == pinnedId) {
+      list = &loop.passes.recordPass.committedChunkIds;
+    } else {
+      for (const OverdubPass& pass : loop.passes.overdubPasses) {
+        if (pass.id == pinnedId) {
+          list = &pass.committedChunkIds;
+          break;
+        }
+      }
+    }
+    if (list == nullptr) {
+      ++missing;
+      continue;
+    }
+    if (!list->empty()) {
+      lists.push_back(list);
+    }
+  }
+  gather.pinnedPassesMissing = missing;
+  gather.pinnedLists = static_cast<uint32_t>(lists.size());
+  if (lists.empty() && !source->ownedChunks.empty()) {
+    // The revision **owns bodies** (the retention took the store's references for them) and yet none is reachable
+    // through the pass set: an empty window here would be served as silence for content the revision demonstrably has,
+    // so it is refused by name instead. `ownedChunks` empty means the revision genuinely carried no bodies.
+    gather.result = RetainedWindowGatherResult::PinnedBodiesUnavailable;
+    gather.complete = cursor.complete;
+    return gather;
+  }
+  // The oracle's own clamping: a window at least as long as the loop *is* the loop.
+  uint32_t windowStart = startPhase;
+  uint32_t windowLength = lengthTicks;
+  if (windowLength >= loop.loopLengthTicks) {
+    windowStart = 0;
+    windowLength = loop.loopLengthTicks;
+  } else {
+    windowStart = startPhase % loop.loopLengthTicks;
+  }
+  const bool freshCursor = cursor.listIndex == 0 && cursor.chunkIndex == 0 && cursor.chunkEventOffset == 0 &&
+                           !cursor.complete;
+  if (freshCursor) {
+    // A fresh traversal owns its destination: the interval's events are appended to it, never onto a previous answer.
+    out.clear();
+  }
+  if (lists.empty()) {
+    gather.result = RetainedWindowGatherResult::Served;
+    gather.complete = true;
+    return gather;
+  }
+  const CommittedEventRange::WindowTraversalResult slice = CommittedEventRange::appendWindowBudgeted(
+      lists.data(), lists.size(), loop.loopLengthTicks, windowStart, windowLength, kRetainedGatherSliceEvents,
+      cursor, out);
+  gather.result = RetainedWindowGatherResult::Served;
+  gather.complete = slice.complete;
+  gather.inspectedChunks = static_cast<uint32_t>(slice.chunksCopied);
+  gather.eventsAppended = static_cast<uint32_t>(slice.eventsAppended);
+  if (slice.complete) {
+    // Tick order, which is the shape the fallback's own effective-content gather produces for the same revision --
+    // **by hand** rather than through `std::sort`: that instantiation (introsort, its insertion sorts and the
+    // long-branch veneers from this flash-resident TU) measured 1,280 B of ITCM against a 1,640 B headroom, and the
+    // window is bounded by `kWindowAdmissionLimit` events. The ordering bound is the completion boundary's business
+    // when this gather is driven per turn; here it is one off-clock call.
+    for (size_t i = 1; i < out.size(); ++i) {
+      const MidiEvent key = out[i];
+      size_t j = i;
+      while (j > 0 && out[j - 1].tick > key.tick) {
+        out[j] = out[j - 1];
+        --j;
+      }
+      out[j] = key;
+    }
+  }
+  return gather;
 }
 
 TRACK_COLD_MEM void Track::applyPlaybackViewTransition(uint8_t slotIndex, PlaybackViewTransition transition) {
@@ -2941,16 +3134,37 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackWindow(uin
   }
   // Enumerate through the **effective-content resolver**: the selected `LoopSnapshot`'s window membership,
   // never raw committed chunks (spec *One pass late is the only stale authority*). Only the `Snapshot` branch is
-  // the *current* published root; an `Overlay` carries unpublished session/pending passes and a rootless slot
-  // has no content to resolve, so both refuse by name instead of serving stale content as current.
+  // the *current* published root; an `Overlay` carries unpublished session/pending passes and is the stale-root
+  // allowance, so neither of those is served from anywhere but the root.
+  //
+  // A slot with **no published root at all** is the case task 3.7a opens: its source is the **retained revision**
+  // (DEC-108 §10), so the interval is answered from that revision's pinned bodies, directed by the interval index --
+  // and only when that authority actually holds it. Otherwise the named `SourceUnavailable` stands exactly as before,
+  // and the merged-window fallback keeps serving the slot in the meantime.
   Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
   uint32_t inspectedEntries = 0;
   scratch.clear();
   if (!loop.tryGatherPublishedSnapshotEventsInWindow(scratch, coverage.startPhase, coverage.lengthTicks, &path,
                                                      &inspectedEntries)) {
-    return PlaybackViewRequestResult::SourceUnavailable;
-  }
-  if (path != Loop::SnapshotWindowGatherPath::Snapshot) {
+    CommittedEventRange::WindowTraversalCursor cursor{};
+    CommittedEventRange::resetWindowTraversalCursor(cursor);
+    bool complete = false;
+    for (uint32_t slice = 0; slice < kRetainedGatherMaxSlices && !complete; ++slice) {
+      const RetainedWindowGather gathered = gatherRetainedSourceWindowForSlot(
+          slotIndex, coverage.startPhase, coverage.lengthTicks, loop.playbackRevision, cursor, scratch);
+      if (gathered.result != RetainedWindowGatherResult::Served) {
+        scratch.clear();
+        return PlaybackViewRequestResult::SourceUnavailable;
+      }
+      complete = gathered.complete;
+    }
+    if (!complete) {
+      // The interval did not fit the gather's own slice budget: refused by name rather than handed to the admission as
+      // a truncated window (the capacity bound is the admission's, not this loop's).
+      scratch.clear();
+      return PlaybackViewRequestResult::SourceUnavailable;
+    }
+  } else if (path != Loop::SnapshotWindowGatherPath::Snapshot) {
     return PlaybackViewRequestResult::SourceNotCurrent;
   }
   // The handoff is the phase at which the playhead next *enters this interval* -- "readiness is owed per affected

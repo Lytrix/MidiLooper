@@ -590,6 +590,56 @@ public:
                                                            uint32_t lengthTicks, uint32_t expectedRevision,
                                                            uint32_t& indexedBarsOut,
                                                            uint32_t& skippedBarsOut) const;
+  /// Task 3.7a (I1): **serve an interval from the retained revision's pinned bodies**, directed by the index above.
+  ///
+  /// This is the window consumer's source for a slot with **no published root**: the retained revision is the source
+  /// (DEC-108 §10), so a build can be owed where the published root cannot answer -- and readiness therefore names the
+  /// build owner rather than `published_source` for such a slot. The revision asked for is answered **by name** when it
+  /// is not the retained one: the one-pass-late allowance is the caller's rule (task 3.6b), never this primitive's.
+  ///
+  /// **One bounded slice per call** through the existing resumable body primitive
+  /// (`CommittedEventRange::appendWindowBudgeted`), so the inspected work is the slice's own: an interval the index
+  /// proves empty is answered **without inspecting a single chunk**, which is what the index exists for. On the
+  /// completing slice the destination is the interval's events in tick order -- the same shape the fallback's
+  /// `Loop::copyEffectiveCommittedEventsInRange` produces for the same revision, which is the differential oracle.
+  /// Active note-edit rows of the retained revision are **not** applied yet: that resolution is per pass layer and
+  /// belongs with the consumer integration, so such a revision is refused **by name** rather than served unfaithfully.
+  enum class RetainedWindowGatherResult : uint8_t {
+    Served,
+    NoRuntime,
+    /// The slot holds no committed content or no usable length.
+    NotServable,
+    /// Nothing is retained for this slot: there is no revision to serve from, so the **source** is what is owed.
+    NoRetainedSource,
+    /// The retained source is not the revision asked for.
+    RevisionMismatch,
+    /// The loop's bar count is outside the indexed range: refused rather than presented as window-bounded.
+    BarsUnsupported,
+    /// The retained revision pins an Active note-edit row: per-layer edit resolution has not landed yet, so the
+    /// revision is refused rather than served with a merged-flat edit application (a different answer).
+    PinnedEditRowsUnsupported,
+    /// The retained revision pins capture passes but none of their bodies is reachable in the pass set: refused rather
+    /// than serving an empty window as content.
+    PinnedBodiesUnavailable,
+    /// No interval index is published for this revision, so the skip cannot be claimed; the caller owes a scan it must
+    /// account for rather than present as window-directed.
+    NoIndex,
+  };
+  struct RetainedWindowGather {
+    RetainedWindowGatherResult result = RetainedWindowGatherResult::NoRuntime;
+    bool complete = false;             ///< the interval has been fully traversed (true on the first call for an empty one)
+    uint32_t indexedBars = 0;          ///< bars of the interval the pinned bodies cover, per the index
+    uint32_t skippedBars = 0;          ///< bars skipped **without touching a chunk**, per the index
+    uint32_t inspectedChunks = 0;      ///< chunks this slice copied out of the store (0 when the index proved emptiness)
+    uint32_t eventsAppended = 0;       ///< events this slice appended to the destination
+    uint32_t pinnedLists = 0;          ///< pinned capture passes whose bodies this slice enumerated
+    uint32_t pinnedPassesMissing = 0;  ///< pinned passes no longer present in the set: reported, never guessed
+    bool indexAnsweredEmpty = false;   ///< true when the index alone answered the interval as empty
+  };
+  RetainedWindowGather gatherRetainedSourceWindowForSlot(uint8_t slotIndex, uint32_t startPhase,
+                                                         uint32_t lengthTicks, uint32_t expectedRevision,
+                                                         CommittedEventRange::WindowTraversalCursor& cursor,
+                                                         SessionMidiEventVec& out);
   /// Task 3.11 (DEC-108 §13d): apply a **lifecycle transition** to this slot's shared view state, through the one table
   /// `resolvePlaybackViewTransition` states. It cancels the in-flight candidate and/or retires a prepared successor
   /// when the row says so, invalidates the operation identity when the row says so (so a returning slot revives

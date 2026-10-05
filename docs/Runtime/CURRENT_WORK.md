@@ -5180,6 +5180,54 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+**DEC-114 — active implementation direction:** DEC-113's interval-root proposal is withdrawn and retained only as historical audit. DEC-108 governs: the whole-loop `LoopSnapshot` remains checkpoint/effective-content authority; playback windows are derived from the retained pinned-source revision and `RetainedIntervalIndex`. The task sequence is 3.7a production consumer/index integration with the mutable fallback retained, then finish 3.14 undo/redo and 4.5 closure/recovery against that real handoff, and only then 3.7b fallback removal after parity, timing and compatibility gates. No production consumer integration or fallback removal is claimed here. 3.7a needs its own G2 execution packet and production-path fixtures before implementation.
+
+### 3.7a (I1) — the retained-source window consumer: rootless serving, index-bounded lookup, readiness holder (2026-10-06; firmware + tests)
+
+**Increment I1 of 3.7a landed; the task stays open** (I2 the deferred lane turn serving a rootless demand, I3 the
+3.12 paged consumer and 3.13 preview hooks, I4 differential parity + timing admission). The slice's G2 packet was
+written **before** the edit —
+[`evidence/2026-10-06-s37a-production-consumer/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-production-consumer/EXECUTION.md) —
+and pins scope, oracle, increments, fixtures and mutations.
+
+**What landed.** `Track::gatherRetainedSourceWindowForSlot` answers an interval from the **retained revision's pinned
+bodies** (DEC-108 §10), directed by `RetainedIntervalIndex`: an interval whose bars the index proves empty is served
+**empty with no chunk inspected at all**, everything else is enumerated one bounded slice per call through the
+existing resumable primitive (`CommittedEventRange::appendWindowBudgeted`, sliced at `kWindowPageCapacity`), the
+pinned passes supply the revision's membership (read from the pin, so a pass a later revision disabled is exactly the
+lag the retention serves), and every refusal is **named** (`NoRetainedSource`, `RevisionMismatch`, `BarsUnsupported`,
+`NoIndex`, `PinnedEditRowsUnsupported`, `PinnedBodiesUnavailable`). `Track::requestPlaybackWindow` takes that path
+**only** where the published-root enumeration cannot answer at all; the stale-root `Overlay` case, every root-backed
+case and the merged-window fallback are untouched, and a rootless slot with no retained revision keeps the named
+`SourceUnavailable`. `Track::playbackWindowReadinessForSlot` now names the **build** owner, not `published_source`,
+for a rootless slot whose retained source is the **current** revision — the same contract one line over.
+
+**Verified.** Focused `test_runtime_working_set_ownership` **146/146**; full native **2,817 cases / 7 skipped /
+2,810 succeeded / 0 failed**; `teensy41-capture-serial` **SUCCESS** with `variables 96,192` byte-identical and
+`code 391,768 + padding 1,448` (floor 840, 608 B above it; the slice's own +192 B); strict validation valid;
+`git diff --check` clean. Four mutations red-proved with byte-identical restores, and **one of them recorded as a
+non-red-proof** rather than reworded: removing the gather's own source-revision gate leaves the suite green because
+the *index's* revision authority already refuses that request (MR-3.7a-B'), which fails 3.6c's fixture **and** this
+slice's.
+
+**Recorded, not smoothed over.** (1) The first device build **failed the RAM1 guard** — `code 392,856 + padding 360`,
+i.e. **+1,280 B**, `variables` unchanged: `nm` showed libstdc++'s introsort instantiations (and their long-branch
+veneers) for this TU's comparator landing in ITCM, so the window is sorted **by hand** (bounded insertion sort over
+at most `kWindowAdmissionLimit` events) at **+192 B**, with the per-turn ordering bound named as I2's. (2) A retained
+revision with **Active note-edit rows is refused**, not served: the fallback applies each committed list *separately*
+and then merges (a merged-then-apply pass lets a LIFO delete pair a hidden On with another pass's Off), so per-layer
+resolution belongs with I2's consumer integration. (3) The differential oracle compares against
+`Loop::copyEffectiveCommittedEventsInRange` at the same revision pairwise by tick, and the fixture's window has two
+events at distinct ticks — **same-tick order stays 4.3's gate**, and the hand-rolled sort is not stable.
+(4) `requestPlaybackWindow` at a playhead *at* the interval's start is refused (`CannotCompleteBeforeHandoff`,
+measured), so the fixture drives playhead 500.
+
+**Not claimed.** No production *lane* service for a rootless demand (the deferred turn still requires a current
+published root: I2), no 3.12 paged consumer and no 3.13 preview hooks (I3), no edited-content/long-window/same-tick
+parity (I4/4.3), no timing envelope, no device run, no `ExecutionBounds.md` row change, no fallback removal (3.7b).
+3.12/3.13's consumer clauses remain owed to I3. Evidence:
+[`evidence/2026-10-06-s37a-production-consumer/EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-production-consumer/EVIDENCE.md).
+
 ### 3.13 — fixture 2.12's integration half on a new harness combination (2026-10-05; test-only + host tooling)
 
 **Authorized slice done: task 3.13's owed fixture half, no production line changed (`git diff -- src include` empty).**
@@ -5236,12 +5284,7 @@ O(chunks) per pass (`src/CommittedEventRange.cpp:207-265`). Existing materializa
 `src/Loop/LoopMaterialization.cpp:170-265`) is already window-filtered, but applies active edits per pass layer and still
 walks chunk lists; that's an existing fallback behavior, not proof of bounded seek latency.
 
-**Authority conflict / not decided:** the active spec's *One pass late is the only stale authority* requires the effective-
-content resolver over a selected `LoopSnapshot` and says raw committed chunks alone do not apply edit passes (`spec.md:174-193`;
-DEC-108 at `docs/DECISION_LOG.md`). Route D therefore needs an owner-ratified authority amendment before any production
-change. Remaining UNKNOWNs: parity for overlap/Hide/Shorten and same-tick cross-pass order; closure semantics at both window
-edges through actual `playMidiEventsForSlot` + ledger output; how active/committed edit history is bounded; and measured
-window-build latency under maximum passes/density. **No production source change or Route D decision is made.**
+**Decision update (DEC-114):** the source-authority question is resolved in favor of DEC-108. The playback source is the generation-qualified retained revision over pinned bodies, queried through the `LoopSnapshot` effective-content owner and `RetainedIntervalIndex`; no interval-root object or alternate content authority. The investigation's cautions remain implementation gates: note identity/context and closure responsibility, overlap/Hide/Shorten and same-tick parity, bounded edit history, and measured build cost. These are not authority blockers; 3.7a must prove them on the production path with fallback retained.
 
 The proposed source is a **hypothesis**, not yet a firmware contract: make a bounded playback window without requiring a
 `LoopSnapshot` root. Read-only code trace (the implementation-investigator delegate failed from provider credit exhaustion;
@@ -5267,14 +5310,9 @@ O(chunks) per pass (`src/CommittedEventRange.cpp:207-265`). Existing materializa
 `src/Loop/LoopMaterialization.cpp:170-265`) is already window-filtered, but applies active edits per pass layer and still
 walks chunk lists; that's an existing fallback behavior, not proof of bounded seek latency.
 
-**Authority conflict / not decided:** the active spec's *One pass late is the only stale authority* requires the effective-
-content resolver over a selected `LoopSnapshot` and says raw committed chunks alone do not apply edit passes (`spec.md:174-193`;
-DEC-108 at `docs/DECISION_LOG.md`). Route D therefore needs an owner-ratified authority amendment before any production
-change. Remaining UNKNOWNs: parity for overlap/Hide/Shorten and same-tick cross-pass order; closure semantics at both window
-edges through actual `playMidiEventsForSlot` + ledger output; how active/committed edit history is bounded; and measured
-window-build latency under maximum passes/density. **No production source change or Route D decision is made.**
+**Authority status (DEC-114):** the source choice is resolved in favor of DEC-108's retained-source index and effective-content query over pinned bodies. The remaining items below are technical proof obligations for 3.7a, not an authority conflict: overlap/Hide/Shorten and same-tick parity, closure responsibility at the playback edge, bounded edit history and measured build cost. No production source change is claimed here.
 
-### Route A — the lane is served by interval roots (DEC-113; `tasks.md` §7) — slices 7.1–7.2 landed, 7.3 next
+### Historical Route A record — DEC-113 withdrawn by DEC-114 (not active implementation scope)
 
 **G2 red team (2026-10-05): BLOCKED for 7.3/7.4** — five blockers (B1 no path to a turn for the interval phase; B2 two more
 whole-root sites incl. a MIDI-edge one; B3 stale-root Launch eligibility — **owner decision pending**; B4 interval box not

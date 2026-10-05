@@ -298,23 +298,31 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   `code 391,928 + padding 1,288` (448 B headroom) and **no re-base**; three mutations red-proved with byte-identical
   restores (edit destinations not folded; the revision guard dropped; every bar reported covered). The S3.0 pin moved
   per ABI again (target 6,488 → **6,512**: +96 B sources, +24 B lag, +24 B index; host unchanged at 6,544).
-  *Limits recorded, not smoothed over:* the **consumer path is 3.7's** — nothing in production requests a window yet,
-  so the fixture drives the index and the body enumeration directly rather than through a production caller — and the
-  **envelope roll-up** of these per-slot figures into RWO's budget artifact belongs to that change's own terms.
+  *Limits recorded, not smoothed over:* the **consumer path is 3.7a's** — nothing in production requests a retained-source window yet, so the fixture drives the index and body enumeration directly rather than through a production caller — and the **envelope roll-up** of these per-slot figures into RWO's budget artifact belongs to that change's own terms.
   Detail: [`evidence/2026-10-02-s36c-interval-index/EVIDENCE.md`](evidence/2026-10-02-s36c-interval-index/EVIDENCE.md).
-- [ ] 3.7 Remove the live mutable merged-window build — **the last step of the ladder, stage (4)**, and only after **every**
-  dependency is implemented and verified: committed interval publication (3.2), readiness and retention (3.5/3.6), the
-  bounded legacy compatibility path (3.12), preview publication (3.13), shared-view ownership (3.11), fault recovery
-  (4.5) and undo/redo audible handoff (3.14). Keep a cold reference path for parity testing.
-  Verify F-7 still passes on the cold path, that no demoted slot
-  reaches the removed path (`playMidiEventsForSlot`'s fallback), and that `ExecutionBounds.md` row 2 is re-classed only
-  with evidence
-  *Historical status at 2026-10-02 (not a current prerequisite claim; later increments implement parts of these dependencies):* it requires **3.11**
-  (shared-view ownership and the cancellation transition table), **3.12** (the bounded legacy compatibility path),
-  **3.13** (preview publication), **3.14** (undo/redo audible handoff) and **4.5** (fault recovery) to be implemented
-  and verified first, and **none of them exists yet**. The ladder's stage (4) is therefore not reachable, and the next
-  slices are those dependencies — **3.11 first**, since the shared-view transition table is what the removal's
-  correctness rests on. Recorded here so the gate is visible where the task is read, not only in a session log.
+- [ ] 3.7a **Wire the retained-source interval index into the production window consumer while retaining the legacy fallback** — extend the existing `Track::requestPlaybackWindow` / `Track::stepPlaybackViewMaintenance` / `RuntimePlaybackViewFill` path to query `RetainedIntervalIndex` and enumerate pinned source bodies through the effective-content resolver. Keep the current merged-window fallback active as a compatibility and cold-parity path. Reuse existing role-owned windows, retention and `WindowPagedStream`; do not add an interval-root `LoopSnapshot`, publisher, scheduler or second content authority. Supply the production consumer/caller integration owed by 3.12 (paged legacy serving) and 3.13 (preview request/lifecycle hooks). Verify root-demoted production serving without a whole-loop root, parity, empty-window ledger behavior, bounded inspected work, legacy pages, preview lifecycle, timing admission and differential fallback parity. After this integration is enabled with fallback intact, finish 3.14 and 4.5 against the real handoff, including their production-path interleavings and closure/recovery gates. A slice-specific G2 packet, production-path fixtures and red-proofs are required before enablement.
+  **Increment I1 landed 2026-10-06 (firmware + tests; the task stays open).** The G2 packet
+  ([`evidence/2026-10-06-s37a-production-consumer/EXECUTION.md`](evidence/2026-10-06-s37a-production-consumer/EXECUTION.md))
+  fixes the slice's scope, oracle and a four-increment ladder (I1 this rootless serving + requester + readiness
+  increment; I2 the deferred lane turn serving a rootless demand; I3 the 3.12 paged consumer and 3.13 preview hooks;
+  I4 differential parity and the timing admission). I1 adds `Track::gatherRetainedSourceWindowForSlot` — the interval
+  answered from the **retained revision's pinned bodies**, directed by `RetainedIntervalIndex` (an interval the index
+  proves empty is served empty with **no chunk inspected**; a stale revision, a loop beyond the indexed ceiling, an
+  interval with no published index, pinned Active note-edit rows and unreachable pinned bodies each refuse **by
+  name**) — and takes it from `Track::requestPlaybackWindow` exactly where the published-root enumeration cannot
+  answer at all, with the merged-window fallback untouched. `Track::playbackWindowReadinessForSlot` names the **build**
+  owner, not `published_source`, for a rootless slot whose retained source is the current revision. **Verified:**
+  focused **146/146**, full native **2,817 / 7 skipped / 2,810 succeeded / 0 failed**, capture build **SUCCESS** with
+  `variables 96,192` unchanged and `code 391,768 + padding 1,448` (floor 840; **+192 B**, after the measured
+  `std::sort` instantiation cost of **+1,280 B** was removed by sorting by hand), strict validation and
+  `git diff --check` clean, four mutations red-proved with byte-identical restores — **one of them recorded as a
+  non-red-proof** (the gather's own revision gate is redundant under the index's revision authority; MR-3.7a-B'
+  removes both and fails 3.6c's fixture plus this slice's) — and the differential parity claim scoped to the
+  unedited-content window (same-tick order stays 4.3's gate). **Not claimed:** no production lane service for a
+  rootless demand (I2), no edited-content/long-window parity (I4), no device run, no fallback removal (3.7b), and
+  3.12/3.13's consumer clauses remain owed to I3. Detail:
+  [`evidence/2026-10-06-s37a-production-consumer/EVIDENCE.md`](evidence/2026-10-06-s37a-production-consumer/EVIDENCE.md).
+- [ ] 3.7b **Remove the live mutable merged-window fallback — final ladder stage (4)** only after 3.7a is enabled and verified and tasks 3.12, 3.13, 3.14 and 4.5 plus F-7/F-8, timing and compatibility gates pass on their applicable production/device paths. Keep a cold reference path for parity testing. Verify no supported slot reaches the removed `playMidiEventsForSlot` fallback and reclassify `ExecutionBounds.md` row 2 only with evidence. Rollback before this stage retains today's fallback.
 - [x] 3.8 Confirm reuse before invention — verify a review note names the existing resumable entry points used (the
   declared build contract, bounded body-format write/parse, resume arming, the single persistence drain budget) and that
   no second publication scheduler exists
@@ -605,12 +613,12 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   **59/59**, the sibling suite **60/60** (the over-reach oracle, green again), full native **2690 / 2683 succeeded / 7
   skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192` **unchanged** /
   `code 392,072 + padding 1,144` (304 B headroom) and **no re-base**; five mutations red-proved with byte-identical
-  restores. **Not claimed:** with no production window lane (3.7's requester) the gate is inert in today's running
+  restores. **Not claimed:** with no production window lane yet (to be connected in 3.7a) the gate is inert in today's running
   system, and the plain-event reservation release on refusal is executed but not asserted. **OWED in this task:** fixture
-  **5.5**'s timing envelope with the over-capacity same-tick, wrap and cross-page-closure cases, and the paged path's
-  production consumer. Detail:
+  **5.5 timing envelope** with over-capacity same-tick, wrap and cross-page-closure cases remains; production paging consumption is assigned to 3.7a and verified before 3.12 checkoff. Detail:
   [`evidence/2026-10-02-s312c-midi-edge-admission/EVIDENCE.md`](evidence/2026-10-02-s312c-midi-edge-admission/EVIDENCE.md).
-  *Increment 3.12d landed 2026-10-05 — fixture 5.5 content/storage dimensions (test-only; task stays open).* New focused suite `test/test_window_paged_legacy/` exercises over-capacity same-tick events across two source lists (2,400 events > L), explicit `RingFull` then page reuse, a wrap-crossing W-range against independently assembled half-open source-order events, and a NoteOn/NoteOff pair separated across >3 pages. M-RING (drained page not released) makes all three cases fail to terminate; the production header was restored and verified diff-clean. **Verified:** focused 3/3; full native **2810 cases / 7 skipped / 2803 succeeded / 0 failed**; `openspec validate --strict` valid; `git diff --check` clean. **Not claimed:** no timing/deadline measurement, no production consumer, no device run; task 3.12 remains open for those gates and task 3.7 remains its consumer-integration dependency. Detail: [`evidence/2026-10-05-s312-fixture-55/EVIDENCE.md`](evidence/2026-10-05-s312-fixture-55/EVIDENCE.md).
+  *Increment 3.12d landed 2026-10-05 — fixture 5.5 content/storage dimensions (test-only; task stays open).* New focused suite `test/test_window_paged_legacy/` exercises over-capacity same-tick events across two source lists (2,400 events > L), explicit `RingFull` then page reuse, a wrap-crossing W-range against independently assembled half-open source-order events, and a NoteOn/NoteOff pair separated across >3 pages. M-RING (drained page not released) makes all three cases fail to terminate; the production header was restored and verified diff-clean. **Verified:** focused 3/3; full native **2810 cases / 7 skipped / 2803 succeeded / 0 failed**; strict validation and `git diff --check` valid. **Not claimed:** timing/deadline measurement, production consumer or device run; 3.12 remains open for those gates, and its production consumer is assigned to 3.7a. Detail: [`evidence/2026-10-05-s312-fixture-55/EVIDENCE.md`](evidence/2026-10-05-s312-fixture-55/EVIDENCE.md).
+  **DEC-114 sequencing:** the remaining production-consumer clause in 3.12 is delivered by 3.7a with the fallback retained; fixture 5.5's timing measurement remains a separate 3.12 gate.
 - [ ] 3.13 **Implement the preview contract — immutable deferred publication** — publish preview through the same
   immutable deferred discipline as committed content, defining **source freezing** (the preview revision a build works
   from), **cancellation** (session mutation, track re-focus, undo, exit between build grains) and **committed-content
@@ -630,49 +638,9 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   stale **by its own revision**, and a cancellation can never cancel a committed build (the lane marks its own work).
   The **committed-content handoff** is a boundary rather than a gap: at exit the preview window keeps serving, the
   committed successor is owed, and the obligation is discharged at the **adoption** boundary, with a repeated exit
-  answering `AlreadyHandedOff`. *Verification:* focused **61/61**, full native **2692 / 2685 succeeded / 7 skipped / 0
-  failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192` **unchanged** / `code
-  392,328 + padding 888` (48 B above the floor) and the **target size pin re-based with measurement and its reason at
-  the assert** (6,512 -> **6,624**: +112 B, 8 B of payload and the rest alignment; the host stayed 6,544). Five mutations
-  red-proved with byte-identical restores. **OWED in this task:** fixture **2.12**'s integration half (edit while
-  playing on a long loop, cross window boundaries, in-session undo/redo, switch the selected track, mutate/exit between
-  build grains, then save — needing a suite that links **both** the window lane and the real edit stack) and the
-  production **callers** (the preview requester and the `EditManager` lifecycle hooks). Implement these with
-  the serving-path integration in 3.10/3.13 BEFORE 3.7 fallback removal; removal is not their prerequisite. Detail:
-  [`evidence/2026-10-02-s313-preview-contract/EVIDENCE.md`](evidence/2026-10-02-s313-preview-contract/EVIDENCE.md).
-  *Increment 3.13 (integration half) landed 2026-10-05 — **test-only + host tooling; no `src`/`include` line changed**;
-  the **task stays open** on the production callers and the save clause.* The harness the first increment named as
-  missing now exists: `test/test_windowed_preview_integration/` links the **real** note-edit owner (session
-  lifecycle, store and projection, `sessionPlaybackPreviewRevision`, `sessionUndo`/`sessionRedo`, the undo owner,
-  `TrackManager::setSelectedTrack`) beside the **window lane** (`track_harness.inc`, whose `EditManager` global and
-  constructor are now guarded by `HARNESS_LINKS_REAL_EDIT_MANAGER` so a suite may supply the real ones; the suite is
-  registered in `scripts/native_test_link.py`'s firmware-boundary set). Five fixtures drive the **production** session
-  and mutation edges — `openNoteEditSession`/`closeNoteEditSession`, `Track::invalidateCaches(true)` →
-  `flushDeferredNoteEditDisplayRefresh` (the revision's advance), `pushSessionUndoOnKindChange`, `sessionUndo`,
-  `sessionRedo`, `setSelectedTrack` — and assert: the session **owns** the preview source at the session's own
-  revision (whole-loop coverage; the served stream is the session's projection, with a control that nothing serves
-  before the session exists); a mutation landing **between build grains** never publishes a mix (the cancelled
-  build's completion publishes nothing; the served window stays the previous revision field-for-field, then the new
-  revision is adopted); in-session **undo/redo** advance the revision and the served preview follows the session's
-  projection; the production **focus route** cancels the departing track's preview as `SelectedTrackChanged`
-  (nothing torn, no handoff owed, control on the incoming track); and the production **exit** makes the committed
-  successor owed while the preview keeps serving, a repeated exit is `AlreadyHandedOff`, and adoption discharges it.
-  Red-proofs: **MA1** (the deferred refresh does not advance the playback preview revision) fails two fixtures,
-  **MA2** (the session open does not bump the revision) fails one, **MA3** (`cancelPreviewWindowForSlot` skips the
-  shared-view row: the un-released candidate blocks the new revision) fails one — each restored byte-identically.
-  Verified: focused **5/5**, full native **2,815 / 7 skipped / 2,808 succeeded / 0 failed**, `teensy41-capture-serial`
-  SUCCESS with the RAM1 line byte-identical (`variables 96,192`; `code 391,576 + padding 1,640`; floor 840), `git diff
-  -- src include` empty, `git diff --check` clean, strict validation valid. **Recorded limits:** the FSM's five
-  `src/EditStates` TUs cannot be linked natively (host toolchain rejects their narrowing initializers, e.g.
-  `EditStartNoteState.cpp:69`), so their four entry points are observable no-ops while the session's store, revision,
-  undo/redo entries and lifecycle are real; the redo is asserted at the preview boundary rather than as a byte-exact
-  redo of the fixture's own hand-written row (the session's current-state model is built from the rematerialized
-  loop); loop storage survives between fixtures, so the helper adopts a prepared successor. **Still owed:** the
-  production callers (the preview requester at the revision-advance seam and the `EditManager` mutation/re-focus/exit
-  hooks — they belong with the stage that admits the committed requester, since a published window is consumed by the
-  windowed serving path) and fixture 2.12's `then save` clause (the storage closure lives in the storage harnesses).
-  Detail:
-  [`evidence/2026-10-05-s313-preview-integration/EVIDENCE.md`](evidence/2026-10-05-s313-preview-integration/EVIDENCE.md).
+  answering `AlreadyHandedOff`. *Verification:* focused **61/61**, full native **2692 / 2685 succeeded / 7 skipped / 0 failed**, capture build SUCCESS with RAM1 variables 96,192 unchanged / code 392,328 + padding 888 (48 B above the floor); target size pin measured/rebased 6,512 → 6,624 (+112 B), host 6,544. Five mutations red-proved with byte-identical restores.
+  **OWED in this task:** fixture 2.12's integration half and production callers — preview requester at the revision-advance seam and `EditManager` mutation/re-focus/exit hooks — through the serving path in 3.7a with fallback retained. The `then save` clause belongs to the storage harness. Evidence: [`evidence/2026-10-02-s313-preview-contract/EVIDENCE.md`](evidence/2026-10-02-s313-preview-contract/EVIDENCE.md).
+  *Increment 3.13 integration half landed 2026-10-05 — test-only + host tooling; no production line changed; task remains open for production callers and the save clause.* `test/test_windowed_preview_integration/` links the real note-edit owner and window lane. Five fixtures cover session source ownership, mutation between build grains, in-session undo/redo, selected-track cancellation and committed handoff on exit. Verified: focused 5/5; full native 2,815 / 2,808 succeeded / 7 skipped / 0 failed; capture build SUCCESS with RAM1 unchanged; three mutations red-proved and restored byte-identically. **Still owed:** production preview requester/lifecycle hooks through 3.7a with fallback retained and fixture 2.12's save clause in the storage harness. Evidence: [`evidence/2026-10-05-s313-preview-integration/EVIDENCE.md`](evidence/2026-10-05-s313-preview-integration/EVIDENCE.md).
 
 - [ ] 3.14 **Integrate undo/redo audible handoff** — establish a production-path fixture before changing
   `refreshPlaybackAfterCapturePassStateChange` and its capture/overdub undo/redo callers. Extend the existing
@@ -682,7 +650,7 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   notes close at handoff and obsolete closures never fire; pause between real preparation grains for
   repeated undo/redo, track/slot switching and stale completion. Assert exact MIDI output, ledger state,
   retained-source lifetime and eventual release. Reuse task 2.12 for preview-session undo/redo. Red-prove
-  the fixture with blanket silence restored. Gate normal windowed undo/redo enablement and task 3.7's
+  the fixture with blanket silence restored. Gate normal windowed undo/redo enablement and task 3.7b's
   fallback removal on this task; content parity in task 4.1 alone is insufficient.
   *Increment 3.14 landed 2026-10-02 — the **audible half** (the blanket silence replaced); the **task stays open** for
   the overdub-session identity source and the publication-owner request.* The four **edit-batch** call sites now
@@ -708,7 +676,7 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   through the immutable publication owner** — that needs a bounded content source for the affected interval, and the
   existing request path takes a caller-owned enumerated scratch, so the choice between a cold content-sized allocation
   and the owner's own companion-pass source is a design decision to state here first; (c) the between-grains matrix
-  (repeated undo/redo, track/slot switching, stale completion — 3.7's serving path), retained-source lifetime and
+  (repeated undo/redo, track/slot switching, stale completion — 3.7a's serving path), retained-source lifetime and
   discharge (3.6a's release predicate, cited) and preview-session undo/redo (3.13/2.12, cited). One finding is recorded
   rather than silently changed: `UndoEntryKind::RecordPassAdded`'s undo case does not call the refresh at all. Detail:
   [`evidence/2026-10-02-s314-undo-audible-handoff/EVIDENCE.md`](evidence/2026-10-02-s314-undo-audible-handoff/EVIDENCE.md).
@@ -733,45 +701,15 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   bookkeeping facts are recorded rather than left implicit: the earlier M38/M39 anchors moved into the shared core and
   M36b's target was deleted, so **M42/M43/M44** are their successors on the code as it now stands; and M44's first
   attempt reported green only because its anchor sat in the wrong **file** — an unmatched anchor is not evidence.
-  **OWED in this task:** (a) the refresh is still **not a request through the immutable publication owner** — the two
-  candidate sources are now both visible in the code (the owner's own `RuntimeCompanionPasses`, which needs no caller
-  buffer but whose authority for a slot at undo time is **unverified**, versus the existing request path's
-  caller-owned enumerated scratch, correct but a cold content-sized allocation), and choosing between them is a design
-  decision to state here first (3.14c); (b) the between-grains matrix (repeated undo/redo, track/slot switching, stale
-  completion while preparation grains are paused — 3.10/3.14 serving-path integration); (c) retained-source lifetime and discharge
-  (3.6a, cited), displayed provenance, and preview-session undo/redo (3.13/2.12, cited). Detail:
-  [`evidence/2026-10-02-s314b-committed-pass-source/EVIDENCE.md`](evidence/2026-10-02-s314b-committed-pass-source/EVIDENCE.md).
-  *Increment 3.14c landed 2026-10-02 — the **refresh's source question, verified** (no production code changed); the
-  task stays open on the requester's own ordering.* Both no-caller-buffer candidates for an eager refresh request at this
-  edge are rejected **on their own documentation**: `RuntimeCompanionPasses` is an *operation-scoped preparation*
-  ("caller **freezes** active passes … and keeps their descriptors/events and rows immutable **until done**";
-  `ready(source)` requires `phase_ == Complete && valid() && source == expected_`), and `RuntimeCanonicalPassInputs`
-  documents *"invalidate before pass/history mutation or release"* — while this edge's act **is** that mutation, so a
-  refresh sourced from either would read content the same gesture has just invalidated. The third option (the existing
-  request path's enumerated scratch) is **measurably gated**: with a served window and a real `TrackUndo::undoForLoop`,
-  readiness stops being `Ready` (a rebuild is owed, **named** in the owner's vocabulary) and `requestPlaybackWindow`
-  answers **`SourceNotCurrent`** — the lagging root is named, never served as current, which is DEC-073's protection and
-  exactly **4.1**'s lagging-checkpoint outcome. Source currency is produced by the existing Loop publication
-  owner (`requestCommittedPassesRepublish` and its deferred service), not by parity verification in 4.1.
-  The refresh requester belongs to 3.14 with 3.10's consumer/traversal integration, BEFORE 3.7 removal. What this edge owes it already does: advance the currency (revision + generation), settle
-  the closures from the change's own identities, keep the ledger (the closure-obligation set), silence nothing and
-  enumerate nothing. *Verification:* focused **64/64** (fixture extended again, not added), full native **2695 / 2688
-  succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192`
-  **unchanged** / `code 392,328 + padding 888` (48 B above the floor; byte-identical to the five previous slices). Three
-  mutations red-proved with byte-identical restores, and **two of them deliberately mutate other owners' code** (the
-  not-current guard, the revision bump) because those are the facts the handoff rests on — a fixture that only fails when
-  its own slice is undone would not test the claim it states. **OWED in this task:** the refresh's requester (source publication -> 3.10/3.14 integration -> 3.7 removal);
-  the between-grains matrix (repeated undo/redo, track/slot switching, stale completion while preparation grains are
-  paused — 3.10/3.14 serving-path integration); retained-source lifetime and eventual release (3.6a, cited); displayed provenance; and
-  preview-session undo/redo (3.13/2.12, cited). Its **audible** requirement and the red-proof the task demands
-  ("restore the blanket silence") are complete. Detail:
-  [`evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md`](evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md).
+  **Earlier increments 3.14/3.14b:** audible ledger reconciliation and committed-pass identity sources are implemented; their native proofs and evidence remain as recorded above. The remaining production request cannot use operation-scoped `RuntimeCompanionPasses` or invalidated `RuntimeCanonicalPassInputs` at the mutation edge. It must request currency through the existing Loop publication owner, without inline enumeration/publication. The production-path probe with a served window and real `TrackUndo::undoForLoop` shows readiness becomes non-Ready and names the owed rebuild. **Still owed:** 3.7a requester/consumer integration with fallback retained; then the repeated undo/redo, track/slot switch and stale-completion matrix, retained-source release, displayed provenance and preview undo/redo against the real handoff. Source currency remains the Loop publication owner's responsibility; parity task 4.1 does not produce it. Evidence: [`evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md`](evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md).
+
+  **Sequence:** 3.7a first, then complete 3.14 and 4.5 against the real handoff. 3.7b removes fallback only after those plus 3.12/3.13, F-7/F-8, timing and compatibility gates pass.
 
 ## 4. Checkpoint parity and content parity
 
-- [ ] 4.1 Land **F-5** (checkpoint parity, undo) — verify an undo restores exactly what its entry named, including the
-  **lagging** case, whose outcome must be named rather than reported as current
-  *Increment 4.1 landed 2026-10-02 — the parity is **named** (`CheckpointParity` + the pure `resolveCheckpointParity`, and `Loop::checkpointParity()` reading the loop's own three figures: no new state, no pin move), and the **lagging** case is named through the *production* undo path with `publishedSnapshotIdentity()` null — selected, never presented as current. This also answers the question 3.14c left the refresh resting on: whether a root is current is now a **named** outcome (`OwesReconciliation` at the undo edge, measured), so the requester's precondition has a name even though the requester itself remains 3.14 implementation with 3.10 serving integration, before 3.7 removal. Verified: focused 65/65, full native 2696 / 2689 succeeded / 7 skipped / 0 failed, true clean rebuild with the RAM1 line byte-identical (48 B headroom); four mutations red-proved with byte-identical restores. **The task stays open** on the content-level comparison, whose instrument is 4.3's content-verification pipeline; save parity is **4.2**. No production caller consumes the name yet (4.2 and the readiness/lag reporting will) — stated rather than implied. Detail: [`evidence/2026-10-02-s41-checkpoint-parity/EVIDENCE.md`](evidence/2026-10-02-s41-checkpoint-parity/EVIDENCE.md).*
+- [ ] 4.1 Land **F-5** (checkpoint parity, undo) — verify an undo restores exactly what its entry named, including the lagging case, whose outcome must be named rather than reported as current.
+  *Increment 4.1 landed 2026-10-02 — parity is named (`CheckpointParity` and `resolveCheckpointParity`; `Loop::checkpointParity()` reads the loop's own three figures without new state), and the lagging case is named through the production undo path with `publishedSnapshotIdentity()` null: selected, never presented as current. This establishes a named precondition for 3.14's refresh, but does not implement its requester. The task stays open on content-level comparison through 4.3's content-verification pipeline; save parity is 4.2. No production caller consumes the outcome yet. Detail: [`evidence/2026-10-02-s41-checkpoint-parity/EVIDENCE.md`](evidence/2026-10-02-s41-checkpoint-parity/EVIDENCE.md).*
+
 - [ ] 4.2 Land **F-6** (checkpoint parity, save) — verify a persisted body is equivalent to the root it was serialized
   from and a restore's outcome is either current **or** named as stale; the fixture must falsify today's
   `storePublishedSnapshot(…, kSnapshotCoverageCurrent)`-without-reconcile path
@@ -792,29 +730,15 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   by the transition. **The task stays open** on three named items: its **device leg** (6.4's windowed content-verification
   profile with 6.5's split; `ExecutionBounds.md` row 27 still denies active windowed playback), the **closure obligation
   at the transition** — the sequence is balanced while either window alone is not, so the closure is the consumer's
-  (3.7 with 4.5's ledger set) — and the **overlap rule** (the interval policy is centred, so arbitrary-phase consecutive
-  windows overlap; 3.7). Loop-wrap content is deliberately not in this fixture. Verified: 66/66 (+1 fixture) + 52/52 +
-  190/190 (cited pin) + 38/38, full native 2698 / 2691 succeeded / 7 skipped / 0 failed, true clean rebuild with the RAM1
+  profile with 6.5's split; `ExecutionBounds.md` row 27 still denies active windowed playback), the **closure obligation at the transition** — either window alone may omit the closure, so the consumer's 3.7a serving handoff must reconcile it with 4.5's ledger — and the **overlap rule** (the interval policy is centred, so arbitrary-phase consecutive windows overlap and the consumer must avoid double-serving). Loop-wrap content is deliberately not in this fixture. Verified: 66/66 (+1 fixture) + 52/52 + 190/190 (cited pin) + 38/38, full native 2698 / 2691 succeeded / 7 skipped / 0 failed, true clean rebuild with RAM1 line unchanged; four mutations red-proved and restored byte-identically. Detail:
+  [`evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md`](evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md).*
   line byte-identical (48 B headroom); four mutations red-proved with byte-identical restores. Detail:
   [`evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md`](evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md).*
-- [ ] 4.4 Land **F-8** (length-independent root residency; *re-pointed 2026-10-05: the lane's "windows resident, no whole root needed" statement is delivered by §7, DEC-113*) — verify a residency statement per slot (windows resident,
-  root demoted) plus content parity for the demoted state, **swept** over loop lengths
-  *Increment 4.4 landed 2026-10-02 — **test-only**: the residency statement per slot, swept over 16/17/24/30/32/64 bars
-  through the production policy and admission (`fullTakePlaybackViewAdmissible` + `prewarmPlaybackForSlot`, which
-  decides the representation itself) and read from the slot's own accounting. Verified: the policy boundary is the
-  declared bar cap; the whole-take representation is reserved **exactly while admissible and absent at every demoted
-  length**; **every demoted length reports the same windowed reservation** (length-independent, and strictly smaller),
-  with each view at the declared capacity and the stagings resident; at/above the declaration's floor the slot is
-  **served from a window while its root is demoted**, and below it the refusal is **named**. **The floor as a number:**
-  the lead the declaration's own arithmetic implies is 22,272 ticks ≈ 29 bars, so the floor is **exactly 30 bars** and
-  loops between the bar cap and it have neither representation admissible — the number 6.3/3.10 need, pinned from the
-  contract's fields rather than hardcoded. **The task stays open** on the parity half with the content-verification
-  pipeline (6.4/6.5), the retained-source figure (3.6a), and 6.3's wider sweeps. Verified: 67/67 (+1 fixture) + 52/52 +
-  190/190 (cited pin) + 38/38, full native 2699 / 2692 succeeded / 7 skipped / 0 failed, build SUCCESS and a no-op with
-  the RAM1 line unchanged; three mutations red-proved with byte-identical restores, their two limits stated (the oracle
-  is the policy function itself, so the contract's declared numbers are 3.10/6.3's to own; and the absolute figure is
-  cited from `test_playback_prewarm`). Detail:
-  [`evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md`](evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md).*
+- [ ] 4.4 Land **F-8** (length-independent root residency) — verify a residency statement per slot (windows resident, root demoted) plus content parity for the demoted state, **swept** over loop lengths.
+  *Increment 4.4 landed 2026-10-02 — **test-only**: the residency statement per slot, swept over 16/17/24/30/32/64 bars through the production policy and admission (`fullTakePlaybackViewAdmissible` + `prewarmPlaybackForSlot`, which decides the representation itself), and read from the slot's own accounting. Verified: the policy boundary is the declared bar cap; the whole-take representation is reserved exactly while admissible and absent at every demoted length; every demoted length reports the same windowed reservation, with each view at declared capacity and stagings resident; at/above its floor the slot is served from a window while its root is demoted, and below it refusal is named.
+  **The floor as a number:** the lead implied by the declaration's arithmetic is 22,272 ticks ≈29 bars, so the floor is exactly 30 bars; loops between the bar cap and that floor have neither representation admissible. The number is pinned from 6.3/3.10 contract fields, not hardcoded.
+  **The task stays open** on parity through the content-verification pipeline (6.4/6.5), the retained-source figure (3.6a), and 6.3's wider sweeps. Verified: 67/67 (+1 fixture) + 52/52 + 190/190 (cited pin) + 38/38, full native 2699 / 2692 succeeded / 7 skipped / 0 failed, build SUCCESS and a no-op with the RAM1 line unchanged; three mutations red-proved with byte-identical restores. The oracle is the policy function itself, so its declared figures remain 3.10/6.3's to own; the absolute floor is cited from `test_playback_prewarm`.
+  Detail: [`evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md`](evidence/2026-10-02-s44-length-independent-residency/EVIDENCE.md).
 
 - [ ] 4.5 **Implement second-miss fault containment, the approved last resort, and cross-generation closures**
   (*DEC-108 §13e–g*) — latch a **named deadline-contract fault** on the second miss; continue the last coherent revision
@@ -841,42 +765,9 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   affected-slot silence through the existing **slot-scoped** owner, never a global transport stop and never a rebuild —
   answering `NotNeeded`, with **zero** emitted events, whenever coverage remains. *Verification:* focused **62/62**, full
   native **2693 / 2686 succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with
-  `variables 96,192` **unchanged** / `code 392,328 + padding 888` (48 B above the floor; the line is byte-identical to
-  the previous slice — FLASH-placed additions, no ITCM growth — and the new `bool` fitted padding, so **no size pin
-  moved**). Six mutations red-proved with byte-identical restores; the first "track-wide silence" mutation did **not**
-  discriminate (the fixture observed only the ledger, while that owner emits CC 123 and touches no ledger), so the
-  fixture now asserts the real **MIDI output** through `MidiSendCapture`, and an assertion that was **vacuous in this
-  suite** (`g_nativeSilenceTrackCalls`) was **removed** rather than kept as evidence, with a genuinely global mutation
-  added so the sibling-slot assertion is shown to have teeth. **OWED in this task:** the **cross-generation closure**
-  half (§13g) — preserve unchanged sounding notes without retriggering, close removed/invalidated notes at handoff,
-  suppress obsolete closures, note-offs **before** replacement note-ons, obligations outliving view retirement — which is
-  **emission at a version handoff** and therefore the consumption path's (3.7's consumer switch and 3.14's undo/redo
-  handoff), together with its own verification (a closure whose note-off moves across the handoff, a window that is empty
-  while a note is sustained). Detail:
-  [`evidence/2026-10-02-s45-containment/EVIDENCE.md`](evidence/2026-10-02-s45-containment/EVIDENCE.md).
-  *Increment 4.5b landed 2026-10-02 — the **cross-generation closure reconciliation** (§13g), the dependency 3.14 names
-  ("task 4.5's off-clock selective reconciliation"); the **task stays open** for the serving-path integration.*
-  `ClosureSettlement` is one handoff's plan as a **value** — the soundings the replacement **removes** (note-offs required
-  at handoff), the ones it **re-issues** (their note-ons **suppressed**, because an unchanged note is never retriggered),
-  and the ones it leaves alone — every list bounded by `ActiveNoteLedger::kMaxOpenNotes` and nothing allocating.
-  `Track::planClosureSettlementForSlot` computes it **off-clock** (one bounded pass over the incoming note-ons into a
-  256-byte presence set, then a walk of ≤128 ledger entries with no search), and
-  `Track::applyClosureSettlementForSlot` emits the closures **first** and only closures — the replacement's note-ons are
-  the caller's to emit afterwards, which is the spec's "note-offs before replacement note-ons" as a calling order rather
-  than a promise — discharging exactly those ledger obligations through the ledger's own event path. The one
-  **interpretive** rule is stated where it is decided and marked as such: absence from the incoming content is evidence
-  of removal **only when that content is authoritative for the whole loop**, and never for an empty window, because a
-  window is a *slice* and a note sustained across it is still sounding — which is what makes "an event-empty window means
-  *no new events*" a consequence rather than a special case. *Verification:* focused **63/63**, full native **2694 / 2687
-  succeeded / 7 skipped / 0 failed**, `teensy41-capture-serial` **SUCCESS** on a clean rebuild with `variables 96,192`
-  **unchanged** / `code 392,328 + padding 888` (48 B above the floor; the line is byte-identical to the two previous
-  slices — FLASH-placed additions, no ITCM growth, no size pin move). Four mutations red-proved with byte-identical
-  restores (absence always removal; a re-issued note also closed; no closure emitted; the ledger not discharged); one
-  non-unique-anchor harness repair is recorded, caught by the `shasum` oracle before the gates ran. **OWED in this
-  task:** the emitted order at the **real** handoff (the clock-path caller that emits the replacement's note-ons after
-  the closures), the **moving-closure** case (a note-off moved across the boundary, fired at its correct tick) and
-  displayed provenance — all on the serving path (3.7's consumer switch). Detail:
-  [`evidence/2026-10-02-s45-closure-reconciliation/EVIDENCE.md`](evidence/2026-10-02-s45-closure-reconciliation/EVIDENCE.md).
+  the previous slice. Six mutations red-proved with byte-identical restores. The first track-wide-silence mutation did not discriminate because the fixture observed only the ledger; it was corrected to assert real MIDI output, and a global mutation now fails as intended.
+  *Increment 4.5b landed 2026-10-02 — cross-generation closure planning implemented; task remains open for real serving-path integration.* `ClosureSettlement` is a bounded, allocation-free handoff plan. `Track::planClosureSettlementForSlot` computes it off-clock; `Track::applyClosureSettlementForSlot` emits closures before replacement note-ons. Unchanged notes are preserved, re-issued notes are suppressed, and absence means removal only when the input is authoritative for the whole loop (never for an empty window). Verification: focused 63/63, full native 2694 / 2687 succeeded / 7 skipped / 0 failed, capture build SUCCESS with RAM1 unchanged; four mutations red-proved and restored byte-identically. Evidence: [`evidence/2026-10-02-s45-closure-reconciliation/EVIDENCE.md`](evidence/2026-10-02-s45-closure-reconciliation/EVIDENCE.md).
+  **OWED:** production containment/recovery, actual emitted ordering, a moving closure at its correct tick, sustained-note behavior through an empty window, displayed provenance and eventual recovery through the real consumer. 3.7a connects that consumer while preserving fallback; complete 3.14 and 4.5 against the real handoff before 3.7b removes fallback.
 
 ## 5. Capacity, envelope and placement
 
@@ -1675,108 +1566,11 @@ and `single-pass-verification.json` in the requester-retry evidence directory.
 No task checkoff for continuous refill or task3.7 fallback removal. Completing
 qualification sooner does not establish a supported sustained service envelope.
 
-## 7. Route A — the lane is served by interval roots (DEC-113)
+## 7. DEC-113 disposition — Route A withdrawn; DEC-108 pinned-source index governs
 
-Authority: DEC-113, NAMING *Interval root*, spec amendments (currency + containment, checkpoint clause, readiness holder,
-one-pass-late), design D11. Each slice follows the ladder (fixture fails first → implemented and verified → production path
-enabled → old path removed), gets its own G2 packet section in `G2-EXECUTION-PACKET.md`, red-proves each fixture with a
-byte-identical restore, and commits on the working branch. The three round-7 assessment findings are **entry criteria** for
-7.2/7.3/7.4 below. Task 4.4's residency claim ("windows resident, root demoted") is re-pointed here: it becomes literally
-true for the lane only once 7.3/7.4 land and 7.6 supplies the row.
+DEC-113 is superseded by DEC-114 and has no implementation authority. Route A's interval-root publisher, LoopSnapshot sub-root, per-role root admission and root-specific device instrumentation are retired; none was implemented. The earlier Route A red-team blockers are historical and do not gate the DEC-108 retained-source consumer path.
 
-- [x] 7.1 Authority (docs only) — DEC-113 appended; NAMING *Interval root* row and the *Published root* qualification; the
-  four spec amendments; design D11, owners row, failure behaviour and owed measurements; this section. No code touched.
-  Verify: `openspec validate windowed-playback-generation --strict`; the artifacts agree.
-- [x] 7.2 *(landed 2026-10-05; see § Now implementing)* Windowed enumeration with an **exact** chunk gate (no behaviour change for existing consumers) — verify the
-  sub-step short-window fixture **fails** with the sampled gate restored (chunk `[0,100]`, event at tick 8, one-tick window
-  at tick 8). **Entry criterion (round 7, F1):** the exact overlap is *modular* — a wrapped chunk (`firstTick > lastTick`)
-  and a wrapped window are each tested as a tail segment and a head segment — with both-direction fixtures (wrapped chunk
-  vs linear window `[50,100]`, linear chunk vs wrapped window), or the exact gate is an interval-path-only parameter;
-  and the equality oracle over every existing `CommittedEventRange::inWindow` caller (`LoopSnapshotPlayback.cpp` Overlay,
-  `LoopMaterialization.cpp`, visual cache) must be written *before* the gate changes.
-- [ ] 7.2a **G2 red team (2026-10-05): BLOCKED for 7.3/7.4 until the contract carries these changes** (full report:
-  session scratch `delegations/…/report.md`; severities as reported; each needs the named validation before Apply).
-  **B1 — the interval phase has no path to a turn:** the Snapshot owner steps only `loopWithPendingSnapshotPublish()`
-  (`TrackDeferredMaintenance.cpp:1022-1137`, `TrackSlotPool.cpp`), gated by `snapshotIdleAllowed` and
-  `allowSnapshotConstructionStart` (`MidiServiceDrain.h:438-445`), and `stepPendingSnapshotPublish` returns at
-  `LoopSnapshotPublish.cpp:2142-2145` with nothing pending. 7.3 must name the interval request as an explicit input to the
-  selector, the idle-step gate and the construction-start gate, add those files, state interval-vs-checkpoint priority
-  (within one `Loop` and across slots; a rank-0 whole-root build must not starve it), dispatch the interval phase before the
-  `:2142` early return, route it through `admitSnapshotPublicationTurn`, and say where its `LoopSnapshotConstruction`
-  lives — without making it `hasPendingSnapshotPublish()` (that distorts `hasSnapshotPublicationBacklogOnAnySlot`, the
-  extra-Snapshot rotation, `main.cpp:533`, save/undo gates). Fixture: rootless target + a running whole-root build on the
-  active slot + Launch demand ⇒ the interval root completes within N owner turns; red-proof: selector unchanged.
-  **B2 — more sites need the whole root than the plan listed:** `rollingCandidateReadyAtBoundary` (`:2330`, reached from the
-  MIDI edge via `resolveRollingPlaybackWindow`) and `revalidateCompletedPlaybackWindow` (`:3120-3121`, plus the
-  `snapshotIdentity == publishedSnapshotIdentity()` compare) both require `publishedSnapshotIsCurrent()`; with no whole root
-  every Rolling boundary is rejected and deadline-miss recovery never validates. Add both and `serviceRollingPlaybackWindow`
-  (`:2444`) to the single resolver (O(1) metadata on the hot path) and define the identity the view carries — compare
-  `(coveredPassRevision, generation, served interval)`, not a snapshot pointer (`PlaybackViewSourceIdentity::operator==`
-  includes it). Fixtures: a rootless Rolling slot adopts at the boundary through the real `playMidiEventsForSlot`; a forced
-  deadline miss recovers.
-  **B3 — a stale-but-present root on a Launch target has no producer:** eligibility is "no *current* root", not "rootless".
-  `requestPlaybackWindow` refuses stale roots and the launch no longer republishes, so a stale demoted slot could never
-  commit. **DECIDED 2026-10-05 (owner): keep the launch republish request for stale roots.** Interval-root eligibility is
-  "**no published root at all**" (`!publishedSnapshot()`); a published-but-stale root keeps `requestCommittedPassesRepublish`
-  in `preparePlaybackLaunchForSlot` (so edit-pass content stays on the whole-root path); the resolver's step (4) raises an
-  interval request only for the rootless case. Consequence: the stale launch still waits on a whole-root build — an accepted,
-  named limitation, not a regression. Fixture: stale root,
-  `pend=0`, nothing queued ⇒ the launch republish request is raised (not an interval request) and `launch_ready` follows
-  once the whole root is current; rootless ⇒ interval request, no republish.
-  **B4 — identity survives slot destruction:** `Loop::resetPassTimeline` sets `playbackRevision = 0` and clears the
-  published snapshot without a Track generation bump (`SlotReset.cpp:23`, `CurrentSetBootLoad.cpp:36`, …), so a new take can
-  reach the same revision and an old interval root would look current. Clear the interval box inside
-  `Loop::clearPublishedSnapshot`; add `loopLengthTicks` and `canonicalStorageGeneration` to the box identity and the currency
-  check; discard on length change. Fixture: accepted interval root → `resetLoopSlotToEmpty` + re-load at the same revision with
-  an unchanged Track generation ⇒ unusable.
-  **B5 — no release on an active-slot change:** the A→B commit does not bump the generation, so a Rolling admission record
-  `{slot=A}` would refuse B's Rolling demand (and is a second copy of "which slot is active"). Add the release term "no
-  longer the active slot / pending target" at `serviceRollingPlaybackWindow` `:2380-2381`; derive roles from
-  `activeLoopIndex` at use time, never store them. Fixture: A active, B launched, both rootless ⇒ B's first Rolling demand is
-  admitted.
-  **Tightenings to carry:** T1 the generation is Track-wide (any slot's reset bumps it; state the livelock cost or use a
-  per-slot identity); T2 readiness must validate what the view stamped (revision + interval), not the box, and not pointer
-  identity; T3 hard invariant that the interval-charged lookahead keeps the first Rolling boundary within the 1536-tick
-  launch window, else the gap is **silence** (`GatherMissHoldEmpty`); T4 the playhead-centred `requestPlaybackWindow` has no
-  production caller and Rolling starts are multiples of 1536, so the unaligned fixtures and the 7.2 gate are not acceptance-
-  critical (the gate fix stays: it is correct and shared readers are unaffected), and the walk is O(all chunks) per interval
-  — measure it; T5 a restored demoted slot now never gets a whole root (note-edit open, save, display stay on their no-root
-  paths) — record in DEC-113 with one display/note-edit oracle; T6 the in-flight `LoopSnapshotConstruction` is not in the RAM2
-  admission table — add a hard refusal tied to `admitSnapshotPublicationTurn`; T7 "raise/replace" must be idempotent (replace
-  only when the demand or identity changes; `preparePlaybackLaunchForSlot` runs every provision turn); T8 compare parity
-  against `LoopContentResolution` truth as well as the whole-root build; T9 release on transport stop / lease release; T10
-  re-verify every plan file:line before the 7.3 packet is signed.
-
-- [ ] 7.3 Interval-root construction (empty parent, exact served range, window-filtered companions, two-phase
-  generation-gated acceptance, wrap-journal refusal) — verify content parity against today's rootless whole-root build for
-  the served ticks, and that the whole-root publisher's progress does not advance for the lane. **Entry criterion (round 7,
-  F2):** construction preserves today's *pass-candidate → companion-parent* sequence (`unpublishedCandidate` becomes the
-  parent after each frozen pass fragment, `LoopSnapshotPublish.cpp:1035-1047,1284-1300`), not a bare `createEmpty`, with
-  coupled note/event change-set filtering that includes a Replace whose old On/Off straddle the served range.
-- [ ] 7.4 The lane's source rule — never require, wait for or request a whole-loop root (single private resolver; readiness
-  holder `OwesIntervalRoot` / `interval_root_owner`; admission one interval root per `(track, role)`; the launch path's
-  republish request becomes an interval-root request) — verify the production switch shape reaches `launch_ready` with no
-  current root and no whole-root build. **Entry criterion (round 7, F3):** a production **rollover** fixture forces a whole
-  root to become current while an interval window is serving/building and asserts no gap, no duplicate MIDI, exactly one
-  source-identity transition (through the existing atomic emission-free handoff) and safe retirement of the interval root.
-- [ ] 7.5 Boundary, short-window and edge fixtures — unaligned playhead-centred demand, boundary notes on the real
-  emission path (`playMidiEventsForSlot` + `MidiSendCapture` + slot ledger), companion windowing, wrap refusal, loop-end
-  clamp, roll-boundary modulo, revision advance mid-build, switch away/back, clear/load, transport stop, persistence in
-  flight, overdub open, retirement + arena delta.
-- [ ] 7.6 Gated instrumentation — `DIAG,launch_gate` `iv=`, a per-slot interval-root row, a `snap_gate` field showing
-  whether any whole-root build exists for the slot; `SC_QUALIFICATION_ROWS_ENABLED`, Tier-A, marker contract green, absent
-  from the default build.
-- [ ] 7.6a The device oracle becomes executable — `scripts/hitl/verify/windowed_lane.py` parses `launch_gate` / `snap_gate` /
-  the hold row / the interval-root row and judges `lane_served_without_any_whole_root`, `no_slot_switch_hold_exceeded`,
-  `whole_root_never_published_for_the_switch`, `root_residency_stated_per_slot`; one host test per check, each red-proved;
-  `oracle_complete` stays `False` while content parity remains the content pipeline's verdict.
-- [ ] 7.7 Device leg — the registered `windowed_content_parity` leg onto a rootless 24-bar slot: `launch_ready` from an
-  interval root, no `slot_switch_hold_exceeded`, `rv` may stay 0, residency measured; gated on 7.3/7.6a measurements.
-- [ ] 7.8 Recorded follow-ups (not planned; no code in this change): (1) broad sole-source — interval roots replacing the
-  stale-root Overlay and live record window for the playing slot (needs an overlay contract); (2) the whole-root retirement
-  programme, a separate DEC per consumer in the order lane → display → note-edit → undo checkpoint → publisher incremental
-  model → save; (3) the demotion policy knob `Loop::shouldAvoidFullVisualRebuild`, last and separately gated.
-
+Carry forward only independent landed work: the exact modular `CommittedEventRange` chunk-gate correction from the former 7.2 remains a correctness fix; the `PendingPassChangeProgress` window fields are unused Route A residue and are cleanup candidates in 3.7a. Do not build an interval-root object or alternate content source.
 ## Gated rolling slice closeout (no additional task checkoff)
 
 **Gated rolling request → preparation → validated handoff → emission verified.**
