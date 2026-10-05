@@ -5180,6 +5180,39 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+### Route D — rootless effective-content window investigation (2026-10-05)
+
+The proposed source is a **hypothesis**, not yet a firmware contract: make a bounded playback window without requiring a
+`LoopSnapshot` root. Read-only code trace (the implementation-investigator delegate failed from provider credit exhaustion;
+I completed the trace directly): `Loop::tryGatherPublishedSnapshotEventsInWindow` returns `false` immediately when
+`publishedSnapshot()` is absent (`src/Loop/LoopSnapshotPlayback.cpp:182-201`). Its existing `Overlay` is specifically a
+**stale-root** overlay: collect session/pending unpublished pass IDs, gather those chunks in the requested window, then
+apply unpublished companion edit rows (`:220-327`). `buildMergedPlaybackFallbackCold` turns a failed gather into an empty
+buffer (`src/Track/TrackPlaybackWindowBuild.cpp:272-277`), the measured silence path (`GatherMissHoldEmpty`).
+
+**Differential characterization added:** `test_rootless_window_filter_then_delete_loses_predecessor_note_context` in
+`test/test_rootless_window_resolution/` compares (a) Delete with full note context then windowing against (b) filtering raw
+window events first then applying the same ID-based edit. With a NoteOn at tick 100, NoteOff at 500 and window [400,600),
+path (a) has no event; path (b) retains the Off because the NoteOn needed by the edit is outside the window. The fixture
+**does not claim** path (a) is the audible answer: a sounding-note ledger may owe a targeted closure Off. It proves the
+rootless candidate must carry note identity/context or explicitly transfer closure responsibility to the ledger. Verified:
+focused new suite **1/1**, existing Overlay/effective-content suite `test_loop_take_survival` **143/143**, full native **2,807
+cases / 7 skipped / 2,800 succeeded / 0 failed**.
+
+Other constraints VERIFIED: `LoopEventStore::append` allows out-of-order ticks and only marks the bar index dirty
+(`src/LoopEventStore.cpp:560-576`); chunk `firstTick`/`lastTick` are append endpoints, so chunk lists/spans do **not** yet
+establish a binary-seek invariant. Current `CommittedEventRange::appendWindowBudgeted` examines each chunk's span and is
+O(chunks) per pass (`src/CommittedEventRange.cpp:207-265`). Existing materialization (`Loop::copyEffectiveCommittedEventsInRange`,
+`src/Loop/LoopMaterialization.cpp:170-265`) is already window-filtered, but applies active edits per pass layer and still
+walks chunk lists; that's an existing fallback behavior, not proof of bounded seek latency.
+
+**Authority conflict / not decided:** the active spec's *One pass late is the only stale authority* requires the effective-
+content resolver over a selected `LoopSnapshot` and says raw committed chunks alone do not apply edit passes (`spec.md:174-193`;
+DEC-108 at `docs/DECISION_LOG.md`). Route D therefore needs an owner-ratified authority amendment before any production
+change. Remaining UNKNOWNs: parity for overlap/Hide/Shorten and same-tick cross-pass order; closure semantics at both window
+edges through actual `playMidiEventsForSlot` + ledger output; how active/committed edit history is bounded; and measured
+window-build latency under maximum passes/density. **No production source change or Route D decision is made.**
+
 ### Route A — the lane is served by interval roots (DEC-113; `tasks.md` §7) — slices 7.1–7.2 landed, 7.3 next
 
 **G2 red team (2026-10-05): BLOCKED for 7.3/7.4** — five blockers (B1 no path to a turn for the interval phase; B2 two more
