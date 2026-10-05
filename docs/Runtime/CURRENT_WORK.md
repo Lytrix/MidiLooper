@@ -5152,6 +5152,27 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+### Task 6.4/6.5 — the one controlled switch into an even-length target: the first failed transition is the source publication
+
+**One episode, the three existing rows read together, no new diagnostics** (`captures/s64-trace-01`; the registered
+profile's recipe, firmware byte-identical to the previous run so the target's length is the only variable). The device
+verifies the target's identity itself — `launch_gate,t=7,s=5,len=18432,cmt=1,avoid=1,root=0,pend=1,req=1` beside
+`snap_gate,t=7,s=5,a=4,elig=1` — i.e. **24 bars / span-aligned, committed, demoted, inactive, rootless** (arranged by the
+registered recipe, `s64-etarget-02`). The trace: **(1) switch pending** (`Loop 6: Queued playback switch`, never a record
+start); **(2) launch preparation** (`x=launch_requested` with `req=1` accepted, then `x=launch_requested_match` — the last
+launch exit in the capture); **(3) source publication, the FIRST FAILED TRANSITION**: the `Snapshot` owner selects the
+target in 135 of 136 rows with `p=1,sep=1,elig=1,idle=1,step=1` — **admitted, not refused** — while **no `snapshot_unit`
+row is serviced anywhere in the 22 s the switch is pending**, the units starting only once the transport stops (66–80 per
+2 s); the switch then reports its bound and stays pending (`slot_switch_hold_exceeded track=7 target=5 age=3073`, active
+slot unchanged) so **(4–6) initial view ready/bound → rolling request → preparation → adoption are never reached**.
+**Recorded, not interpreted further:** the gate state is *an admitted, idle producer*, not a refusal; the
+restore-versus-rootless question is not reopened, and the episode stops here. F-7/F-8/AC-8 and task 6.5's four hardware
+claims remain **NOT RUN**; 6.4/6.5 stay open. Also landed, as the bounded prerequisite with its host regression: **F-17**
+— the reused leg accepts the runner's managed-capture handshake (`--follow-serial-log`/`--follow-current-session`/
+`--out-dir`) by *reading* the capture's log rather than opening the port (nothing is stripped), pinned by
+`ManagedRunnerHandshakeTests` (**27/27**; neighbouring host suites 19/19). Evidence:
+[`switch-trace`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-switch-trace/TRACE.md).
+
 ### Task 6.4/6.5 — the rolling demand path's gate row (`DIAG,win_gate`), the third and last silent family of the demand side
 
 **The lane's demand now names its own exit on a device; the four hardware claims stay unmeasured and 6.4/6.5 stay open.**

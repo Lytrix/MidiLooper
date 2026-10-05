@@ -1066,6 +1066,29 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   hardware claims remain **NOT RUN**; the next shape needs a committed length that is a whole number of two-bar spans (a
   *leg-shape* decision), and the root-currency question stays the owner decision already on record. See
   [`DEVICE-RUN.md`](evidence/2026-10-05-rolling-gate-row/DEVICE-RUN.md).
+
+  *And the **one controlled switch episode** the owner asked for — into an inactive, committed, even-length, demoted
+  target, traced across the three families together (`captures/s64-trace-01`; the registered recipe, **no** new
+  diagnostics; firmware byte-identical to run 05, so the target's length is the only variable).* The device names the
+  target itself: `launch_gate,t=7,s=5,len=18432,cmt=1,avoid=1,root=0,pend=1,req=1` with `snap_gate … s=5,a=4,…,elig=1` —
+  **18432 = 24 bars (span-aligned), committed, demoted, inactive, rootless**, arranged by the registered recipe after the
+  preparation run (`s64-etarget-02`: `length=18432`) and a re-flash. The trace: **(1) switch pending** —
+  `Loop 6: Queued playback switch`, never a record start; **(2) launch preparation** — `x=launch_requested`, `req=1` (the
+  republish was **accepted**), then `x=launch_requested_match` (`prep=1`, `root=0`) which is the **last** launch exit in
+  the whole capture; **(3) source publication — the FIRST FAILED TRANSITION**: the `Snapshot` owner selects the target in
+  135 of 136 rows with `p=1,sep=1,elig=1,idle=1,step=1` (admitted, not gate-refused) while **zero `snapshot_unit` rows
+  are serviced anywhere in the 22 s the switch is pending** (they begin only after the transport stops, 66–80 per 2 s);
+  the switch then reports its bound and stays pending (`slot_switch_hold_exceeded track=7 target=5 age=3073`,
+  `a=4` = the active slot never moved), so **(4–6) initial view ready/bound, rolling request, preparation and adoption
+  are never reached** (`launch_ready`/`ready_owns_source` appear nowhere, no `root=1` on any launch row, no rolling
+  `win_requested` for the target). **The gate state to report is therefore: not a refusal — an admitted, idle
+  producer.** 6.4 stays open, F-7/F-8/AC-8 and 6.5's four hardware claims stay NOT RUN, and the episode stops here per
+  instruction (the restore-versus-rootless question is **not** reopened: the producer was reached and admitted). Also
+  fixed as the bounded prerequisite this needed, with its host regression: **F-17** — the reused leg now *accepts* the
+  runner's managed-capture handshake (`--follow-serial-log`, `--follow-current-session`, `--out-dir`), reading the
+  capture's log instead of opening the port (nothing stripped), pinned by
+  `test_windowed_content_parity_verify::ManagedRunnerHandshakeTests` (**27/27**). See
+  [`switch-trace`](evidence/2026-10-05-switch-trace/TRACE.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B

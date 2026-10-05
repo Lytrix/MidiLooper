@@ -88,6 +88,16 @@ terms: `window_demand_observed` false, coverage and overrun checks true, receipt
 committed length (a leg-shape decision), with the root-currency question still the owner decision on record. See
 [`rolling-gate-row/DEVICE-RUN.md`](evidence/2026-10-05-rolling-gate-row/DEVICE-RUN.md).
 
+**And the one controlled switch into an even-length target put the remaining blocker one step earlier in the chain.** With
+the target verified by the device's own rows as **24 bars (span-aligned), committed, demoted, inactive and rootless**, the
+trace is: switch pending → launch preparation (its republish request **accepted**) → **source publication FAILED** →
+never reached: initial view ready/bound, rolling request, preparation, adoption. The failure is not a refusal: the
+`Snapshot` owner selects the target in 135 of 136 rows with `p=1, sep=1, elig=1`, and **no publication unit is serviced
+anywhere in the 22 s the switch is pending** (the units begin only after the transport stops), after which the switch
+reports its bound and stays pending. So the chain's blocker is *serviced publication work under transport*, which is a
+different question from the restore-versus-rootless one and is **not** an S7.5 input until the lane is given a demand.
+See [`switch-trace/TRACE.md`](evidence/2026-10-05-switch-trace/TRACE.md).
+
 ## 4. The assertions S7.5 will judge, and how this change relates to them
 
 S7.5 requires, under sustained simultaneous playback / record-overdub / undo-redo / switching with

@@ -126,9 +126,54 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     parser.add_argument("--state-sync-timeout-ms", type=int, default=8000)
     parser.add_argument("--boot-settle-ms", type=int, default=10000)
     parser.add_argument("--serial-grace-ms", type=int, default=3000)
+    # The runner's **managed capture** owns the USB port for those runs and hands the session log to a
+    # legacy driver rather than letting it open the port (`runner.py`: `merged += ["--out-dir", ...]` and
+    # `legacy_args_with_managed_capture` adds `--follow-serial-log <path>`); the base legacy drivers
+    # (`legacy_record_baseline`, `legacy_edit_baseline`) take both. This leg did not, so a managed run
+    # aborted in argparse **before driving anything** (`unrecognized arguments: --follow-serial-log …
+    # --out-dir …`, F-17). Accepting them is the bounded prerequisite for driving task 6.4's profile
+    # through the content-verification pipeline's managed path; neither is a capture-ownership argument
+    # (`--serial-port` is), and this leg never writes the followed log.
+    parser.add_argument("--follow-serial-log", default=None)
+    parser.add_argument("--follow-current-session", action="store_true")
+    parser.add_argument("--out-dir", default=None)
     legacy = list(getattr(args, "legacy_args", []) or [])
     return parser.parse_args(legacy)
 
+
+class FollowedSerialLog:
+    """Read-only view of a capture log **another process owns** (the runner's managed capture).
+
+    It offers exactly what this leg and its helpers ask of a collector -- `snapshot()` -- and a no-op
+    `stop()`, so the leg's serial-derived waits, its LOOP_EDIT precondition and its verification all run
+    against the managed session log. That is also the only place the boot banner (`Edit session:
+    LOOP_EDIT`) can be seen when the capture attached before the sketch started, which is the state a
+    managed run's `--boot-reset` deliberately produces.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+
+    def snapshot(self) -> list[str]:
+        try:
+            return self.path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return []
+
+    def stop(self) -> None:
+        """Nothing to stop: this view does not own the port."""
+
+
+def followed_serial_log_path(ns: argparse.Namespace) -> Optional[Path]:
+    """The capture log to *read* instead of owning the port, when the runner named one."""
+    if ns.follow_serial_log:
+        return Path(ns.follow_serial_log)
+    if ns.follow_current_session:
+        from hitl.baseline_loop_inventory import current_session_serial_log
+
+        out_dir = Path(ns.out_dir) if ns.out_dir else Path("captures")
+        return current_session_serial_log(out_dir)
+    return None
 def run_long_loop_display_window(args: object) -> int:
     import mido
     from hitl.serial_transport import resolve_wall_tempo_for_proxy
@@ -177,6 +222,11 @@ def run_long_loop_display_window(args: object) -> int:
         print("[long-loop-display-hitl] error: --record-bars must be > 16 for bounded window")
         return 2
 
+    # The runner's `--out-dir` is this leg's artifact directory too (the base legacy drivers route theirs
+    # the same way), so a managed run's log/report land with its session log rather than in the default.
+    if ns.out_dir:
+        setattr(args, "out_dir", Path(ns.out_dir))
+
     out_port = mido.open_output(_find_midi_port(ns.midi_out, "output"))
     in_port = mido.open_input(_find_midi_port(ns.midi_in, "input"))
     serial_collector: Optional[SerialCaptureCollector] = None
@@ -193,6 +243,19 @@ def run_long_loop_display_window(args: object) -> int:
                     "(Teensy resets when serial opens)"
                 )
                 time.sleep(ns.boot_settle_ms / 1000.0)
+        else:
+            # The runner's managed capture owns the port and hands us its session log instead (F-17): read it,
+            # never open the port -- two owners of one USB serial port is a broken run.
+            followed_log = followed_serial_log_path(ns)
+            if followed_log is not None:
+                serial_collector = FollowedSerialLog(followed_log)  # type: ignore[assignment]
+                print(
+                    f"[long-loop-display-hitl] following the capture's session log: {followed_log} "
+                    "(the capture owns the port; this leg reads the log instead)"
+                )
+                if ns.boot_settle_ms > 0:
+                    time.sleep(ns.boot_settle_ms / 1000.0)
+
 
         if ns.start_transport:
             _ensure_transport_running(

@@ -428,5 +428,78 @@ class WindowedTargetTests(unittest.TestCase):
         )
 
 
+class ManagedRunnerHandshakeTests(unittest.TestCase):
+    """F-17: the runner's managed-capture handshake must not lose the capture, and must not abort the reused leg.
+
+    The real failing argv came from a managed run (`captures/s64-win-gate-01`): the runner appends
+    `--out-dir <dir>` (`runner.py`) and the managed-capture hand-off appends `--follow-serial-log <session log>`
+    (`hitl/managed_capture.py`), and the reused leg's **strict** parser answered `unrecognized arguments: …`
+    before a single gesture was sent. Both halves are pinned here: the wrapper consumes **only** its own flags,
+    and the leg then *accepts* the runner's -- it reads the log instead of opening the port, because in a
+    managed run the capture owns the port. Nothing is stripped: a managed run that silently lost
+    `--follow-serial-log` would have no capture at all.
+    """
+
+    #: The argv a managed windowed run hands down: runner flags, the hand-off's log pointer, and the wrapper's
+    #: two own flags (`--loop-slot` is the wrapper's because the reused leg takes no slot argument).
+    MANAGED_ARGV = [
+        "--track", "8", "--loop-slot", "5", "--midi-channel", "8",
+        "--follow-serial-log", "/tmp/session_20261005.log", "--out-dir", "captures/managed-run",
+        "--switch-target-slot", "6",
+    ]
+
+    def _wrapper_to_leg(self, legacy: list[str]) -> tuple[int | None, int | None, list[str]]:
+        slot, remaining = split_loop_slot_flag(legacy)
+        target, remaining = split_switch_target_slot_flag(remaining)
+        return slot, target, remaining
+
+    def test_the_wrapper_consumes_only_its_own_flags(self) -> None:
+        slot, target, remaining = self._wrapper_to_leg(list(self.MANAGED_ARGV))
+        self.assertEqual(5, slot)
+        self.assertEqual(6, target)
+        self.assertNotIn("--loop-slot", remaining)
+        self.assertNotIn("--switch-target-slot", remaining)
+        for kept in ("--follow-serial-log", "/tmp/session_20261005.log", "--out-dir", "captures/managed-run"):
+            self.assertIn(kept, remaining)
+
+    def test_the_leg_accepts_what_the_wrapper_hands_it(self) -> None:
+        from hitl.scenarios.long_loop_display_window import _parse_common_args
+
+        _slot, _target, remaining = self._wrapper_to_leg(list(self.MANAGED_ARGV))
+        ns = _parse_common_args(SimpleNamespace(legacy_args=remaining))
+        self.assertEqual(8, ns.track_number)
+        self.assertEqual("/tmp/session_20261005.log", ns.follow_serial_log)
+        self.assertEqual("captures/managed-run", ns.out_dir)
+
+    def test_the_followed_log_is_read_through_the_collector_interface(self) -> None:
+        """The leg and its helpers only ever ask a collector for `snapshot()`; the adapter must satisfy exactly that."""
+        import tempfile
+
+        from hitl.scenarios.long_loop_display_window import FollowedSerialLog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "session.log"
+            log.write_text("boot\nEdit session: LOOP_EDIT\nplayback_start\n", encoding="utf-8")
+            adapter = FollowedSerialLog(log)
+            self.assertEqual(["boot", "Edit session: LOOP_EDIT", "playback_start"], adapter.snapshot())
+            adapter.stop()  # no-op: this view does not own the port
+            self.assertEqual([], FollowedSerialLog(Path(tmp) / "missing.log").snapshot())
+
+    def test_a_canonical_follow_current_session_resolves_to_the_pointer(self) -> None:
+        """`--follow-current-session` is the base drivers' canonical form: resolve it through the same pointer."""
+        import tempfile
+
+        from hitl.scenarios.long_loop_display_window import _parse_common_args, followed_serial_log_path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session_20261005.log"
+            session.write_text("boot\n", encoding="utf-8")
+            (Path(tmp) / ".current_session").write_text(str(session), encoding="utf-8")
+            ns = _parse_common_args(SimpleNamespace(legacy_args=["--follow-current-session", "--out-dir", tmp]))
+            self.assertEqual(session, followed_serial_log_path(ns))
+            # Without the runner naming anything, there is nothing to follow and the leg keeps its own behaviour.
+            self.assertIsNone(followed_serial_log_path(_parse_common_args(SimpleNamespace(legacy_args=[]))))
+
+
 if __name__ == "__main__":
     unittest.main()
