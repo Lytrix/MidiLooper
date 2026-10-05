@@ -5182,6 +5182,68 @@ bridge's verify path) are unrelated and unchanged. See
 
 **DEC-114 — active implementation direction:** DEC-113's interval-root proposal is withdrawn and retained only as historical audit. DEC-108 governs: the whole-loop `LoopSnapshot` remains checkpoint/effective-content authority; playback windows are derived from the retained pinned-source revision and `RetainedIntervalIndex`. The task sequence is 3.7a production consumer/index integration with the mutable fallback retained, then finish 3.14 undo/redo and 4.5 closure/recovery against that real handoff, and only then 3.7b fallback removal after parity, timing and compatibility gates. No production consumer integration or fallback removal is claimed here. 3.7a needs its own G2 execution packet and production-path fixtures before implementation.
 
+### 3.7a (I2) — the deferred lane turn serves a rootless demand: the launch chain now completes with no root (2026-10-06; firmware + tests)
+
+**Increment I2 of 3.7a landed; the task stays open** (I3 the 3.12 paged consumer and 3.13 preview hooks; I4
+differential parity over edited content/long windows + the timing admission). Packet written **before** the edit:
+[`evidence/2026-10-06-s37a-i2-deferred-lane/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i2-deferred-lane/EXECUTION.md).
+
+**The measured device shape this answers.** Every switch leg recorded `x=launch_requested … root=0` and then nothing:
+the target's launch demand was retained, `committedPlaybackRetryCanProgress` refused it because
+`loop.publishedSnapshotIsCurrent()` was false, and the only other source authority (the retained revision) had no
+lane. I2 gives the lane that source.
+
+**What landed.** `LoopPlaybackRuntime` owns one **retained-source gather** per slot — phase, the resumable
+`CommittedEventRange::WindowTraversalCursor`, the gathered window (`SessionMidiEventVec`, external allocator), slice
+and chunk counters, and the **named refusal** that left the demand owed (`NoSource`, `RevisionMismatch`,
+`BarsUnsupported`, `NoIndex`, `EditRowsUnsupported`, `BodiesUnavailable`, `WindowExceedsCapacity`, `DeadlineExpired`,
+`EpochInvalidated`, `GeometryInvalidated`). `Track::stepCommittedPlaybackRetry` freezes the demand exactly as the
+root-backed qualification does (the record is discharged by the freeze), serves **one bounded page per turn** through
+I1's `gatherRetainedSourceWindowForSlot`, and on the completing page admits the gathered window through
+`requestPlaybackViewMaintenance` — the **same** production admission a requester uses, so the derived cost, the
+retained work record, the deadline arithmetic and the discharge rule cannot differ between the two callers. A launch
+demand served this way gets the launch lane's own bookkeeping (`launchPreparation = Building`), and the promotion to
+`Ready` stays the owner's existing branch.
+
+**The promise rule.** The demand's own position is validated before anything is served (geometry, clock epoch,
+`deadlineTick`); a lost position is **named** and the demand is **coalesced back** into the record the admission path
+reads (the oldest deadline of the same operation survives), and nothing is re-granted. The admission's phase input is
+the phase a **qualified** clock names now; an unqualified clock (a launch may carry one) falls back to the phase the
+demand was made at.
+
+**One predicate, not seven root checks.** `Track::playbackWindowSourceIsCurrentForSlot` = the current published root
+**or** a retained revision equal to the loop's current revision. It is applied at `committedPlaybackRetryCanProgress`,
+the frozen-request validation, the turn's launch-preparation check, `playbackLaunchReadyForSlot`,
+`rollingCandidateReadyAtBoundary` (which now takes the slot) and `revalidateCompletedPlaybackWindow`. Everything that
+is not the window lane keeps `publishedSnapshotIsCurrent()` (DEC-114), and the launch/rolling gate rows keep reporting
+the **root** state rather than the predicate's answer.
+
+**Teardown and ownership by name.** `applyPlaybackViewTransition`'s candidate-release row discards the gather **and**
+coalesces its obligation back; `cancelPlaybackLaunchForSlot` discards a gather serving the launch demand it clears;
+`fillPlaybackHolders`, `hasPendingPlaybackViewMaintenance` and `noLiveOwnerForSlot` all treat the gather as this lane's
+own work. `LoopPlaybackRuntime::reset` drops it with the lane's other half-owned work.
+
+**Verified.** Focused `test_runtime_working_set_ownership` **149/149**; full native **2,820 cases / 7 skipped /
+2,813 succeeded / 0 failed**; `teensy41-capture-serial` **SUCCESS** with `variables 96,192` byte-identical and
+`code 391,832 + padding 1,384` (floor 840, 544 B above; I2's own **+64 B** of ITCM); both `LoopPlaybackRuntime` size
+pins re-based **with compiler-measured figures** (target **7,120 → 7,160**, host **9,144 → 9,216**; per-slot external
+state, no RAM1/DTCM cost); strict validation valid; `git diff --check` clean. Four mutations red-proved with
+byte-identical restores (MR-3.7a-E 2 fails, F 1, G 1, H 1).
+
+**Recorded, not smoothed over.** (1) MR-3.7a-H's first run **crashed** the suite (132 of 150 cases reported): the
+fixture dereferenced the pending record after a non-fatal Unity assertion, so the mutation exposed a *fixture* defect
+first; the assertions were made crash-safe and the mutation then failed that one case cleanly. (2) The first fixture
+draft expected a single page for an interval that completes in one, so the per-turn accounting was meaningless; the
+fixture now uses a **200-event dense bar** so the interval genuinely needs two pages (page 1 exactly
+`kWindowPageCapacity`, page 2 completing and admitting). (3) The turn's first grain is **"begin + first page"**: a
+turn that only began the gather would waste a lane opportunity (measured while fixing (2)).
+
+**Not claimed.** No paged (over-`L`) serving and no preview hooks (I3); no per-layer edit resolution on a retained
+revision (the gather still refuses Active note-edit rows by name); no differential parity over edited content, long
+windows or same-tick order (I4/4.3); no timing envelope; **no device run** — the rootless launch *binding* on hardware
+stays owed to 6.4/6.5's profile; no fallback removal (3.7b). Evidence:
+[`evidence/2026-10-06-s37a-i2-deferred-lane/EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i2-deferred-lane/EVIDENCE.md).
+
 ### 3.7a (I1) — the retained-source window consumer: rootless serving, index-bounded lookup, readiness holder (2026-10-06; firmware + tests)
 
 **Increment I1 of 3.7a landed; the task stays open** (I2 the deferred lane turn serving a rootless demand, I3 the

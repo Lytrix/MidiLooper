@@ -9964,6 +9964,7 @@ void test_rolling_path_reuses_the_view_slot_after_a_refused_completion() {
 
   // ---- The completion arrives **after** ownership moved: the reader moves the generation inside the final grain.
   MidiSendCapture::reset();
+
   PlaybackPathRows::reset();
   Track::PlaybackViewTurnResult lastA = Track::PlaybackViewTurnResult::Idle;
   for (uint32_t turn = 0; turn < 512; ++turn) {
@@ -10294,8 +10295,218 @@ void test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_ch
   TEST_ASSERT_TRUE((RollingGateRows::last()->flags & kPlaying) == 0);
 }
 
-int main() {
 
+/// 3.7a (I2): **the deferred lane's production turn serves a demand whose slot has no published root** -- the shape the
+/// device legs measured as `launch_requested … root=0 …` never reaching readiness. The demand is retained exactly as
+/// before (`requestCommittedPlaybackWindow`), the turn freezes it and gathers one bounded page of the retained
+/// revision's pinned bodies per turn, and the completing turn admits the gathered window through the **same**
+/// production admission a requester uses -- so the window publishes with no root anywhere, and its content is the
+/// fallback's own effective content for that revision.
+void test_3_7a_i2_a_rootless_committed_demand_is_served_from_the_retained_revision() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  constexpr uint32_t length = 512 * bar;
+  // Dense bar 0 (200 events, ticks 0..199) so the two-bar interval needs **more than one gather page**: the per-turn
+  // accounting below is then about work that actually happened, not about a single-slice special case.
+  constexpr uint32_t kDenseEvents = 200;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  Loop& loop = track.getActiveLoop();
+  loop.loopLengthTicks = length;
+  loop.beginCapture(CapturePhase::Record);
+  for (uint32_t i = 0; i < kDenseEvents; ++i) {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(i * 2, 1, 48, 100)));
+  }
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(length, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0));
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the fixture's shape is a rootless demoted slot");
+  TEST_ASSERT_FALSE_MESSAGE(track.playbackWindowSourceIsCurrentForSlot(0),
+                            "and with nothing retained there is no window source at all");
+  // The **demand is retained** before any source exists: this is the pre-I2 shape, asserted so the change is visible
+  // as a change (the demand used to sit here forever).
+  const PlaybackCoverageInterval coverage{0, 2 * bar, length};
+  nativePlaybackDeadlineClock = {1000, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+      static_cast<int>(track.requestCommittedPlaybackWindow(0, coverage, 13 * bar, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_NOT_NULL(track.pendingViewRequest(0));
+  TEST_ASSERT_FALSE_MESSAGE(track.committedPlaybackRetryCanProgress(0, nativePlaybackDeadlineClock),
+                            "a rootless slot with nothing retained owes its source, not a window");
+  // **The retained revision is the source** (DEC-108 section 10), and the lane's currency predicate says so.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, loop.playbackRevision, 3)));
+  TEST_ASSERT_TRUE(track.playbackWindowSourceIsCurrentForSlot(0));
+  TEST_ASSERT_TRUE(track.committedPlaybackRetryCanProgress(0, nativePlaybackDeadlineClock));
+  TEST_ASSERT_TRUE(track.hasPendingPlaybackViewMaintenance());
+
+  // One turn is one bounded page: the first turn freezes the demand (the record is discharged by the freeze, exactly
+  // as the root-backed qualification discharges it) and gathers its first slice.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
+      static_cast<int>(track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_TRUE_MESSAGE(runtime->retainedGatherActive(), "the gather is in flight after its first page");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, runtime->retainedGatherUnits, "one page per turn");
+  TEST_ASSERT_TRUE(runtime->frozenViewRequest.active);
+  TEST_ASSERT_TRUE(runtime->retainedGatherInspectedChunks >= 1);
+  TEST_ASSERT_FALSE_MESSAGE(runtime->viewBuild.active(), "the window build has not started yet");
+  const uint32_t afterFirstPage = static_cast<uint32_t>(runtime->retainedGatherEvents.size());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kWindowPageCapacity, afterFirstPage,
+                                   "a page carries exactly the paged stream's capacity");
+
+  // The completing page discharges the demand through the **production admission** and starts the fill.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
+      static_cast<int>(track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_FALSE_MESSAGE(runtime->retainedGatherActive(), "the completing page releases the gather");
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(0), "and the admission discharges the demand");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->retainedGatherEvents.capacity()),
+                                   "the gathered window does not stay resident after admission");
+  TEST_ASSERT_TRUE(runtime->viewBuild.active() || runtime->coverageBuildNeedsService());
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RetainedGatherRefusal::None),
+                    static_cast<int>(runtime->retainedGatherRefusal));
+
+  PlaybackWindowIdentity published{};
+  for (unsigned turn = 0; turn < 4096 && !track.publishedPlaybackWindowIdentityForSlot(0, published); ++turn) {
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, published),
+                           "the production turn publishes the rootless window");
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, published.playbackRevision);
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackWindowOrigin::Committed), static_cast<int>(published.origin));
+  PlaybackViewSourceIdentity identityOut{};
+  PlaybackCoverageInterval coverageOut{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowForSlot(0, identityOut, coverageOut));
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(loop.publishedSnapshotIdentity(), identityOut.snapshotIdentity,
+                                "the window carries the root it read: none, by construction");
+  TEST_ASSERT_EQUAL_UINT32(coverage.startPhase, coverageOut.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(coverage.lengthTicks, coverageOut.lengthTicks);
+  // Content parity against the **fallback's own** effective gather for the same revision -- not a hand-written list.
+  SessionMidiEventVec oracle;
+  loop.copyEffectiveCommittedEventsInRange(oracle, coverage.startPhase, coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kDenseEvents, static_cast<uint32_t>(oracle.size()),
+                                   "the interval holds the dense bar's events");
+  const auto* set = runtime->viewSetIfPrewarmed();
+  const auto& served = set->views[set->lifecycle.current];
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(oracle.size()), served.storage.eventCount,
+                                   "the retained-served window holds the revision's effective content");
+  for (size_t i = 0; i < oracle.size() && i < served.storage.eventCount; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(oracle[i].tick, served.storage.events[served.storage.order[i]].tick);
+  }
+}
+
+/// 3.7a (I2): **the launch demand binds from the retained revision with no root** -- the chain the device leg measured
+/// as never completing for a rootless switch target (`launch_requested`, `root=0`, then a hold). The switch target is
+/// demoted (24 bars), deliberately rootless, and its current revision is retained.
+void test_3_7a_i2_a_rootless_launch_target_binds_from_the_retained_revision() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitRecordPassIntoTrackSlot(track, 0);
+  commitBarSpacedPassIntoTrackSlot(track, 2, 24);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  track.forceSetState(TRACK_PLAYING);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(2));
+  Loop& target = track.getLoop(2);
+  TEST_ASSERT_FALSE_MESSAGE(target.publishedSnapshotIsCurrent(), "the launch target has no published root");
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  // The switch queue takes the target's occupancy; the launch demand it leaves behind is the one this lane serves.
+  trackManager.requestSlotSwitch(0, 2, SlotQuantization::LoopEnd, 100);
+  TEST_ASSERT_TRUE(trackManager.servicePendingSlotProvision());
+  TEST_ASSERT_FALSE_MESSAGE(runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::None,
+                            "the switch leaves a launch preparation owed");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(2, target.playbackRevision, 9)));
+  nativePlaybackDeadlineClock = {1000, 1};
+  for (unsigned turn = 0; turn < 5000 && !track.playbackLaunchReadyForSlot(2); ++turn) {
+    trackManager.servicePendingSlotProvision();
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    nativePlaybackDeadlineClock.tick += 64;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(track.playbackLaunchReadyForSlot(2),
+                           "the rootless launch reached readiness from the retained revision");
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::LaunchPreparation::Ready),
+                    static_cast<int>(runtime->launchPreparation));
+  TEST_ASSERT_TRUE_MESSAGE(track.bindPlaybackLaunchForSlot(2, nativePlaybackDeadlineClock.tick),
+                           "and it binds, which is the step the rootless device leg never reached");
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::LaunchPreparation::Bound),
+                    static_cast<int>(runtime->launchPreparation));
+  const auto* set = runtime->viewSetIfPrewarmed();
+  const auto& bound = set->views[set->lifecycle.current];
+  TEST_ASSERT_TRUE(bound.published);
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(target.publishedSnapshotIdentity(), bound.source.snapshotIdentity,
+                                "the bound view reads no root: the retained revision served it");
+}
+
+/// 3.7a (I2): the refused gather **keeps the demand** and names why -- a retained revision that lags the loop, a
+/// passed deadline, and the gather's own discarding transition. Nothing here publishes, and nothing is dropped.
+void test_3_7a_i2_a_refused_or_cancelled_gather_keeps_the_demand() {
+  constexpr uint32_t bar = Config::TICKS_PER_BAR;
+  constexpr uint32_t length = 512 * bar;
+  Track& track = trackManager.getTrack(0);
+  commitRecordPassIntoTrackSlotOfLength(track, 0, length);
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = length;
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0));
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const PlaybackCoverageInterval coverage{0, 2 * bar, length};
+  nativePlaybackDeadlineClock = {1000, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+      static_cast<int>(track.requestCommittedPlaybackWindow(0, coverage, 13 * bar, nativePlaybackDeadlineClock)));
+
+  // (a) A retained revision that is **not** the loop's current one: the source is refused by name, nothing is
+  // inspected, and the demand is still owed rather than dropped.
+  const uint32_t retainedRevision = loop.playbackRevision;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, retainedRevision, 3)));
+  loop.playbackRevision = retainedRevision + 1;  // what an edit does to the revision a window is dated by
+  TEST_ASSERT_FALSE(track.playbackWindowSourceIsCurrentForSlot(0));
+  TEST_ASSERT_FALSE_MESSAGE(track.committedPlaybackRetryCanProgress(0, nativePlaybackDeadlineClock),
+                            "a lagging retained revision is not a window source");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::Idle),
+      static_cast<int>(track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock)));
+  const PlaybackViewPendingRequest* stillOwed = track.pendingViewRequest(0);
+  TEST_ASSERT_NOT_NULL_MESSAGE(stillOwed, "the demand survives a source it cannot use");
+  if (stillOwed != nullptr) {
+    // Read only once the record is known to exist: a fixture that dereferences a dropped demand would *crash* the run
+    // instead of failing this case, which is how the first version of this assertion behaved (measured).
+    TEST_ASSERT_EQUAL(static_cast<int>(PlaybackViewPendingReason::AwaitingSourceQualification),
+                      static_cast<int>(stillOwed->reason));
+  }
+  PlaybackWindowIdentity notPublished{};
+  TEST_ASSERT_FALSE(track.publishedPlaybackWindowIdentityForSlot(0, notPublished));
+
+  // (b) The loop's revision returns to the retained one, the gather starts -- and a **transition** discards the
+  // gather without touching the demand or the served window.
+  loop.playbackRevision = retainedRevision;
+  TEST_ASSERT_TRUE(track.committedPlaybackRetryCanProgress(0, nativePlaybackDeadlineClock));
+  TEST_ASSERT_TRUE(track.beginRetainedSourceGatherForSlot(0));
+  TEST_ASSERT_TRUE(runtime->retainedGatherActive());
+  track.applyPlaybackViewTransition(0, PlaybackViewTransition::TransportStop);
+  TEST_ASSERT_FALSE_MESSAGE(runtime->retainedGatherActive(), "a transition releases the candidate's gather");
+  TEST_ASSERT_NOT_NULL_MESSAGE(track.pendingViewRequest(0), "and the demand is not dropped with it");
+
+  // (c) An **expired promise** is not re-granted: the demand keeps a positional refusal and no window is published.
+  TEST_ASSERT_TRUE(track.beginRetainedSourceGatherForSlot(0));
+  const uint64_t deadline = runtime->frozenViewRequest.deadlineTick;
+  TEST_ASSERT_TRUE(deadline != 0);
+  PlaybackDeadlineClock lateClock{};
+  lateClock.epoch = nativePlaybackDeadlineClock.epoch;
+  lateClock.tick = deadline + 1;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainDenied),
+      static_cast<int>(track.stepPlaybackViewMaintenance(0, nullptr, false, lateClock)));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RetainedGatherRefusal::DeadlineExpired),
+                    static_cast<int>(runtime->retainedGatherRefusal));
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackViewPendingReason::DeadlineExpired),
+                    static_cast<int>(track.pendingViewRequest(0) != nullptr
+                                         ? track.pendingViewRequest(0)->reason
+                                         : PlaybackViewPendingReason::None));
+  PlaybackWindowIdentity none{};
+  TEST_ASSERT_FALSE(track.publishedPlaybackWindowIdentityForSlot(0, none));
+}
+
+int main() {
 
 
   UNITY_BEGIN();
@@ -10471,6 +10682,12 @@ int main() {
   // root** -- the production requester serves it, the index bounds the lookup, and the differential fallback oracle
   // agrees; plus every refusal the gather owes by name.
   RUN_TEST(test_retained_source_window_serves_a_rootless_interval_and_the_index_bounds_the_lookup);
+  // windowed-playback-generation slice 3.7a (I2): the **deferred lane turn** serves a rootless demand from the
+  // retained revision -- the committed demand publishes, the launch demand binds, and a refused or cancelled gather
+  // keeps the demand with its reason named.
+  RUN_TEST(test_3_7a_i2_a_rootless_committed_demand_is_served_from_the_retained_revision);
+  RUN_TEST(test_3_7a_i2_a_rootless_launch_target_binds_from_the_retained_revision);
+  RUN_TEST(test_3_7a_i2_a_refused_or_cancelled_gather_keeps_the_demand);
   RUN_TEST(test_the_retained_source_gather_refuses_by_name_where_it_must);
   // windowed-playback-generation slice 3.11: the shared-view ownership rules as one transition table, an operation
   // that is never retargeted, a late completion that publishes nothing, and storage reuse by the last owner.

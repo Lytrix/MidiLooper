@@ -16,6 +16,7 @@
 #include "RuntimeCaptureCompanions.h"
 #include "RuntimeCompanionOverlapWalk.h"
 #include "RuntimeCompanionSpanWalk.h"
+#include "CommittedEventRange.h"  // task 3.7a (I2): the retained-source gather's resumable window cursor
 #include "RuntimeCompanionReconstruction.h"
 #include "RuntimeCompanionApply.h"
 #include "RuntimeCompanionBridgeMap.h"
@@ -564,6 +565,37 @@ struct LoopPlaybackRuntime {
   PlaybackViewPendingRequest frozenViewRequest;
   enum class CoveragePreparation : uint8_t { Idle, Counting, AwaitAdmission, Building, Retiring };
   CoveragePreparation coveragePreparation = CoveragePreparation::Idle;
+  /// Task 3.7a (I2): **the retained-source gather** -- how the deferred lane qualifies a demand for a slot whose
+  /// published root cannot answer. One bounded page of the interval is gathered per turn (`Track::gatherRetainedSource`
+  /// `WindowForSlot`, task 3.7a I1's primitive), so the qualification is a sequence of bounded turns rather than a
+  /// materialization, and the gathered window is then admitted through the **same** production admission a requester
+  /// uses (`Track::requestPlaybackViewMaintenance`). The refusal name is what left the demand owed, so a receipt or a
+  /// fixture can read *why* the retained revision could not serve rather than inferring it.
+  enum class RetainedGatherPhase : uint8_t { Idle, Gathering };
+  RetainedGatherPhase retainedGatherPhase = RetainedGatherPhase::Idle;
+  CommittedEventRange::WindowTraversalCursor retainedGatherCursor{};
+  SessionMidiEventVec retainedGatherEvents;
+  uint32_t retainedGatherUnits = 0;           ///< slices served for the current gather (bounded per demand)
+  uint32_t retainedGatherInspectedChunks = 0; ///< chunks those slices copied out of the store
+  /// The named refusal that left this slot's demand owed (`None` while a gather is running or nothing was refused).
+  enum class RetainedGatherRefusal : uint8_t {
+    None,
+    NoSource,
+    RevisionMismatch,
+    BarsUnsupported,
+    NoIndex,
+    EditRowsUnsupported,
+    BodiesUnavailable,
+    WindowExceedsCapacity,
+    DeadlineExpired,
+    EpochInvalidated,
+    GeometryInvalidated,
+  };
+  RetainedGatherRefusal retainedGatherRefusal = RetainedGatherRefusal::None;
+  bool retainedGatherActive() const { return retainedGatherPhase != RetainedGatherPhase::Idle; }
+  /// Drop the gather and release the window it gathered: the demand it serves is *not* dropped here (a refusal retains
+  /// or an admission discharges it), and nothing a reader holds is touched.
+  void discardRetainedGather();
   enum class LaunchPreparation : uint8_t { None, Requested, Building, Ready, Bound, Fallback, FallbackBound };
   LaunchPreparation launchPreparation = LaunchPreparation::None;
   uint32_t launchBoundTick = 0;

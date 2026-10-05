@@ -423,6 +423,19 @@ public:
       const PlaybackCoverageInterval& coverage, PlaybackDeadlineClock clock);
   bool committedPlaybackRetryCanProgress(uint8_t slotIndex, PlaybackDeadlineClock clock) const;
   PlaybackViewTurnResult stepCommittedPlaybackRetry(uint8_t slotIndex, PlaybackDeadlineClock clock);
+  /// Task 3.7a (I2): **the window lane's source currency for a slot** -- the current published root, or the retained
+  /// revision the slot admitted for exactly the revision it now carries. This is the source a *window* may be built
+  /// from; it deliberately does not replace `Loop::publishedSnapshotIsCurrent()` where that answer is the checkpoint /
+  /// effective-content authority's (DEC-114), and it changes nothing a gate row reports about the root itself.
+  bool playbackWindowSourceIsCurrentForSlot(uint8_t slotIndex) const;
+  /// Task 3.7a (I2): begin the **retained-source gather** for this slot's pending demand -- freezing the demand, exactly
+  /// as `beginCoverageQualification` does for the root-backed path -- or refuse by name with the demand left owed and
+  /// the reason recorded (`LoopPlaybackRuntime::retainedGatherRefusal`). Off-clock only.
+  bool beginRetainedSourceGatherForSlot(uint8_t slotIndex);
+  /// Task 3.7a (I2): serve **one bounded slice** of that gather, and on the completing slice admit the gathered window
+  /// through the same production admission a requester uses. The demand's **own** deadline is validated first, so a
+  /// promise is honoured or refused by name -- never silently re-granted. Off-clock only.
+  PlaybackViewTurnResult stepRetainedSourceGatherForSlot(uint8_t slotIndex, PlaybackDeadlineClock clock);
   /// The declared `CoverageServiceContract` this owner is admitted under. Single-sourced: the declaration,
   /// its derivation and the measurement still owed are recorded where it is defined, and the grain quanta
   /// below are the sizes its declared grain counts come from.

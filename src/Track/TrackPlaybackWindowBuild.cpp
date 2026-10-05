@@ -1714,9 +1714,194 @@ TRACK_COLD_MEM Track::RetainedWindowGather Track::gatherRetainedSourceWindowForS
         --j;
       }
       out[j] = key;
+
     }
   }
   return gather;
+}
+
+/// Task 3.7a (I2): the gather's own refusal name, as the runtime records it. One mapping, so the reason a demand is
+/// still owed and the primitive's answer cannot drift apart.
+static LoopPlaybackRuntime::RetainedGatherRefusal retainedRefusalForGatherResult(
+    Track::RetainedWindowGatherResult result) {
+  if (result == Track::RetainedWindowGatherResult::NoRetainedSource) {
+    return LoopPlaybackRuntime::RetainedGatherRefusal::NoSource;
+  }
+  if (result == Track::RetainedWindowGatherResult::RevisionMismatch) {
+    return LoopPlaybackRuntime::RetainedGatherRefusal::RevisionMismatch;
+  }
+  if (result == Track::RetainedWindowGatherResult::BarsUnsupported) {
+    return LoopPlaybackRuntime::RetainedGatherRefusal::BarsUnsupported;
+  }
+  if (result == Track::RetainedWindowGatherResult::NoIndex) {
+    return LoopPlaybackRuntime::RetainedGatherRefusal::NoIndex;
+  }
+  if (result == Track::RetainedWindowGatherResult::PinnedEditRowsUnsupported) {
+    return LoopPlaybackRuntime::RetainedGatherRefusal::EditRowsUnsupported;
+  }
+  if (result == Track::RetainedWindowGatherResult::PinnedBodiesUnavailable) {
+    return LoopPlaybackRuntime::RetainedGatherRefusal::BodiesUnavailable;
+  }
+  return LoopPlaybackRuntime::RetainedGatherRefusal::NoSource;
+}
+
+/// Task 3.7a (I2): the window lane's **source currency**. A window may be built from the current published root, or --
+/// for a slot whose root is not resident, which is the demoted shape this change exists for -- from the retained
+/// revision the slot admitted for exactly the revision it now carries (DEC-108 §10). The generation is not currency,
+/// and the retained *role* is irrelevant here: what matters is that a revision's bodies are held and that revision is
+/// the loop's current one.
+TRACK_COLD_MEM bool Track::playbackWindowSourceIsCurrentForSlot(uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return false;
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  if (loop.publishedSnapshotIsCurrent()) {
+    return true;
+  }
+  RetainedPlaybackSource retained{};
+  return retainedPlaybackSourceForSlot(slotIndex, retained) && retained.revision == loop.playbackRevision;
+}
+
+/// Task 3.7a (I2): **begin the retained-source gather** for this slot's pending demand. The preconditions and the freeze
+/// are the root-backed qualification's own (`LoopPlaybackRuntime::beginCoverageQualification`): a free build role, a
+/// committed demand, and a record discharged by the freeze rather than kept beside the frozen copy. What differs is the
+/// source: the interval is enumerated from the retained revision's pinned bodies, one bounded page per turn, instead of
+/// from a root's window cursor.
+TRACK_COLD_MEM bool Track::beginRetainedSourceGatherForSlot(uint8_t slotIndex) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->coverageRoleAvailable() || !runtime->pendingViewRequest_.active) {
+    return false;
+  }
+  const auto kind = runtime->pendingViewRequest_.sourceKind;
+  if (kind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+      kind != PlaybackViewPendingRequest::SourceKind::CommittedLaunch) {
+    return false;
+  }
+  if (!playbackWindowSourceIsCurrentForSlot(slotIndex)) {
+    // Named, and nothing is read: this demand is owed a *source*, not a window.
+    runtime->retainedGatherRefusal = LoopPlaybackRuntime::RetainedGatherRefusal::NoSource;
+    return false;
+  }
+  runtime->discardRetainedGather();
+  runtime->retainedGatherRefusal = LoopPlaybackRuntime::RetainedGatherRefusal::None;
+  runtime->retainedGatherPhase = LoopPlaybackRuntime::RetainedGatherPhase::Gathering;
+  runtime->retainedGatherUnits = 0;
+  runtime->retainedGatherInspectedChunks = 0;
+  // The freeze is the qualification's own rule: the frozen copy owns the promise, the record is discharged, and a later
+  // demand starts a fresh record rather than sharing this one's deadline.
+  runtime->frozenViewRequest = runtime->pendingViewRequest_;
+  runtime->clearViewPendingRequest();
+  return true;
+}
+
+/// Task 3.7a (I2): one turn of that gather. The demand's **own** promise is validated before anything is served (a
+/// geometry or epoch change voids its position and a passed deadline expires it: none is re-granted here), then one
+/// bounded slice is gathered, and the completing slice admits the window through `requestPlaybackViewMaintenance` --
+/// the same admission a requester uses, so the derived cost, the retained work record, the deadline arithmetic and the
+/// discharge rule cannot differ between the two callers.
+///
+/// A refusal never drops the demand: the record is coalesced back for the admission path to read (the oldest deadline
+/// of the same operation survives -- `retainViewPendingRequest`'s own rule), and the gather's window is released.
+TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForSlot(
+    uint8_t slotIndex, PlaybackDeadlineClock clock) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->retainedGatherActive() || !runtime->frozenViewRequest.active) {
+    if (runtime != nullptr) runtime->discardRetainedGather();
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  PlaybackViewPendingRequest& request = runtime->frozenViewRequest;
+  const bool launch = request.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch;
+  const bool geometryChanged = request.loopLengthTicks != loop.loopLengthTicks;
+  const bool epochChanged = !launch && request.clockEpoch != 0 && clock.epoch != request.clockEpoch;
+  const bool expired = !launch && request.deadlineTick != 0 && clock.tick >= request.deadlineTick;
+  const bool sourceMoved = request.source.playbackRevision != loop.playbackRevision ||
+                           !playbackWindowSourceIsCurrentForSlot(slotIndex);
+  if (geometryChanged || epochChanged || expired || sourceMoved || request.positionInvalidated) {
+    runtime->retainedGatherRefusal = geometryChanged
+        ? LoopPlaybackRuntime::RetainedGatherRefusal::GeometryInvalidated
+        : (epochChanged ? LoopPlaybackRuntime::RetainedGatherRefusal::EpochInvalidated
+                        : (expired ? LoopPlaybackRuntime::RetainedGatherRefusal::DeadlineExpired
+                                   : LoopPlaybackRuntime::RetainedGatherRefusal::NoSource));
+    if (launch) {
+      // A launch has no positional promise to keep: its preparation is cancelled by name, and the switch that wanted
+      // it keeps the state it had.
+      runtime->frozenViewRequest = {};
+      runtime->discardRetainedGather();
+      cancelPlaybackLaunchForSlot(slotIndex);
+      return PlaybackViewTurnResult::GrainDenied;
+    }
+    request.positionInvalidated = true;
+    request.reason = geometryChanged ? PlaybackViewPendingReason::DeadlineInvalidatedGeometry
+        : (epochChanged ? PlaybackViewPendingReason::DeadlineInvalidatedEpoch
+                        : PlaybackViewPendingReason::DeadlineExpired);
+    if (!runtime->pendingViewRequest_.active) {
+      runtime->pendingViewRequest_ = request;
+    }
+    runtime->frozenViewRequest = {};
+    runtime->discardRetainedGather();
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  if (runtime->retainedGatherUnits >= kRetainedGatherMaxSlices) {
+    request.reason = PlaybackViewPendingReason::WindowExceedsRetainedCapacity;
+    runtime->retainedGatherRefusal = LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity;
+    if (!runtime->pendingViewRequest_.active) {
+      runtime->pendingViewRequest_ = request;
+    }
+    runtime->frozenViewRequest = {};
+    runtime->discardRetainedGather();
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  const RetainedWindowGather gathered = gatherRetainedSourceWindowForSlot(
+      slotIndex, request.coverage.startPhase, request.coverage.lengthTicks, request.source.playbackRevision,
+      runtime->retainedGatherCursor, runtime->retainedGatherEvents);
+  if (gathered.result != RetainedWindowGatherResult::Served) {
+    runtime->retainedGatherRefusal = retainedRefusalForGatherResult(gathered.result);
+    request.reason = PlaybackViewPendingReason::SourceNotCurrent;
+    if (!runtime->pendingViewRequest_.active) {
+      runtime->pendingViewRequest_ = request;
+    }
+    runtime->frozenViewRequest = {};
+    runtime->discardRetainedGather();
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  ++runtime->retainedGatherUnits;
+  runtime->retainedGatherInspectedChunks += gathered.inspectedChunks;
+  if (!gathered.complete) {
+    return PlaybackViewTurnResult::GrainServed;
+  }
+  // The completing slice: admit the gathered window. The phase the clock names **now** is what the admission may
+  // promise a lead from (a launch has no positional promise: its own requested phase is the only one it carries), and
+  // the interval and identity are the demand's own.
+  // The completing slice: admit the gathered window. The phase a **qualified** clock names now is the admission's own
+  // input (the launch carries no positional promise, so an unqualified clock falls back to the phase the demand was
+  // made at), and the interval and identity are the demand's own.
+  uint32_t currentPhase = request.requestedPhase;
+  if (clock.epoch != 0) {
+    const uint32_t effectiveTick = getEffectivePlaybackTick(static_cast<uint32_t>(clock.tick));
+    currentPhase = IntervalProjection::tickPhaseInProjectionCycle(
+        effectiveTick, getProjectionCycleStartTick(), request.coverage.loopLengthTicks);
+  }
+  const PlaybackViewRequestResult admitted = requestPlaybackViewMaintenance(
+      slotIndex, runtime->retainedGatherEvents.data(), runtime->retainedGatherEvents.size(), request.source,
+      request.coverage, {}, {}, currentPhase, request.coverage.startPhase, clock);
+  runtime->frozenViewRequest = {};
+  if (admitted != PlaybackViewRequestResult::Admitted) {
+    // The admission wrote its own named refusal and retained what it refused (its own rule). This lane keeps the
+    // refusal name for the account of *why* -- and releases the window it gathered, either way.
+    runtime->retainedGatherRefusal = admitted == PlaybackViewRequestResult::WindowExceedsRetainedCapacity
+        ? LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity
+        : LoopPlaybackRuntime::RetainedGatherRefusal::NoSource;
+    runtime->discardRetainedGather();
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  if (launch) {
+    // The launch lane's own bookkeeping, exactly as `beginQualifiedCoverageBuild` performs it for the root-backed
+    // path: the promotion to `Ready` at completion is the owner's existing branch.
+    runtime->launchPreparation = LoopPlaybackRuntime::LaunchPreparation::Building;
+  }
+  runtime->discardRetainedGather();
+  return PlaybackViewTurnResult::GrainServed;
 }
 
 TRACK_COLD_MEM void Track::applyPlaybackViewTransition(uint8_t slotIndex, PlaybackViewTransition transition) {
@@ -1733,6 +1918,14 @@ TRACK_COLD_MEM void Track::applyPlaybackViewTransition(uint8_t slotIndex, Playba
     // The candidate's resources are released here, and **only** its own: the served window and the retained source
     // belong to other owners and are untouched by this.
     runtime->discardCoverageBuild();
+    // Task 3.7a (I2): a **retained-source gather** is the other half of a candidate's preparation. The obligation it
+    // was serving survives the release -- it is coalesced back into the record the lane reads, exactly as
+    // `retireCoverageSource` coalesces a frozen root-backed request -- and only the gathered window is released.
+    if (runtime->retainedGatherActive() && runtime->frozenViewRequest.active) {
+      if (!runtime->pendingViewRequest_.active) runtime->pendingViewRequest_ = runtime->frozenViewRequest;
+      runtime->frozenViewRequest = {};
+      runtime->discardRetainedGather();
+    }
     runtime->viewBuildOperationGeneration = 0;
   }
   if (set != nullptr && effect.preparedSuccessorRetired &&
@@ -1803,6 +1996,9 @@ TRACK_COLD_MEM bool Track::noLiveOwnerForSlot(uint8_t slot) const {
   const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
   if (runtime != nullptr) {
     if (runtime->ownsCoverageSource() || runtime->ownsLaunchPreparation()) return false;
+    // Task 3.7a (I2): a **retained-source gather** holds a window it gathered for a demand not yet admitted, so the
+    // slot is owned by name until the gather is discharged or discarded.
+    if (runtime->retainedGatherActive()) return false;
     if (runtime->ownsLiveFinalization()) return false;
     if (runtime->ownsInFlightPreparedHandover()) return false;
   }
@@ -2319,8 +2515,12 @@ TRACK_COLD_MEM void Track::cancelPlaybackLaunchForSlot(uint8_t slotIndex, bool i
       set->lifecycle.current < set->views.size()) set->views[set->lifecycle.current].resetMetadata();
   if (runtime->pendingViewRequest_.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch)
     runtime->clearViewPendingRequest();
-  if (runtime->frozenViewRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch)
+  if (runtime->frozenViewRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch) {
     runtime->frozenViewRequest = {};
+    // Task 3.7a (I2): the gather was serving that frozen demand, so it goes with it rather than running on for a
+    // demand nobody owns.
+    runtime->discardRetainedGather();
+  }
   // Completed worker may point at a now-published view. Only discard an active
   // launch worker; publication has already transferred a completed destination.
   if (runtime->launchPreparation == LoopPlaybackRuntime::LaunchPreparation::Requested ||
@@ -2452,7 +2652,7 @@ bool Track::playbackLaunchReadyForSlot(uint8_t slotIndex) const {
   if (!set || set->lifecycle.ready >= set->views.size()) return false;
   const auto& view = set->views[set->lifecycle.ready];
   const auto& loop = loopForSlot(slotIndex);
-  return loop.hasCommittedPasses() && loop.publishedSnapshotIsCurrent() && view.complete &&
+  return loop.hasCommittedPasses() && playbackWindowSourceIsCurrentForSlot(slotIndex) && view.complete &&
       view.source.sourceGeneration == playbackGeneration && view.source.playbackRevision == loop.playbackRevision &&
       view.source.origin == PlaybackWindowOrigin::Committed && !view.rawCoveragePrepared &&
       view.coverage.loopLengthTicks == loop.loopLengthTicks && view.coverage.startPhase == 0 &&
@@ -2510,7 +2710,7 @@ TRACK_COLD_MEM __attribute__((noinline)) Track::RollingResolution rejectRollingF
 // Fixed metadata reads only, under RollingMetadataGuard. Device duration remains
 // a qualification obligation; this placement is not a timing claim.
 TRACK_COLD_MEM __attribute__((noinline)) bool rollingCandidateReadyAtBoundary(
-    const LoopPlaybackRuntime& runtime, const Loop& loop, uint32_t phase) {
+    const LoopPlaybackRuntime& runtime, bool sourceCurrent, const Loop& loop, uint32_t phase) {
   const auto& frame = runtime.rolling;
   const auto* set = runtime.viewSetIfPrewarmed();
   if (!set || runtime.ownsCoverageSource() || runtime.completedPromisePendingJudgement ||
@@ -2520,7 +2720,7 @@ TRACK_COLD_MEM __attribute__((noinline)) bool rollingCandidateReadyAtBoundary(
   const auto& work = runtime.viewBuildWork;
   const auto& ready = set->views[set->lifecycle.ready];
   return work.clockEpoch == frame.epoch && work.deadlineTick == frame.deadlineTick &&
-      runtime.viewBuildOperationGeneration == frame.generation && loop.publishedSnapshotIsCurrent() &&
+      runtime.viewBuildOperationGeneration == frame.generation && sourceCurrent &&
       runtime.cachedLoopRevision == loop.playbackRevision && runtime.cachedTrackGeneration == frame.generation &&
       ready.complete && !ready.published && !ready.rawCoveragePrepared &&
       ready.source.origin == PlaybackWindowOrigin::Committed && ready.source.sourceGeneration == frame.generation &&
@@ -2634,7 +2834,7 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   auto* set = runtime->viewSetIfPrewarmed();
   if (!set || set->lifecycle.current >= set->views.size() ||
       !set->views[set->lifecycle.current].complete || !set->views[set->lifecycle.current].published ||
-      !loop.publishedSnapshotIsCurrent()) {
+      !playbackWindowSourceIsCurrentForSlot(activeLoopIndex)) {
     reportPlaybackRollingGateRow("win_not_servable", clock.epoch != 0);
     return RollingOutcome::Excluded;
   }
@@ -2734,7 +2934,9 @@ Track::RollingResolution Track::resolveRollingPlaybackWindow(
   }
   if (clock.tick < frame.deadlineTick) return {RollingOutcome::Waiting, nullptr};
   if (clock.tick != frame.deadlineTick || frame.phase != LoopPlaybackRuntime::RollingPhase::Ready ||
-      phase != frame.startPhase || !rollingCandidateReadyAtBoundary(*runtime, loop, phase)) return rejectRollingFrame(*runtime, loop);
+      phase != frame.startPhase ||
+      !rollingCandidateReadyAtBoundary(*runtime, playbackWindowSourceIsCurrentForSlot(slot), loop, phase))
+    return rejectRollingFrame(*runtime, loop);
   if (!adoptPreparedPlaybackWindow(slot)) return rejectRollingFrame(*runtime, loop);
   loop.nextEventIndex = 0; // First event in the new half-open interval, no inline search/build.
   frame.boundView = set->lifecycle.current;
@@ -2750,6 +2952,10 @@ TRACK_COLD_MEM bool Track::committedPlaybackRetryCanProgress(uint8_t slotIndex, 
   if (runtime->coverageSource.retiring()) return true;
   // A frozen reservation always gets a turn, including cancellation/invalidity.
   if (runtime->ownsCoverageSource()) return true;
+  // Task 3.7a (I2): a **retained-source gather in flight** is this lane's own work. The frozen demand carries the
+  // promise (the pending record was discharged by the freeze, exactly as the root-backed qualification discharges it),
+  // so the turn must be able to serve the next slice.
+  if (runtime->retainedGatherActive()) return runtime->frozenViewRequest.active;
   const auto* request = pendingViewRequest(slotIndex);
   const bool launch = request && request->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch;
   if (!request || (!launch && request->sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot) ||
@@ -2759,7 +2965,7 @@ TRACK_COLD_MEM bool Track::committedPlaybackRetryCanProgress(uint8_t slotIndex, 
       request->reason == PlaybackViewPendingReason::CannotCompleteBeforeHandoff ||
       !runtime->coverageRoleAvailable() || playbackViewOutstandingGrains(slotIndex) != 0) return false;
   const auto& loop = loopForSlot(slotIndex);
-  return request->loopLengthTicks == loop.loopLengthTicks && loop.publishedSnapshotIsCurrent() &&
+  return request->loopLengthTicks == loop.loopLengthTicks && playbackWindowSourceIsCurrentForSlot(slotIndex) &&
       request->source.playbackRevision == loop.playbackRevision;
 }
 
@@ -2772,6 +2978,18 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
     return PlaybackViewTurnResult::GrainServed;
   }
   if (!runtime->ownsCoverageSource()) {
+    // Task 3.7a (I2): the **retained-source gather**. Its own next slice first, then its beginning -- and only for a
+    // slot whose published root cannot answer, so the root-backed path below is unchanged for every slot that has one.
+    if (runtime->retainedGatherActive()) {
+      return stepRetainedSourceGatherForSlot(slotIndex, clock);
+    }
+    if (runtime->pendingViewRequest_.active && !loopForSlot(slotIndex).publishedSnapshotIsCurrent() &&
+        playbackWindowSourceIsCurrentForSlot(slotIndex)) {
+      // One turn is one bounded grain: the gather's beginning and its **first page** are served together, so the
+      // slice accounting always describes work this turn actually did.
+      if (!beginRetainedSourceGatherForSlot(slotIndex)) return PlaybackViewTurnResult::GrainDenied;
+      return stepRetainedSourceGatherForSlot(slotIndex, clock);
+    }
     // A temporary root reference cannot retire the root here: the Loop still owns
     // this current root throughout this non-interleaved main-loop turn.
     const auto snapshot = loopForSlot(slotIndex).publishedSnapshot();
@@ -2785,7 +3003,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
   if (!request.active || request.operationGeneration != playbackGeneration || request.positionInvalidated ||
       (!launch && (clock.epoch == 0 || request.clockEpoch != clock.epoch || clock.tick < request.work.admittedTick ||
       clock.tick >= request.deadlineTick)) || request.loopLengthTicks != loop.loopLengthTicks ||
-      !loop.publishedSnapshotIsCurrent() || request.source.playbackRevision != loop.playbackRevision) {
+      !playbackWindowSourceIsCurrentForSlot(slotIndex) || request.source.playbackRevision != loop.playbackRevision) {
     if (launch) {
       cancelPlaybackLaunchForSlot(slotIndex);
       return PlaybackViewTurnResult::GrainDenied;
@@ -2843,6 +3061,7 @@ TRACK_COLD_MEM bool Track::hasPendingPlaybackViewMaintenance() const {
     const bool runtimePresent = runtime != nullptr;
     if (MidiServiceDrain::playbackViewMaintenanceNeeded(
             runtimePresent, runtimePresent && (runtime->coverageBuildNeedsService() || runtime->ownsCoverageSource() ||
+                runtime->retainedGatherActive() ||
                 (pendingViewRequest(slot) && pendingViewRequest(slot)->sourceKind !=
                     PlaybackViewPendingRequest::SourceKind::Borrowed)))) {
       return true;
@@ -2862,7 +3081,9 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
     const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
     if (runtime == nullptr) continue;
     const auto* pending = pendingViewRequest(slot);
-    if (!runtime->coverageBuildNeedsService() && (runtime->ownsCoverageSource() ||
+    // Task 3.7a (I2): a **retained-source gather** is a holder too -- it owes its next slice, and the frozen demand it
+    // serves carries the deadline the urgency below is read from.
+    if (!runtime->coverageBuildNeedsService() && (runtime->ownsCoverageSource() || runtime->retainedGatherActive() ||
         (pending && (pending->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot ||
                      pending->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch)))) {
       auto& holder = holders[slot];
@@ -2871,7 +3092,9 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
       if (runtime->coverageSource.retiring() || (runtime->ownsCoverageSource() && !runtime->frozenViewRequest.active)) {
         holder.hasDeadline = true; holder.handoffLeadTicks = 0; continue;
       }
-      const auto& request = runtime->frozenViewRequest.active ? runtime->frozenViewRequest : *pending;
+      const auto& request = runtime->frozenViewRequest.active
+                                ? runtime->frozenViewRequest
+                                : (pending != nullptr ? *pending : runtime->pendingViewRequest_);
       holder.hasDeadline = request.clockEpoch != 0 && request.clockEpoch == clock.epoch;
       const uint64_t lead = request.deadlineTick > clock.tick ? request.deadlineTick - clock.tick : 0;
       holder.handoffLeadTicks = lead > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(lead);
@@ -2998,7 +3221,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
         set->views[set->lifecycle.build].source.playbackRevision != loop.playbackRevision ||
         set->views[set->lifecycle.build].source.sourceGeneration != playbackGeneration ||
         set->views[set->lifecycle.build].coverage.loopLengthTicks != loop.loopLengthTicks ||
-        !loop.publishedSnapshotIsCurrent()) {
+        !playbackWindowSourceIsCurrentForSlot(slot)) {
       cancelPlaybackLaunchForSlot(slot);
       return PlaybackViewTurnResult::GrainDenied;
     }
@@ -3331,7 +3554,7 @@ TRACK_COLD_MEM bool Track::revalidateCompletedPlaybackWindow(
       loop.loopLengthTicks != work.admittedLoopLength ||
       currentPhase >= loop.loopLengthTicks || currentPhase != candidate.coverage.startPhase) return false;
   if (candidate.source.origin == PlaybackWindowOrigin::Committed) {
-    if (!loop.publishedSnapshotIsCurrent() || candidate.source.playbackRevision != loop.playbackRevision ||
+    if (!playbackWindowSourceIsCurrentForSlot(slotIndex) || candidate.source.playbackRevision != loop.playbackRevision ||
         candidate.source.snapshotIdentity != loop.publishedSnapshotIdentity()) return false;
   } else if (!runtime->previewSourceActive ||
              candidate.source.playbackRevision != runtime->previewSourceRevision) {

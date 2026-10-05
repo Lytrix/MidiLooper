@@ -331,6 +331,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(bool preserveLed
     return false;
   }
   retireCoverageSource();
+  // Task 3.7a (I2): the retained-source gather is this lane's other half-owned work, so a reset drops it too -- its
+  // buffer is per-slot external memory and must not outlive the operation that owed it.
+  discardRetainedGather();
   bridgeWindowBuild.discard();
   bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
   bridgeWindowContextIndex = RuntimePlaybackBridgeLifecycle::kNoBridge;
@@ -2137,6 +2140,23 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardCoverageBuild()
   viewBuild.discard();
 }
 
+/// Task 3.7a (I2): drop the retained-source gather and **release the window it gathered**. The demand it serves is not
+/// dropped here: a refusal retains it (with its reason) and an admission discharges it, so this only returns the
+/// per-slot external buffer and the cursor. The last refusal name is kept, because it is the reason the demand is still
+/// owed -- the next gather clears it.
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardRetainedGather() {
+  retainedGatherPhase = RetainedGatherPhase::Idle;
+  CommittedEventRange::resetWindowTraversalCursor(retainedGatherCursor);
+  retainedGatherUnits = 0;
+  retainedGatherInspectedChunks = 0;
+  if (!retainedGatherEvents.empty() || retainedGatherEvents.capacity() != 0) {
+    // Swap rather than `clear()`: the capacity is the window's own external allocation, and a discharged demand must
+    // not keep it resident per slot.
+    SessionMidiEventVec released;
+    retainedGatherEvents.swap(released);
+  }
+}
+
 /// DEC-108 §13(a)/(c) / task 3.10 (increment 24): **retain or coalesce the slot's pending preparation demand.** One
 /// record per slot, and the **newest** demand wins its identity, interval, phase and bounded cost -- while the
 /// **oldest outstanding deadline** of the same operation survives (progress toward the oldest deadline is the thing
@@ -2500,8 +2520,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // measured target 6,832 -> 7,072 (+240 B), host 8,784 -> 9,096 (+312 B).
 // Eight target runtimes add 1,920 external bytes; no event buffer or RAM1 rebase.
 // Gated rolling frame: compiler probe measured7,072 ->7,120 (+48 external bytes).
-static_assert(sizeof(LoopPlaybackRuntime) == 7120,
-              "S3.0/3.10: target per-slot runtime 7,120 B, including gated rolling frame");
+// Task 3.7a (I2): the **retained-source gather** adds its cursor, phase, slice counters, the refusal name and the
+// gathered window's vector header -- per-slot external state, no RAM1 `variables`, no DTCM. Measured +72 B on the host
+// ABI (9,144 -> 9,216) and +40 B on the target ABI (7,120 -> 7,160): the cursor is smaller there and the
+// vector header is pointer-sized. Both re-bases are compiler-measured, not estimated.
+static_assert(sizeof(LoopPlaybackRuntime) == 7160,
+              "S3.0/3.10: target per-slot runtime 7,160 B, including the gated rolling frame and the "
+              "3.7a retained-source gather");
 static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
@@ -2517,7 +2542,9 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // the target figure above is the one charged to RAM1, and the target is the shipped ABI.
 #if defined(PIO_UNIT_TEST_NATIVE)
 // Gated rolling episode adds48 external bytes including the physical view token: measured9,096 ->9,144.
-static_assert(sizeof(LoopPlaybackRuntime) == 9144,
-              "S3.0/3.10: host-ABI per-slot runtime size (9,144 B, including rolling frame)");
+// Task 3.7a (I2) re-base: +72 B for the retained-source gather (cursor 32 + window vector header 24 + phase/units/
+// chunks/refusal 16, with padding). Measured by the compiler on this ABI, not estimated.
+static_assert(sizeof(LoopPlaybackRuntime) == 9216,
+              "S3.0/3.10: host-ABI per-slot runtime size (9,216 B, including rolling frame and the 3.7a gather)");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

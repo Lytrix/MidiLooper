@@ -316,12 +316,39 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   `variables 96,192` unchanged and `code 391,768 + padding 1,448` (floor 840; **+192 B**, after the measured
   `std::sort` instantiation cost of **+1,280 B** was removed by sorting by hand), strict validation and
   `git diff --check` clean, four mutations red-proved with byte-identical restores — **one of them recorded as a
+
   non-red-proof** (the gather's own revision gate is redundant under the index's revision authority; MR-3.7a-B'
   removes both and fails 3.6c's fixture plus this slice's) — and the differential parity claim scoped to the
   unedited-content window (same-tick order stays 4.3's gate). **Not claimed:** no production lane service for a
   rootless demand (I2), no edited-content/long-window parity (I4), no device run, no fallback removal (3.7b), and
   3.12/3.13's consumer clauses remain owed to I3. Detail:
   [`evidence/2026-10-06-s37a-production-consumer/EVIDENCE.md`](evidence/2026-10-06-s37a-production-consumer/EVIDENCE.md).
+
+  **Increment I2 landed 2026-10-06 (firmware + tests; the task stays open).** The deferred lane's **production turn**
+  now serves a demand for a slot with no current published root — the shape the device legs measured as
+  `launch_requested … root=0 …` never reaching readiness. `LoopPlaybackRuntime` owns one **retained-source gather**
+  per slot (phase, resumable `CommittedEventRange::WindowTraversalCursor`, the gathered window in external memory, the
+  slice/chunk counters, and the **named refusal** that left the demand owed); `Track::stepCommittedPlaybackRetry`
+  freezes the demand exactly as the root-backed qualification does, serves **one bounded page per turn** through I1's
+  `gatherRetainedSourceWindowForSlot`, and on the completing page admits the gathered window through
+  `requestPlaybackViewMaintenance` — the same production admission a requester uses. The demand's **own** promise is
+  validated first (geometry/epoch/deadline) and a lost position is named and coalesced back rather than re-granted.
+  `Track::playbackWindowSourceIsCurrentForSlot` states the window lane's source authority in one predicate (current
+  root **or** the retained revision the loop currently carries) and is applied at `committedPlaybackRetryCanProgress`,
+  the frozen-request validation, the turn's launch-preparation check, `playbackLaunchReadyForSlot`,
+  `rollingCandidateReadyAtBoundary` and `revalidateCompletedPlaybackWindow`; a launch demand served this way gets the
+  launch lane's own bookkeeping and reaches `Ready`/`Bound` with no root. **Verified:** focused **149/149**, full native
+  **2,820 / 7 skipped / 2,813 succeeded / 0 failed**, capture build **SUCCESS** with `variables 96,192` unchanged and
+  `code 391,832 + padding 1,384` (floor 840; I2's own **+64 B** of ITCM), both `LoopPlaybackRuntime` size pins re-based
+  with **compiler-measured** figures (target 7,160 / host 9,216), strict validation and `git diff --check` clean, four
+  mutations red-proved with byte-identical restores. **Recorded, not smoothed over:** MR-3.7a-H's first run *crashed*
+  the suite (132 of 150 cases reported) because the fixture dereferenced a record after a non-fatal Unity assertion —
+  the fixture was made crash-safe and the mutation then failed that one case cleanly; and the first fixture draft
+  expected one page for an interval that completes in one, so the fixture now uses a 200-event dense bar.
+  **Not claimed:** no paged (over-L) serving, no preview hooks or per-layer edit resolution (I3), no
+  edited-content/long-window/same-tick parity (I4/4.3), no timing envelope, **no device run** (the rootless launch
+  *binding* on hardware stays owed to 6.4/6.5), no fallback removal (3.7b). Detail:
+  [`evidence/2026-10-06-s37a-i2-deferred-lane/EVIDENCE.md`](evidence/2026-10-06-s37a-i2-deferred-lane/EVIDENCE.md).
 - [ ] 3.7b **Remove the live mutable merged-window fallback — final ladder stage (4)** only after 3.7a is enabled and verified and tasks 3.12, 3.13, 3.14 and 4.5 plus F-7/F-8, timing and compatibility gates pass on their applicable production/device paths. Keep a cold reference path for parity testing. Verify no supported slot reaches the removed `playMidiEventsForSlot` fallback and reclassify `ExecutionBounds.md` row 2 only with evidence. Rollback before this stage retains today's fallback.
 - [x] 3.8 Confirm reuse before invention — verify a review note names the existing resumable entry points used (the
   declared build contract, bounded body-format write/parse, resume arming, the single persistence drain budget) and that
