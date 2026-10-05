@@ -1,0 +1,55 @@
+{
+  "slice": "windowed-playback-generation task 3.10 — the rolling chain's admission boundary on the playing path",
+  "kind": "verification on the playing production chain (tests enable the interference budget; no production line changed)",
+  "packet": "EXECUTION.md",
+  "evidence": "EVIDENCE.md",
+  "owner_steer": "take option 1 narrowed to the rolling path; do not enable normal operation; stop after the capability statement and the next contract decision; bounded inspection of the flaky helper",
+  "production_changes": [],
+  "fixtures": {
+    "R1": "test_rolling_path_admissible_shape_repeats_handoffs_under_enforcement",
+    "R2": "test_rolling_path_refused_shape_is_named_retained_and_falls_back",
+    "R3": "test_rolling_path_budget_charges_qualification_and_retirement_work"
+  },
+  "driver": "rollingTestTick (selector + one worker turn per 64 ticks, transport per tick)",
+  "measured": {
+    "R1": {"served_view_changes_min": 2, "builds_at_adoption": 0, "events": 33, "ons": 16, "offs": 17, "foreign_notes": 0, "one_pass_late": 0, "leftover_demand": false},
+    "R2": {"shape": "300 notes = 600 entries in bars 6..7", "adoptions": 0, "serving_ticks": 0, "served_view_unchanged": true, "frozen_demand_seen": true, "obligation_kept_with_deadline": true, "one_pass_late": 0, "events": 603},
+    "R3": {"charge_while_owning_source_gt": 1000, "charge_without_admitted_record": true, "enforced_candidate": "CannotCompleteBeforeHandoff (retained)", "same_request_after_retirement": "Admitted"}
+  },
+  "findings": {
+    "F-1": {
+      "culprit_test": "test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one",
+      "symptom": "a later demoted switch stays pending while the target's launch is ready (assert_s4b_7_a_demoted_target_through_the_turn: 'the root-backed demoted switch must commit')",
+      "probe_diag": {"packed": "0x12010DC8", "tick": 3528, "pending": 1, "activeSlot": 0, "holds": 0, "launchReady": 1, "ownsSource": 0, "targetSlot": 2},
+      "bisect": {"passes_after_RUN_TEST": 88, "fails_after_RUN_TEST": 89},
+      "eliminated": ["re-creating trackManager + resetPoolForTests() + initPool() inside the probe", "priming the clock tick"],
+      "mechanism": "unidentified (bounded inspection as instructed)"
+    },
+    "F-2": "the selector's refusal check reads the pending record while a post-freeze refusal is written on the frozen one -> the episode ends by non-adoption, not a named Blocked state (next contract decision)",
+    "F-3": "dropping the retry admission's sibling charge fails no test (the dense shape is refused by its own derived cost)",
+    "F-4": "the selector must be serviced at the lane cadence (64 ticks), not every tick"
+  },
+  "mutations": [
+    {"id": "MR2", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "a slot owning its coverage source is not charged", "result": "R3 fails as intended", "restored_sha256_16": "75c23a3f1849d15a"},
+    {"id": "MR1", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "retry admission's sibling charge -> 0", "result": "no test failed (recorded as F-3)", "restored_sha256_16": "75c23a3f1849d15a"},
+    {"id": "MR1p", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "retry admission ignores the window's own derived cost", "result": "focused run did not complete in budget (a hang, not a clean red-proof)", "restored_sha256_16": "75c23a3f1849d15a"},
+    {"id": "MR3", "file": "include/Track.h", "change": "kPlaybackViewFillQuantum 64 -> 128", "result": "eight pre-existing cost fixtures fail; the new fixtures pass (they pin emission, not grain cost)", "restored_sha256_16": "b9d0ef22549c2c66"},
+    {"id": "MR5", "file": "src/Track/TrackPlaybackWindowBuild.cpp", "change": "a refusal is not retained", "result": "harness-level abort at the first case (1 test cases: 0 succeeded), not a clean assertion failure", "restored_sha256_16": "75c23a3f1849d15a"}
+  ],
+  "verification": {
+    "focused": {"command": "pio test -e native -f test_runtime_working_set_ownership", "cases": 140, "passed": 140, "failed": 0},
+    "full_native": {"command": "pio test -e native", "cases": 2794, "succeeded": 2787, "skipped": 7, "failed": 0},
+    "capture_build": {"command": "pio run -e teensy41-capture-serial", "status": "SUCCESS", "ram1_variables": 96192, "ram1_code": 391576, "ram1_padding": 1640, "ram1_floor": 840, "rebased": false},
+    "strict_openspec": {"command": "openspec validate windowed-playback-generation --strict", "result": "valid"},
+    "git_diff_check": "clean",
+    "device": "NOT RUN"
+  },
+  "not_claimed": [
+    "continuous two-bar service (the proven capability is intermittent immutable coverage)",
+    "a reduced supported window (the boundary is workload against the lead granted)",
+    "activation in production",
+    "device verification",
+    "checkoff of task 3.10, 6.3 or 3.7"
+  ],
+  "next_steps": ["task 6.4 registered device profile", "task 6.5 controlled device qualification (with fallback and qualification gates retained)"]
+}

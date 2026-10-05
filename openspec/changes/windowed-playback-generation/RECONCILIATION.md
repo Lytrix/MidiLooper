@@ -1,14 +1,15 @@
 # Reconciliation — the change's remaining tasks against the code and the evidence
 
 **Current closeout — the activation audit, atop `25542299`, the gated rolling slice, the `H x K` contention sweep and the
-preserved cumulative uncommitted work.** Full native: **2,791 cases / 2,784 passed / 7 skipped / 0 failed**. Default
+preserved cumulative uncommitted work, and the playing-chain boundary slice.** Full native: **2,794 cases / 2,787 passed / 7 skipped / 0 failed**. Default
 capture build passes the unchanged RAM1 floor 840 (padding **1,640**; the explicit rolling qualification build's 984 is
 from the rolling slice). No upload; the first two slices are committed (`2620168e`), the audit is not. Earlier counts below
 and in dated runtime history are historical, not final-tree verification. Three slices sit in this tree's history: the
 gated rolling handoff ([ROLLING_HANDOFF.md](evidence/requester-retry-integration/ROLLING_HANDOFF.md)), the test-only
-contention sweep ([EVIDENCE.md](evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md)) and the activation audit
-([EVIDENCE.md](evidence/2026-10-05-s310y-activation-audit/EVIDENCE.md)), each with its own durable verification manifest
-for the exact scope and results.
+contention sweep ([EVIDENCE.md](evidence/2026-10-05-s310x-hk-contention-sweep/EVIDENCE.md)) the activation audit
+([EVIDENCE.md](evidence/2026-10-05-s310y-activation-audit/EVIDENCE.md)) and the playing-chain admission boundary
+([EVIDENCE.md](evidence/2026-10-05-s310z-rolling-admission-boundary/EVIDENCE.md)), each with its own durable verification
+manifest for the exact scope and results.
 **Method / corrected dependency reading.** Task completion requires code, production-path
 fixtures and the applicable evidence. Implementation, controlled enablement, qualification and
 fallback removal are separate stages. `requestCommittedPlaybackWindow` and

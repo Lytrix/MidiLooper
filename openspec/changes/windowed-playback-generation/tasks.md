@@ -1455,3 +1455,30 @@ incremental-build object or an uninitialised read in the launch/commit path), an
 sound. **Task 3.10 stays open** on service qualification (device enforcement), and 6.3's remaining axes and 3.7's removal
 are untouched. Detail:
 [`evidence/2026-10-05-s310y-activation-audit/EVIDENCE.md`](evidence/2026-10-05-s310y-activation-audit/EVIDENCE.md).
+
+**Task 3.10 — the rolling path's admission boundary on the playing chain (2026-10-05; test-only, no checkoff).**
+Three fixtures drive the **playing** chain the production lane composes (`rollingTestTick`: selector + one worker turn per
+64 ticks, transport per tick) with the interference budget enforced in tests only. **R1:** an admissible two-bar shape is
+requested at the first aligned interval, prepared, adopted at its absolute boundary and **served repeatedly** — the served
+view changes at each handoff with **no mutable build** at any of them — emitting **exactly 33 events** (16 ons + 17
+closures of the loop's own note 48, nothing else), crossing **no** promise, leaving **no demand**. **R2:** a **dense**
+two-bar interval (300 notes = 600 entries, prepared cost beyond the lead the selector grants from the declared basis) is
+**requested but never adopted** — the served view never moves, the episode freezes and is priced, its obligation keeps its
+**original absolute deadline**, `one_pass_late == 0`, and playback continues through the mutable fallback (603 events over
+the same drive). **R3:** while a slot **owns its coverage source** (qualification/retirement) the per-track budget is
+**non-zero** although that slot has no admitted work record, the enforced candidate on that track is refused **by name**
+(`CannotCompleteBeforeHandoff`, obligation retained) and the **same request is admitted once the source has retired** —
+before/after in one fixture. Capacity 2048, span <= 2 bars and every timing constant are unchanged; the claim is
+**intermittent immutable coverage**, not continuous service. **Findings recorded:** (F-1) the earlier "intermittent"
+S4b.7 helper failure is now reproducible with a **named culprit** — `test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one`
+leaves suite-global state that leaves a later demoted switch **pending** while the target's launch is ready (probe:
+re-creating the TrackManager + pool does not clear it; bisected at registration #89), mechanism unidentified, so the new
+fixtures are registered before it; (F-2) the selector's refusal check reads the *pending* record while a post-freeze
+refusal is written on the *frozen* one, so the episode ends by non-adoption rather than a named `Blocked` state — **the
+next contract decision**; (F-3) the retry admission's *sibling* charge is not what refuses the dense shape (its own derived
+cost is); (F-4) the selector must be serviced at the lane cadence, not every tick. Mutations: **MR2** (a coverage-source
+owner not charged) fails R3 as intended and is restored byte-identically; MR1/MR1p/MR3/MR5 are recorded with the reason
+each did not give a clean red-proof. Verified: focused **140/140**, full native **2794 / 2787 succeeded / 7 skipped /
+0 failed**, capture build SUCCESS with the RAM1 line byte-identical, strict validation valid, `git diff --check` clean.
+**No production line changed**; no upload; no optimization series. Detail:
+[`evidence/2026-10-05-s310z-rolling-admission-boundary/EVIDENCE.md`](evidence/2026-10-05-s310z-rolling-admission-boundary/EVIDENCE.md).

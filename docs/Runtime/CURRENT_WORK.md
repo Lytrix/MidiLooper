@@ -4903,6 +4903,38 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+### Task 3.10 — the rolling path's admission boundary on the playing chain (and a named culprit for the flaky helper)
+
+**The playing chain is proved end to end, in workload/lead terms, with enforcement in tests only.** `rollingTestTick`-driven
+(selector + one worker turn per 64 ticks, transport per tick) over 16 bars with `sInterferenceBudgetEnforced` on: an
+admissible two-bar shape is requested at the first aligned interval, prepared by the bounded worker, adopted at its
+absolute boundary and **served repeatedly** — the served view changes at each handoff with **no mutable build** at any of
+them — emitting **exactly 33 events** (16 ons + 17 closures of the loop's own note, nothing else), crossing **no** promise
+and leaving **no demand** behind. A **dense** two-bar interval (300 notes = 600 entries) is **requested but never adopted**:
+the episode freezes and is priced, its obligation keeps its **original absolute deadline**, the served view never moves,
+nothing is emitted late and playback continues through the mutable fallback (**603** events over the same drive). The
+boundary is therefore described as **admissible workload against the lead granted**, not as a smaller supported window;
+capacity 2048, span <= 2 bars and the timing constants are untouched, and the claim is **intermittent immutable coverage**,
+never continuous service. With a slot owning its **coverage source**, the budget is non-zero while that slot has no
+admitted record, the enforced candidate is refused **by name** and the **same request is admitted after retirement**.
+
+**Recorded, not smoothed:** (1) the selector's refusal check reads the *pending* record while a post-freeze refusal lands
+on the *frozen* one (the freeze discharges the pending record), so the episode ends by **non-adoption** instead of a named
+`Blocked` state — the **next contract decision** for the owner; (2) the previously "intermittent" S4b.7 helper failure is
+now **reproducible with a named culprit** (`test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one`:
+after it, a later demoted switch stays pending although the target's launch is ready and holds are zero; re-creating the
+TrackManager and pool inside a probe does not clear it), so the three new fixtures are deliberately registered **before**
+it; (3) dropping the retry admission's sibling charge fails no test (the dense shape is refused by its own derived cost);
+(4) the selector must be serviced at the lane's cadence, not every tick.
+
+Verification: focused **140/140** (was 137; +3 cases); full native **2794 / 2787 succeeded / 7 skipped / 0 failed**;
+capture build **SUCCESS** with the RAM1 line byte-identical (`variables 96,192` / `padding 1,640`, no re-base); strict
+validation valid; `git diff --check` clean. **No production line changed**, no gate flipped, no constant moved, no upload,
+no optimization series started. **Next steps the owner named:** task 6.4 (registered device profile) then 6.5 (controlled
+device qualification), with the fallback and qualification gates retained. Evidence:
+[`rolling-admission-boundary`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s310z-rolling-admission-boundary/EVIDENCE.md).
+
+
 ### Task 3.10 — activation audit: the production demand is stamped, and the two exempt paths are pinned
 
 **Activation's named blocker ("the clock-owner wiring") is answered with evidence, and no production line changed.** The

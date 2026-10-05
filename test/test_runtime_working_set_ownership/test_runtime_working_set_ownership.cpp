@@ -9286,6 +9286,217 @@ void test_activation_audit_the_launch_demand_is_unpositioned_and_never_judged() 
   sInterferenceBudgetEnforced = wasEnforced;
   TEST_ASSERT_FALSE_MESSAGE(sInterferenceBudgetEnforced, "and the fixture left the enforcement switch as it found it");
 }
+
+/// **Task 3.10 -- the rolling path's admission boundary, half 1: an admissible shape completes and emits exactly across
+/// repeated handoffs, with the interference budget enforced.**
+///
+/// The `H x K` sweep measures *completion given sufficient lead* on the service composition with the transport stopped;
+/// this drives the **playing** chain the production lane composes -- `serviceRollingPlaybackWindow` (selector) then
+/// `stepPlaybackViewMaintenance` (bounded worker) then `resolveRollingPlaybackWindow` (boundary validation and
+/// adoption) then the existing emitter -- with `sInterferenceBudgetEnforced` on, and counts the handoffs it performs.
+void test_rolling_path_admissible_shape_repeats_handoffs_under_enforcement() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  const uint64_t origin = clockManager.getCurrentTick();
+  nativePlaybackDeadlineClock = {origin, 1};
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the stamped playing caller opens the first interval's demand");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(6 * 768, runtime->rolling.startPhase,
+                                   "the selector targets the first aligned two-bar interval ahead");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(origin + 6 * 768, runtime->rolling.deadlineTick,
+                                   "with the absolute boundary as its deadline");
+  MidiSendCapture::reset();
+  PlaybackPathRows::reset();
+  const bool wasEnforced = sInterferenceBudgetEnforced;
+  sInterferenceBudgetEnforced = true;
+
+  // The suite's own lane drive (`rollingTestTick`: selector + one worker turn every 64 ticks, transport every tick), over
+  // 16 bars -- and nothing is asserted inside it, so a failure cannot leave the enforcement switch flipped for later
+  // fixtures. The counts below are what the drive saw.
+  uint32_t servingTicks = 0;
+  uint32_t viewChanges = 0;
+  uint32_t buildsAtAdoption = 0;
+  uint32_t lastView = runtime->viewSetIfPrewarmed()->lifecycle.current;
+  for (uint32_t delta = 1; delta <= 16 * 768 + 48; ++delta) {
+    const auto builds = Track::playbackOrderHotRebuildCount();
+    rollingTestTick(track, origin + delta, delta % 64 == 0);
+    if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving && track.playbackWindowServesSlot(2)) {
+      ++servingTicks;
+      const uint32_t current = runtime->viewSetIfPrewarmed()->lifecycle.current;
+      if (current != lastView) {
+        lastView = current;
+        ++viewChanges;
+        if (builds != Track::playbackOrderHotRebuildCount()) ++buildsAtAdoption;
+      }
+    }
+  }
+  sInterferenceBudgetEnforced = wasEnforced;
+
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, servingTicks,
+                                          "at least one interval is served from the immutable window");
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(2u, viewChanges,
+                                              "and the served view changes at each handoff: repeated handoffs");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, buildsAtAdoption,
+                                   "adoption reuses the prepared window: no mutable build at the boundary");
+  // The exact trace the existing rolling fixture pins for this drive, now under enforcement: 17 ons and 16 offs.
+  const uint32_t total = MidiSendCapture::count();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(33u, total, "16 bars and 48 ticks: 16 ons + 17 offs, and no other event");
+  uint32_t ons = 0;
+  uint32_t offs = 0;
+  uint32_t foreign = 0;
+  for (size_t i = 0; i < total; ++i) {
+    const auto event = MidiSendCapture::at(i);
+    if (event.data.noteData.note != 48) ++foreign;
+    else if (event.isNoteOn()) ++ons;
+    else ++offs;
+  }
+  // The drive starts one tick past the loop's bar-0 note-on, so the range holds bars 1..16's ons (16) and bars 0..16's
+  // closures (17): the same trace the existing rolling fixture pins, counted from the same boundary.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(16u, ons, "one note-on per bar in the driven range");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(17u, offs, "and its closure, one bar later");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, foreign, "and nothing else was emitted: no silence, no foreign note");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "an admissible shape crosses no promise, enforced or not");
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(2), "the admissible shape leaves no refused demand behind");
+}
+
+/// **Task 3.10 -- the rolling path's admission boundary, half 2: the shape just outside the charge is refused by name,
+/// keeps its obligation, and playback continues through the fallback.**
+///
+/// The selector probes the declared basis cost for its lookahead while the worker's admission prices the window's
+/// **derived** work at `H`, so a dense interval is *requested* (the demand is made) and then refused **by name** by the
+/// admission; the interval is served by the mutable fallback exactly as if no request had been made. The bound remains
+/// two bars and capacity 2048: what the refusal describes is the shape's **workload against the lead it was granted**,
+/// not a smaller supported window.
+void test_rolling_path_refused_shape_is_named_retained_and_falls_back() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  const uint64_t origin = clockManager.getCurrentTick();
+  // The dense root sits exactly inside the interval the selector targets first (bars 6..7 = [4608, 5376)), so the
+  // derivation sees 300 notes = 600 entries where the launch's own interval held four.
+  publishNotesInBarsRootForSlot(track.getLoop(2), 6, 7, 300);
+  const bool wasEnforced = sInterferenceBudgetEnforced;
+  sInterferenceBudgetEnforced = true;
+
+  nativePlaybackDeadlineClock = {origin, 1};
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the demand is made: the selector's lookahead is the declared basis cost");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(6 * 768, runtime->rolling.startPhase, "targeting the dense interval");
+  const uint64_t promised = runtime->rolling.deadlineTick;
+  MidiSendCapture::reset();
+  PlaybackPathRows::reset();
+  const uint32_t servedBefore = runtime->viewSetIfPrewarmed()->lifecycle.current;
+
+  // The same lane drive as the admissible fixture: the dense shape is *prepared* here, and the boundary decides.
+  uint32_t servingTicks = 0;
+  uint32_t viewChanges = 0;
+  bool sawFrozenDemand = false;
+  for (uint32_t delta = 1; delta <= 10 * 768 + 48; ++delta) {
+    rollingTestTick(track, origin + delta, delta % 64 == 0);
+    if (runtime->frozenViewRequest.active) sawFrozenDemand = true;
+    if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving && track.playbackWindowServesSlot(2)) {
+      ++servingTicks;
+    }
+    if (runtime->viewSetIfPrewarmed()->lifecycle.current != servedBefore) ++viewChanges;
+  }
+  sInterferenceBudgetEnforced = wasEnforced;
+
+  // **The boundary, on the playing path:** the dense interval is never adopted, the served view never moves, and the
+  // obligation is still there afterwards -- on whichever of the episode's two records the freeze left it.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, servingTicks, "the dense shape is never served from the immutable window");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, viewChanges, "and no handoff takes the served view");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(servedBefore, runtime->viewSetIfPrewarmed()->lifecycle.current,
+                                   "the served view is untouched");
+  TEST_ASSERT_TRUE_MESSAGE(sawFrozenDemand, "the shape was prepared for: its demand froze and was priced");
+  const PlaybackViewPendingRequest* pend = track.pendingViewRequest(2);
+  const bool retainedWithItsDeadline =
+      (pend != nullptr && pend->clockEpoch == 1 && pend->deadlineTick == promised) ||
+      (runtime->frozenViewRequest.active && runtime->frozenViewRequest.deadlineTick == promised);
+  TEST_ASSERT_TRUE_MESSAGE(retainedWithItsDeadline, "and the refused demand keeps its original deadline");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
+                                   "the refusal is not a crossed promise: nothing is served late");
+  // Playback continues through the fallback: the dense root's 600 events (bars 6..7) plus three of the launch's four
+  // (the drive starts one tick past the launch's bar-0 note-on, so that first event is outside the captured range).
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(603u, MidiSendCapture::count(),
+                                   "playback continues through the fallback, unaffected by the refusal");
+}
+/// **Task 3.10 -- the rolling path's admission boundary, half 3: the budget charges work, not only an admitted builder.**
+///
+/// A slot that is qualifying or retiring its coverage source has no admitted work record yet, and the per-track budget
+/// must still price it, otherwise a candidate's lead is checked against only part of the work on its track. This pins
+/// both directions in one fixture: with a sibling owning its coverage source the candidate is refused **by name** (the
+/// charge is the worst-case snapshot bound, not an observed count), and once that source has retired the very same
+/// request is admitted.
+void test_rolling_path_budget_charges_qualification_and_retirement_work() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* target = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  const uint64_t origin = clockManager.getCurrentTick();
+  const bool wasEnforced = sInterferenceBudgetEnforced;
+
+  // The target (the demoted, playing slot) starts its own qualification, which **owns** its coverage source.
+  nativePlaybackDeadlineClock = {origin, 1};
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the rolling demand is opened");
+  for (uint32_t turn = 0; turn < 512 && !target->ownsCoverageSource(); ++turn) {
+    nativePlaybackDeadlineClock = {origin + turn * 64 + 1, 1};
+    track.stepPlaybackViewMaintenance(static_cast<uint32_t>(origin), nullptr, false, nativePlaybackDeadlineClock);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(target->ownsCoverageSource(), "the target owns its coverage source while it qualifies");
+  // **The charge is real work:** the owner of a coverage source has no admitted builder yet, and the budget still
+  // prices it -- at the worst-case snapshot bound, which is why the enforced candidate below cannot fit any loop.
+  TEST_ASSERT_NULL_MESSAGE(target->activeViewBuildWork(), "qualification is not an admitted builder's record");
+  const uint32_t qualifyingCharge = track.playbackViewOutstandingGrains(1);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(1000u, qualifyingCharge,
+                                          "the budget charges the qualification's worst-case snapshot bound");
+  TEST_ASSERT_FALSE_MESSAGE(sInterferenceBudgetEnforced, "the enforced window is closed before this assertion");
+
+  // (A) Enforced: a candidate on the same track is refused **by name** because its lead is charged with that work.
+  SessionMidiEventVec& scratch = windowSourceScratch(1);
+  sInterferenceBudgetEnforced = true;
+  // Give the candidate's own slot a current root and a prewarmed runtime, so the only reason it can be refused is the
+  // sibling's charge (a rootless slot would refuse for its source and prove nothing about the budget).
+  commitRecordPassIntoTrackSlotOfLength(track, 1, 40 * 768);
+  Loop& candidateLoop = track.getLoop(1);
+  candidateLoop.loopLengthTicks = 40 * 768;
+  publishNotesInBarsRootForSlot(candidateLoop, 12, 13, 20);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(1));
+  scratch.clear();
+  const Track::PlaybackViewRequestResult refused =
+      track.requestPlaybackWindow(1, 12 * 768, scratch, {origin + 50000, 1});
+  sInterferenceBudgetEnforced = false;
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::CannotCompleteBeforeHandoff),
+                            static_cast<int>(refused),
+                            "the sibling's qualification work is charged against the candidate's lead");
+  const PlaybackViewPendingRequest* retained = track.pendingViewRequest(1);
+  TEST_ASSERT_NOT_NULL_MESSAGE(retained, "and the refused candidate keeps its obligation");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PlaybackViewPendingReason::CannotCompleteBeforeHandoff),
+                                  static_cast<uint8_t>(retained->reason), "named as retained, not dropped");
+
+  // (B) The charge is released with the work: once the qualification/retirement finishes, the very same request is
+  // admitted -- so the refusal above was attributable to the charge and to nothing else.
+  for (uint32_t turn = 0; turn < 16384 && target->ownsCoverageSource(); ++turn) {
+    nativePlaybackDeadlineClock = {origin + turn * 64 + 1, 1};
+    track.stepPlaybackViewMaintenance(static_cast<uint32_t>(origin), nullptr, false, nativePlaybackDeadlineClock);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(target->ownsCoverageSource(),
+                            "the qualification/retirement work had to finish for the pair to be honest");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.playbackViewOutstandingGrains(1)),
+                                   "and its charge is gone with it");
+  scratch.clear();
+  const Track::PlaybackViewRequestResult admitted =
+      track.requestPlaybackWindow(1, 12 * 768, scratch, {origin + 60000, 1});
+  sInterferenceBudgetEnforced = wasEnforced;
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                            static_cast<int>(admitted),
+                            "with the charge released the same request is admitted: the charge was the refusal");
+}
+
 int main() {
 
 
@@ -9354,6 +9565,9 @@ int main() {
   RUN_TEST(test_rolling_selector_preserves_existing_adjacent_refusal_and_deadline);
   RUN_TEST(test_rolling_boundary_rejects_stale_epoch_geometry_source_and_missed_tick);
   RUN_TEST(test_rolling_cancellation_retires_only_its_owned_request);
+  RUN_TEST(test_rolling_path_admissible_shape_repeats_handoffs_under_enforcement);
+  RUN_TEST(test_rolling_path_refused_shape_is_named_retained_and_falls_back);
+  RUN_TEST(test_rolling_path_budget_charges_qualification_and_retirement_work);
   RUN_TEST(test_rootless_restored_launch_requests_its_source_once_and_becomes_ready);
   RUN_TEST(test_immutable_launch_source_wait_does_not_hide_a_later_track);
   RUN_TEST(test_immutable_launch_sibling_interference_is_a_temporary_wait);
@@ -9487,5 +9701,6 @@ int main() {
   RUN_TEST(test_window_contention_boundary_is_predicted_by_the_declaration_and_named_when_crossed);
   // windowed-playback-generation task 3.10: the activation audit -- which production demand carries a qualified stamp,
   // and which production paths are deliberately exempt.
+  // windowed-playback-generation task 3.10: the rolling path's admission boundary on the playing chain.
   return UNITY_END();
 }

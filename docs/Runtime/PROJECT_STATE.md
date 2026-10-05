@@ -1,3 +1,28 @@
+**The rolling path's admission boundary is proved on the playing chain, and the earlier anomalous failure now has a
+named culprit (test-only slice).**
+Driving the lane's own composition (`rollingTestTick`: selector + one worker turn every 64 ticks, transport every tick) for
+16 bars with the interference budget **enforced**: an admissible two-bar shape is requested, prepared, adopted
+**repeatedly** (the served view changes at each handoff, no mutable build at any adoption), emits **exactly 33 events**
+(16 ons + 17 closures of the loop's own note, nothing else), crosses **no** promise and leaves **no** demand behind; a
+**dense** two-bar interval (300 notes = 600 entries, prepared cost beyond the lead the selector grants from the declared
+basis) is **requested but never adopted** -- the served view never moves, the episode freezes and is priced, its obligation
+keeps its **original absolute deadline**, nothing is emitted late and playback continues through the mutable fallback with
+the loop's own content (603 events). Capacity 2048, span <= 2 bars and every timing constant are unchanged, and what is
+proven is **intermittent immutable coverage, not continuous service**. With a slot owning its **coverage source**, the
+per-track budget is non-zero while that slot has no admitted work record, the enforced candidate on that track is refused
+**by name** and the **same request is admitted once the source retires**. **Findings recorded, not smoothed:** (i) the
+selector's refusal check reads the *pending* record while a post-freeze refusal is written on the *frozen* one, so the
+episode cannot enter the named `Blocked` state on that path -- **the next contract decision**; (ii) the earlier
+"intermittent" launch-test failure is now **reproducible with a named culprit**,
+`test_record_switch_respects_a_retained_stop_and_permits_an_admitted_one`, which leaves suite-global state that prevents a
+later demoted switch from committing (switch pending, target launch ready, holds 0; a probe re-creating the TrackManager +
+pool does **not** clear it; bisected at registration #89) -- mechanism still unidentified, and the three new fixtures are
+registered before it for that reason; (iii) dropping the retry admission's *sibling* charge fails no test, because the
+dense shape is refused by its **own** derived cost. Verification: focused **140/140** (was 137), full native **2794 / 2787
+succeeded / 7 skipped / 0 failed**, capture build SUCCESS with the RAM1 line byte-identical, strict validation and
+`git diff --check` clean, no production line edited, no upload, no optimization series started. Evidence:
+[`rolling-admission-boundary`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s310z-rolling-admission-boundary/EVIDENCE.md).
+
 **Activation's clock-wiring question is answered with evidence: the production demand is stamped; the launch and the
 capture edge are exempt by design (test-only slice).**
 Task 3.10's own records named *"the clock-owner wiring"* as what activation needs (*"the MIDI edge, the switch
