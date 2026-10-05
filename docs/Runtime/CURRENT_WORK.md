@@ -5190,6 +5190,20 @@ for stale roots; interval roots serve only the rootless case.** **Slice 7.3 must
 The red team also found the unaligned playhead-centred demand has no production caller (Rolling starts are multiples of
 1536), so slice 7.2 is correct but not acceptance-critical.
 
+**Second G2 pass on the revised 7.3/7.4 contract (2026-10-05): still BLOCKED.** B1/B2/B4 closed and `hasPendingSnapshotPublish()` stays
+false with all consumers unaffected, but five new blockers: R1 the interval start gate (`allowSnapshotConstructionStart` with
+`havePublishedSnapshot = hasPublishedIntervalRoot()`) never lets a rebuild or second demand start; R2 the stamp-based
+`committedPlaybackRetryCanProgress` rejects every unfrozen rootless request; R3 B5 is not closed — a derived-role release sweep
+cannot tell a Launch demand from a stale Rolling one and would release the pending-switch target every maintenance turn
+(livelock in the measured case); R4 box allocation/release would run under the `cpsid i` `RollingMetadataGuard`; **R5 (design
+level) a rootless slot has no continuous coverage** — the declared contract gives lookahead 4352 ticks against 1536-tick windows,
+so after the 1536-tick launch window the slot is silent until at least tick 4608 (the merged fallback gathers from the root and
+returns empty when rootless). Plus nine tightenings (identity growth breaking the `LoopPlaybackRuntime` size pins, the missing
+acceptance call site, the idempotent tuple omitting `coveredPassRevision`, dispatch cadence ≈ a quarter of the measured rate,
+stop release not wired, site-5 ordering, a missing in-flight owner term, and a device-leg preflight that no other track is
+recording). Full report: session scratch `delegations/…/report.md`; contract r2: `route-a-7.3-7.4-contract-r2.md`. **R5 needs an
+owner decision before 7.3/7.4 can proceed; no lifecycle code has been written.**
+
 **Slice 7.2 landed 2026-10-05 (native-first; no firmware behaviour change for existing consumers).**
 `CommittedEventRange::chunkIntersectsWindow` is now an **exact, modular, half-open span overlap** (wrapped chunks and
 wrapped windows each split into two segments) instead of the sampled `noteIntersectsWindow` delegation;
