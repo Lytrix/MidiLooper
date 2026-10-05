@@ -1,0 +1,60 @@
+{
+  "slice": "launch-path-trace",
+  "date": "2026-10-05",
+  "change": "windowed-playback-generation",
+  "device_image": "teensy41-capture-serial-window-qualification",
+  "track_lane_index": 7,
+  "run": "captures/s64-switch-06",
+  "method": "existing rows only; no firmware edit, no rebuild, no device action",
+  "target": {
+    "lane_slot_index": 4,
+    "operator_display_label": "Loop 5",
+    "census": {
+      "source": "captures/s64-window-census-01/census.json",
+      "note": "separate session; identity only",
+      "loop_length_ticks": 18432,
+      "committed_pass_count": 1,
+      "committed_event_count": 1144,
+      "has_root_content": false,
+      "root_is_current": false
+    }
+  },
+  "rows": {
+    "switch_queued": "Loop 5: Queued playback switch",
+    "switch_held": "Slot switch hold slot_switch_hold_exceeded track=7 target=4 age=3075 ticks",
+    "target_length_at_switch": "Sent loop length CC feedback: 24 bars (18432 ticks) -> CC=23",
+    "target_publication": [
+      "#CAP,7119760,RRQ,7,4,0,0,queued,none,none",
+      "#CAP,8957338,RRQ,7,4,0,0,running,none,none",
+      "#CAP,9140559,RRQ,7,4,0,0,terminal,none,committed"
+    ],
+    "target_rows_after_publication": 0,
+    "lane_work_same_run": {
+      "path": "snapshot",
+      "track": 7,
+      "slot": 5,
+      "windowLengthTicks": 1536,
+      "eventCount": 96,
+      "windowStartTick": [6154, 6922, 7690, 8458, 9226, 9994],
+      "atUs": [103955002, 105987625, 107989065, 109990482, 111991868, 113993303],
+      "playback_order_rows": 6
+    },
+    "note_edit_rows_in_switch_window": 3031,
+    "win_gap": {"rows": 32, "running_1": 29, "eligibleTurns_all_zero": true, "progressTurns_all_zero": true, "overruns_all_zero": true}
+  },
+  "checks": {
+    "mem_denied_lines": {"s64-switch-01": 0, "s64-switch-04": 0, "s64-switch-05": 0, "s64-switch-06": 0},
+    "queueAllCommittedPassesInto": "silent on failure (src/Loop/LoopSnapshotPublish.cpp:1869)",
+    "preparePlaybackLaunchForSlot_exits": "all silent except launch_legacy_dense (src/Track/TrackPlaybackWindowBuild.cpp:2163)",
+    "regression_covering_on_demand_root": "test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:8865"
+  },
+  "conclusions": {
+    "branch": "immutableLaunch true (target != active, 24-bar > kMaxDetailedWindowBars)",
+    "provision": "did not refuse",
+    "blocker_locus": "silent exit inside Track::preparePlaybackLaunchForSlot (src/Track/TrackPlaybackWindowBuild.cpp:2142-2204)",
+    "open_candidates": [":2151-2152 source request guard/failure", ":2167 prewarmRollingViews", ":2168/:2174-2185 build/Ready/Requested guards", ":2188 role/pending guard"],
+    "leading_hypothesis": ":2188 coverage role unavailable while an edit session rebuilt the active slot",
+    "retracted": ["missing whole-loop root as the cause", "no driver shape can give the lane work", "the 24-bar slot is lane index 5"],
+    "next_step": "no-firmware driver variation first (switch with the edit session provably closed); narrow diagnostic only if that does not discriminate"
+  }
+}

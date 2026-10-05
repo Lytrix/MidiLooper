@@ -1,4 +1,14 @@
 # The measurement, and what the switch-leg blocker actually is (classification)
+> **SUPERSEDED (2026-10-05, later the same day).** This file's *measurement* stands
+> (the target's length and the census root fields), but its **classification is
+> retracted**: the switch target's root publication did in fact complete
+> (`RRQ,7,4,…terminal,none,committed`), and the lane serves a demoted 24-bar slot in the
+> same run — so "the missing whole-loop root is the cause, a prerequisite outside the
+> lane" is wrong. The trace that replaced it, with citations, is
+> [`../2026-10-05-launch-path-trace/EVIDENCE.md`](../2026-10-05-launch-path-trace/EVIDENCE.md):
+> the first failed transition is a **silent exit inside
+> `Track::preparePlaybackLaunchForSlot`**. Read the findings below as history.
+
 
 The discriminating check the switch-leg slice named: **the switch target's runtime loop length**, read from the device's
 own selection feedback, plus the root fields the census reports for the same slots. The result classifies the blocker — and
