@@ -209,7 +209,7 @@ the next begins:
 | **C** | S4d, S4e, S2.6 quantisation | playback standby/fine-window work depends on F; display work has its own cap gate |
 | **D** | S6 | persistence-backed canonical residency + dirty-generation pinning (own DEC amendment) |
 | **E** | S7 | large-library scaling and continuity acceptance |
-| **F** | sibling **`windowed-playback-generation`** — planning artifacts plus DEC-108 and reassessment recorded; nothing implemented | its own execution gates before Apply; final S7/archive depends on F, S6 and combined continuity acceptance |
+| **F** | sibling **`windowed-playback-generation`** — planning artifacts, **DEC-108** and its reassessment recorded 2026-10-02, **plus implemented slices landed 2026-10-05**: window identity, the whole-take/lag rule, the readiness-holder vocabulary, the admission boundary on the playing chain, the native-force fixtures, and a registered windowed HITL profile with two authorized device runs. Its **capacity, scheduling and retention bounds remain unproven** and its own gates are open | its own execution gates before Apply; final S7/archive depends on F, S6 and combined continuity acceptance |
 
 **Standby is optional.** The base 60-slot requirement must be satisfied by the law alone; standby excerpts and
 visual detail windows are bounded optimisations on top, never a precondition for usability.
@@ -853,9 +853,11 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       validate strict. It takes over the acceptance criteria this change wrote for it (`S4C1` AC-1…AC-9 and `S4C45`
       F-1…F-8), inherits the four interfaces S2.1 needs, and now carries **its own DEC-108 and
       `ARCHITECTURE-REASSESSMENT.md` (landed 2026-10-02)** — the gate this change's `IMPLEMENTATION_CONTRACT.md` §4 sets
-      for it. **Nothing is implemented and no phase-F implementation may be applied here**, and DEC-108's capacity,
-      scheduling and retention bounds are recorded as **unproven** — `S2.3`'s `N` stays provisional until that change's
-      gates pass.
+      for it. *(Updated 2026-10-05: the sibling is no longer planning-only — it has landed implemented slices of its own
+      (window identity, publication/readiness/lag, the admission boundary, its native forces and a registered windowed
+      HITL profile with two authorized device runs), while its **own gates stay open**.)* **Nothing of it may be applied
+      here**, and DEC-108's capacity, scheduling and retention bounds are recorded as **unproven** — `S2.3`'s `N` stays
+      provisional until that change's gates pass.
 - [ ] **S2.11 The 64-slot / 64-bar / 3-notes-per-16th capacity claim cannot be met by this change (measured
       2026-10-02).** The owner's requirement — every one of the 64 slots minimally able to hold 64 bars at 3 notes
       per 16th — needs **393,216 events** (6,144/slot), and the answer is **no, by 6-7x**, with **three independent
@@ -882,9 +884,10 @@ and captures/s13-slope-evidence/extended-slope.json. -->
       requirements are retained here as a dependency contract (the immutable `PlaybackWindowGeneration` authority; `publishedSnapshot` narrowed to the
       checkpoint authority for undo/save; no whole-loop root merely because a slot sounds; the one-pass-late rule
       via S4c.3; separate measurement of snapshot-root bytes). The sibling is **CREATED 2026-10-02 as planning
-      artifacts only** ([`../windowed-playback-generation/proposal.md`](../windowed-playback-generation/proposal.md));
-      nothing of it exists in code and nothing may be applied from here. **S2.3's N stays provisional until its own
-      gates pass**.
+      artifacts** ([`../windowed-playback-generation/proposal.md`](../windowed-playback-generation/proposal.md)),
+      **implemented in part since 2026-10-05** (see row F); nothing of it may be applied from here. **S2.3's N stays
+      provisional until its own gates pass** — the sibling records today's **eight sounding roles** as the *current
+      capability* and derives no `N` of its own, so nothing here may be re-based on it yet.
       provisional until it lands**.
 
 > **Contract corrections binding on the stages below (`design.md` Revisions 18–22).** Each line names the task
@@ -4639,6 +4642,13 @@ has not run to completion.
 - [ ] S7 gates: S6 and phase F implemented/validated, then all prior applicable gates plus S7.1-S7.4 recorded
       with numbers, S7.5a — continuity envelope/oracle and S7.5b — dependency closure complete,
       S7.5 — combined continuity acceptance passing, and S7.6's session recorded as evidence.
+      **Status restated 2026-10-05 (task 6.6 of the sibling):** phase F is **not** implemented/validated — the sibling
+      carries implemented slices (window identity, publication, readiness-holder, lag rule, the admission boundary, its
+      native forces, a registered windowed HITL profile and two authorized device runs) but its **capacity, scheduling and
+      retention bounds stay unproven**, its gates are open, and its own hardware envelope (grain duration, service gaps
+      under load, contention, external clock, residency) is **NOT RUN**. So this gate's phase-F clause is **unmet**, and
+      nothing here may be re-based on the sibling yet: `S2.3`'s `N` stays provisional and no `N` has been derived on its
+      side (its own record states today's **eight sounding roles** as the current capability, not a law).
 
 ## Safeguards (valuable, not the strategy)
 

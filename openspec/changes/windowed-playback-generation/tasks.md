@@ -869,10 +869,23 @@ them. Nothing in this section may stand in for production behaviour with a stub 
 
 ## 6. Gates, sweeps and closeout
 
-- [ ] 6.1 Run the full native suite (`pio test -e native`) — verify every case passes and that no skipped or errored
+- [x] 6.1 Run the full native suite (`pio test -e native`) — verify every case passes and that no skipped or errored
   suite is counted as green
-- [ ] 6.2 Build the firmware env (`teensy41-capture-serial`) through the RAM1 budget guard — verify the build succeeds
+  *Verified 2026-10-05:* **2796 cases / 2789 succeeded / 7 skipped / 0 failed**, and at suite granularity **107 PASSED, 0
+  FAILED, 0 ERRORED** with **4 suites SKIPPED and named** — `test_serial_midi_input_read`, `test_offline_boot_recovery`,
+  `test_offline_undo_recovery`, `test_offline_workspace_recovery` (the isolated-recovery ABI / explicit-env suites the
+  `native` env configures out; the runner reports them `[SKIPPED]`, never `PASSED`, so none is counted as green). The 7
+  skipped **cases** carry their reasons in their names: `test_reconstructed_workspace_loads` ×3 and
+  `test_reconstructed_history_roundtrips` ×2 (*isolated recovery ABI build required*), `test_copied_slots_decode` ×1
+  (*set `MIDILOOPER_RECOVERY_SLOTS` to verified host-copy current/slots*) and
+  `diagnostic_only_reconstruct_175026_tagged_off_pairing` ×1 (a parked finding, diagnostic only).
+- [x] 6.2 Build the firmware env (`teensy41-capture-serial`) through the RAM1 budget guard — verify the build succeeds
   and the budget line is reported; do **not** flash without asking
+  *Verified 2026-10-05:* `pio run -e teensy41-capture-serial` → **SUCCESS** with the budget reported:
+  `variables 96,192 / ITCM 393,216 (code 391,576 + padding 1,640) / locals 34,880 | approved floor: padding >= 840`
+  (800 B above the floor; no re-base). The qualification env added later reports its own recorded line
+  (`code 392,232 + padding 984`). The board was **not** flashed by this task: every flash in this change's sessions was
+  made only after explicit authorization, and the two authorized runs are recorded under 6.5.
 - [ ] 6.3 Run the sweeps — verify loop length, content density, tempo, window span and competing deferred work are each
   varied and reported, and that a single configuration is never presented as the acceptance
   *Partially supplied 2026-10-05 — the **contention** and **window span** axes and part of **content density** are now
@@ -997,12 +1010,29 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   external-clock behaviour, memory high-water marks with content parity) are **still NOT RUN**, and the run says why:
   they need a **demand** (the owner's enablement decision for the rolling lane, or a leg that drives a demoted switch).
   The task stays open on all four.
-- [ ] 6.6 Update RWO's dependency records now that the sibling exists and carries its DEC and reassessment — verify RWO
+- [x] 6.6 Update RWO's dependency records now that the sibling exists and carries its DEC and reassessment — verify RWO
   `tasks.md` (S2.9/F) and `design.md:812` point at this change, and that S2.3's `N` and `S7 gates` status are restated
   accurately under [`docs/Authority/DOCUMENTATION_CLOSEOUT.md`](../../../docs/Authority/DOCUMENTATION_CLOSEOUT.md)
-- [ ] 6.7 Close out the docs — verify `docs/Runtime/PROJECT_STATE.md`, `docs/Runtime/CURRENT_WORK.md`,
+  *Updated 2026-10-05:* RWO's three records that still read "planning artifacts only" / "nothing is implemented" were
+  corrected to the accurate state — the **phase table's row F**, the **S2.9 block** and the **dependency-contract block**
+  in `tasks.md`, and **§3 Extracted stage** in `design.md:812` — each now naming what the sibling has actually landed
+  (window identity, publication, readiness-holder vocabulary, lag rule, the admission boundary on the playing chain, its
+  native forces, and a registered windowed HITL profile with two authorized device runs) while stating that its
+  **capacity/scheduling/retention bounds stay unproven**, its gates are open and **nothing of it may be applied from
+  RWO**. `S2.3`'s **`N` stays provisional**, with the reason sharpened: no `N` has been derived on the sibling's side
+  (its record states today's **eight sounding roles** as the current capability, not a law). The **`S7 gates`** entry
+  gained a status restatement: its phase-F clause is **unmet** — including the sibling's own hardware envelope being
+  **NOT RUN**. Both changes validate `--strict`.
+- [x] 6.7 Close out the docs — verify `docs/Runtime/PROJECT_STATE.md`, `docs/Runtime/CURRENT_WORK.md`,
   `docs/DELIVERABLE_TRACKING.md` and this change's own task list reflect the shipped state, and
   `openspec validate windowed-playback-generation --strict` is valid
+  *Verified 2026-10-05:* `PROJECT_STATE.md` and `CURRENT_WORK.md` carry this session's slices head-first (the native
+  split, the profile's registration and exercise halves, both device runs, the F-13 retraction and the F-14 fix with the
+  measured lane rows); `DELIVERABLE_TRACKING.md` now carries this change's own entry — it had **none**, so its absence was
+  the gap — recording what shipped, the two device corrections, the measured lane result and the named open items;
+  this task list reflects the same state, including the items that stay open. `openspec validate
+  windowed-playback-generation --strict` and `runtime-working-set-ownership --strict` are both valid, and
+  `git diff --check` is clean.
 - [ ] 6.8 **Continuity evidence handoff** — reference the runtime spec's *Continuous runtime operation has
   one end-to-end acceptance contract* and its task S7.5a — envelope/timing oracle, rather than inventing
   local end-to-end thresholds. Before enabling the affected production paths, allocate and verify the
@@ -1014,6 +1044,15 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   evidence to runtime task S7.5b — dependency closure and task S7.5 — combined continuity acceptance;
   passing this subsystem does not certify the whole runtime. S7.5b/S7.5 are downstream consumers, not
   prerequisites for producing this handoff; S7.5a's oracle/budget is upstream. Keep task 4.5's fault-injection results separate.
+  *Supplied 2026-10-05:* [`CONTINUITY-HANDOFF.md`](CONTINUITY-HANDOFF.md) — it states **no** local end-to-end threshold,
+  point-for-point at S7.5a's unpinned oracle (so the window/index/retention/page/closure allocation is recorded as
+  **owed**, not invented, and the enablement consequence is stated: the rolling path lives only in the dedicated
+  qualification env); it supplies the **native transition evidence** this change has, and the **hardware** evidence as
+  *partial and named as partial* — 50 service blocks under transport at the declared advance with zero overruns, and
+  `eligible=progress=0` everywhere, so grain duration, service gaps under load, contention, external clock and residency
+  were **not** measured; it relates this change to each of S7.5's assertions (coverage-fault names, the one-pass-late rule
+  as latency and never hidden execution, the closure fixtures) while leaving each number to S7.5a; and it routes the
+  artifact to **S7.5b/S7.5** as downstream consumers, with 4.5's fault-injection results kept separate.
 
   *Increment 3.10 (increment 8) landed 2026-10-02 — **source-lifetime repair, fairness repair, and the derived admission (not enabled)**. Two defects in my own
   earlier increments: (1) the fixture helper gathered the request source into a **stack-local** vector while the build reads `source_[cursor_]` **across turns**

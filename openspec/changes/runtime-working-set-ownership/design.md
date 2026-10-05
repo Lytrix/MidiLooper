@@ -811,11 +811,13 @@ descriptors only and reserves no canonical-copy capacity.
 
 **S2.9 is extracted** to a sibling change, `windowed-playback-generation`, carrying its own DEC and reassessment
 for the interval publication unit, per-window currency, the five gather call sites, LSV1 root authority and undo
-root pinning. The sibling was **CREATED 2026-10-02 as planning artifacts only**
+root pinning. The sibling was **CREATED 2026-10-02 as planning artifacts**
 ([`../windowed-playback-generation/proposal.md`](../windowed-playback-generation/proposal.md)); its own **DEC-108** and
 the sibling's `ARCHITECTURE-REASSESSMENT.md` landed 2026-10-02 (its capacity, scheduling and retention bounds stay
-unproven), and no implementation of it exists or
-may be applied from here — this change keeps S4c as contract-only work, not publication/root implementation; **S2.3's N stays provisional** and may not be
+unproven), and **since 2026-10-05 it carries implemented slices of its own** — window identity, publication, the
+readiness-holder vocabulary, the whole-take/lag rule, the admission boundary on the playing chain, its native-force
+fixtures and a registered windowed HITL profile with two authorized device runs — with its **own gates still open**.
+Nothing of it may be applied from here — this change keeps S4c as contract-only work, not publication/root implementation; **S2.3's N stays provisional** and may not be
 claimed as the memory law until that sibling lands.
 
 ### End-to-end continuity ownership (2026-10-02)
