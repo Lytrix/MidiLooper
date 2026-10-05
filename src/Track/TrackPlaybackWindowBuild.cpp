@@ -3554,6 +3554,8 @@ struct SnapshotGateLastState {
   uint8_t activeSlot = 0;
   uint8_t constructionUnits = 0;
   bool seen = false;
+  /// Progress, **excluded from the row cadence**: eligible owner turns so far (a turn that will step the selected loop).
+  uint32_t eligibleTurns = 0;
 };
 
 constexpr size_t kSnapshotGateTrackCount = Config::NUM_TRACKS;
@@ -3607,7 +3609,12 @@ TRACK_COLD_MEM void Track::reportSnapshotOwnerGateRow(uint8_t selectedSlot, uint
                            visualCacheNeedsFirstPaint, isRecording(), isPlaying(), isOverdubbing(), stepAdmits,
                            clauseAdmits, idleAllowed, eligible);
   SnapshotGateLastState& last = sSnapshotGateLast[trackIndex];
-  if (last.seen && last.verdicts == verdicts && last.selectedSlot == selectedSlot && last.activeSlot == activeSlot &&
+  if (eligible) ++last.eligibleTurns;
+  // A progress heartbeat: while the owner is stepping, one row per 16 eligible turns, so the progress fields are sampled
+  // mid-construction (state-change rows alone land on construction start/finish, where `cu` is 0). Bounded, and only
+  // while work is eligible.
+  const bool progressHeartbeat = eligible && (last.eligibleTurns % 16u) == 0u;
+  if (!progressHeartbeat && last.seen && last.verdicts == verdicts && last.selectedSlot == selectedSlot && last.activeSlot == activeSlot &&
       last.constructionUnits == constructionUnits) {
     return;
   }
@@ -3616,7 +3623,8 @@ TRACK_COLD_MEM void Track::reportSnapshotOwnerGateRow(uint8_t selectedSlot, uint
   last.activeSlot = activeSlot;
   last.constructionUnits = constructionUnits;
   last.seen = true;
-  SC_SNAPSHOT_GATE(trackIndex, selectedSlot, activeSlot, verdicts, constructionUnits);
+  SC_SNAPSHOT_GATE(trackIndex, selectedSlot, activeSlot, verdicts, constructionUnits, last.eligibleTurns,
+                   selected.inFlightSnapshotConstructionUnits(), selected.publishedSnapshotRevision());
 #else
   (void)selectedSlot;
   (void)activeSlot;

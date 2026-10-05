@@ -1439,14 +1439,15 @@ SC_MEM_ATTR void launchGateRow(uint8_t track, uint8_t slot, const char* exit, ui
 }
 
 SC_MEM_ATTR void snapshotGateRow(uint8_t track, uint8_t selectedSlot, uint8_t activeSlot, uint16_t verdicts,
-                                uint8_t constructionUnits) {
+                                uint8_t constructionUnits, uint32_t eligibleTurns, uint16_t inFlightUnits,
+                                uint32_t publishedRevision) {
   // The same **two delivery rules** as `launchGateRow` (and as the save-completion receipt), for the same measured
   // reason: this row is raised while the transport runs, and the ring is retained by design then. The row exists only
   // where its caller does -- which rows are owed, and on which state change, is production state
   // (`Track::reportSnapshotOwnerGateRow`). Bit order: see the declaration in the header.
-  if (serialWriteRoom(160)) {
+  if (serialWriteRoom(200)) {
     Serial.printf(SC_FMT("#CAP,%lu,DIAG,snap_gate,t=%u,s=%u,a=%u,u=%u,p=%u,sep=%u,fc=%u,wj=%u,hp=%u,lr=%u,vc=%u,"
-                         "rec=%u,play=%u,od=%u,step=%u,cl=%u,idle=%u,elig=%u\r\n"),
+                         "rec=%u,play=%u,od=%u,step=%u,cl=%u,idle=%u,elig=%u,st=%lu,cu=%u,rv=%lu\r\n"),
                   static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
                   static_cast<unsigned>(selectedSlot), static_cast<unsigned>(activeSlot),
                   static_cast<unsigned>(constructionUnits),
@@ -1454,11 +1455,12 @@ SC_MEM_ATTR void snapshotGateRow(uint8_t track, uint8_t selectedSlot, uint8_t ac
                   launchGateBit(verdicts, 3), launchGateBit(verdicts, 4), launchGateBit(verdicts, 5),
                   launchGateBit(verdicts, 6), launchGateBit(verdicts, 7), launchGateBit(verdicts, 8),
                   launchGateBit(verdicts, 9), launchGateBit(verdicts, 10), launchGateBit(verdicts, 11),
-                  launchGateBit(verdicts, 12), launchGateBit(verdicts, 13));
+                  launchGateBit(verdicts, 12), launchGateBit(verdicts, 13), static_cast<unsigned long>(eligibleTurns),
+                  static_cast<unsigned>(inFlightUnits), static_cast<unsigned long>(publishedRevision));
     return;
   }
   emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,snap_gate,t=%u,s=%u,a=%u,u=%u,p=%u,sep=%u,fc=%u,wj=%u,hp=%u,lr=%u,vc=%u,"
-                       "rec=%u,play=%u,od=%u,step=%u,cl=%u,idle=%u,elig=%u\r\n"),
+                       "rec=%u,play=%u,od=%u,step=%u,cl=%u,idle=%u,elig=%u,st=%lu,cu=%u,rv=%lu\r\n"),
                 static_cast<unsigned long>(micros()), static_cast<unsigned>(track),
                 static_cast<unsigned>(selectedSlot), static_cast<unsigned>(activeSlot),
                 static_cast<unsigned>(constructionUnits),
@@ -1466,7 +1468,8 @@ SC_MEM_ATTR void snapshotGateRow(uint8_t track, uint8_t selectedSlot, uint8_t ac
                 launchGateBit(verdicts, 3), launchGateBit(verdicts, 4), launchGateBit(verdicts, 5),
                 launchGateBit(verdicts, 6), launchGateBit(verdicts, 7), launchGateBit(verdicts, 8),
                 launchGateBit(verdicts, 9), launchGateBit(verdicts, 10), launchGateBit(verdicts, 11),
-                launchGateBit(verdicts, 12), launchGateBit(verdicts, 13));
+                launchGateBit(verdicts, 12), launchGateBit(verdicts, 13), static_cast<unsigned long>(eligibleTurns),
+                static_cast<unsigned>(inFlightUnits), static_cast<unsigned long>(publishedRevision));
 }
 
 SC_MEM_ATTR void winGateRow(uint8_t track, uint8_t slot, const char* exit, uint16_t flags, uint32_t loopLengthTicks,

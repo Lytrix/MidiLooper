@@ -1,3 +1,19 @@
+**2026-10-05 — `snap_gate` progress fields; the starved switch is a *rate* problem, not starvation (`captures/s64-progress-01`).**
+The qualification-only row gained `st=<eligible owner turns so far>,cu=<in-flight construction units completed>,rv=<published
+root revision>` and a **heartbeat row every 16 eligible turns** (so progress is sampled mid-construction and is no longer
+hidden by the shed `snapshot_unit` rows); the state-change key is unchanged. Native: the playing-track probe asserts the
+counter advances, `cu` is non-zero mid-construction and rows stay far fewer than turns; full native 2,802 / 7 skipped /
+2,795 succeeded / 0 failed; both capture builds SUCCESS with RAM1 line unchanged (`variables 96,192`; qualification
+`code 392,232 + padding 984`); marker audit 0 over the limit. **Device (rootless 18,432-tick target, `s=5,a=4,hp=0`, the
+starved shape reproduced -- `x=launch_requested,req=1`, then `slot_switch_hold_exceeded age=3072 ticks`):** the owner is
+serving the target the whole window at a steady **~105 eligible turns/s x 2 units** (`st` 5,073 -> 6,155 over 160.2 ->
+170 s, `cu` climbing in ~190-unit fragments), and `rv` is still 0 at 193.6 s -- the publication needs **well over 30 s**,
+against a hold bound of ~8 s (3,072 ticks). The rate is the same after the transport stops (`u=2`, `play=0`). So the
+failure is **throughput of the demoted body's rebuild against the switch hold**, not selection, gating or starvation.
+**Not done (a decision, not a fix here):** raising units/turn or the hold bound trades MIDI-timing margin (the owner's
+2-unit grain) against switch latency; or the windowed lane should serve the interval without the whole-root rebuild
+(F-8). The leg's display oracle again reported `ok=False`; not investigated.
+
 **2026-10-05 — `switch-trace` (`captures/s64-trace-01`) re-read: "no publication unit serviced under transport" is NOT established.**
 The capture's own ring shed the window (`RING,tier_a_evicted,3,first=139330174`, `RING,shed,60413`), so the absence of
 `snapshot_unit` rows between 146.5 s and 168.5 s is the shed, not non-service (the same caveat the earlier episode

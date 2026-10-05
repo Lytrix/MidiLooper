@@ -23,14 +23,18 @@ struct Row {
   uint8_t activeSlot = 0;
   uint16_t verdicts = 0;
   uint8_t constructionUnits = 0;
+  uint32_t eligibleTurns = 0;
+  uint16_t inFlightUnits = 0;
+  uint32_t publishedRevision = 0;
 };
 inline Row rows[64];
 inline size_t count = 0;
 inline void reset() { count = 0; }
 inline void record(uint8_t track, uint8_t selectedSlot, uint8_t activeSlot, uint16_t verdicts,
-                   uint8_t constructionUnits) {
+                   uint8_t constructionUnits, uint32_t eligibleTurns, uint16_t inFlightUnits,
+                   uint32_t publishedRevision) {
   if (count < sizeof(rows) / sizeof(rows[0])) {
-    rows[count] = Row{track, selectedSlot, activeSlot, verdicts, constructionUnits};
+    rows[count] = Row{track, selectedSlot, activeSlot, verdicts, constructionUnits, eligibleTurns, inFlightUnits, publishedRevision};
   }
   ++count;
 }
@@ -43,8 +47,10 @@ inline size_t countSelecting(uint8_t slot) {
   return seen;
 }
 }  // namespace SnapshotGateRows
-#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits) \
-  SnapshotGateRows::record(track, selectedSlot, activeSlot, verdicts, constructionUnits)
+#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits, eligibleTurns, inFlightUnits, \
+                         publishedRevision) \
+  SnapshotGateRows::record(track, selectedSlot, activeSlot, verdicts, constructionUnits, eligibleTurns, inFlightUnits, \
+                           publishedRevision)
 #include "../test_support/capture_storage_harness.inc"
 #include <cstdlib>
 #if BYPASS_STOP_UNDO_SAVE
@@ -2961,9 +2967,18 @@ void test_snapshot_owner_serves_a_rootless_pending_slot_while_the_track_plays() 
   t.forceSetState(TRACK_PLAYING);
   TEST_ASSERT_TRUE(t.isPlaying());
   TEST_ASSERT_TRUE(&t.loopWithPendingSnapshotPublish() == &target);
-  for (unsigned turn = 0; turn < 20000 && target.hasPendingSnapshotPublish(); ++turn) {
+  SnapshotGateRows::reset();
+  unsigned turns = 0;
+  for (; turns < 20000 && target.hasPendingSnapshotPublish(); ++turns) {
     t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
   }
+  // The row's progress fields: the eligible-turn counter advances with the turns the owner stepped (cadence unchanged:
+  // far fewer rows than turns), and an in-flight construction reports its completed units.
+  TEST_ASSERT_TRUE(SnapshotGateRows::count >= 2 && SnapshotGateRows::count < turns);
+  TEST_ASSERT_TRUE(SnapshotGateRows::last()->eligibleTurns > SnapshotGateRows::rows[0].eligibleTurns);
+  bool sawUnits = false;
+  for (size_t i = 0; i < SnapshotGateRows::count && i < 64; ++i) sawUnits |= SnapshotGateRows::rows[i].inFlightUnits > 0;
+  TEST_ASSERT_TRUE(sawUnits);
   TEST_ASSERT_FALSE_MESSAGE(target.hasPendingSnapshotPublish(), "a playing track must still serve the pending slot");
   TEST_ASSERT_TRUE(target.publishedSnapshotIsCurrent());
 }

@@ -318,7 +318,11 @@ SC_MEM_ATTR void launchGateRow(uint8_t track, uint8_t slot, const char* exit, ui
  *  **which loop the publication owner was about to work on, and which of its gates refused.**
  *  Wire form: `DIAG,snap_gate,t=<track>,s=<selected slot>,a=<active slot>,u=<construction units this call>,p=<0|1>,`
  *  `sep=<0|1>,fc=<0|1>,wj=<0|1>,hp=<0|1>,lr=<0|1>,vc=<0|1>,rec=<0|1>,play=<0|1>,od=<0|1>,step=<0|1>,cl=<0|1>,`
- *  `idle=<0|1>,elig=<0|1>`.
+ *  `idle=<0|1>,elig=<0|1>,st=<n>,cu=<n>,rv=<n>`.
+ *  The **progress fields** answer "is the selected loop being *serviced*, and how fast" without the ring's `snapshot_unit`
+ *  rows (which are shed under transport): `st` is this track's cumulative count of **eligible** owner turns, `cu` the
+ *  selected loop's in-flight construction units completed so far (0 when none) and `rv` its published root revision.
+ *  They are not part of the state-change key; a **heartbeat row every 16 eligible turns** samples them mid-construction.
  *  `s` is the loop `Track::loopWithPendingSnapshotPublish` returned — **not** the track's active loop unless it won the
  *  selector, and `a` is printed beside it so a reader sees that without knowing the code. `p`/`sep`/`fc`/`wj`/`hp` are
  *  that loop's `hasPendingSnapshotPublish` / `pendingSnapshotSessionExitQueued` /
@@ -335,7 +339,8 @@ SC_MEM_ATTR void launchGateRow(uint8_t track, uint8_t slot, const char* exit, ui
  *  6 `visualCacheNeedsFirstPaint`, 7 `isRecording`, 8 `isPlaying`, 9 `isOverdubbing`, 10 `allowSnapshotIdleStep`,
  *  11 the four-term clause, 12 `snapshotIdleAllowed`, 13 `snapshotEligible`. */
 SC_MEM_ATTR void snapshotGateRow(uint8_t track, uint8_t selectedSlot, uint8_t activeSlot, uint16_t verdicts,
-                                 uint8_t constructionUnits);
+                                 uint8_t constructionUnits, uint32_t eligibleTurns, uint16_t inFlightUnits,
+                                 uint32_t publishedRevision);
 
 /** The **rolling demand path**'s gate row (`DIAG,win_gate`) — the same qualification-only, state-change-emitted
  *  instrument as `launch_gate`/`snap_gate`, on the third and last silent family of the demand side. Every exit of
@@ -653,12 +658,15 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 /// (`Track::reportSnapshotOwnerGateRow`), so a substituted recorder observes exactly the rows the device would emit.
 #if SC_QUALIFICATION_ROWS_ENABLED
 #ifndef SC_SNAPSHOT_GATE
-#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits) \
-  DebugSessionCapture::snapshotGateRow(track, selectedSlot, activeSlot, verdicts, constructionUnits)
+#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits, eligibleTurns, inFlightUnits, \
+                         publishedRevision) \
+  DebugSessionCapture::snapshotGateRow(track, selectedSlot, activeSlot, verdicts, constructionUnits, eligibleTurns, \
+                                       inFlightUnits, publishedRevision)
 #endif
 #else
 #ifndef SC_SNAPSHOT_GATE
-#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits) ((void)0)
+#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits, eligibleTurns, inFlightUnits, \
+                         publishedRevision) ((void)0)
 #endif
 #endif
 /// The rolling demand path's **gate row** — the same **qualification-only** gate and the same `#ifndef` substitution
@@ -842,7 +850,8 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #define SC_LAUNCH_GATE(track, slot, exit, flags, loopLengthTicks, launchPreparation) ((void)0)
 #endif
 #ifndef SC_SNAPSHOT_GATE
-#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits) ((void)0)
+#define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits, eligibleTurns, inFlightUnits, \
+                         publishedRevision) ((void)0)
 #endif
 #ifndef SC_WIN_GATE
 #define SC_WIN_GATE(track, slot, exit, flags, loopLengthTicks, requestResult) ((void)0)

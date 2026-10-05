@@ -1510,6 +1510,12 @@ LOOP_COLD_MEM bool Loop::hasInFlightSnapshotConstruction() const {
   return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->construction;
 }
 
+LOOP_COLD_MEM uint16_t Loop::inFlightSnapshotConstructionUnits() const {
+  if (!pendingSnapshotPublishBox_ || !pendingSnapshotPublishBox_->construction) return 0;
+  const size_t units = pendingSnapshotPublishBox_->construction->completedUnitCount();
+  return units > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(units);
+}
+
 LOOP_COLD_MEM bool Loop::hasPendingWrapJournal() const {
   return pendingSnapshotPublishBox_ &&
          !pendingSnapshotPublishBox_->queuedWrapJournals.empty();

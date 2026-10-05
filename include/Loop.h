@@ -1076,6 +1076,8 @@ struct Loop {
                                   uint32_t liveRecordCompletedTicks = 0);
   bool hasPendingSnapshotPublish() const;
   bool hasInFlightSnapshotConstruction() const;
+  /// Units the in-flight construction has completed (saturating; 0 when none). Qualification row progress only.
+  uint16_t inFlightSnapshotConstructionUnits() const;
   bool hasPendingWrapJournal() const;
   size_t pendingSnapshotQueuedPassCount() const;
   size_t pendingSnapshotAppliedPassCount() const;
