@@ -49,6 +49,7 @@ class ScaffoldTests(unittest.TestCase):
             self.assertIn("press_record", recipe)
             self.assertIn("| `DIAG,post_restore_census,` | OK |", recipe)
             self.assertTrue(result.markers_ok)
+            self.assertTrue(result.flow.is_file())
         self.assertEqual(get_stimulus(PARENT), parent_before)
         with self.assertRaises(KeyError):
             get_stimulus(f"{PARENT}-TEMP-T1")
@@ -67,6 +68,36 @@ class ScaffoldTests(unittest.TestCase):
                 scaffold.scaffold(PARENT, "T3", out_dir=Path(tmp), bars=0)
             with self.assertRaises(KeyError):
                 scaffold.scaffold("STIM-NOPE-01", "T3", out_dir=Path(tmp))
+
+
+class FlowSkeletonTests(unittest.TestCase):
+    def test_generated_flow_compiles_uses_only_existing_helpers_and_embeds_scope_and_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = scaffold.scaffold(PARENT, "F1", out_dir=Path(tmp), markers=["DIAG,post_restore_census,"])
+            text = result.flow.read_text(encoding="utf-8")
+            compile(text, str(result.flow), "exec")
+            self.assertIn("AUTHORIZED_TRACK = 8", text)
+            self.assertIn("AUTHORIZED_SLOTS = (4, 5)", text)
+            self.assertIn("'DIAG,post_restore_census,'", text)
+            self.assertIn("from hitl.actions.observation import await_markers", text)
+            self.assertNotIn("_send_short_press", text)
+            self.assertNotIn("out_port", text)
+
+    def test_generated_flow_runs_against_a_fake_context_and_records_missing_marker(self) -> None:
+        import importlib.util
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = scaffold.scaffold(PARENT, "F2", out_dir=Path(tmp), markers=["DIAG,zz_never,"])
+            spec = importlib.util.spec_from_file_location("draft_flow_f2", result.flow)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.MARKER_TIMEOUT_S = 0.1
+            collector = SimpleNamespace(snapshot=lambda: ["#CAP,1,ST,x"], line_count=lambda: 0)
+            ctx = SimpleNamespace(collector=collector, markers=[], config=SimpleNamespace(phase_wait_ms=0))
+            module.transport.phase_wait = lambda _ctx: None
+            self.assertFalse(module.run(ctx))
+            self.assertTrue(ctx.markers[-1].endswith("markers_missing"))
 
 
 class CliTests(unittest.TestCase):

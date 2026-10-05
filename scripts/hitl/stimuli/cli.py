@@ -159,6 +159,7 @@ def run_stimulus_command(args: argparse.Namespace) -> int:
         print(f"Created {result.spec.stimulus_id} (not registered)")
         print(f"Wrote {result.sidecar}")
         print(f"Wrote {result.recipe}")
+        print(f"Wrote {result.flow}")
         for marker in result.markers:
             print(marker.message)
         print("Run the parent scenario with --stimulus-temp-suffix "

@@ -69,7 +69,10 @@ Checklist before flashing:
 It writes an unregistered TEMP variant plus a pre-filled recipe under `captures/stimuli/`, lists the real gesture
 helpers and control constants (read from `scripts/hitl/`), and runs the marker pre-flight. `--require-markers`
 exits 1 when a declared marker fails, which is the "do not flash" signal. `NOT YET` is normal before the
-firmware row is written. Implementation: `scripts/hitl/stimuli/scaffold.py`.
+firmware row is written. It also writes `<ID>.flow.py`, a draft flow that composes only
+`hitl.actions.*` helpers, embeds the authorized track/slots and your markers, and leaves each unknown as a TODO
+(it is a draft under `captures/stimuli/`; moving it into `scripts/hitl/flows/` is a deliberate later step).
+Implementation: `scripts/hitl/stimuli/scaffold.py`.
 
 ## Ladder: stop at the first red step
 
