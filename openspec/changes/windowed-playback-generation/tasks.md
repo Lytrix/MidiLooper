@@ -640,6 +640,39 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   production **callers** (the preview requester and the `EditManager` lifecycle hooks). Implement these with
   the serving-path integration in 3.10/3.13 BEFORE 3.7 fallback removal; removal is not their prerequisite. Detail:
   [`evidence/2026-10-02-s313-preview-contract/EVIDENCE.md`](evidence/2026-10-02-s313-preview-contract/EVIDENCE.md).
+  *Increment 3.13 (integration half) landed 2026-10-05 — **test-only + host tooling; no `src`/`include` line changed**;
+  the **task stays open** on the production callers and the save clause.* The harness the first increment named as
+  missing now exists: `test/test_windowed_preview_integration/` links the **real** note-edit owner (session
+  lifecycle, store and projection, `sessionPlaybackPreviewRevision`, `sessionUndo`/`sessionRedo`, the undo owner,
+  `TrackManager::setSelectedTrack`) beside the **window lane** (`track_harness.inc`, whose `EditManager` global and
+  constructor are now guarded by `HARNESS_LINKS_REAL_EDIT_MANAGER` so a suite may supply the real ones; the suite is
+  registered in `scripts/native_test_link.py`'s firmware-boundary set). Five fixtures drive the **production** session
+  and mutation edges — `openNoteEditSession`/`closeNoteEditSession`, `Track::invalidateCaches(true)` →
+  `flushDeferredNoteEditDisplayRefresh` (the revision's advance), `pushSessionUndoOnKindChange`, `sessionUndo`,
+  `sessionRedo`, `setSelectedTrack` — and assert: the session **owns** the preview source at the session's own
+  revision (whole-loop coverage; the served stream is the session's projection, with a control that nothing serves
+  before the session exists); a mutation landing **between build grains** never publishes a mix (the cancelled
+  build's completion publishes nothing; the served window stays the previous revision field-for-field, then the new
+  revision is adopted); in-session **undo/redo** advance the revision and the served preview follows the session's
+  projection; the production **focus route** cancels the departing track's preview as `SelectedTrackChanged`
+  (nothing torn, no handoff owed, control on the incoming track); and the production **exit** makes the committed
+  successor owed while the preview keeps serving, a repeated exit is `AlreadyHandedOff`, and adoption discharges it.
+  Red-proofs: **MA1** (the deferred refresh does not advance the playback preview revision) fails two fixtures,
+  **MA2** (the session open does not bump the revision) fails one, **MA3** (`cancelPreviewWindowForSlot` skips the
+  shared-view row: the un-released candidate blocks the new revision) fails one — each restored byte-identically.
+  Verified: focused **5/5**, full native **2,815 / 7 skipped / 2,808 succeeded / 0 failed**, `teensy41-capture-serial`
+  SUCCESS with the RAM1 line byte-identical (`variables 96,192`; `code 391,576 + padding 1,640`; floor 840), `git diff
+  -- src include` empty, `git diff --check` clean, strict validation valid. **Recorded limits:** the FSM's five
+  `src/EditStates` TUs cannot be linked natively (host toolchain rejects their narrowing initializers, e.g.
+  `EditStartNoteState.cpp:69`), so their four entry points are observable no-ops while the session's store, revision,
+  undo/redo entries and lifecycle are real; the redo is asserted at the preview boundary rather than as a byte-exact
+  redo of the fixture's own hand-written row (the session's current-state model is built from the rematerialized
+  loop); loop storage survives between fixtures, so the helper adopts a prepared successor. **Still owed:** the
+  production callers (the preview requester at the revision-advance seam and the `EditManager` mutation/re-focus/exit
+  hooks — they belong with the stage that admits the committed requester, since a published window is consumed by the
+  windowed serving path) and fixture 2.12's `then save` clause (the storage closure lives in the storage harnesses).
+  Detail:
+  [`evidence/2026-10-05-s313-preview-integration/EVIDENCE.md`](evidence/2026-10-05-s313-preview-integration/EVIDENCE.md).
 
 - [ ] 3.14 **Integrate undo/redo audible handoff** — establish a production-path fixture before changing
   `refreshPlaybackAfterCapturePassStateChange` and its capture/overdub undo/redo callers. Extend the existing

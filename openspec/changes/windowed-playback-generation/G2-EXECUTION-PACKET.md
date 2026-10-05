@@ -1063,3 +1063,70 @@ suite + the `teensy41-capture-serial` build with the RAM1 guard. Detail:
 - **Verified:** focused **80/80**, full native **2719 / 2712 / 7 / 0**, build SUCCESS, RAM1 line byte-identical; `sizeof(LoopPlaybackRuntime)` **6 640 → 6 648** target only (host 6 544 unchanged).
 - **Next:** step 3's instrumentation + device leg, then step 4's formula and enforcement; coalescing is *not* implemented (recorded).
 - Detail: [`evidence/2026-10-03-s310q-track-interference-budget/EVIDENCE.md`](evidence/2026-10-03-s310q-track-interference-budget/EVIDENCE.md).
+
+## Slice 3.13 (continuation) — fixture 2.12's integration half on a new harness combination (2026-10-05)
+
+### Identity and scope
+
+- **Change/task:** `windowed-playback-generation`, task 3.13 — its **owed** half: fixture 2.12's integration
+  clauses. The production callers (the preview requester and the `EditManager` lifecycle hooks) stay owed and are
+  **not** implemented here.
+- **Owner:** the note-edit owner (`EditManager`, linked **real**) beside the window lane (`Track` /
+  `RuntimePlaybackViewLifecycle`). No ownership move.
+- **Slice scope:** a new native suite (`test/test_windowed_preview_integration`) that links the **real** note-edit
+  owner and the **window lane** in one translation unit, plus five fixtures driving the production session
+  lifecycle, mutation edge and undo/redo entries.
+- **Non-goals:** no `src/`/`include/` change at all (test-only + host tooling); no production caller; no device
+  claim; fixture 2.12's `then save` clause (the storage closure is another harness).
+- **Preconditions:** slice 3.13's lane contract (2026-10-02) and its fixtures; `track_harness.inc`.
+
+### Why a new harness was the work
+
+The runtime working-set suite deliberately stubs the edit session, so driving a real one there would have been a
+new harness rather than a fixture — which the 2026-10-02 evidence named as owed. This slice is that harness: the
+session's own projection and revision, the real undo/redo entries and the real focus route are the inputs.
+
+### Oracle fixed before any test edit
+
+1. **Source ownership and currency.** With no published root, opening a session rematerializes the loop into the
+   session store; the published preview's identity must be `origin == Preview` at the **session's** revision, whole-loop,
+   and its served stream must equal the session's own projection.
+2. **No mixed or stale publication.** A content change that lands between build grains advances the revision; the
+   cancelled build's completion must publish nothing (served window unchanged field-for-field, still the previous
+   revision and content), and the new revision must be admitted, adopted and served.
+3. **In-session undo/redo.** The revision advances on each; the undo reverts the content; the served preview follows
+   the session's projection at each revision.
+4. **Re-focus.** The production focus route re-opens the session on the incoming track; the departing track's preview
+   is cancelled as `SelectedTrackChanged`, never tearing the served window and never owing a committed handoff.
+5. **Exit.** The production exit makes the committed successor owed while the preview keeps serving; a repeated exit
+   is named; adoption discharges the handoff.
+
+### Controls and coverage
+
+- F1's control: no window serves the slot before the session exists, and the revision starts at 0 (`setUp` resets the
+  session state, closing any session a previous fixture left open).
+- F4's control: the incoming track owns no preview, so cancelling there is `NothingToCancel`.
+- `TrackManager::setSelectedTrack`'s panel notification is recorded, so "the real focus route ran" is asserted rather
+  than assumed.
+
+### Red-proofs
+
+MA1 (the deferred refresh does not advance the playback preview revision) fails F2/F3; MA2 (the session open does not
+bump the revision) fails F1; MA3 (`cancelPreviewWindowForSlot` skips the shared-view row) fails F2 by blocking the new
+revision with the un-released candidate. Each production file restored byte-identically (sha256 compared).
+
+### Verification recipe
+
+`pio test -e native -f test_windowed_preview_integration` (5/5) → `pio test -e native` (2,815 / 7 skipped /
+2,808 succeeded / 0 failed) → `pio run -e teensy41-capture-serial` SUCCESS with the RAM1 line byte-identical (no
+production file changed) → `git diff -- src include` empty → `git diff --check` clean →
+`openspec validate windowed-playback-generation --strict`.
+
+### Completion record
+
+Fixtures and harness landed and green; three mutations red-proved with byte-identical restores; **the task stays
+open** on the production callers and fixture 2.12's save clause. Recorded limits: the FSM's five state TUs cannot be
+linked natively (host-toolchain narrowing in `src/EditStates/EditStartNoteState.cpp:69`), so their entries are
+observable no-ops; the redo is asserted at the preview boundary rather than as a byte-exact redo of the fixture's own
+hand-written row; loop storage survives between fixtures.
+Detail: [`evidence/2026-10-05-s313-preview-integration/EVIDENCE.md`](evidence/2026-10-05-s313-preview-integration/EVIDENCE.md).

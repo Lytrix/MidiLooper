@@ -96,8 +96,14 @@
 // defines as an observable output boundary instead of a fail-closed stub.
 ClockManager::ClockManager() : pendingStart(false) {}
 ClockManager clockManager;
+// The edit-session owner. Most suites only need the global (their fixtures never open a note-edit
+// session), so the constructor and the global stay here. A suite that links the **real** `EditManager`
+// (`src/EditManager.cpp`, e.g. the windowed-preview integration suite, whose subject *is* the edit
+// session's preview lifecycle) defines `HARNESS_LINKS_REAL_EDIT_MANAGER` and supplies both itself.
+#if !defined(HARNESS_LINKS_REAL_EDIT_MANAGER)
 EditManager::EditManager() {}
 EditManager editManager;
+#endif
 LooperStateManager looperState;
 uint32_t ClockManager::getCurrentTick() const { return currentTick; }
 PlaybackDeadlineClock nativePlaybackDeadlineClock{};

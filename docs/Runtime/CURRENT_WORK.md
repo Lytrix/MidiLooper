@@ -5180,6 +5180,34 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+### 3.13 — fixture 2.12's integration half on a new harness combination (2026-10-05; test-only + host tooling)
+
+**Authorized slice done: task 3.13's owed fixture half, no production line changed (`git diff -- src include` empty).**
+`test/test_windowed_preview_integration/` is the suite the 2026-10-02 evidence named as missing: it links the
+**real** note-edit owner beside the **window lane** in one native TU (so the preview a fixture sees is the session's
+own projection and revision, not a hand-built vector). Five fixtures drive the production session lifecycle, the
+mutation edge (`Track::invalidateCaches(true)` → `flushDeferredNoteEditDisplayRefresh`), `pushSessionUndoOnKindChange`
+/ `sessionUndo` / `sessionRedo` and `TrackManager::setSelectedTrack`; they assert source ownership and currency, that
+a mutation between build grains publishes no mixed or stale window, that undo/redo advance the revision with the
+served preview following the session's projection, that the focus route cancels the departing track's preview as
+`SelectedTrackChanged` without tearing or owing a handoff, and that the exit owes — and adoption discharges — the
+committed handoff while the preview keeps serving. Verified: focused **5/5**, full native **2,815 / 7 skipped /
+2,808 succeeded / 0 failed**, `teensy41-capture-serial` SUCCESS with the RAM1 line byte-identical (`variables
+96,192`; `code 391,576 + padding 1,640`; floor 840), `git diff --check` clean, strict validation valid; three
+mutations red-prove the fixtures with byte-identical restores (MA1 the deferred refresh's revision bump, MA2 the
+session open's bump, MA3 the cancellation's shared-view row). **Recorded limits, not smoothed over:** the FSM's five
+`src/EditStates` TUs cannot be linked natively at all — the host toolchain rejects their narrowing initializers
+(`EditStartNoteState.cpp:69` assigns a `uint32_t` to a `uint8_t` member), reproduced by a plain `g++ -fsyntax-only`
+outside this harness — so their four entry points are observable no-ops while the session's store, revision,
+undo/redo entries and lifecycle are real; the redo is asserted at the preview boundary rather than as a byte-exact
+redo of the fixture's own hand-written row; loop storage survives between fixtures, so the publish helper adopts a
+prepared successor when one exists. **Not claimed:** any production caller, any device result, fixture 2.12's `then
+save` clause (the storage closure is the storage harnesses'). **Still owed by 3.13:** the production callers — the
+preview requester at the revision-advance seam and the `EditManager` mutation/re-focus/exit hooks — which belong
+with the stage that admits the committed requester, since a published window is consumed by the windowed serving
+path (3.10/3.7). Evidence:
+[`2026-10-05-s313-preview-integration/EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s313-preview-integration/EVIDENCE.md).
+
 ### Route D — rootless effective-content window investigation (2026-10-05)
 
 **3.12 — legacy paged compatibility, fixture 5.5 increment landed 2026-10-05 (test-only).** `test/test_window_paged_legacy/` now pins over-capacity same-tick ordering across two source lists (2,400 events), explicit `RingFull`/page reuse, wrap-window filtering and a NoteOn/NoteOff pair spanning multiple pages. M-RING (no release of drained pages) fails all three cases to terminate; restoration was confirmed diff-clean. Focused 3/3, full native **2810 / 7 skipped / 2803 succeeded / 0 failed**, strict OpenSpec valid. Evidence: `openspec/changes/windowed-playback-generation/evidence/2026-10-05-s312-fixture-55/EVIDENCE.md`. **Not claimed:** device timing, no-tick-delay under real load, or production consumption. Task 3.12 stays open; the paged consumer is coupled to 3.7, and fixture 5.5's timing envelope still needs measurement.

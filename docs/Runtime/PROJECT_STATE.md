@@ -6180,3 +6180,37 @@ current; the only rootless long body — 18432 ticks, 5 passes — is on track 4
 capture builds SUCCESS with RAM1 byte-identical; marker audit clean. **Not claimed:** device-level starvation (it needs
 a demoted rootless target on the driven track — a bench write plus a reboot), no fix of the selector, no 6.4/6.5 or
 parity claim. Evidence: [`evidence/2026-10-05-snapshot-owner-gate/`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-snapshot-owner-gate/EVIDENCE.md).
+
+**2026-10-05 — `windowed-playback-generation`: task 3.13's owed fixture half landed on a new harness combination (test-only + host tooling; no production line changed).** The suite the 2026-10-02 preview-contract evidence
+named as missing now exists: `test/test_windowed_preview_integration/` links the **real** note-edit owner (session
+lifecycle, session store and projection, `sessionPlaybackPreviewRevision`, `sessionUndo`/`sessionRedo`, the undo
+owner, `TrackManager::setSelectedTrack`) beside the **window lane** (`track_harness.inc`, whose `EditManager` global
+and constructor are now guarded by `HARNESS_LINKS_REAL_EDIT_MANAGER`; the suite joins
+`scripts/native_test_link.py`'s firmware-boundary set). Five fixtures drive the **production** session and mutation
+edges — `openNoteEditSession`/`closeNoteEditSession`, `Track::invalidateCaches(true)` →
+`flushDeferredNoteEditDisplayRefresh`, `pushSessionUndoOnKindChange`, `sessionUndo`, `sessionRedo`,
+`setSelectedTrack` — and assert: the session **owns** the preview source at the session's own revision (whole-loop;
+the served stream **is** the session's projection, with a control that nothing serves before the session exists); a
+mutation landing **between build grains** publishes no mixed or stale window (the cancelled build's completion
+publishes nothing, the served window stays the previous revision field-for-field, then the new revision is adopted);
+in-session **undo/redo** advance the revision and the served preview follows; the production **focus route** cancels
+the departing track's preview as `SelectedTrackChanged` with nothing torn and no handoff owed (control: the incoming
+track owns no preview); the **exit** owes the committed successor while the preview keeps serving, names a repeated
+exit `AlreadyHandedOff`, and discharges the obligation on adoption. **Red-proofs:** MA1 (the deferred refresh does
+not bump the playback preview revision) fails two fixtures, MA2 (the session open does not bump) fails one, MA3
+(`cancelPreviewWindowForSlot` skips the shared-view row, so the un-released candidate blocks the new revision) fails
+one — each production file restored byte-identically (sha256 compared). Verified: focused **5/5**, full native
+**2,815 / 7 skipped / 2,808 succeeded / 0 failed**, `teensy41-capture-serial` **SUCCESS** with the RAM1 line
+byte-identical (`variables 96,192` / `code 391,576 + padding 1,640` / floor 840), `git diff -- src include` empty,
+`git diff --check` clean, strict validation valid. **Recorded limits:** the FSM's five `src/EditStates` TUs cannot be
+linked in a native suite at all — the host toolchain rejects their narrowing initializers (`EditStartNoteState.cpp:69`
+assigns a `uint32_t` to a `uint8_t` member; a plain `g++ -fsyntax-only` reproduces it outside this harness) — so their
+four entry points are observable no-ops while the session's content, revision, undo/redo entries and lifecycle stay
+real; the redo is asserted at the preview boundary rather than as a byte-exact redo of the fixture's own hand-written
+row (the session's current-state model is built from the rematerialized loop); loop storage survives between fixtures,
+so the publish helper adopts a prepared successor. **Not claimed / still owed:** the production callers (the preview
+requester at the revision-advance seam and the `EditManager` mutation/re-focus/exit hooks — they belong with the stage
+that admits the committed requester, since a published window is consumed by the windowed serving path, 3.10/3.7),
+fixture 2.12's `then save` clause (the storage closure is the storage harnesses'), no device evidence, and no 6.4/6.5
+or parity claim. Task 3.13 **stays open**. Evidence:
+[`evidence/2026-10-05-s313-preview-integration/`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-s313-preview-integration/EVIDENCE.md).

@@ -26,6 +26,10 @@ _FIRMWARE_BOUNDARY_SUITES = {
     # restored-library-stability 1.3: the on-demand library observation links the load/restore owners
     # against the in-memory SD card, so it needs the same hardware boundaries as the load suite.
     "test_library_observation_session",
+    # windowed-playback-generation 3.13 (fixture 2.12 integration): the note-edit owner is linked
+    # **real** (`src/EditManager*.cpp`) alongside the window lane, so the suite needs the same
+    # Arduino/SD hardware boundaries as the continuous-capture harness it builds on.
+    "test_windowed_preview_integration",
 }
 if env.get("PIOTEST_RUNNING_NAME") in _FIRMWARE_BOUNDARY_SUITES:
     env.Append(CPPPATH=["$PROJECT_DIR/test/test_support/firmware"])

@@ -1,0 +1,264 @@
+// Fail closed when the fixture accidentally enters an unrelated route.
+#define OFF_PATH() TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__)
+DisplayManager::DisplayManager() {}
+DisplayManager displayManager;
+void ClockManager::toggleTransport() { OFF_PATH(); }
+#if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+void TrackManager::forceMidiLedUpdate(uint32_t) {}
+#endif
+void DisplayManager::emitDisplayCaptureSnapshot(const Track&, uint8_t, uint32_t) {}
+void DisplayManager::refreshViewportAfterOverdubStop(Track&, uint8_t, uint32_t) {}
+// Some suites link the real Track stop-telemetry TU (S4b needs the switch's persistence request), so
+// these stop-path diagnostics must not also be defined here.
+#if !defined(HARNESS_LINKS_REAL_STOP_TELEMETRY)
+void emitOverdubStopDisplaySnapshot(Track&, uint8_t, uint32_t) {}
+void logMemoryAfterOverdubStop(uint32_t, const Loop&) {}
+void logOverdubStopStage(const Loop&, uint32_t, const char*, uint32_t, uint32_t, uint32_t, const char*, const StopPathStorageStats*, const PendingCapturePass*) {}
+const char* commitResultLabel(CommitResult) { return "native"; }
+void requestActiveLoopSlotPersist(Track&, uint8_t) { OFF_PATH(); }
+#endif
+#if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
+void Track::stopPlaying() { OFF_PATH(); }
+void Track::startPlaying(uint32_t, bool) { OFF_PATH(); }
+void Track::togglePlayStop() { OFF_PATH(); }
+#endif
+#endif
+// The record-stop commit route is a **separate** boundary from the play/stop transport neighbours above: one
+// fixture has to drive the production transport-stop route and assert that the resulting take *commits* with
+// content, and that route lives in `TrackCaptureStopCommit.cpp` + `TrackManagerTransportTick.cpp`. Those TUs
+// define `Track::stopRecording`, `Track::stopRecordingToStopped`, `Track::commitCaptureForStop` and
+// `TrackManager::handleTransportStop`, so the four stubs move behind this macro. Default stays OFF_PATH: only
+// a TU that defines the macro (and includes the real TUs) links them, and no fixture in the suite reached any
+// of the four before this. `stopPlaying`/`startPlaying`/`togglePlayStop` deliberately stay stubbed -- the
+// recording branch is the one under test, and the play branch must remain fail-closed.
+#if !defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
+void Track::stopRecording(uint32_t) { OFF_PATH(); }
+void Track::stopRecordingToStopped(uint32_t) { OFF_PATH(); }
+#endif
+#if !defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
+CommitResult Track::commitCaptureForStop(CommitReason, uint32_t, uint32_t, uint8_t) { OFF_PATH(); return {}; }
+#endif
+// A physical output boundary, not an unrelated domain route: silencing is reachable from both stop
+// destinations, so failing closed here left the whole `Stopped`-destination deferred drain without any
+// native coverage (see B03). Counting it instead keeps it observable -- a fixture can assert the track
+// was silenced -- without pretending the silence itself is under test. Reset in setUp.
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
+void Track::silenceTrackMidiOutput() { ++g_nativeSilenceTrackCalls; }
+#endif
+#if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+// `handleTransportStop` reaches these two, so a suite that drives that route makes them observable rather
+// than fail-closed. Neither weakens the fixture that drives it: `clearQueuedPlaybackStart` is a reset of a
+// queued start the transport-stop fixture never has, and `setMasterLoopLength` records the *track manager's*
+// adopted length while that fixture asserts the loop's own `loopLengthTicks` (set by the commit itself).
+// `queuePlaybackStartAtGrid`/`commitQueuedPlaybackStart` are NOT reachable from the route and stay
+// fail-closed, as do the play/stop neighbours above.
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
+#if defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
+void Track::clearQueuedPlaybackStart() {}
+// S4f.21: record the adopted value rather than dropping it, so a fixture can assert that the master
+// length came from the interval's *published* geometry. The real `masterLoopLength` is private and
+// this suite links the stop route, not the policy TU that owns its accessor, so the stub is the
+// observable boundary (matching the `g_nativeSilenceTrackCalls` convention above).
+void TrackManager::setMasterLoopLength(uint32_t length) {
+  g_nativeAdoptedMasterLength = length;
+  ++g_nativeAdoptedMasterLengthCalls;
+}
+#else
+void Track::clearQueuedPlaybackStart() { OFF_PATH(); }
+void TrackManager::setMasterLoopLength(uint32_t) { OFF_PATH(); }
+#endif
+#endif
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
+void Track::queuePlaybackStartAtGrid(int32_t, uint32_t) { OFF_PATH(); }
+void Track::commitQueuedPlaybackStart(uint32_t) { OFF_PATH(); }
+#endif
+// The record start ends by reclaiming disabled-pass storage. That reclaim is not the handoff under
+// test, so suites that drive a start keep it observable.
+#if defined(HARNESS_OBSERVABLE_START_RECLAIM)
+void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats*, bool) {}
+#else
+void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats*, bool) { OFF_PATH(); }
+#endif
+#endif
+#if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+// These are the persistence requests a switch/selection makes. Storage behavior belongs to the load
+// suites; suites driving the switch keep them observable so the role handoff is what is under test.
+#if defined(HARNESS_OBSERVABLE_SD_REFRESH)
+void StorageManager::markLoopSlotMaterialDirty(uint8_t, uint8_t) {}
+void StorageManager::admitLoopSlotPersist(uint8_t, uint8_t) {}
+void StorageManager::requestDeferredSaveState(const LooperState&, uint32_t, bool) {}
+#else
+void StorageManager::markLoopSlotMaterialDirty(uint8_t, uint8_t) { OFF_PATH(); }
+void StorageManager::admitLoopSlotPersist(uint8_t, uint8_t) { OFF_PATH(); }
+void StorageManager::requestDeferredSaveState(const LooperState&, uint32_t, bool) { OFF_PATH(); }
+#endif
+#endif
+// The note-edit **state FSM** is a boundary in this suite. Its five TUs cannot be linked here: on the
+// host toolchain their narrowing initializers are ill-formed (`src/EditStates/EditStartNoteState.cpp:69`
+// assigns `focus.last.startTick` (uint32_t) to a `uint8_t` member), so the entries are observable no-ops
+// rather than fail-closed -- opening a session legitimately enters one, and this suite's subject is the
+// session's *content, revision, undo/redo and lifecycle*, all of which are linked real below.
+#define OBSERVABLE_EDIT_STATE(Type) \
+void Type::onEnter(EditManager&, Track&, uint32_t) {} \
+void Type::onExit(EditManager&, Track&) {} \
+void Type::onEncoderTurn(EditManager&, Track&, int) {} \
+void Type::onButtonPress(EditManager&, Track&) {}
+OBSERVABLE_EDIT_STATE(EditNoteHomeState)
+OBSERVABLE_EDIT_STATE(EditSelectNoteState)
+OBSERVABLE_EDIT_STATE(EditStartNoteState)
+OBSERVABLE_EDIT_STATE(EditLengthNoteState)
+OBSERVABLE_EDIT_STATE(EditPitchNoteState)
+#undef OBSERVABLE_EDIT_STATE
+#if !defined(HARNESS_LINKS_REAL_STOP_TELEMETRY)
+uint8_t resolveTrackIndexForPersistence(const Track& track) {
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i)
+    if (&trackManager.getTrack(i) == &track) return i;
+  return Config::INVALID_TRACK_INDEX;
+}
+#endif
+// The switch path invalidates the display cache; suites that drive the switch keep this observable
+// instead of fail-closed, because the display is not the behavior under test.
+#if defined(HARNESS_OBSERVABLE_SLOT_CHANGE)
+// S4b.4: observable *and* recorded -- the slot identities the panel is told about are the assertion.
+void DisplayManager::invalidateForSlotChange(uint8_t track, uint8_t from, uint8_t to) {
+  SlotChangeObservation& observation = slotChangeObservation();
+  ++observation.count;
+  observation.track = track;
+  observation.from = from;
+  observation.to = to;
+}
+#else
+void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) { OFF_PATH(); }
+#endif
+// A suite that links the real StorageManager load path (which defines these two) opts out with
+// `HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD`; everything else keeps the fail-closed route.
+#if !defined(HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD) && !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+// The switch asks whether the target slot has a payload on SD. The harness has no card, so the
+// truthful observable answer is "no payload on SD"; the storage behavior is the load suites' subject.
+#if defined(HARNESS_OBSERVABLE_SD_REFRESH)
+bool StorageManager::hasLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) { return false; }
+#else
+bool StorageManager::hasLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) { OFF_PATH(); return false; }
+#endif
+// The switch path refreshes the target slot's payload from SD. The storage half of a switch belongs to
+// the load/restore suites, so it is observable here rather than fail-closed: the behavior under test is
+// the role handoff, not the SD read.
+#if defined(HARNESS_OBSERVABLE_SD_REFRESH)
+void StorageManager::refreshLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) {}
+#else
+void StorageManager::refreshLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) { OFF_PATH(); }
+#endif
+#endif
+#if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+// The selection/focus change asks storage to prioritize a restore. Storage is the load suites' subject;
+// suites driving the switch keep this observable.
+#if defined(HARNESS_OBSERVABLE_SD_REFRESH)
+void StorageManager::prioritizeLoopSlotRestoreForFocus(uint8_t, uint8_t) {}
+#else
+void StorageManager::prioritizeLoopSlotRestoreForFocus(uint8_t, uint8_t) { OFF_PATH(); }
+#endif
+#endif
+#if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+#if defined(HARNESS_OBSERVABLE_SD_REFRESH)
+void StorageManager::requestWorkspaceFooterPersistWhenSafe() {}
+#else
+void StorageManager::requestWorkspaceFooterPersistWhenSafe() { OFF_PATH(); }
+#endif
+#endif
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
+void Track::silenceSlotMidiOutput(uint8_t) { OFF_PATH(); }
+#endif
+#include "BarStepButtonHandler.h"
+BarStepButtonHandler::BarStepButtonHandler() {}
+BarStepButtonHandler barStepButtonHandler;
+bool BarStepButtonHandler::isBarStepButtonNote(uint8_t channel, uint8_t) const {
+  TEST_ASSERT_EQUAL_MESSAGE(1, channel, "fixture injects musical channel 1 only");
+  return false;
+}
+void BarStepButtonHandler::handleMidiNote(uint8_t, uint8_t, uint8_t, bool) { OFF_PATH(); }
+#if !defined(A34A_LINKS_REAL_MIDI_BUTTONS)
+MidiButtonProcessor::MidiButtonProcessor() {}
+MidiButtonManager::MidiButtonManager() {}
+MidiButtonManager midiButtonManager;
+void MidiButtonManager::handleMidiNote(uint8_t, uint8_t, uint8_t, bool) { OFF_PATH(); }
+#endif
+MidiFaderProcessor::MidiFaderProcessor() {}
+MidiFaderManager::MidiFaderManager() {}
+ControlSurfaceManager::ControlSurfaceManager() {}
+ControlSurfaceManager controlSurfaceManager;
+#if !defined(A34A_LINKS_REAL_TRACK_TRANSPORT)
+void ControlSurfaceManager::onEditEvent(EditEvent) { OFF_PATH(); }
+#endif
+void ControlSurfaceManager::handleMidiCC(uint8_t, uint8_t, uint8_t) { OFF_PATH(); }
+void ControlSurfaceManager::handleMidiPitchbend(uint8_t, int16_t) { OFF_PATH(); }
+void ClockManager::onMidiStart() { OFF_PATH(); }
+void ClockManager::onMidiStop() { OFF_PATH(); }
+void ClockManager::onMidiClockPulse() { OFF_PATH(); }
+void ClockManager::requestTransitionTo(ClockSource) { OFF_PATH(); }
+uint32_t ClockManager::setLastMidiClockTime(uint32_t) { OFF_PATH(); return 0; }
+#if !defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
+void TrackManager::handleTransportStop() { OFF_PATH(); }
+#endif
+MidiFaderActions::MidiFaderActions() {}
+
+// ---- the record-stop commit route's own boundaries (HARNESS_LINKS_REAL_TRANSPORT_STOP) ----------------
+// Linking `TrackCaptureStopCommit.cpp` + `TrackManagerTransportTick.cpp` brings the real record-stop commit
+// chain, and with it exactly these neighbours. They are the same classes of boundary the rest of this file
+// already handles, so they get the same treatment rather than new semantics:
+//  * display refresh after a record stop -- an empty body, mirroring `refreshViewportAfterRecordStop`'s
+//    sibling `refreshViewportAfterOverdubStop` above;
+//  * persistence queries -- false, so `handleTransportStop` never queues a workspace save, and the write
+//    requests below fail closed if that ever changes;
+//  * `Track::sendAllNotesOff` -- a physical output boundary, so it is observable for a suite that drives the
+//    stop route (no-op) and fail-closed otherwise.
+void DisplayManager::refreshViewportAfterRecordStop(Track&, uint8_t, uint32_t) {}
+#if !defined(HARNESS_LINKS_PLAYBACK_SWITCH_LANE)
+#if defined(HARNESS_OBSERVABLE_ALL_NOTES_OFF)
+void Track::sendAllNotesOff() {}
+#else
+void Track::sendAllNotesOff() { OFF_PATH(); }
+#endif
+#endif
+#if defined(HARNESS_LINKS_REAL_TRANSPORT_STOP)
+// `handleTransportStop` calls this only when the save query below says yes; it is defined so the route links,
+// and it fails closed if the route is ever entered.
+void StorageManager::admitGlobalMeta() { OFF_PATH(); }
+// The real `StorageManager::shouldQueueCurrentWorkspaceSave()` is already defined in the linked set and
+// references these; they answer "nothing is dirty, nothing needs a full write, nothing to auto-save", which
+// is the fail-closed answer for a suite that is not testing persistence.
+namespace StorageManagerInternal {
+CurrentSetStorage::AnchorFields currentSetAnchorFields;
+bool forceCurrentSetFullLoopWrite = false;
+bool anyAllocatedLoopEditStateDirty() { return false; }
+bool anyCurrentSetLoopSlotDirty() { return false; }
+}  // namespace StorageManagerInternal
+bool CurrentSetStorage::shouldAutoSaveBeforeLoadIntoCurrent(const AnchorFields&) { return false; }
+#endif
+
+// S4b.4 (undo clause): driving `TrackUndo::undoForLoop` -- the production undo call shape -- pulls three
+// symbols the suite did not need before. Each is stubbed the way this harness already treats its neighbours:
+// the edit manager's geometry flush stays **fail-closed** (an undo on a live edit session must not run here,
+// the same rule DEC-101 set for the switch lane), and the display/storage notifications are observable no-ops,
+// because they report the undo's effect rather than decide it.
+// (`LoopEditManager` is declared where the suite defines its other stub -- see the main TU.)
+void DisplayManager::invalidateLiveDisplayCache(bool) {}
+void StorageManager::admitSlotMeta(uint8_t, uint8_t) {}
+
+// ---- the note-edit owner's own boundary neighbours ------------------------------------------------
+// This suite links the **real** note-edit owner, so the two display/surface notifications its selection
+// and undo entries make are boundaries of the same kind the rest of this file already carries: they
+// *report* the session's effect (a sidebar refresh, the surface leaving length-edit mode) and decide
+// nothing about content, the lane or the revision. They are observable no-ops here, never fail-closed,
+// because the real session legitimately makes them.
+void DisplayManager::requestNoteInfoRefresh(Track&) {}
+void ControlSurfaceManager::resetLengthEditingModeOnNoteSelect() {}
+void ControlSurfaceManager::resetLengthEditingModeOnSessionBoundary() {}
+DetailedWindowContext DisplayManager::resolveDetailedWindow(const Track&, uint8_t, uint32_t) const {
+  OFF_PATH();
+  return DetailedWindowContext{};
+}
+// The button-action owner is never constructed on this suite's routes (no MIDI button is injected):
+// the constructor is defined only so the linked closure resolves, and nothing else about the class is
+// provided here.
+MidiButtonActions::MidiButtonActions() {}
