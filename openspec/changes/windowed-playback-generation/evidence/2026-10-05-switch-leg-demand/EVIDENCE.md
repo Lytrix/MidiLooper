@@ -98,3 +98,50 @@ an already-resident slot) may avoid the restore entirely.
 * F-7/F-8 or AC-8: no receipt, no publication, no boundary crossing.
 * The envelope: grain duration, service gaps under load, contention, external clock and residency remain **NOT RUN**.
 * That the switch *committed*: it was held and named, which is the firmware's own report, not a failure of this slice.
+
+---
+
+## Correction, same session — run 04 revises the cold-target reading and names a sharper blocker
+
+Two further runs were made. The preparation for them matters: the **reset must be a flash of the qualification image**,
+because `scripts/hitl_boot_census.py` (the documented reset-by-re-upload path) hard-codes
+`pio run -e teensy41-capture-serial -t upload` — the **default** env, where the rolling lane is compiled **off**. Using it
+would silently produce a run whose lane rows mean nothing, so the reset used here was
+`pio run -e teensy41-capture-serial-window-qualification -t upload` (its distinctive RAM1 line `code 392,232 + padding 984`
+confirms which image is on the board).
+
+* **Runs 02 and 03** (no reboot between runs) aborted at the leg's own precondition — `clear failed` after its retry —
+  so they never reached the switch. Recorded as setup failures, not evidence. The pattern is consistent: run 01 started
+  from a fresh boot, these did not.
+* **Run 04** (fresh qualification flash, then the same switch leg) reached the switch **and completed the target's
+  restore**: `RRQ,7,3,0,0,queued` → `RRQ,7,3,0,0,running` → **`RRQ,7,3,0,0,terminal,none,committed`**. So for this run the
+  "cold target" reading of run 01 does **not** apply — the source was resident — and the switch **still** held
+  (`slot_switch_hold_exceeded track=7 target=3 age=3073 ticks`).
+
+**What the rows show instead, and it is sharper than either earlier reading.** The whole window between the queue and the
+hold is 29 rows, and they contain **no preparation activity for the target at all**: no `capture_prewarm,track=7,slot=3`
+row (run 01 had one), no provision row, no `playback_build` for the slot, no launch row. The queue is reaffirmed and then
+nothing happens for eight seconds until the bound reports:
+
+```
+[132.981] Loop edit session entered — sent loop start/length/tempo fader feedback
+[132.981] [TRACK] LOOP_EDIT session refreshed for focus change
+[133.026] Loop 4: Queued playback switch
+[133.630] Loop 4: Reaffirmed playback switch
+[141.575] Slot switch hold slot_switch_hold_exceeded track=7 target=3 age=3073 ticks
+```
+
+**The named candidate, from the row immediately before the queue:** the *slot selection itself* opened a **LOOP_EDIT
+session** (`Loop edit session entered`, `LOOP_EDIT session refreshed for focus change`), and the pending switch's
+preparation is then never reached — which is consistent with the lane's own rules (`serviceRollingPlaybackWindow` refuses
+while an edit session is active) and with the S4b device legs, whose switches were prepared while the track played
+*without* one. That is now the leading explanation, and it is a **hypothesis with evidence**, not a measured mechanism:
+what is measured is the complete absence of preparation activity with the edit session open.
+
+**So the next attempt is precise and small:** exit the edit session (or select the target without entering one) **before**
+pressing its record control, then switch. Everything else — the switch gesture, the gating, the drain, the device-time
+reader — is already in place and red-proved.
+
+**The lane result is unchanged in both runs:** 45 and 85 `win_gap` blocks respectively (29 and 66 with `running=1`), every
+one `eligible=0`/`progress=0`, zero receipts, zero publications. The lane is dispatched under transport and is never given
+work, and each run's own capture says why for that run.

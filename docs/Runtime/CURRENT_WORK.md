@@ -12,7 +12,15 @@ capture explains it: the target's on-demand restore was queued and never complet
 anything to prepare. Two host defects of mine were found by driving it (my flag reached the leg's strict parser and aborted
 the first attempt; the port-lookup lesson recurred) and are now pinned, with M1 (order reversed) and M2 (gate removed)
 red-proving the new pins and the file restored byte-identically. A second device attempt aborted at its own precondition
-and is recorded as a setup failure, not evidence. **Next, precisely:** warm the target first (play it, then switch away and
+and is recorded as a setup failure, not evidence. **Run 04 revised the cause:** with a fresh qualification flash the target's restore **completed**
+(`RRQ,7,3,...terminal,none,committed`) and the switch still held, with **no preparation activity at all** between the queue
+and the hold — the leading cause (recorded as a **hypothesis** with its evidence) is the **LOOP_EDIT session** that the slot
+selection itself opens immediately before the queue, since the lane refuses while an edit session is active and the S4b
+device legs prepared their switches without one. Two runs made without a reboot aborted at the leg's own `clear failed`
+precondition and are recorded as setup failures, not evidence. A trap is recorded with them: the reset must flash the
+**qualification** image, because `hitl_boot_census.py` — the documented reset-by-re-upload path — hard-codes the **default**
+env, where the lane is compiled off. **Next, precisely:** exit the edit session (or select the target without entering one)
+before pressing its record control. **Next, precisely:** warm the target first (play it, then switch away and
 back) or let the queued restore complete, then re-run. Not claimed: the lane was not given work; F-7/F-8/AC-8 unverified;
 6.4/6.5 open.
 

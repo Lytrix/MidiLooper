@@ -984,8 +984,14 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   (`slot_switch_hold_exceeded track=7 target=3 age=3072 ticks`) — and the lane *still* with `eligible=progress=0`
   everywhere, which the same capture explains: the target was **cold** (its on-demand restore was queued —
   `RRQ,7,3,…queued`, `capture_prewarm … ready=0` — and never completed inside the run), so neither the legacy merge nor the
-  lane's launch had a source to prepare. **The next attempt is named:** warm the target first (play it, then switch away
-  and back) or let the queued restore complete before re-running. See
+  lane's launch had a source to prepare. *Revised by run 04:* with the target's restore **completed** the switch still
+  held, and the window between the queue and the hold contains **no preparation activity at all** — the leading (and
+  recorded-as-hypothesis) cause is now the **LOOP_EDIT session** that the slot selection itself opens immediately before
+  the queue, since the lane refuses while an edit session is active and the S4b device legs prepared their switches
+  without one. Also recorded: the reset for these runs must be a flash of the **qualification** image —
+  `scripts/hitl_boot_census.py`, the documented reset-by-re-upload path, hard-codes the **default** env, where the lane is
+  compiled off, so using it would silently invalidate the run. **The next attempt is named:** exit the edit session (or
+  select the target without entering one) before pressing its record control. See
   [`switch-leg-demand`](evidence/2026-10-05-switch-leg-demand/EVIDENCE.md). **Not claimed:** the lane was **not exercised**;
   F-7/F-8/AC-8 remain unverified on hardware; no firmware was changed and no oracle was bent to fit an observation. See
   [`s64-s65-device-leg-01`](evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md).
