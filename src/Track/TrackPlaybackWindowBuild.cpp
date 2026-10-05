@@ -3664,8 +3664,19 @@ struct RollingGateLastState {
 };
 
 constexpr size_t kRollingGateTrackCount = Config::NUM_TRACKS;
-/// The deciding bits of `sRollingGateLast.key`; see the header's declaration for the bit order.
-constexpr uint16_t kRollingGateChangeKeyMask = 0xFFBFu;  // all bits but 14 (`gr`, a progress counter)
+/// The bits whose change is a change of the **decision**. `coverageRoleAvailable` (10), `ownsCoverageSource` (11),
+/// `viewBuild.active()` (13) and outstanding grains (14) are **observation**: they toggle between two turns without the
+/// exit changing, and the device measured exactly that -- the `docs/Agents/hitl_authoring_traps.md` "dedupe that
+/// alternates forever" case, found by the leg rather than by a fixture. Three device runs on 2026-10-05
+/// (`captures/s64-win-gate-0{3,4,5}`, same 24-bar leg) measured the ladder: with every bit in the key **809** rows and
+/// up to **20** identical lines per state (`bld`/`rl` alternating, 758 of 775 consecutive rows differing only there);
+/// with only bits 11 and 13 cleared **817** rows (the wrong bit had been guessed -- `rl` is 10, not 11, and the
+/// alternation survived); with bits 10/11/13/14 cleared **57** rows, the only remaining differences being genuine
+/// (`len` 27, `al` 25 as the recorded loop grows). None of the four is a reason the row reports: every exit's own token
+/// names its decision, and when one of them clears the guard the **exit changes**, so the transition is still named. The
+/// kept bits are the ones that *are* reasons -- the entry trio (0-2), the not-playing terms (3-7), the not-servable pair
+/// (8-9), the demand-active input (12) and re-projection (15).
+constexpr uint16_t kRollingGateChangeKeyMask = 0x93FFu;
 #if defined(__IMXRT1062__)
 DMAMEM RollingGateLastState sRollingGateLast[kRollingGateTrackCount];
 #else

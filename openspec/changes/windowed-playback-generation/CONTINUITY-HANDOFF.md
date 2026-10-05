@@ -77,6 +77,17 @@ emitted once per state change. It observes only, is out of every non-qualificati
 is not a duration. It exists so that the next authorized run *measures* rather than infers which term refuses the lane's
 demand.
 
+**And it was then run on the device (2026-10-05, authorized): the inference is over, and the answer is not a lane defect.**
+`ep=1` in every row (the deadline clock *is* stamped), and the demand dies at its **entry** because the leg's committed
+loop is not a whole number of two-bar spans (`len=19200`, `al=0`) while it is demoted — so **this shape gives the lane no
+demand at all**, which is why the hardware half has nothing to measure yet. Where the loop *is* aligned the second gate is
+named (`x=win_not_servable`, `rt=0`). The device also corrected the row itself (its change key alternated forever through
+two observation bits: 809 → 57 rows). The registered verifier, replayed over the run, says the same thing in its own
+terms: `window_demand_observed` false, coverage and overrun checks true, receipts 0, `build_complete` 0. **Nothing in
+§3's "not measured" list changes** — the lane was never given a demand — and the next leg shape needs a span-aligned
+committed length (a leg-shape decision), with the root-currency question still the owner decision on record. See
+[`rolling-gate-row/DEVICE-RUN.md`](evidence/2026-10-05-rolling-gate-row/DEVICE-RUN.md).
+
 ## 4. The assertions S7.5 will judge, and how this change relates to them
 
 S7.5 requires, under sustained simultaneous playback / record-overdub / undo-redo / switching with

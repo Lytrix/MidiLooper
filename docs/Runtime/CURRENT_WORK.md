@@ -5189,10 +5189,31 @@ clause **after** its `return` (unreachable, left by the `snap_gate` slice); remo
 **Not claimed:** the row has **not** been read on hardware — 6.5's four hardware claims (grain duration and maximum
 service gaps, sustained multi-track playback under capture/persistence contention, external-clock behaviour, memory
 high-water marks with boundary content parity) are still **NOT RUN**, and F-7/F-8/AC-8 remain unverified; nothing is
-checked off. **The next authorized step** is an upload of `teensy41-capture-serial-window-qualification` plus the
-registered windowed leg on a demoted active slot (the leg's own 24-bar take produces one) — the row then says whether
-the demand is refused at its entry or admitted and built. Evidence:
-[`rolling-gate-row`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-rolling-gate-row/EVIDENCE.md).
+checked off.
+
+**Then the owner authorized the upload and the registered leg, and the row both answered the question and exposed a
+defect in itself (three device episodes, `captures/s64-win-gate-0{3,4,5}`).** *The answer:* the demand on the driven
+track dies at its **entry** — the loop the leg's own record stop commits is **not a whole number of two-bar spans**
+(`len=19200` = 25 bars, `al=0`) while it *is* demoted (`av=1`) — and `ep=1` in **every** row, so the *clock stamp*, the
+candidate five runs of inference had carried, is **refuted**; where the loop *is* aligned the second gate is named
+instead (`x=win_not_servable`, `rt=0`, the rootless-demoted-slot tension of the switch-leg record, now measured rather
+than deduced). *The defect:* the row's own **change key** was wrong — bits 10 (`coverageRoleAvailable`) and 13
+(`viewBuild.active()`) are observation, not decisions, and with them in the key the row alternated A↔B forever
+(`docs/Agents/hitl_authoring_traps.md`'s "dedupe that alternates forever"): **809 rows** in one leg with up to **20**
+identical lines per length step. Run 04 is kept in the record because it is the *wrong first guess* (clearing bits 11+13
+left `rl` alternating — the header lists `coverageRoleAvailable` at 10); with the corrected key the **same** leg is **57**
+rows and only genuine differences remain (`len`/`al` as the loop grows). The profile's **registered verifier** was
+replayed over run 05 (`captures/s64-win-gate-05-verify`): `window_demand_observed` false ("no slot owed a window build"),
+`windowed_service_coverage_under_transport` **true** (blocks=14, under_transport=1, permitted=64),
+`no_windowed_overrun_under_transport` **true**, receipts 0, `build_complete` 0 — the oracle's first line and the row say
+the same thing at different resolutions. **F-17 recorded, not patched:** the profile cannot be driven through the
+runner's *managed* capture path (it injects `--follow-serial-log`/`--out-dir` into the reused leg's strictly-parsed args,
+while the leg's own LOOP_EDIT precondition wants the managed boot banner), so the runs use `--serial-port` — the shape
+the two earlier successful legs used; both failures are reproduced in `s64-win-gate-01/-02`. **Not claimed:** the lane was
+never given a *demand*, so F-7/F-8/AC-8 and 6.5's four hardware claims stay **NOT RUN**, 6.4/6.5 stay open and nothing is
+checked off; the next shape needs a committed length that is a whole number of two-bar spans (a *leg-shape* decision).
+Evidence: [`rolling-gate-row`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-rolling-gate-row/EVIDENCE.md)
+and its [`DEVICE-RUN.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-rolling-gate-row/DEVICE-RUN.md).
 
 ### HITL authoring hygiene (docs-only, 2026-10)
 

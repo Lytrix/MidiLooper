@@ -101,14 +101,33 @@ unreachable code left by the `snap_gate` slice (the first `return` already class
 was harmless but wrong). It is removed with the `win_gate` entry added in the same list, and the boundary pins in both
 capture suites cover the family as it now stands.
 
-## 6. What this does *not* claim
+## 6. The device read (authorized after this slice's native verification)
 
-- **No device run.** The row has never been read on hardware from this slice: the qualification image must be flashed
-  (**not authorized here**) and the registered windowed leg re-run on a demoted active slot. F-7, F-8, AC-8 and the four
-  hardware claims of task 6.5 stay **NOT RUN**; **6.4 and 6.5 stay open.**
-- **No claim about what the device's exit will be.** The fixture pins that the row *names* the terms; it does not claim
-  the device is in the `ep=0` state. That is the measurement the next authorized run takes.
+The owner authorized the upload and the registered leg, and the row was read on hardware. Three device runs
+(`captures/s64-win-gate-0{3,4,5}`) measured the demand's decision **and found this row's cadence wrong** — the traps
+list's *"dedupe that alternates forever"*: 809 rows in one leg with up to 20 identical lines per state, because bits 10
+(`coverageRoleAvailable`) and 13 (`viewBuild.active()`) alternated A↔B while the exit never changed. The change key was
+corrected against that measurement (bits 10/11/13/14 are **observation**, not decisions); the same leg then produced
+**57 rows** with no alternation and only genuine differences left (`len`/`al` as the recorded loop grows). Run 04 is
+recorded too, because it is the *wrong first guess* (bits 11+13 cleared, `rl` still alternating) — the second fix
+followed the measurement, not the assumption.
+
+And the answer five runs of inference could not reach is now a row: `ep=1` in every row (the deadline clock **is**
+stamped, so the clock-stamp hypothesis is refuted), and the demand dies at its **entry** because the leg's committed
+loop is **not a whole number of two-bar spans** (`len=19200` = 25 bars, `al=0`) while it *is* demoted (`av=1`); where the
+loop is aligned, the second gate is named instead (`x=win_not_servable`, `rt=0`). Full record, including the profile's
+own oracle replayed over the run and the two host-tooling failures that shaped the invocation:
+[`DEVICE-RUN.md`](DEVICE-RUN.md).
+
+## 7. What this does *not* claim
+
+- **No F-7/F-8/AC-8 or hardware-envelope claim.** The lane was never given a *demand* in those runs — that is what the
+  rows show — so nothing about its service, timing or memory was measured. Task 6.5's four hardware claims stay **NOT
+  RUN**; **6.4 and 6.5 stay open**, and nothing is checked off.
+- **No claim about an exit the runs did not reach.** The fixture pins that the row *names* the terms; the device then
+  named them itself. Those are observations, not a claim that every exit has been seen on hardware.
 - **No instrumentation of `resolveRollingPlaybackWindow`.** That is the **consumption** path, called on the playback hot
   path per tick; only the off-clock demand turn is instrumented, per the instrumentation rule.
-- **No fix of anything the row might show.** If the device's entry term is the clock stamp, that is a separate finding
-  with its own owner and decision — the row's job is to end the inference, not to pre-empt the answer.
+- **No fix of what the row showed.** The unaligned committed length is a *leg-shape* matter, and the root currency is the
+  owner decision already on record (RWO's restore edge vs a DEC-108 source rule). The row's job was to end the
+  inference; it did.

@@ -10032,8 +10032,16 @@ void test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_ch
       RollingGateRows::countOf("win_serving") + RollingGateRows::countOf("win_ready") +
           RollingGateRows::countOf("win_waiting"),
       "the lane's own progress is named as the frame moves, not left implicit");
-  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(24u, RollingGateRows::count - rowsAtRequest,
-                                       "a state-change bound: not one row per lane turn (measured: 12 over 120 turns)");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(16u, RollingGateRows::count - rowsAtRequest,
+                                       "a state-change bound: not one row per lane turn (measured: 9 over 120 turns)");
+
+  // The **cadence the device found**: with `coverageRoleAvailable`/`viewBuild.active()` in the change key the row
+  // alternated A<->B forever (up to 20 identical lines per length step on the bench, `captures/s64-win-gate-03`). They
+  // are observation, not decisions, so they are outside the key; the drive reaches `Ready` twice (once per episode) and
+  // must emit one row each rather than one per toggle. This is what MR-W4 red-proves.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      2u, RollingGateRows::countOf("win_ready"),
+      "one row per decision: the role/progress bits must not re-emit the same state");
 
   // ---- (W5) A refusal raised before this family existed: with the transport down the demand is excluded by name.
   track.forceSetState(TRACK_STOPPED);

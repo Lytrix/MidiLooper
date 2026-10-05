@@ -1043,10 +1043,29 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   `TrackPlaybackWindowBuild.cpp` restored byte-identically (sha256 `27d6ffde…`). Verified: focused
   `test_runtime_working_set_ownership` **144/144**, `test_capture_ring` **16/16** with the new Tier-A boundary pin, full
   native **2,801 / 7 skipped / 2,794 succeeded / 0 failed**, both capture builds SUCCESS with RAM1 byte-identical, marker
-  audit 0 over, `git diff --check` clean, strict validation valid. **Still owed, and not claimed:** the row has **not
-  been read on a device** — that needs an authorized flash of the qualification image plus the registered leg re-run on a
-  demoted active slot, which is the next authorized step and the one that feeds 6.5's four hardware claims. See
+  audit 0 over, `git diff --check` clean, strict validation valid. **Owed at that point:** the row had not been read on a
+  device; that needed an authorized flash of the qualification image plus the registered leg re-run on a demoted active
+  slot — which the owner then authorized, below. Native evidence:
   [`rolling-gate-row`](evidence/2026-10-05-rolling-gate-row/EVIDENCE.md).
+
+  *Then the **authorized device run** (owner: "Authorize the upload + windowed leg now"), and it both read the answer and
+  found a defect in this row* (`captures/s64-win-gate-0{3,4,5}`, the registered profile through the content-verification
+  pipeline; `--serial-port` because the managed path injects flags the reused leg's strict parser rejects — **F-17**,
+  recorded not patched, with both failures reproduced in `s64-win-gate-01/-02`)*:* the demand on the driven track dies at
+  its **entry** because the loop the leg's own record stop commits is **not a whole number of two-bar spans**
+  (`len=19200` = 25 bars, `al=0`) while it *is* demoted (`av=1`) — and `ep=1` in **every** row, so the clock-stamp
+  candidate the earlier record carried is **refuted**; where the loop *is* aligned the second gate is named instead
+  (`x=win_not_servable`, `rt=0`). The row's own **change key was wrong** and only the device showed it: bits 10
+  (`coverageRoleAvailable`) and 13 (`viewBuild.active()`) alternated A<->B, the traps list's "dedupe that alternates
+  forever" — 809 rows in one leg with up to 20 identical lines per state; with the corrected key the **same** leg is
+  **57** rows with no alternation (run 04 is kept because it is the *wrong first guess*, bits 11+13, and it says so).
+  The profile's registered verifier was replayed over run 05 (`captures/s64-win-gate-05-verify`): `window_demand_observed`
+  false ("no slot owed a window build"), `windowed_service_coverage_under_transport` **true** (blocks=14,
+  under_transport=1, permitted=64), `no_windowed_overrun_under_transport` **true**, receipts 0 and `build_complete` 0.
+  **Not claimed, and the reason 6.4 stays open:** the lane was never given a *demand*, so F-7/F-8/AC-8 and 6.5's four
+  hardware claims remain **NOT RUN**; the next shape needs a committed length that is a whole number of two-bar spans (a
+  *leg-shape* decision), and the root-currency question stays the owner decision already on record. See
+  [`DEVICE-RUN.md`](evidence/2026-10-05-rolling-gate-row/DEVICE-RUN.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B
@@ -1090,6 +1109,12 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   the lane's own entry (`ep`/`av`/`al`) or something further in refuses. Full native after it: **2,801 / 7 skipped /
   2,794 succeeded / 0 failed**; both capture builds SUCCESS with RAM1 byte-identical. See
   [`rolling-gate-row`](evidence/2026-10-05-rolling-gate-row/EVIDENCE.md).
+
+  **Updated by the authorized run (same day):** the instrument then **read the demand's decision on hardware** and the
+  lane was still never given a demand -- the driven loop is unaligned (`len=19200`, `al=0`) and the clock is stamped
+  (`ep=1`), with `x=win_not_servable, rt=0` naming the second gate where the loop is aligned. So this task's four
+  hardware claims are **NOT RUN for a now-measured reason**, not for want of an instrument. See
+  [`DEVICE-RUN.md`](evidence/2026-10-05-rolling-gate-row/DEVICE-RUN.md).
 - [x] 6.6 Update RWO's dependency records now that the sibling exists and carries its DEC and reassessment — verify RWO
   `tasks.md` (S2.9/F) and `design.md:812` point at this change, and that S2.3's `N` and `S7 gates` status are restated
   accurately under [`docs/Authority/DOCUMENTATION_CLOSEOUT.md`](../../../docs/Authority/DOCUMENTATION_CLOSEOUT.md)

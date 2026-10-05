@@ -102,8 +102,9 @@ Flag bits: 0 `clock.epoch != 0`, 1 `shouldAvoidFullVisualRebuild`, 2 `loopLength
   be re-read; a 4 KB snap names the align edge).
 - Contract: `python3 scripts/check_marker_contract.py 'DIAG,win_gate,'` and `--audit`; `git diff --check`;
   `openspec validate windowed-playback-generation --strict`.
-- **Device: NOT RUN** — reading the row needs an authorized upload; recorded as owed with the exact command and the
-  question it answers.
+- **Device: NOT RUN at the time of writing** — the owner authorized the upload and the registered leg after this
+  packet's native verification, and the run's outcome (including a defect it found in this row) is the **Completion
+  record** below plus [`DEVICE-RUN.md`](DEVICE-RUN.md).
 - Evidence path: `openspec/changes/windowed-playback-generation/evidence/2026-10-05-rolling-gate-row/`.
 
 ## Completion record
@@ -133,12 +134,14 @@ Flag bits: 0 `clock.epoch != 0`, 1 `shouldAvoidFullVisualRebuild`, 2 `loopLength
   ordering or fallback behaviour changed.
 - [x] **Fixture implemented and discriminating:** `test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change`
   (cases W1–W5) in `test_runtime_working_set_ownership`, driving the production entry.
-- [x] **Red proofs (each restored byte-identically, sha256 `27d6ffde909d72566b7ab5bb94a1a2603072510fe99b974a7a928264f5f8f230`,
-  `git diff -- src` empty afterwards):** **MR-W1** (the entry exit goes silent) → *"Expected 1 Was 0. the exit that
-  refused names itself exactly once"*; **MR-W2** (dedupe removed) → *"Expected 1 Was 2. one row per state change,
-  never one per call"*; **MR-W3** (the shaping terms stop being told apart) → *"`av=0`: a loop the whole-take policy
-  admits never takes the windowed demand"*. Each mutation failed **exactly one** case (the new one).
-- [x] **Native verification:** focused `test_runtime_working_set_ownership` **144/144** (was 143);
+- [x] **Red proofs (each restored byte-identically, sha256 `c47bf2c5c5be4693…` before the cadence fix and
+  `f93c1da22fa574e5…` after it; `git diff -- src` empty afterwards):** **MR-W1** (the entry exit goes silent) → *"Expected
+  1 Was 0. the exit that refused names itself exactly once"*; **MR-W2** (dedupe removed) → *"Expected 1 Was 2. one row per
+  state change, never one per call"*; **MR-W3** (the shaping terms stop being told apart) → *"`av=0`: a loop the
+  whole-take policy admits never takes the windowed demand"*; **MR-W4** (every observation bit back in the change key,
+  the device's own alternation) → *"Expected 2 Was 4. one row per decision: the role/progress bits must not re-emit the
+  same state"*. Each mutation failed **exactly one** case (the new one).
+- [x] **Native verification:** focused `test_runtime_working_set_ownership` **144/144** (was 143),
   `test_capture_ring` **16/16** (with the new boundary pin); full `pio test -e native` **2,801 cases / 7 skipped /
   2,794 succeeded / 0 failed**, no ERRORED suite.
 - [x] **Build/RAM1:** `teensy41-capture-serial` **SUCCESS** (`variables 96,192 / code 391,576 + padding 1,640` —
@@ -146,13 +149,22 @@ Flag bits: 0 `clock.epoch != 0`, 1 `shouldAvoidFullVisualRebuild`, 2 `loopLength
   (`variables 96,192 / code 392,232 + padding 984` — byte-identical). No re-base.
 - [x] **Contract:** `check_marker_contract.py 'DIAG,win_gate,'` OK (14/31 bytes) and `--audit` 0 over;
   `git diff --check` clean; `openspec validate windowed-playback-generation --strict` valid.
-- [ ] **Device verification: NOT RUN.** Owed with its prerequisite named: an **authorized upload** of
-  `teensy41-capture-serial-window-qualification` plus the registered windowed leg on a demoted active slot (the leg's
-  own 24-bar take produces one). The row answers the question the four hardware claims of task 6.5 rest on: whether the
-  lane's demand is refused at its entry (`ep`/`av`/`al`) or admitted and built.
-- [x] **One defect found and fixed beside it (recorded, not glossed):** `isTierATextLine` carried a duplicated
-  `DIAG,launch_gate,` clause *after* its `return` — unreachable, left by the `snap_gate` slice. Removed; the function's
-  classification is unchanged, and both capture suites pin the family's boundaries.
+- [x] **Device verification: RUN** (authorized 2026-10-05, three episodes: `captures/s64-win-gate-0{3,4,5}`, the
+  registered profile through the content-verification pipeline). It **read the answer** and it **found a defect in this
+  row**: the demand dies at the entry because the leg's committed loop is **not span-aligned** (`len=19200`, `al=0`)
+  while demoted, with `ep=1` in every row (the clock-stamp hypothesis refuted) and `x=win_not_servable, rt=0` naming the
+  second gate where the loop *is* aligned; and the change key alternated A↔B through two observation bits (the traps
+  list's "dedupe that alternates forever") — 809 rows in one leg with up to 20 identical lines per state, corrected to
+  **57** on the same leg with no alternation. The profile's own oracle was replayed over the run
+  (`captures/s64-win-gate-05-verify`). Full record: [`DEVICE-RUN.md`](DEVICE-RUN.md).
+- [ ] **Still unmeasured:** F-7, F-8, AC-8 and task 6.5's four hardware claims — the lane was never given a *demand* in
+  these runs, so nothing about its service, timing or memory was measured. A leg whose committed length is a whole
+  number of two-bar spans is the next shape (a *leg-shape* decision), and the root-currency question stays the owner
+  decision already on record.
+- [x] **Two defects found and fixed beside it (recorded, not glossed):** (a) `isTierATextLine` carried a duplicated
+  `DIAG,launch_gate,` clause *after* its `return` — unreachable, left by the `snap_gate` slice; removed, classification
+  unchanged, and both capture suites pin the family's boundaries. (b) The row's own **change key** was wrong, and only the
+  device could show it: see the device bullet above (809 → 57 rows).
 - [x] **Durable docs:** `tasks.md` (6.4/6.5 notes), `CURRENT_WORK.md` § Now implementing, `PROJECT_STATE.md`,
   this directory's `EVIDENCE.md` + `win-gate-verification.json`; committed on the working branch
   `feature/windowed-playback-generation`.

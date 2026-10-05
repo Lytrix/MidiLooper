@@ -1,3 +1,27 @@
+**The rolling demand path's gate row was read on hardware: the demand dies at its **entry** because the leg's committed
+loop is not span-aligned, the clock-stamp hypothesis is refuted by the row, and the row's own change key turned out to
+alternate forever (809 -> 57 rows after the device said so).** The owner authorized the upload and the registered
+windowed leg, so the instrument landed earlier this session was read in three episodes
+(`captures/s64-win-gate-0{3,4,5}`, the qualification image, the registered profile through the content-verification
+pipeline). **The answer to five runs of inference:** every row carries `ep=1` — the deadline clock *is* stamped under
+transport — and the refusal is the entry's third term, span alignment: `x=win_window_ineligible, len=19200 (25 bars),
+av=1, al=0, pl=1`; where the loop *is* aligned the second gate is named instead (`x=win_not_servable, rt=0`). So the
+lane has never been given a *demand* by this leg shape at all — not because the lane is broken and not because the clock
+is missing. **The defect the device found in the instrument:** `win_gate`'s change key included two *observation* bits
+(`coverageRoleAvailable` bit 10, `viewBuild.active()` bit 13) that alternated A↔B while the exit never changed — the
+traps list's "dedupe that alternates forever": **809 rows** in one leg, up to **20** identical lines per length step. The
+correction followed the measurement, not the header's bit numbering (run 04's first guess cleared bits 11+13 and left
+`rl` alternating; it is kept in the record precisely because it was wrong), and the same leg then produced **57 rows**
+with only genuine differences left (`len`/`al` as the loop grows). The profile's registered verifier, replayed over the
+last run, agrees at its own resolution: `window_demand_observed` false, `windowed_service_coverage_under_transport`
+true (blocks=14, under_transport=1, permitted=64), `no_windowed_overrun_under_transport` true, receipts 0 and
+`build_complete` 0. **F-17 recorded, not patched:** the runner's managed-capture path injects
+`--follow-serial-log`/`--out-dir` into the reused leg's strict parser (both failures reproduced) while that leg's own
+LOOP_EDIT precondition wants the managed boot banner, so the runs use `--serial-port`. **Not claimed:** F-7/F-8/AC-8 and
+task 6.5's four hardware claims remain **NOT RUN** — the lane was never given a demand; 6.4/6.5 stay open, nothing is
+checked off, and the next leg shape needs a committed length that is a whole number of two-bar spans. Evidence:
+[`DEVICE-RUN.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-05-rolling-gate-row/DEVICE-RUN.md).
+
 **The rolling demand path now names its own exit on a device: `DIAG,win_gate` is the third and last silent family of the
 windowed lane's demand side, closing the rolling half of F-16 (firmware instrumentation + native proof; no device run, no
 task checkoff).** `Track::serviceRollingPlaybackWindow`'s ~20 exits returned a typed `RollingOutcome` to their caller with
