@@ -144,7 +144,7 @@ RECA_RE = re.compile(r"^RECA,(\d+),")
 WINDOW_OPEN_RE = re.compile(r"^DIAG,reentry_window_open,(\d+),")
 CANONICAL_RELEASE_RE = re.compile(r"^DIAG,canonical_release,(\d+),")
 CANONICAL_RELEASE_INTERVAL_RE = re.compile(
-    r"^DIAG,canonical_release_interval,(\d+),(\d+),(\d+),(\d+),(\d+)$"
+    r"^DIAG,(?:canon_rel_interval|canonical_release_interval),(\d+),(\d+),(\d+),(\d+),(\d+)$"  # old name: archived captures
 )
 REENTRY_RE = re.compile(r"^DIAG,reentry,([a-z_]+),")
 # The **overdub** leg's own identity chain (`response-driven-hitl-acceptance` task 2.2). `RECA`/`RECS` above
@@ -720,7 +720,7 @@ def analyse(text: str, *, leg: str, slot_a: int, slot_b: int,
                f"{all_windows[0][1][:120]}" if all_windows else ""), "setup", "L3")
 
     # L4 -- A's release is the one its **leg interval** retired on: the interval-qualified
-    # `canonical_release_interval` the firmware emits for it, or the overdub owner's floor-based plain read when
+    # `canon_rel_interval` (was `canonical_release_interval`) the firmware emits for it, or the overdub owner's floor-based plain read when
     # that legacy row is all there is. The slot-wide list is deliberately not a fallback on this leg -- its first
     # row is the seed's release, which would credit the leg with a retirement it did not produce.
     if leg == "od" and od_a is not None:

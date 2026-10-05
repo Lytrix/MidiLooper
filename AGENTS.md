@@ -40,6 +40,11 @@ here; read the relevant file on demand using the map at the bottom of this file.
    and record verification evidence before checkoff. Use [EXECUTION_PACKET.md](docs/Templates/EXECUTION_PACKET.md).
    This applies to future steps of existing changes; scale checks to risk, with no extra approval gate.
 
+8. Before writing a HITL test, serial marker, or Tier-A log line, read
+   [`docs/Agents/hitl_authoring_traps.md`](docs/Agents/hitl_authoring_traps.md) and fill
+   [`HITL_TEST_RECIPE.md`](docs/Templates/HITL_TEST_RECIPE.md): tier registration, RAM1 headroom,
+   and reuse of `scripts/hitl/actions/` (no hand-rolled MIDI bytes).
+
 Follow [critical-path and debugging boundaries](docs/Authority/WORKFLOW_LIFECYCLE.md#critical-path-and-debugging-boundary):
 name the acceptance criterion, fix only its blockers or concrete immediate risks,
 and return to the main task after verification. For non-trivial lifecycle changes,

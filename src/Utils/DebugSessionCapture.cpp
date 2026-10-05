@@ -1391,7 +1391,7 @@ SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t ge
 SC_MEM_ATTR void canonicalFinalizationCapacityReleasedForInterval(
     uint8_t slot, uint64_t interval, uint32_t generation, uint32_t loopLengthTicks,
     size_t availableChunks) {
-  emitCapPrintf("#CAP,%lu,DIAG,canonical_release_interval,%u,%llu,%lu,%lu,%lu\r\n",
+  emitCapPrintf("#CAP,%lu,DIAG,canon_rel_interval,%u,%llu,%lu,%lu,%lu\r\n",
                 (unsigned long)micros(), static_cast<unsigned>(slot),
                 static_cast<unsigned long long>(interval),
                 (unsigned long)generation, (unsigned long)loopLengthTicks,

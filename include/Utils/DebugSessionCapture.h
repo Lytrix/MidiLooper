@@ -295,8 +295,10 @@ SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t ge
                                                       uint32_t loopLengthTicks,
                                                       size_t availableChunks);
 /** Identity-qualified companion for `canonical_release`, used to distinguish slot reuse in stopped logs.
- *  Wire form: DIAG,canonical_release_interval,<slot>,<interval>,<generation>,<loopLengthTicks>,<availableChunks>.
- *  Diagnostic-only; it does not change admission or retirement behavior. */
+ *  Wire form: DIAG,canon_rel_interval,<slot>,<interval>,<generation>,<loopLengthTicks>,<availableChunks>.
+ *  Diagnostic-only; it does not change admission or retirement behavior.
+ *  Renamed from `canonical_release_interval`: that 32-byte prefix exceeded the 31-byte Tier-A limit of the ring's
+ *  47-byte head read (see scripts/check_marker_contract.py), so it was unclassifiable late in a session. */
 SC_MEM_ATTR void canonicalFinalizationCapacityReleasedForInterval(
     uint8_t slot, uint64_t interval, uint32_t generation, uint32_t loopLengthTicks,
     size_t availableChunks);

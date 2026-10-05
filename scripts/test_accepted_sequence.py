@@ -1326,7 +1326,7 @@ class EvidenceGateTests(unittest.TestCase):
                 handle.write(disp_row(slot_number, "RECORDING", stamp_us=attempt * 1000000 + 1) + "\n")
 
         def markers(_log, _mark, tokens, *_args, **_kwargs):
-            return not any("canonical_release_interval" in token for token in tokens)
+            return not any("canon_rel_interval" in token for token in tokens)
 
         fixture = self._drive(["--leg", "od", "--track", "8", "--slot-a", "4",
                                "--slot-b", "5", "--notes", "1", "--arm-timeout-s", "0.0"],
@@ -3321,7 +3321,7 @@ class MixedLegOracleTests(unittest.TestCase):
         text = mixed_chain_log().replace(
             "#CAP,8000000,DIAG,canonical_release,4,0,1536,8",
             "#CAP,2500000,DIAG,canonical_release,4,0,1536,8\n"
-            "#CAP,8000000,DIAG,canonical_release_interval,4,4,0,1536,8")
+            "#CAP,8000000,DIAG,canon_rel_interval,4,4,0,1536,8")
         result = self.run_mixed(text)
         self.assertEqual("ok", by_name(result)["L6_b_stop_executes_once"].status)
         self.assertEqual("ok", by_name(result)["L7_one_press_per_stop"].status)

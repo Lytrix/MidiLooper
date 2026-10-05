@@ -1422,7 +1422,7 @@ def drive_leg(request: LegRequest, *, ctx, capture, capture_log: Path, out_port,
         # while the seed's stop obligation remains live even after `PERS,result`; require the slot-scoped
         # canonical release marker before treating the seed as settled.
         settled = _await_markers(capture_log, commit_mark,
-                                 (f"canonical_release_interval,{slot0},",),
+                                 (f"canon_rel_interval,{slot0},",),
                                  request.seed_settle_timeout_s, drain=drain)
         events.append({"event": f"seed_{label}_finalization_settled", "slot": slot_number,
                        "confirmed": settled})

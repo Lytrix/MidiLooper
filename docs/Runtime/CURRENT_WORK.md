@@ -5062,6 +5062,22 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+### HITL authoring hygiene (docs-only, 2026-10)
+
+Added `docs/Agents/hitl_authoring_traps.md` and `docs/Templates/HITL_TEST_RECIPE.md`, linked from `AGENTS.md`
+step 8. No firmware change. Open follow-ups (not started): a native pre-flight that checks each declared
+marker is registered in `CaptureLineTier.h` — **landed** as `scripts/check_marker_contract.py` (+ `scripts/test_check_marker_contract.py`);
+a scaffold command for new stimuli (not started). Finding from `--audit`: `DIAG,canonical_release_interval,` is a 32-byte
+Tier-A prefix, one over the 31-byte limit, so at a 10-digit micros the ring's 47-byte head read cannot classify it
+**Fixed:** the row is renamed `DIAG,canon_rel_interval,` (24 bytes); emitter, tier entry, accepted-sequence flow wait and
+tests moved with it, and `accepted_sequence_probe.py` still parses the old name for archived captures. `--audit` now reports 0 over.
+Earlier docs/evidence that cite `canonical_release_interval` are historical and unchanged. **Device-confirmed 2026-10-05** (`captures/canon-rel-interval-confirm-03`, OD leg track 8 slots 4/5, firmware `3a30da12…`, `DROVE_LEG`):
+the device emits `DIAG,canon_rel_interval,<slot>,<interval>,<gen>,<ticks>,<chunks>` (4 rows), the preparation wait and the probe's
+`CANONICAL_RELEASE_INTERVAL_RE` consume it, and setup checks (fresh boot, identity, overflow-free) pass. The oracle's overall verdict is
+`ACCEPTED_SEQUENCE_FAIL` on `L2_no_capacity_denial` (a reentry capacity denial) -- not related to this rename and not investigated here.
+Preparation note: at default `--seed-settle-timeout-s 10` a slow seed persist (~9 s) released the seed at 10.9 s and failed preparation
+(`…-confirm-02`); `--seed-settle-timeout-s 30` passes. The first run needs `--no-upload --boot-reset` after a flash (`…-confirm-01`: no banner).
+
 ### Task 3.10 — the rolling path's admission boundary on the playing chain (and a named culprit for the flaky helper)
 
 **The playing chain is proved end to end, in workload/lead terms, with enforcement in tests only.** `rollingTestTick`-driven

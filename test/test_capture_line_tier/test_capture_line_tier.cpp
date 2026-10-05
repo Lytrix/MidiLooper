@@ -465,7 +465,9 @@ void test_deferred_stop_identity_edges_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701454,DIAG,reentry_window_open,7,12345,4096"));
   // The retiring owner's slot + generation.
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701459,DIAG,canonical_release,7,3,4096,448"));
-  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701459,DIAG,canonical_release_interval,7,4096,3,4096,448"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701459,DIAG,canon_rel_interval,7,4096,3,4096,448"));
+  // Late-session worst case: a 10-digit micros leaves 31 bytes of tag inside the 47-byte head read.
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,4294967295,DIAG,canon_rel_interval,7,4096,3,4096,448"));
   // Long micros field must not shift the tag parse.
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,39819493,DIAG,canonical_release,7,3,4096,448"));
   // The working-set LEASE release, which `canonical_release` does not report (that row is the retiring
