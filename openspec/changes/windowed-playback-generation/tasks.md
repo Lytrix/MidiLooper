@@ -1002,8 +1002,19 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   input is the target's **runtime** length, which read **`length=0`** for the 2-bar slot (not resident), putting that
   switch on the **legacy** branch where no work was done at all. Run 06's outcome was identical to the others and its
   selection printed **no** loop-length row, so whether the 24-bar target took the launch branch is **unknown** — the one
-  value still missing. **Next step is a measurement, not a gesture:** read the switch target's *runtime* loop length at the
-  moment of the switch. See
+  value still missing. **The measurement was taken and it classifies the blocker.** Read from the device's own selection feedback after a fresh
+  qualification flash: the 2-bar slot's runtime length is **0** (not resident) while the **24-bar** slot's is **18 432** —
+  so run 06's switch *did* satisfy the routing condition and `servicePendingSlotProvision` **did** call the lane. What stops
+  it is the **root**: both demand paths refuse a source whose whole-loop root is not current
+  (`TrackPlaybackWindowBuild.cpp:2374` `RollingOutcome::Excluded`, `:2861` `SourceUnavailable`), and a **demoted** slot has
+  no root at all (`has_root_content=false` for both 24-bar slots; `true` only for the 2-bar one) — which is this change's own
+  `shouldAvoidFullVisualRebuild` policy. **Classification: neither closure work nor a defect of this change** — it is
+  RWO's already-recorded **S4b.7 published-root question** reproduced on hardware, and it exposes a tension with this
+  change's **F-8** claim ("a window is served without the whole root being resident"). Two resolutions and both are
+  decisions, not verification edits: the restore edge installs the root as current (RWO), or the demand paths stop requiring
+  a whole-loop root for a demoted interval (a DEC-108 design decision here). **F-16 recorded:** the demand paths' refusals
+  are **unobservable on device** — a typed enum with no row — which is exactly the distinction five runs were spent on. See
+  [`switch-leg-demand/MEASUREMENT.md`](evidence/2026-10-05-switch-leg-demand/MEASUREMENT.md). See
   [`switch-leg-demand`](evidence/2026-10-05-switch-leg-demand/EVIDENCE.md). **Not claimed:** the lane was **not exercised**;
   F-7/F-8/AC-8 remain unverified on hardware; no firmware was changed and no oracle was bent to fit an observation. See
   [`s64-s65-device-leg-01`](evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md).
