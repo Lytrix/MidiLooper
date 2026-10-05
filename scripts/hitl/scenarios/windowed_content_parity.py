@@ -30,28 +30,44 @@ SLOT_SELECT_PRESS_MS = 120
 #: while the transport is still running delivers none of them (measured 2026-10-05).
 POST_STOP_DRAIN_S = 12.0
 TRANSPORT_STOP_PRESS_MS = 120
+#: How long the switch leg waits for the queued switch's target to be prepared and committed before the drain. The
+#: preparation is off-clock (the `SlotProvision` turn) but it is what gives the window lane its **demand**, so the wait
+#: must be long enough for that turn to be served at least once under transport.
+SWITCH_SETTLE_S = 20.0
+RECORD_PRESS_MS = 120
 
 
-def split_loop_slot_flag(legacy: list[str]) -> tuple[int | None, list[str]]:
-    """Take `--loop-slot N` out of the forwarded legacy arguments.
+def split_flag(legacy: list[str], name: str) -> tuple[int | None, list[str]]:
+    """Take `<name> N` out of the legacy arguments, returning the value and what the reused leg may see.
 
-    Returns the named slot (or `None`) and the arguments the reused leg may see. Only the first occurrence is honoured:
-    a repeated `--loop-slot` is a caller error and the second value is left for the leg's parser to reject rather than
-    silently ignored.
+    The wrapper owns flags the reused leg has no argument for (`--loop-slot`, `--switch-target-slot`); forwarding one
+    would abort the leg's **strict** parser before it drives anything -- which is exactly how the switch leg failed its
+    first attempt. Only the first occurrence is honoured: a repeat is a caller error and is left for the leg to reject
+    rather than silently ignored.
     """
-    slot: int | None = None
+    value: int | None = None
     remaining: list[str] = []
     index = 0
     while index < len(legacy):
         token = legacy[index]
-        if token == "--loop-slot" and index + 1 < len(legacy):
-            if slot is None:
-                slot = int(legacy[index + 1])
+        if token == name and index + 1 < len(legacy):
+            if value is None:
+                value = int(legacy[index + 1])
                 index += 2
                 continue
         remaining.append(token)
         index += 1
-    return slot, remaining
+    return value, remaining
+
+
+def split_loop_slot_flag(legacy: list[str]) -> tuple[int | None, list[str]]:
+    """Take `--loop-slot N` out of the forwarded legacy arguments."""
+    return split_flag(legacy, "--loop-slot")
+
+
+def split_switch_target_slot_flag(legacy: list[str]) -> tuple[int | None, list[str]]:
+    """Take `--switch-target-slot N` out of the forwarded legacy arguments."""
+    return split_flag(legacy, "--switch-target-slot")
 
 
 def select_loop_slot(out_port: Any, slot: int, *, press_ms: int = SLOT_SELECT_PRESS_MS) -> None:
@@ -97,6 +113,50 @@ def press_global_transport_stop(out_port: Any, *, press_ms: int = TRANSPORT_STOP
     )
 
 
+def switch_target_slot_from(legacy: list[str]) -> int | None:
+    """The filled, non-active slot the switch leg should switch *to*, or `None` for the base leg only.
+
+    This is what gives the window lane a **demand** under transport: a plain record-and-play owes no window (measured),
+    while a switching target owes one because the launch prepares it. Absent by default, so the base behaviour is
+    unchanged and the two shapes stay comparable.
+    """
+    return split_switch_target_slot_flag(legacy)[0]
+
+
+def press_record_for_active_slot(out_port: Any, *, press_ms: int = RECORD_PRESS_MS) -> None:
+    """Press the record control, whose meaning the **firmware** decides from the target's own state.
+
+    With the track playing and the selected slot **filled**, `MidiButtonActions` cannot enter its recording branch
+    (`slotCanArmForRecord = !hasCommittedPassesInSlot(slot)` is false) and queues a playback switch instead, so this
+    gesture cannot overwrite the target. That is why the switch leg selects the target first and then presses this.
+    """
+    from hitl.control_constants import CONTROL_CHANNEL_1BASED, RECORD_BUTTON_NOTE
+    from hitl.midi_io import _send_short_press
+
+    _send_short_press(
+        out_port,
+        note=RECORD_BUTTON_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=press_ms,
+        _caller="windowed_content_parity",
+    )
+
+
+def switch_leg(out_port: Any, target_slot: int, *, settle_s: float = SWITCH_SETTLE_S) -> None:
+    """Select the target **first**, then press its record control, then wait for the switch to be prepared.
+
+    The order is the whole safety argument: the control acts on the *selected* slot, and on a filled one while the track
+    plays the firmware can only queue a playback switch. Reversing the two would put the press on whatever slot happened
+    to be active.
+    """
+    if not 1 <= target_slot <= 8:
+        raise ValueError(f"switch target slot {target_slot} is outside 1..8")
+    select_loop_slot(out_port, target_slot)
+    time.sleep(0.5)
+    press_record_for_active_slot(out_port)
+    time.sleep(settle_s)
+
+
 def serial_port_from(args: object) -> str | None:
     """The serial port this run was given, wherever the runner kept it.
 
@@ -119,10 +179,18 @@ def _leg_capture_log(out_dir: Path) -> Path | None:
     return logs[-1] if logs else None
 
 
-def drain_after_transport_stop(args: object, *, drain_s: float = POST_STOP_DRAIN_S) -> Path | None:
-    """Stop the transport if the leg left it running, then read until the ring's retained rows are delivered.
+def run_post_leg_phase(
+    args: object,
+    *,
+    switch_target_slot: int | None = None,
+    drain_s: float = POST_STOP_DRAIN_S,
+    switch_settle_s: float = SWITCH_SETTLE_S,
+) -> Path | None:
+    """Everything the driver owes **after** the reused leg: the switch leg (optional), then the stop-and-drain.
 
-    Returns the drain capture's path (`None` when there was nothing to drain, or when the serial port is unknown).
+    Both halves are gated on the transport actually running, for the same reason: a switch or a drain performed with the
+    transport stopped is not the regime this leg exists for (the lane's rows are produced *under transport*), and the stop
+    press is a toggle that would otherwise **start** a transport.
     """
     out_dir = Path(getattr(args, "out_dir", Path("captures")))
     port = serial_port_from(args)
@@ -134,7 +202,8 @@ def drain_after_transport_stop(args: object, *, drain_s: float = POST_STOP_DRAIN
         return None
     lines = log.read_text(encoding="utf-8").splitlines()
     if last_transport_row_running(lines) is not True:
-        print("[windowed-content-parity] the capture ends with the transport stopped: nothing retained to drain")
+        print("[windowed-content-parity] the capture ends with the transport stopped: neither a switch leg nor a drain "
+              "belongs here")
         return None
 
     import mido
@@ -147,6 +216,14 @@ def drain_after_transport_stop(args: object, *, drain_s: float = POST_STOP_DRAIN
     time.sleep(1.0)
     out_port = mido.open_output(_find_midi_port("Teensy", False))
     try:
+        if switch_target_slot is not None:
+            if not 1 <= switch_target_slot <= 8:
+                print(f"[windowed-content-parity] --switch-target-slot {switch_target_slot} is outside 1..8")
+                return None
+            print(f"[windowed-content-parity] switch leg: selecting slot {switch_target_slot} and pressing its record "
+                  f"control to queue a switch while the transport runs")
+            switch_leg(out_port, switch_target_slot, settle_s=switch_settle_s)
+
         print("[windowed-content-parity] stopping the transport so the retained Tier-A rows drain")
         press_global_transport_stop(out_port)
     finally:
@@ -166,6 +243,7 @@ def run_windowed_content_parity(args: object) -> int:
     """Select the declared slot, run the reused leg, then drain what the transport retained."""
     legacy = list(getattr(args, "legacy_args", []) or [])
     slot, remaining = split_loop_slot_flag(legacy)
+    switch_target, remaining = split_switch_target_slot_flag(remaining)
     if slot is None:
         print(
             "[windowed-content-parity] --loop-slot is required: the reused leg clears and records on the *active* "
@@ -192,8 +270,8 @@ def run_windowed_content_parity(args: object) -> int:
 
     code = run_long_loop_display_window(args)
     # The lane's rows are produced under transport and the ring is retained while one runs, so the leg's own capture
-    # cannot contain them; the drain is what makes them observable at all.
-    drain_after_transport_stop(args)
+    # cannot contain them; the switch leg (when asked for) and the drain are what make them observable at all.
+    run_post_leg_phase(args, switch_target_slot=switch_target)
     return code
 
 

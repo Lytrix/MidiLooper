@@ -23,9 +23,19 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from hitl.control_constants import CONTROL_CHANNEL_1BASED, GLOBAL_TRANSPORT_NOTE, LOOP_SELECT_NOTE_BASE
+from hitl.control_constants import (
+    CONTROL_CHANNEL_1BASED,
+    GLOBAL_TRANSPORT_NOTE,
+    LOOP_SELECT_NOTE_BASE,
+    RECORD_BUTTON_NOTE,
+)
 from hitl.scenarios.windowed_content_parity import (
     last_transport_row_running,
+    press_record_for_active_slot,
+    run_post_leg_phase,
+    switch_leg,
+    split_switch_target_slot_flag,
+    switch_target_slot_from,
     serial_port_from,
     press_global_transport_stop,
     run_windowed_content_parity,
@@ -341,6 +351,59 @@ class WindowedTargetTests(unittest.TestCase):
             [(GLOBAL_TRANSPORT_NOTE, CONTROL_CHANNEL_1BASED - 1)] * 2,
             port.sent,
         )
+
+    def test_the_switch_target_flag_is_absent_by_default(self) -> None:
+        """The base leg keeps its behaviour: no flag means no switch leg, so the two shapes stay comparable."""
+        self.assertIsNone(switch_target_slot_from(["--track-number", "8", "--loop-slot", "6"]))
+        self.assertEqual(3, switch_target_slot_from(["--switch-target-slot", "3"]))
+
+    def test_the_record_press_uses_the_record_control(self) -> None:
+        port = _StubPort()
+        press_record_for_active_slot(port, press_ms=1)
+        self.assertEqual([(RECORD_BUTTON_NOTE, CONTROL_CHANNEL_1BASED - 1)] * 2, port.sent)
+
+    def test_the_switch_leg_needs_a_running_transport_and_a_named_slot(self) -> None:
+        """Both halves of the post-leg phase are gated on the transport: a switch (or a stop press, which toggles)
+        performed while it is stopped is not the regime the leg exists for."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            (out_dir / "host_midi_hitl_long_loop_display_serial_20260101_000000.log").write_text(
+                "[1.000] [INFO] Transport started\n[2.000] [INFO] Transport stopped\n", encoding="utf-8"
+            )
+
+            class _Args:
+                serial_port = "/dev/cu.stub"
+                legacy_args: list[str] = []
+
+            args = _Args()
+            args.out_dir = out_dir
+            # The capture ends stopped, so neither half runs -- and no port is even opened.
+            self.assertIsNone(run_post_leg_phase(args, switch_target_slot=3))
+
+    def test_the_wrappers_own_flags_never_reach_the_reused_leg(self) -> None:
+        """The leg's parser is strict: a wrapper-owned flag forwarded to it aborts the run before it drives anything."""
+        slot, remaining = split_loop_slot_flag(["--track-number", "8", "--loop-slot", "6"])
+        self.assertEqual(6, slot)
+        self.assertNotIn("--loop-slot", remaining)
+        target, remaining = split_switch_target_slot_flag(remaining + ["--switch-target-slot", "4", "--midi-channel", "8"])
+        self.assertEqual(4, target)
+        self.assertNotIn("--switch-target-slot", remaining)
+        self.assertEqual(["--track-number", "8", "--midi-channel", "8"], remaining)
+
+    def test_the_switch_leg_selects_the_target_before_pressing_its_record_control(self) -> None:
+        """The order is the safety argument: the press acts on the *selected* slot."""
+        port = _StubPort()
+        switch_leg(port, 3, settle_s=0.0)
+        self.assertEqual(
+            [(LOOP_SELECT_NOTE_BASE + 2, CONTROL_CHANNEL_1BASED - 1)] * 2
+            + [(RECORD_BUTTON_NOTE, CONTROL_CHANNEL_1BASED - 1)] * 2,
+            port.sent,
+        )
+        with self.assertRaises(ValueError):
+            switch_leg(port, 9, settle_s=0.0)
 
     def test_the_slot_select_presses_that_slots_own_control(self) -> None:
         port = _StubPort()

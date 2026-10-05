@@ -1,3 +1,28 @@
+**The windowed leg now drives a slot switch, the gesture is proven safe on hardware, and the reason the lane still has no
+work is measured (host tooling + one authorized device run; no firmware line changed).**
+`run_windowed_content_parity` gained a **switch leg** — select a filled, non-active target, press its record control, wait,
+then the existing stop-and-drain — absent by default and gated on the transport actually running. Its press **order** is
+the safety argument and a code fact, not a hope: in `MidiButtonActions.cpp` the recording branch is unreachable while the
+track plays and the target is filled (`slotCanArmForRecord = !hasCommittedPassesInSlot(slot)`), so the press can only queue
+a playback switch. The device **confirmed it**: `Loop 4: Queued playback switch` (never `Start Recording`), a second press
+that *reaffirmed* the queue, and the switch **held and named** at its bound (`slot_switch_hold_exceeded track=7 target=3
+age=3072 ticks`) — the S4b.7 report-not-decision behaviour on hardware. **The lane still had no work**, and the same
+capture says why: **85 `win_gap` blocks (66 with `running=1`), every one `eligible=0`/`progress=0`**, zero receipts and
+zero publications, while the target's on-demand restore was **queued and never completed inside the run**
+(`RRQ,7,3,…queued`; `capture_prewarm,track=7,slot=3,full=0,ready=0,credits=0`; no restore terminal). A **cold target** has
+no resident source, so neither the legacy merged-window path nor the lane's launch preparation could owe anything — a
+*different* reason from the earlier runs (there nothing was owed; here the source was not resident yet), and the switch
+hold is the device naming exactly that. **Two host defects of mine were found by driving it** (my new flag was forwarded to
+the reused leg's strict parser and aborted the first attempt — the wrapper now consumes its own flags, pinned; and the
+port-lookup lesson recurred and is now pinned) and two mutations red-prove the new pins (M1 order reversed, M2 gate
+removed), each restored byte-identically. One second device attempt aborted at its own precondition (`clear failed`) and is
+recorded as a setup failure, not evidence. Verification: host 22/22 plus the registry/scenario suites, native **2796 / 2789
+succeeded / 7 skipped / 0 failed**, both changes strict-valid, `git diff --check` clean, `src`/`include` diffs empty.
+**Not claimed:** the lane was not given work; F-7/F-8/AC-8 remain unverified; the hardware envelope stays NOT RUN; 6.4/6.5
+stay open and now carry a measured reason. **Next, precisely:** warm the target first (play it, then switch away and back)
+or let the queued restore complete, then re-run. Evidence:
+[`switch-leg-demand`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-switch-leg-demand/EVIDENCE.md).
+
 **F-13 was wrong, F-14 is real and fixed, and the device finally shows the windowed lane serving under transport.**
 Reading the code before editing refuted the previous entry: `DIAG,win_gap,` **is** already Tier-A, classified in
 `src/Utils/DebugSessionCapture.cpp` (with its own recorded RAM1 reason for not living in the header) and pinned by

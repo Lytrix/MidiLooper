@@ -973,7 +973,20 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   row keeps its own time. **The device then said something positive for the first time:** 54 `win_gap` blocks, **50 with
   `running=1`** and rising phase — the lane *is* dispatched under transport — every block `permitted=64`, `overruns=0`,
   and every block `eligible=progress=0`, so the lane still owed nothing. That is a real measurement of service under
-  transport and **not** the envelope; the next step is a leg whose gestures create a demand (a demoted slot switch). **Not claimed:** the lane was **not exercised**;
+  transport and **not** the envelope; the next step is a leg whose gestures create a demand (a demoted slot switch).
+  *Switch leg supplied 2026-10-05 — the gesture is in the driver, and the device says why the lane still has no work.*
+  `run_windowed_content_parity` gained a **switch leg** (select a filled non-active target, press its record control, wait,
+  then the existing drain), absent by default and gated on a running transport; its press **order** is the safety argument
+  (read from `MidiButtonActions.cpp`: with the track playing and the slot filled, `slotCanArmForRecord` is false, so the
+  recording branch is unreachable and only a playback switch can be queued) and it is pinned, with M1 (order reversed) and
+  M2 (gate removed) red-proving the pins and the file restored byte-identically. The successful device run shows
+  **`Loop 4: Queued playback switch`** (never `Start Recording`) and the switch **held and named**
+  (`slot_switch_hold_exceeded track=7 target=3 age=3072 ticks`) — and the lane *still* with `eligible=progress=0`
+  everywhere, which the same capture explains: the target was **cold** (its on-demand restore was queued —
+  `RRQ,7,3,…queued`, `capture_prewarm … ready=0` — and never completed inside the run), so neither the legacy merge nor the
+  lane's launch had a source to prepare. **The next attempt is named:** warm the target first (play it, then switch away
+  and back) or let the queued restore complete before re-running. See
+  [`switch-leg-demand`](evidence/2026-10-05-switch-leg-demand/EVIDENCE.md). **Not claimed:** the lane was **not exercised**;
   F-7/F-8/AC-8 remain unverified on hardware; no firmware was changed and no oracle was bent to fit an observation. See
   [`s64-s65-device-leg-01`](evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on

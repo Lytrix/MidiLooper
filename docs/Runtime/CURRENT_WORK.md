@@ -1,3 +1,21 @@
+**2026-10-05 — `windowed-playback-generation`: the windowed leg drives a slot switch; the gesture is proven safe on
+hardware and the lane's missing demand is root-caused to a cold target (host tooling + one authorized device run; no
+firmware change).**
+`run_windowed_content_parity` gained a **switch leg** (select a filled non-active target, press record, wait, then drain),
+off by default and gated on a running transport. The safety argument is a code fact: with the track playing and the target
+filled, `MidiButtonActions`' recording branch is unreachable (`slotCanArmForRecord = !hasCommittedPassesInSlot(slot)`) so
+only a playback switch can queue -- and the device confirmed it with `Loop 4: Queued playback switch`, never
+`Start Recording`, followed by the switch being **held and named** (`slot_switch_hold_exceeded track=7 target=3 age=3072
+ticks`). The lane nonetheless stayed `eligible=progress=0` in all 85 `win_gap` blocks (66 with `running=1`), and the same
+capture explains it: the target's on-demand restore was queued and never completed in the run (`RRQ,7,3,…queued`;
+`capture_prewarm … ready=0`; no restore terminal), so a **cold target** gave neither the legacy merge nor the lane's launch
+anything to prepare. Two host defects of mine were found by driving it (my flag reached the leg's strict parser and aborted
+the first attempt; the port-lookup lesson recurred) and are now pinned, with M1 (order reversed) and M2 (gate removed)
+red-proving the new pins and the file restored byte-identically. A second device attempt aborted at its own precondition
+and is recorded as a setup failure, not evidence. **Next, precisely:** warm the target first (play it, then switch away and
+back) or let the queued restore complete, then re-run. Not claimed: the lane was not given work; F-7/F-8/AC-8 unverified;
+6.4/6.5 open.
+
 **2026-10-05 — `windowed-playback-generation`: F-13 retracted, F-14 fixed, the leg now drains after the stop, and the
 windowed lane is measured serving under transport for the first time.**
 Reading the code first refuted F-13: `DIAG,win_gap,` **is** already Tier-A (classified in `DebugSessionCapture.cpp` for a
