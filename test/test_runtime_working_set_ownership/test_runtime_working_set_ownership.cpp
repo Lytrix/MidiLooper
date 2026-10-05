@@ -149,6 +149,42 @@ inline size_t countOf(const char* exit) {
 }  // namespace LaunchGateRows
 #define SC_LAUNCH_GATE(track, slot, exit, flags, loopLengthTicks, launchPreparation) \
   LaunchGateRows::record(track, slot, exit, flags, loopLengthTicks, launchPreparation)
+
+// windowed-playback-generation (the rolling demand path's gate row): the same substitutable-seam pattern, on the third
+// and last silent family of the demand side. Every exit of `serviceRollingPlaybackWindow` returns a typed
+// `RollingOutcome` to its caller with no row, so without this recorder the row's contract -- it names the exit, the
+// inputs that decided it and the **change key** -- could not be checked anywhere. The recorder substitutes only the
+// emission: which rows are owed is the production cadence in `Track::reportPlaybackRollingGateRow`.
+namespace RollingGateRows {
+struct Row {
+  uint8_t track = 0;
+  uint8_t slot = 0;
+  const char* exit = nullptr;
+  uint16_t flags = 0;
+  uint32_t loopLengthTicks = 0;
+  uint8_t requestResult = 0;
+};
+inline Row rows[512];
+inline size_t count = 0;
+inline void reset() { count = 0; }
+inline void record(uint8_t track, uint8_t slot, const char* exit, uint16_t flags, uint32_t loopLengthTicks,
+                   uint8_t requestResult) {
+  if (count < sizeof(rows) / sizeof(rows[0])) {
+    rows[count] = Row{track, slot, exit, flags, loopLengthTicks, requestResult};
+  }
+  ++count;
+}
+inline const Row* last() { return count == 0 ? nullptr : &rows[count - 1]; }
+inline size_t countOf(const char* exit) {
+  size_t seen = 0;
+  for (size_t i = 0; i < count && i < sizeof(rows) / sizeof(rows[0]); ++i) {
+    if (rows[i].exit != nullptr && strcmp(rows[i].exit, exit) == 0) ++seen;
+  }
+  return seen;
+}
+}  // namespace RollingGateRows
+#define SC_WIN_GATE(track, slot, exit, flags, loopLengthTicks, requestResult) \
+  RollingGateRows::record(track, slot, exit, flags, loopLengthTicks, requestResult)
 //
 // **S3 gate — `runtime-working-set-ownership` acceptance suite.** The stage's unit contracts live in
 // `test_working_set_lease` (the vocabulary) and `test_continuous_capture` (the per-owner-kind matrix
@@ -9897,6 +9933,118 @@ void test_rolling_path_cancellation_between_every_preparation_grain_recovers() {
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, foreign, "and no foreign note: recovery, not residue");
 }
 
+/// **Task 6.4/6.5 -- the rolling demand path's gate row (`DIAG,win_gate`).**
+///
+/// The lane's own rows (`win_gap`, `playback_build`) say whether it was *dispatched*; nothing said **what its demand
+/// path decided**, because `serviceRollingPlaybackWindow` returns a typed `RollingOutcome` to its caller with no row.
+/// On device that made "this track owed no window" and "the window was refused -- and by which term" the same absence
+/// (F-16: five switch-leg runs were spent on the distinction). This fixture pins the row's contract on the production
+/// entry: the exit token of **this** call, the active slot's identity, the flags that decided it, the request's own
+/// ordinal, and the once-per-state-change cadence.
+///
+/// The case it is built around is the one the device question now rests on: the demand's **entry** decision, where an
+/// unstamped deadline clock, a loop below the demotion bound and an unaligned length all leave through the *same*
+/// exit -- and `ep`/`av`/`al` tell a reader which of the three refused, so one token cannot hide it.
+void test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change() {
+  assert_s4b_7_a_demoted_target_through_the_turn(true);
+  auto& track = trackManager.getTrack(0);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 2);
+  TEST_ASSERT_NOT_NULL(runtime);
+  Loop& active = track.getActiveLoop();
+  const uint32_t demotedLength = active.loopLengthTicks;
+  const uint64_t origin = clockManager.getCurrentTick();
+  constexpr uint16_t kEpochStamped = 1u << 0;
+  constexpr uint16_t kAvoidFullRebuild = 1u << 1;
+  constexpr uint16_t kSpanAligned = 1u << 2;
+  constexpr uint16_t kPlaying = 1u << 3;
+  constexpr uint16_t kRootCurrent = 1u << 9;
+  RollingGateRows::reset();
+
+  // ---- (W1) The unstamped clock: the exit names the entry decision, and the flags say which term refused. This is
+  // the reading the device could not make -- the lane was dispatched (`win_gap` `running=1`) and owed nothing.
+  nativePlaybackDeadlineClock = {origin + 64, 0};
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Excluded),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "an unstamped deadline clock is excluded before anything is promised");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, RollingGateRows::count, "the exit that refused names itself exactly once");
+  TEST_ASSERT_EQUAL_STRING("win_window_ineligible", RollingGateRows::last()->exit);
+  TEST_ASSERT_EQUAL_UINT8(0, RollingGateRows::last()->track);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(2, RollingGateRows::last()->slot, "the row names the active slot it read");
+  TEST_ASSERT_EQUAL_UINT32(demotedLength, RollingGateRows::last()->loopLengthTicks);
+  TEST_ASSERT_TRUE_MESSAGE((RollingGateRows::last()->flags & kEpochStamped) == 0,
+                           "`ep=0`: the clock's own stamp is the term that refused");
+  TEST_ASSERT_TRUE_MESSAGE((RollingGateRows::last()->flags & kAvoidFullRebuild) != 0,
+                           "and the shaping terms passed, so the refusal is attributable to the stamp");
+  TEST_ASSERT_TRUE((RollingGateRows::last()->flags & kSpanAligned) != 0);
+  TEST_ASSERT_TRUE((RollingGateRows::last()->flags & kPlaying) != 0);
+  // The cadence: a second call on the same state owes no second row (a per-turn row would evict the evidence it explains).
+  nativePlaybackDeadlineClock = {origin + 128, 0};
+  (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, RollingGateRows::count, "one row per state change, never one per call");
+
+  // ---- (W2) The other two terms of that same exit are told apart by their own flags, so one token cannot hide which
+  // guard refused.
+  active.loopLengthTicks = 4 * 768;  // below `kMaxDetailedWindowBars`: the legacy policy, not the windowed one
+  nativePlaybackDeadlineClock = {origin + 192, 1};
+  (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_UINT32(2, RollingGateRows::count);
+  TEST_ASSERT_EQUAL_STRING("win_window_ineligible", RollingGateRows::last()->exit);
+  TEST_ASSERT_TRUE((RollingGateRows::last()->flags & kEpochStamped) != 0);
+  TEST_ASSERT_TRUE_MESSAGE((RollingGateRows::last()->flags & kAvoidFullRebuild) == 0,
+                           "`av=0`: a loop the whole-take policy admits never takes the windowed demand");
+  active.loopLengthTicks = demotedLength + 768;  // demoted, but not a whole number of two-bar spans
+  nativePlaybackDeadlineClock = {origin + 256, 1};
+  (void)track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock);
+  TEST_ASSERT_EQUAL_UINT32(3, RollingGateRows::count);
+  TEST_ASSERT_EQUAL_STRING("win_window_ineligible", RollingGateRows::last()->exit);
+  TEST_ASSERT_TRUE((RollingGateRows::last()->flags & kAvoidFullRebuild) != 0);
+  TEST_ASSERT_TRUE_MESSAGE((RollingGateRows::last()->flags & kSpanAligned) == 0,
+                           "`al=0`: the length cannot carry whole spans");
+  active.loopLengthTicks = demotedLength;
+
+  // ---- (W3) A stamped clock on the demoted, aligned slot: the demand opens and the row names the exit that took it.
+  const uint64_t base = origin + 512;
+  nativePlaybackDeadlineClock = {base, 1};
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the same shape is admissible once the clock is stamped: the stamp was the difference");
+  TEST_ASSERT_EQUAL_STRING("win_requested", RollingGateRows::last()->exit);
+  TEST_ASSERT_EQUAL_UINT8(2, RollingGateRows::last()->slot);
+  TEST_ASSERT_TRUE((RollingGateRows::last()->flags & kEpochStamped) != 0);
+  TEST_ASSERT_TRUE((RollingGateRows::last()->flags & kRootCurrent) != 0);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
+      static_cast<uint8_t>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+      RollingGateRows::last()->requestResult,
+      "the row carries the request result the exit observed, not a placeholder");
+  const uint32_t rowsAtRequest = RollingGateRows::count;
+
+  // ---- (W4) The lane turning reports its own progress, and the count stays bounded rather than following the tick.
+  clockManager.assignCurrentTickSilently(static_cast<uint32_t>(base));
+  uint32_t servingTicks = 0;
+  for (uint32_t delta = 1; delta <= 10 * 768 + 48; ++delta) {
+    rollingTestTick(track, base + delta, delta % 64 == 0);
+    if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving && track.playbackWindowServesSlot(2))
+      ++servingTicks;
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, servingTicks, "the episode really ran: the row reports a live lane");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
+      0u,
+      RollingGateRows::countOf("win_serving") + RollingGateRows::countOf("win_ready") +
+          RollingGateRows::countOf("win_waiting"),
+      "the lane's own progress is named as the frame moves, not left implicit");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(24u, RollingGateRows::count - rowsAtRequest,
+                                       "a state-change bound: not one row per lane turn (measured: 12 over 120 turns)");
+
+  // ---- (W5) A refusal raised before this family existed: with the transport down the demand is excluded by name.
+  track.forceSetState(TRACK_STOPPED);
+  nativePlaybackDeadlineClock = {base + 40000, 1};
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Excluded),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "a stopped track takes no window demand");
+  TEST_ASSERT_EQUAL_STRING("win_track_not_playing", RollingGateRows::last()->exit);
+  TEST_ASSERT_TRUE((RollingGateRows::last()->flags & kPlaying) == 0);
+}
+
 int main() {
 
 
@@ -9940,6 +10088,7 @@ int main() {
   // windowed-playback-generation slice 3.10 increment 7: the measured grain-cost model and the derived bound.
   RUN_TEST(test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window);
   RUN_TEST(test_window_request_work_is_bounded_and_retained_across_source_shapes);
+  RUN_TEST(test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change);
   RUN_TEST(test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a_sibling);
   RUN_TEST(test_enforced_candidate_charges_derived_cost_and_eight_track_rotation);
   RUN_TEST(test_window_admission_refuses_by_name_once_the_interference_budget_is_enforced);

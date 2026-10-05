@@ -301,14 +301,16 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
   // silently. Without this the one row that reports an exceedance was the one dropped where exceedances happen. The
   // boundary is exact and pinned in `test_capture_ring`, the suite that asks **this** predicate (the header's
   // `CaptureLineTier::isTierALine` cannot see this family by construction -- see the note above).
-  // ...and so are the two **qualification-only gate rows**: a launch's decision is taken while the track plays, and the
-  // snapshot owner's refusal is taken in the same regime -- the budget-8 shed path is exactly where both are needed.
+  // ...and so are the **qualification-only gate rows**: a launch's decision is taken while the track plays, the
+  // snapshot owner's refusal in the same regime, and the rolling demand path's own exit only exists *under* transport
+  // (the lane is dispatched while a transport runs) -- the budget-8 shed path is exactly where all three are needed.
   // Measured: the first device runs of the launch row carried it in the firmware and delivered **none** of them.
+  // (A duplicated `launch_gate` clause used to sit after the `return` here, unreachable; removed 2026-10-05.)
   return CaptureLineTier::tagStartsWith(line, "DIAG,win_gap,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,win_gap_overrun,") ||
          CaptureLineTier::tagStartsWith(line, "DIAG,launch_gate,") ||
-         CaptureLineTier::tagStartsWith(line, "DIAG,snap_gate,");
-         CaptureLineTier::tagStartsWith(line, "DIAG,launch_gate,");
+         CaptureLineTier::tagStartsWith(line, "DIAG,snap_gate,") ||
+         CaptureLineTier::tagStartsWith(line, "DIAG,win_gate,");
 }
 
 SC_MEM_ATTR bool isCriticalTextLine(const char* line) {
@@ -1465,6 +1467,38 @@ SC_MEM_ATTR void snapshotGateRow(uint8_t track, uint8_t selectedSlot, uint8_t ac
                 launchGateBit(verdicts, 6), launchGateBit(verdicts, 7), launchGateBit(verdicts, 8),
                 launchGateBit(verdicts, 9), launchGateBit(verdicts, 10), launchGateBit(verdicts, 11),
                 launchGateBit(verdicts, 12), launchGateBit(verdicts, 13));
+}
+
+SC_MEM_ATTR void winGateRow(uint8_t track, uint8_t slot, const char* exit, uint16_t flags, uint32_t loopLengthTicks,
+                            uint8_t requestResult) {
+  // The **row** and nothing else: which rows are owed -- the cadence -- is the caller's own state
+  // (`Track::reportPlaybackRollingGateRow`), so the bound is production logic a native suite can observe rather than
+  // a property of this transport. The same **two delivery rules** as `launchGateRow`/`snapshotGateRow` (and as the
+  // save-completion receipt), for the same measured reason: the decision this row reports is taken while the
+  // transport runs -- that is when the lane is dispatched at all -- and the ring is *retained by design* then, so a
+  // row merely enqueued during a leg arrives only after the transport stops, after the demand it explains.
+  // Bit order: see the declaration in the header (bits 0..15, plus `rq` as the request's own ordinal).
+  if (serialWriteRoom(160)) {
+    Serial.printf(SC_FMT("#CAP,%lu,DIAG,win_gate,t=%u,s=%u,x=%s,len=%lu,ep=%u,av=%u,al=%u,pl=%u,ed=%u,od=%u,pv=%u,"
+                         "rw=%u,sv=%u,rt=%u,rl=%u,ow=%u,dm=%u,bld=%u,gr=%u,rp=%u,rq=%u\r\n"),
+                  static_cast<unsigned long>(micros()), static_cast<unsigned>(track), static_cast<unsigned>(slot),
+                  exit == nullptr ? "?" : exit, static_cast<unsigned long>(loopLengthTicks),
+                  launchGateBit(flags, 0), launchGateBit(flags, 1), launchGateBit(flags, 2), launchGateBit(flags, 3),
+                  launchGateBit(flags, 4), launchGateBit(flags, 5), launchGateBit(flags, 6), launchGateBit(flags, 7),
+                  launchGateBit(flags, 8), launchGateBit(flags, 9), launchGateBit(flags, 10), launchGateBit(flags, 11),
+                  launchGateBit(flags, 12), launchGateBit(flags, 13), launchGateBit(flags, 14), launchGateBit(flags, 15),
+                  static_cast<unsigned>(requestResult));
+    return;
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,win_gate,t=%u,s=%u,x=%s,len=%lu,ep=%u,av=%u,al=%u,pl=%u,ed=%u,od=%u,pv=%u,"
+                       "rw=%u,sv=%u,rt=%u,rl=%u,ow=%u,dm=%u,bld=%u,gr=%u,rp=%u,rq=%u\r\n"),
+                static_cast<unsigned long>(micros()), static_cast<unsigned>(track), static_cast<unsigned>(slot),
+                exit == nullptr ? "?" : exit, static_cast<unsigned long>(loopLengthTicks), launchGateBit(flags, 0),
+                launchGateBit(flags, 1), launchGateBit(flags, 2), launchGateBit(flags, 3), launchGateBit(flags, 4),
+                launchGateBit(flags, 5), launchGateBit(flags, 6), launchGateBit(flags, 7), launchGateBit(flags, 8),
+                launchGateBit(flags, 9), launchGateBit(flags, 10), launchGateBit(flags, 11), launchGateBit(flags, 12),
+                launchGateBit(flags, 13), launchGateBit(flags, 14), launchGateBit(flags, 15),
+                static_cast<unsigned>(requestResult));
 }
 #endif  // SC_QUALIFICATION_ROWS_ENABLED
 

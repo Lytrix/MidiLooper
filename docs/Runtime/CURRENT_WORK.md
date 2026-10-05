@@ -5152,6 +5152,48 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+### Task 6.4/6.5 — the rolling demand path's gate row (`DIAG,win_gate`), the third and last silent family of the demand side
+
+**The lane's demand now names its own exit on a device; the four hardware claims stay unmeasured and 6.4/6.5 stay open.**
+Every exit of `Track::serviceRollingPlaybackWindow` returned a typed `RollingOutcome` to its caller with **no** row, so
+"this track owed no window" and "the window was refused, and by which term" were the same absence — **F-16** of the
+switch-leg record (*"exactly the distinction five runs were spent on, and a row would have settled it in one"*). The
+launch half of F-16 landed as `DIAG,launch_gate`; this is the rolling half, and the one the windowed profile's leg has
+been stuck on: the lane is dispatched **under transport** (`win_gap` `running=1`) and builds nothing, with the demand's
+entry decision (`!clock.epoch || !shouldAvoidFullVisualRebuild(…) || loopLengthTicks % span != 0`,
+`TrackPlaybackWindowBuild.cpp:2397`) the one explanation left and the one that had no row.
+
+**The instrument is the gate rows' third sibling, and it is qualification-only.** `Track::reportPlaybackRollingGateRow`
+assembles the flags from the **active slot's own state** (the call site supplies the clock's own stamp, whether the tick
+fell outside the projection and the request's result ordinal), `winGateRow` emits
+`DIAG,win_gate,t=,s=,x=,len=,ep=,av=,al=,pl=,ed=,od=,pv=,rw=,sv=,rt=,rl=,ow=,dm=,bld=,gr=,rp=,rq=` with the same two
+delivery rules as its siblings (direct when USB has room, ring fallback) and the same Tier-A entry, and the **cadence**
+is production state: one row per state change per track, keyed on (exit token, slot, the length the deciding terms read,
+the request's ordinal, the deciding bits) — `gr` is *printed* but excluded from the key, because it is a progress
+counter and keying on it would turn one state into a row per grain. The entry exit's three terms are told apart on the
+row itself (`ep`/`av`/`al`), so one token cannot hide which guard refused. Nothing admits, refuses, reorders, retires or
+changes a return value. `SC_QUALIFICATION_ROWS_ENABLED` keeps the row out of every other image: the plain capture build
+compiles the call to `((void)0)` and its RAM1 line is byte-identical (`padding 1,640`), as is the qualification image's
+(`code 392,232 + padding 984`) — no re-base.
+
+**Verified:** new fixture
+`test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change` (cases W1–W5 on the production entry,
+including the cadence bound: **12 rows measured across 120 lane turns**, asserted *< 24*); focused
+`test_runtime_working_set_ownership` **144/144**, `test_capture_ring` **16/16** with the new boundary pin, full native
+**2,801 / 7 skipped / 2,794 succeeded / 0 failed** (was 2,798 / 7 / 2,791), both capture builds **SUCCESS** with RAM1
+byte-identical, `check_marker_contract.py --audit` **0 over**, `git diff --check` clean, strict validation valid. Three
+mutations red-proved with byte-identical restores (MR-W1 the entry exit goes silent → *Expected 1 Was 0*; MR-W2 the
+dedupe removed → *Expected 1 Was 2*; MR-W3 the terms stop being told apart → its `av=0` assertion fails), each failing
+exactly its own case. **One defect found beside it and fixed:** `isTierATextLine` carried a duplicated `launch_gate`
+clause **after** its `return` (unreachable, left by the `snap_gate` slice); removed, classification unchanged.
+**Not claimed:** the row has **not** been read on hardware — 6.5's four hardware claims (grain duration and maximum
+service gaps, sustained multi-track playback under capture/persistence contention, external-clock behaviour, memory
+high-water marks with boundary content parity) are still **NOT RUN**, and F-7/F-8/AC-8 remain unverified; nothing is
+checked off. **The next authorized step** is an upload of `teensy41-capture-serial-window-qualification` plus the
+registered windowed leg on a demoted active slot (the leg's own 24-bar take produces one) — the row then says whether
+the demand is refused at its entry or admitted and built. Evidence:
+[`rolling-gate-row`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-rolling-gate-row/EVIDENCE.md).
+
 ### HITL authoring hygiene (docs-only, 2026-10)
 
 Added `docs/Agents/hitl_authoring_traps.md` and `docs/Templates/HITL_TEST_RECIPE.md`, linked from `AGENTS.md`

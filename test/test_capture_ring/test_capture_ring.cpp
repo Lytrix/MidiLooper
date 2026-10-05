@@ -443,6 +443,15 @@ void test_the_window_readiness_receipt_is_emitted_directly_and_delayed_rather_th
       "the snapshot gate row survives the timing-critical flush");
   TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,snap_gatex,1"),
                             "and a longer subtag is not swept in");
+  // ...and the rolling demand path's gate row as the third of the family: its exit exists only *under* transport (the
+  // lane is dispatched while a transport runs and nowhere else), so its absence in a budget-8 drain would be read as
+  // "nothing was owed" -- exactly the confusion F-16 records. Own boundary, exact.
+  TEST_ASSERT_TRUE_MESSAGE(
+      isTierATextLine("#CAP,112456330,DIAG,win_gate,t=7,s=5,x=win_window_ineligible,len=18432,ep=0,av=1,al=1,pl=1,"
+                      "ed=0,od=0,pv=0,rw=0,sv=1,rt=1,rl=1,ow=0,dm=0,bld=0,gr=0,rp=0,rq=0"),
+      "the rolling demand path's gate row survives the timing-critical flush");
+  TEST_ASSERT_FALSE_MESSAGE(isTierATextLine("#CAP,1,DIAG,win_gatex,1"),
+                            "and a longer subtag is not swept in");
 }
 void test_rejected_critical_rows_are_replayed_at_stopped_flush() {
   sCaptureRing.capacity = 1;

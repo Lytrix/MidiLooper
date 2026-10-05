@@ -2380,51 +2380,83 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot)
     if (slot != activeLoopIndex) cancelRollingPlaybackWindow(slot);
   auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
-  if (!runtime || !loopsAllocated()) return RollingOutcome::Excluded;
+  if (!runtime || !loopsAllocated()) {
+    reportPlaybackRollingGateRow("win_no_runtime", clock.epoch != 0);
+    return RollingOutcome::Excluded;
+  }
   auto& frame = runtime->rolling;
   auto& loop = getActiveLoop();
   if (!isPlaying() || editManager.isNoteEditActive() || hasPendingDeferredOverdubStop() || runtime->previewSourceActive ||
       runtime->hasBoundRecordReturnWindowForPendingJob()) {
     cancelRollingPlaybackWindow(activeLoopIndex);
+    reportPlaybackRollingGateRow("win_track_not_playing", clock.epoch != 0);
     return RollingOutcome::Excluded;
   }
   if (hasQueuedPlaybackStart() || isJamPlaybackActive() || isJamming()) {
     if (frame.phase != LoopPlaybackRuntime::RollingPhase::Idle)
       frame.phase = LoopPlaybackRuntime::RollingPhase::Blocked;
+    reportPlaybackRollingGateRow("win_reprojection_blocked", clock.epoch != 0);
     return RollingOutcome::Excluded; // Re-projection does not erase the positioned debt.
   }
   constexpr uint32_t span = 2 * Config::TICKS_PER_BAR;
   if (!clock.epoch || !loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks) ||
-      loop.loopLengthTicks % span != 0) return RollingOutcome::Excluded;
+      loop.loopLengthTicks % span != 0) {
+    // The demand's **entry** decision, and the term the device question rests on: an unstamped deadline clock, a loop
+    // below the demotion bound and an unaligned length all leave here, and the row tells them apart by `ep`/`av`/`al`
+    // rather than by a token that would hide which one refused.
+    reportPlaybackRollingGateRow("win_window_ineligible", clock.epoch != 0);
+    return RollingOutcome::Excluded;
+  }
   if (frame.phase != LoopPlaybackRuntime::RollingPhase::Idle) {
     if (frame.epoch != clock.epoch || frame.generation != playbackGeneration ||
         frame.loopLength != loop.loopLengthTicks ||
         (uint32_t(getProjectionCycleStartTick()) - uint32_t(frame.projectionStart)) % frame.loopLength != 0) {
       frame.phase = LoopPlaybackRuntime::RollingPhase::Blocked;
+      reportPlaybackRollingGateRow("win_frame_invalidated", clock.epoch != 0);
       return RollingOutcome::Rejected; // Keep the original debt; do not grant a new clock frame.
     }
-    if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving) return RollingOutcome::Serving;
-    if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked) return RollingOutcome::Rejected;
+    if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
+      reportPlaybackRollingGateRow("win_serving", clock.epoch != 0);
+      return RollingOutcome::Serving;
+    }
+    if (frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked) {
+      reportPlaybackRollingGateRow("win_blocked", clock.epoch != 0);
+      return RollingOutcome::Rejected;
+    }
     const auto* request = runtime->pendingViewRequest();
     if (request && (request->positionInvalidated ||
         request->reason == PlaybackViewPendingReason::CannotCompleteBeforeHandoff ||
         request->reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity)) {
       frame.phase = LoopPlaybackRuntime::RollingPhase::Blocked;
+      reportPlaybackRollingGateRow("win_blocked_by_request", clock.epoch != 0);
       return RollingOutcome::Rejected;
     }
-    return frame.phase == LoopPlaybackRuntime::RollingPhase::Ready ? RollingOutcome::Ready : RollingOutcome::Waiting;
+    if (frame.phase != LoopPlaybackRuntime::RollingPhase::Ready) {
+      reportPlaybackRollingGateRow("win_waiting", clock.epoch != 0);
+      return RollingOutcome::Waiting;
+    }
+    reportPlaybackRollingGateRow("win_ready", clock.epoch != 0);
+    return RollingOutcome::Ready;
   }
   auto* set = runtime->viewSetIfPrewarmed();
   if (!set || set->lifecycle.current >= set->views.size() ||
       !set->views[set->lifecycle.current].complete || !set->views[set->lifecycle.current].published ||
-      !loop.publishedSnapshotIsCurrent()) return RollingOutcome::Excluded;
+      !loop.publishedSnapshotIsCurrent()) {
+    reportPlaybackRollingGateRow("win_not_servable", clock.epoch != 0);
+    return RollingOutcome::Excluded;
+  }
   // Existing promises and shared owners take precedence. Never coalesce a new
   // rolling target over someone else's debt merely to gain a later deadline.
   if (runtime->pendingViewRequest_.active || runtime->frozenViewRequest.active ||
-      !runtime->coverageRoleAvailable() || playbackViewOutstandingGrains(activeLoopIndex) != 0)
+      !runtime->coverageRoleAvailable() || playbackViewOutstandingGrains(activeLoopIndex) != 0) {
+    reportPlaybackRollingGateRow("win_busy", clock.epoch != 0);
     return RollingOutcome::Busy;
+  }
   const uint32_t effective = getEffectivePlaybackTick(static_cast<uint32_t>(clock.tick));
-  if (effective != static_cast<uint32_t>(clock.tick)) return RollingOutcome::Excluded;
+  if (effective != static_cast<uint32_t>(clock.tick)) {
+    reportPlaybackRollingGateRow("win_reprojected_tick", clock.epoch != 0, /*reprojectedTick=*/true);
+    return RollingOutcome::Excluded;
+  }
   const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
       effective, getProjectionCycleStartTick(), loop.loopLengthTicks);
   const auto contract = playbackViewCoverageContract();
@@ -2432,12 +2464,23 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
       (uint64_t(contract.maximumConsecutiveDeniedTurns) + 1) * contract.maximumPhaseAdvancePerTurn + contract.leadTicks;
   const uint64_t boundary = ((uint64_t(phase) + lookahead + span - 1) / span) * span;
   if (!lookahead || boundary <= phase || boundary - phase >= loop.loopLengthTicks ||
-      clock.tick > UINT64_MAX - (boundary - phase)) return RollingOutcome::Rejected;
+      clock.tick > UINT64_MAX - (boundary - phase)) {
+    reportPlaybackRollingGateRow("win_boundary_rejected", clock.epoch != 0);
+    return RollingOutcome::Rejected;
+  }
   const PlaybackCoverageInterval coverage{static_cast<uint32_t>(boundary % loop.loopLengthTicks), span, loop.loopLengthTicks};
-  if (requestCommittedPlaybackWindow(activeLoopIndex, coverage, phase, clock) !=
-      PlaybackViewRequestResult::DeferredSourceQualification) return RollingOutcome::Rejected;
+  const PlaybackViewRequestResult requested = requestCommittedPlaybackWindow(activeLoopIndex, coverage, phase, clock);
+  if (requested != PlaybackViewRequestResult::DeferredSourceQualification) {
+    reportPlaybackRollingGateRow("win_request_refused", clock.epoch != 0, /*reprojectedTick=*/false,
+                                 static_cast<uint8_t>(requested));
+    return RollingOutcome::Rejected;
+  }
   const auto* pending = runtime->pendingViewRequest();
-  if (!pending) return RollingOutcome::Rejected;
+  if (!pending) {
+    reportPlaybackRollingGateRow("win_request_dropped", clock.epoch != 0, /*reprojectedTick=*/false,
+                                 static_cast<uint8_t>(requested));
+    return RollingOutcome::Rejected;
+  }
   frame.boundView = RuntimePlaybackViewLifecycle::kNoView;
   frame.boundStorageGeneration = 0;
   frame.epoch = pending->clockEpoch;
@@ -2448,6 +2491,7 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
   frame.deadlineTick = pending->deadlineTick;
   frame.lastTick = clock.tick;
   frame.phase = LoopPlaybackRuntime::RollingPhase::Requested; // Publish metadata last.
+  reportPlaybackRollingGateRow("win_requested", clock.epoch != 0, /*reprojectedTick=*/false, static_cast<uint8_t>(requested));
   return RollingOutcome::Requested;
 #endif
 }
@@ -3599,6 +3643,125 @@ TRACK_COLD_MEM void Track::reportPlaybackLaunchCallerExit(uint8_t slotIndex, Pla
     return;
   }
   reportPlaybackLaunchGateRow(slotIndex, "launch_not_reached_occupied");
+}
+
+namespace {
+
+/// The rolling demand path's gate row, **last emitted state** per track: the packed flags, the active slot, the length
+/// the deciding terms read and the request's own ordinal. Same shape and same reasoning as the launch gate's table --
+/// the row is a *transition* record, and the lane turn visits **every** track on every
+/// `DeferredIdleOwnerCount` rotation, so an unconditional row would be a flood that evicts the evidence it explains.
+/// `bit 14` (outstanding grains) is printed as context but is **not** part of the change key: it is a progress counter,
+/// not a decision, and keying on it would turn one state into a row per grain. `DMAMEM` is RAM2: off-clock state read
+/// by the lane turn alone, never DTCM.
+struct RollingGateLastState {
+  uint16_t key = 0;
+  uint8_t slot = 0;
+  uint32_t loopLengthTicks = 0;
+  uint8_t requestResult = 0;
+  const char* exit = nullptr;
+  bool seen = false;
+};
+
+constexpr size_t kRollingGateTrackCount = Config::NUM_TRACKS;
+/// The deciding bits of `sRollingGateLast.key`; see the header's declaration for the bit order.
+constexpr uint16_t kRollingGateChangeKeyMask = 0xFFBFu;  // all bits but 14 (`gr`, a progress counter)
+#if defined(__IMXRT1062__)
+DMAMEM RollingGateLastState sRollingGateLast[kRollingGateTrackCount];
+#else
+RollingGateLastState sRollingGateLast[kRollingGateTrackCount];
+#endif
+
+/// The row's bit order, in one place so the caller and the emitter cannot drift (the emitter prints one named field per
+/// bit; the list is in the capture header's declaration).
+uint16_t rollingGateFlags(bool epochStamped, bool avoidFullRebuild, bool spanAligned, bool playing, bool noteEditActive,
+                          bool pendingDeferredOverdubStop, bool previewSourceActive, bool recordReturnBound,
+                          bool viewSetServable, bool rootCurrent, bool roleAvailable, bool ownsCoverageSource,
+                          bool demandActive, bool builderActive, bool outstandingGrains) {
+  uint16_t bits = 0;
+  if (epochStamped) bits |= 1u << 0;
+  if (avoidFullRebuild) bits |= 1u << 1;
+  if (spanAligned) bits |= 1u << 2;
+  if (playing) bits |= 1u << 3;
+  if (noteEditActive) bits |= 1u << 4;
+  if (pendingDeferredOverdubStop) bits |= 1u << 5;
+  if (previewSourceActive) bits |= 1u << 6;
+  if (recordReturnBound) bits |= 1u << 7;
+  if (viewSetServable) bits |= 1u << 8;
+  if (rootCurrent) bits |= 1u << 9;
+  if (roleAvailable) bits |= 1u << 10;
+  if (ownsCoverageSource) bits |= 1u << 11;
+  if (demandActive) bits |= 1u << 12;
+  if (builderActive) bits |= 1u << 13;
+  if (outstandingGrains) bits |= 1u << 14;
+  return bits;
+}
+
+}  // namespace
+
+TRACK_COLD_MEM void Track::reportPlaybackRollingGateRow(const char* exit, bool clockEpochStamped, bool reprojectedTick,
+                                                        uint8_t requestResult) {
+  // The rolling demand path's **state-change record**: every exit of `serviceRollingPlaybackWindow` used to return a
+  // typed outcome with no row, so on hardware "this track owed no window" and "the window was refused, and by which
+  // term" were the same absence (F-16). Nothing here admits, refuses, reorders or retires: the guards have already
+  // decided and this reads the same state they read. **Qualification-only** (`SC_QUALIFICATION_ROWS_ENABLED`): the
+  // other images carry neither the row nor this table.
+#if SC_QUALIFICATION_ROWS_ENABLED
+  if (exit == nullptr || activeLoopIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+  const uint8_t slot = activeLoopIndex;
+  const Loop& loop = loopForSlot(slot);
+  const auto* runtime = playbackRuntime.slotIfAllocated(slot);
+  constexpr uint32_t span = 2 * Config::TICKS_PER_BAR;
+  const bool rootCurrent = loop.publishedSnapshotIsCurrent();
+  bool viewSetServable = false;
+  bool roleAvailable = false;
+  bool ownsCoverageSource = false;
+  bool demandActive = false;
+  bool builderActive = false;
+  bool previewSourceActive = false;
+  bool recordReturnBound = false;
+  if (runtime) {
+    const auto* set = runtime->viewSetIfPrewarmed();
+    viewSetServable = set != nullptr && set->lifecycle.current < set->views.size() &&
+                      set->views[set->lifecycle.current].complete && set->views[set->lifecycle.current].published;
+    roleAvailable = runtime->coverageRoleAvailable();
+    ownsCoverageSource = runtime->ownsCoverageSource();
+    demandActive = runtime->pendingViewRequest_.active || runtime->frozenViewRequest.active;
+    builderActive = runtime->viewBuild.active();
+    previewSourceActive = runtime->previewSourceActive;
+    recordReturnBound = runtime->hasBoundRecordReturnWindowForPendingJob();
+  }
+  uint16_t flags =
+      rollingGateFlags(clockEpochStamped, loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks),
+                       loop.loopLengthTicks % span == 0, isPlaying(), editManager.isNoteEditActive(),
+                       hasPendingDeferredOverdubStop(), previewSourceActive, recordReturnBound, viewSetServable,
+                       rootCurrent, roleAvailable, ownsCoverageSource, demandActive, builderActive,
+                       playbackViewOutstandingGrains(slot) != 0);
+  if (reprojectedTick) flags |= 1u << 15;
+  const uint8_t trackIndex = playbackRebuildTrackIndex(*this);
+  if (trackIndex >= kRollingGateTrackCount) return;
+  RollingGateLastState& last = sRollingGateLast[trackIndex];
+  const uint16_t key = static_cast<uint16_t>(flags & kRollingGateChangeKeyMask);
+  // The token is compared by **content**, not by pointer, and the key is the *decision* (the exit token, the length the
+  // deciding terms read, the request's ordinal and the deciding bits) rather than every printed field. Bounded,
+  // off-clock work on the lane turn.
+  if (last.seen && last.key == key && last.slot == slot && last.loopLengthTicks == loop.loopLengthTicks &&
+      last.requestResult == requestResult && last.exit != nullptr && std::strcmp(last.exit, exit) == 0) {
+    return;
+  }
+  last.key = key;
+  last.slot = slot;
+  last.loopLengthTicks = loop.loopLengthTicks;
+  last.requestResult = requestResult;
+  last.exit = exit;
+  last.seen = true;
+  SC_WIN_GATE(trackIndex, slot, exit, flags, loop.loopLengthTicks, requestResult);
+#else
+  (void)exit;
+  (void)clockEpochStamped;
+  (void)reprojectedTick;
+  (void)requestResult;
+#endif
 }
 TRACK_COLD_MEM const char* Track::playbackWindowReadinessLabel(PlaybackWindowReadiness readiness) {
   // No name table and no `switch`: either is `.data` on this target (the RAM1 rule's finding), and this TU's string

@@ -1,0 +1,61 @@
+{
+  "slice": "windowed-playback-generation task 6.4/6.5 — the rolling demand path's gate row (DIAG,win_gate)",
+  "kind": "firmware instrumentation (qualification-only diagnostic row) + native fixture; no behavior change",
+  "packet": "EXECUTION.md",
+  "evidence": "EVIDENCE.md",
+  "authority": ["task 6.4 (oracle/profile preparation)", "task 6.5 (native/hardware verification split)", "F-16 of evidence/2026-10-05-switch-leg-demand/MEASUREMENT.md"],
+  "production_changes": [
+    "src/Track/TrackPlaybackWindowBuild.cpp: reportPlaybackRollingGateRow + cadence table + one call at every exit of serviceRollingPlaybackWindow",
+    "src/Utils/DebugSessionCapture.cpp: winGateRow emitter (direct-when-room, ring fallback) + Tier-A entry; removed an unreachable duplicated launch_gate clause",
+    "src/Utils/DebugSessionCapture.cpp / include/Utils/DebugSessionCapture.h: SC_WIN_GATE seam (qualification-only, substituted in native)"
+  ],
+  "behavior_change": "none: RollingOutcome values, guard order and every returned value are unchanged; the row observes after the guards decided",
+  "row": {
+    "tag": "DIAG,win_gate",
+    "tier": "A",
+    "prefix_bytes": 14,
+    "wire": "DIAG,win_gate,t=,s=,x=,len=,ep=,av=,al=,pl=,ed=,od=,pv=,rw=,sv=,rt=,rl=,ow=,dm=,bld=,gr=,rp=,rq=",
+    "exits": ["win_no_runtime", "win_track_not_playing", "win_reprojection_blocked", "win_window_ineligible", "win_frame_invalidated", "win_serving", "win_blocked", "win_blocked_by_request", "win_ready", "win_waiting", "win_not_servable", "win_busy", "win_reprojected_tick", "win_boundary_rejected", "win_request_refused", "win_request_dropped", "win_requested"],
+    "cadence": "one row per state change per track; key = (exit, active slot, loopLengthTicks, request ordinal, flags & ~bit14)",
+    "caller": "Track::serviceRollingPlaybackWindow, driven off-clock by src/main.cpp's DeferredIdleOwner::PlaybackViewMaintenance turn"
+  },
+  "fixture": {
+    "suite": "test_runtime_working_set_ownership",
+    "case": "test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change",
+    "cases_forced": {
+      "W1": "the unstamped clock: x=win_window_ineligible with ep=0/av=1/al=1, and no second row on the same state",
+      "W2": "the same exit's other two terms told apart: av=0 (4-bar), al=0 (24 bars + 1 tick)",
+      "W3": "a stamped clock on the demoted aligned slot: x=win_requested with rq=12 (DeferredSourceQualification)",
+      "W4": "the lane's episode names waiting/ready/serving and stays bounded (measured 12 rows over 120 lane turns)",
+      "W5": "a stopped transport: x=win_track_not_playing with pl=0"
+    },
+    "measured_row_list": "16 rows total; 3 entry-exit rows (0x070e ep=0, 0x070d av=0, 0x070b al=0), then requested/waiting/ready/serving, then a second episode, then 0x0307 stopped"
+  },
+  "mutations": {
+    "MR-W1": {"change": "the entry exit's report call removed", "result": "Fails 1 case: Expected 1 Was 0. the exit that refused names itself exactly once"},
+    "MR-W2": {"change": "the state-change dedupe disabled", "result": "Fails 1 case: Expected 1 Was 2. one row per state change, never one per call"},
+    "MR-W3": {"change": "the demotion/alignment bits always set (terms stop being told apart)", "result": "Fails 1 case: `av=0`: a loop the whole-take policy admits never takes the windowed demand"},
+    "restore": "src/Track/TrackPlaybackWindowBuild.cpp sha256 27d6ffde909d72566b7ab5bb94a1a2603072510fe99b974a7a928264f5f8f230 before and after every mutation; git diff -- src empty afterwards"
+  },
+  "verification": {
+    "focused_runtime_working_set_ownership": "144/144 (was 143)",
+    "focused_capture_ring": "16/16 (new Tier-A boundary pin, win_gate in / win_gatex out)",
+    "full_native": "2801 cases / 7 skipped / 2794 succeeded / 0 failed, no ERRORED suite (was 2798 / 7 / 2791)",
+    "build_capture_serial": "SUCCESS, RAM1 variables 96,192 / code 391,576 + padding 1,640 (byte-identical, no re-base)",
+    "build_window_qualification": "SUCCESS, RAM1 variables 96,192 / code 392,232 + padding 984 (byte-identical, no re-base)",
+    "marker_contract": "OK DIAG,win_gate,: emitted, tier-a-prefix 14/31 bytes; --audit 0 over",
+    "git_diff_check": "clean",
+    "openspec_validate_strict": "valid"
+  },
+  "device": {
+    "status": "NOT RUN",
+    "prerequisite": "an authorized upload of teensy41-capture-serial-window-qualification plus the registered windowed leg (STIM-WINDOW-CONTENT-01@v1) on a demoted active slot",
+    "question_it_answers": "whether the rolling demand is refused at its entry (ep/av/al) or admitted and built, which the four hardware claims of task 6.5 are blocked behind"
+  },
+  "not_claimed": [
+    "no device run; F-7, F-8, AC-8 and task 6.5's four hardware claims stay NOT RUN",
+    "no claim about which exit the device is in",
+    "no instrumentation of the consumption path (resolveRollingPlaybackWindow, playback hot path)",
+    "no fix of anything the row may show; 6.4 and 6.5 stay open, nothing checked off"
+  ]
+}

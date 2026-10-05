@@ -336,6 +336,30 @@ SC_MEM_ATTR void launchGateRow(uint8_t track, uint8_t slot, const char* exit, ui
  *  11 the four-term clause, 12 `snapshotIdleAllowed`, 13 `snapshotEligible`. */
 SC_MEM_ATTR void snapshotGateRow(uint8_t track, uint8_t selectedSlot, uint8_t activeSlot, uint16_t verdicts,
                                  uint8_t constructionUnits);
+
+/** The **rolling demand path**'s gate row (`DIAG,win_gate`) — the same qualification-only, state-change-emitted
+ *  instrument as `launch_gate`/`snap_gate`, on the third and last silent family of the demand side. Every exit of
+ *  `Track::serviceRollingPlaybackWindow` returns a typed `RollingOutcome` to its caller with **no** row, so a device
+ *  reader could not tell "this track owed no window" from "the window was refused, and by which term" (F-16: five
+ *  switch-leg runs were spent on that distinction). The input the device question now rests on is the **clock stamp**
+ *  (`ep`): the lane is dispatched under transport (`win_gap` `running=1`) and builds nothing.
+ *  Wire form: `DIAG,win_gate,t=<track>,s=<active slot>,x=<exit>,len=<loopLengthTicks>,ep=<0|1>,av=<0|1>,al=<0|1>,`
+ *  `pl=<0|1>,ed=<0|1>,od=<0|1>,pv=<0|1>,rw=<0|1>,sv=<0|1>,rt=<0|1>,rl=<0|1>,ow=<0|1>,dm=<0|1>,bld=<0|1>,gr=<0|1>,`
+ *  `rp=<0|1>,rq=<PlaybackViewRequestResult ordinal; 0 = no request attempted>`.
+ *  Flag bits, all read from the **active slot's own state** (bit 15 and `rq` are supplied by the call site, which alone
+ *  knows them): 0 `clock.epoch != 0`, 1 `shouldAvoidFullVisualRebuild(loopLengthTicks)`, 2 the length is span-aligned,
+ *  3 `isPlaying`, 4 `isNoteEditActive`, 5 `hasPendingDeferredOverdubStop`, 6 `previewSourceActive`,
+ *  7 `hasBoundRecordReturnWindowForPendingJob`, 8 the prewarmed view set's current view is complete **and** published,
+ *  9 `publishedSnapshotIsCurrent`, 10 `coverageRoleAvailable`, 11 `ownsCoverageSource`, 12 `pendingViewRequest_.active`,
+ *  13 `viewBuild.active()`, 14 outstanding grains on this track (coarse), 15 the tick fell outside the projection
+ *  (`effective != clock.tick`).
+ *  `x` names the exit **of this call**: `win_no_runtime`, `win_track_not_playing`, `win_reprojection_blocked`,
+ *  `win_window_ineligible` (the epoch / demotion / span-alignment trio, told apart by `ep`/`av`/`al`),
+ *  `win_frame_invalidated`, `win_serving`, `win_blocked`, `win_blocked_by_request`, `win_ready`, `win_waiting`,
+ *  `win_not_servable`, `win_busy`, `win_reprojected_tick`, `win_boundary_rejected`, `win_request_refused`,
+ *  `win_request_dropped`, `win_requested`. */
+SC_MEM_ATTR void winGateRow(uint8_t track, uint8_t slot, const char* exit, uint16_t flags, uint32_t loopLengthTicks,
+                            uint8_t requestResult);
 /** Playback-order rebuild on the same tick as gather: DIAG,playback_order,<durationUs>,<eventCount> (Tier-A). */
 SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount);
 /** The deferred predecessor stop has frozen its interval and handed the live capture role
@@ -637,6 +661,20 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits) ((void)0)
 #endif
 #endif
+/// The rolling demand path's **gate row** — the same **qualification-only** gate and the same `#ifndef` substitution
+/// seam as `SC_LAUNCH_GATE`/`SC_SNAPSHOT_GATE`, and the same rule: the **cadence** (which rows are owed) is
+/// production state (`Track::reportPlaybackRollingGateRow`), so a substituted recorder observes exactly the rows the
+/// device would emit.
+#if SC_QUALIFICATION_ROWS_ENABLED
+#ifndef SC_WIN_GATE
+#define SC_WIN_GATE(track, slot, exit, flags, loopLengthTicks, requestResult) \
+  DebugSessionCapture::winGateRow(track, slot, exit, flags, loopLengthTicks, requestResult)
+#endif
+#else
+#ifndef SC_WIN_GATE
+#define SC_WIN_GATE(track, slot, exit, flags, loopLengthTicks, requestResult) ((void)0)
+#endif
+#endif
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
 /// `#ifndef`-guarded so a native suite can substitute its own recorder (the `SC_ACCEPTED_LATCH` pattern).
@@ -805,6 +843,9 @@ inline bool captureRingRange(uintptr_t&, size_t&) { return false; }
 #endif
 #ifndef SC_SNAPSHOT_GATE
 #define SC_SNAPSHOT_GATE(track, selectedSlot, activeSlot, verdicts, constructionUnits) ((void)0)
+#endif
+#ifndef SC_WIN_GATE
+#define SC_WIN_GATE(track, slot, exit, flags, loopLengthTicks, requestResult) ((void)0)
 #endif
 #ifndef SC_WINDOW_SERVICE_GAP
 #define SC_WINDOW_SERVICE_GAP(sample, phase, running, epoch) ((void)0)

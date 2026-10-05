@@ -1024,6 +1024,29 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   (`captures/s64-switch-12`, `-13`: `launch_requested → launch_ready`, no hold). **Parked:** the *starved* shape (a
   rootless, pending demoted target) was never produced on device and is not pursued unless it shows up as a real defect.
   6.4 stays open on its device-oracle items; nothing here claims F-7/F-8/AC-8.
+
+  *Also supplied 2026-10-05 — the **oracle preparation** the device leg was missing (firmware instrumentation, natively
+  verified; **6.4 stays open**):* `DIAG,win_gate` makes the **rolling demand path** name itself. Every exit of
+  `Track::serviceRollingPlaybackWindow` returned a typed `RollingOutcome` to its caller with **no** row, which is **F-16**
+  ("*a device reader cannot tell 'nothing was owed' from 'the source was refused'. That is exactly the distinction five
+  runs were spent on, and a row would have settled it in one*") — and it is the exit this profile's own leg has been
+  unable to explain: the lane is **dispatched under transport** (`win_gap` `running=1`) and builds nothing, with the
+  demand's entry decision (`!clock.epoch || !shouldAvoidFullVisualRebuild(…) || loopLengthTicks % span != 0`) the one
+  remaining explanation and the one that had no row. It is the launch/snapshot gate's third sibling: assembled from the
+  **active slot's own state**, emitted **once per state change** per track (`gr` is excluded from the key: it is a
+  progress counter, not a decision), `x` naming this call's exit, `ep`/`av`/`al` telling the entry exit's three terms
+  apart so one token cannot hide which guard refused, and `rq` carrying the request's own ordinal. Qualification-only by
+  build: the plain capture env compiles the call to `((void)0)` (RAM1 padding 1,640 unchanged) and the qualification
+  image's `code 392,232 + padding 984` is byte-identical. No stimulus, oracle term or oracle verdict was bent to take
+  it. Red-proofed by MR-W1 (the entry exit goes silent — *Expected 1 Was 0*), MR-W2 (dedupe removed — *Expected 1 Was
+  2*) and MR-W3 (the terms stop being told apart — its `av=0` assertion fails), each failing exactly its own case with
+  `TrackPlaybackWindowBuild.cpp` restored byte-identically (sha256 `27d6ffde…`). Verified: focused
+  `test_runtime_working_set_ownership` **144/144**, `test_capture_ring` **16/16** with the new Tier-A boundary pin, full
+  native **2,801 / 7 skipped / 2,794 succeeded / 0 failed**, both capture builds SUCCESS with RAM1 byte-identical, marker
+  audit 0 over, `git diff --check` clean, strict validation valid. **Still owed, and not claimed:** the row has **not
+  been read on a device** — that needs an authorized flash of the qualification image plus the registered leg re-run on a
+  demoted active slot, which is the next authorized step and the one that feeds 6.5's four hardware claims. See
+  [`rolling-gate-row`](evidence/2026-10-05-rolling-gate-row/EVIDENCE.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B
@@ -1058,6 +1081,15 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   external-clock behaviour, memory high-water marks with content parity) are **still NOT RUN**, and the run says why:
   they need a **demand** (the owner's enablement decision for the rolling lane, or a leg that drives a demoted switch).
   The task stays open on all four.
+
+  *Also supplied 2026-10-05 — the **instrument the hardware half's reading was missing*** (firmware, natively verified;
+  **6.5 stays open**): this task's four hardware claims are read off a lane whose demand path was silent, and
+  `DIAG,win_gate` (see the note under **6.4**) now names that path's exit with the inputs that decided it. It changes no
+  native expectation and no claim here — the interleavings, ordering proofs and cancellation forces above stand as
+  recorded — but it is what the next authorized device run reads instead of inferring, and it is what will say whether
+  the lane's own entry (`ep`/`av`/`al`) or something further in refuses. Full native after it: **2,801 / 7 skipped /
+  2,794 succeeded / 0 failed**; both capture builds SUCCESS with RAM1 byte-identical. See
+  [`rolling-gate-row`](evidence/2026-10-05-rolling-gate-row/EVIDENCE.md).
 - [x] 6.6 Update RWO's dependency records now that the sibling exists and carries its DEC and reassessment — verify RWO
   `tasks.md` (S2.9/F) and `design.md:812` point at this change, and that S2.3's `N` and `S7 gates` status are restated
   accurately under [`docs/Authority/DOCUMENTATION_CLOSEOUT.md`](../../../docs/Authority/DOCUMENTATION_CLOSEOUT.md)

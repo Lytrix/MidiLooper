@@ -66,6 +66,17 @@ hardware half is **NOT RUN** in that sense, and the reason is measured rather th
 window demand (the next step is a leg that drives a demoted slot switch), and the lane's coverage/overrun rows needed the
 F-14 classification and the post-stop drain before they could be read at all.
 
+**The instrument that read was missing (2026-10-05, `rolling-gate-row`) — it changes what the *next* read will be, not
+what has been measured.** The reason the hardware half could not be read is now itself addressable: the lane's **demand**
+path (`Track::serviceRollingPlaybackWindow`, the off-clock turn `src/main.cpp` drives) returned a typed `RollingOutcome`
+to its caller with **no row**, so "owed nothing" and "refused, and by which term" were the same absence (F-16). The new
+qualification-only `DIAG,win_gate` row names that exit, the active slot, the inputs that decided it (`ep`/`av`/`al` tell
+apart the entry decision's clock stamp, demotion bound and span alignment; `rq` carries the request's ordinal) and is
+emitted once per state change. It observes only, is out of every non-qualification image, and changes no
+`RollingOutcome`, guard order or return value. **Not measured by it:** everything listed in the paragraph above — a row
+is not a duration. It exists so that the next authorized run *measures* rather than infers which term refuses the lane's
+demand.
+
 ## 4. The assertions S7.5 will judge, and how this change relates to them
 
 S7.5 requires, under sustained simultaneous playback / record-overdub / undo-redo / switching with

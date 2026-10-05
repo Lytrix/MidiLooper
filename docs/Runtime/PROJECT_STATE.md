@@ -1,3 +1,31 @@
+**The rolling demand path now names its own exit on a device: `DIAG,win_gate` is the third and last silent family of the
+windowed lane's demand side, closing the rolling half of F-16 (firmware instrumentation + native proof; no device run, no
+task checkoff).** `Track::serviceRollingPlaybackWindow`'s ~20 exits returned a typed `RollingOutcome` to their caller with
+**no** row, so on hardware "this track owed no window" and "the window was refused, and by which term" were the same
+absence — F-16's own words: *"exactly the distinction five runs were spent on, and a row would have settled it in one"*.
+The launch half landed as `DIAG,launch_gate`, the selector's as `DIAG,snap_gate`; this is the third sibling, and the one
+the windowed profile's leg has been stuck on: the lane is dispatched **under transport** (`win_gap` `running=1`) and
+builds nothing, with the demand's **entry** decision (`!clock.epoch || !shouldAvoidFullVisualRebuild(…) ||
+loopLengthTicks % span != 0`) the one explanation left and the one that had no row. The row
+(`DIAG,win_gate,t=,s=,x=,len=,ep=,av=,al=,pl=,ed=,od=,pv=,rw=,sv=,rt=,rl=,ow=,dm=,bld=,gr=,rp=,rq=`) is assembled from
+the **active slot's own state**, delivered by its siblings' two rules (direct when USB has room, ring fallback), Tier-A,
+and emitted **once per state change** per track — the cadence key is the *decision* (exit token, slot, the length the
+terms read, the request ordinal, the deciding bits), with `gr` printed but excluded because it is a progress counter; the
+entry exit's three terms are told apart by `ep`/`av`/`al` so one token cannot hide which guard refused. It observes only:
+no guard, order, admission, capacity, fallback or return value changed, and `SC_QUALIFICATION_ROWS_ENABLED` keeps the row
+and its table out of every other image (plain capture RAM1 `padding 1,640` and the qualification image's
+`code 392,232 + padding 984` are both byte-identical — no re-base). Natively: new fixture
+`test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change` (W1–W5 on the production entry, cadence
+measured at **12 rows over 120 lane turns** and asserted < 24), focused `test_runtime_working_set_ownership` **144/144**,
+`test_capture_ring` **16/16** with the new Tier-A boundary pin, full native **2,801 / 7 skipped / 2,794 succeeded / 0
+failed**, marker audit 0 over, `git diff --check` clean, strict validation valid; **MR-W1/W2/W3** each fail exactly the new
+case and restore `TrackPlaybackWindowBuild.cpp` byte-identically (`27d6ffde…`). **A defect fixed beside it, recorded:**
+`isTierATextLine` carried a duplicated `launch_gate` clause after its `return` — unreachable, left by the `snap_gate`
+slice. **Not claimed:** the row has not been read on hardware, so F-7/F-8/AC-8 and 6.5's four hardware claims stay **NOT
+RUN** and 6.4/6.5 stay open; the next authorized step is an upload of
+`teensy41-capture-serial-window-qualification` plus the registered windowed leg on a demoted active slot. Evidence:
+[`rolling-gate-row`](../openspec/changes/windowed-playback-generation/evidence/2026-10-05-rolling-gate-row/EVIDENCE.md).
+
 **The windowed leg now drives a slot switch, the gesture is proven safe on hardware, and the lane's missing demand is
 traced into `preparePlaybackLaunchForSlot`'s silent exits -- the target's root published and committed, and the lane serves
 a demoted slot in the same run (host tooling + one authorized device run; no firmware line changed).**

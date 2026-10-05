@@ -315,6 +315,19 @@ public:
   void reportSnapshotOwnerGateRow(uint8_t selectedSlot, uint8_t activeSlot, uint8_t constructionUnits,
                                   bool liveRecordPastFirstBar, bool visualCacheNeedsFirstPaint, bool stepAdmits,
                                   bool clauseAdmits, bool idleAllowed, bool eligible);
+  /// The **rolling demand path**'s gate row (the same qualification-only instrument as the launch and snapshot gates,
+  /// on the third silent family of the demand side). Every exit of `serviceRollingPlaybackWindow` returns a typed
+  /// `RollingOutcome` to its caller with no row, so on hardware "this track owed no window" and "the window was
+  /// refused -- and by which term" were indistinguishable (F-16). The flags are assembled here, from the **active
+  /// slot's own state**, so a call site names the exit and only the facts it alone knows: whether the clock it was
+  /// handed is stamped, whether this tick fell outside the projection, and the request result the exit observed.
+  /// Reports **once per state change**, never per turn. It observes; it never admits, refuses, reorders or retires
+  /// anything.
+  /// `clockEpochStamped` is `clock.epoch != 0` for the clock the turn was called with; `reprojectedTick` and
+  /// `requestResult` are the two facts only the call site knows. Everything else is read from the **active slot's own
+  /// state**.
+  void reportPlaybackRollingGateRow(const char* exit, bool clockEpochStamped = false, bool reprojectedTick = false,
+                                    uint8_t requestResult = 0);
   /// DEC-108 §13b / task 3.10 (the review's step 2): the **per-track outstanding-work budget** -- the sum of every
   /// active build's **full** admitted grains on this track. Full, not remaining, is deliberate: it is an **upper
   /// bound** on what is still owed (a served grain is charged again), which is the safe direction for a budget. A
