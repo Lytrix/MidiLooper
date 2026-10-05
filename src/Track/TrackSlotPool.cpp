@@ -125,18 +125,43 @@ TRACK_COLD_MEM bool Track::hasPendingSessionExitSnapshotOnAnySlot() const {
   return false;
 }
 
+/// Which loop the `Snapshot` deferred owner serves this turn. The active loop wins **ties**, but not absolutely: a
+/// pending publication the owner's own gate can refuse (queued pass ids with no session exit, no wrap journal and
+/// nothing in flight, e.g. while PLAYING) must not hold the turn against a demoted slot whose accepted republish request
+/// the owner *can* start (windowed-playback-generation: a switch target's source publication waited behind such a loop).
+/// Rank 0 = construction already in flight (finish what was started), 1 = startable (session exit queued or a wrap
+/// journal), 2 = any other pending publication. Lowest rank wins; ties go to the active loop, then slot order. Stateless
+/// and bounded by `MAX_LOOPS_PER_TRACK`. While recording, the active loop keeps absolute priority: live-record
+/// progress is its own clause of the owner's gate.
 TRACK_COLD_MEM Loop& Track::loopWithPendingSnapshotPublish() {
   Loop& active = getActiveLoop();
-  if (active.hasPendingSnapshotPublish()) {
+  const bool activePending = active.hasPendingSnapshotPublish();
+  if (activePending && isRecording()) {
     return active;
   }
-  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+  const auto rank = [](const Loop& l) -> uint8_t {
+    if (l.hasInFlightSnapshotConstruction()) return 0;
+    if (l.pendingSnapshotSessionExitQueued() || l.hasPendingWrapJournal()) return 1;
+    return 2;
+  };
+  Loop* best = nullptr;
+  uint8_t bestRank = 3;
+  if (activePending) {
+    best = &active;
+    bestRank = rank(active);
+  }
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK && bestRank > 0; ++s) {
     Loop& slotLoop = getLoop(s);
-    if (slotLoop.hasPendingSnapshotPublish()) {
-      return slotLoop;
+    if (&slotLoop == &active || !slotLoop.hasPendingSnapshotPublish()) {
+      continue;
+    }
+    const uint8_t r = rank(slotLoop);
+    if (r < bestRank) {
+      best = &slotLoop;
+      bestRank = r;
     }
   }
-  return active;
+  return best != nullptr ? *best : active;
 }
 
 TRACK_COLD_MEM bool Track::hasAnySlotData() const {

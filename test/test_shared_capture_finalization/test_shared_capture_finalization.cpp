@@ -2759,7 +2759,7 @@ void test_job_pass_staging_denial_and_receipt_binding() {
 /// accepted request waits behind it. The fixture drives the **production turn** (`processDeferredIdleMaintenance`,
 /// Snapshot owner, one unit): the earlier regression stepped the publication primitive by hand on the target, which is
 /// precisely the seam that hides the loop choice on hardware.
-void test_snapshot_owner_selects_the_active_loop_and_starves_a_pending_slot() {
+void test_snapshot_owner_prefers_the_active_loop_on_a_tie() {
   Track& t = trackManager.getTrack(0);
   t.ensureLoopsAllocated();
   // The demoted, non-active target (index 2): committed content, no published root -- the shape the switch leg reads.
@@ -2839,6 +2839,54 @@ void test_snapshot_owner_selects_the_active_loop_and_starves_a_pending_slot() {
   TEST_ASSERT_TRUE((SnapshotGateRows::last()->verdicts & (1u << 0)) != 0);
 }
 
+/// **The fix's acceptance oracle.** A demoted slot has a publication construction already in flight (it was selected
+/// while the active loop owed nothing); the operator's active loop then queues its own republish. The selector must let
+/// the started construction finish -- rank 0 beats the active loop's merely startable work -- instead of rebinding every
+/// turn to the active loop and leaving the demoted slot's accepted request behind it.
+void test_snapshot_owner_resumes_an_in_flight_slot_behind_the_active_loop() {
+  Track& t = trackManager.getTrack(2);
+  t.ensureLoopsAllocated();
+  const auto commitTake = [&t](uint8_t slot, uint8_t note) -> Loop& {
+    Loop& l = t.getLoop(slot);
+    t.setActiveLoopIndex(slot);
+    l.loopLengthTicks = 24 * 768;
+    l.beginCapture(CapturePhase::Record);
+    for (uint32_t bar = 0; bar < 24; ++bar) {
+      TEST_ASSERT_TRUE(l.appendCaptureEvent(MidiEvent::NoteOn(bar * 768, 1, note, 100)));
+      TEST_ASSERT_TRUE(l.appendCaptureEvent(MidiEvent::NoteOff(bar * 768 + 48, 1, note, 0)));
+    }
+    TEST_ASSERT_EQUAL(SealOutcome::Ok, l.sealCapture(24 * 768, CommitReason::RecordStop));
+    TEST_ASSERT_TRUE(l.commitPendingCapturePass());
+    return l;
+  };
+  Loop& target = commitTake(2, 48);
+  for (unsigned i = 0; i < 20000 && target.hasPendingSnapshotPublish(); ++i)
+    target.stepPendingSnapshotPublish(4, true, 0);
+  target.storePublishedSnapshotForTest({}, 0);
+  Loop& active = commitTake(3, 50);
+  t.setActiveLoopIndex(3);
+  TEST_ASSERT_TRUE(target.requestCommittedPassesRepublish());
+  for (unsigned i = 0; i < 400 && !target.hasInFlightSnapshotConstruction(); ++i)
+    target.stepPendingSnapshotPublish(1, true, 0);
+  // Precondition (the shape under test): the target is mid-construction; the active loop owes startable work.
+  TEST_ASSERT_TRUE(target.hasInFlightSnapshotConstruction());
+  TEST_ASSERT_TRUE(target.hasPendingSnapshotPublish());
+  TEST_ASSERT_TRUE(active.requestCommittedPassesRepublish());
+  TEST_ASSERT_FALSE(active.hasInFlightSnapshotConstruction());
+  TEST_ASSERT_TRUE(&t.loopWithPendingSnapshotPublish() == &target);
+  // The production turn serves it, and once construction is in flight it keeps the turn.
+  SnapshotGateRows::reset();
+  t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+  TEST_ASSERT_NOT_NULL(SnapshotGateRows::last());
+  TEST_ASSERT_EQUAL_UINT8(2, SnapshotGateRows::last()->selectedSlot);
+  TEST_ASSERT_EQUAL_UINT8(3, SnapshotGateRows::last()->activeSlot);
+  for (unsigned turn = 0; turn < 20000 && target.hasPendingSnapshotPublish(); ++turn) {
+    t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(target.hasPendingSnapshotPublish(), "the demoted slot's request must be served");
+  TEST_ASSERT_TRUE(target.publishedSnapshotIsCurrent());
+}
+
 int main() {
   UNITY_BEGIN();
       RUN_TEST(test_record_normalization_orders_and_identity_completes_the_merged_store);
@@ -2876,7 +2924,8 @@ RUN_TEST(test_job_pass_staging_yields_and_preserves_successor);
   RUN_TEST(test_slot_clear_during_a_record_finalization_does_not_republish);
   RUN_TEST(test_retained_record_stop_admits_stopped_once_the_transport_is_not_running);
   RUN_TEST(test_two_tracks_each_serve_their_own_deferred_window);
-  RUN_TEST(test_snapshot_owner_selects_the_active_loop_and_starves_a_pending_slot);
+  RUN_TEST(test_snapshot_owner_prefers_the_active_loop_on_a_tie);
+  RUN_TEST(test_snapshot_owner_resumes_an_in_flight_slot_behind_the_active_loop);
   RUN_TEST(test_deferred_record_interval_serves_beyond_bar_one_from_the_frozen_source);
   RUN_TEST(test_published_record_interval_does_not_replay_the_return_window);
   RUN_TEST(test_stalled_frozen_window_build_does_not_park_the_record_job);

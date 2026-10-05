@@ -1,3 +1,18 @@
+**2026-10-05 — `windowed-playback-generation`: the `Snapshot` owner's slot selector no longer gives the active loop absolute priority (firmware fix + native proof).**
+`Track::loopWithPendingSnapshotPublish` now ranks pending loops: 0 = construction already in flight, 1 = startable
+(session exit queued or wrap journal), 2 = other pending; lowest rank wins, ties go to the active loop, then slot order
+(stateless, bounded by `MAX_LOOPS_PER_TRACK`, no new member). While recording the active loop keeps absolute priority
+(live-record progress is its own gate clause). `test_snapshot_owner_resumes_an_in_flight_slot_behind_the_active_loop`
+drives the production turn: a demoted slot mid-construction keeps the turn when the active loop queues its own republish,
+and its request is served to a current root; reverting the selector fails it (`TrackSlotPool.cpp` restored). The earlier
+starvation test is now `..._prefers_the_active_loop_on_a_tie` (the tie behaviour is unchanged). Verified: shared capture
+finalization 62/62, full native 2,799 / 7 skipped / 2,792 succeeded / 0 failed, `teensy41-capture-serial` SUCCESS with
+RAM1 variables byte-identical (96,192). **Not claimed:** no device observation of the fix (needs a flash -- awaiting
+approval -- and a demoted rootless long target, e.g. track 4 slot 0, without a bench write); the *unstartable-active*
+shape (queued pass ids while PLAYING, no session exit) is ranked 2 by construction but not built natively (no existing
+seam creates it without a live overdub session); no DEC entry (selector order inside the existing owner, not an
+architecture rule).
+
 **2026-10-05 — `windowed-playback-generation`: the `Snapshot` owner's gate row names the publication side, and its red-proved fixture pins the **active-loop preference** as the starvation mechanism; the device episode lost its target shape to a re-flash (firmware diagnostic + native proof + one episode).**
 `DIAG,snap_gate,t=<track>,s=<selected slot>,a=<active slot>,u=<units>,p=,sep=,fc=,wj=,hp=,lr=,vc=,rec=,play=,od=,step=,cl=,idle=,elig=`
 is emitted from the `Snapshot` branch of `Track::processDeferredIdleMaintenance`, **once per state change** per track,
