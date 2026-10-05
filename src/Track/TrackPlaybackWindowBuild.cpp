@@ -1545,6 +1545,11 @@ TRACK_COLD_MEM Track::RetainedIntervalQueryResult Track::queryRetainedIntervalFo
   return RetainedIntervalQueryResult::Indexed;
 }
 
+/// Task 3.7a (I1/I3b): the retained revision's pinned capture bodies, in pass-set order (record first, then overdubs);
+/// declared here because both readers of one revision's membership use it -- the window gather below and the paged
+/// producer in this same unit -- and a second enumeration is exactly how two readers would come to disagree.
+static void collectPinnedCaptureLists(const Loop& loop, const RetainedPlaybackSource& source,
+                                     std::vector<const CommittedChunkIdList*>& listsOut, uint32_t& missingOut);
 /// Task 3.7a (I1): the interval answered from the **retained revision's pinned bodies**. The index answers first (how
 /// many bars the pinned bodies cover and how many cost no inspection at all), and only a covered interval is
 /// enumerated -- through the same resumable body primitive `WindowPagedStream` already uses, one bounded slice per
@@ -1641,28 +1646,8 @@ TRACK_COLD_MEM Track::RetainedWindowGather Track::gatherRetainedSourceWindowForS
   // later revision disabled is exactly the lag the retention exists to serve. A pin whose body is no longer reachable
   // is counted, and serving an empty window in that state would be indistinguishable from silence -- so it is refused.
   std::vector<const CommittedChunkIdList*> lists;
-  lists.reserve(source->pins.capturePassIds.size());
   uint32_t missing = 0;
-  for (const PassId pinnedId : source->pins.capturePassIds) {
-    const CommittedChunkIdList* list = nullptr;
-    if (loop.passes.hasRecordPass() && loop.passes.recordPass.id == pinnedId) {
-      list = &loop.passes.recordPass.committedChunkIds;
-    } else {
-      for (const OverdubPass& pass : loop.passes.overdubPasses) {
-        if (pass.id == pinnedId) {
-          list = &pass.committedChunkIds;
-          break;
-        }
-      }
-    }
-    if (list == nullptr) {
-      ++missing;
-      continue;
-    }
-    if (!list->empty()) {
-      lists.push_back(list);
-    }
-  }
+  collectPinnedCaptureLists(loop, *source, lists, missing);
   gather.pinnedPassesMissing = missing;
   gather.pinnedLists = static_cast<uint32_t>(lists.size());
   if (lists.empty() && !source->ownedChunks.empty()) {
@@ -1718,6 +1703,38 @@ TRACK_COLD_MEM Track::RetainedWindowGather Track::gatherRetainedSourceWindowForS
     }
   }
   return gather;
+}
+
+/// Task 3.7a (I1/I3b): **the retained revision's pinned capture bodies**, in pass-set order (record first, then
+/// overdubs), with the count of pinned passes whose descriptor is no longer reachable. One implementation, because the
+/// window gather and the paged legacy producer must enumerate the *same* content for the same revision -- two
+/// enumerations could disagree, and then the window and the pages would serve different loops.
+static void collectPinnedCaptureLists(
+    const Loop& loop, const RetainedPlaybackSource& source,
+    std::vector<const CommittedChunkIdList*>& listsOut, uint32_t& missingOut) {
+  listsOut.clear();
+  listsOut.reserve(source.pins.capturePassIds.size());
+  missingOut = 0;
+  for (const PassId pinnedId : source.pins.capturePassIds) {
+    const CommittedChunkIdList* list = nullptr;
+    if (loop.passes.hasRecordPass() && loop.passes.recordPass.id == pinnedId) {
+      list = &loop.passes.recordPass.committedChunkIds;
+    } else {
+      for (const OverdubPass& pass : loop.passes.overdubPasses) {
+        if (pass.id == pinnedId) {
+          list = &pass.committedChunkIds;
+          break;
+        }
+      }
+    }
+    if (list == nullptr) {
+      ++missingOut;
+      continue;
+    }
+    if (!list->empty()) {
+      listsOut.push_back(list);
+    }
+  }
 }
 
 /// Task 3.7a (I2): the gather's own refusal name, as the runtime records it. One mapping, so the reason a demand is
@@ -1843,6 +1860,15 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
     return PlaybackViewTurnResult::GrainDenied;
   }
   if (runtime->retainedGatherUnits >= kRetainedGatherMaxSlices) {
+    // Task 3.7a (I3b) / DEC-108 §14(c): **this demand does not fit one window.** `appendWindowBudgeted` is bounded by
+    // events per call, so a sparse interval completes in a handful of slices and cannot reach this ceiling; reaching it
+    // means the interval's own content is over `L`. The honest answer is therefore no longer only a refusal: the *same*
+    // retained bodies are prepared as pages for the same revision (a bounded ring, while the content stays unbounded),
+    // and the turn immediately produces that preparation's first page -- the switch itself does no gathering.
+    if (!launch && beginPagedPlaybackForSlot(slotIndex)) {
+      runtime->discardRetainedGather();
+      return stepPagedPlaybackForSlot(slotIndex, clock);
+    }
     request.reason = PlaybackViewPendingReason::WindowExceedsRetainedCapacity;
     runtime->retainedGatherRefusal = LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity;
     if (!runtime->pendingViewRequest_.active) {
@@ -1885,16 +1911,34 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
   const PlaybackViewRequestResult admitted = requestPlaybackViewMaintenance(
       slotIndex, runtime->retainedGatherEvents.data(), runtime->retainedGatherEvents.size(), request.source,
       request.coverage, {}, {}, currentPhase, request.coverage.startPhase, clock);
-  runtime->frozenViewRequest = {};
   if (admitted != PlaybackViewRequestResult::Admitted) {
-    // The admission wrote its own named refusal and retained what it refused (its own rule). This lane keeps the
-    // refusal name for the account of *why* -- and releases the window it gathered, either way.
+    // Task 3.7a (I3b): the **one** refusal on this path that is not an answer is the destination's own capacity
+    // bound -- the gathered window is over `L`, which is exactly what the paged path exists for. The demand is
+    // switched to pages for the same revision, and the admission is *not* argued with (its bound is its own rule).
+    // A launch keeps its fallback, and a demand whose bodies cannot be paged keeps the refusal below.
+    if (admitted == PlaybackViewRequestResult::WindowExceedsRetainedCapacity && !launch &&
+        beginPagedPlaybackForSlot(slotIndex)) {
+      runtime->discardRetainedGather();
+      return stepPagedPlaybackForSlot(slotIndex, clock);
+    }
     runtime->retainedGatherRefusal = admitted == PlaybackViewRequestResult::WindowExceedsRetainedCapacity
         ? LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity
         : LoopPlaybackRuntime::RetainedGatherRefusal::NoSource;
+    // The demand is **coalesced back** into the record the lane reads (the oldest deadline of the same operation
+    // survives, and an admission that already retained its own record is left untouched): a window that could not be
+    // admitted is still owed an answer, and dropping it here is what would make a refusal indistinguishable from a
+    // fulfilled promise.
+    request.reason = admitted == PlaybackViewRequestResult::WindowExceedsRetainedCapacity
+        ? PlaybackViewPendingReason::WindowExceedsRetainedCapacity
+        : PlaybackViewPendingReason::SourceNotCurrent;
+    if (!runtime->pendingViewRequest_.active) {
+      runtime->pendingViewRequest_ = request;
+    }
+    runtime->frozenViewRequest = {};
     runtime->discardRetainedGather();
     return PlaybackViewTurnResult::GrainDenied;
   }
+  runtime->frozenViewRequest = {};
   if (launch) {
     // The launch lane's own bookkeeping, exactly as `beginQualifiedCoverageBuild` performs it for the root-backed
     // path: the promotion to `Ready` at completion is the owner's existing branch.
@@ -1902,6 +1946,224 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
   }
   runtime->discardRetainedGather();
   return PlaybackViewTurnResult::GrainServed;
+}
+
+/// Task 3.7a (I3b) / DEC-108 §14(c): **prepare the interval that cannot fit one window as pages.** The source is the
+/// same retained revision and, through `collectPinnedCaptureLists`, the same pinned bodies the gather reads -- one
+/// enumeration, so the two readers cannot serve different content for one revision. The demand is not discharged here:
+/// the frozen request stays the promise, and the ring becomes its destination (this is the switch, not the delivery).
+///
+/// Idempotent for an interval whose pages are already held: a re-demand must **not** re-prepare, because `reset` would
+/// clear pages a consumer has not walked yet (`WindowPageCursor` carries the revision only, so a re-prepared interval
+/// would hand an old position to new content -- the preparation therefore resets the cursor, and the slot keeps
+/// **one walker**).
+TRACK_COLD_MEM bool Track::beginPagedPlaybackForSlot(uint8_t slotIndex) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->frozenViewRequest.active) {
+    return false;
+  }
+  const PlaybackViewPendingRequest& request = runtime->frozenViewRequest;
+  if (request.sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot) {
+    // A **launch** keeps its own answer for dense legacy content: the merged-material fallback is a working delivery,
+    // and nothing emits from pages until I3c -- switching a launch here would take the fallback away and give back a
+    // preparation with no consumer. Named rather than silent (`pagedOutcome` stays `None`).
+    return false;
+  }
+  const uint32_t revision = request.source.playbackRevision;
+  if (runtime->pagedActiveForInterval(revision, request.coverage)) {
+    return true;  // already prepared for this revision and interval: the pages stay, exactly as they are
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  const RetainedPlaybackSource* source = nullptr;
+  for (const RetainedPlaybackSource& entry : runtime->retainedSources) {
+    if (entry.isRetained() && entry.revision == revision) {
+      source = &entry;
+      break;
+    }
+  }
+  if (source == nullptr) {
+    return false;
+  }
+  std::vector<const CommittedChunkIdList*> lists;
+  uint32_t missing = 0;
+  collectPinnedCaptureLists(loop, *source, lists, missing);
+  if (lists.empty()) {
+    // No reachable body to page: the interval cannot be prepared from this revision at all, so it stays owed to a
+    // source rather than being delivered as silence.
+    runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::NoBodies;
+    return false;
+  }
+  // The switch: the demand's own window lane states *why* it stopped being a window lane (`WindowExceedsCapacity` is
+  // the named fact -- the interval is over `L`), and then the ring is established for the same revision and interval,
+  // its pages preallocated, and the consumer's position started at the interval's own beginning.
+  runtime->retainedGatherRefusal = LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity;
+  runtime->discardPagedWindow();
+  runtime->pagedWindow.reset(revision);
+  runtime->pagedCursor = WindowPageCursor{};
+  runtime->pagedActive = true;
+  runtime->pagedRevision = revision;
+  runtime->pagedInterval = request.coverage;
+  runtime->pagedPagesProduced = 0;
+  runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::None;
+  return true;
+}
+
+/// Task 3.7a (I3b): **one turn of that preparation.** The demand's own promise is validated exactly as the gather's is
+/// (geometry, epoch, deadline, identity -- none of them re-granted), then **at most one page** is produced. `RingFull`
+/// is the ring's own bound doing its job: the producer waits for its consumer instead of allocating or overwriting, and
+/// the demand stays owed. `SourceComplete` is the **delivery**: the pages hold the whole interval for their revision,
+/// which is all the window lane can promise for content that cannot fit a window -- so the promise is discharged there
+/// and the interval's serving becomes the pager's own consumer.
+TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPagedPlaybackForSlot(
+    uint8_t slotIndex, PlaybackDeadlineClock clock) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->pagedActive) {
+    if (runtime != nullptr) runtime->discardPagedWindow();
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  if (!runtime->frozenViewRequest.active) {
+    // The ring outlives its promise only as a standing delivery. Anything else is a leftover whose page buffers nobody
+    // owes -- released here rather than left resident per slot.
+    if (runtime->pagedOutcome != LoopPlaybackRuntime::PagedPlaybackOutcome::Prepared) {
+      runtime->discardPagedWindow();
+    }
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  PlaybackViewPendingRequest& request = runtime->frozenViewRequest;
+  const bool geometryChanged = request.loopLengthTicks != loop.loopLengthTicks ||
+      request.coverage.loopLengthTicks != loop.loopLengthTicks;
+  const bool epochChanged = request.clockEpoch != 0 && clock.epoch != request.clockEpoch;
+  const bool expired = request.deadlineTick != 0 && clock.tick >= request.deadlineTick;
+  const bool sourceMoved = request.source.playbackRevision != loop.playbackRevision ||
+                           !playbackWindowSourceIsCurrentForSlot(slotIndex);
+  if (geometryChanged || epochChanged || expired || sourceMoved || request.positionInvalidated) {
+    // Voided, and **named**: the promise is not silently re-granted, and the pages prepared under it are released
+    // (a delivery for an interval whose identity moved is not a delivery).
+    runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::Cancelled;
+    request.positionInvalidated = true;
+    request.reason = geometryChanged ? PlaybackViewPendingReason::DeadlineInvalidatedGeometry
+        : (epochChanged ? PlaybackViewPendingReason::DeadlineInvalidatedEpoch
+                        : PlaybackViewPendingReason::DeadlineExpired);
+    if (!runtime->pendingViewRequest_.active) {
+      runtime->pendingViewRequest_ = request;
+    }
+    runtime->frozenViewRequest = {};
+    runtime->discardPagedWindow();
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  if (runtime->pagedWindow.sourceComplete()) {
+    // The preparation completed on an earlier turn: this turn is the demand's own end (it was frozen for a *window*,
+    // and a window is what the content cannot fit). Discharged as the named delivery, not dropped.
+    runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::Prepared;
+    runtime->frozenViewRequest = {};
+    return PlaybackViewTurnResult::GrainServed;
+  }
+  const RetainedPlaybackSource* source = nullptr;
+  for (const RetainedPlaybackSource& entry : runtime->retainedSources) {
+    if (entry.isRetained() && entry.revision == request.source.playbackRevision) {
+      source = &entry;
+      break;
+    }
+  }
+  if (source == nullptr) {
+    // The revision's bodies are no longer reachable: the preparation cannot be finished, and the demand goes back to
+    // owing a *source* (its own name), with the ring released.
+    runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::NoBodies;
+    request.reason = PlaybackViewPendingReason::SourceNotCurrent;
+    if (!runtime->pendingViewRequest_.active) {
+      runtime->pendingViewRequest_ = request;
+    }
+    runtime->frozenViewRequest = {};
+    runtime->discardPagedWindow();
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  std::vector<const CommittedChunkIdList*> lists;
+  uint32_t missing = 0;
+  collectPinnedCaptureLists(loop, *source, lists, missing);
+  // The gather's own clamp, so the pages describe the *same* interval the window would have described: a window at
+  // least as long as the loop is the loop.
+  uint32_t windowStart = request.coverage.startPhase;
+  uint32_t windowLength = request.coverage.lengthTicks;
+  if (windowLength >= loop.loopLengthTicks) {
+    windowStart = 0;
+    windowLength = loop.loopLengthTicks;
+  } else {
+    windowStart = request.coverage.startPhase % loop.loopLengthTicks;
+  }
+  const WindowPagedStream::ProduceOutcome produced = runtime->pagedWindow.produce(
+      lists.data(), lists.size(), loop.loopLengthTicks, windowStart, windowLength,
+      request.source.playbackRevision);
+  if (produced == WindowPagedStream::ProduceOutcome::StaleRevision) {
+    runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::Cancelled;
+    request.reason = PlaybackViewPendingReason::SourceNotCurrent;
+    if (!runtime->pendingViewRequest_.active) {
+      runtime->pendingViewRequest_ = request;
+    }
+    runtime->frozenViewRequest = {};
+    runtime->discardPagedWindow();
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  if (produced == WindowPagedStream::ProduceOutcome::RingFull) {
+    // The ring is full with undrained pages: the producer waits for its consumer, and the demand stays owed (nothing
+    // is dropped, nothing is overwritten, nothing is allocated).
+    runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::ProducerWaiting;
+    return PlaybackViewTurnResult::GrainDenied;
+  }
+  ++runtime->pagedPagesProduced;
+  if (runtime->pagedWindow.sourceComplete()) {
+    runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::Prepared;
+    runtime->frozenViewRequest = {};
+  }
+  return PlaybackViewTurnResult::GrainServed;
+}
+
+/// Task 3.7a (I3b) / task 3.12's owed production consumer: **walk the prepared interval exactly once.** The position is
+/// the runtime's own cursor, so re-entering continues and cannot repeat; `NeedsPage` is the ring telling the caller to
+/// produce, never a wait; and the revision these pages belong to is checked against the loop's **now** -- a revision the
+/// loop has left is served by nobody, by name (`StaleRevision`).
+TRACK_COLD_MEM Track::PagedWindowConsumeResult Track::consumePagedPlaybackWindowForSlot(
+    uint8_t slotIndex, MidiEvent* out, size_t capacity, size_t& emittedOut) {
+  emittedOut = 0;
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return PagedWindowConsumeResult::NoRuntime;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return PagedWindowConsumeResult::NoRuntime;
+  }
+  if (!runtime->pagedActive) {
+    return PagedWindowConsumeResult::NoPages;
+  }
+  // Identity at the read: the pages were produced for one revision, and the loop's own revision is the only currency
+  // a consumer may be served under. (A cursor cannot "resume" across revisions -- `WindowPageCursor` carries the
+  // revision it was stamped with, and this check is the slot's own face of the same rule.)
+  if (runtime->pagedRevision != loopForSlot(slotIndex).playbackRevision) {
+    return PagedWindowConsumeResult::StaleRevision;
+  }
+  size_t emitted = 0;
+  const WindowPagedStream::ConsumeOutcome outcome =
+      runtime->pagedWindow.consume(runtime->pagedCursor, out, capacity, emitted);
+  emittedOut = emitted;
+  switch (outcome) {
+    case WindowPagedStream::ConsumeOutcome::Emitted:
+      if (runtime->pagedCursor.exhausted) {
+        // Every page drained and the source complete: the delivery is finished, and the ring's storage is returned.
+        runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::Drained;
+      }
+      return PagedWindowConsumeResult::Emitted;
+    case WindowPagedStream::ConsumeOutcome::NeedsPage:
+      return PagedWindowConsumeResult::NeedsPage;
+    case WindowPagedStream::ConsumeOutcome::Exhausted:
+      // The walk is over, so the pages go back to the allocator and the **name** of what happened is written after the
+      // release (the release clears the ring's own state, not the account).
+      runtime->discardPagedWindow();
+      runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::Drained;
+      return PagedWindowConsumeResult::Exhausted;
+    case WindowPagedStream::ConsumeOutcome::StaleRevision:
+      return PagedWindowConsumeResult::StaleRevision;
+  }
+  return PagedWindowConsumeResult::Exhausted;
 }
 
 TRACK_COLD_MEM void Track::applyPlaybackViewTransition(uint8_t slotIndex, PlaybackViewTransition transition) {
@@ -1925,6 +2187,17 @@ TRACK_COLD_MEM void Track::applyPlaybackViewTransition(uint8_t slotIndex, Playba
       if (!runtime->pendingViewRequest_.active) runtime->pendingViewRequest_ = runtime->frozenViewRequest;
       runtime->frozenViewRequest = {};
       runtime->discardRetainedGather();
+    }
+    // Task 3.7a (I3b): the **paged preparation** is the third half of it, by the same rule -- the demand it serves is
+    // coalesced back rather than dropped, and the ring returns its pages. A standing delivery whose consumer is
+    // mid-walk is released with it: the transition is this slot's preparation boundary, and the read side names what
+    // happened afterwards (`NoPages`) rather than resuming into pages that no longer exist.
+    if (runtime->pagedActive) {
+      if (runtime->frozenViewRequest.active && !runtime->pendingViewRequest_.active) {
+        runtime->pendingViewRequest_ = runtime->frozenViewRequest;
+      }
+      runtime->frozenViewRequest = {};
+      runtime->discardPagedWindow();
     }
     runtime->viewBuildOperationGeneration = 0;
   }
@@ -1999,6 +2272,10 @@ TRACK_COLD_MEM bool Track::noLiveOwnerForSlot(uint8_t slot) const {
     // Task 3.7a (I2): a **retained-source gather** holds a window it gathered for a demand not yet admitted, so the
     // slot is owned by name until the gather is discharged or discarded.
     if (runtime->retainedGatherActive()) return false;
+    // Task 3.7a (I3b): a **paged preparation** holds the ring that serves its interval (and a standing delivery holds
+    // content its consumer may still walk), so the slot is owned by name until the pages are released -- by a
+    // transition, by a reset, by a voided promise, or by the consumer walking the interval to its end.
+    if (runtime->pagedActive) return false;
     if (runtime->ownsLiveFinalization()) return false;
     if (runtime->ownsInFlightPreparedHandover()) return false;
   }
@@ -2956,6 +3233,11 @@ TRACK_COLD_MEM bool Track::committedPlaybackRetryCanProgress(uint8_t slotIndex, 
   // promise (the pending record was discharged by the freeze, exactly as the root-backed qualification discharges it),
   // so the turn must be able to serve the next slice.
   if (runtime->retainedGatherActive()) return runtime->frozenViewRequest.active;
+  // Task 3.7a (I3b): a **paged preparation in flight** is this lane's own work too -- the frozen demand is its promise
+  // and the ring is its destination -- so the turn must be able to produce the next page (or report that its consumer is
+  // behind). Its *completion* does not keep the gate open: a standing delivery is the pager's consumer's business, and
+  // a demand that was discharged is not re-granted here.
+  if (runtime->pagedActive && runtime->frozenViewRequest.active) return true;
   const auto* request = pendingViewRequest(slotIndex);
   const bool launch = request && request->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch;
   if (!request || (!launch && request->sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot) ||
@@ -2983,11 +3265,26 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
     if (runtime->retainedGatherActive()) {
       return stepRetainedSourceGatherForSlot(slotIndex, clock);
     }
+    // Task 3.7a (I3b): the **paged preparation** continues on its own turn (one page per turn) before any new demand is
+    // begun for this slot: an in-flight preparation owns the ring, and its pages are what its consumer waits for.
+    if (runtime->pagedActive && runtime->frozenViewRequest.active) {
+      return stepPagedPlaybackForSlot(slotIndex, clock);
+    }
     if (runtime->pendingViewRequest_.active && !loopForSlot(slotIndex).publishedSnapshotIsCurrent() &&
         playbackWindowSourceIsCurrentForSlot(slotIndex)) {
       // One turn is one bounded grain: the gather's beginning and its **first page** are served together, so the
       // slice accounting always describes work this turn actually did.
       if (!beginRetainedSourceGatherForSlot(slotIndex)) return PlaybackViewTurnResult::GrainDenied;
+      // Task 3.7a (I3b): an interval whose pages are **already prepared** for this revision is served by that delivery.
+      // Re-gathering it page by page would rediscover -- at the cost of the whole interval -- a fact the ring already
+      // holds, and re-preparing would drop whatever its consumer has not walked yet. The gather is released first, so
+      // the promise belongs to the ring's lane and to no other.
+      if (runtime->frozenViewRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+          runtime->pagedActiveForInterval(runtime->frozenViewRequest.source.playbackRevision,
+                                          runtime->frozenViewRequest.coverage)) {
+        runtime->discardRetainedGather();
+        return stepPagedPlaybackForSlot(slotIndex, clock);
+      }
       return stepRetainedSourceGatherForSlot(slotIndex, clock);
     }
     // A temporary root reference cannot retire the root here: the Loop still owns
@@ -3062,6 +3359,10 @@ TRACK_COLD_MEM bool Track::hasPendingPlaybackViewMaintenance() const {
     if (MidiServiceDrain::playbackViewMaintenanceNeeded(
             runtimePresent, runtimePresent && (runtime->coverageBuildNeedsService() || runtime->ownsCoverageSource() ||
                 runtime->retainedGatherActive() ||
+                // Task 3.7a (I3b): the **paged preparation** owes pages too -- and only while it still owes them: a
+                // completed delivery is its consumer's business, not a deferred turn's, so a standing one does not
+                // claim the track's service here.
+                (runtime->pagedActive && runtime->frozenViewRequest.active) ||
                 (pendingViewRequest(slot) && pendingViewRequest(slot)->sourceKind !=
                     PlaybackViewPendingRequest::SourceKind::Borrowed)))) {
       return true;
@@ -3084,6 +3385,9 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
     // Task 3.7a (I2): a **retained-source gather** is a holder too -- it owes its next slice, and the frozen demand it
     // serves carries the deadline the urgency below is read from.
     if (!runtime->coverageBuildNeedsService() && (runtime->ownsCoverageSource() || runtime->retainedGatherActive() ||
+        // Task 3.7a (I3b): a **paged preparation in flight** owes pages, so it is a holder too -- with the deadline of
+        // the demand it serves (read below from the frozen request, which is this lane's promise).
+        (runtime->pagedActive && runtime->frozenViewRequest.active) ||
         (pending && (pending->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot ||
                      pending->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch)))) {
       auto& holder = holders[slot];

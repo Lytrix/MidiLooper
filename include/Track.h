@@ -436,6 +436,37 @@ public:
   /// through the same production admission a requester uses. The demand's **own** deadline is validated first, so a
   /// promise is honoured or refused by name -- never silently re-granted. Off-clock only.
   PlaybackViewTurnResult stepRetainedSourceGatherForSlot(uint8_t slotIndex, PlaybackDeadlineClock clock);
+  /// Task 3.7a (I3b) / task 3.12 (DEC-108 §14(c)): **the bounded legacy compatibility path's consumer entry**. The
+  /// deferred lane prepares an interval that cannot fit one window as `WindowPagedStream` pages (one page per turn,
+  /// from the same retained revision and the same pinned bodies the gather reads); this entry walks them, exactly once,
+  /// through the runtime's own cursor. It never waits: `NeedsPage` tells the caller to produce, and a cursor from a
+  /// revision the loop has left is refused by name (`StaleRevision`) rather than served. Cold: the emission adapter
+  /// that drives this per page (I3c) is where the hot-path call belongs.
+  enum class PagedWindowConsumeResult : uint8_t {
+    /// Events were copied into the caller's buffer; `emittedOut` is their count (0 is possible for a page that holds
+    /// no events while the traversal has not completed).
+    Emitted,
+    /// The cursor's next sequence is not published yet: the caller produces. **Never a wait.**
+    NeedsPage,
+    /// The loop has left the revision these pages belong to: identity, not currency.
+    StaleRevision,
+    /// The interval was walked to its end (the source was complete and every page drained).
+    Exhausted,
+    NoRuntime,
+    /// No pages are held for this slot (never prepared, or already released).
+    NoPages,
+  };
+  PagedWindowConsumeResult consumePagedPlaybackWindowForSlot(uint8_t slotIndex, MidiEvent* out, size_t capacity,
+                                                             size_t& emittedOut);
+  /// Task 3.7a (I3b): the over-`L` trigger's own beginning: **prepare the frozen demand's interval as pages** from the
+  /// retained revision's pinned bodies. Idempotent for an interval whose pages are still held (a re-demand must not
+  /// drop what its consumer has not walked). Refuses by name with the demand left owed -- the caller keeps the previous
+  /// refusal, never a silent drop. Off-clock only.
+  bool beginPagedPlaybackForSlot(uint8_t slotIndex);
+  /// Task 3.7a (I3b): **one turn of that preparation** -- at most one page (`RingFull` stops the turn rather than
+  /// allocating or overwriting), the frozen demand's own promise validated first exactly as the gather's is, and
+  /// completion reported as the named delivery (`LoopPlaybackRuntime::PagedPlaybackOutcome::Prepared`). Off-clock only.
+  PlaybackViewTurnResult stepPagedPlaybackForSlot(uint8_t slotIndex, PlaybackDeadlineClock clock);
   /// The declared `CoverageServiceContract` this owner is admitted under. Single-sourced: the declaration,
   /// its derivation and the measurement still owed are recorded where it is defined, and the grain quanta
   /// below are the sizes its declared grain counts come from.

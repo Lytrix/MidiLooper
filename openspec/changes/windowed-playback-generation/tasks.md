@@ -347,6 +347,36 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   on the demoted shape), no production adoption boundary for a preview successor, no timing envelope, no device run.
   Detail: [`evidence/2026-10-06-s37a-i3-preview-wiring/EVIDENCE.md`](evidence/2026-10-06-s37a-i3-preview-wiring/EVIDENCE.md).
 
+  **Increment I3b landed 2026-10-06 (firmware + tests; the task stays open for I3c).** The I3 packet split I3 into
+  I3 (preview, above), **I3b (this: the paged legacy path in the production lane)** and **I3c (the hot-path emission
+  adapter, still owed)**. An interval that cannot fit one window is now **prepared as pages** instead of ending as a
+  refused demand: the retained lane's own slice ceiling (`kRetainedGatherMaxSlices`) and the **admission's own
+  `WindowExceedsRetainedCapacity` refusal** both switch the demand to `WindowPagedStream` for the **same** revision and
+  interval, from the **same** pinned bodies (one file-static `collectPinnedCaptureLists`, so the window gather and the
+  pager cannot enumerate different content). `Track::beginPagedPlaybackForSlot` / `stepPagedPlaybackForSlot` produce
+  **one bounded page per turn** (`RingFull` → `ProducerWaiting`: the producer waits for its consumer, never allocating or
+  overwriting) and write the delivery by name (`PagedPlaybackOutcome::Prepared`) when the source completes; the frozen
+  demand is the promise throughout and is discharged as that delivery. `Track::consumePagedPlaybackWindowForSlot` is
+  **3.12's owed production consumer entry**: it walks the prepared interval exactly once through the runtime's own
+  cursor, answers `NeedsPage` (never a wait) for the caller to produce, releases the ring's pages when the walk ends, and
+  refuses a revision the loop has left by name (`StaleRevision`). A launch keeps its dense-legacy merged fallback (by
+  name) because nothing emits from pages until I3c. **Verified:** focused working-set **154/154**, ring **3/3**, preview
+  **9/9**, full native **2,829 / 7 skipped / 2,822 succeeded / 0 failed**, capture build **SUCCESS** (`variables 96,192`;
+  `code 392,216 + padding 1,000`; **160 B** above the floor — the tightest figure on the lane, recorded as I3c's first
+  constraint), `LoopPlaybackRuntime` pins re-based **compiler-measured** (target **7,312**, host **9,448**), strict
+  validation and `git diff --check` clean, **five mutations red-proved** with byte-identical restores (MR-M the
+  budget-branch switch, MR-N the page-per-turn bound, MR-O the read-side revision guard, MR-P the admission-trigger
+  switch, MR-Q the cursor's own advance) — **one non-red-proof recorded as such**: MR-Q's first attempt was a no-op
+  against a fixture that always consumed a whole page, so the walk was given a **partial-buffer** shape, which is where
+  the cursor is observable. **Named limitation:** the pages emit in traversal order (pass-set order, chunk order within a
+  pass); global tick-ordering *across layers* is I3c's, so the content fixture uses single-pass content where traversal
+  order *is* tick order. **Also recorded:** the admission-refusal branch no longer drops the demand (it is coalesced
+  back), and I3's "151/151" line counted its admission fixture twice (the committed tree registers 150). **Not claimed:**
+  no hot-path emission (I3c — its blockers are the stream index → page base mapping, page retirement by emission
+  position, the timing envelope, and the lane gate), no `ExecutionBounds.md` row change, no timing measurement, no
+  device run, no fallback removal (3.7b). Detail:
+  [`evidence/2026-10-06-s37a-i3b-paged-legacy/EVIDENCE.md`](evidence/2026-10-06-s37a-i3b-paged-legacy/EVIDENCE.md).
+
   **Increment I2 landed 2026-10-06 (firmware + tests; the task stays open).** The deferred lane's **production turn**
   now serves a demand for a slot with no current published root — the shape the device legs measured as
   `launch_requested … root=0 …` never reaching readiness. `LoopPlaybackRuntime` owns one **retained-source gather**
@@ -669,6 +699,7 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   [`evidence/2026-10-02-s312c-midi-edge-admission/EVIDENCE.md`](evidence/2026-10-02-s312c-midi-edge-admission/EVIDENCE.md).
   *Increment 3.12d landed 2026-10-05 — fixture 5.5 content/storage dimensions (test-only; task stays open).* New focused suite `test/test_window_paged_legacy/` exercises over-capacity same-tick events across two source lists (2,400 events > L), explicit `RingFull` then page reuse, a wrap-crossing W-range against independently assembled half-open source-order events, and a NoteOn/NoteOff pair separated across >3 pages. M-RING (drained page not released) makes all three cases fail to terminate; the production header was restored and verified diff-clean. **Verified:** focused 3/3; full native **2810 cases / 7 skipped / 2803 succeeded / 0 failed**; strict validation and `git diff --check` valid. **Not claimed:** timing/deadline measurement, production consumer or device run; 3.12 remains open for those gates, and its production consumer is assigned to 3.7a. Detail: [`evidence/2026-10-05-s312-fixture-55/EVIDENCE.md`](evidence/2026-10-05-s312-fixture-55/EVIDENCE.md).
   **DEC-114 sequencing:** the remaining production-consumer clause in 3.12 is delivered by 3.7a with the fallback retained; fixture 5.5's timing measurement remains a separate 3.12 gate.
+  *Increment 2026-10-06 (3.7a I3b) — the **production paging consumer entry** this task owed, plus the production trigger.* `Track::consumePagedPlaybackWindowForSlot` is the consumer entry the ring's own fixtures could not provide: it walks the prepared interval exactly once through the runtime's cursor, answers `NeedsPage` (the caller produces; never a wait), releases the page storage at the end of the walk, and refuses `StaleRevision` once the loop's revision has moved. The production trigger is now real too: an interval that cannot fit one window — reached either by the retained lane's own slice ceiling or by the window admission's `WindowExceedsRetainedCapacity` — is prepared as pages for the same revision, one bounded page per turn, from the same pinned bodies the window gather reads. **Verified** in 3.7a's record (focused 154/154, full native 2,829 / 7 skipped / 2,822 succeeded, capture build SUCCESS, five red-proofs with byte-identical restores). **Still owed in this task:** fixture 5.5's timing envelope over the production paging path, and the hot-path emission integration (3.7a I3c) — the pages are prepared and walkable, but nothing emits from them on the clock path yet. Detail: [`evidence/2026-10-06-s37a-i3b-paged-legacy/EVIDENCE.md`](evidence/2026-10-06-s37a-i3b-paged-legacy/EVIDENCE.md).
 - [ ] 3.13 **Implement the preview contract — immutable deferred publication** — publish preview through the same
   immutable deferred discipline as committed content, defining **source freezing** (the preview revision a build works
   from), **cancellation** (session mutation, track re-focus, undo, exit between build grains) and **committed-content

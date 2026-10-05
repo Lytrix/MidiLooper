@@ -5182,6 +5182,57 @@ bridge's verify path) are unrelated and unchanged. See
 
 **DEC-114 — active implementation direction:** DEC-113's interval-root proposal is withdrawn and retained only as historical audit. DEC-108 governs: the whole-loop `LoopSnapshot` remains checkpoint/effective-content authority; playback windows are derived from the retained pinned-source revision and `RetainedIntervalIndex`. The task sequence is 3.7a production consumer/index integration with the mutable fallback retained, then finish 3.14 undo/redo and 4.5 closure/recovery against that real handoff, and only then 3.7b fallback removal after parity, timing and compatibility gates. No production consumer integration or fallback removal is claimed here. 3.7a needs its own G2 execution packet and production-path fixtures before implementation.
 
+### 3.7a (I3b) — the paged legacy path reaches the production lane: an over-`L` interval is prepared as pages, and the consumer entry walks them exactly once (2026-10-06; firmware + tests)
+
+**Increment I3b of 3.7a landed; the task stays open** (I3c the hot-path emission adapter, I4/I5 parity + timing), and
+**3.12's owed production paging consumer is delivered here** (its fixture 5.5 timing envelope stays owed). Packet
+written **before** the edit:
+[`evidence/2026-10-06-s37a-i3b-paged-legacy/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i3b-paged-legacy/EXECUTION.md).
+
+**Before this slice** an interval that could not fit one window ended as a refused demand: the retained lane spent its
+slice ceiling and named `WindowExceedsRetainedCapacity`, and a window over the destination's limit was refused with the
+promise dropped in the band where the gather completed *and* the window was over `L`. **Now** both of those conclusions
+— the gather's own ceiling and the admission's own `kWindowAdmissionLimit` refusal — **switch the demand to pages** for
+the **same** revision and interval, enumerated from the **same** pinned bodies (one file-static
+`collectPinnedCaptureLists`, so the window gather and the pager cannot serve different content for one revision).
+`Track::beginPagedPlaybackForSlot` / `stepPagedPlaybackForSlot` produce **one bounded page per turn**; `RingFull` stops
+the turn by name (`PagedPlaybackOutcome::ProducerWaiting`) rather than allocating or overwriting, and the completing
+turn writes the delivery (`Prepared`) and discharges the frozen demand. `Track::consumePagedPlaybackWindowForSlot` is
+the consumer entry 3.12 owed: it walks the prepared interval **exactly once** through the runtime's own cursor (so a
+caller cannot re-enter at a stale position, and a re-preparation resets the position), answers `NeedsPage` for the
+caller to produce (never a wait), returns the ring's page storage when the walk ends (`Drained`), and refuses a revision
+the loop has left **by name** (`StaleRevision`) without discarding the preparation. The lane's own bookkeeping knows the
+preparation (`committedPlaybackRetryCanProgress`, the dispatch, `hasPendingPlaybackViewMaintenance`,
+`fillPlaybackHolders`, `noLiveOwnerForSlot`, `applyPlaybackViewTransition`), and **a launch keeps its dense-legacy merged
+fallback** — by name, `CommittedSnapshot`-only — because nothing emits from pages until I3c.
+
+**Verified.** Focused working-set **154/154** (150 + four new cases), focused ring **3/3**, focused preview **9/9**,
+full native **2,829 cases / 7 skipped / 2,822 succeeded / 0 failed**, capture build **SUCCESS** (`variables 96,192`;
+`code 392,216 + padding 1,000`; the guard reports **160 B** above the floor), `LoopPlaybackRuntime` size pins re-based on
+**compiler-measured** figures (target **7,312**, host **9,448**), strict validation valid, `git diff --check` clean, and
+**five mutations red-proved** with byte-identical restores (sha256
+`3384f62271ed1cd8663badbfb990823ffac9eaeb140d0a1be6ce910a03abfe30`): MR-M the budget-branch switch, MR-N the
+page-per-turn bound, MR-O the read-side revision guard, MR-P the admission-trigger switch, MR-Q the cursor's own
+advance.
+
+**Recorded, not smoothed over.** (1) **MR-Q's first attempt was a non-red-proof**: against the original fixture, which
+always consumed a whole page, re-feeding the page offset was a no-op (the ring drains a page in one call) — the walk was
+then given a **partial-buffer** shape (37 events per call), which is exactly where the cursor is observable, and MR-Q
+failed as intended. (2) **+384 B of ITCM**: the approved I2/I3 line was `code 391,832 + padding 1,384` (544 B above the
+floor); this increment leaves **160 B**, the tightest figure on the lane — recorded as **I3c's first constraint** rather
+than absorbed by moving the floor. (3) **A named ordering limitation:** the pages emit in traversal order (pass-set
+order, chunk order within a pass); global tick-ordering *across layers* is the emission adapter's business, so the
+content fixture is **single-pass** content, where traversal order *is* tick order. (4) I3's evidence line "151/151"
+counted its admission fixture twice; the committed tree registers **150** `RUN_TEST` cases.
+
+**Not claimed.** No **hot-path emission adapter** (I3c): the pages are prepared and walkable, but nothing emits from them
+on the clock path, and `ExecutionBounds.md` row 27 still denies active windowed playback — I3c's blockers are (a) a
+stream index → page base mapping, (b) page retirement driven by the emission position, (c) the timing envelope, (d) the
+lane gate. No ordering claim across layers, no timing/deadline measurement, no `ExecutionBounds.md` row change, **no
+device run and no upload**, no HITL run, no fallback removal (3.7b). Evidence:
+[`evidence/2026-10-06-s37a-i3b-paged-legacy/EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i3b-paged-legacy/EVIDENCE.md).
+
+
 ### 3.7a (I3) — the preview lane's production callers: the requester and its three lifecycle hooks are firmware code (2026-10-06; firmware + tests)
 
 **Increment I3 of 3.7a landed; the task stays open** (I3b the paged legacy consumer, I4/I5 parity + timing), and

@@ -17,6 +17,7 @@
 #include "RuntimeCompanionOverlapWalk.h"
 #include "RuntimeCompanionSpanWalk.h"
 #include "CommittedEventRange.h"  // task 3.7a (I2): the retained-source gather's resumable window cursor
+#include "WindowPagedStream.h"     // task 3.7a (I3b): the bounded legacy path's page ring
 #include "RuntimeCompanionReconstruction.h"
 #include "RuntimeCompanionApply.h"
 #include "RuntimeCompanionBridgeMap.h"
@@ -596,6 +597,45 @@ struct LoopPlaybackRuntime {
   /// Drop the gather and release the window it gathered: the demand it serves is *not* dropped here (a refusal retains
   /// or an admission discharges it), and nothing a reader holds is touched.
   void discardRetainedGather();
+  /// Task 3.7a (I3b) / task 3.12b (DEC-108 §14(c)): **the bounded legacy compatibility path** for an interval that
+  /// cannot fit one window. The pages are produced from the retained revision's pinned bodies off-clock (**one page per
+  /// turn**), and a consumer walks them **exactly once** through `pagedCursor`: the producer position is
+  /// `CommittedEventRange::WindowTraversalCursor` inside the ring, the consumer position is
+  /// `(sourceRevision, nextSequence, offsetInPage)`, and a page is never written after it is published nor reused
+  /// before it is drained. Memory is bounded (`kWindowPageCount` fixed-capacity pages) while content does not have to
+  /// be -- which is exactly task 5.5's reading: **a storage bound, not a throughput claim.**
+  WindowPagedStream pagedWindow;
+  WindowPageCursor pagedCursor;
+  bool pagedActive = false;
+  /// The revision the pages belong to -- an **identity**, never a currency: a revision the loop has left is served by
+  /// nobody (the read side refuses it by name).
+  uint32_t pagedRevision = 0;
+  PlaybackCoverageInterval pagedInterval{};
+  /// **What the paged lane last concluded for this slot.** `Prepared` is a *delivery*, not a refusal: the interval is
+  /// held as pages for its revision, which is all the window lane can promise for content that cannot fit a window.
+  /// The rest are the names a reader needs to tell "waiting for its consumer" from "voided" without inferring it.
+  enum class PagedPlaybackOutcome : uint8_t {
+    None,
+    Prepared,
+    /// The ring holds `kWindowPageCount` undrained pages: the consumer must catch up (`RingFull` is not a failure and
+    /// never becomes an allocation or an overwrite).
+    ProducerWaiting,
+    /// The revision pins no reachable body: there is nothing to page, and the demand stays owed to a source.
+    NoBodies,
+    /// The promise was voided (geometry, epoch, deadline or identity) or the slot's preparation was abandoned.
+    Cancelled,
+    /// The consumer walked the interval to its end.
+    Drained,
+  };
+  PagedPlaybackOutcome pagedOutcome = PagedPlaybackOutcome::None;
+  uint32_t pagedPagesProduced = 0;
+  bool pagedActiveForInterval(uint32_t revision, const PlaybackCoverageInterval& interval) const {
+    return pagedActive && pagedRevision == revision && pagedInterval.startPhase == interval.startPhase &&
+           pagedInterval.lengthTicks == interval.lengthTicks &&
+           pagedInterval.loopLengthTicks == interval.loopLengthTicks;
+  }
+  /// Release the ring and its pages: the demand it serves is not dropped here (the same rule as the gather's discard).
+  void discardPagedWindow();
   enum class LaunchPreparation : uint8_t { None, Requested, Building, Ready, Bound, Fallback, FallbackBound };
   LaunchPreparation launchPreparation = LaunchPreparation::None;
   uint32_t launchBoundTick = 0;

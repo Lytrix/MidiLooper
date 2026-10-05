@@ -332,8 +332,10 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(bool preserveLed
   }
   retireCoverageSource();
   // Task 3.7a (I2): the retained-source gather is this lane's other half-owned work, so a reset drops it too -- its
-  // buffer is per-slot external memory and must not outlive the operation that owed it.
+  // buffer is per-slot external memory and must not outlive the operation that owed it. Task 3.7a (I3b): the page ring
+  // is the same kind of work for the interval that cannot fit a window.
   discardRetainedGather();
+  discardPagedWindow();
   bridgeWindowBuild.discard();
   bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
   bridgeWindowContextIndex = RuntimePlaybackBridgeLifecycle::kNoBridge;
@@ -2144,6 +2146,21 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardCoverageBuild()
 /// dropped here: a refusal retains it (with its reason) and an admission discharges it, so this only returns the
 /// per-slot external buffer and the cursor. The last refusal name is kept, because it is the reason the demand is still
 /// owed -- the next gather clears it.
+/// Task 3.7a (I3b): drop the page ring and **release its pages' storage**. The ring's pages are fixed-capacity vectors,
+/// so the pages themselves are cleared and re-reserved on the next `reset` -- nothing a consumer holds is touched, and a
+/// consumed cursor is simply invalid afterwards (the next `reset` stamps a new revision).
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardPagedWindow() {
+  pagedActive = false;
+  pagedOutcome = PagedPlaybackOutcome::None;
+  pagedRevision = 0;
+  pagedInterval = PlaybackCoverageInterval{};
+  pagedPagesProduced = 0;
+  pagedCursor = WindowPageCursor{};
+  // The ring releases its own pages (one owner for the fixed storage), so the slot does not leave `kWindowPageCount`
+  // page buffers resident after the preparation is discarded.
+  pagedWindow.release();
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardRetainedGather() {
   retainedGatherPhase = RetainedGatherPhase::Idle;
   CommittedEventRange::resetWindowTraversalCursor(retainedGatherCursor);
@@ -2524,9 +2541,15 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // gathered window's vector header -- per-slot external state, no RAM1 `variables`, no DTCM. Measured +72 B on the host
 // ABI (9,144 -> 9,216) and +40 B on the target ABI (7,120 -> 7,160): the cursor is smaller there and the
 // vector header is pointer-sized. Both re-bases are compiler-measured, not estimated.
-static_assert(sizeof(LoopPlaybackRuntime) == 7160,
-              "S3.0/3.10: target per-slot runtime 7,160 B, including the gated rolling frame and the "
-              "3.7a retained-source gather");
+// Task 3.7a (I3b): the **paged legacy path** adds one `WindowPagedStream` (three fixed pages, each a vector header plus
+// revision/sequence/published, the traversal cursor, the consumer cursor, the interval and the outcome name) --
+// per-slot external state again, no RAM1 `variables` and no DTCM. Measured +152 B on the target ABI (7,160 -> 7,312)
+// and +232 B on the host (9,216 -> 9,448): the difference is the two ABIs' vector headers and padding, and both figures
+// are compiler-measured by the probe this commit removes, not estimated. The page *buffers* are not part of this: they
+// are allocated by `reset` when a preparation begins and released by `release`/`discardPagedWindow`.
+static_assert(sizeof(LoopPlaybackRuntime) == 7312,
+              "S3.0/3.10: target per-slot runtime 7,312 B, including the gated rolling frame, the "
+              "3.7a retained-source gather and the 3.7a paged ring");
 static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
@@ -2544,7 +2567,10 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // Gated rolling episode adds48 external bytes including the physical view token: measured9,096 ->9,144.
 // Task 3.7a (I2) re-base: +72 B for the retained-source gather (cursor 32 + window vector header 24 + phase/units/
 // chunks/refusal 16, with padding). Measured by the compiler on this ABI, not estimated.
-static_assert(sizeof(LoopPlaybackRuntime) == 9216,
-              "S3.0/3.10: host-ABI per-slot runtime size (9,216 B, including rolling frame and the 3.7a gather)");
+// Task 3.7a (I3b) re-base: +232 B for the paged ring (three page headers with their 64-bit vector headers, the two
+// cursors, the interval and the outcome name, with padding). Measured by the compiler on this ABI, not estimated.
+static_assert(sizeof(LoopPlaybackRuntime) == 9448,
+              "S3.0/3.10: host-ABI per-slot runtime size (9,448 B, including rolling frame, the 3.7a gather and the "
+              "3.7a paged ring)");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

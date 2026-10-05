@@ -92,6 +92,23 @@ class WindowPagedStream {
 
   uint32_t sourceRevision() const { return sourceRevision_; }
   bool sourceComplete() const { return sourceComplete_; }
+  /// Task 3.7a (I3b): **release the ring's pages**. A lane that abandons a preparation (or a consumer that has finished
+  /// with an interval) returns the fixed page storage instead of leaving `kWindowPageCount` page buffers resident per
+  /// slot; the next `reset` re-reserves them. Phases and positions are cleared with the pages, so a cursor from before
+  /// the release is invalid afterwards rather than resuming into a page that no longer exists.
+  void release() {
+    for (WindowEventPage& page : pages_) {
+      SessionMidiEventVec released;
+      page.events.swap(released);
+      page.sourceRevision = 0;
+      page.sequence = 0;
+      page.published = false;
+    }
+    sourceRevision_ = 0;
+    nextProduceSequence_ = 0;
+    sourceComplete_ = false;
+    CommittedEventRange::resetWindowTraversalCursor(traversal_);
+  }
 
   size_t pagesPublished() const {
     size_t count = 0;

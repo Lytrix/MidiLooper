@@ -10556,6 +10556,299 @@ void test_3_7a_i3_the_capture_admission_counts_committed_windows_only() {
                                    "the committed window's events are the interval's inherited content");
 }
 
+namespace {
+/// 3.7a (I3b): the **over-`L` fixture shape** both paged cases need -- a demoted slot (no published root) whose dense
+/// interval holds more events than any window can retain, its revision retained, and the demand for that interval
+/// retained by the deferred lane. Nothing is driven here: the caller owns the turns, so each fixture's accounting is
+/// about work that actually happened.
+struct OverCapacityPagedFixture {
+  Track* track = nullptr;
+  Loop* loop = nullptr;
+  LoopPlaybackRuntime* runtime = nullptr;
+  PlaybackCoverageInterval coverage{};
+  uint32_t denseEvents = 0;
+};
+
+OverCapacityPagedFixture prepareOverCapacityPagedSlot(uint32_t denseEvents) {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  const uint32_t length = 512 * kBar;
+  OverCapacityPagedFixture fixture{};
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  Loop& loop = track.getActiveLoop();
+  loop.loopLengthTicks = length;
+  loop.beginCapture(CapturePhase::Record);
+  uint32_t appended = 0;
+  // Dense **inside the window's own tick ceiling**: `kMaximumWindowTicks` is two bars, so more events than a window can
+  // hold have to share those ticks (about 1.6 events per tick at 2,500 events). The note advances per cycle so no event
+  // is a capture-level duplicate (the same channel+note+tick is refused as a duplicate -- the guard the store's dedup
+  // policy owns), and the seal's stable sort turns the whole span into one tick-ordered body: the same body both
+  // readers then see.
+  constexpr uint32_t kWindowTicks = 2 * kBar;
+  for (uint32_t i = 0; i < denseEvents; ++i) {
+    const uint8_t note = static_cast<uint8_t>(48 + (i / kWindowTicks) % 64);
+    if (!loop.appendCaptureEvent(MidiEvent::NoteOn(i % kWindowTicks, 1, note, 100))) {
+      break;
+    }
+    ++appended;
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(denseEvents, appended, "the fixture's dense content must land whole in one pass");
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(length, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0));
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the fixture's shape is a rootless demoted slot");
+  // The interval covers the whole dense span, and it is the widest interval the window path accepts (two bars).
+  fixture.track = &track;
+  fixture.loop = &loop;
+  fixture.coverage = PlaybackCoverageInterval{0, 2 * kBar, length};
+  fixture.denseEvents = denseEvents;
+  fixture.runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(fixture.runtime);
+  nativePlaybackDeadlineClock = {1000, 1};
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+      static_cast<int>(track.requestCommittedPlaybackWindow(
+          0, fixture.coverage, 13 * kBar, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, loop.playbackRevision, 3)));
+  TEST_ASSERT_TRUE(track.playbackWindowSourceIsCurrentForSlot(0));
+  return fixture;
+}
+
+/// 3.7a (I3b): drive the deferred lane until the demand leaves the gather's lane for the paged one, and report how many
+/// turns the window lane spent first. The gather's own ceiling is the oracle for *when* that may happen: every turn
+/// before it serves exactly one bounded slice.
+uint32_t driveGatherUntilPagedSwitch(OverCapacityPagedFixture& fixture) {
+  uint32_t turns = 0;
+  while (!fixture.runtime->pagedActive && turns < kRetainedGatherMaxSlices + 4u) {
+    if (turns > 0) {
+      // The first turn *begins* the lane (freeze + first page together); every turn after it serves a slice of it.
+      TEST_ASSERT_TRUE_MESSAGE(fixture.runtime->retainedGatherActive(),
+                               "the window lane is in flight until it concludes the interval is over `L`");
+    }
+    const uint32_t unitsBefore = fixture.runtime->retainedGatherUnits;
+    const Track::PlaybackViewTurnResult result =
+        fixture.track->stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    ++turns;
+    if (fixture.runtime->pagedActive) {
+      break;
+    }
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
+                      static_cast<int>(result));
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(unitsBefore + 1u, fixture.runtime->retainedGatherUnits,
+                                     "one bounded slice per turn, before the switch changes the granularity");
+  }
+  return turns;
+}
+
+/// 3.7a (I3b): walk the prepared interval through the **production consumer entry** while the producer runs behind it,
+/// 3.7a (I3b): walk the prepared interval through the **production consumer entry** while the producer runs behind it,
+/// returning the events in the order they were emitted. The caller's buffer is a *page* by default, and deliberately
+/// smaller where a fixture wants to show that a partial buffer neither skips nor repeats an event across a boundary.
+/// A `NeedsPage` answer is the ring telling the caller to produce, so the loop drives the lane -- never a wait, and
+/// never an inference about time.
+SessionMidiEventVec walkPagedPlaybackUntilExhausted(OverCapacityPagedFixture& fixture, size_t capacity,
+                                                   uint32_t& emittedPagesOut, uint32_t& produceTurnsOut) {
+  SessionMidiEventVec walked;
+  emittedPagesOut = 0;
+  produceTurnsOut = 0;
+  for (unsigned guard = 0; guard < 512; ++guard) {
+    MidiEvent buffer[kWindowPageCapacity];
+    size_t emitted = 0;
+    const Track::PagedWindowConsumeResult result =
+        fixture.track->consumePagedPlaybackWindowForSlot(0, buffer, capacity, emitted);
+    if (result == Track::PagedWindowConsumeResult::Emitted) {
+      for (size_t i = 0; i < emitted; ++i) {
+        walked.push_back(buffer[i]);
+      }
+      if (emitted != 0) {
+        ++emittedPagesOut;
+      }
+      continue;
+    }
+    if (result == Track::PagedWindowConsumeResult::NeedsPage) {
+      ++produceTurnsOut;
+      fixture.track->stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+      continue;
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PagedWindowConsumeResult::Exhausted),
+                              static_cast<int>(result),
+                              "the walk ends only at the interval's own end");
+    break;
+  }
+  return walked;
+}
+}  // namespace
+
+/// 3.7a (I3b) / W-37a-15: **an interval that cannot fit one window is prepared as pages, not refused.** The window lane
+/// spends its whole slice ceiling first (`appendWindowBudgeted` is bounded by events per call, so a sparse interval
+/// cannot reach it -- reaching it means the content is over `L`), and the turn that concludes that switches the demand
+/// to the **paged path for the same revision and interval**, producing its first page in the same turn. From there one
+/// turn is one bounded page, and the ring's three pages are a bound rather than a suggestion: the producer waits for its
+/// consumer instead of allocating or overwriting.
+void test_3_7a_i3b_an_over_capacity_demand_is_prepared_as_pages() {
+  // More events than `kWindowAdmissionLimit`, and more than the gather's ceiling can traverse (18 pages = 2,304 events),
+  // so no window could ever hold this interval.
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500);
+  LoopPlaybackRuntime* runtime = fixture.runtime;
+
+  // ---- (P1) The window lane really tried: the ceiling is spent slice by slice, then the switch.
+  const uint32_t gatherTurns = driveGatherUntilPagedSwitch(fixture);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kRetainedGatherMaxSlices + 1u, gatherTurns,
+                                   "the ceiling is spent (18 gathered pages) before the concluding turn switches");
+  TEST_ASSERT_TRUE_MESSAGE(runtime->pagedActive, "the over-`L` demand left the gather's lane for the paged one");
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity),
+                    static_cast<int>(runtime->retainedGatherRefusal));
+
+  // ---- (P2) The switch prepares the **same** interval and revision, and it does not leak the window it gathered.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, runtime->pagedPagesProduced,
+                                   "the concluding turn produces the preparation's first page, not a whole interval");
+  TEST_ASSERT_FALSE_MESSAGE(runtime->retainedGatherActive(), "the gather's lane is over");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->retainedGatherEvents.capacity()),
+                                   "the gathered window is released when the demand becomes pages");
+  TEST_ASSERT_TRUE(runtime->pagedActiveForInterval(fixture.loop->playbackRevision, fixture.coverage));
+  TEST_ASSERT_EQUAL_UINT32(fixture.loop->playbackRevision, runtime->pagedWindow.sourceRevision());
+  TEST_ASSERT_EQUAL_UINT32(0u, runtime->pagedCursor.nextSequence);
+  TEST_ASSERT_NULL_MESSAGE(fixture.track->pendingViewRequest(0),
+                           "the demand is the pager's promise now, not a fresh pending record");
+
+  // ---- (P3) One page per turn, until the ring's own bound stops the producer.
+  for (uint32_t turn = 0; turn < 4 && runtime->pagedWindow.pagesPublished() < kWindowPageCount; ++turn) {
+    const uint32_t before = runtime->pagedPagesProduced;
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
+        static_cast<int>(fixture.track->stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock)));
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(before + 1u, runtime->pagedPagesProduced, "at most one page per turn");
+  }
+  TEST_ASSERT_EQUAL_UINT32(kWindowPageCount, runtime->pagedWindow.pagesPublished());
+  TEST_ASSERT_EQUAL_UINT32(kWindowPageCount, runtime->pagedPagesProduced);
+  // A turn while the ring is full neither produces nor overwrites: it is the consumer's move, the demand is still owed
+  // (a bound does not drop the promise), and the state says so by name.
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainDenied),
+      static_cast<int>(fixture.track->stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock)));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::PagedPlaybackOutcome::ProducerWaiting),
+                    static_cast<int>(runtime->pagedOutcome));
+  TEST_ASSERT_EQUAL_UINT32(kWindowPageCount, runtime->pagedWindow.pagesPublished());
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kWindowPageCount, runtime->pagedPagesProduced,
+                                   "the ring's bound is respected, not allocated around");
+  TEST_ASSERT_TRUE(runtime->frozenViewRequest.active);
+}
+
+/// 3.7a (I3b) / W-37a-16: **the consumer walks the interval exactly once, across pages.** The emitted sequence is the
+/// interval's effective content, in order, with no duplicate and no missing event -- a page boundary is exactly where a
+/// cursor that resumed at the wrong offset would show, and the oracle is the effective-content resolver rather than a
+/// hand-written list. The producer runs behind the consumer (the ring frees a page only once it is drained), and the
+/// same interval prepared again walks to the same content: a position must not survive a release.
+void test_3_7a_i3b_pages_walk_the_interval_exactly_once_across_pages() {
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500);
+  driveGatherUntilPagedSwitch(fixture);
+  TEST_ASSERT_TRUE(fixture.runtime->pagedActive);
+
+  uint32_t emittedPages = 0;
+  uint32_t produceTurns = 0;
+  const SessionMidiEventVec firstWalk =
+      walkPagedPlaybackUntilExhausted(fixture, kWindowPageCapacity, emittedPages, produceTurns);
+  SessionMidiEventVec oracle;
+  fixture.loop->copyEffectiveCommittedEventsInRange(oracle, fixture.coverage.startPhase,
+                                                   fixture.coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(fixture.denseEvents, static_cast<uint32_t>(oracle.size()),
+                                   "the interval holds the dense span's events");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(oracle.size()), static_cast<uint32_t>(firstWalk.size()),
+                                   "exactly once: no duplicate and no missing event across the page boundary");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(1u, emittedPages, "the walk crossed more than one page");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, produceTurns, "the producer ran behind the consumer, never ahead");
+  for (size_t i = 0; i < oracle.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(oracle[i].tick, firstWalk[i].tick);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(oracle[i].type), static_cast<uint8_t>(firstWalk[i].type));
+    TEST_ASSERT_EQUAL_UINT8(oracle[i].data.noteData.note, firstWalk[i].data.noteData.note);
+    TEST_ASSERT_EQUAL_UINT8(oracle[i].data.noteData.velocity, firstWalk[i].data.noteData.velocity);
+  }
+  // The walk's end is a named state, and the ring's storage is back: a drained delivery is not resident.
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::PagedPlaybackOutcome::Drained),
+                    static_cast<int>(fixture.runtime->pagedOutcome));
+  TEST_ASSERT_FALSE_MESSAGE(fixture.runtime->pagedActive, "the drained delivery releases the ring and its pages");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, fixture.runtime->pagedWindow.pagesPublished(),
+                                   "no page is left published: the ring's fixed storage is back");
+  MidiEvent afterRelease[kWindowPageCapacity];
+  size_t afterReleaseEmitted = 0;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedWindowConsumeResult::NoPages),
+      static_cast<int>(fixture.track->consumePagedPlaybackWindowForSlot(
+          0, afterRelease, kWindowPageCapacity, afterReleaseEmitted)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(afterReleaseEmitted),
+                                   "and the read names the released preparation instead of resuming into it");
+
+  // **The same interval again**: the pages are re-prepared from the same retained revision (the window lane spends its
+  // ceiling again) and the walk repeats exactly. A cursor that survived the release, or a ring that kept a position,
+  // would show here as a short, offset or duplicated sequence.
+  nativePlaybackDeadlineClock.tick += 64;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
+      static_cast<int>(fixture.track->requestCommittedPlaybackWindow(
+          0, fixture.coverage, 13 * Config::TICKS_PER_BAR, nativePlaybackDeadlineClock)));
+  driveGatherUntilPagedSwitch(fixture);
+  TEST_ASSERT_TRUE(fixture.runtime->pagedActive);
+  uint32_t secondEmittedPages = 0;
+  uint32_t secondProduceTurns = 0;
+  // The **partial buffer** shape: 37 events per call does not divide the page (128), so a cursor that re-fed an offset,
+  // skipped one, or advanced a page early shows here as a repetition, a gap or a short sequence.
+  const SessionMidiEventVec secondWalk =
+      walkPagedPlaybackUntilExhausted(fixture, 37, secondEmittedPages, secondProduceTurns);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(firstWalk.size()),
+                                   static_cast<uint32_t>(secondWalk.size()),
+                                   "the second walk of the same interval yields the same events");
+  for (size_t i = 0; i < firstWalk.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(firstWalk[i].tick, secondWalk[i].tick);
+    TEST_ASSERT_EQUAL_UINT8(firstWalk[i].data.noteData.note, secondWalk[i].data.noteData.note);
+  }
+}
+
+/// 3.7a (I3b) / W-37a-18: **identity is enforced at the read.** The pages were produced for one revision, and the loop's
+/// revision is the only currency a consumer may be served under: once the loop has moved on, the entry refuses by name
+/// (`StaleRevision`) and emits nothing -- a revision a loop has left is served by nobody.
+void test_3_7a_i3b_the_paged_read_refuses_a_revision_the_loop_left() {
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500);
+  driveGatherUntilPagedSwitch(fixture);
+  TEST_ASSERT_TRUE(fixture.runtime->pagedActive);
+  const uint32_t producedRevision = fixture.runtime->pagedRevision;
+  // A first page really is emitted for the currency the pages belong to.
+  MidiEvent buffer[kWindowPageCapacity];
+  size_t emitted = 0;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedWindowConsumeResult::Emitted),
+      static_cast<int>(fixture.track->consumePagedPlaybackWindowForSlot(0, buffer, kWindowPageCapacity, emitted)));
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(emitted));
+  // The loop advances (the fixture writes the currency directly: it is the loop's own field), and the same entry is
+  // asked again for the pages that revision produced.
+  fixture.loop->playbackRevision = producedRevision + 1;
+  size_t staleEmitted = 0;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedWindowConsumeResult::StaleRevision),
+      static_cast<int>(fixture.track->consumePagedPlaybackWindowForSlot(0, buffer, kWindowPageCapacity, staleEmitted)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(staleEmitted), "and nothing is emitted for it");
+  TEST_ASSERT_TRUE_MESSAGE(fixture.runtime->pagedActive,
+                           "the refusal is at the read: a bad read does not silently discard the preparation");
+}
+
+/// 3.7a (I3b) / W-37a-15, the second trigger: **the admission's own capacity bound switches the demand too.** An
+/// interval the gather *can* traverse (its pages complete inside the ceiling) whose window is still over the
+/// destination's `kWindowAdmissionLimit` is refused by the window admission -- and that refusal is the same fact, so the
+/// same switch follows. The demand is not dropped by it, and the admission's bound is not argued with: it is its own
+/// rule.
+void test_3_7a_i3b_an_over_capacity_admission_switches_to_pages() {
+  // 2,100 events: 17 gather pages (2,176 events) complete the traversal *inside* the ceiling (18), and the admission
+  // then refuses a window of 2,100 events against `kWindowAdmissionLimit` (2,048).
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2100);
+  LoopPlaybackRuntime* runtime = fixture.runtime;
+  const uint32_t gatherTurns = driveGatherUntilPagedSwitch(fixture);
+  TEST_ASSERT_TRUE_MESSAGE(runtime->pagedActive, "the admission's capacity refusal switched the demand to pages");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(17u, gatherTurns,
+                                   "the traversal completed inside the ceiling: the admission is what refused");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(kRetainedGatherMaxSlices, runtime->retainedGatherUnits,
+                                       "the switch came from the admission, not from the gather's ceiling");
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity),
+                    static_cast<int>(runtime->retainedGatherRefusal));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->retainedGatherEvents.capacity()),
+                                   "the refused window does not stay resident after the switch");
+  TEST_ASSERT_TRUE(runtime->pagedActiveForInterval(fixture.loop->playbackRevision, fixture.coverage));
+  TEST_ASSERT_EQUAL_UINT32(1u, runtime->pagedPagesProduced);
+  TEST_ASSERT_NULL(fixture.track->pendingViewRequest(0));
+}
 int main() {
 
 
@@ -10750,6 +11043,14 @@ int main() {
   // windowed-playback-generation slice 3.12b: the bounded legacy paged path (pages + resumable cursor).
   RUN_TEST(test_paged_window_stream_serves_more_than_one_page_exactly_once_across_the_ring);
   // windowed-playback-generation slice 3.12c: the MIDI-edge wiring of the admission limit (DEC-108 §14).
+  // windowed-playback-generation slice 3.7a (I3b): the **paged legacy path reaches the production lane** -- an interval
+  // that cannot fit one window is prepared as pages for the same revision (by the gather's ceiling and by the
+  // admission's own capacity bound), one bounded page per turn, walked exactly once through the runtime's cursor, and
+  // refused at the read once the loop's revision moves.
+  RUN_TEST(test_3_7a_i3b_an_over_capacity_demand_is_prepared_as_pages);
+  RUN_TEST(test_3_7a_i3b_pages_walk_the_interval_exactly_once_across_pages);
+  RUN_TEST(test_3_7a_i3b_the_paged_read_refuses_a_revision_the_loop_left);
+  RUN_TEST(test_3_7a_i3b_an_over_capacity_admission_switches_to_pages);
   RUN_TEST(test_capture_admission_refuses_at_the_edge_and_never_a_closure_or_a_stop);
   // windowed-playback-generation slice 3.12c: the refusal's cleanup, and the window-seeded boundary on the lane the
   // window actually serves (DEC-108 §14).
