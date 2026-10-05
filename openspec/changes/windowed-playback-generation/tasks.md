@@ -995,8 +995,15 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   of any kind** for its whole bound (no `RRQ`, no `capture_prewarm`, no provision, no launch, and no lane work: 59 `win_gap`
   blocks, all `eligible=progress=0`). **Three hypotheses tested, two refuted** (cold target; edit session), and the live one
   is no longer about the leg at all: the next investigation is the **code** — `servicePendingSlotProvision` and what it
-  gates on — which needs no device, with the S4b legs (whose switches *did* prepare and commit on this board) as the
-  comparison. See
+  gates on — which needs no device, with the S4b legs (whose switches *did* prepare and commit on this board) as the comparison.
+  **Run 06 (a 24-bar target) and the code gate:** `servicePendingSlotProvision` calls the lane **only** for an
+  `immutableLaunch` target — one that is not the active slot **and** whose `shouldAvoidFullVisualRebuild(loopLength)` holds
+  (`loopLength > 16 bars`, the same bound the reused leg enforces) — and run 01's own selection feedback shows the decisive
+  input is the target's **runtime** length, which read **`length=0`** for the 2-bar slot (not resident), putting that
+  switch on the **legacy** branch where no work was done at all. Run 06's outcome was identical to the others and its
+  selection printed **no** loop-length row, so whether the 24-bar target took the launch branch is **unknown** — the one
+  value still missing. **Next step is a measurement, not a gesture:** read the switch target's *runtime* loop length at the
+  moment of the switch. See
   [`switch-leg-demand`](evidence/2026-10-05-switch-leg-demand/EVIDENCE.md). **Not claimed:** the lane was **not exercised**;
   F-7/F-8/AC-8 remain unverified on hardware; no firmware was changed and no oracle was bent to fit an observation. See
   [`s64-s65-device-leg-01`](evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md).

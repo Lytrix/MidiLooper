@@ -191,3 +191,49 @@ with that recorded.
 **One more operational trap, recorded:** after a flash the device re-enumerates and the USB MIDI port is briefly absent;
 a leg started immediately fails with `No MIDI output port matching 'Teensy'`. The recovery is to wait for the port to
 reappear (observed: present ~6 s later) before starting the leg.
+
+---
+
+## Run 06 — the code gate found, and the one value still missing
+
+Reading the provision path (no device needed) located the gate that decides whether the **lane** is asked at all:
+
+```cpp
+// TrackManager::servicePendingSlotProvision, src/TrackManager/TrackManagerSlotMatrix.cpp
+const bool immutableLaunch = targetSlot != track.getActiveLoopIndex() &&
+    track.getLoop(targetSlot).shouldAvoidFullVisualRebuild(track.getLoop(targetSlot).loopLengthTicks);
+if (immutableLaunch) {
+    if (!provisionSlotForSwitch(trackIndex, targetSlot)) return false;
+    didWork = track.preparePlaybackLaunchForSlot(targetSlot);          // <- the lane's work
+} else if (MidiServiceDrain::slotProvisionNeeded(true, track.hasPlaybackOccupancyForSlot(targetSlot))) {
+    if (!provisionSlotForSwitch(trackIndex, targetSlot)) return false;
+    track.ensurePlaybackMergedEventsForSlot(targetSlot);               // legacy only
+}
+```
+
+and `Loop::shouldAvoidFullVisualRebuild(length)` is `length > kMaxDetailedWindowBars * TICKS_PER_BAR`, i.e. **> 16 bars**
+— the same bound the reused leg enforces on itself (`--record-bars must be > 16`).
+
+**Two facts follow, one of them measured:**
+
+1. **The key is the target's *runtime* loop length, not its card content.** Run 01's own selection feedback proves the
+   distinction: selecting slot 4 printed `Sent loop length CC feedback: length=0 -> CC=0 (1 bar default)` — the runtime
+   length was **0**, because the slot's content was not resident. `shouldAvoidFullVisualRebuild(0)` is false, so that
+   switch took the **legacy** branch, where `slotProvisionNeeded` was false (occupancy already existed), so **no work at
+   all** was done and the lane was never asked. That is the measured explanation of runs 01/04/05 — a *shorter* route than
+   the cold-target and edit-session stories I refuted, and it fits every row.
+2. **For the 24-bar target (run 06) that value was not captured.** The same selection printed no loop-length feedback row,
+   so whether the runtime length was 18432 (launch branch → the lane) or 0 (legacy branch) is **unknown**. The run's
+   outcome was identical to the others (`Loop 5: Queued playback switch`, held and named at `age=3075`, 44 `win_gap`
+   blocks with 29 `running=1` and **every one `eligible=progress=0`**, zero receipts, no target prewarm row).
+
+**So the next step is one measurement, not another gesture:** read the switch target's **runtime** loop length at the
+moment of the switch (the selection's own loop-length CC feedback is the natural probe, and it is the readout that just
+went missing). If it reads 0 while the card holds 18 432 ticks, the finding is that a cold *runtime* keeps a demoted
+target on the legacy path — a different problem from anything in the lane, and one that the switch's own preparation
+would have to solve before the lane can be given work.
+
+**Interim verdict for tasks 6.4/6.5 (unchanged in substance, sharper in cause):** the lane is dispatched under transport
+and is **never asked** for work in any of the four runs; the reason is now located in the provision path's branch
+condition and its input (the target's runtime loop length), rather than in the leg, the tier classification, the target's
+warmth or the edit session.

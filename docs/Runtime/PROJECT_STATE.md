@@ -29,7 +29,12 @@ precondition and are recorded as setup failures, not evidence. A trap is recorde
 env, where the lane is compiled off. **Run 05 tested that and refuted it too:** the driver now exits the edit session first (a long press on the edit control past the
 firmware's 350 ms window, pinned; M3 red-proves the order), the device confirms `Long press - exited edit mode`, and the
 queued switch **still** emitted no row of any kind for its whole bound — no `RRQ`, no `capture_prewarm`, no provision, no
-launch, and no lane work (59 `win_gap`, all `eligible=progress=0`). Three hypotheses tested, two refuted; the live one is no
+launch, and no lane work (59 `win_gap`, all `eligible=progress=0`). **Run 06 + the code gate:** `servicePendingSlotProvision` asks the lane **only** for an `immutableLaunch` target
+(not the active slot, and `shouldAvoidFullVisualRebuild(loopLength)` = **> 16 bars**), and the decisive input is the target's
+**runtime** length — run 01's selection feedback read **`length=0`** for the 2-bar slot, putting that switch on the legacy
+branch where no work happened at all, which explains runs 01/04/05. Run 06 (24-bar target) behaved identically and printed
+no loop-length row, so the one value still missing is the long target's runtime length at switch time. The next step is
+that measurement; the live question is no
 longer about the leg: the next investigation is the **code** (`servicePendingSlotProvision` and its gating, no device
 needed), with the S4b legs — whose switches *did* prepare and commit on this board, driven with the destination's track
 already playing — as the comparison. Evidence:
