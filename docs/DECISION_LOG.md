@@ -6531,3 +6531,62 @@ row, the leg's `@ tick` phase from its start row, `bars` to convert ticks to clo
 `captures/s45-camp4-20261002-200100-od1` (fresh boot), `-od2` and `-od3` (both anchored to pass 1), with non-zero
 release generations (20/20/18) and `L5_successor_started` reading "0 after A's release edge" in all three. The record
 leg's own campaign and S4f.11's cold-root route remain open, so S4.5 keeps no checkoff.
+
+
+## DEC-113 — The windowed lane is served by interval roots and never requires the whole-loop root
+
+**Date:** 2026-10-05
+**Status:** **Accepted (owner-directed, 2026-10-05) as an implementation-contract extension of DEC-108 — NOT implemented.**
+Records the owner's choice of "Route A" (interval-scoped root) and its sole-source framing; changes no firmware behaviour
+by itself. Appended, never edited in place; DEC-108 stands.
+**Owner:** `Loop::stepPendingSnapshotPublish` (interval phase); `Track` (admission, generation-gated acceptance, lane
+source selection). No new publication owner and no ownership move, so no reassessment trigger.
+**Follows:** DEC-108 items 3/5/6/10 and §12–§14, DEC-073, DEC-104, DEC-107/DEC-110. Supersedes nothing; **removes the
+"bootstrap while the whole root completes" framing** from the planning record.
+
+**Why.** On a switch onto a rootless demoted 24-bar slot the `Snapshot` owner serves the target steadily (~105 eligible
+turns/s × 2 units, `captures/s64-progress-01`), but the whole-loop root needs well over 30 s against a ~8 s hold
+(`slot_switch_hold_exceeded age=3072 ticks`). The lane requires a current whole root, which a demoted slot does not have.
+The spec already requires interval-backed playback and "served without whole-root residency"; the implementation did not
+provide an interval source.
+
+**Decisions.**
+1. The lane SHALL NEVER require, wait for or request a whole-loop root publication. Scope: sole source where no usable
+   published root exists; a current root is preferred where one exists; the stale-root Overlay, live record window and
+   merged fallback keep serving the playing slot (their interval-root replacement is follow-up 1).
+2. An interval root is a `LoopSnapshot` for **one linear served interval** (`start + length <= loopLengthTicks`,
+   `length <= EventWindowCursor::kMaximumWindowTicks`), **not necessarily bar-aligned**, judged against the exact tick
+   range; a crossing request is refused by name, never split.
+3. Construction uses today's rootless-publication sequence (pass-candidate → companion-parent, empty initial parent) and
+   the same change-set builder, with passes enumerated over the exact served range and **companion changes filtered to
+   it**; it inherits the named empty-parent companion limitation of that path.
+4. The **whole-loop checkpoint root is unchanged** and is not built for the lane: display note gather, note-edit commit,
+   undo/redo, save note pages and the publisher's incremental parent chain keep reading `publishedSnapshot*`; the interval
+   root is unreachable through those accessors.
+5. The interval root is **not a note-row or closure authority**: boundary notes stay with the slot ledger at emission
+   (`Track::applyPlaybackLedgerEvent` → `ActiveNoteLedger`) and the emission-free audible handoff.
+6. The chunk gate for windowed enumeration becomes **exact and modular** (half-open span overlap, wrapped chunks and
+   windows tested as two segments), replacing the sampled `noteIntersectsWindow` delegation, because a short window can
+   otherwise drop a chunk holding a served event; no existing consumer's result may change.
+7. **Admission is per `(track, role)`** — one interval root in flight for Launch (pending-switch target) and one for Rolling
+   (active slot), refused by name otherwise, accounted in RAM2 (`DMAMEM`) with release identity
+   `(slot, runtimeGeneration, playbackGeneration)`; capacity is measured, not asserted. This accounting is new state and is
+   recorded here rather than smuggled in.
+8. **Generation is gated twice**: `Track` accepts a completed candidate under its live `playbackGeneration`; `Loop` stores
+   only on a matching argument, with the per-turn argument as the second gate.
+9. The interval phase is refused while a queued wrap journal is authoritative-pending.
+10. The lane's admission **charges the interval-root build** as well as the window build, so `canCompleteBeforeHandoff`
+    stays truthful; the grain cost is an owed measurement.
+11. The serving window is replaced only by the existing successor lane and one atomic, emission-free handoff; a later
+    whole-root arrival is handled by that handoff and needs a production rollover fixture.
+12. **Retiring the whole-loop root is a separate decision**, taken consumer by consumer (lane → display → note-edit → undo
+    checkpoint → publisher incremental model → save); the demotion knob (`Loop::shouldAvoidFullVisualRebuild`) is a further,
+    separately gated follow-up.
+
+**Placement.** Interval-root metadata beside `publishedSnapshotBox_` in `Loop` (extmem) with a deliberate `sizeof(Loop)`
+re-base; admission state in `DMAMEM`; no RAM1 `variables` growth.
+**Consequences.** DEC-104's hold terminal stays report-only but is no longer the expected outcome for this shape; F-8's
+residency statement becomes measurable once the slice-7.6 row exists.
+**Not claimed.** The interval-root grain cost, arena residency, the exact gate's inspected-work delta, content parity for
+the served range, and the device leg — until their fixtures and leg pass. Slices and entry criteria:
+`openspec/changes/windowed-playback-generation/tasks.md` §7.

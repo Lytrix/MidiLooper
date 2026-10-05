@@ -131,6 +131,17 @@ produced when the stream has room (the `persistenceResultImmediate` / `SC_PERSIS
 fallback so it is delayed rather than lost, and diagnostic cadence is bounded through `Utils/TelemetryCadence.h`, so a
 diagnostic cannot evict the evidence it explains.
 
+**D11 — The interval root is the lane's source; the whole-loop root is the checkpoint authority only (DEC-113).** The
+windowed lane never requires, waits for or requests a whole-loop root. Where no usable published root exists (the
+measured demoted/rootless switch: a 24-bar body needed well over 30 s of whole-root construction against an ~8 s hold,
+`captures/s64-progress-01`), the lane is served by an **interval root**: a `LoopSnapshot` for one **linear, not
+necessarily bar-aligned** served interval, built on the existing publisher's fragment path from an empty parent with
+committed passes enumerated over the exact served range and companion changes filtered to it, accepted by the owning
+`Track` under its live `playbackGeneration` before it is stored. A current whole root is still preferred when one exists;
+the stale-root Overlay, live record window and merged fallback keep serving the playing slot. The checkpoint root and its
+consumers (display, note-edit commit, undo/redo, save, the publisher's incremental parent chain) are unchanged; retiring
+the whole root is a separate, later decision, consumer by consumer, and the demotion policy knob is a further follow-up.
+
 ## Owners and call paths
 
 | concern | owner today | what this change adds |
@@ -141,6 +152,7 @@ diagnostic cannot evict the evidence it explains.
 | retention (new) | the prepared pair only (`…::held`) | a **pinned source revision** per affected interval, charged to the envelope |
 | commit binding | `TrackManager::updateAllTracks` (`TrackManagerTransportTick.cpp`) | unchanged shape: read readiness, stay pending, never build inline |
 | preparation request | `TrackManager::servicePendingSlotProvision` (`DeferredIdleOwner::SlotProvision`) | requests preparation and reads readiness; publishes nothing in the steady state |
+| **interval-root publication (new)** | *nothing today* | `Loop::stepPendingSnapshotPublish` interval phase (windowed enumeration, exact chunk gate, separate progress record), two-phase acceptance by `Track` under its live `playbackGeneration`, RAM2 admission per `(track, role)` with one release predicate; the lane no longer requests the whole root |
 | checkpoint consumers (read-only) | `TrackUndo.cpp`, `StorageLoopIo.cpp`, `WorkspaceSave.cpp`, `LibraryObservationSession.cpp` | parity assertions only — no ownership change |
 | content verification | `.agents/skills/hitl-content-verification`, `docs/Guides/HITL_CONTENT_VERIFICATION.md` | fed the windowed/demoted cases (new stimulus profile), not replaced |
 
@@ -176,7 +188,7 @@ owner `Track::stepPlaybackViewMaintenance`.
 - **Second consecutive miss:** a **named contract breach** (not a pass), reported with its holder.
 - **Prepared empty interval:** ready, and it sounds as silence — it is not a readiness failure.
 - **Demoted slot with no published root:** the hold is satisfied by "**required window and source lifetime ready**", not
-  by whole-root residency; the switch is accepted, retained and bound at a valid boundary with no second gesture
+  by whole-root residency — here the source is an **interval root**, and no whole-root build is required or awaited (DEC-113); the switch is accepted, retained and bound at a valid boundary with no second gesture
   (DEC-108 §10, revising DEC-104's report-only shape for this lane).
 - **Refusal at the owner:** non-destructive and named with its own operation kind (the `OperationKind::SlotSwitch` /
   `op=slot_switch` precedent) — the request stays pending.
@@ -231,6 +243,8 @@ behaviour**.
 - The per-window capacity beyond the provisional 2,048-event ceiling; whether smaller spans are adopted.
 - The RAM1 line on a fresh target build, and the corrected size baselines (6,368 B / 984 B).
 - The source-retention cost as a charged envelope term.
+- The interval root's grain cost (so the lane's admission can charge it), its arena/PSRAM residency (published root plus one
+  in-flight candidate per role) and the exact chunk gate's inspected-work delta (DEC-113).
 - Device evidence: the windowed HITL profile, and the sweeps over loop length, density, tempo, window span and competing
   deferred work.
 

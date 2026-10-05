@@ -5180,6 +5180,24 @@ bridge's verify path) are unrelated and unchanged. See
 
 ## Now implementing
 
+### Route A — the lane is served by interval roots (DEC-113; `tasks.md` §7) — slice 7.1 landed, 7.2 next
+
+**Slice 7.1 (authority, docs only) landed 2026-10-05; no code, build or device action.** DEC-113 — *the windowed lane is
+served by interval roots and never requires the whole-loop root* is appended (DEC-108 extension, owner-directed, **not
+implemented**); NAMING gains *Interval root* and the *Published root* qualification; the spec gains four amendments
+(currency + containment, checkpoint clause, readiness holder `interval_root_owner`, one-pass-late); design D11, the
+owners row, the failure-behaviour line and the owed measurements are updated; `tasks.md` §7 (7.1–7.8) exists and 4.4's
+residency claim is re-pointed. `openspec validate --strict` is clean. **Scope now authorised:** slices 7.2–7.6a, one G2
+packet each, native-first. **Entry criteria carried from the assessment (round 7):** 7.2 — the exact chunk gate is
+*modular* (wrapped chunks/windows tested as two segments), with an equality oracle over every existing
+`CommittedEventRange::inWindow` caller written before the gate changes; 7.3 — construction keeps today's
+pass-candidate → companion-parent sequence with coupled note/event filtering (incl. a straddling Replace); 7.4 — a
+production rollover fixture (whole root appears while an interval window serves: no gap, no duplicate MIDI, one identity
+transition). **Not claimed:** any interval-root behaviour, grain cost, residency, or device result; the plan reached
+round 7 with `REVISE` (three findings, now entry criteria) rather than a `PASS`. The starved-shape hardware gate stays
+parked; the measured cause is publication *rate* (`captures/s64-progress-01`). Plan record:
+`$PI_SCRATCH_DIR/route-a-interval-root-plan.md` (session-local; DEC-113 and `tasks.md` §7 are the durable copy).
+
 ### Task 6.4/6.5 — the one controlled switch into an even-length target: the first failed transition is the source publication
 
 **One episode, the three existing rows read together, no new diagnostics** (`captures/s64-trace-01`; the registered

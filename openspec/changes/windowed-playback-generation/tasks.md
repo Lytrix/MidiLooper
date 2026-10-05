@@ -763,7 +763,7 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   190/190 (cited pin) + 38/38, full native 2698 / 2691 succeeded / 7 skipped / 0 failed, true clean rebuild with the RAM1
   line byte-identical (48 B headroom); four mutations red-proved with byte-identical restores. Detail:
   [`evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md`](evidence/2026-10-02-s43-window-boundary-parity/EVIDENCE.md).*
-- [ ] 4.4 Land **F-8** (length-independent root residency) — verify a residency statement per slot (windows resident,
+- [ ] 4.4 Land **F-8** (length-independent root residency; *re-pointed 2026-10-05: the lane's "windows resident, no whole root needed" statement is delivered by §7, DEC-113*) — verify a residency statement per slot (windows resident,
   root demoted) plus content parity for the demoted state, **swept** over loop lengths
   *Increment 4.4 landed 2026-10-02 — **test-only**: the residency statement per slot, swept over 16/17/24/30/32/64 bars
   through the production policy and admission (`fullTakePlaybackViewAdmissible` + `prewarmPlaybackForSlot`, which
@@ -1640,6 +1640,55 @@ and `single-pass-verification.json` in the requester-retry evidence directory.
 
 No task checkoff for continuous refill or task3.7 fallback removal. Completing
 qualification sooner does not establish a supported sustained service envelope.
+
+## 7. Route A — the lane is served by interval roots (DEC-113)
+
+Authority: DEC-113, NAMING *Interval root*, spec amendments (currency + containment, checkpoint clause, readiness holder,
+one-pass-late), design D11. Each slice follows the ladder (fixture fails first → implemented and verified → production path
+enabled → old path removed), gets its own G2 packet section in `G2-EXECUTION-PACKET.md`, red-proves each fixture with a
+byte-identical restore, and commits on the working branch. The three round-7 assessment findings are **entry criteria** for
+7.2/7.3/7.4 below. Task 4.4's residency claim ("windows resident, root demoted") is re-pointed here: it becomes literally
+true for the lane only once 7.3/7.4 land and 7.6 supplies the row.
+
+- [x] 7.1 Authority (docs only) — DEC-113 appended; NAMING *Interval root* row and the *Published root* qualification; the
+  four spec amendments; design D11, owners row, failure behaviour and owed measurements; this section. No code touched.
+  Verify: `openspec validate windowed-playback-generation --strict`; the artifacts agree.
+- [ ] 7.2 Windowed enumeration with an **exact** chunk gate (no behaviour change for existing consumers) — verify the
+  sub-step short-window fixture **fails** with the sampled gate restored (chunk `[0,100]`, event at tick 8, one-tick window
+  at tick 8). **Entry criterion (round 7, F1):** the exact overlap is *modular* — a wrapped chunk (`firstTick > lastTick`)
+  and a wrapped window are each tested as a tail segment and a head segment — with both-direction fixtures (wrapped chunk
+  vs linear window `[50,100]`, linear chunk vs wrapped window), or the exact gate is an interval-path-only parameter;
+  and the equality oracle over every existing `CommittedEventRange::inWindow` caller (`LoopSnapshotPlayback.cpp` Overlay,
+  `LoopMaterialization.cpp`, visual cache) must be written *before* the gate changes.
+- [ ] 7.3 Interval-root construction (empty parent, exact served range, window-filtered companions, two-phase
+  generation-gated acceptance, wrap-journal refusal) — verify content parity against today's rootless whole-root build for
+  the served ticks, and that the whole-root publisher's progress does not advance for the lane. **Entry criterion (round 7,
+  F2):** construction preserves today's *pass-candidate → companion-parent* sequence (`unpublishedCandidate` becomes the
+  parent after each frozen pass fragment, `LoopSnapshotPublish.cpp:1035-1047,1284-1300`), not a bare `createEmpty`, with
+  coupled note/event change-set filtering that includes a Replace whose old On/Off straddle the served range.
+- [ ] 7.4 The lane's source rule — never require, wait for or request a whole-loop root (single private resolver; readiness
+  holder `OwesIntervalRoot` / `interval_root_owner`; admission one interval root per `(track, role)`; the launch path's
+  republish request becomes an interval-root request) — verify the production switch shape reaches `launch_ready` with no
+  current root and no whole-root build. **Entry criterion (round 7, F3):** a production **rollover** fixture forces a whole
+  root to become current while an interval window is serving/building and asserts no gap, no duplicate MIDI, exactly one
+  source-identity transition (through the existing atomic emission-free handoff) and safe retirement of the interval root.
+- [ ] 7.5 Boundary, short-window and edge fixtures — unaligned playhead-centred demand, boundary notes on the real
+  emission path (`playMidiEventsForSlot` + `MidiSendCapture` + slot ledger), companion windowing, wrap refusal, loop-end
+  clamp, roll-boundary modulo, revision advance mid-build, switch away/back, clear/load, transport stop, persistence in
+  flight, overdub open, retirement + arena delta.
+- [ ] 7.6 Gated instrumentation — `DIAG,launch_gate` `iv=`, a per-slot interval-root row, a `snap_gate` field showing
+  whether any whole-root build exists for the slot; `SC_QUALIFICATION_ROWS_ENABLED`, Tier-A, marker contract green, absent
+  from the default build.
+- [ ] 7.6a The device oracle becomes executable — `scripts/hitl/verify/windowed_lane.py` parses `launch_gate` / `snap_gate` /
+  the hold row / the interval-root row and judges `lane_served_without_any_whole_root`, `no_slot_switch_hold_exceeded`,
+  `whole_root_never_published_for_the_switch`, `root_residency_stated_per_slot`; one host test per check, each red-proved;
+  `oracle_complete` stays `False` while content parity remains the content pipeline's verdict.
+- [ ] 7.7 Device leg — the registered `windowed_content_parity` leg onto a rootless 24-bar slot: `launch_ready` from an
+  interval root, no `slot_switch_hold_exceeded`, `rv` may stay 0, residency measured; gated on 7.3/7.6a measurements.
+- [ ] 7.8 Recorded follow-ups (not planned; no code in this change): (1) broad sole-source — interval roots replacing the
+  stale-root Overlay and live record window for the playing slot (needs an overlay contract); (2) the whole-root retirement
+  programme, a separate DEC per consumer in the order lane → display → note-edit → undo checkpoint → publisher incremental
+  model → save; (3) the demotion policy knob `Loop::shouldAvoidFullVisualRebuild`, last and separately gated.
 
 ## Gated rolling slice closeout (no additional task checkoff)
 
