@@ -1,3 +1,9 @@
+**Device episode 2 (`captures/s64-switch-13`, rebooted by re-upload so the demoted long slot restored from the card; leg
+`ok=True`, record slot 6, target slot 5):** the switch again completed the full chain (`launch_requested → ready`) with
+`root=1,pend=0` on the target -- a rebooted demoted slot is still root-backed here -- so **the starved shape was again not
+produced** and the fix is still proven natively only. Reproducing it on hardware would need a deliberately rootless,
+pending target, which no gesture in this leg creates.
+
 **Follow-up (same day):** the *unstartable-active* shape is now pinned natively --
 `test_snapshot_owner_serves_a_startable_slot_behind_an_unstartable_active_loop` (active loop owes a queued pass id only,
 via the native-only seam `Loop::queueLastCommittedPassForPublishForTest`; the startable demoted slot is selected and
