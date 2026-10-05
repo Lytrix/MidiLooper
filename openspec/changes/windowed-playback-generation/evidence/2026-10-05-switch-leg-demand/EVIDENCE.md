@@ -145,3 +145,49 @@ reader — is already in place and red-proved.
 **The lane result is unchanged in both runs:** 45 and 85 `win_gap` blocks respectively (29 and 66 with `running=1`), every
 one `eligible=0`/`progress=0`, zero receipts, zero publications. The lane is dispatched under transport and is never given
 work, and each run's own capture says why for that run.
+
+---
+
+## Run 05 — the edit-session hypothesis is refuted too, so the question moves into the provision path
+
+The edit session was the leading candidate from run 04, so the driver now **exits it**: `switch_leg` selects the target,
+holds the edit control past the firmware's own long-press window (`EDIT_EXIT_PRESS_MS` 700 ms > `EDIT_BUTTON_DEBOUNCE_MS`
+350 ms, pinned by a test), and only then presses record. **M3** (the exit dropped) red-proves the new order pin, restored
+byte-identically (`sha256 77437ba8e0bd77f9…`).
+
+The device run confirms the gesture fired — `MIDI Encoder: Long press - exited edit mode` immediately before the queue —
+and the switch **still** produced nothing:
+
+```
+[134.920] Loop 4: Queued playback switch
+[144.691] Slot switch hold slot_switch_hold_exceeded track=7 target=3 age=3072 ticks
+```
+
+and, for the whole bound, from both captures: **no `RRQ` for the target at all** (not even a restore request),
+**no `capture_prewarm,track=7,slot=3`**, no provision row, no launch row. The lane: 59 `win_gap` blocks, 51 with
+`running=1`, **every one `eligible=0`/`progress=0`**, zero receipts, zero publications.
+
+**So three hypotheses have now been tested against the device and two are refuted:**
+
+| # | Hypothesis for the missing preparation | Verdict |
+|---|---|---|
+| 1 | the target is cold, so nothing can be prepared (run 01) | **refuted** by run 04: the target's restore *committed* (`RRQ,7,3,…terminal,none,committed`) and the switch still held with no preparation rows |
+| 2 | the LOOP_EDIT session the selection opens blocks the preparation (run 04) | **refuted** by run 05: the session was explicitly exited and the preparation still produced no row of any kind |
+| 3 | *(live)* — the pending switch is not *reached* by the provision path in this device state | **to be investigated in the code, not by more runs** |
+
+**What is measured, and what that means for scope.** The switch is queued and reaffirmed, the hold is reported by name at
+its bound, the gesture is safe, and the switch preparation emits **no row of any kind** — neither a restore request, nor a
+prewarm, nor a provision, nor a lane turn. That is a statement about the preparation path *being reached*, and it is no
+longer a tuning question about the leg: the next investigation is the **code** (`servicePendingSlotProvision` and what it
+gates on), which needs no device. A hit-count comparison against the S4b legs, whose switches *did* prepare and commit on
+this board, is the natural first read — they were driven with the slot **already active/playing** on the destination's
+track, whereas this leg switches while another slot of the same track plays.
+
+**Consequence for tasks 6.4/6.5:** the "used" clause is not satisfied — the lane is dispatched under transport
+(29/51/66 `running=1` blocks across runs) and is **never given work** — and the reason is now narrowed to the provision
+path rather than to the driver, the tier classification, the target's warmth or the edit session. Both tasks stay open
+with that recorded.
+
+**One more operational trap, recorded:** after a flash the device re-enumerates and the USB MIDI port is briefly absent;
+a leg started immediately fails with `No MIDI output port matching 'Teensy'`. The recovery is to wait for the port to
+reappear (observed: present ~6 s later) before starting the leg.

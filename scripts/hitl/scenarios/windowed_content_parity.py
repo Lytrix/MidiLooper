@@ -34,6 +34,11 @@ TRANSPORT_STOP_PRESS_MS = 120
 #: preparation is off-clock (the `SlotProvision` turn) but it is what gives the window lane its **demand**, so the wait
 #: must be long enough for that turn to be served at least once under transport.
 SWITCH_SETTLE_S = 20.0
+#: The edit control (note 38) held long enough to **exit** the loop-edit session a slot selection opens. Measured on
+#: device (run 04): selecting the target enters `LOOP_EDIT`, and while that session is open the queued switch's
+#: preparation is never reached -- no provision row, no prewarm, no lane work -- so the switch holds until its bound.
+#: The firmware's own long-press window is 350 ms (`EDIT_BUTTON_DEBOUNCE_MS`); 700 ms is the value the reused leg uses.
+EDIT_EXIT_PRESS_MS = 700
 RECORD_PRESS_MS = 120
 
 
@@ -142,16 +147,38 @@ def press_record_for_active_slot(out_port: Any, *, press_ms: int = RECORD_PRESS_
     )
 
 
-def switch_leg(out_port: Any, target_slot: int, *, settle_s: float = SWITCH_SETTLE_S) -> None:
-    """Select the target **first**, then press its record control, then wait for the switch to be prepared.
+def press_edit_exit(out_port: Any, *, press_ms: int = EDIT_EXIT_PRESS_MS) -> None:
+    """Hold the edit control long enough to leave the loop-edit session a slot selection opens.
 
-    The order is the whole safety argument: the control acts on the *selected* slot, and on a filled one while the track
-    plays the firmware can only queue a playback switch. Reversing the two would put the press on whatever slot happened
-    to be active.
+    Measured, not assumed: run 04 selected the target, the device entered `LOOP_EDIT`, and the queued switch then sat
+    untouched for its whole bound — no provision row, no capture prewarm, and no lane work — while the lane refuses
+    while an edit session is active. The S4b device legs prepared their switches with no such session open.
+    """
+    from hitl.control_constants import CONTROL_CHANNEL_1BASED, EDIT_BUTTON_NOTE
+    from hitl.midi_io import _send_short_press
+
+    _send_short_press(
+        out_port,
+        note=EDIT_BUTTON_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=press_ms,
+        _caller="windowed_content_parity",
+    )
+
+
+def switch_leg(out_port: Any, target_slot: int, *, settle_s: float = SWITCH_SETTLE_S) -> None:
+    """Select the target, leave the edit session it opens, then press its record control and wait for the switch.
+
+    The order is the whole safety argument: the record control acts on the *selected* slot, and on a filled one while the
+    track plays the firmware can only queue a playback switch. Reversing those two would put the press on whatever slot
+    happened to be active. The **edit exit** sits between them because the selection opens a session the switch's
+    preparation does not survive (run 04).
     """
     if not 1 <= target_slot <= 8:
         raise ValueError(f"switch target slot {target_slot} is outside 1..8")
     select_loop_slot(out_port, target_slot)
+    time.sleep(0.5)
+    press_edit_exit(out_port)
     time.sleep(0.5)
     press_record_for_active_slot(out_port)
     time.sleep(settle_s)

@@ -990,8 +990,13 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   the queue, since the lane refuses while an edit session is active and the S4b device legs prepared their switches
   without one. Also recorded: the reset for these runs must be a flash of the **qualification** image —
   `scripts/hitl_boot_census.py`, the documented reset-by-re-upload path, hard-codes the **default** env, where the lane is
-  compiled off, so using it would silently invalidate the run. **The next attempt is named:** exit the edit session (or
-  select the target without entering one) before pressing its record control. See
+  compiled off, so using it would silently invalidate the run. **Run 05 refuted that too:** the driver now exits the edit session
+  (a long press on the edit control, pinned) and the device confirms the exit — yet the queued switch still emitted **no row
+  of any kind** for its whole bound (no `RRQ`, no `capture_prewarm`, no provision, no launch, and no lane work: 59 `win_gap`
+  blocks, all `eligible=progress=0`). **Three hypotheses tested, two refuted** (cold target; edit session), and the live one
+  is no longer about the leg at all: the next investigation is the **code** — `servicePendingSlotProvision` and what it
+  gates on — which needs no device, with the S4b legs (whose switches *did* prepare and commit on this board) as the
+  comparison. See
   [`switch-leg-demand`](evidence/2026-10-05-switch-leg-demand/EVIDENCE.md). **Not claimed:** the lane was **not exercised**;
   F-7/F-8/AC-8 remain unverified on hardware; no firmware was changed and no oracle was bent to fit an observation. See
   [`s64-s65-device-leg-01`](evidence/2026-10-05-s64-s65-device-leg-01/EVIDENCE.md).

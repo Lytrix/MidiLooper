@@ -25,12 +25,14 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 from hitl.control_constants import (
     CONTROL_CHANNEL_1BASED,
+    EDIT_BUTTON_NOTE,
     GLOBAL_TRANSPORT_NOTE,
     LOOP_SELECT_NOTE_BASE,
     RECORD_BUTTON_NOTE,
 )
 from hitl.scenarios.windowed_content_parity import (
     last_transport_row_running,
+    press_edit_exit,
     press_record_for_active_slot,
     run_post_leg_phase,
     switch_leg,
@@ -393,17 +395,29 @@ class WindowedTargetTests(unittest.TestCase):
         self.assertNotIn("--switch-target-slot", remaining)
         self.assertEqual(["--track-number", "8", "--midi-channel", "8"], remaining)
 
-    def test_the_switch_leg_selects_the_target_before_pressing_its_record_control(self) -> None:
-        """The order is the safety argument: the press acts on the *selected* slot."""
+    def test_the_switch_leg_selects_then_leaves_the_edit_session_then_presses_record(self) -> None:
+        """Three gestures in one order: the selection is the safety argument, and the edit exit is what the switch's
+        preparation needs (run 04: with the session open the preparation never starts)."""
         port = _StubPort()
         switch_leg(port, 3, settle_s=0.0)
         self.assertEqual(
             [(LOOP_SELECT_NOTE_BASE + 2, CONTROL_CHANNEL_1BASED - 1)] * 2
+            + [(EDIT_BUTTON_NOTE, CONTROL_CHANNEL_1BASED - 1)] * 2
             + [(RECORD_BUTTON_NOTE, CONTROL_CHANNEL_1BASED - 1)] * 2,
             port.sent,
         )
         with self.assertRaises(ValueError):
             switch_leg(port, 9, settle_s=0.0)
+
+    def test_the_edit_exit_holds_the_edit_control_past_the_firmware_long_press_window(self) -> None:
+        """The firmware's own threshold is 350 ms; a short press would cycle the session instead of leaving it."""
+        from hitl.control_constants import EDIT_BUTTON_DEBOUNCE_MS
+        from hitl.scenarios.windowed_content_parity import EDIT_EXIT_PRESS_MS
+
+        self.assertGreater(EDIT_EXIT_PRESS_MS, EDIT_BUTTON_DEBOUNCE_MS)
+        port = _StubPort()
+        press_edit_exit(port, press_ms=1)
+        self.assertEqual([(EDIT_BUTTON_NOTE, CONTROL_CHANNEL_1BASED - 1)] * 2, port.sent)
 
     def test_the_slot_select_presses_that_slots_own_control(self) -> None:
         port = _StubPort()

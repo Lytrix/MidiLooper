@@ -26,9 +26,13 @@ selection itself opens immediately before the queue, since the lane refuses whil
 device legs prepared their switches without one. Two runs made without a reboot aborted at the leg's own `clear failed`
 precondition and are recorded as setup failures, not evidence. A trap is recorded with them: the reset must flash the
 **qualification** image, because `hitl_boot_census.py` — the documented reset-by-re-upload path — hard-codes the **default**
-env, where the lane is compiled off. **Next, precisely:** exit the edit session (or select the target without entering one)
-before pressing its record control. **Next, precisely:** warm the target first (play it, then switch away and back)
-or let the queued restore complete, then re-run. Evidence:
+env, where the lane is compiled off. **Run 05 tested that and refuted it too:** the driver now exits the edit session first (a long press on the edit control past the
+firmware's 350 ms window, pinned; M3 red-proves the order), the device confirms `Long press - exited edit mode`, and the
+queued switch **still** emitted no row of any kind for its whole bound — no `RRQ`, no `capture_prewarm`, no provision, no
+launch, and no lane work (59 `win_gap`, all `eligible=progress=0`). Three hypotheses tested, two refuted; the live one is no
+longer about the leg: the next investigation is the **code** (`servicePendingSlotProvision` and its gating, no device
+needed), with the S4b legs — whose switches *did* prepare and commit on this board, driven with the destination's track
+already playing — as the comparison. Evidence:
 [`switch-leg-demand`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-05-switch-leg-demand/EVIDENCE.md).
 
 **F-13 was wrong, F-14 is real and fixed, and the device finally shows the windowed lane serving under transport.**
