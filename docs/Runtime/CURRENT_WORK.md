@@ -5067,7 +5067,7 @@ bridge's verify path) are unrelated and unchanged. See
 Added `docs/Agents/hitl_authoring_traps.md` and `docs/Templates/HITL_TEST_RECIPE.md`, linked from `AGENTS.md`
 step 8. No firmware change. Open follow-ups (not started): a native pre-flight that checks each declared
 marker is registered in `CaptureLineTier.h` — **landed** as `scripts/check_marker_contract.py` (+ `scripts/test_check_marker_contract.py`);
-a scaffold command for new stimuli (not started). Finding from `--audit`: `DIAG,canonical_release_interval,` is a 32-byte
+a scaffold command for new stimuli -- **landed** as `host_midi_hitl.py stimulus scaffold` (`scripts/hitl/stimuli/scaffold.py`, `scripts/test_stimulus_scaffold.py`). Finding from `--audit`: `DIAG,canonical_release_interval,` is a 32-byte
 Tier-A prefix, one over the 31-byte limit, so at a 10-digit micros the ring's 47-byte head read cannot classify it
 **Fixed:** the row is renamed `DIAG,canon_rel_interval,` (24 bytes); emitter, tier entry, accepted-sequence flow wait and
 tests moved with it, and `accepted_sequence_probe.py` still parses the old name for archived captures. `--audit` now reports 0 over.

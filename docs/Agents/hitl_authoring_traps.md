@@ -62,6 +62,15 @@ Checklist before flashing:
   Never edit a canonical stimulus; make a temporary variant.
 - Never execute a captured `command.json`. Use the authoritative entry point.
 
+## Start a new experiment with the scaffold
+
+`.venv/bin/python scripts/host_midi_hitl.py stimulus scaffold <PARENT_ID> <SUFFIX> --reason "<why canonical is insufficient>" [--bars N] [--must-prove "..."] [--marker 'DIAG,my_event,'] [--require-markers]`
+
+It writes an unregistered TEMP variant plus a pre-filled recipe under `captures/stimuli/`, lists the real gesture
+helpers and control constants (read from `scripts/hitl/`), and runs the marker pre-flight. `--require-markers`
+exits 1 when a declared marker fails, which is the "do not flash" signal. `NOT YET` is normal before the
+firmware row is written. Implementation: `scripts/hitl/stimuli/scaffold.py`.
+
 ## Ladder: stop at the first red step
 
 1. Native test (`pio test -e native -f <suite>`), including the tier test for any new marker.

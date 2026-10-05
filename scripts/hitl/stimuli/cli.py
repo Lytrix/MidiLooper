@@ -33,6 +33,21 @@ def add_stimulus_subparser(sub: argparse._SubParsersAction) -> None:
     temp_p.add_argument("suffix", help="TEMP suffix, e.g. A → STIM-…-TEMP-A")
     temp_p.add_argument("--reason", default="", help="Why the canonical recipe is insufficient")
     temp_p.add_argument("--out-dir", type=Path, default=Path("captures"))
+    scaf_p = stim_sub.add_parser(
+        "scaffold",
+        help="Fork a TEMP variant and write a pre-filled recipe, gesture list and marker pre-flight",
+    )
+    scaf_p.add_argument("parent_id", help="Canonical stimulus id to fork (see `stimulus list`)")
+    scaf_p.add_argument("suffix", help="TEMP suffix, e.g. A -> STIM-...-TEMP-A")
+    scaf_p.add_argument("--reason", required=True, help="Why the canonical recipe is insufficient")
+    scaf_p.add_argument("--bars", type=int, default=None, help="Override the base record length in bars")
+    scaf_p.add_argument("--description", default=None)
+    scaf_p.add_argument("--must-prove", action="append", default=[], help="Repeatable acceptance statement")
+    scaf_p.add_argument("--marker", action="append", default=[],
+                        help="Repeatable capture tag the test waits on, e.g. 'DIAG,my_event,'")
+    scaf_p.add_argument("--require-markers", action="store_true",
+                        help="Exit 1 unless every --marker is emitted, Tier-A and fits the ring head read")
+    scaf_p.add_argument("--out-dir", type=Path, default=Path("captures"))
 
 
 def write_temporary_sidecar(
@@ -128,6 +143,29 @@ def run_stimulus_command(args: argparse.Namespace) -> int:
             "Run the parent scenario with --stimulus-temp-suffix "
             f"{args.suffix} --stimulus-temp-parent {spec.parent_id}"
         )
+        return 0
+    if command == "scaffold":
+        from hitl.stimuli.scaffold import scaffold
+
+        try:
+            result = scaffold(
+                args.parent_id, args.suffix, out_dir=Path(args.out_dir), reason=args.reason,
+                bars=args.bars, must_prove=args.must_prove, description=args.description,
+                markers=args.marker,
+            )
+        except (KeyError, ValueError) as exc:
+            print(f"[hitl] {exc}")
+            return 2
+        print(f"Created {result.spec.stimulus_id} (not registered)")
+        print(f"Wrote {result.sidecar}")
+        print(f"Wrote {result.recipe}")
+        for marker in result.markers:
+            print(marker.message)
+        print("Run the parent scenario with --stimulus-temp-suffix "
+              f"{args.suffix} --stimulus-temp-parent {result.spec.parent_id}")
+        if args.require_markers and not result.markers_ok:
+            print("[hitl] --require-markers: a declared marker failed pre-flight; do not flash")
+            return 1
         return 0
     print("[hitl] unknown stimulus command")
     return 2

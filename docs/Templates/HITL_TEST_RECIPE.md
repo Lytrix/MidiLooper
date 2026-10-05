@@ -1,5 +1,7 @@
 # HITL test recipe (fill in before writing code)
 
+`host_midi_hitl.py stimulus scaffold` writes a pre-filled copy of this table for a TEMP variant.
+
 Companion: [hitl_authoring_traps.md](../Agents/hitl_authoring_traps.md). Pairs with
 [EXECUTION_PACKET.md](EXECUTION_PACKET.md); do not duplicate its fields.
 
