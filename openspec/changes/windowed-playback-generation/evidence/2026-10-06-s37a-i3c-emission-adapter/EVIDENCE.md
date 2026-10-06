@@ -313,3 +313,26 @@ The parity work has been deferred item by item; this slice states the matrix onc
 | Focused RWS | **159/159** |
 | Production sources | unchanged (test-only): the device/guard figures above stand |
 | Strict validation / `git diff --check` | valid / clean |
+
+
+---
+
+## 12. The harness attempt: the §10 candidate falsified, and what the harness still needs (2026-10-06, test-only)
+
+**Measured:** after a whole pass of clock-path ticks, the slot's paged delivery is **still bound** (`pagedActive` true).
+`LoopPlaybackRuntime::reset` *drops* the ring (its own comment: "the page ring is the same kind of work"), so the
+stale-runtime path IS10 named as the nearest candidate **did not run** -- the candidate is **falsified**, and the tick
+path's silence comes from elsewhere in `playCommittedLoopMidi`'s body (the pair/merge section between its entry and the
+tick record is the next place to look).
+
+**A probe that had to be withdrawn, recorded rather than hidden:** calling `isStale(loop.playbackRevision,
+playbackGeneration)` directly from the fixture **crashed the run** (one case, none succeeded). Reading the runtime's
+staleness therefore needs a production-safe route, which is itself part of what the harness must provide.
+
+**What the harness still needs (named, with what exists):**
+
+| Piece | State |
+|---|---|
+| A **MIDI sink** at the walk level | **exists**: the suite's `pagedEmissionSinkSend` captures the emitted stream, and the acceptance fixture compares it element-wise against the effective-content resolver |
+| A MIDI sink at the **production send path** (`applyPlaybackLedgerEvent` + `sendMidiEvent`) | **not implemented**: `playbackCursorAdvanceSend` is file-local to the hot-path TU, and this suite has no handler-level capture |
+| **Transport/load** state that lets the clock path run | **not implemented**: the drive is silent, the stale-reset candidate is now falsified, and the next bisection step is the pair/merge section |

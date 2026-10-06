@@ -11067,6 +11067,17 @@ void test_3_7a_i4_the_production_tick_path_selects_nothing_before_its_boundary()
   // What the clock path does *not* do for a slot whose delivery is not yet admitted: it builds no heavy merged
   // fallback (that build is refused on the clock path by design -- a rootless dense slot is **silent** here, which is
   // exactly the condition the paged delivery exists to change), and it consumes nothing from the ring.
+  // Probe: is the delivery still bound after the first ticks? `LoopPlaybackRuntime::reset` *drops* the paged ring
+  // (its own comment says so), and the tick path calls it when the runtime is stale -- so a stale first tick would
+  // destroy exactly the delivery this path exists to serve, and that is what "records no tick" looks like from here.
+  // **Falsified candidate (measured):** the paged delivery survives the clock path's ticks, so
+  // `LoopPlaybackRuntime::reset` -- and therefore the stale-runtime path IS10 named as its nearest candidate -- did
+  // *not* run: a reset drops the ring by its own comment. The tick path's silence comes from somewhere else, and the
+  // next step of that bisection is the pair/merge section between its entry and the tick record. (A probe that called
+  // `isStale(...)` directly crashed the run -- one case, none succeeded -- and was removed; the staleness must be read
+  // through a production-safe route, which is part of what the harness needs.)
+  TEST_ASSERT_TRUE_MESSAGE(runtime->pagedActive,
+                           "the paged delivery survived the clock path's own runtime reset (the reset did not run)");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
                                    "the clock path does not build the heavy merged fallback for this slot");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.consumedOrdinal,
