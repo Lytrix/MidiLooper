@@ -224,23 +224,20 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   PlaybackViewSourceIdentity expectedFixedSource{};
   const FixedPlaybackBridgeStorage* fixedBridge = nullptr;
   const RuntimePlaybackView* fixedView = nullptr;
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  bool rollingViewSelected = false;
+  resolveQualificationPlaybackSourceForTurn(slotIndex, loop, fixedViewEligible, currentTick,
+                                            expectedFixedSource, fixedBridge, fixedView,
+                                            rollingViewSelected);
+#else
   resolveFixedPlaybackSourceForTurn(slotIndex, loop, fixedViewEligible, expectedFixedSource, fixedBridge,
                                     fixedView);
-
   if (fixedView == nullptr && fixedViewEligible && !isJamPlaybackActive() && !isJamming()) {
     const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
         currentTick, projectionCycleStartTick, loop.loopLengthTicks);
     fixedView = runtime.boundLaunchView(expectedFixedSource, loop.loopLengthTicks, phase, currentTick);
   }
-
-  const RuntimePlaybackView* rollingView = nullptr;
-#if PLAYBACK_WINDOW_ROLLING_ENABLED
-  if (fixedView == nullptr && fixedViewEligible) {
-    const auto resolved = resolveRollingPlaybackWindow(slotIndex, currentTick,
-        clockManager.getPlaybackDeadlineClock());
-    rollingView = resolved.view;
-    if (rollingView != nullptr) fixedView = rollingView;
-  }
+  const bool rollingViewSelected = false;
 #endif
 
   if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
@@ -256,7 +253,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
       if (!runtime.reset(true)) return;
     }
     // A bound rolling interval retains its cursor/version until its end.
-    if (rollingView == nullptr) {
+    if (!rollingViewSelected) {
       loop.nextEventIndex = 0;
       if (isActive) loop.captureNextEventIndex = 0;
     }

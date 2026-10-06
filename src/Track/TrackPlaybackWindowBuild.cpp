@@ -694,6 +694,32 @@ TRACK_COLD_MEM void Track::resolveFixedPlaybackSourceForTurn(
   viewOut = bridgeOut != nullptr ? runtime->fullLoopBridgeBase(*bridgeOut, loop.loopLengthTicks)
                                  : runtime->publishedFullLoopView(sourceOut, loop.loopLengthTicks);
 }
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+// This qualification-only selector runs on the clock path but is deliberately placed in FLASH to meet the RAM1 bank
+// budget. Its placement is observable in timing, so no timing equivalence/qualification is claimed here.
+FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
+    uint8_t slotIndex, const Loop& loop, bool eligible, uint32_t currentTick,
+    PlaybackViewSourceIdentity& sourceOut, const FixedPlaybackBridgeStorage*& bridgeOut,
+    const RuntimePlaybackView*& viewOut, bool& rollingViewSelectedOut) {
+  rollingViewSelectedOut = false;
+  resolveFixedPlaybackSourceForTurn(slotIndex, loop, eligible, sourceOut, bridgeOut, viewOut);
+  if (viewOut == nullptr && eligible && !isJamPlaybackActive() && !isJamming()) {
+    if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex)) {
+      const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+          currentTick, getProjectionCycleStartTick(), loop.loopLengthTicks);
+      viewOut = runtime->boundLaunchView(sourceOut, loop.loopLengthTicks, phase, currentTick);
+    }
+  }
+  if (viewOut == nullptr && eligible) {
+    const RuntimePlaybackView* rollingView =
+        resolveRollingPlaybackWindow(slotIndex, currentTick, clockManager.getPlaybackDeadlineClock()).view;
+    if (rollingView != nullptr) {
+      viewOut = rollingView;
+      rollingViewSelectedOut = true;
+    }
+  }
+}
+#endif
 TRACK_COLD_MEM Track::PagedEmissionDeliveryState Track::pagedEmissionDeliveryStateForSlot(
     uint8_t slotIndex) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
@@ -3754,7 +3780,7 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
 #endif
 }
 
-Track::RollingResolution Track::resolveRollingPlaybackWindow(
+FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
     uint8_t slot, uint32_t tick, PlaybackDeadlineClock clock) {
 #if !PLAYBACK_WINDOW_ROLLING_ENABLED
   (void)slot; (void)tick; (void)clock;

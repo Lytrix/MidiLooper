@@ -510,6 +510,13 @@ public:
                                          PlaybackViewSourceIdentity& sourceOut,
                                          const FixedPlaybackBridgeStorage*& bridgeOut,
                                          const RuntimePlaybackView*& viewOut);
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+  /// Qualification-image source selection in flash. Preserves fixed-view, launch-view, then rolling-window priority.
+  void resolveQualificationPlaybackSourceForTurn(
+      uint8_t slotIndex, const Loop& loop, bool eligible, uint32_t currentTick,
+      PlaybackViewSourceIdentity& sourceOut, const FixedPlaybackBridgeStorage*& bridgeOut,
+      const RuntimePlaybackView*& viewOut, bool& rollingViewSelectedOut);
+#endif
   /// Task 3.7a (I5)'s ITCM budget slice: **the bridge window's handoff seek, in flash.** The compiled bridge and the
   /// window carry the same cycle stream, so the seek is logarithmic in the window's event count and only has to exclude
   /// the interval this turn's predecessor already serviced. It is called once per handoff, never per event.
