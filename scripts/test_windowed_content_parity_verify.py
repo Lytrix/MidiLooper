@@ -37,6 +37,7 @@ from hitl.scenarios.windowed_content_parity import (
     run_post_leg_phase,
     switch_leg,
     split_switch_target_slot_flag,
+    split_switch_settle_flag,
     switch_target_slot_from,
     serial_port_from,
     press_global_transport_stop,
@@ -45,7 +46,9 @@ from hitl.scenarios.windowed_content_parity import (
     split_loop_slot_flag,
 )
 from hitl.verify.windowed_lane import (
+    demand_entry_summary,
     gap_rows,
+    gate_rows,
     row_us,
     overrun_rows,
     readiness_rows,
@@ -99,6 +102,47 @@ def _gap(
 
 def _overrun(us: int, *, permitted: int = 1, overruns: int = 2, overrun_max: int = 5, running: int = 1) -> str:
     return f"#CAP,{us},DIAG,win_gap_overrun,{permitted},{overruns},{overrun_max},{running},1"
+
+
+def _gate(
+    us: int,
+    *,
+    exit: str,
+    track: int = 8,
+    slot: int = 4,
+    loop_len: int = LONG_LOOP,
+    rq: int = 0,
+    ep: int = 1,
+    av: int = 1,
+    al: int = 1,
+    pl: int = 1,
+    ed: int = 0,
+    od: int = 0,
+    pv: int = 0,
+    rw: int = 0,
+    sv: int = 1,
+    rt: int = 1,
+    rl: int = 1,
+    ow: int = 0,
+    dm: int = 0,
+    bld: int = 0,
+    gr: int = 0,
+    rp: int = 0,
+) -> str:
+    """The demand path's gate row, in `DebugSessionCapture::winGateRow`'s own field order."""
+    return (
+        f"#CAP,{us},DIAG,win_gate,t={track},s={slot},x={exit},len={loop_len},ep={ep},av={av},al={al},pl={pl},ed={ed},"
+        f"od={od},pv={pv},rw={rw},sv={sv},rt={rt},rl={rl},ow={ow},dm={dm},bld={bld},gr={gr},rp={rp},rq={rq}"
+    )
+
+
+def _no_demand_lines(*gates: str) -> list[str]:
+    """A running-transport capture with nothing owed: a dispatch block, zero eligible turns, and the gate rows."""
+    lines = ["[1.000] [INFO] Transport started"]
+    lines.extend(gates)
+    lines.append(_gap(2_100_000, opportunities=22784, running=0, eligible=0, progress=0, denied=0))
+    lines.append("[9.000] [INFO] Transport stopped")
+    return lines
 
 
 def _build(us: int, *, path: str = "build_complete", loop_len: int = LONG_LOOP, revision: int = 1) -> str:
@@ -271,6 +315,86 @@ class WindowedLaneTests(unittest.TestCase):
         self.assertTrue(demand["ok"])
         self.assertTrue(result["ok"], result["issues"])
 
+
+    def test_the_gate_row_is_read_by_the_emitters_field_order(self) -> None:
+        """The row is parsed where `winGateRow` writes it, and a row the emitter never writes is skipped."""
+        rows = gate_rows([_gate(2_100_000, exit="win_not_servable", rq=3, sv=0, rt=1)])
+        self.assertEqual(1, len(rows))
+        row = rows[0]
+        self.assertEqual("win_not_servable", row["exit"])
+        self.assertEqual("8", row["track"])
+        self.assertEqual("4", row["slot"])
+        self.assertEqual(str(LONG_LOOP), row["loop_len"])
+        self.assertEqual("1", row["flags"]["av"])
+        self.assertEqual("0", row["flags"]["sv"])
+        self.assertEqual("3", row["request_result"])
+        self.assertEqual(2_100_000, row["us"])
+        # Truncated at the request field: the emitter never writes one, and reading it would be guessing.
+        self.assertEqual([], gate_rows(["#CAP,1,DIAG,win_gate,t=8,s=4,x=win_ready"]))
+
+    def test_an_ineligible_loop_names_the_term_that_refused(self) -> None:
+        """An unaligned demoted loop: the check says *which* of the entry trio refused, not merely 'no demand'."""
+        lines = _no_demand_lines(
+            _gate(2_110_000, exit="win_window_ineligible", loop_len=25 * TICKS_PER_BAR, al=0),
+        )
+        result = verify_windowed_lane(lines)
+        self.assertFalse(result["ok"])
+        demand = next(check for check in result["checks"] if check["name"] == "window_demand_observed")
+        self.assertFalse(demand["ok"])
+        self.assertIn("win_window_ineligible(1)", demand["detail"])
+        self.assertIn("not a whole number of two-bar spans", demand["detail"])
+        self.assertEqual("win_window_ineligible", result["demand"]["dominant_exit"])
+        self.assertEqual(1, result["demand"]["gate_rows"])
+
+    def test_a_not_servable_slot_names_the_missing_published_window(self) -> None:
+        """The shape the 2026-10-05 switch runs measured: every row `win_not_servable`, `sv=0`."""
+        lines = _no_demand_lines(*[_gate(2_110_000 + index, exit="win_not_servable", sv=0, rt=0)
+                                   for index in range(3)])
+        result = verify_windowed_lane(lines)
+        demand = next(check for check in result["checks"] if check["name"] == "window_demand_observed")
+        self.assertFalse(demand["ok"])
+        self.assertIn("no complete published current window", demand["detail"])
+        self.assertEqual({"win_not_servable": 3}, result["demand"]["exits"])
+
+    def test_the_most_frequent_exit_is_the_one_reported(self) -> None:
+        """One odd refusal among many is not reported as the reason: the dominant exit is."""
+        lines = _no_demand_lines(
+            _gate(2_110_000, exit="win_not_servable", sv=0, rt=0),
+            _gate(2_120_000, exit="win_blocked", sv=0, rt=0),
+            _gate(2_130_000, exit="win_blocked", sv=0, rt=0),
+        )
+        result = verify_windowed_lane(lines)
+        self.assertEqual("win_blocked", result["demand"]["dominant_exit"])
+
+    def test_a_request_exit_is_a_demand_even_with_no_receipt_or_eligible_turn(self) -> None:
+        """`win_requested` can only be reached with a request in existence, so it evidences the demand itself."""
+        lines = [
+            "[1.000] [INFO] Transport started",
+            _gate(2_100_000, exit="win_requested", sv=1, rt=1, rq=2),
+            _gap(2_200_000, opportunities=9, running=1, eligible=0, progress=0, denied=0),
+            "[9.000] [INFO] Transport stopped",
+        ]
+        summary = demand_entry_summary(lines)
+        self.assertTrue(summary["observed"])
+        result = verify_windowed_lane(lines)
+        demand = next(check for check in result["checks"] if check["name"] == "window_demand_observed")
+        self.assertTrue(demand["ok"])
+        self.assertIn("win_requested(1)", demand["detail"])
+        self.assertTrue(result["demand"]["observed"])
+
+    def test_a_capture_without_the_gate_family_says_the_image_lacks_it(self) -> None:
+        """The gate row is qualification-only: its absence is stated, because the entry term is then unreadable."""
+        lines = [
+            "[1.000] [INFO] Transport started",
+            _gap(2_100_000, opportunities=11776, running=0, eligible=0, progress=0, denied=0),
+            "[9.000] [INFO] Transport stopped",
+        ]
+        result = verify_windowed_lane(lines)
+        demand = next(check for check in result["checks"] if check["name"] == "window_demand_observed")
+        self.assertFalse(demand["ok"])
+        self.assertIn("does not compile the lane's gate row", demand["detail"])
+        self.assertEqual(0, result["demand"]["gate_rows"])
+        self.assertIsNone(result["demand"]["refusal"])
     def test_one_publication_is_not_a_boundary_crossing(self) -> None:
         result = verify_windowed_lane(_lane_lines(completions=1))
         self.assertFalse(result["ok"])
@@ -358,6 +482,39 @@ class WindowedTargetTests(unittest.TestCase):
         """The base leg keeps its behaviour: no flag means no switch leg, so the two shapes stay comparable."""
         self.assertIsNone(switch_target_slot_from(["--track-number", "8", "--loop-slot", "6"]))
         self.assertEqual(3, switch_target_slot_from(["--switch-target-slot", "3"]))
+
+    def test_the_settle_flag_is_taken_out_of_the_legacy_args(self) -> None:
+        """The wrapper's own float flag, removed before the reused leg's strict parser sees it."""
+        settle, remaining = split_switch_settle_flag(
+            ["--record-bars", "24", "--switch-settle-s", "60", "--switch-target-slot", "3"]
+        )
+        self.assertEqual(60.0, settle)
+        self.assertEqual(["--record-bars", "24", "--switch-target-slot", "3"], remaining)
+        self.assertEqual((None, ["--record-bars", "24"]), split_switch_settle_flag(["--record-bars", "24"]))
+
+    def test_an_unparsable_settle_is_refused_with_its_token(self) -> None:
+        with self.assertRaises(ValueError) as caught:
+            split_switch_settle_flag(["--switch-settle-s", "soon"])
+        self.assertIn("'soon'", str(caught.exception))
+
+    def test_the_default_settle_is_the_measured_one(self) -> None:
+        """45 s is the s64-progress-01 measurement (>30 s of service) with margin, not a comfort value."""
+        from hitl.scenarios.windowed_content_parity import SWITCH_SETTLE_S
+
+        self.assertEqual(45.0, SWITCH_SETTLE_S)
+
+    def test_a_settle_without_a_switch_target_is_refused_before_any_device_contact(self) -> None:
+        """A wait that belongs to the switch leg cannot be named without a target: it would measure nothing."""
+        class _Args:
+            legacy_args = ["--loop-slot", "4", "--switch-settle-s", "45"]
+
+        self.assertEqual(2, run_windowed_content_parity(_Args()))
+
+    def test_a_non_positive_settle_is_refused_before_any_device_contact(self) -> None:
+        class _Args:
+            legacy_args = ["--loop-slot", "4", "--switch-target-slot", "3", "--switch-settle-s", "0"]
+
+        self.assertEqual(2, run_windowed_content_parity(_Args()))
 
     def test_the_record_press_uses_the_record_control(self) -> None:
         port = _StubPort()

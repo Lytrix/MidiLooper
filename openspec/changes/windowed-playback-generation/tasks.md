@@ -1488,6 +1488,32 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   capture's log instead of opening the port (nothing stripped), pinned by
   `test_windowed_content_parity_verify::ManagedRunnerHandshakeTests` (**27/27**). See
   [`switch-trace`](evidence/2026-10-05-switch-trace/TRACE.md).
+
+  *Increment landed 2026-10-07 (host tooling + host tests; **no firmware line changed**, no device run) — the demand's
+  own reading and the time it needs.* The gap F-16 recorded is closed **on the host side**: the leg's verifier now reads
+  the lane's own `DIAG,win_gate` rows by `DebugSessionCapture::winGateRow`'s field order, so a run with no demand **names
+  the term that refused** (the entry trio `ep`/`av`/`al` with the failing bit spelled out, `win_not_servable`'s missing
+  published current window, `win_busy`'s holder, `win_requested`'s own `rq`) instead of leaving a reader to infer it —
+  and a gate exit that can only exist with a frame or a request (`win_requested` … `win_frame_invalidated`) now counts
+  as a demand in its own right, so a request that has not yet produced a receipt is not read as "the lane was not
+  asked". The reading travels in the result (`demand`), and a capture carrying no gate row says so explicitly (the
+  family is qualification-only). **The demand is also given the time the measurement says it needs:** the switch leg's
+  wait was a fixed 20 s while a rootless demoted target's publication needed *well over 30 s* of service at the measured
+  ~105 eligible turns/s x 2 units (`captures/s64-progress-01`), so `SWITCH_SETTLE_S` is now **45 s** — derived from that
+  measurement, documented against the ~8 s switch hold bound and the 360 s managed-run bound, and overridable per run
+  with `--switch-settle-s` (a float with its own splitter, refused **before any device contact** when non-positive,
+  unparsable with the token named, or given without `--switch-target-slot`). Verified: the leg's host suite **39/39**
+  (was 28), and the full host discover (1,254 tests) is **A/B identical to HEAD** — its 6 failures and 2 errors
+  (`test_compatibility_consumer_inventory`, `test_foundation_runner`, `test_layered_verifiers`,
+  `test_occupy_paint_serial_verify`, `test_6_3_machinery_closeout_gate`, `test_hitl_serial_timing`,
+  `test_edit_session_state_serial_verify`) are pre-existing in this environment and unchanged by the slice; no
+  firmware or C++ test file changed, so the native suite (**2,855 / 7 skipped / 2,848 succeeded / 0 failed**) stands.
+  **The task stays open:** the leg has still never run with a demand — the next step is an authorized upload of
+  `teensy41-capture-serial-window-qualification` (back inside its RAM1 guard since the same day's repair: `code 392,312
+  + padding 904`) driven on a **demoted, span-aligned** target through the switch leg, and the first run may correct
+  this oracle rather than the firmware. Not claimed: no device result, no timing/envelope claim, no F-7/F-8/AC-8
+  qualification, no change to the launch that owns the demand's `sv` term. Detail:
+  [`2026-10-07-s64-demand-leg`](evidence/2026-10-07-s64-demand-leg/EXECUTION.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B

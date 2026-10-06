@@ -1,3 +1,22 @@
+**2026-10-07 — `windowed-playback-generation` 6.4 (exercise half): the demand-creating leg — the lane's entry term is named, and the demand is given the time the measurement says it needs (host tooling + host tests; no firmware line, no device run).**
+The gap **F-16** recorded (five device runs spent telling "nothing owed" from "refused, and by which term") is closed on the host
+side: the leg's verifier reads the lane's own `DIAG,win_gate` rows by `DebugSessionCapture::winGateRow`'s field order, so a run with
+no demand now **names the refusing term** — the entry trio `ep`/`av`/`al` with the failing bit spelled out, `win_not_servable`'s
+missing published current window, `win_busy`'s holder, `win_requested`'s own `rq` — and a gate exit that can only exist with a frame
+or a request in existence counts as a demand in its own right, so a request without a receipt yet is not read as "the lane was not
+asked". The reading travels in the result (`demand`); a capture with no gate row says so explicitly (the family is qualification-only).
+**The demand is also given time:** the switch leg's wait was a fixed 20 s while a rootless demoted target's publication needed *well
+over 30 s* of service at the measured ~105 eligible turns/s x 2 units (`captures/s64-progress-01`), so `SWITCH_SETTLE_S` is **45 s**,
+derived from that measurement and documented against the ~8 s switch hold bound and the 360 s managed-run bound, overridable per run
+with `--switch-settle-s` (a float with its own splitter; refused before any device contact when non-positive, unparsable with the token
+named, or named without `--switch-target-slot`). Verified: the leg's host suite **39/39** (was 28); the full host discover (1,254
+tests) is **A/B identical to HEAD** (its 6 failures + 2 errors are pre-existing in this environment); no firmware/C++ change, so the
+native suite (**2,855 / 7 skipped / 2,848 succeeded / 0 failed**) stands. **Not claimed:** the leg has still never run with a demand —
+6.4/6.5 stay open, F-7/F-8/AC-8 and the hardware envelope stay **NOT RUN**, and the launch that owns the demand's `sv` term is
+unchanged. Next: an authorized upload of `teensy41-capture-serial-window-qualification` (back inside its RAM1 guard after the same
+day's repair) driven on a demoted, span-aligned target through the switch leg. Packet:
+[`2026-10-07-s64-demand-leg/EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-07-s64-demand-leg/EXECUTION.md).
+
 **2026-10-07 — `windowed-playback-generation` task 2.7: the demoted-shape harness tripwire is discharged (red-proof only; no production or test-source change).**
 The task's own clause — *verify a fixture **fails** when the window build is removed on a demoted slot* — is measured. The mutation
 removed the demoted slot's window build at the owner turn (an early `Idle` in `Track::stepPlaybackViewMaintenance` when

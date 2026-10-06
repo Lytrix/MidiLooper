@@ -32,6 +32,77 @@ GAP_OVERRUN_ROW = "DIAG,win_gap_overrun,"
 #: `#CAP,<us>,DIAG,playback_build,<path>,…` — the lane's path row (`build_complete`, `grain_denied`, …).
 BUILD_ROW = "DIAG,playback_build,"
 BUILD_COMPLETE = "build_complete"
+#: The **demand path's own gate row** (`DIAG,win_gate`) — qualification-only, one row per state change. It is the
+#: instrument that tells "this track owed no window" apart from "the window was refused, and **by which term**"
+#: (F-16: five switch-leg runs were spent on that distinction), so a leg that produces no demand can name its reason
+#: instead of prompting another run by guesswork.
+GATE_ROW = "DIAG,win_gate,"
+#: Field positions in the emitted wire form
+#: `#CAP,<us>,DIAG,win_gate,t=,s=,x=,len=,ep=,av=,al=,pl=,ed=,od=,pv=,rw=,sv=,rt=,rl=,ow=,dm=,bld=,gr=,rp=,rq=` —
+#: read from `DebugSessionCapture::winGateRow`, not from memory.
+GATE_EXIT_FIELD = 6
+GATE_LOOP_LEN_FIELD = 7
+GATE_FLAG_FIRST_FIELD = 8
+#: The 16 flag bits, in emission order. Each is read from the **active slot's own state** (see the header's list);
+#: `ep` `av` `al` are the eligibility trio and `sv`/`rt` are the servability pair the demand's entry rests on.
+GATE_FLAGS: tuple[str, ...] = (
+    "ep", "av", "al", "pl", "ed", "od", "pv", "rw", "sv", "rt", "rl", "ow", "dm", "bld", "gr", "rp",
+)
+GATE_REQUEST_FIELD = GATE_FLAG_FIRST_FIELD + len(GATE_FLAGS)
+#: Exits that prove the lane was given work: each one can only be reached with a frame or a request in existence, so
+#: a run that shows any of them has exercised the lane even if no page, receipt or publication followed yet.
+DEMAND_EXITS: frozenset[str] = frozenset(
+    {
+        "win_requested",
+        "win_request_dropped",
+        "win_serving",
+        "win_ready",
+        "win_waiting",
+        "win_blocked",
+        "win_blocked_by_request",
+        "win_frame_invalidated",
+    }
+)
+#: What each **refusing** exit means, in the active slot's own terms, so the reader is not left to decode flags.
+REFUSAL_REASONS: dict[str, str] = {
+    "win_no_runtime": "the active slot has no playback runtime allocated",
+    "win_track_not_playing": "the state gates refused before any window was considered",
+    "win_reprojection_blocked": "a queued playback start, jam or jam playback holds the projection",
+    "win_window_ineligible": "the demand's entry trio refused",
+    "win_not_servable": "the active slot holds no published current window, so the rolling lane has nothing to roll "
+                        "from (a switch/launch that binds one creates the demand)",
+    "win_busy": "an existing promise, owner or outstanding grain holds the slot",
+    "win_reprojected_tick": "the tick fell outside the projection, so the demand's absolute position is not this one",
+    "win_boundary_rejected": "the declared lead could not place a boundary inside the loop",
+    "win_request_refused": "the request itself was refused by name",
+}
+#: The flags that explain each refusal, and the sentence each flag's `0` adds.
+_FLAG_LABELS: dict[str, str] = {
+    "ep": "the deadline clock is unstamped",
+    "av": "the loop is not demoted",
+    "al": "the length is not a whole number of two-bar spans",
+    "pl": "the track is not playing",
+    "ed": "a note-edit session is active",
+    "od": "a deferred overdub stop is pending",
+    "pv": "a preview source is active",
+    "rw": "a record-return window is bound",
+    "sv": "no complete published current window",
+    "rt": "the published root is not current",
+    "rl": "the coverage role is unavailable",
+    "ow": "the slot owns a coverage source",
+    "dm": "a view request is active",
+    "bld": "a build is in flight",
+    "gr": "grains are outstanding",
+    "rp": "the tick was reprojected",
+}
+#: The flags that explain each refusal.
+_REFUSAL_FLAGS: dict[str, tuple[str, ...]] = {
+    "win_window_ineligible": ("ep", "av", "al"),
+    "win_track_not_playing": ("pl", "ed", "od", "pv", "rw"),
+    "win_not_servable": ("sv", "rt"),
+    "win_busy": ("dm", "rl", "ow", "gr"),
+    "win_reprojected_tick": ("rp",),
+}
 
 #: The transport's own human rows (the stream's own ordering is the clock here; no unit conversion is attempted).
 TRANSPORT_STARTED = "Transport started"
@@ -206,6 +277,98 @@ def build_rows(lines: list[str], *, path: str | None = None) -> list[dict[str, A
     return rows
 
 
+def gate_rows(lines: list[str]) -> list[dict[str, Any]]:
+    """The demand path's own state-change rows, parsed by the **emitter's** field order.
+
+    A row the emitter never writes is skipped rather than guessed at: `len(fields)` is checked against the request
+    field, which is the last one, so a truncated row cannot silently become a row whose `rq` reads as something else.
+    """
+    rows: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        if not _is_lane_row(line, GATE_ROW):
+            continue
+        fields = _split(line)
+        if len(fields) <= GATE_REQUEST_FIELD:
+            continue
+        flags: dict[str, str] = {}
+        for offset, name in enumerate(GATE_FLAGS):
+            value = fields[GATE_FLAG_FIRST_FIELD + offset]
+            flags[name] = value.split("=", 1)[1] if "=" in value else value
+        rows.append(
+            {
+                "index": index,
+                "us": row_us(line),
+                "track": fields[4].split("=", 1)[-1],
+                "slot": fields[5].split("=", 1)[-1],
+                "exit": fields[GATE_EXIT_FIELD].split("=", 1)[-1],
+                "loop_len": fields[GATE_LOOP_LEN_FIELD].split("=", 1)[-1],
+                "flags": flags,
+                "request_result": fields[GATE_REQUEST_FIELD].split("=", 1)[-1],
+            }
+        )
+    return rows
+
+
+def _exit_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["exit"]] = counts.get(row["exit"], 0) + 1
+    return counts
+
+
+def _dominant_exit(counts: dict[str, int]) -> tuple[str, int] | None:
+    """The most frequent exit, ties broken by name so two runs of one capture read the same."""
+    if not counts:
+        return None
+    return max(sorted(counts.items()), key=lambda item: item[1])
+
+
+def _refusal_detail(exit_name: str, row: dict[str, Any] | None) -> str:
+    """Translate the refusing exit **and the flag that refused** into the active slot's own terms."""
+    reason = REFUSAL_REASONS.get(exit_name, "an exit this reader does not know")
+    if row is None:
+        return reason
+    flags = row["flags"]
+    named = [
+        _FLAG_LABELS.get(name, name)
+        for name in _REFUSAL_FLAGS.get(exit_name, ())
+        if flags.get(name) == "0"
+    ]
+    if not named:
+        return reason
+    return f"{reason}: {'; '.join(named)}"
+
+
+def demand_entry_summary(lines: list[str]) -> dict[str, Any]:
+    """Whether the lane was given work, and -- when it was not -- **which term refused**.
+
+    Three independent surfaces can show a demand: a gap block with an eligible or progressing turn, a readiness
+    receipt, or any gate exit that can only be reached with a frame or a request in existence. The gate rows are the
+    only surface that can explain the **absence** of one, which is why they are read here rather than left to the
+    reader: five device runs were once spent telling "nothing was owed" from "refused, and by which term" (F-16).
+    """
+    gaps = gap_rows(lines)
+    gap_work = [row for row in gaps if row["eligible_turns"] != "0" or row["progress_turns"] != "0"]
+    receipts = readiness_rows(lines)
+    gates = gate_rows(lines)
+    counts = _exit_counts(gates)
+    demand_exits = {name: count for name, count in counts.items() if name in DEMAND_EXITS}
+    dominant = _dominant_exit(counts)
+    last = gates[-1] if gates else None
+    return {
+        "observed": bool(gap_work or receipts or demand_exits),
+        "gap_work": len(gap_work),
+        "receipts": len(receipts),
+        "gate_rows": len(gates),
+        "exits": counts,
+        "demand_exits": demand_exits,
+        "dominant_exit": dominant[0] if dominant else None,
+        "dominant_count": dominant[1] if dominant else 0,
+        "last": last,
+        "refusal": _refusal_detail(dominant[0], last) if dominant else None,
+    }
+
+
 def _check(name: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"name": name, "ok": ok, "detail": detail}
 
@@ -219,27 +382,80 @@ def window_demand_observed(lines: list[str]) -> bool:
     authorized device run established this on hardware: 44 `win_gap` blocks, every one with `eligible=progress=denied=0`
     and `running=0`, and **no** `win_readiness` receipt at all, on an image where the rolling lane is compiled off and
     no launch was owed. Reporting that as "three lane checks failed" would blame the lane for not being asked.
+
+    A gate exit that can only be reached with a frame or a request in existence counts as a demand too, and is the
+    surface that **names** the reason when there is none: see `demand_entry_summary`.
     """
-    for row in gap_rows(lines):
-        if row["eligible_turns"] != "0" or row["progress_turns"] != "0":
-            return True
-    return bool(readiness_rows(lines))
+    return bool(demand_entry_summary(lines)["observed"])
+
+
+def _gate_state(row: dict[str, Any]) -> str:
+    """The one line a reader needs from a gate row: where, which exit, and the flags that decide it."""
+    flags = row["flags"]
+    return (
+        f"t={row['track']} s={row['slot']} x={row['exit']} len={row['loop_len']} "
+        f"ep={flags.get('ep')} av={flags.get('av')} al={flags.get('al')} "
+        f"sv={flags.get('sv')} rt={flags.get('rt')} rq={row['request_result']}"
+    )
+
+
+def _demand_met_detail(summary: dict[str, Any]) -> str:
+    """What evidenced the demand -- each surface named, so a reader can see which one carried it."""
+    surfaces: list[str] = []
+    if summary["demand_exits"]:
+        rendered = ", ".join(f"{name}({count})" for name, count in sorted(summary["demand_exits"].items()))
+        surfaces.append(f"gate exits={rendered}")
+    if summary["gap_work"]:
+        surfaces.append(f"gap blocks with eligible/progress turns={summary['gap_work']}")
+    if summary["receipts"]:
+        surfaces.append(f"readiness receipts={summary['receipts']}")
+    detail = "the lane was asked for window work in this capture: " + "; ".join(surfaces)
+    last = summary["last"]
+    if last is not None:
+        detail += f". last gate row {_gate_state(last)}"
+    return detail
+
+
+def _demand_detail(summary: dict[str, Any]) -> str:
+    """No demand: say so, **and name the term that refused** rather than prompting another run.
+
+    The wording of F-16's original finding is kept in front, because it is the finding a reader must not lose: a
+    dispatch with nothing owed is not a lane defect. What is appended is the measurement five runs once lacked.
+    """
+    detail = (
+        "no eligible/progress turn and no readiness receipt in the whole capture: no slot owed a window build, so "
+        "this run did not exercise the lane (a demand needs the rolling lane enabled, or a launch/retry in flight -- "
+        "a plain record-and-play owes none)"
+    )
+    if not summary["gate_rows"]:
+        return detail + (
+            "; and this capture carries no `DIAG,win_gate` row at all, so this image does not compile the lane's gate "
+            "row (it is qualification-only) and the entry term cannot be read from this run"
+        )
+    counted = sorted(summary["exits"].items(), key=lambda item: (-item[1], item[0]))
+    rendered = ", ".join(f"{name}({count})" for name, count in counted)
+    detail += f". The lane's own gate rows name why: rows={summary['gate_rows']} exits={rendered}"
+    if summary["dominant_exit"] is not None:
+        detail += f", dominant={summary['dominant_exit']}({summary['dominant_count']})"
+    last = summary["last"]
+    if last is not None:
+        detail += f"; last row {_gate_state(last)}"
+    if summary["refusal"]:
+        detail += f" -> {summary['refusal']}"
+    return detail
 
 
 def verify_windowed_lane(lines: list[str]) -> dict[str, Any]:
     """Judge the declared oracle's judgeable half, and name the rest."""
     intervals = running_intervals(lines)
     checks: list[dict[str, Any]] = []
-    demand = window_demand_observed(lines)
+    summary = demand_entry_summary(lines)
+    demand = bool(summary["observed"])
     checks.append(
         _check(
             "window_demand_observed",
             demand,
-            "the lane was asked for window work in this capture"
-            if demand
-            else "no eligible/progress turn and no readiness receipt in the whole capture: no slot owed a window "
-                 "build, so this run did not exercise the lane (a demand needs the rolling lane enabled, or a "
-                 "launch/retry in flight -- a plain record-and-play owes none)",
+            _demand_detail(summary) if not demand else _demand_met_detail(summary),
         )
     )
 
@@ -303,6 +519,18 @@ def verify_windowed_lane(lines: list[str]) -> dict[str, Any]:
         "ok": not issues,
         "checks": checks,
         "issues": issues,
+        # The demand's own entry reading travels with the verdict: when there is no demand, this is **where the reason
+        # is**, and a reader must not have to re-derive it from the capture (F-16).
+        "demand": {
+            "observed": demand,
+            "gap_work": summary["gap_work"],
+            "receipts": summary["receipts"],
+            "gate_rows": summary["gate_rows"],
+            "exits": dict(summary["exits"]),
+            "dominant_exit": summary["dominant_exit"],
+            "refusal": summary["refusal"],
+            "last": summary["last"],
+        },
         "deferred": [dict(entry) for entry in DEFERRED_TERMS],
         # A green lane is **not** F-7/F-8 qualification: two declared terms are not judged here at all.
         "oracle_complete": False,

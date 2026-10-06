@@ -6,11 +6,14 @@ its own: it reuses `run_long_loop_display_window` -- a leg that records a loop f
 (`--record-bars`, default 24, and its own run refuses <= 16), keeps the transport running, and already has a host-tested
 verifier -- and pairs it with the windowed lane's own checks (`hitl.verify.windowed_lane`).
 
-**The one thing this wrapper owns is the target.** The reused leg takes no slot argument: it clears and records on
-whatever slot is *active* on the selected track, so a run that names a slot without selecting it would report a scope it
-never used. The wrapper therefore consumes the runner's `--loop-slot` -- refusing a run that does not name one -- and
-presses that slot's own select control before delegating. Without this the leg would not even start: the runner appends
-`--loop-slot N` to the legacy arguments and the leg's parser (strict) rejects it.
+**The three things this wrapper owns are the target, the demand and the drain.** The reused leg takes no slot
+argument: it clears and records on whatever slot is *active* on the selected track, so a run that names a slot without
+selecting it would report a scope it never used. The wrapper therefore consumes the runner's `--loop-slot` -- refusing a
+run that does not name one -- and presses that slot's own select control before delegating. **The demand** is
+`--switch-target-slot`: a switch to a filled, demoted target is what makes the launch bind a first window and so gives
+the window lane something to roll from (a plain record-and-play owes none), and `--switch-settle-s` is the time that
+demand is given to be served. Without the slot press the leg would not even start: the runner appends `--loop-slot N` to
+the legacy arguments, and the leg's own parser is strict about arguments it does not know.
 """
 
 from __future__ import annotations
@@ -30,10 +33,16 @@ SLOT_SELECT_PRESS_MS = 120
 #: while the transport is still running delivers none of them (measured 2026-10-05).
 POST_STOP_DRAIN_S = 12.0
 TRANSPORT_STOP_PRESS_MS = 120
-#: How long the switch leg waits for the queued switch's target to be prepared and committed before the drain. The
-#: preparation is off-clock (the `SlotProvision` turn) but it is what gives the window lane its **demand**, so the wait
-#: must be long enough for that turn to be served at least once under transport.
-SWITCH_SETTLE_S = 20.0
+#: How long the switch leg waits for the queued switch's target to be prepared **and for the demand it creates to be
+#: served**, before the drain. The wait is what makes the lane's rows exist at all: the switch's launch binds the
+#: target's first window, and only then can the rolling lane roll forward from it.
+#:
+#: The value is **derived from measurement, not chosen for comfort**: on a rootless demoted target the publication
+#: needed *well over 30 s* of service at the measured ~105 eligible turns/s x 2 units (`captures/s64-progress-01`),
+#: against a switch hold bound of ~8 s -- so a 20 s wait can observe a demand that was created and not yet served, and
+#: would then report the lane as unexercised. 45 s is that measurement with margin, it is overridable per run with
+#: `--switch-settle-s`, and the managed run timeout (360 s) bounds the whole leg.
+SWITCH_SETTLE_S = 45.0
 #: The edit control (note 38) held long enough to **exit** the loop-edit session a slot selection opens. Measured on
 #: device (run 04): selecting the target enters `LOOP_EDIT`, and while that session is open the queued switch's
 #: preparation is never reached -- no provision row, no prewarm, no lane work -- so the switch holds until its bound.
@@ -45,10 +54,11 @@ RECORD_PRESS_MS = 120
 def split_flag(legacy: list[str], name: str) -> tuple[int | None, list[str]]:
     """Take `<name> N` out of the legacy arguments, returning the value and what the reused leg may see.
 
-    The wrapper owns flags the reused leg has no argument for (`--loop-slot`, `--switch-target-slot`); forwarding one
-    would abort the leg's **strict** parser before it drives anything -- which is exactly how the switch leg failed its
-    first attempt. Only the first occurrence is honoured: a repeat is a caller error and is left for the leg to reject
-    rather than silently ignored.
+    The wrapper owns flags the reused leg has no argument for (`--loop-slot`, `--switch-target-slot`,
+    `--switch-settle-s`); forwarding one would abort the leg's **strict** parser before it drives anything -- which is
+    exactly how the switch leg failed its first attempt. Only the first occurrence is honoured: a repeat is a caller
+    error and is left for the leg to reject rather than silently ignored. (This helper takes integer-valued flags; the
+    settle window is a float and has its own splitter, `split_switch_settle_flag`.)
     """
     value: int | None = None
     remaining: list[str] = []
@@ -73,6 +83,32 @@ def split_loop_slot_flag(legacy: list[str]) -> tuple[int | None, list[str]]:
 def split_switch_target_slot_flag(legacy: list[str]) -> tuple[int | None, list[str]]:
     """Take `--switch-target-slot N` out of the forwarded legacy arguments."""
     return split_flag(legacy, "--switch-target-slot")
+
+
+def split_switch_settle_flag(legacy: list[str]) -> tuple[float | None, list[str]]:
+    """Take `--switch-settle-s SECONDS` out of the forwarded legacy arguments.
+
+    A **float**, unlike the slot flags, and an unparsable value is refused **with the token named** rather than left
+    in the argument list: the reused leg has no such flag, so leaving it there would abort that leg's strict parser
+    and blame the leg for the wrapper's own flag (the failure mode the switch flag names).
+    """
+    value: float | None = None
+    remaining: list[str] = []
+    index = 0
+    while index < len(legacy):
+        token = legacy[index]
+        if token == "--switch-settle-s" and index + 1 < len(legacy):
+            if value is None:
+                raw = legacy[index + 1]
+                try:
+                    value = float(raw)
+                except ValueError as error:
+                    raise ValueError(f"--switch-settle-s {raw!r} is not a number of seconds") from error
+                index += 2
+                continue
+        remaining.append(token)
+        index += 1
+    return value, remaining
 
 
 def select_loop_slot(out_port: Any, slot: int, *, press_ms: int = SLOT_SELECT_PRESS_MS) -> None:
@@ -307,10 +343,29 @@ def run_post_leg_phase(
 
 
 def run_windowed_content_parity(args: object) -> int:
-    """Select the declared slot, run the reused leg, then drain what the transport retained."""
+    """Select the declared slot, run the reused leg, then drive the demand (switch) and drain what the transport kept.
+
+    The wrapper owns three flags the reused leg has no argument for -- `--loop-slot`, `--switch-target-slot` and
+    `--switch-settle-s` -- and refuses a run that names them badly **before** any device contact, because a flag left
+    in the forwarded arguments aborts the leg's strict parser and blames the leg.
+    """
     legacy = list(getattr(args, "legacy_args", []) or [])
     slot, remaining = split_loop_slot_flag(legacy)
     switch_target, remaining = split_switch_target_slot_flag(remaining)
+    try:
+        switch_settle, remaining = split_switch_settle_flag(remaining)
+    except ValueError as error:
+        print(f"[windowed-content-parity] {error}")
+        return 2
+    if switch_settle is not None and not switch_settle > 0:
+        print(f"[windowed-content-parity] --switch-settle-s {switch_settle} must be a positive number of seconds")
+        return 2
+    if switch_settle is not None and switch_target is None:
+        # The wait belongs to the switch leg: without a target there is no switch, so a run that names a settle would
+        # silently measure nothing and could still read as "the lane was not asked".
+        print("[windowed-content-parity] --switch-settle-s has no meaning without --switch-target-slot: the wait is "
+              "the time the switch's own demand gets to be served")
+        return 2
     if slot is None:
         print(
             "[windowed-content-parity] --loop-slot is required: the reused leg clears and records on the *active* "
@@ -337,8 +392,10 @@ def run_windowed_content_parity(args: object) -> int:
 
     code = run_long_loop_display_window(args)
     # The lane's rows are produced under transport and the ring is retained while one runs, so the leg's own capture
-    # cannot contain them; the switch leg (when asked for) and the drain are what make them observable at all.
-    run_post_leg_phase(args, switch_target_slot=switch_target)
+    # cannot contain them; the switch leg (when asked for) and the drain are what make them observable at all. The
+    # settle window is the demand's own time to be served -- see `SWITCH_SETTLE_S`.
+    run_post_leg_phase(args, switch_target_slot=switch_target,
+                       switch_settle_s=switch_settle if switch_settle is not None else SWITCH_SETTLE_S)
     return code
 
 
