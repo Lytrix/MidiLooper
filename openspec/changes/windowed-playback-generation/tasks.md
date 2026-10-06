@@ -404,6 +404,23 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   no cross-layer ordering claim, no device run, no fallback removal (3.7b). Detail:
   [`evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md`](evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md).
 
+  **Increment I3c-c landed 2026-10-06 (firmware + tests; the task stays open for I4/I5 parity + timing).** The boundary
+  mapping defect is **fixed** and paged emission **selection is enabled**. Diagnosis: the adapter served *everything
+  published*, while the producer deliberately runs ahead into the next pass -- whose events occupy the same tick space --
+  so the next pass's head leaked into the current pass's window. Fix: the adapter bounds the walk by the **emitting
+  pass's own content end** (`passContentOrdinal`, the producer's last re-arm ordinal; the bound is self-correcting at a
+  boundary, and the residual "a further pass completes inside one window" cannot arise because this path exists only for
+  content over `L`, sixteen pages, so no pass fits the ring's three-page depth). `kPagedEmissionSelectionEnabled = true`:
+  a slot with no served window, bridge or prepared pair whose delivery is admitted (one cached boolean, maintained
+  off-clock) emits from the ring and the unbounded merged build is skipped for it. **Verified:** the acceptance fixture
+  asserts both passes exact, element-wise, exactly 5,000 emissions; **MR-I3c-c-1** (the content bound removed) is **RED**
+  (*Expected 5000 Was 4872*) with a byte-identical restore; focused **157/157**, ring **3/3**, full native **2,832 / 7
+  skipped / 2,825 succeeded / 0 failed**, capture build **SUCCESS** with the guard passing (`variables 96,192`;
+  `code 392,216 + padding 1,000`), strict validation and `git diff --check` clean. **Still owed:** the I3c-a packet's
+  **MR-R/S/T/U**, and the end-to-end emission assertion on a real transport tick (I4/4.3's differential parity).
+  **Not claimed:** no timing claim, no `ExecutionBounds.md` row change, no device run, no fallback removal (3.7b).
+  Detail: [`evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md`](evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md).
+
   **Increment I2 landed 2026-10-06 (firmware + tests; the task stays open).** The deferred lane's **production turn**
   now serves a demand for a slot with no current published root — the shape the device legs measured as
   `launch_requested … root=0 …` never reaching readiness. `LoopPlaybackRuntime` owns one **retained-source gather**

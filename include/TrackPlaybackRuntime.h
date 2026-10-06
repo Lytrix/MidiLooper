@@ -705,13 +705,14 @@ struct LoopPlaybackRuntime {
     /// Task 3.7a (I3c-b): **may the clock path take this slot's emission from the ring?** One cached boolean the
     /// deferred lane maintains; the hot path loads it and tests it, and judges nothing itself.
     ///
-    /// **Deliberately closed at the last step, and named rather than smoothed over.** The seam, the lead cap and the
-    /// boundary judgement all landed, and the acceptance fixture proves **pass one exact**; but the same fixture found
-    /// the second pass's sequence **offset past its first 5,000 events**, i.e. the walk's per-pass index and the ring's
-    /// ordinal do not re-align exactly at a boundary. Until that mapping is fixed, selecting a delivery would emit
-    /// wrong content, so selection is refused by construction (a constant `false`, so the seam costs no ITCM either):
-    /// the merged fallback keeps playing the slot exactly as before, and the fixture records the measurement.
-    static constexpr bool kPagedEmissionSelectionEnabled = false;
+    /// **Open, with the defect that closed it fixed.** The I3c-b fixture found the second pass's sequence drifting past
+    /// index 5,000 because the adapter served *everything published* -- and the producer runs ahead into the next pass,
+    /// whose events sit in the same tick space. The adapter now bounds the walk by the **emitting pass's own content
+    /// end** (`passContentOrdinal`, which is the producer's last re-arm ordinal while that pass is being emitted), and
+    /// the acceptance fixture asserts **two whole passes, element-wise**. The residual case -- a producer completing a
+    /// further pass inside one window -- cannot arise here: this path exists for content **over `L`** (2,048 events,
+    /// i.e. over sixteen pages), so no pass fits the ring's three-page depth. Selection is enabled.
+    static constexpr bool kPagedEmissionSelectionEnabled = true;
     bool admittedForEmission() const { return kPagedEmissionSelectionEnabled && bound && admissible; }
     /// The playback projection wrapped: the **next** pass begins where the walk's position is now (the producer
     /// re-traverses the same interval into the same ordinal space, so the walk's index restarts while the ring's

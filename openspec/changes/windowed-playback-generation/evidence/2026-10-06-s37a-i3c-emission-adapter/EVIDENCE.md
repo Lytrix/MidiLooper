@@ -124,3 +124,45 @@ straddle judgement is the only sound one and `dryTurns` stays as named accountin
 | Device build | **SUCCESS**, guard passes: `variables 96,192`; `code 392,152 + padding 1,064`; **224 B above the floor** (the closed seam is *cheaper* than I3c-a's: `code` fell by 128 B) |
 | Selection | **closed by construction**; the merged fallback serves |
 | Device run / upload | **NOT RUN** |
+
+
+---
+
+## 6. I3c-c — the boundary mapping fixed, and selection enabled (same increment, 2026-10-06)
+
+**The defect, diagnosed.** The I3c-b fixture drifted past index 5,000 because the adapter served **everything
+published** -- and the producer deliberately runs ahead into the *next* pass (that is the lead across the wrap), whose
+events occupy the **same tick space** as the pass being emitted. The walk cannot tell pass *N*'s tick-800 event from
+pass *N+1*'s, so the next pass's head leaked into the current pass's window.
+
+**The fix (one clamp, and it is self-correcting).** The adapter bounds the walk by the **emitting pass's own content
+end**: `passEnd = passContentOrdinal > passBaseOrdinal ? passContentOrdinal : published`. `passContentOrdinal` is the
+producer's last re-arm ordinal -- the end of the traversal it completed -- so while pass *N* is being emitted it *is*
+pass *N*'s end; at the boundary the base moves to that end, the two become equal, and the bound opens again for the pass
+that now follows. No queue of ends is needed and no pass index is stored.
+
+**Why the residual case cannot arise on this path**: a producer completing a *further* pass inside one window would need
+the next pass to fit the ring's three-page depth. This path exists for content **over `L`** (2,048 events, over sixteen
+pages) -- the ceiling switch and the admission switch both require it -- so no pass fits three pages, and the clamp's
+boundary case is unreachable. Recorded as the reason, not assumed silently.
+
+**Selection enabled:** `kPagedEmissionSelectionEnabled = true`. A slot with no served window, no bridge and no prepared
+pair whose delivery has been admitted (one cached boolean, maintained off-clock) now emits from the ring instead of the
+merged store, and the unbounded merged build is not made for it.
+
+**Acceptance, and its red-proof.**
+
+| Check | Result |
+|---|---|
+| Both passes exact, element-wise, **exactly 5,000 emissions** | **passes** (the assertion I3c-b failed) |
+| **MR-I3c-c-1** (the content bound removed) | **RED** -- *Expected 5000 Was 4872*: next-pass content leaks in and the pass loses events; restored byte-identically |
+| Focused RWS / ring | **157/157** / 3/3 |
+| Full native | **2,832 / 7 skipped / 2,825 succeeded / 0 failed** |
+| Device build | **SUCCESS**, guard passes: `variables 96,192`; `code 392,216 + padding 1,000`; **160 B above the floor** |
+| Strict validation / `git diff --check` | valid / clean |
+| Device run / upload | **NOT RUN** |
+
+**Still owed (named, not smoothed over).** The red-proofs the I3c-a packet asked for (**MR-R/S/T/U**) remain unrun; the
+one this increment identified as load-bearing (the content bound) *is* red-proved above. I3c's own end-to-end assertion
+-- emission from the ring on a real transport tick -- belongs to **I4/4.3's** differential parity, where an
+emitted-stream comparison is the oracle; the fixtures here drive the production walk directly.

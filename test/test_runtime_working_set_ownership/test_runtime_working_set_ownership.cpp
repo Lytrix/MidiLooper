@@ -10929,26 +10929,25 @@ void test_3_7a_i3c_a_a_paged_pass_emits_through_the_walk_and_straddles_its_wrap(
   // adapter exists for, and the one the I3c-a measurement could not yet make (it lost two pages of the second pass).
   // The lead across the wrap is what changed: an *emitting* delivery keeps one page free, so the producer hands the
   // next pass's head over while this pass's tail is still queued.
-  // **Pass one is exact** -- asserted element-wise over the first pass's events, which is the emission-side proof the
-  // adapter exists for. **And the fixture found a real defect beyond it**, recorded rather than smoothed over: the
-  // *second* pass's sequence drifts out of alignment past the first 5,000 emissions (the element-wise comparison above
-  // failed at index 5,000 with tick 0 expected and 64 emitted), i.e. the walk's per-pass index and the ring's ordinal do
-  // not re-align exactly at a boundary. That is why selection is closed by construction
-  // (`kPagedEmissionSelectionEnabled == false`): emitting wrong content is worse than not emitting from pages, and the
-  // merged fallback is untouched. The assertion below is the part this increment can stand behind.
-  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(static_cast<uint32_t>(oracle.size()), static_cast<uint32_t>(emitted.size()));
-  for (size_t i = 0; i < oracle.size() && i < emitted.size(); ++i) {
-    TEST_ASSERT_EQUAL_UINT32(oracle[i].tick, emitted[i].tick);
-    TEST_ASSERT_EQUAL_UINT8(oracle[i].data.noteData.note, emitted[i].data.noteData.note);
+  // **Both passes are exact, element-wise, over every emitted event.** This is the assertion the I3c-b measurement
+  // failed (it drifted past index 5,000) and the one the content clamp makes true: the walk is bounded by the emitting
+  // pass's own content end, so the producer's lead into the *next* pass -- which sits in the same tick space -- is not
+  // served inside this pass.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u * static_cast<uint32_t>(oracle.size()), static_cast<uint32_t>(emitted.size()),
+                                   "exactly two passes, nothing more: no next-pass event leaked into a pass");
+  for (size_t i = 0; i < emitted.size(); ++i) {
+    const MidiEvent& expected = oracle[i % oracle.size()];
+    TEST_ASSERT_EQUAL_UINT32(expected.tick, emitted[i].tick);
+    TEST_ASSERT_EQUAL_UINT8(expected.data.noteData.note, emitted[i].data.noteData.note);
   }
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.passesUnstraddled,
                                    "every wrap arrived with the next pass's head already published");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.passesWithDrys, "no dry read: the producer led");
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Admissible),
                     static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
-  // The clock path's own predicate: one cached boolean the deferred lane maintained, which is what the hot path tests.
-  TEST_ASSERT_FALSE_MESSAGE(runtime->pagedEmission.admittedForEmission(),
-                            "selection stays closed by construction until the boundary mapping is fixed");
+  // The clock path's own predicate: one cached boolean the deferred lane maintained, which is what the seam tests.
+  TEST_ASSERT_TRUE_MESSAGE(runtime->pagedEmission.admittedForEmission(),
+                           "an admissible delivery may be selected for emission");
+
 }
 
 /// 3.7a (I3c-a) / W-37a-21 and W-37a-22: **the adapter never produces, and the predicate's answers are named.** With

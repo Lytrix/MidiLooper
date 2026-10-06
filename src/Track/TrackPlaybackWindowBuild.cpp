@@ -468,16 +468,25 @@ TRACK_COLD_MEM size_t pagedEmissionStreamSize(const void* ctx) {
   ++state.reads;
   const WindowPagedStream& ring = stream->runtime->pagedWindow;
   const uint32_t published = ring.producedOrdinal();
-  if (published <= state.passBaseOrdinal) {
+  // Task 3.7a (I3c-b/c): **the emitting pass's own content is the bound.** The producer runs ahead into the *next* pass
+  // (that is the lead across the wrap), and every pass has the same tick space -- so serving "everything published"
+  // would emit the next pass's events inside this pass's window. When the producer has recorded an end beyond this
+  // pass's base, that end is this pass's content end and the walk is bounded by it. Otherwise no end is known yet (the
+  // producer is still producing this pass), and what is published *is* this pass.
+  const uint32_t passEnd = state.passContentOrdinal > state.passBaseOrdinal
+      ? state.passContentOrdinal
+      : published;
+  const uint32_t servable = published < passEnd ? published : passEnd;
+  if (servable <= state.passBaseOrdinal) {
     ++state.dryTurns;
     return 0;
   }
   // A read that finds the ring empty **ahead of the walk** (everything published is already consumed) is the dry the
   // delivery's proof cares about: the frame it serves had nothing to hand over.
-  if (published <= state.consumedOrdinal) {
+  if (servable <= state.consumedOrdinal) {
     ++state.dryTurns;
   }
-  return published - state.passBaseOrdinal;
+  return servable - state.passBaseOrdinal;
 }
 
 TRACK_COLD_MEM bool pagedEmissionStreamValid(const void* ctx, uint16_t cursor) {
