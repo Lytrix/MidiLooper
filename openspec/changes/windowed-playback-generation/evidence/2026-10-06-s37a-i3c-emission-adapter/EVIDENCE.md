@@ -412,3 +412,88 @@ the merged fallback stays the serving path by design), no timing claim, no `Exec
 run, no fallback removal (3.7b). The *emitting half*'s remaining piece is now named precisely: this fixture's slot has
 **nothing to emit** until the delivery is admitted (a boundary must be straddled cleanly), which is the paged selection
 work itself rather than a harness gap.
+
+---
+
+## 14. I5: the paged lane's production serving is a **closed cycle** -- measured, fixed, red-proved, and **not landed** (the approved RAM1 floor refuses its ITCM)
+
+**I3c-c's remaining item was "the end-to-end emission assertion on a real transport tick". Driving it found that the
+assertion cannot be made: a bound paged delivery can never earn admission from the clock path.** Two shapes, one run
+each (temporary probes, withdrawn; the numbers are the probes' own output):
+
+| Shape | Result after a full drive |
+|---|---|
+| **Rootless** (the lane's reason to exist: no root, no window, fallback empty by construction) | `bound=1 boundaries=0 unstraddled=0 contentEnd=0 emitting=0 admitted=0 consumed=0 sink=0 wire=0 last=4294967295 state=Unproven` -- **no tick was ever recorded**: the delivery's own judgement never ran |
+| **Root-backed** (the same delivery with a published root, so the fallback serves and the tick path runs) | `boundaries=4 unstraddled=4 contentEnd=0 emitting=0 admitted=0 consumed=0 sink=19/13/19 state=Unproven` -- every wrap judged, **every one a violation**, the producer never re-armed, nothing emitted from the ring |
+
+**The mechanism is a closed cycle, in three links.** (1) The **zero-content gate** returns *above* the boundary
+judgement (`servicePagedPassBoundaryForSlot` sits below it), so a slot whose merged store is empty by construction --
+exactly the slot paging exists for -- never reaches the judgement that would admit it. (2) The straddle rule counts
+`passContentOrdinal == 0` ("no completed traversal") as a violation, so the first boundary is always a violation, and a
+single violation makes `admissible` false **forever** for that delivery. (3) `passContentOrdinal` is set only by the
+producer's **re-arm**, which happens only while `pagedEmission.emitting`, which is set only by a **read of the adapter** --
+and nothing reads it unless it is selected, which admission gates. The walk-level acceptance fixtures could verify the
+adapter because *the fixture's own read* set `emitting`; the clock path never reads an unadmitted delivery, so the cycle
+never opens. **What this means:** I3c-c's "selection is enabled" holds for a delivery that is already admissible, but
+nothing on a device can make one admissible. F-8's purpose -- serving a demoted slot with no root -- is **not** delivered
+by I3c alone, and only the walk-level half of I4's parity matrix describes production.
+
+**The fix: three parts, plus one latent crash the fix would have hit.**
+
+1. **The judgement comes first, in flash.** `servicePagedPassBoundaryForTurn` recomputes the turn's projection off-ITCM and
+   judges the boundary **before** the selection that reads the admission (the I3c lesson one layer down: the judgement is
+   the admission's input). Hoisting those three pure projections inline measured **+256 B** of ITCM, hence the flash call.
+2. **The gate must not refuse an admitted delivery.** Its count is the merged store's, which is null on the paged branch;
+   the exemption is one arm of that count (`pagedEmission ? 1 : 0`).
+3. **The first boundary is judged against the walk's position, not against "no head by definition"**:
+   `headRequest = passContentOrdinal != 0 ? passContentOrdinal : consumedOrdinal` -- the ring must hold content *ahead of
+   the walk*, which is the walk-independent question before any traversal has completed.
+4. **Measured while part 1+3 were in and part 2's guard was not: SIGSEGV.** `mergedEvents` is null on the paged branch, so
+   `eventCount`'s `mergedEvents->size()` was a live null dereference the moment admission became reachable.
+
+**The fix works -- measured, with the end-to-end assertions the task row asks for** (fixtures green with it, in
+[`i5-fixtures-not-landed.txt`](i5-fixtures-not-landed.txt), which is the exact source excerpt):
+
+| Assertion | Measurement with the fix |
+|---|---|
+| The rootless 512-bar fixture, one frame | `passCount=1 unstraddled=0 admitted=1 emitting=1 consumed>0 lastTick=64` and the pass head **already on the wire** -- judgement, admission and walk land in the *same* frame |
+| The same shape over a full interval | `sink=2500 wire=2500` for **one whole pass, exactly the dense span** (2,500 events); before the fix: 0, and after a partial fix that judged too late: 2,370 (the head frame lost) |
+| A rootless 3-bar loop, **pass-exact** | pass 2 = **2,500 events, element-wise equal** to `copyEffectiveCommittedEventsInRange` (tick/note/velocity), with the wire boundary's record equal element-for-element; `passesUnstraddled == 0`, `passContentOrdinal > 0`, `state=Admissible` |
+
+**Red-proved (all three restored byte-identically; the tree hash returned to the fixed state each time).**
+
+| Mutation | Result |
+|---|---|
+| **RP-I5-hoist**: the judgement gated on the admission (the old ordering) | **RED** -- *"Expected 1 Was 0. the frame judged the delivery's own pass boundary"* and *"the drive must reach the second pass"* |
+| **RP-I5-first-boundary**: `passContentOrdinal == 0` counted as a violation again | **RED** -- *"Expected 0 Was 1. and the judgement straddled"* and *"Expected 0 Was 3. every boundary arrived with the next pass's head already published"* |
+| **RP-I5-gate**: the exemption removed | **RED** -- *"the same frame's walk took the delivery"* and *"Expected 0 to be greater than 0. the producer re-armed"* |
+| **RP-I5-null** (implicit, measured during development) | **SIGSEGV** in the rootless fixture |
+
+**Why it is not landed: the approved RAM1 floor.** `scripts/check_ram1_budget.py` refuses **every** form of the fix
+measured (floor: `padding >= 840`; the approved line has **80 B** of headroom):
+
+| Variant | Post-link RAM1 |
+|---|---|
+| Baseline (no fix) | `code 392,296 + padding 920` -- passes |
+| Flash-hoist of the judgement only (parts 1) | `code 392,360 + padding 856` -- **passes**, +64 B |
+| Part 1 + the gate exemption (part 2) | `code 392,488 + padding 728` -- refused, +192 B |
+| Part 1 + the gate clause in the hot path | `code 392,616 + padding 600` -- refused, +320 B |
+| Part 1 + the whole gate moved to flash | `code 392,632 + padding 584` -- refused, +336 B |
+
+So the fix needs **a deliberate decision** that this agent should not take silently: either **re-base the floor** (the
+guard's own note says it is only re-based deliberately) or fund a **dedicated ITCM-reduction slice** in
+`playCommittedLoopMidi` (candidates, each named from the measurement: the `RUNTIME_TIMING_*` bookkeeping that the
+capture build keeps on this edge, the fixed-source/bridge identity resolution, or moving the whole gate decision to
+flash -- tried here in one form and still +336 B). **Nothing is claimed as landed:** production sources are byte-identical
+to the previous commit, and the post-link line is back to `code 392,296 + padding 920`.
+
+**Effect on 3.7a's own clause and on 3.14/4.5 (stated, not implied):** the task row's "root-demoted production serving
+without a whole-loop root" and its **differential fallback parity** are **not** satisfied by the walk-level fixtures
+alone; and both 3.14's and 4.5's remaining clauses are written *against the real handoff* ("actual emitted ordering",
+"sustained-note behavior through an empty window", "displayed provenance and eventual recovery through the real
+consumer"), so they are **blocked behind this decision** rather than behind more fixture work.
+
+**Verified for this increment (the committed tree -- production byte-identical to the previous commit):** focused RWS
+**160/160**, full native **2,835 / 7 skipped / 2,828 succeeded / 0 failed**,
+`teensy41-capture-serial` **SUCCESS** with the approved line (`variables 96,192 / code 392,296 + padding 920`; 80 B above
+the floor), strict validation and `git diff --check` clean.
