@@ -377,6 +377,31 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   device run, no fallback removal (3.7b). Detail:
   [`evidence/2026-10-06-s37a-i3b-paged-legacy/EVIDENCE.md`](evidence/2026-10-06-s37a-i3b-paged-legacy/EVIDENCE.md).
 
+  **Increment I3c-a landed 2026-10-06 (firmware + tests; the task stays open for I3c-b, and its own assumption is the
+  thing it falsified).** The **paged emission adapter** exists: `makePagedEmissionStream` presents the ring to the
+  production walk (`advancePlaybackCursor`) by **stream ordinal** -- `WindowEventPage::baseOrdinal`, `producedOrdinal()`,
+  `eventAtOrdinal()` and `retireThroughOrdinal()` (retirement by *emission position*), plus `rearmForNextPass()` (the
+  additive pass re-arm I3b named as its blocker: the traversal restarts, the pages and the ordinal space are kept) --
+  with **no staging copy**, no allocation, no producer call and no wait on the clock path (a ring with nothing ahead of
+  the walk is a counted dry). The pass model is explicit: the walk's index is per-pass, the ring's ordinal is not, and
+  the base is set at a boundary the projection **signals** (`notePassBoundary`). `Track::pagedEmissionDeliveryStateForSlot`
+  names what a selection gate may read (`NoDelivery`, `StaleRevision`, `CannotStraddleTheWrap`, `Unproven`, `Admissible`).
+  **The measurement falsified the increment's assumption:** driving two consecutive passes through the walk with the lane
+  producing one page per turn shows pass one **exact** (2,500/2,500) and pass two **short by two pages** (2,244/2,500),
+  both wraps judged `passesUnstraddled` -- a three-page ring cannot lead a wrap at this density, so the events the next
+  pass's first frames cross are behind them. The delivery is therefore **refused by name for selection** (the gate stays
+  closed; the merged fallback keeps playing the slot) and I3c-b's requirement is now *measured*: give the producer a lead
+  across the wrap, then this fixture is its acceptance test. **Verified:** focused RWS **157/157**, ring **3/3**, full
+  native **2,832 / 7 skipped / 2,825 succeeded / 0 failed**, capture build **SUCCESS** with the RAM1 guard passing
+  (`variables 96,192` unchanged; `code 392,280 + padding 936`; 96 B above the floor -- after the run's first build
+  **failed** the guard with +32 B of RAM1 and +320 B of ITCM, both fixed by moving the guard's event into the runtime's
+  external state and the adapter's functions to flash), pins re-based compiler-measured (target **7,384**, host
+  **9,528**). **Recorded as deviations:** the packet's **red-proofs were not run** (owed to I3c-b, where the wiring makes
+  them load-bearing), and W-37a-20's expectations were **corrected to the measurement** rather than to the hoped-for
+  result. **Not claimed:** no production selection (no gate is open), no timing claim, no `ExecutionBounds.md` row change,
+  no cross-layer ordering claim, no device run, no fallback removal (3.7b). Detail:
+  [`evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md`](evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md).
+
   **Increment I2 landed 2026-10-06 (firmware + tests; the task stays open).** The deferred lane's **production turn**
   now serves a demand for a slot with no current published root — the shape the device legs measured as
   `launch_requested … root=0 …` never reaching readiness. `LoopPlaybackRuntime` owns one **retained-source gather**

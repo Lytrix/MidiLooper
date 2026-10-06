@@ -5182,6 +5182,50 @@ bridge's verify path) are unrelated and unchanged. See
 
 **DEC-114 — active implementation direction:** DEC-113's interval-root proposal is withdrawn and retained only as historical audit. DEC-108 governs: the whole-loop `LoopSnapshot` remains checkpoint/effective-content authority; playback windows are derived from the retained pinned-source revision and `RetainedIntervalIndex`. The task sequence is 3.7a production consumer/index integration with the mutable fallback retained, then finish 3.14 undo/redo and 4.5 closure/recovery against that real handoff, and only then 3.7b fallback removal after parity, timing and compatibility gates. No production consumer integration or fallback removal is claimed here. 3.7a needs its own G2 execution packet and production-path fixtures before implementation.
 
+### 3.7a (I3c-a) — the paged emission adapter: built, measured, and its own assumption falsified (2026-10-06; firmware + tests)
+
+**Increment I3c-a of 3.7a landed; the task stays open** (I3c-b gives the producer a lead across the wrap, then wires the
+selection), and **the gate stays closed**: nothing in production selects a paged delivery yet. Packet written **before**
+the edit:
+[`evidence/2026-10-06-s37a-i3c-emission-adapter/EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i3c-emission-adapter/EXECUTION.md).
+
+**What landed.** The **paged emission adapter** (`makePagedEmissionStream`) presents the ring to the *production* walk
+(`advancePlaybackCursor`) by **stream ordinal**: a page now carries its `baseOrdinal`, the ring reports
+`producedOrdinal()`, answers `eventAtOrdinal()`, retires pages through `retireThroughOrdinal()` (**retirement by emission
+position**), and re-arms a pass with `rearmForNextPass()` -- the additive re-arm I3b named as its blocker, which restarts
+the traversal while **keeping** the pages and the ordinal space. The adapter stages nothing, allocates nothing, calls no
+producer and never waits: a ring with nothing ahead of the walk is a counted dry. The pass model is explicit -- the
+walk's index is per-pass, the ring's ordinal is not, and the base is set at a boundary the projection **signals**
+(`notePassBoundary`), never inferred. `Track::pagedEmissionDeliveryStateForSlot` names what a selection gate may read:
+`NoDelivery`, `StaleRevision`, `CannotStraddleTheWrap`, `Unproven`, `Admissible`.
+
+**The measurement falsified the increment's own assumption.** Two consecutive passes driven through the walk with the
+lane producing one page per turn: pass one **exact** (2,500/2,500, in order, once each -- the emission-side proof the
+adapter exists for), pass two **short by two pages** (2,244/2,500), both wraps judged `passesUnstraddled`. The mechanism:
+the producer completes its traversal exactly as the consumer reaches the pass's end, so the ring is empty of the next
+pass's head at the wrap and the events the new pass's first frames cross are behind them by construction. **A three-page
+ring cannot lead a wrap at this density with one page per turn** -- so the delivery is **refused by name for selection**
+(the same fact is not proof), the merged fallback keeps playing the slot, and I3c-b's requirement is now *measured*
+rather than assumed: give the producer a lead across the wrap; this fixture is its acceptance test, written to fail today.
+
+**Verified.** Focused working-set **157/157**, ring **3/3**, full native **2,832 / 7 skipped / 2,825 succeeded /
+0 failed**, capture build **SUCCESS** with the RAM1 guard **passing** (`variables 96,192` unchanged; `code 392,280 +
+padding 936`; **96 B** above the floor; the increment's own **+64 B** of ITCM), `LoopPlaybackRuntime` pins re-based
+compiler-measured (target **7,384**, host **9,528**), strict validation and `git diff --check` clean.
+
+**Recorded, not smoothed over.** (1) The first device build **failed the RAM1 guard** (`variables 96,224`,
+`padding 680 < 840`): +32 B of RAM1 from a file static and +320 B of ITCM from adapter functions that were not
+flash-marked. Both were fixed -- the guard's event moved into the runtime's **external** state, the functions into flash
+-- and the guard passes. (2) The **red-proofs were not run** (owed to I3c-b, where the wiring makes them load-bearing):
+named as a deviation rather than presented as a pass. (3) The fixture's expectations were **corrected to the
+measurement**, not to the hoped-for result. (4) A staging design was written, measured (+192 B target / +296 B host per
+slot, and unable to serve a frame's ~104-event demand at the declared advance) and **removed**.
+
+**Not claimed.** No production selection (no gate is open), no timing/deadline measurement, no `ExecutionBounds.md` row
+change, no cross-layer ordering claim, no device run, no upload, no fallback removal (3.7b). Evidence:
+[`evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md).
+
+
 ### 3.7a (I3b) — the paged legacy path reaches the production lane: an over-`L` interval is prepared as pages, and the consumer entry walks them exactly once (2026-10-06; firmware + tests)
 
 **Increment I3b of 3.7a landed; the task stays open** (I3c the hot-path emission adapter, I4/I5 parity + timing), and

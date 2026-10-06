@@ -63,7 +63,7 @@ enum class PendingStopPhase : uint8_t {
   /// Record-only terminal: the accepted Record take produced no prepared content
   /// once projection and minimum-length policy ran (all rows dropped, all pairs
   /// filtered, or an empty take). It keeps the inline route's no-content
-  /// semantics -- no pass, no undo, no persistence -- and retires terminally
+  /// no pass, no undo, no persistence -- and retires terminally
   /// rather than pending forever. Appended so existing phase ranges are unchanged.
   RecordEmpty,
   /// Record-only: the pass, its `RecordPassAdded` undo entry and the once-only
@@ -636,6 +636,83 @@ struct LoopPlaybackRuntime {
   }
   /// Release the ring and its pages: the demand it serves is not dropped here (the same rule as the gather's discard).
   void discardPagedWindow();
+
+  /// Task 3.7a (I3c-a): **the paged emission adapter's state** — the walk's view of a paged delivery. The walk's index
+  /// is per-pass (`DEC-108 §13(a)`: "a pass is one traversal of the affected interval in the playback projection")
+  /// while the ring's ordinal is monotone across passes, so both are held here: `stagedBaseOrdinal`/`stageCount` are
+  /// the staged window's ring range, `consumedOrdinal` is how far the walk has advanced *through the ring* (advanced
+  /// once per index the walk consumes, emitted or skipped), and `passBaseOrdinal` is the ring ordinal the emitting
+  /// pass started at — set at a **pass boundary** the playback projection signals, never inferred: only the
+  /// projection knows the playhead wrapped. The refill is bounded per turn (`kPagedEmissionRefillsPerTurn` stages of
+  /// `kPagedEmissionStageCapacity` events, i.e. at most one page), and the accounting is what a gate reads.
+  /// One stage is **8 events** and a turn stages at most **16** of them: the per-turn copy bound is one page
+  /// (8 x 16 = 128, the ring's own page capacity), and a smaller stage means the ring's page is retired closer to
+  /// the emission position that drains it (which is what "retirement by emission position" asks for).
+  struct PagedEmissionState {
+    /// The adapter's unreachable-path fallback: the walk's `eventAt` must return a reference, and this is the one it
+    /// returns if it is ever asked for an ordinal the ring cannot answer (a bug, not a path). It lives **here** -- in
+    /// the externally allocated runtime -- so hosting it costs no RAM1 `variables`, which a file-level static did
+    /// (measured: +32 B, refused by the budget guard).
+    MidiEvent unreachableFallback{};
+    /// How far the walk has advanced *through the ring* (the ring's stream ordinal): advanced once per index the walk
+    /// consumes -- emitted or skipped as behind the frame -- so it is monotone across passes.
+    uint32_t consumedOrdinal = 0;
+    /// The ring ordinal the *emitting* pass starts at (walk index 0 is this ordinal). Set at a **pass boundary** the
+    /// playback projection signals, never inferred: only the projection knows the playhead wrapped.
+    uint32_t passBaseOrdinal = 0;
+    uint32_t passCount = 0;
+    /// Passes in which a turn found the ring empty. A late page loses the events the frame already passed, so a pass
+    /// with a dry is never proof and the gate refuses on it -- probation, not optimism.
+    uint32_t passesWithDrys = 0;
+    /// Named accounting: dry turns, ring reads (the adapter's own bounded work), boundaries seen.
+    uint32_t dryTurns = 0;
+    uint32_t reads = 0;
+    uint32_t boundaries = 0;
+    /// Passes whose boundary arrived with **nothing of the next pass published yet** -- the straddle the paged emission
+    /// needs and that this ring's depth does not always provide (measured: see the I3c-a evidence). A pass whose wrap
+    /// was not straddled is never proof, so the gate refuses on it.
+    uint32_t passesUnstraddled = 0;
+    bool bound = false;
+    /// True once the **emission** is what this delivery serves: the producer then re-arms a pass instead of completing
+    /// once, because a delivery nobody emits keeps I3b's one-shot completion (and its `Prepared` discharge).
+    bool emitting = false;
+    void bindToDelivery() {
+      consumedOrdinal = 0;
+      passBaseOrdinal = 0;
+      passCount = 0;
+      passesWithDrys = 0;
+      passesUnstraddled = 0;
+      dryTurns = 0;
+      reads = 0;
+      boundaries = 0;
+      bound = true;
+      emitting = false;
+    }
+    void unbind() {
+      bound = false;
+      emitting = false;
+    }
+    /// The playback projection wrapped: the **next** pass begins where the walk's position is now (the producer
+    /// re-traverses the same interval into the same ordinal space, so the walk's index restarts while the ring's
+    /// ordinal continues), and this pass's dry record is **closed, not erased**: a pass that ran dry stays visible to
+    /// the gate through `passesWithDrys`.
+    void notePassBoundary(uint32_t publishedOrdinal) {
+      // The boundary is taken at the walk's position, and it is **judged**, not just recorded: a wrap that arrives
+      // with nothing published beyond that position (`publishedOrdinal <= consumedOrdinal`) had no next-pass head to
+      // hand over, so the events of the new pass that the very next frame crosses are behind it by construction.
+      if (publishedOrdinal <= consumedOrdinal) {
+        ++passesUnstraddled;
+      }
+      passBaseOrdinal = consumedOrdinal;
+      if (dryTurns != 0) {
+        ++passesWithDrys;
+      }
+      dryTurns = 0;
+      ++passCount;
+      ++boundaries;
+    }
+  };
+  PagedEmissionState pagedEmission;
   enum class LaunchPreparation : uint8_t { None, Requested, Building, Ready, Bound, Fallback, FallbackBound };
   LaunchPreparation launchPreparation = LaunchPreparation::None;
   uint32_t launchBoundTick = 0;

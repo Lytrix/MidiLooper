@@ -441,6 +441,120 @@ PlaybackEventStream makeCapturePlaybackStream(Loop& loop) {
   return PlaybackEventStream{&loop, capturePlaybackStreamSize, nullptr,
                              capturePlaybackStreamEventAt, capturePlaybackStreamPhase};
 }
+
+/// Task 3.7a (I3c-a): **the paged emission adapter.** `advancePlaybackCursor` reads `size` **once per turn** and then
+/// walks `eventAt`/`consume` per index, so this adapter answers all three from the ring's **own ordinal space** -- no
+/// staging copy, no per-slot buffer, no allocation, and nothing produced, waited for or inferred:
+///
+///   - `passBaseOrdinal + cursor` is the ring ordinal the walk is asking for (the walk's index restarts every pass,
+///     the ring's ordinal does not), which is the "stream index -> page base" mapping the paged path needed;
+///   - `size` is the ring's **published** count minus that pass base: the walk is bounded by what the producer has
+///     handed over, so a ring that is momentarily empty simply ends the turn and the deferred lane's next turn is what
+///     continues it (`dryTurns` counts those turns);
+///   - `consume` advances the emitted position and **retires the pages behind it** (`retireThroughOrdinal`), which is
+///     retirement by emission position rather than by a copy-out call.
+TRACK_COLD_MEM size_t pagedEmissionStreamSize(const void* ctx) {
+  const auto* stream = static_cast<const PagedEmissionStreamCtx*>(ctx);
+  if (stream == nullptr || stream->runtime == nullptr) {
+    return 0;
+  }
+  LoopPlaybackRuntime::PagedEmissionState& state =
+      const_cast<LoopPlaybackRuntime::PagedEmissionState&>(stream->runtime->pagedEmission);
+  if (!state.bound) {
+    return 0;
+  }
+  // The emission is what this delivery now serves: from here the producer re-arms a pass instead of completing once.
+  state.emitting = true;
+  ++state.reads;
+  const WindowPagedStream& ring = stream->runtime->pagedWindow;
+  const uint32_t published = ring.producedOrdinal();
+  if (published <= state.passBaseOrdinal) {
+    ++state.dryTurns;
+    return 0;
+  }
+  // A read that finds the ring empty **ahead of the walk** (everything published is already consumed) is the dry the
+  // delivery's proof cares about: the frame it serves had nothing to hand over.
+  if (published <= state.consumedOrdinal) {
+    ++state.dryTurns;
+  }
+  return published - state.passBaseOrdinal;
+}
+
+TRACK_COLD_MEM bool pagedEmissionStreamValid(const void* ctx, uint16_t cursor) {
+  const auto* stream = static_cast<const PagedEmissionStreamCtx*>(ctx);
+  if (stream == nullptr || stream->runtime == nullptr) {
+    return false;
+  }
+  (void)cursor;
+  return stream->runtime->pagedEmission.bound;
+}
+
+TRACK_COLD_MEM const MidiEvent& pagedEmissionStreamEventAt(const void* ctx, uint16_t cursor) {
+  const auto* stream = static_cast<const PagedEmissionStreamCtx*>(ctx);
+  const LoopPlaybackRuntime::PagedEmissionState& state = stream->runtime->pagedEmission;
+  const MidiEvent* event =
+      stream->runtime->pagedWindow.eventAtOrdinal(state.passBaseOrdinal + static_cast<uint32_t>(cursor));
+  if (event != nullptr) {
+    return *event;
+  }
+  // Unreachable while `size` bounds the walk to the ring's own published ordinals, so this is a **guard, not a path**:
+  // it returns an `InvalidType` event the walk cannot mistake for music, and it costs no RAM1 (the fallback lives in
+  // the runtime's own external state).
+  return const_cast<LoopPlaybackRuntime::PagedEmissionState&>(state).unreachableFallback;
+}
+
+TRACK_COLD_MEM void pagedEmissionStreamConsume(const void* ctx) {
+  const auto* stream = static_cast<const PagedEmissionStreamCtx*>(ctx);
+  if (stream == nullptr || stream->runtime == nullptr) {
+    return;
+  }
+  LoopPlaybackRuntime::PagedEmissionState& state =
+      const_cast<LoopPlaybackRuntime::PagedEmissionState&>(stream->runtime->pagedEmission);
+  ++state.consumedOrdinal;
+  // Retirement by emission position: the pages the walk has passed return to the ring, so the producer can refill
+  // them with the next pass's content -- bounded by the ring's page count.
+  const_cast<WindowPagedStream&>(stream->runtime->pagedWindow).retireThroughOrdinal(state.consumedOrdinal);
+}
+
+TRACK_COLD_MEM PlaybackEventStream makePagedEmissionStream(PagedEmissionStreamCtx& ctx) {
+  return PlaybackEventStream{&ctx, pagedEmissionStreamSize, pagedEmissionStreamValid,
+                             pagedEmissionStreamEventAt, mergedPlaybackStreamPhase,
+                             pagedEmissionStreamConsume};
+}
+
+/// Task 3.7a (I3c-a): **is this slot's paged delivery fit to be selected as the emission source?** Every answer is
+/// named, and the two that are not `Admissible` are the honest ones:
+///
+/// - `CannotStraddleTheWrap`: the interval spans the whole loop, so its wrap *is* the production window and no pass
+///   can be prepared while the playhead is elsewhere. `ExecutionBounds.md` row 27's contract row is explicit -- "if
+///   not provable, **reject active windowed selection**" -- so this is refused rather than half-served, and the merged
+///   fallback keeps playing the slot exactly as it does today.
+/// - `Unproven`: the delivery stands, but no **dry-free pass** has been observed yet. A dry pass is the producer
+///   falling behind the playhead, and a late page loses the events the frame already passed -- so probation, not
+///   optimism, decides. The deferred lane's own turns are what complete a pass; the gate reads this same predicate.
+TRACK_COLD_MEM Track::PagedEmissionDeliveryState Track::pagedEmissionDeliveryStateForSlot(
+    uint8_t slotIndex) const {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return PagedEmissionDeliveryState::NoDelivery;
+  }
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->pagedActive) {
+    return PagedEmissionDeliveryState::NoDelivery;
+  }
+  const Loop& loop = loopForSlot(slotIndex);
+  if (runtime->pagedRevision != loop.playbackRevision) {
+    return PagedEmissionDeliveryState::StaleRevision;
+  }
+  if (runtime->pagedInterval.lengthTicks >= loop.loopLengthTicks) {
+    return PagedEmissionDeliveryState::CannotStraddleTheWrap;
+  }
+  if (!runtime->pagedEmission.bound || runtime->pagedEmission.passCount == 0 ||
+      runtime->pagedEmission.passesWithDrys != 0 ||
+      runtime->pagedEmission.passesUnstraddled != 0) {
+    return PagedEmissionDeliveryState::Unproven;
+  }
+  return PagedEmissionDeliveryState::Admissible;
+}
 TRACK_COLD_MEM void Track::reanchorPlaybackCycle(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
   if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {
@@ -2005,6 +2119,10 @@ TRACK_COLD_MEM bool Track::beginPagedPlaybackForSlot(uint8_t slotIndex) {
   runtime->pagedInterval = request.coverage;
   runtime->pagedPagesProduced = 0;
   runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::None;
+  // Task 3.7a (I3c-a): a **new delivery** starts from a fresh ring, so the emission state is bound to it -- a position
+  // left over from a previous interval or revision would address ordinals that no longer exist (the ordinal space is
+  // monotone only *within* one delivery; a new source is `reset`, which restarts the sequence numbering).
+  runtime->pagedEmission.bindToDelivery();
   return true;
 }
 
@@ -2112,6 +2230,16 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPagedPlaybackForSlot(
   }
   ++runtime->pagedPagesProduced;
   if (runtime->pagedWindow.sourceComplete()) {
+    // Task 3.7a (I3c-a): the pass is fully produced. A delivery the **emission** is serving keeps going: the ring
+    // re-arms for the next pass -- restarting the traversal while **keeping** the pages the walk has not reached, and
+    // keeping the ordinal space -- so the next pass's first page exists before the playhead reaches it. That is what
+    // straddles a wrap. A delivery nobody is emitting keeps I3b's one-shot completion (`Prepared`, demand discharged),
+    // which is what its own fixtures walk.
+    if (runtime->pagedEmission.emitting) {
+      runtime->pagedWindow.rearmForNextPass();
+      runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::None;
+      return PlaybackViewTurnResult::GrainServed;
+    }
     runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::Prepared;
     runtime->frozenViewRequest = {};
   }

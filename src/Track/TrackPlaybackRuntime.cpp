@@ -2156,6 +2156,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardPagedWindow() {
   pagedInterval = PlaybackCoverageInterval{};
   pagedPagesProduced = 0;
   pagedCursor = WindowPageCursor{};
+  // Task 3.7a (I3c-a): the emission state goes with the ring it addressed -- a position without its pages would
+  // address ordinals nobody holds any more.
+  pagedEmission.unbind();
   // The ring releases its own pages (one owner for the fixed storage), so the slot does not leave `kWindowPageCount`
   // page buffers resident after the preparation is discarded.
   pagedWindow.release();
@@ -2547,9 +2550,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // and +232 B on the host (9,216 -> 9,448): the difference is the two ABIs' vector headers and padding, and both figures
 // are compiler-measured by the probe this commit removes, not estimated. The page *buffers* are not part of this: they
 // are allocated by `reset` when a preparation begins and released by `release`/`discardPagedWindow`.
-static_assert(sizeof(LoopPlaybackRuntime) == 7312,
-              "S3.0/3.10: target per-slot runtime 7,312 B, including the gated rolling frame, the "
-              "3.7a retained-source gather and the 3.7a paged ring");
+// Task 3.7a (I3c-a) re-base: +48 B for the paged **emission** state -- the emitted ordinal, the pass base, the pass
+// and dry accounting and the two flags. Deliberately **not** a staging buffer: the adapter reads the ring's own pages
+// by stream ordinal, so an 8-event stage (192 B here) was written, measured and removed. Compiler-measured.
+static_assert(sizeof(LoopPlaybackRuntime) == 7384,
+              "S3.0/3.10: target per-slot runtime 7,384 B, including the gated rolling frame, the "
+              "3.7a retained-source gather, the 3.7a paged ring and the 3.7a paged emission state");
 static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
@@ -2569,8 +2575,10 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // chunks/refusal 16, with padding). Measured by the compiler on this ABI, not estimated.
 // Task 3.7a (I3b) re-base: +232 B for the paged ring (three page headers with their 64-bit vector headers, the two
 // cursors, the interval and the outcome name, with padding). Measured by the compiler on this ABI, not estimated.
-static_assert(sizeof(LoopPlaybackRuntime) == 9448,
-              "S3.0/3.10: host-ABI per-slot runtime size (9,448 B, including rolling frame, the 3.7a gather and the "
-              "3.7a paged ring)");
+// Task 3.7a (I3c-a) re-base: +40 B for the paged **emission** state (the same fields, this ABI's padding). The
+// staging variant measured +296 B here and was removed in favour of reading the ring's pages by ordinal.
+static_assert(sizeof(LoopPlaybackRuntime) == 9528,
+              "S3.0/3.10: host-ABI per-slot runtime size (9,528 B, including rolling frame, the 3.7a gather, the 3.7a "
+              "paged ring and the 3.7a paged emission state)");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

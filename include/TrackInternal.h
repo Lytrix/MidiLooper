@@ -129,6 +129,18 @@ TRACK_INTERNAL_MEM PlaybackEventStream makeMergedPlaybackStream(MergedPlaybackSt
 
 TRACK_INTERNAL_MEM PlaybackEventStream makeFixedPlaybackStream(FixedPlaybackStreamCtx& ctx);
 
+/// Task 3.7a (I3c-a): **the paged emission adapter's context.** It carries no state of its own beyond the slot it
+/// serves -- the position, the staged window and the accounting live in the slot's runtime
+/// (`LoopPlaybackRuntime::PagedEmissionState`), because the deferred lane and the walk are two owners of one delivery
+/// and neither may hold a private copy of the position.
+struct PagedEmissionStreamCtx {
+  Track* track = nullptr;
+  LoopPlaybackRuntime* runtime = nullptr;
+  uint8_t slot = 0;
+};
+
+TRACK_INTERNAL_MEM PlaybackEventStream makePagedEmissionStream(PagedEmissionStreamCtx& ctx);
+
 /// Task 2.4 slice 2 consume decision, kept as a pure function of the runtime pair state
 /// so the clock path and its native fixtures share one implementation. It never builds:
 /// a miss only records a request, and the last coherent pair (if any) is what the tick

@@ -467,6 +467,25 @@ public:
   /// allocating or overwriting), the frozen demand's own promise validated first exactly as the gather's is, and
   /// completion reported as the named delivery (`LoopPlaybackRuntime::PagedPlaybackOutcome::Prepared`). Off-clock only.
   PlaybackViewTurnResult stepPagedPlaybackForSlot(uint8_t slotIndex, PlaybackDeadlineClock clock);
+  /// Task 3.7a (I3c-a): **may this slot's emission come from its paged delivery?** Every answer is named, and only
+  /// `Admissible` is a yes: a delivery whose interval spans the whole loop is `CannotStraddleTheWrap` (its wrap is the
+  /// production window, so no pass can be prepared while the playhead is elsewhere -- row 27's contract row requires
+  /// rejecting active windowed selection rather than half-serving it), and a delivery whose pass has not been observed
+  /// **dry-free** is `Unproven` (a late page loses the events the frame already passed, so probation decides). This is
+  /// the predicate a selection gate reads; it never selects anything itself, and the hot path is unchanged by it.
+  enum class PagedEmissionDeliveryState : uint8_t {
+    /// Nothing prepared for this slot's current revision, nothing bound, or no runtime.
+    NoDelivery,
+    /// The loop has left the revision these pages belong to: identity, not currency.
+    StaleRevision,
+    /// The interval has no re-arm room (its length reaches the loop's), so a pass cannot be prepared across its wrap.
+    CannotStraddleTheWrap,
+    /// The delivery stands, but no dry-free pass has been observed: not proven, so not selected.
+    Unproven,
+    /// A pass completed with the producer ahead of the playhead throughout: the delivery may be selected.
+    Admissible,
+  };
+  PagedEmissionDeliveryState pagedEmissionDeliveryStateForSlot(uint8_t slotIndex) const;
   /// The declared `CoverageServiceContract` this owner is admitted under. Single-sourced: the declaration,
   /// its derivation and the measurement still owed are recorded where it is defined, and the grain quanta
   /// below are the sizes its declared grain counts come from.

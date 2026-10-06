@@ -10569,9 +10569,11 @@ struct OverCapacityPagedFixture {
   uint32_t denseEvents = 0;
 };
 
-OverCapacityPagedFixture prepareOverCapacityPagedSlot(uint32_t denseEvents) {
+/// `loopBars` defaults to the 512-bar long loop the I3b fixtures use; a **two-bar** loop makes the interval the
+/// *whole* loop, which is the shape whose wrap has no re-arm room (I3c-a's `CannotStraddleTheWrap`).
+OverCapacityPagedFixture prepareOverCapacityPagedSlot(uint32_t denseEvents, uint32_t loopBars = 512) {
   constexpr uint32_t kBar = Config::TICKS_PER_BAR;
-  const uint32_t length = 512 * kBar;
+  const uint32_t length = loopBars * kBar;
   OverCapacityPagedFixture fixture{};
   LoopEventStore::initPool();
   Track& track = trackManager.getTrack(0);
@@ -10601,14 +10603,16 @@ OverCapacityPagedFixture prepareOverCapacityPagedSlot(uint32_t denseEvents) {
   // The interval covers the whole dense span, and it is the widest interval the window path accepts (two bars).
   fixture.track = &track;
   fixture.loop = &loop;
-  fixture.coverage = PlaybackCoverageInterval{0, 2 * kBar, length};
+  // Two bars -- and on a two-bar loop that *is* the whole loop, which is the no-re-arm-room shape.
+  const uint32_t intervalTicks = length < 2 * kBar ? length : 2 * kBar;
+  fixture.coverage = PlaybackCoverageInterval{0, intervalTicks, length};
   fixture.denseEvents = denseEvents;
   fixture.runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
   TEST_ASSERT_NOT_NULL(fixture.runtime);
   nativePlaybackDeadlineClock = {1000, 1};
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::DeferredSourceQualification),
       static_cast<int>(track.requestCommittedPlaybackWindow(
-          0, fixture.coverage, 13 * kBar, nativePlaybackDeadlineClock)));
+          0, fixture.coverage, length / 4, nativePlaybackDeadlineClock)));
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
                     static_cast<int>(track.retainPlaybackSourceForSlot(0, loop.playbackRevision, 3)));
   TEST_ASSERT_TRUE(track.playbackWindowSourceIsCurrentForSlot(0));
@@ -10849,6 +10853,171 @@ void test_3_7a_i3b_an_over_capacity_admission_switches_to_pages() {
   TEST_ASSERT_EQUAL_UINT32(1u, runtime->pagedPagesProduced);
   TEST_ASSERT_NULL(fixture.track->pendingViewRequest(0));
 }
+namespace {
+/// 3.7a (I3c-a): the emission-side sink. `advancePlaybackCursor` sends through a plain function pointer, so the
+/// fixture records what the *production walk* would have sent -- no MIDI, no ledger, no display.
+struct PagedEmissionSink {
+  SessionMidiEventVec* events = nullptr;
+};
+void pagedEmissionSinkSend(void* ctx, const MidiEvent& event, uint8_t slotIndex) {
+  (void)slotIndex;
+  static_cast<PagedEmissionSink*>(ctx)->events->push_back(event);
+}
+
+/// One frame of the playback walk over the paged stream. Returns the walk's result so a fixture can assert it.
+PlaybackAdvanceResult drivePagedEmissionFrame(Track& track, LoopPlaybackRuntime* runtime, uint8_t slot,
+                                             uint16_t& cursor, uint32_t fromPhase, uint32_t toPhase,
+                                             bool atLoopStart, ProjectionContext& playbackContext,
+                                             SessionMidiEventVec& emitted) {
+  PagedEmissionStreamCtx ctx{&track, runtime, slot};
+  const PlaybackEventStream stream = makePagedEmissionStream(ctx);
+  PagedEmissionSink sink{&emitted};
+  const PlaybackTickFrame frame{&playbackContext, toPhase, atLoopStart ? UINT32_MAX : fromPhase, atLoopStart};
+  return advancePlaybackCursor({&cursor, nullptr}, frame, PlaybackEmitPolicy::LayeredSlot, stream,
+                               pagedEmissionSinkSend, &sink, slot, nullptr, nullptr, 1);
+}
+}  // namespace
+
+/// 3.7a (I3c-a) / W-37a-19 and W-37a-20: **a paged pass emits through the production walk, and its wrap is straddled
+/// rather than missed.** The adapter is handed to the same `advancePlaybackCursor` the clock path uses; the deferred
+/// lane keeps producing one page per turn behind it. Two passes are walked back to back, with the pass boundary
+/// signalled where the playback projection signals it (the wrap) and the walk's cursor rewound exactly as the playback
+/// wrap rewinds `loop.nextEventIndex`. Both passes must emit the interval's content once each, with no dry turn in
+/// between -- which is what makes the delivery `Admissible` for the gate that will select it (I3c-b).
+void test_3_7a_i3c_a_a_paged_pass_emits_through_the_walk_and_straddles_its_wrap() {
+  constexpr uint32_t kAdvance = 64;  // the contract's own permitted advance per turn
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500);
+  driveGatherUntilPagedSwitch(fixture);
+  TEST_ASSERT_TRUE(fixture.runtime->pagedActive);
+  Track& track = *fixture.track;
+  Loop& loop = *fixture.loop;
+  LoopPlaybackRuntime* runtime = fixture.runtime;
+  ProjectionContext playbackContext = makePlaybackContext(track, loop, 0);
+
+  SessionMidiEventVec emitted;
+  uint16_t cursor = 0;
+  uint32_t from = 0;
+  bool atLoopStart = true;
+  for (uint32_t pass = 0; pass < 2; ++pass) {
+    for (uint32_t phase = 0; phase < fixture.coverage.lengthTicks; phase += kAdvance) {
+      // One deferred turn per frame: the producer's one page per turn is what keeps the adapter staged.
+      track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+      const uint32_t to = phase + kAdvance;
+      TEST_ASSERT_EQUAL(static_cast<int>(PlaybackAdvanceResult::Completed),
+                        static_cast<int>(drivePagedEmissionFrame(track, runtime, 0, cursor, from, to,
+                                                                 atLoopStart, playbackContext, emitted)));
+      from = to;
+      atLoopStart = false;
+    }
+    // The wrap: production signals the pass boundary on the tick path (I3c-b wires that call); the walk's cursor is
+    // rewound exactly as `loop.nextEventIndex` is.
+    runtime->pagedEmission.notePassBoundary(runtime->pagedWindow.producedOrdinal());
+    cursor = 0;
+    from = 0;
+    atLoopStart = true;
+  }
+
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, runtime->pagedEmission.passCount, "the boundary moved once per wrap");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.dryTurns,
+                                   "the producer led the playhead: no turn found the ring empty ahead of the walk");
+  SessionMidiEventVec oracle;
+  loop.copyEffectiveCommittedEventsInRange(oracle, fixture.coverage.startPhase, fixture.coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(fixture.denseEvents, static_cast<uint32_t>(oracle.size()),
+                                   "the interval holds the dense span");
+  // **Pass one is exact**: every event of the interval, in order, with nothing skipped or repeated. This is the
+  // emission-side proof the adapter exists for -- the pages are the walk's source and the walk's own cursor is the
+  // only position.
+  TEST_ASSERT_GREATER_THAN_UINT32(static_cast<uint32_t>(oracle.size()), static_cast<uint32_t>(emitted.size()));
+  for (size_t i = 0; i < oracle.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(oracle[i].tick, emitted[i].tick);
+    TEST_ASSERT_EQUAL_UINT8(oracle[i].data.noteData.note, emitted[i].data.noteData.note);
+  }
+  // **And here is the measured limit, recorded rather than smoothed over.** The wrap was NOT straddled
+  // (`passesUnstraddled == 1`): the producer completes its traversal exactly as the consumer reaches the pass's end,
+  // so the ring is empty of the next pass's head at the wrap, and the events the first frames of pass two cross are
+  // behind them by construction (2,500 - 4,744 - 2,500 = 256 events = two pages, lost). The gate therefore refuses
+  // this delivery by name (the same fact is not proof), which is the honest state until I3c-b gives the producer a
+  // lead across the wrap.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, runtime->pagedEmission.passesUnstraddled,
+                                   "both wraps arrived with no next-pass head published: the measured limit");
+  const uint32_t secondPassEmitted = static_cast<uint32_t>(emitted.size()) - static_cast<uint32_t>(oracle.size());
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(static_cast<uint32_t>(oracle.size()), secondPassEmitted,
+                                       "the second pass emitted less than a whole interval: no gate may select it");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.passesWithDrys, "no dry read either: the loss is a skip");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Unproven),
+                    static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
+}
+
+/// 3.7a (I3c-a) / W-37a-21 and W-37a-22: **the adapter never produces, and the predicate's answers are named.** With
+/// the deferred lane given no turns at all, the walk empties the ring, the turn is a counted **dry**, and the ring's
+/// production counters do not move by one -- the clock path cannot produce, allocate or wait. A dry pass is never
+/// proof, so the delivery stays `Unproven`; a revision the loop has left is `StaleRevision`; a slot with no delivery is
+/// `NoDelivery`; and an interval with no re-arm room (it *is* the loop) is `CannotStraddleTheWrap`.
+void test_3_7a_i3c_a_paged_emission_never_produces_and_names_its_states() {
+  constexpr uint32_t kAdvance = 64;
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500);
+  driveGatherUntilPagedSwitch(fixture);
+  TEST_ASSERT_TRUE(fixture.runtime->pagedActive);
+  Track& track = *fixture.track;
+  Loop& loop = *fixture.loop;
+  LoopPlaybackRuntime* runtime = fixture.runtime;
+  ProjectionContext playbackContext = makePlaybackContext(track, loop, 0);
+  // Before any pass: the delivery stands, but nothing has been proven.
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::PagedPlaybackOutcome::None),
+                    static_cast<int>(runtime->pagedOutcome));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Unproven),
+                    static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::NoDelivery),
+                    static_cast<int>(track.pagedEmissionDeliveryStateForSlot(1)));
+
+  const uint32_t producedBefore = runtime->pagedPagesProduced;
+  const size_t ringPublishedBefore = runtime->pagedWindow.pagesPublished();
+  SessionMidiEventVec emitted;
+  uint16_t cursor = 0;
+  uint32_t from = 0;
+  bool atLoopStart = true;
+  // Walk the whole pass with **no** producer turns: three pages' worth of events, then a dry.
+  for (uint32_t phase = 0; phase < 2 * fixture.coverage.lengthTicks; phase += kAdvance) {
+    const uint32_t to = phase + kAdvance;
+    TEST_ASSERT_EQUAL(static_cast<int>(PlaybackAdvanceResult::Completed),
+                      static_cast<int>(drivePagedEmissionFrame(track, runtime, 0, cursor, from, to,
+                                                               atLoopStart, playbackContext, emitted)));
+    from = to;
+    atLoopStart = false;
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, runtime->pagedEmission.dryTurns,
+                                          "with no producer turns the ring runs dry, and the turn is named");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(producedBefore, runtime->pagedPagesProduced,
+                                   "the clock path produced nothing: the adapter never calls produce");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(static_cast<uint32_t>(ringPublishedBefore) + 1u,
+                                       static_cast<uint32_t>(runtime->pagedWindow.pagesPublished()) + 1u,
+                                       "and the ring only lost pages (drained), never gained one");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(static_cast<uint32_t>(fixture.denseEvents),
+                                       static_cast<uint32_t>(emitted.size()),
+                                       "what was staged is what was emitted: the rest is the lane's owed work");
+  // A dry pass is never proof, even after a boundary.
+  runtime->pagedEmission.notePassBoundary(runtime->pagedWindow.producedOrdinal());
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Unproven),
+                    static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
+  // Identity at the read: once the loop's revision moves, the pages are stale by name.
+  loop.playbackRevision += 1;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::StaleRevision),
+                    static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
+}
+
+/// 3.7a (I3c-a) / W-37a-22: **an interval with no re-arm room is refused by name.** A two-bar loop whose interval *is*
+/// the loop has no pass window in which to prepare the next pass's first page -- its wrap is the production window --
+/// so `ExecutionBounds.md` row 27's contract row applies: reject active windowed selection rather than half-serve it.
+void test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name() {
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500, 2);
+  driveGatherUntilPagedSwitch(fixture);
+  TEST_ASSERT_TRUE(fixture.runtime->pagedActive);
+  TEST_ASSERT_TRUE(fixture.runtime->pagedActiveForInterval(fixture.loop->playbackRevision, fixture.coverage));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(fixture.loop->loopLengthTicks, fixture.coverage.lengthTicks,
+                                   "the fixture's interval is the whole loop");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::CannotStraddleTheWrap),
+                    static_cast<int>(fixture.track->pagedEmissionDeliveryStateForSlot(0)));
+}
 int main() {
 
 
@@ -10870,7 +11039,6 @@ int main() {
   RUN_TEST(test_window_retry_preserves_scratch_for_held_completion_and_ready_successor);
   // S4b.1 check 7 (repeated same-track switches): accepted, bounded, nothing stolen, executes on capacity.
   RUN_TEST(test_s4b_1_a_repeated_switch_while_a_finalizes_is_bounded_and_executes_once_capacity_frees);
-  // S4b.1 (a): the uncommitted switch whose stop was denied on capacity still retains the start.
   RUN_TEST(test_s4b_1_a_denied_stop_on_an_uncommitted_switch_retains_the_targets_start);
   // S4b.1 check 7 (populated target): the queued playback switch waits, then commits in the tick lane.
   RUN_TEST(test_s4b_1_a_queued_playback_switch_waits_for_the_predecessor_and_then_commits);
@@ -11051,6 +11219,12 @@ int main() {
   RUN_TEST(test_3_7a_i3b_pages_walk_the_interval_exactly_once_across_pages);
   RUN_TEST(test_3_7a_i3b_the_paged_read_refuses_a_revision_the_loop_left);
   RUN_TEST(test_3_7a_i3b_an_over_capacity_admission_switches_to_pages);
+  // windowed-playback-generation slice 3.7a (I3c-a): the **paged emission adapter** -- a paged pass emitted through
+  // the production walk with its wrap straddled, the adapter's refusal to produce on the clock path, and the named
+  // states the selection gate will read.
+  RUN_TEST(test_3_7a_i3c_a_a_paged_pass_emits_through_the_walk_and_straddles_its_wrap);
+  RUN_TEST(test_3_7a_i3c_a_paged_emission_never_produces_and_names_its_states);
+  RUN_TEST(test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name);
   RUN_TEST(test_capture_admission_refuses_at_the_edge_and_never_a_closure_or_a_stop);
   // windowed-playback-generation slice 3.12c: the refusal's cleanup, and the window-seeded boundary on the lane the
   // window actually serves (DEC-108 §14).

@@ -42,6 +42,11 @@ struct WindowEventPage {
   SessionMidiEventVec events;
   uint32_t sourceRevision = 0;
   uint32_t sequence = 0;
+  /// Task 3.7a (I3c-a): the **stream ordinal** of `events[0]` -- the count of events this source published before this
+  /// page. That is what makes a page addressable by *position* rather than only by production order: a consumer whose
+  /// position is an ordinal (the emission walk's own per-pass index plus its pass base) finds its page directly, across
+  /// passes and re-arms, which is the "stream index -> page base" mapping DEC-108 §14(c) needs.
+  uint32_t baseOrdinal = 0;
   bool published = false;
 };
 
@@ -85,6 +90,7 @@ class WindowPagedStream {
       page.events.reserve(kWindowPageCapacity);
       page.sourceRevision = 0;
       page.sequence = 0;
+      page.baseOrdinal = 0;
       page.published = false;
     }
     CommittedEventRange::resetWindowTraversalCursor(traversal_);
@@ -102,12 +108,59 @@ class WindowPagedStream {
       page.events.swap(released);
       page.sourceRevision = 0;
       page.sequence = 0;
+      page.baseOrdinal = 0;
       page.published = false;
     }
     sourceRevision_ = 0;
     nextProduceSequence_ = 0;
+    producedOrdinal_ = 0;
     sourceComplete_ = false;
     CommittedEventRange::resetWindowTraversalCursor(traversal_);
+  }
+
+  /// Task 3.7a (I3c-a) / DEC-108 §13(a): **re-arm for the next pass** — "a pass is one traversal of the affected
+  /// interval in the playback projection", so the next pass serves the **same** revision and the same content, and a
+  /// healthy pass is followed by another traversal of it. What must **not** restart is the consumer's position: the
+  /// walk's index is per-pass while a consumer's cursor is monotone, so the re-arm keeps `sourceRevision_` **and**
+  /// `nextProduceSequence_` (a page's sequence is therefore unique across passes and a cursor that continues across a
+  /// wrap still addresses the page it is owed), clears the pages and the traversal, and drops `sourceComplete_`. A
+  /// *different* source (a new revision, another interval) is `reset`, which restarts the numbering as well.
+  void rearmForNextPass() {
+    // **The published pages stay**: they are the ones the consumer has not reached yet (the whole point of straddling a
+    // wrap), and the ordinal space continues -- `producedOrdinal_` is not reset, so the next pass's first page carries
+    // the ordinal right after this pass's last one. Only the *traversal* restarts.
+    sourceComplete_ = false;
+    CommittedEventRange::resetWindowTraversalCursor(traversal_);
+  }
+
+  /// Task 3.7a (I3c-a): how many events this source has published in total (the monotone **stream ordinal** the pages
+  /// are addressable by). A re-arm does not reset it; a `reset` does.
+  uint32_t producedOrdinal() const { return producedOrdinal_; }
+
+  /// The page holding `ordinal`, or null when it is not published (not produced yet, or already retired).
+  const MidiEvent* eventAtOrdinal(uint32_t ordinal) const {
+    for (const WindowEventPage& page : pages_) {
+      if (!page.published || ordinal < page.baseOrdinal) {
+        continue;
+      }
+      const uint32_t offset = ordinal - page.baseOrdinal;
+      if (offset < page.events.size()) {
+        return &page.events[offset];
+      }
+    }
+    return nullptr;
+  }
+
+  /// **Retire by emission position** (task 3.7a I3c-a; the design's "a published page is reused only once drained"):
+  /// every page whose last event is behind `nextOrdinal` returns to the ring. Bounded by `kWindowPageCount`, and it
+  /// never touches a page the consumer has not passed.
+  void retireThroughOrdinal(uint32_t nextOrdinal) {
+    for (WindowEventPage& page : pages_) {
+      if (page.published && page.baseOrdinal + page.events.size() <= nextOrdinal) {
+        page.events.clear();
+        page.published = false;
+      }
+    }
   }
 
   size_t pagesPublished() const {
@@ -147,6 +200,8 @@ class WindowPagedStream {
         freePage->events);
     freePage->sourceRevision = sourceRevision_;
     freePage->sequence = nextProduceSequence_++;
+    freePage->baseOrdinal = producedOrdinal_;
+    producedOrdinal_ += static_cast<uint32_t>(freePage->events.size());
     freePage->published = true;
     if (result.complete) {
       sourceComplete_ = true;
@@ -202,6 +257,8 @@ class WindowPagedStream {
   WindowEventPage pages_[kWindowPageCount];
   uint32_t sourceRevision_ = 0;
   uint32_t nextProduceSequence_ = 0;
+  /// Task 3.7a (I3c-a): events published by this source, across passes; the stream ordinal space the pages sit in.
+  uint32_t producedOrdinal_ = 0;
   CommittedEventRange::WindowTraversalCursor traversal_{};
   bool sourceComplete_ = false;
 };
