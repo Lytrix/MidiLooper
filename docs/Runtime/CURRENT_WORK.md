@@ -1,3 +1,39 @@
+**2026-10-06 — `windowed-playback-generation` 3.7a I10 / 4.5: containment and recovery are driven by the lane's own serving
+boundary (firmware + tests; both tasks stay open).** Task 4.5's **recovery half** is measured and delivered. The
+containment policy was implemented and measured long ago but had **no production caller at all** — the only site that
+clears a latched deadline-contract fault is `advancePlaybackLagTraversal`'s `Current` branch, and nothing consulted
+`containmentForSlot`, so a fault latched through the one route that *was* wired (an admitted promise whose deadline
+passes, `serviceAdmittedDeadlineMisses` → `noteMissedTraversalForSlot`) was **permanent** and the approved exception
+(targeted note closure plus affected-slot silence) was **unreachable**. The lane's serving resolver owns exactly the two
+per-traversal events that can judge it: **adoption** — the eligible boundary, where the prepared replacement was just
+adopted, so the episode and any latched fault **end** there (the production caller the task owed, still the only clear
+site) — and **expiry**, where the traversal passed with the interval still at its previous revision (the first miss names
+the `one_pass_late` allowance, a second consecutive one of the same interval latches the breach); the containment is
+applied where the lane's own window stops serving (the three `Serving`-phase rejections), `NotNeeded` unless the fault is
+latched **and** no valid coverage remains. **Measured** through the lane's real path (`serviceRollingPlaybackWindow` +
+the suite's `rollingTestTick`, so the resolver runs from the clock path): a latched fault clears at a real adoption with
+the served window untouched and nothing silenced; an expiry names exactly one allowance and no breach; a latched fault
+with a covering window closes nothing; and with the lane's window no longer servable exactly **one** closure goes out for
+that slot's own sounding, a **sibling slot's** sounding is untouched, the transport is never stopped and nothing is
+rebuilt. Verified: focused **176/176** (baseline 175/175), full native **2,855 / 7 skipped / 2,848 succeeded / 0 failed**
+(baseline 2,854/7/2,847), default capture build **SUCCESS** with the RAM1 line **byte-identical** (`variables 96,192`;
+`code 392,248 + padding 968`) because the slice lives behind `PLAYBACK_WINDOW_ROLLING_ENABLED`, which that image keeps at
+0 — **the shipping image is unchanged by construction and by measurement** —, the lane-enabled qualification image
+measured **+144 B of ITCM** and **already over its own budget before this slice** (I5's recorded blocker; it cannot be
+flashed, so **nothing about this behaviour is claimed from hardware**), strict validation and `git diff --check` clean,
+and **three red-proofs RED with byte-identical restores** (RP-A the adoption judgement removed, RP-B the expiry judgement
+removed, RP-C the containment application removed). **Recorded, not smoothed over:** the first fixture reused the S4b.7a
+harness and produced a *trailing* harness failure plus an ERRORED suite in every arrangement tried — including with this
+slice stashed and at two different positions in the run order — so the fixture is now **self-contained** (it builds its
+own demoted loop, served window and lane demand); and two pre-existing `RUN_TEST` entries (`test_window_contention_sweep_*`)
+that an over-wide cut had removed were caught by diffing the entry list against `HEAD` and restored. **Not claimed:** no
+device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the exception is applied only
+while the lane is serving the slot; `serviceAdmittedDeadlineMisses`' own counting is unchanged, so a promise miss no lane
+frame is serving still latches without a boundary of its own; **4.5 stays open** on displayed provenance (the display's,
+RWO **S4e**), **3.7a stays open** (3.7b's conditions are unchanged). Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45e-lane-containment-recovery/EXECUTION.md).
+
 **2026-10-06 — `windowed-playback-generation` 3.7a I9 / 4.5: the closure that slid **behind** the re-anchored cursor is
 closed at the handoff (firmware + tests; both tasks stay open).** 4.5's last named implementation item is measured and
 fixed on the serving handoff. The walk resumes from a **floor** — `reanchorPlaybackIndex` points the cursor at the first
@@ -5549,6 +5585,34 @@ object carries `.gcc_except_table`, and the tree's only `catch (bad_alloc)` is h
 58 % untagged residency), the family's other content-proportional reserves, and the copy-elimination half (**S4e.8**).
 Task **S4e.9**; packet and evidence under
 [`evidence/2026-10-06-s4e9-projection-containment/`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-s4e9-projection-containment/).
+
+### 3.7a (I10) / 4.5 — containment and recovery are driven by the lane's own serving boundary (2026-10-06; firmware + tests; both tasks stay open)
+
+**3.7a I10 landed 2026-10-06 (firmware + tests; the task stays open, 3.7b's conditions unchanged).** Task 4.5's
+**recovery half** is delivered: the containment policy had **no production caller**, so a latched deadline-contract fault
+never cleared (the only clear site is `advancePlaybackLagTraversal`'s `Current` branch) and the approved last resort could
+never be applied. The lane's serving resolver now judges the traversal at its **own** boundary events — **adoption** (the
+eligible boundary: the replacement was just adopted, so the episode and any latched fault end there, and this remains the
+only clear site) and **expiry** (the traversal passed with the interval at its previous revision: the first miss names the
+`one_pass_late` allowance, a second consecutive one of the same interval latches the breach) — and applies the containment
+where the lane's own window stops serving (the three `Serving`-phase rejections): `NotNeeded` unless the fault is latched
+**and** no valid coverage remains, and slot-scoped by construction. No new state, no new row family, no scheduler, no
+second authority; `PlaybackLagState` and `serviceAdmittedDeadlineMisses` are untouched. Verified: focused **176/176**
+(baseline 175/175), full native **2,855 / 7 skipped / 2,848 succeeded / 0 failed** (baseline 2,854/7/2,847), the default
+capture build **SUCCESS** with the RAM1 line **byte-identical** (the slice is behind `PLAYBACK_WINDOW_ROLLING_ENABLED`,
+which that image keeps at 0 — so the shipping image is unchanged by construction), the lane-enabled qualification image
+measured **+144 B of ITCM** and **already over its own approved budget before this slice** (I5's recorded blocker; it
+cannot be flashed, so no device-level claim is made), strict validation and `git diff --check` clean, and **three
+red-proofs RED with byte-identical restores** (RP-A the adoption judgement removed, RP-B the expiry judgement removed,
+RP-C the containment application removed). **Recorded, not smoothed over:** the first fixture reused the S4b.7a harness and
+produced a trailing harness failure plus an ERRORED suite in every arrangement; it is now self-contained, and two
+pre-existing `RUN_TEST` entries removed by an over-wide cut were caught (entry list diffed against `HEAD`) and restored.
+**Not claimed:** no device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the
+exception is applied only while the lane serves the slot; **4.5 stays open** on displayed provenance (display → RWO
+**S4e**). Detail:
+[`EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md)
+with its [`EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45e-lane-containment-recovery/EXECUTION.md)
+packet.
 
 ### 3.7a (I9) / 4.5 — the closure that slid behind the re-anchored cursor is closed at the handoff (2026-10-06; firmware + tests; both tasks stay open)
 

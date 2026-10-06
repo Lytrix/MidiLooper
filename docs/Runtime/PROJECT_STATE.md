@@ -1,3 +1,27 @@
+**`windowed-playback-generation` 3.7a I10 / 4.5 -- containment and recovery are driven by the lane's own serving boundary
+(2026-10-06; firmware + tests; both tasks stay open).**
+Task 4.5's **recovery half** is delivered. The containment policy (`advancePlaybackLagTraversal`, `containmentForSlot`,
+`applyLastResortForSlot`) had **no production caller**, so a latched deadline-contract fault was permanent (its only clear
+site is the lag judgement's `Current` branch) and the approved last resort was unreachable. The lane's serving resolver now
+judges the traversal at its own two boundary events -- **adoption** (the eligible boundary, where the adopted replacement
+means the boundary may serve the current revision, so the episode and any latched fault end there and nowhere else) and
+**expiry** (the traversal passed with the interval still at its previous revision: the first miss is the named
+`one_pass_late` allowance, a second consecutive one of the same interval latches the breach) -- and applies the containment
+where the lane's own window stops serving: `NotNeeded` unless the fault is latched **and** no valid coverage remains.
+Verified: focused **176/176** (baseline 175/175), full native **2,855 / 7 skipped / 2,848 succeeded / 0 failed** (baseline
+2,854/7/2,847), the default capture build **SUCCESS** with the RAM1 line **byte-identical** (`variables 96,192`;
+`code 392,248 + padding 968`) because the slice is behind `PLAYBACK_WINDOW_ROLLING_ENABLED` (the lane stays off in that
+image), the lane-enabled qualification image measured **+144 B of ITCM** and **already over its own budget** (I5's
+recorded blocker -- it cannot be flashed, so nothing is claimed from hardware), strict validation and `git diff --check`
+clean, and **three red-proofs RED with byte-identical restores**. **Recorded, not smoothed over:** the first fixture reused
+the S4b.7a harness and left a trailing harness failure plus an ERRORED suite in every arrangement; it is now
+self-contained, and two pre-existing `RUN_TEST` entries an over-wide cut had removed were restored. **Not claimed:** no
+device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the exception is applied only
+while the lane serves the slot; **4.5 stays open** on displayed provenance (display → RWO **S4e**) and **3.7a stays open**.
+Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45e-lane-containment-recovery/EXECUTION.md).
+
 **`windowed-playback-generation` 3.7a I9 / 4.5 -- the closure that slid **behind** the re-anchored cursor is closed at the
 handoff (2026-10-06; firmware + tests; both tasks stay open).**
 Task 4.5's last named implementation item, and the item I6 recorded as *"out of scope and still owed to 4.5"*, is measured
