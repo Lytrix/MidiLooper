@@ -1514,6 +1514,29 @@ slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` rout
   this oracle rather than the firmware. Not claimed: no device result, no timing/envelope claim, no F-7/F-8/AC-8
   qualification, no change to the launch that owns the demand's `sv` term. Detail:
   [`2026-10-07-s64-demand-leg`](evidence/2026-10-07-s64-demand-leg/EXECUTION.md).
+
+  ***Authorized device run 2026-10-07* (`captures/s64-demand-01`; owner: *"Yes — flash and run the leg now"*, target
+  *"Track 8 slot 4"*; image `teensy41-capture-serial-window-qualification`, `firmware.hex` sha256 `8e558cd7ff846d68…`,
+  git `71bcfe2c`) — the demand now exists on hardware, and its refusal is one named term.** The lane was given work for
+  the **first time** in this change's device history: `win_gap` blocks with `elig=10/prog=10` and `elig=1/prog=1` and
+  `denied=0`, a `build_complete` publication (`t=7 s=4 len=19200`), and a readiness receipt **under transport**
+  (`win_readiness,7,4,owes_build,window_build_owner,1,0`) — with `window_demand_observed` **true**, receipts,
+  coverage and the no-overrun checks **passing**, and **zero** exceedances of the declared `permitted=64`. The
+  **entry trio that five earlier runs could not satisfy now holds** (`ep=1 av=1 al=1`): the leg's record committed
+  **19968 ticks = 26 bars**, and `19968 % 1536 == 0`, so the recorded loop is demoted *and* span-aligned. Every refusal
+  on a demoted, aligned, playing slot is then the **servability** term alone — `win_not_servable` with `sv=0` (no
+  complete published current window), including where the root is current (`rt=1`) and the coverage role is available
+  (`rl=1`) — and the one window that *was* published belongs to the **switch target** (`t=7 s=4`), whose switch then
+  **held at its bound** (`Loop 5: Queued playback switch` → `slot_switch_hold_exceeded track=7 target=4 age=3072`) beside
+  the receipt naming the holder that still owes it. The lane's only verifier failure is
+  `window_boundaries_crossed_under_transport` (`build_complete_under_transport=1`, needs ≥2). The reused leg's own oracle
+  failed on its **length expectation** (`unexpected_loop_len expected≈17664 observed=[19968]`) — a **host** expectation,
+  not a firmware defect, since the record-stop quantisation is what made the loop span-aligned; reconciling the leg's
+  `--record-bars` → committed-length relationship belongs with the leg. **The next step is therefore no longer "get a
+  demand": it is the active slot's first window** (the launch's source publication for a demoted target — the admitted
+  idle producer of `s64-trace-01` plus this run's hold and `owes_build` receipt). 6.4/6.5 stay open, F-7/F-8/AC-8 and
+  6.5's hardware claims stay **NOT RUN**, and no timing/envelope claim is made. Detail:
+  [`2026-10-07-s64-demand-device-run/DEVICE-RUN.md`](evidence/2026-10-07-s64-demand-device-run/DEVICE-RUN.md).
 - [ ] 6.5 Apply the **native/hardware verification split** (*DEC-108 §13 verification split*) — verify **native** forces, on
   the real request→worker→publication→consumption path with controlled ticks and explicit expected MIDI output (no
   sleeps, no copied state machines): A→B→A slot reuse with the first A completion arriving last, the interval A/B

@@ -1,3 +1,19 @@
+**2026-10-07 — `windowed-playback-generation` 6.4: **authorized device run** — the demand exists on hardware and its refusal is now one named term (`captures/s64-demand-01`).**
+Owner-authorized upload + run (*"Yes — flash and run the leg now"*, target track 8 slot 4); image `teensy41-capture-serial-window-qualification`,
+`firmware.hex` sha256 `8e558cd7ff846d68…`, git `71bcfe2c`. **First device evidence that the lane is given work:** `win_gap` blocks with
+`elig=10/prog=10` and `elig=1/prog=1` (`denied=0`), a `build_complete` publication (`t=7 s=4 len=19200`), and a readiness receipt
+**under transport** (`win_readiness,7,4,owes_build,window_build_owner,1,0`) — `window_demand_observed` **true**, receipts/coverage/
+no-overrun checks **pass**, **zero** exceedances of `permitted=64`. The **entry trio now holds** (`ep=1 av=1 al=1`): the record
+committed **19968 ticks = 26 bars**, span-aligned. Every refusal on a demoted, aligned, playing slot is then `win_not_servable` with
+`sv=0` (no complete published current window), including where the root is current (`rt=1`) and the coverage role is available
+(`rl=1`); the one published window belongs to the **switch target** (`t=7 s=4`), whose switch **held at its bound**
+(`slot_switch_hold_exceeded track=7 target=4 age=3072`). The lane's only verifier failure is
+`window_boundaries_crossed_under_transport` (one publication, not a crossing). The reused leg's own oracle failed on its length
+expectation (`expected≈17664 observed=[19968]`) — a **host** expectation, not a firmware defect. **Not claimed:** F-7/F-8/AC-8 and
+6.5's four hardware claims stay **NOT RUN**, no timing/envelope claim, no firmware change. **Next: the active slot's first window**
+(the launch's source publication for a demoted target), not "get a demand". Detail:
+[`DEVICE-RUN.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-07-s64-demand-device-run/DEVICE-RUN.md).
+
 **2026-10-07 — `windowed-playback-generation` 6.4 (exercise half): the demand-creating leg — the lane's entry term is named, and the demand is given the time the measurement says it needs (host tooling + host tests; no firmware line, no device run).**
 The gap **F-16** recorded (five device runs spent telling "nothing owed" from "refused, and by which term") is closed on the host
 side: the leg's verifier reads the lane's own `DIAG,win_gate` rows by `DebugSessionCapture::winGateRow`'s field order, so a run with
