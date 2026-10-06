@@ -734,6 +734,24 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   the single persistence drain budget (`SyncDrainBudget` + `buildSyncDrainBudget(input, sliceBudgetUs)`), which this
   change neither consumes nor shares. Its two **INTERPRETATION** rows are marked as mappings a reader can dispute
   without the citation being wrong. **The audit the task asks for is recorded too:** one deferred-service enumeration
+
+  ***Authorized device run of the slice 2026-10-07* (`captures/s64-37c-01`; image `5786cdb23cf22623…`, git `1a61a6a9`;
+  the same leg, target and invocation as `s64-demand-01`, so the slice is the only variable): the change is visible on
+  hardware, on the active slot.** The same state that used to end the lane — demoted, span-aligned, playing, root
+  current, **nothing served** — now reports
+  `t=7,s=3,x=win_requested,len=18432,ep=1,av=1,al=1,pl=1,ed=0,od=0,pv=0,rw=0,sv=0,rt=1` where the previous run reported
+  `x=win_not_servable … sv=0 rt=1 rl=1`; the frame then moves through `win_waiting` / `win_blocked` /
+  `win_blocked_by_request` instead of stopping at a refusal, and the remaining refusal is the one that should remain
+  (`win_not_servable` with `rt=0`, before the root is current). The lane **served** the demand
+  (`win_gap elig=4 prog=3 denied=1`, and `elig=1 prog=1`) and the readiness receipt names the holder that still owes the
+  build (`win_readiness,7,4,owes_build,window_build_owner,1,0`); the switch target's launch chain also went further than
+  before (`launch_requested` → `launch_requested_match` → `launch_building_match` → `launch_ready` →
+  `launch_ready_owns_source`). **Not claimed:** no `build_complete` publication for the active slot appeared in this
+  run, so the slot is **not yet served from a window on hardware** — the device claim is exactly that the request is
+  opened where it used to be refused; the next measured question is now *why a first window's build does not complete
+  within the service the leg gives it* (the `denied=1` turn and the `window_build_owner` receipt are the surface, and
+  the launch lane's slow-publication family from `s64-trace-01`/`s64-progress-01` is the same question). Detail:
+  [`2026-10-07-s37c-device-run/DEVICE-RUN.md`](evidence/2026-10-07-s37c-device-run/DEVICE-RUN.md).
   (`DeferredIdleOwner`, `include/Utils/MidiServiceDrain.h:13`) — this change added a *value* (`PlaybackViewMaintenance`,
   task 3.1, on the `SlotProvision` precedent), the dispatch rides the existing frame (`src/main.cpp:463`), eligibility
   is state-driven (`playbackViewMaintenanceNeeded`), and the lane has no queue, timer, thread or request record of its
