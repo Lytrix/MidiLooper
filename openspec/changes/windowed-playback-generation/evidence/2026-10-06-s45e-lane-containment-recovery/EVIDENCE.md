@@ -1,126 +1,160 @@
-# 4.5 — containment and recovery are driven by the lane's own serving boundary (firmware + tests)
+# 4.5 — the lane's adoption boundary is the production caller that recovers a latched fault (firmware + tests)
 
 Slice of task **4.5** (its **recovery half**) on task **3.7a**'s serving path. Packet:
-[`EXECUTION.md`](EXECUTION.md). Commit message: *4.5 recovery — containment and recovery are driven by the lane's own
-serving boundary*.
+[`EXECUTION.md`](EXECUTION.md) (§8 is the revision record: this EVIDENCE reports the **landed** slice, and §3 below records
+what an independent review withdrew from its first form). Commit message: *4.5/I10 (fix) — only the adoption boundary
+recovers; the last-resort wiring is withdrawn on review*.
 
 ## 1. What was wrong, measured before the edits
 
-`Track::advancePlaybackLagTraversal`, `Track::containmentForSlot` and `Track::applyLastResortForSlot` had **no production
-caller**: `src/` contained only their definitions, and the only callers anywhere were tests. Two consequences, both
-repaired here:
+`Track::advancePlaybackLagTraversal` had **no production caller at all**: `src/` contained only its definition (plus the
+definition of the policy it drives), and the only callers anywhere were tests. The consequence this slice repairs:
 
-* the latched **deadline-contract fault never cleared in production** — the *only* clear site is
+* the latched **deadline-contract fault never cleared in production** — its only clear site is
   `advancePlaybackLagTraversal`'s `Current` branch (`lag.missedTraversals = 0; lag.breachReported = false;
-  runtime->deadlineContractFaultLatched = false;`), so a fault latched through the one route that *was* wired (an
-  admitted promise whose deadline passes, `serviceAdmittedDeadlineMisses` → `noteMissedTraversalForSlot`) was permanent;
-* the **approved last resort was unreachable**: nothing consulted `containmentForSlot`, so the exception DEC-108 §13(f)
-  grants could never be applied.
+  runtime->deadlineContractFaultLatched = false;`), so a fault latched through the one route that *was* wired (an admitted
+  promise whose deadline passes, `serviceAdmittedDeadlineMisses` → `noteMissedTraversalForSlot`) was **permanent**.
 
-The measured first failure of the new fixture (pre-slice) was exactly that: *"the eligible boundary clears the latched
-fault: recovery through the real consumer, not a silent reset"* — the fault stayed latched across a real adoption.
+`Track::containmentForSlot` / `Track::applyLastResortForSlot` had no production caller either — and **still do not** (§3):
+the approved last resort remains unreachable, and that is now named as owed rather than implied repaired.
+
+**Measured first failure of the landed fixture (pre-slice):** *"the eligible boundary is the production caller that clears
+the latched fault: recovery through the real consumer, not a silent reset"* — the fault stayed latched across a real
+adoption.
 
 ## 2. What landed
 
-Three calls in `Track::resolveRollingPlaybackWindow` (FLASH-placed boundary work, the lane's own per-traversal frame,
-reached from the clock path by the call that already exists — so no new ITCM call site in the default image):
+**One call** in `Track::resolveRollingPlaybackWindow` (FLASH-placed boundary work at the lane's own per-traversal frame,
+reached from the clock path by the call that already exists — so no new ITCM call site in the default image), at the
+frame's **adoption boundary** (`clock.tick == frame.deadlineTick && phase == frame.startPhase`, after the adopted view has
+been validated and `adoptPreparedPlaybackWindow` succeeded):
 
-1. **At the frame's adoption** (the eligible boundary — `clock.tick == frame.deadlineTick && phase == frame.startPhase`
-   and `adoptPreparedPlaybackWindow` succeeded):
-   `advancePlaybackLagTraversal(slot, frame.startPhase, span, loop.playbackRevision, /*replacementReady=*/true)` →
-   `Current` → **the episode and any latched fault end here.** This is the production caller the task owed, and it is
-   still the *only* clear site, so recovery is still "the serving path recovered", never a silent reset.
-2. **At the frame's expiry** (a `Serving` frame whose traversal passed unserved):
-   `advancePlaybackLagTraversal(…, /*replacementReady=*/false)` → the first miss is the **allowance**
-   (`one_pass_late`, named once), a second consecutive miss of the **same interval** is the named **breach** (the latch).
-   Called only at the boundary event, never per turn: the count is per traversal.
-3. **At the point where the lane's own window stops serving** (the three `Serving`-phase rejections: the bound view is
-   no longer current, is no longer the immutable window it was, or no longer covers the phase): `applyLastResortForSlot`
-   — `NotNeeded` unless the fault is latched **and** no valid coverage remains, and slot-scoped by construction.
+```cpp
+(void)advancePlaybackLagTraversal(slot, frame.startPhase, span, loop.playbackRevision,
+                                  /*replacementReady=*/true);
+```
+
+`resolvePlaybackLag` returns `Current` on its `replacementReady` branch, and `Current` ends the episode: `missedTraversals`
+→ 0, `breachReported` → false, `deadlineContractFaultLatched` → false. So the episode and any latched fault end **where the
+serving path really recovered** — at the boundary that may serve the current revision — and this is the **only** production
+clear site.
 
 No new state, no new row family, no scheduler, no second authority; `PlaybackLagState` and the containment policy are
-unchanged. `serviceAdmittedDeadlineMisses`' own counting is untouched.
+unchanged, and `serviceAdmittedDeadlineMisses`' own wiring is untouched.
 
-## 3. Verification
+**Named honestly:** with `replacementReady=true` the call does not read `servedIsCurrent`, so at this site it is a
+**statement** ("this boundary may serve the current revision") rather than a discriminator; `desiredRevision` is passed for
+the record. That is the eligible boundary's intended semantics, and the red-proof (RP-A) is exactly what makes it
+load-bearing: remove the call and the fixture fails.
 
-* **Focused** `test_runtime_working_set_ownership` **176/176** (baseline 175/175), and the pre-existing rolling fixtures
-  are unchanged (the admissible shape still reports *zero* `one_pass_late` rows: an adoption is `Current`, not a miss).
-* **Full native** `pio test -e native` **2,855 cases / 7 skipped / 2,848 succeeded / 0 failed** (baseline 2,854 / 7 /
-  2,847 from the I9 record; no suite ERRORED or FAILED).
-* **Default capture build** `pio run -e teensy41-capture-serial` **SUCCESS** with the RAM1 line **byte-identical**
-  (`variables 96,192` / `ITCM 393,216 (code 392,248 + padding 968)` / `locals 34,880`): the slice lives behind
-  `PLAYBACK_WINDOW_ROLLING_ENABLED`, which that image keeps at **0**, so the shipping image is unchanged by
-  construction and by measurement.
-* **Lane-enabled build** `pio run -e teensy41-capture-serial-window-qualification` is **over its own approved budget
-  before and after this slice** (measured A/B by stashing the slice): baseline `code 393,240 + padding 32,744` → with the
-  slice `code 393,384 + padding 32,600`, i.e. **+144 B of ITCM** in the lane-enabled image, in the same
-  documented silent-boot-hang shape I5 recorded when that env could not be flashed. **Named limit:** this new behaviour
-  is therefore **not device-observable** until that env is funded; nothing about it is claimed at the device level.
-* `git diff --check` clean, strict `openspec validate` valid.
-* **Red-proofs, each restored byte-identically and sha256-checked** (`src/Track/TrackPlaybackWindowBuild.cpp`
-  `01120d7405ae347f…`):
+## 3. What an independent review withdrew (and why it stays on the record)
 
-| id | mutation | measured |
+The first form of this slice was committed as **`eefd90a5`** and wired two more sites: the **expiry** judgement
+(`advancePlaybackLagTraversal(…, /*replacementReady=*/false)` when a `Serving` frame's traversal passed) and the **last
+resort** (`applyLastResortForSlot`) at the resolver's three `Serving`-phase rejections. One independent review falsified
+that form; the working tree was then **reduced** to §2. The findings:
+
+| id | finding | status |
 |---|---|---|
-| **RP-A** | the adoption judgement removed | **RED** — *"the eligible boundary clears the latched fault: recovery through the real consumer, not a silent reset"* |
-| **RP-B** | the expiry judgement removed | **RED** — *Expected 1 Was 0. and that traversal is named as the one-pass-late allowance, exactly once* |
-| **RP-C** | the containment application removed (all three sites) | **RED** — *Expected 1 Was 0. exactly the affected slot's one open note is closed* |
+| **F1** | **Wrong silence.** The resolver's three rejections are exactly the turns the **retained merged fallback** takes the slot over, so `applyLastResortForSlot` there closes a sounding that another serving route is about to play. | verified |
+| **F4** | **Wrong interval.** At the expiry the phase has advanced a whole span past `frame.startPhase`, so the call named the interval the frame had just *served* (at worst one pass late) rather than the traversal that went unserved. `PlaybackLagState` resets the episode when the interval changes, so the call minted the allowance for the wrong interval; the promise route already counts that miss with the demand's own identity. | verified |
+| **F3** | The expiry call can also resolve `Current` (when the published revision is already the desired one) and therefore *clear*: "the adoption boundary is the only clear site" was **false while it existed**, and became true again only by the withdrawal. | accepted |
+| **F2 / F5** | The containment sites' reachability is not established: `containmentForSlot`'s "no valid coverage remains" is defined on the published **window**, which is not this resolver's rejection condition, and only one of the three sites is reachable at all. | accepted |
+| **F6** | The fixture manufactured a state the publication path cannot reach (it advanced `loop.playbackRevision` and then used `+1` again as the desired revision). | accepted |
+| — | Over-claim: the first form's text said `serviceAdmittedDeadlineMisses` "keeps its own count". Both routes share `lagState.missedTraversals`, `breachReported` and the latch through `noteMissedTraversalForSlot`; only the promise route's per-promise dedup counter is its own, and `Current` resets the shared episode state. | corrected in the docs of this commit |
 
-## 4. The fixture, and exactly what it measures
+**Consequence, stated plainly:** the **last resort / containment application is not delivered by this slice.** It needs an
+owner-level predicate for "no serving route at all" (or 3.7b's fallback removal) before it can be wired;
+`containmentForSlot` / `applyLastResortForSlot` therefore still have **no production caller**.
 
-`test_containment_and_recovery_are_driven_by_the_lane_boundary` builds its own shape (a 24-bar demoted loop in the
-selected track's slot 0, its root published, prewarmed, playing, and a **served window** established through the window
-lane's own `requestPlaybackWindow` → `stepPlaybackViewMaintenance` → served-window path), then opens the lane's demand
-with `Track::serviceRollingPlaybackWindow` and drives it with the suite's `rollingTestTick` (selector + one worker turn
-every 64 ticks) — so `resolveRollingPlaybackWindow` runs from the clock path, as in production:
+## 4. Verification (the landed slice, re-run on the frozen tree)
 
-* **(1)** two consecutive misses of the frame's own interval latch the fault; the lane then prepares, builds and
-  **adopts**, and the fault is **cleared** — recovery through the real consumer — with the served window untouched and no
-  silencing row;
-* **(2)** the content revision advances while the requester is not serviced, so the frame's traversal expires with the
-  interval one pass late: exactly **one** `one_pass_late` row, **no** `lag_breach`, no latch;
-* **(2a)** the lane re-serves an interval (the expiry ended that episode), so the two checks below run with the resolver
-  engaged and a `Serving` frame;
-* **(3)** the control: with the fault latched and a readable, covering window, **zero** closures for the marked sounding,
-  the entry alive, and **no** `last_resort_slot_silence` row;
-* **(4)** the exception: with the fault latched and the lane's own window no longer servable, exactly **one** closure for
-  that slot's marked sounding, that slot's ledger cleared, a **sibling slot's** sounding untouched, the
-  `last_resort_slot_silence` row present, and the transport unchanged.
+* **Focused** `test_runtime_working_set_ownership` **176/176** (baseline 175/175 at I9 `2f0feced`; re-run after the fixture
+  doc-comment cleanup, still 176/176), and the pre-existing rolling fixtures are unchanged.
+* **Full native** `pio test -e native` **2,855 cases / 7 skipped / 2,848 succeeded / 0 failed** (baseline 2,854 / 7 /
+  2,847; +1 = the new fixture). No suite ERRORED or FAILED.
+* **Default capture build** `pio run -e teensy41-capture-serial` **SUCCESS** with the RAM1 line **byte-identical**
+  (`variables 96,192` / `ITCM 393,216 (code 392,248 + padding 968)` / `locals 34,880`, approved floor `padding >= 840`):
+  the call lives behind `PLAYBACK_WINDOW_ROLLING_ENABLED`, which that image keeps at **0**, so the shipping image is
+  unchanged by construction and by measurement.
+* **Lane-enabled build** `pio run -e teensy41-capture-serial-window-qualification` **FAILED its own guard** — and that is
+  the honest number: `variables 96,192 / ITCM 425,984 (code 393,240 + padding 32,744) / locals 2,112`, i.e. **exactly the
+  pre-slice baseline** (`capq_base.log` measured the same line before this slice): this slice adds **0 B** to that image,
+  and the image is over its own approved budget **independently of it** (12 banks = 393,216 B; the 13th costs 32,768 B of
+  local allowance and is the documented silent boot hang, I5's record). For contrast, the **withdrawn** calls had cost
+  **+144 B** there (`code 393,384 + padding 32,600`), and withdrawing them restored the baseline byte-for-byte.
+  **Named limit:** the lane-enabled behaviour is therefore **not device-observable**, and nothing about it is claimed from
+  hardware.
+* `git diff --check` clean; strict `openspec validate windowed-playback-generation --strict` valid.
+* **Order of operations, stated so the numbers are not over-read:** the full native run, the capture and qualification builds
+  and the red-proof were taken on the slice **before** the fixture doc-comment cleanup recorded in §6. That cleanup changed
+  **comments and a duplicated declaration only** (the fixture's compiler-visible token stream is unchanged), the capture and
+  qualification builds compile `src/` and are untouched by it, and the **focused suite was re-run after it: 176/176**.
+  `src/Track/TrackPlaybackWindowBuild.cpp` is byte-identical to the pre-red-proof copy (`d875a6c7…`, `diff`-verified), so the
+  red-proof's restore claim holds for the tree as committed.
+* **Red-proof RP-A** (the adoption judgement removed): **RED** at the fixture's own assertion — reported at
+  `test_runtime_working_set_ownership.cpp:6753` in the red-proof run (6754 after the comment-only cleanup), message *"the
+  eligible boundary is the production caller that clears the latched fault…"* — and the suite then ends `ERRORED` (SIGHUP) —
+  the same shape every aborted Unity run in this suite takes; the
+  failure is the assertion, not a harness or setup error. **Restore byte-identical**, verified twice: `diff` against the
+  pre-mutation copy (`rp/i10b_winbuild.cpp`) and sha256
+  `d875a6c70b9f197cd9c64a292773bd5e57b01f89281017f75163ff87f54bd8c3` for `src/Track/TrackPlaybackWindowBuild.cpp`, which is
+  the file's sha256 **before and after** the mutation. (Unity's summary line for the aborted run reads *177 cases: 1 failed,
+  175 succeeded* against the green run's *176: 176*; recorded as observed rather than explained away.)
+* **Void red-proofs:** RP-B (the expiry judgement removed) and RP-C (the containment application removed) measured the
+  **withdrawn** sites and are not evidence for this slice.
 
-## 5. Recorded rather than smoothed over
+## 5. The fixture, and exactly what it measures
 
-* **The first fixture used the neighbouring S4b.7a harness and had to be replaced.** `assert_s4b_7_a_demoted_target_
-  through_the_turn` passed inside the fixture, but the run reported a *trailing* failure at the harness's own switch
-  commit (`Expected 2 Was 0`) attributed to this fixture, and the suite ended ERRORED (SIGHUP) in every arrangement
-  tried — including with this slice stashed, and including two different positions in the run order. The fixture is now
-  **self-contained** (it neither borrows nor perturbs another fixture's preconditions) and the error is gone; the
-  incident is recorded because it is a real trap for anyone else reusing that harness from a new fixture.
-* **Two pre-existing suite entries were lost and restored.** A cut that was meant to remove my own duplicate
-  `RUN_TEST` line took `test_window_contention_sweep_measures_the_composed_cost_across_h_and_k` and
-  `test_window_contention_sweep_scales_with_density_and_is_span_independent` with it; a diff of the `RUN_TEST(...)` sets
-  against `HEAD` caught it and both are back. The suite's entry list now differs from `HEAD` by exactly one line.
-* **The control (3) is a control, not a discriminator.** It passes with and without the containment application by
-  construction (nothing is applied while coverage remains); its job is to make the exception's *guard* assertable, and
-  `RP-C`'s discriminator is (4).
-* **The fixture sets two states directly, and names them:** the content revision it advances (the edit path that
-  advances a revision is not this slice's subject) and the "window no longer servable" flag (`published = false`; which
-  lifecycle event retires a published window belongs to that owner). Both are inputs, not claims.
-* **The miss route's own cadence.** A miss is counted only at a boundary event and the interval identity passed is the
-  frame's own (`frame.startPhase`, span), so the allowance is per interval and per pass — the rule
-  `PlaybackLagState` already documents. With a sliding span, two adjacent frames are different intervals and therefore
-  different episodes; the loop-pass route through `serviceAdmittedDeadlineMisses` keeps its own count.
+`test_the_lane_boundary_is_the_production_caller_that_recovers_a_latched_fault` is **self-contained** (it neither borrows
+nor perturbs another fixture's preconditions): it builds a 24-bar demoted loop in the selected track's slot 0, publishes its
+root, prewarms the slot, forces `TRACK_PLAYING`, establishes a **served window** through the window lane's own
+`requestPlaybackWindow` → `stepPlaybackViewMaintenance` → `playbackWindowServesSlot` path, latches the fault through the
+policy's own entry (`advancePlaybackLagTraversal(…, /*replacementReady=*/false)`: the first miss is the allowance, the
+second consecutive one of the same interval is the breach), opens the lane's demand with
+`Track::serviceRollingPlaybackWindow`, and drives with the suite's `rollingTestTick` (selector + one worker turn) so
+`resolveRollingPlaybackWindow` runs from the clock path:
 
-## 6. Named, not claimed
+1. **the latch's own precondition:** the fault is latched **while no lane promise is outstanding** — the state the boundary
+   below recovers from (asserted, so the fixture does not merely assert the latch);
+2. **the recovery:** the lane opens its demand, prepares, builds and **adopts**; at the adoption the fault is **cleared**,
+   `lagState.missedTraversals` is back to **0** (the episode ended, so the next miss starts a fresh allowance), and the
+   served window is untouched;
+3. **the wire and the ledger are untouched by the recovery:** a following serving turn emits **zero** closures for the slot's
+   marked sounding (pitch 60), the entry is still active, **no** `last_resort_slot_silence` row, and **no** `lag_breach`
+   row is attributed to the recovery.
 
-* **No device leg.** The lane-enabled image cannot be flashed at all (its own guard fails; §3) and the default image does
+**Not covered by this fixture** (recorded in its own doc comment): the **expiry** judgement and the **last-resort
+application** — both withdrawn (§3). The fixture's rows are cleared immediately before the drive, so the row family
+describes the recovery only.
+
+## 6. Recorded rather than smoothed over
+
+* **The S4b.7a harness is not reusable from a new fixture.** The first draft reused
+  `assert_s4b_7_a_demoted_target_through_the_turn`; it passed *inside* the fixture but the run reported a **trailing**
+  failure at the harness's own switch commit and the suite ended `ERRORED` in every arrangement tried — including with the
+  slice stashed, and at two different positions in the run order. The landed fixture is self-contained and the error is gone;
+  the incident is recorded because it is a real trap.
+* **Two pre-existing `RUN_TEST` entries were lost and restored** (an over-wide cut intended for my own duplicate line also
+  removed two `test_window_contention_sweep_*` entries). Caught by diffing the `RUN_TEST(...)` set against `HEAD`. The
+  invariant now holds and is checked: against **`2f0feced`** (I9) the entry set differs by **exactly one line** (this
+  fixture), and against **`eefd90a5`** by **exactly one renamed entry** (176 entries both sides).
+* **The fixture's own doc comment and a duplicated declaration were repaired in this commit.** The wide slice had left the
+  comment describing the withdrawn behaviour (the "containment application lives there" clause) and a second copy of the
+  `rollingTestTick` declaration plus a broken sentence across the helper insertion. Both are fixed here, because a comment
+  that describes withdrawn behaviour is the same defect as a doc that does.
+* **No `ExecutionBounds.md` row, no timing claim, no device row.**
+
+## 7. Named, not claimed
+
+* **No device leg.** The lane-enabled image cannot be flashed (it fails its own RAM1 guard; §4) and the default image does
   not contain this code, so nothing is claimed from hardware. No timing claim, no `ExecutionBounds.md` row change, no
   fallback removal (3.7b).
-* **The exception is applied only while the lane is serving this slot.** The containment call sits in the resolver's
-  `Serving`-phase rejections, so a slot the lane is not serving (an `Idle`/rejected/`Blocked` frame) is not silenced by
-  it — the retained merged fallback keeps serving exactly as before. Whether "no valid coverage" should also cover
-  *non-lane* serving is an owner-level contract this slice does not invent.
-* **`serviceAdmittedDeadlineMisses` is unchanged**, so a promise miss that no lane frame is serving still latches
-  without a boundary of its own.
-* **4.5 stays open** on its remaining item: **displayed provenance** (the display's, per
-  [`DISPLAY-CONSUMER-RECONCILIATION.md`](../../DISPLAY-CONSUMER-RECONCILIATION.md) → RWO **S4e**). The recovery gate
-  itself is delivered here; **3.7a stays open** (3.7b's conditions are unchanged), and 3.14 is untouched.
+* **Containment / the approved last resort is NOT delivered** by this slice: `containmentForSlot` /
+  `applyLastResortForSlot` have no production caller (§3), and a last resort owned by this resolver would silence a slot the
+  retained merged fallback is about to serve. This is the item the withdrawn form attempted and the review rejected.
+* **`serviceAdmittedDeadlineMisses` is unchanged**, and the shared episode counter means an adoption resets state the
+  promise route fed (the earlier draft's "keeps its own count" was wrong).
+* **4.5 stays open** on **production containment / the approved last resort** and on **displayed provenance** (the
+  display's, per [`DISPLAY-CONSUMER-RECONCILIATION.md`](../../DISPLAY-CONSUMER-RECONCILIATION.md) → RWO **S4e**). The
+  **recovery gate** itself is delivered here. **3.7a stays open** (3.7b's conditions are unchanged), and 3.14 is untouched.

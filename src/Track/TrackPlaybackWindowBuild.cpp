@@ -3782,37 +3782,18 @@ Track::RollingResolution Track::resolveRollingPlaybackWindow(
   if (!set) return rejectRollingFrame(*runtime, loop);
   constexpr uint32_t span = 2 * Config::TICKS_PER_BAR;
   if (frame.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
-    if (set->lifecycle.current >= set->views.size() || set->lifecycle.current != frame.boundView) {
-      (void)applyLastResortForSlot(slot, phase);
-      return rejectRollingFrame(*runtime, loop);
-    }
+    if (set->lifecycle.current >= set->views.size() || set->lifecycle.current != frame.boundView) return rejectRollingFrame(*runtime, loop);
     const auto& current = set->views[set->lifecycle.current];
     if (!current.complete || !current.published || current.storageGeneration != frame.boundStorageGeneration ||
         current.source.sourceGeneration != frame.generation || current.source.origin != PlaybackWindowOrigin::Committed ||
         current.coverage.startPhase != frame.startPhase || current.coverage.lengthTicks != span ||
-        current.coverage.loopLengthTicks != frame.loopLength) {
-      (void)applyLastResortForSlot(slot, phase);
-      return rejectRollingFrame(*runtime, loop);
-    }
+        current.coverage.loopLengthTicks != frame.loopLength) return rejectRollingFrame(*runtime, loop);
     if (clock.tick >= frame.deadlineTick && clock.tick - frame.deadlineTick >= span) {
-      // Task 4.5's **miss**, judged where it really happened: the traversal this frame promised has passed with the
-      // interval served at its previous revision. The first such miss of the episode is the allowance the spec protects
-      // (named once, `one_pass_late`); a second consecutive miss of the **same** interval latches the named
-      // deadline-contract fault. Never called per turn: the count is per traversal, so only a boundary event may judge.
-      (void)advancePlaybackLagTraversal(slot, frame.startPhase, span, loop.playbackRevision,
-                                        /*replacementReady=*/false);
       frame.phase = LoopPlaybackRuntime::RollingPhase::Idle;
       loop.nextEventIndex = 0; // Fallback's crossing predicate excludes the already-served interval.
       return {RollingOutcome::Expired, nullptr};
     }
-    if (!current.coverage.contains(phase)) {
-      // The lane's own window stopped **covering** this traversal: `containmentForSlot`'s "valid coverage remains" is
-      // false here, so this is where the approved exception is applied. It answers `NotNeeded` unless the
-      // deadline-contract fault is latched, and it can only ever silence **this slot** (never the transport, never a
-      // rebuild), so a covered slot and a healthy slot emit nothing at all.
-      (void)applyLastResortForSlot(slot, phase);
-      return rejectRollingFrame(*runtime, loop);
-    }
+    if (!current.coverage.contains(phase)) return rejectRollingFrame(*runtime, loop);
     // The copied interval is immutable even if a newer content revision arrives.
     return {RollingOutcome::Serving, &current};
   }
@@ -3829,6 +3810,12 @@ Track::RollingResolution Track::resolveRollingPlaybackWindow(
   // Task 4.5's **eligible boundary, and its only recovery**: the replacement prepared for this traversal was adopted
   // here, so this traversal *may serve the current revision* -- the episode ends and a latched deadline-contract fault
   // clears, because the serving path really recovered rather than because a later edit forgave it.
+  //
+  // Two neighbours this site briefly had were withdrawn by independent review (2026-10-06), recorded in
+  // `evidence/2026-10-06-s45e-lane-containment-recovery/`: judging the lag at the **expiry** attributes the miss to the
+  // interval that was served in full (the promise route counts that miss with the demand's own identity), and applying
+  // the **last resort** from this resolver's rejections would silence a slot the retained merged fallback is about to
+  // serve in the same turn -- that needs an owner-level "no serving route at all" predicate first.
   (void)advancePlaybackLagTraversal(slot, frame.startPhase, span, loop.playbackRevision,
                                     /*replacementReady=*/true);
   return {RollingOutcome::Serving, &set->views[set->lifecycle.current]};

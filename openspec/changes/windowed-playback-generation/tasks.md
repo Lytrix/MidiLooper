@@ -630,35 +630,51 @@ two mutations). **Recorded, not smoothed:** the fixture's first draft used the l
 a long slot's merged store is a **two-bar slice** and the reconcile returns early — which is itself the reach limit this
 task now states (the demoted long-loop serving handoff is the windowed lane's, 3.7a/3.14). **Not claimed:** no device
 leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the off-clock call sites are
-covered natively only; 4.5's **displayed provenance** (display → RWO S4e) and **eventual recovery through the real
-consumer** (`advancePlaybackLagTraversal` still has no production caller) remain owed. Detail:
+covered natively only; 4.5's **displayed provenance** (display → RWO S4e) remains owed -- the other item this note listed,
+**eventual recovery through the real consumer**, was delivered by I10 (the adoption boundary is `advancePlaybackLagTraversal`'s
+production caller). Detail:
 [`evidence/2026-10-06-s45c-moving-closure/EVIDENCE.md`](evidence/2026-10-06-s45c-moving-closure/EVIDENCE.md) with its
 [`EXECUTION.md`](evidence/2026-10-06-s45c-moving-closure/EXECUTION.md) packet.
 **3.7a increment I10 (task 4.5's recovery half) landed 2026-10-06 (firmware + tests; both tasks stay open).** The
-containment policy was implemented and measured but had **no production caller**: nothing cleared a latched
-deadline-contract fault (its only clear site is `advancePlaybackLagTraversal`'s `Current` branch) and nothing applied the
-approved exception (`containmentForSlot` / `applyLastResortForSlot`) -- so a latched fault was permanent and the last
-resort unreachable. The lane's serving resolver owns exactly the two per-traversal events that can judge it: **adoption**
-(the eligible boundary: the boundary may serve the current revision, so the episode and any latched fault end there --
-the production caller the task owed, still the only clear site) and **expiry** (the traversal passed with the interval
-still at its previous revision: the first miss is the named allowance `one_pass_late`, a second consecutive one of the
-same interval is the breach). The containment is applied where the lane's own window stops serving (the three
-`Serving`-phase rejections), `NotNeeded` unless the fault is latched **and** no valid coverage remains. **Measured**
-through the lane's real path: the fault clears at a real adoption with the served window untouched and nothing silenced;
-an expiry names exactly one allowance and no breach; a latched fault with a covering window closes nothing; and with the
-window no longer servable exactly one closure goes out for that slot's sounding, a sibling slot's is untouched and the
-transport is never stopped. Verified: focused **176/176** (baseline 175/175), full native **2,855 / 7 skipped / 2,848
-succeeded / 0 failed** (baseline 2,854/7/2,847), default capture build **SUCCESS** with the RAM1 line **byte-identical**
-(the slice is behind `PLAYBACK_WINDOW_ROLLING_ENABLED`, which that image keeps at 0 -- so the shipping image is unchanged
-by construction), the lane-enabled qualification image measured **+144 B of ITCM** and **already over its own budget
-before this slice** (I5's recorded blocker, so it cannot be flashed and nothing device-level is claimed), strict
-validation and `git diff --check` clean, and **three red-proofs RED with byte-identical restores** (RP-A the adoption
-judgement removed, RP-B the expiry judgement removed, RP-C the containment application removed). **Recorded, not
-smoothed:** the first fixture reused the S4b.7a harness and produced a *trailing* harness failure plus an ERRORED suite in
-every arrangement (with the slice stashed too); it is now self-contained, and two pre-existing `RUN_TEST` entries that an
-over-wide cut had removed were caught (by diffing the entry list against `HEAD`) and restored. **Not claimed:** no device
-leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the exception is applied only while
-the lane is serving the slot; `serviceAdmittedDeadlineMisses` is unchanged. Detail:
+containment policy was implemented and measured long ago, but `Track::advancePlaybackLagTraversal` had **no production
+caller at all**: nothing cleared a latched deadline-contract fault (its only clear site is that function's `Current`
+branch), so a fault latched through the one route that *was* wired (an admitted promise past its deadline,
+`serviceAdmittedDeadlineMisses` -> `noteMissedTraversalForSlot`) was permanent. The lane's serving resolver now owns the
+**one** event that can end such an episode: the **adoption boundary** of `Track::resolveRollingPlaybackWindow` -- the
+eligible boundary, where the boundary may serve the current revision because the prepared replacement was just adopted --
+calls `advancePlaybackLagTraversal(slot, frame.startPhase, span, loop.playbackRevision, /*replacementReady=*/true)`, whose
+`Current` branch ends the episode and clears the fault. **Measured** through the lane's real path (a demand opened by
+`Track::serviceRollingPlaybackWindow`, then `stepPlaybackViewMaintenance` -> the resolver, driven by the suite's
+`rollingTestTick`): a latched fault is cleared by a real adoption, the episode counter returns to zero, the served window is
+untouched and nothing is closed or silenced -- recovery through the real consumer, not a reset. Verified: focused **176/176**
+(baseline 175/175), full native **2,855 / 7 skipped / 2,848 succeeded / 0 failed** (baseline 2,854/7/2,847), default capture
+build **SUCCESS** with the RAM1 line **byte-identical** (the call is behind `PLAYBACK_WINDOW_ROLLING_ENABLED`, which that
+image keeps at 0 -- so the shipping image is unchanged by construction and by measurement), the lane-enabled qualification
+image measured at **exactly its pre-slice baseline** (`code 393,240 + padding 32,744`; already over its own budget since I5,
+so it cannot be flashed and nothing device-level is claimed), strict validation and `git diff --check` clean, and the
+red-proof **RP-A RED with a byte-identical restore** (the adoption judgement removed -- *"the eligible boundary is the
+production caller that clears the latched fault"*).
+**Withdrawn on independent review, and recorded rather than smoothed:** the first form of this slice (commit `eefd90a5`)
+also judged the **expiry** and applied the **last resort** at the resolver's three `Serving`-phase rejections. The review
+falsified it, and the findings are kept: **(F1, verified) wrong silence** -- those rejections are precisely the turns the
+**retained merged fallback** serves the slot, so applying the last resort there closes a sounding another serving route is
+about to play; **(F4, verified) wrong interval** -- at the expiry the phase has advanced a whole span past `frame.startPhase`,
+so the call named the interval the frame had already served (at worst one pass late) instead of the traversal going unserved
+-- a different episode, and `PlaybackLagState` resets the episode when the interval changes; **(F3)** the expiry call could
+also resolve `Current` and clear, so "the adoption is the only clear site" was false while it existed; **(F2/F5)** the
+containment sites' reachability is not established -- `containmentForSlot`'s "no valid coverage" is defined on the
+**published window**, which is not this resolver's rejection condition, and only one of the three sites is reachable at all;
+**(F6)** the fixture manufactured a state the publication path cannot reach (`loop.playbackRevision + 1` as the desired
+revision). The withdrawn calls had cost **+144 B of ITCM** in the lane-enabled image, and withdrawing them returned that
+image to its baseline byte-for-byte. The last resort needs an owner-level "no serving route at all" predicate (or 3.7b's
+fallback removal) before it can be wired. **Not claimed:** no device leg, no timing claim, no `ExecutionBounds.md` row
+change, no fallback removal (3.7b); **`containmentForSlot` / `applyLastResortForSlot` still have no production caller**, so
+the approved exception remains unreachable; `serviceAdmittedDeadlineMisses` is unchanged, and the promise route **shares**
+the episode counter the adoption resets (the withdrawn draft's "the promise route keeps its own count" was wrong -- its
+per-promise count is its own, the episode state is not). **Recorded, not smoothed (process):** the first fixture reused the
+S4b.7a harness and produced a *trailing* harness failure plus an ERRORED suite in every arrangement tried (including with
+the slice stashed), so the landed fixture is self-contained; and two pre-existing `RUN_TEST` entries that an over-wide cut
+had removed were caught by diffing the entry list against `HEAD` and restored. Detail:
 [`evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md)
 with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXECUTION.md) packet.
 - [ ] 3.7b **Remove the live mutable merged-window fallback — final ladder stage (4)** only after 3.7a is enabled and verified and tasks 3.12, 3.13, 3.14 and 4.5 plus F-7/F-8, timing and compatibility gates pass on their applicable production/device paths. Keep a cold reference path for parity testing. Verify no supported slot reaches the removed `playMidiEventsForSlot` fallback and reclassify `ExecutionBounds.md` row 2 only with evidence. Rollback before this stage retains today's fallback.
@@ -1170,14 +1186,20 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   **OWED:** production containment/recovery, actual emitted ordering, a moving closure at its correct tick, sustained-note behavior through an empty window, displayed provenance and eventual recovery through the real consumer. 3.7a connects that consumer while preserving fallback; complete 3.14 and 4.5 against the real handoff before 3.7b removes fallback.
   *Increment I6 landed 2026-10-06 (3.7a's handoff closures; the task stays open):* the **emitted order at the real handoff** is no longer owed -- the handoff reconcile now closes each invalidated obligation on the MIDI wire, at the handoff's own tick and ahead of the replacement's note-ons, discharging it by identity and suppressing an obsolete closure; the **empty-window** clause is measured there too (an event-empty whole-loop replacement closes nothing and drops nothing). Detail: [`evidence/2026-10-06-s37-handoff-closures/EVIDENCE.md`](evidence/2026-10-06-s37-handoff-closures/EVIDENCE.md).
   *Increment I9 landed 2026-10-06 (3.7a's serving handoff; the task stays open):* the **moving closure at its correct tick** is no longer owed -- the plan is one predicate and now also plans a tagged open Entry whose committed NoteOn the replacement **kept** while its own NoteOff moved **behind** the phase the walk resumes from (`planHandoffClosures` + `playbackClosureServeFloor`), so it is closed at the handoff's own tick instead of outliving the revision that ended it and being re-articulated at the wrap; the never-ending-sounding and restarting-pass guards are measured with it. **Still owed:** the **moving closure inside a long/demoted slot's serving handoff** (the merged store is a two-bar slice there, so the windowed lane owns it -- 3.7a/3.14), displayed provenance, eventual recovery through the real consumer, and the device leg. Detail: [`evidence/2026-10-06-s45c-moving-closure/EVIDENCE.md`](evidence/2026-10-06-s45c-moving-closure/EVIDENCE.md).
-  *Increment I10 landed 2026-10-06 (3.7a's serving boundary; the task stays open):* **production containment/recovery and
-"eventual recovery through the real consumer" are no longer owed.** The policy had no caller at all, so a latched fault
-never cleared and the approved last resort could never be applied; the lane's serving resolver now judges the traversal at
-its own two boundary events (adoption = the eligible boundary that clears the fault, expiry = the unserved traversal that
-names the allowance or latches the breach) and applies the containment where the lane's own window stops serving.
-**Still owed:** **displayed provenance** (the display's, RWO S4e), the device leg (the lane-enabled image is over its own
-RAM1 budget, so it cannot be flashed), the moving closure inside a long/demoted slot's serving handoff (3.7a/3.14), and
-the `serviceAdmittedDeadlineMisses` route's own boundary. Detail:
+  *Increment I10 landed 2026-10-06 (3.7a's serving boundary; the task stays open):* **"eventual recovery through the real
+consumer" is no longer owed.** `Track::advancePlaybackLagTraversal` had **no production caller at all**, so a latched fault
+never cleared; the lane's serving resolver now calls it at the one event that can end the episode -- the **adoption
+boundary**, where the prepared window was just adopted, so the boundary may serve the current revision and the fault clears
+by recovery rather than by a reset. **`containmentForSlot` / `applyLastResortForSlot` still have no production caller**, so
+the approved last resort remains unreachable and is owed. Judging the **expiry** and applying the last resort at the
+resolver's three `Serving`-phase rejections were landed first (commit `eefd90a5`) and then **withdrawn on independent
+review**: those rejections are exactly the turns the retained merged fallback serves the slot (so the last resort would
+silence a sounding another serving route is about to play), the expiry named the interval the frame had already served
+instead of the one going unserved, and the containment sites' reachability is not established -- the finding list is in the
+evidence. **Still owed:** **production containment / the approved last resort** (an owner-level "no serving route at all"
+predicate, or 3.7b's fallback removal, is required first), **displayed provenance** (the display's, RWO S4e), the device leg
+(the lane-enabled image is over its own RAM1 budget, so it cannot be flashed), the moving closure inside a long/demoted
+slot's serving handoff (3.7a/3.14), and the `serviceAdmittedDeadlineMisses` route's own boundary. Detail:
 [`evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md).
 
 ## 5. Capacity, envelope and placement

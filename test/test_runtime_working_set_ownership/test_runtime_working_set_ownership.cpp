@@ -6636,17 +6636,7 @@ void test_handoff_closes_a_closure_that_slid_behind_the_re_anchored_cursor() {
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 48));
 }
 
-/// 4.5 (DEC-108 §13(e)/(f)) / 3.7a I10: **containment and recovery are driven by the lane's own serving boundary.**
-///
-/// The policy itself was already implemented and measured (`resolveContinuityContainment`, `containmentForSlot`,
-/// `applyLastResortForSlot`, `advancePlaybackLagTraversal`), but it had **no production caller**: the only site that
-/// clears a latched deadline-contract fault is `advancePlaybackLagTraversal`'s `Current` branch, and nothing consulted
-/// containment -- so a fault latched through the one route that *was* wired (an admitted promise whose deadline passes)
-/// was permanent, and the approved exception (targeted closure plus affected-slot silence) was unreachable.
-///
-/// The lane's serving resolver owns exactly the two per-traversal events that can judge it: **adoption** -- the eligible
-/// boundary, where the boundary *may serve the current revision* because the prepared replacement was adopted, so the
-/// episode and any latched fault end there -- and **expiry** -- the traversal passed with the interval still at its
+/// 4.5 (DEC-108 §13(e)/(f)) / 3.7a I10: **the lane's adoption boundary is where a latched deadline-contract fault recovers.**
 /// How many NoteOffs this fixture's own marked sounding produced in the current wire window. The walk's due notes for
 /// the loop's **own** content are not the exception; pitch 60 belongs to the marked ledger entry only.
 size_t countNoteOffsForPitch(uint8_t pitch) {
@@ -6664,19 +6654,30 @@ size_t countNoteOffsForPitch(uint8_t pitch) {
 /// with the other 4.5/3.7 slices, so the drive is declared here rather than re-implemented.
 void rollingTestTick(Track& track, uint64_t tick, bool service);
 
-/// previous revision, which is the miss the one-pass-late allowance is about. The point where the lane's own window
-/// stops being servable is where the exception's premise ("no valid coverage remains") holds, so the containment
-/// application lives there.
+/// Task 4.5's **recovery** gate, measured through the lane's real serving path. The containment policy
+/// (`resolveContinuityContainment`, `containmentForSlot`, `applyLastResortForSlot`, `advancePlaybackLagTraversal`) was
+/// already implemented and measured, but `advancePlaybackLagTraversal` had **no production caller at all**: the only site
+/// that clears a latched deadline-contract fault is its `Current` branch, so a fault latched through the one route that
+/// *was* wired (an admitted promise whose deadline passes, `serviceAdmittedDeadlineMisses`) was permanent.
 ///
-/// Driven through the lane's real path (`serviceRollingPlaybackWindow` + the suite's `rollingTestTick` drive, so the
-/// resolver runs from the clock path) on the existing demoted-target harness.
-/// The suite's own lane drive (selector + one worker turn), defined with the rolling fixtures below: this fixture sits
-/// with the other 4.5/3.7 slices, so the drive is declared here rather than re-implemented.
-void rollingTestTick(Track& track, uint64_t tick, bool service);
+/// The lane's serving resolver has exactly one event that can end such an episode: the **adoption boundary** -- the
+/// eligible boundary, where the boundary *may serve the current revision* because the prepared replacement was adopted,
+/// so the episode and any latched fault end there and nowhere else. This fixture drives that boundary from the clock path
+/// (`serviceRollingPlaybackWindow` + `stepPlaybackViewMaintenance`, through the suite's `rollingTestTick`) with the fault
+/// already latched, and asserts it is cleared with the episode counter, the served window and the wire all untouched.
+///
+/// **What this fixture deliberately does not cover:** the **expiry** judgement and the last-resort application. Both were
+/// wired in this slice's first form and **withdrawn on independent review** -- the resolver's rejections are the turns the
+/// retained merged fallback serves the slot, so a last resort there would silence a sounding another serving route is
+/// about to play, and the expiry named the interval the frame had already served instead of the traversal going unserved.
+/// `containmentForSlot` / `applyLastResortForSlot` therefore still have no production caller.
+///
+/// It is **self-contained** -- it builds its own demoted loop, published root, served window and lane demand -- so it
+/// neither borrows nor perturbs another fixture's preconditions (the neighbouring S4b.7a harness left a trailing failure
+/// and an ERRORED suite when it was reused here).
 
-void test_containment_and_recovery_are_driven_by_the_lane_boundary() {
+void test_the_lane_boundary_is_the_production_caller_that_recovers_a_latched_fault() {
   constexpr uint8_t kServed = 0;   // the demoted loop the lane serves
-  constexpr uint8_t kSibling = 1;  // a sounding that must survive any exception
   constexpr uint32_t kSpan = 2 * 768;
   LoopEventStore::initPool();
   MidiSendCapture::reset();
@@ -6687,9 +6688,8 @@ void test_containment_and_recovery_are_driven_by_the_lane_boundary() {
   publishBarSpacedRootForSlot(track.getLoop(kServed), 24);
   TrackCaptureStopTestAccess::selectSlot(track, kServed);
   TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kServed, true));
-  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kSibling, true));
   track.forceSetState(TRACK_PLAYING);
-  // A **served window** for the demoted loop first, through the window lane's own request -> build -> adopt entries: the
+  // A **served window** for the demoted loop first, through the window lane's own request -> build -> served entries: the
   // rolling requester deliberately refuses to open a demand for a slot whose current view is not a complete, published
   // window, so the fixture establishes that state the way production does.
   SessionMidiEventVec scratch;
@@ -6708,17 +6708,13 @@ void test_containment_and_recovery_are_driven_by_the_lane_boundary() {
   const uint32_t servedRevision = loop.playbackRevision;
   const uint64_t origin = clockManager.getCurrentTick();
   nativePlaybackDeadlineClock = {origin, 1};
-  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
-                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
-                            "the playing caller opens the interval's demand");
-  // The frame's own interval is the episode identity the lag rule counts, so the fixture reads it from the frame rather
-  // than assuming a boundary.
-  const uint32_t frameStart = runtime->rolling.startPhase;
   auto* frameSet = runtime->viewSetIfPrewarmed();
   TEST_ASSERT_NOT_NULL(frameSet);
 
-  // (1) A **latched** fault, produced by the lag rule's own owner: two consecutive misses of one interval with nothing
-  // published for the desired revision (the first is the allowance, the second the named breach).
+  // (1) A **latched** fault, produced by the lag rule's own owner: two consecutive misses of one interval, driven through
+  // the same entry the promise route calls (`advancePlaybackLagTraversal`) with a desired revision nothing is published
+  // for -- the first miss is the allowance the spec protects, the second the named breach.
+  const uint32_t frameStart = 6 * 768;
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(PlaybackLagDecision::PreviousOnePass),
                             static_cast<int>(track.advancePlaybackLagTraversal(
                                 kServed, frameStart, kSpan, servedRevision + 1, false)),
@@ -6729,15 +6725,22 @@ void test_containment_and_recovery_are_driven_by_the_lane_boundary() {
                             "and the second consecutive one is the named breach");
   TEST_ASSERT_TRUE_MESSAGE(track.deadlineContractFaultLatchedForSlot(kServed),
                            "the fault is latched before the lane is asked to carry it");
+  TEST_ASSERT_NULL_MESSAGE(track.pendingViewRequest(kServed),
+                           "and it was latched while no lane promise was outstanding, which is the state the boundary "
+                           "below recovers from");
 
-  // (1a) The lane prepares, builds and **adopts** at the boundary -- the eligible boundary, and the only place a latched
-  // fault ends.
+  // (2) The lane opens its demand, prepares, builds and **adopts** at its boundary -- the eligible boundary, where the
+  // boundary may serve the current revision, so the episode and the latched fault end here and nowhere else.
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the playing caller opens the interval's demand");
   uint32_t adoptions = 0;
-  uint64_t tick = origin;
   uint8_t lastView = frameSet->lifecycle.current;
+  // From here the row family describes the **recovery** only: the breach row the latch named is cleared with it.
+  PlaybackPathRows::reset();
+  MidiSendCapture::reset();
   for (uint32_t delta = 1; delta <= 12 * 768 && adoptions == 0; ++delta) {
     rollingTestTick(track, origin + delta, delta % 64 == 0);
-    tick = origin + delta;
     if (runtime->rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
       const uint8_t current = frameSet->lifecycle.current;
       if (current != lastView) {
@@ -6748,86 +6751,24 @@ void test_containment_and_recovery_are_driven_by_the_lane_boundary() {
   }
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, adoptions, "the lane adopted its prepared window at the boundary");
   TEST_ASSERT_FALSE_MESSAGE(track.deadlineContractFaultLatchedForSlot(kServed),
-                            "the eligible boundary clears the latched fault: recovery through the real consumer, not a"
-                            " silent reset");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("last_resort_slot_silence")),
-                                   "and a faulted slot with coverage is never silenced");
-
-  // (2) A traversal the lane watched pass **unserved** is named where it happened. The served window keeps its own
-  // revision while the content's revision advances (a controllable fixture input: the edit path that advances it is not
-  // this slice's subject), and the requester is not serviced, so the traversal expires one pass late.
-  loop.playbackRevision = servedRevision + 1;
-  PlaybackPathRows::reset();
-  for (uint32_t delta = 1; delta <= 4 * 768; ++delta) {
-    rollingTestTick(track, tick + delta, false);
-  }
-  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle),
-                            static_cast<int>(runtime->rolling.phase),
-                            "the frame gives up once a whole traversal has passed unserved");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(PlaybackPathRows::countOf("one_pass_late")),
-                                   "and that traversal is named as the one-pass-late allowance, exactly once");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("lag_breach")),
-                                   "a first miss is not a breach");
-  TEST_ASSERT_FALSE(track.deadlineContractFaultLatchedForSlot(kServed));
-  loop.playbackRevision = servedRevision;
-
-  // (2a) Serve a frame again (the expiry ended that episode), so the control and the exception below run with the lane's
-  // resolver engaged **and its frame still serving**.
-  const uint64_t expandedTick = tick + 4 * 768;
-  for (uint32_t delta = 1;
-       delta <= 12 * 768 && runtime->rolling.phase != LoopPlaybackRuntime::RollingPhase::Serving; ++delta) {
-    rollingTestTick(track, expandedTick + delta, delta % 64 == 0);
-  }
-  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Serving),
-                            static_cast<int>(runtime->rolling.phase),
-                            "the lane re-serves the interval after an expiry");
-  // Both turns below stay inside this frame's serving window: a step past `deadlineTick + span` would expire it, which is
-  // the boundary (2) already measured.
-  const uint64_t servedAt = clockManager.getCurrentTick();
-
-  // (3) The control: a latched fault with a readable, covering window closes nothing and silences nothing -- the
-  // exception's own guard, measured with the resolver engaged.
-  track.advancePlaybackLagTraversal(kServed, frameStart, kSpan, loop.playbackRevision + 1, false);
-  track.advancePlaybackLagTraversal(kServed, frameStart, kSpan, loop.playbackRevision + 1, false);
-  TEST_ASSERT_TRUE_MESSAGE(track.deadlineContractFaultLatchedForSlot(kServed),
-                           "the control's precondition: the fault is latched");
+                            "the eligible boundary is the production caller that clears the latched fault: recovery"
+                            " through the real consumer, not a silent reset");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->lagState.missedTraversals),
+                                   "and the episode ends with it: the next miss starts a fresh allowance");
+  // The recovery is a **recovery**: the served window is the current revision, and nothing was closed or silenced to get
+  // there (`applyLastResortForSlot` is not wired from this resolver -- applying it here would silence a slot the retained
+  // merged fallback serves on the very turns this resolver rejects; see the evidence).
   TrackCaptureStopTestAccess::markLedgerEntry(track, kServed, 60);
-  TrackCaptureStopTestAccess::markLedgerEntry(track, kSibling, 62);
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kServed, 60));
-  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kSibling, 62));
   MidiSendCapture::reset();
-  rollingTestTick(track, servedAt + 64, false);
+  rollingTestTick(track, clockManager.getCurrentTick() + 64, false);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(countNoteOffsForPitch(60)),
-                                   "a latched fault with valid coverage closes nothing");
+                                   "no closure is emitted for a sounding the recovery did not touch");
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kServed, 60));
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("last_resort_slot_silence")),
-                                   "and the exception was not applied");
-
-  // (4) The approved exception, where its premise holds: with the fault latched and the lane's own window no longer
-  // servable, the serving turn silences **this slot** -- one closure for its own sounding -- and leaves the sibling, the
-  // transport and the world alone. Never a global stop, never a rebuild.
-  track.advancePlaybackLagTraversal(kServed, frameStart, kSpan, loop.playbackRevision + 1, false);
-  track.advancePlaybackLagTraversal(kServed, frameStart, kSpan, loop.playbackRevision + 1, false);
-  TEST_ASSERT_TRUE_MESSAGE(track.deadlineContractFaultLatchedForSlot(kServed),
-                           "the exception's own precondition: the fault is latched");
-  const bool transportBefore = clockManager.isTransportRunning();
-  // The premise: the lane's own served window is no longer servable. The fixture sets that state directly -- which
-  // lifecycle event retires a published window in production is that owner's business, not this slice's.
-  frameSet->views[frameSet->lifecycle.current].published = false;
-  MidiSendCapture::reset();
-  rollingTestTick(track, servedAt + 128, false);
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(countNoteOffsForPitch(60)),
-                                   "exactly the affected slot's one open note is closed");
-  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kServed, 60),
-                            "the affected slot's notes are closed");
-  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, kSibling, 62),
-                           "and a sibling slot is untouched -- the last resort is targeted, not global");
-  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(
-      1u, static_cast<uint32_t>(PlaybackPathRows::countOf("last_resort_slot_silence")),
-      "and the exception names itself in the row family the containment policy already owns");
-  TEST_ASSERT_EQUAL_MESSAGE(transportBefore, clockManager.isTransportRunning(),
-                            "no global transport stop: the exception is slot-scoped");
-  frameSet->views[frameSet->lifecycle.current].published = true;
+                                   "and the last resort is never applied from this boundary");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(PlaybackPathRows::countOf("lag_breach")),
+                                   "the recovery names no breach of its own");
 }
 
 /// 3.14 (DEC-108 §13(g)): the **undo/redo audible handoff**. The blanket slot silence is gone: undoing an edit batch
@@ -14043,8 +13984,8 @@ int main() {
   RUN_TEST(test_window_service_gap_sample_reports_the_measured_phase_advance_per_opportunity);
   RUN_TEST(test_two_bar_service_cannot_supply_even_dense_copy_work);
   RUN_TEST(test_rolling_generation_change_at_completion_publishes_nothing);
-  // Task 4.5 / 3.7a I10: containment and recovery driven by the lane's own boundary.
-  RUN_TEST(test_containment_and_recovery_are_driven_by_the_lane_boundary);
+  // Task 4.5 / 3.7a I10: the lane's own boundary is the production caller that recovers a latched fault.
+  RUN_TEST(test_the_lane_boundary_is_the_production_caller_that_recovers_a_latched_fault);
   RUN_TEST(test_rolling_queued_zero_start_keeps_the_original_debt);
   RUN_TEST(test_rolling_stop_or_slot_exit_releases_the_episode_off_clock);
   RUN_TEST(test_rolling_handoff_across_natural_wrap_uses_absolute_frame);
