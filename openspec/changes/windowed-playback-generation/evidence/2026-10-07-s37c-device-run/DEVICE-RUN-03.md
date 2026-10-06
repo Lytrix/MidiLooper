@@ -50,6 +50,12 @@ while the publication owner is exercised twice as much as before. This is the st
 reported for that slice's attention rather than attributed to `windowed-playback-generation`; the windowed claim here is
 limited to §1's request/invalidation pattern.
 
+**Corrected the same day by a repeat on the same image:** the very next run, `s64-37c-04` (same board, no rebuild, no
+flash), shows 33 `running=1` gap blocks, 6 with eligible/progress turns **and a `build_complete` publication** — so the
+differences in this section are **not reproducible on the same tree** and must not be read as caused by it. See
+[`DEVICE-RUN-04.md`](DEVICE-RUN-04.md). What survives is §1 (the request/invalidation pattern) and the fact that the
+active slot still publishes nothing in every run.
+
 ## 3. Honest limits
 
 - No completion is claimed on any tree: no `build_complete` publication for the active slot in any of the three runs.
