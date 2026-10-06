@@ -1,3 +1,18 @@
+**2026-10-07 — `windowed-playback-generation` task 2.7: the demoted-shape harness tripwire is discharged (red-proof only; no production or test-source change).**
+The task's own clause — *verify a fixture **fails** when the window build is removed on a demoted slot* — is measured. The mutation
+removed the demoted slot's window build at the owner turn (an early `Idle` in `Track::stepPlaybackViewMaintenance` when
+`loopForSlot(slot).shouldAvoidFullVisualRebuild(...)` holds), so the admitted coverage demand stays selectable and **never receives a
+grain**: no window is built or published, and nothing is refused by name — exactly the silent drop the RWO-recorded tripwire
+describes. **Result: RED** — the focused suite reports `89 failed / 87 succeeded` (89 of the 176 registered cases), and the failures
+include the demoted shape's own fixtures: the interval/publication fixture (`Expected FALSE Was TRUE`), the rootless retained-source
+serving fixture (*the production turn publishes the rootless window*), the boundary-parity fixture, the residency sweep,
+`test_window_readiness_names_its_holder_and_an_empty_interval_is_ready` (*an empty interval is still a window, and it is published*)
+and the atomic-publication fixture (*the last grain completes the build*). **Restored byte-identically** (`git checkout --`; sha256
+`269331f615b66c6a…` identical before and after, `git status --porcelain` empty) and the focused suite is green afterwards at
+**176/176**. **Not claimed:** no production line changed, no device or timing result; task **2.8** (the same red-proof *inside the
+slice that implements it*) stays open, and RWO's own S4b.7 tripwire (`ensurePlaybackMergedEventsForSlot`) is that change's. Detail:
+[`EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-07-s27-demoted-shape-tripwire/EVIDENCE.md).
+
 **2026-10-07 — qualification RAM1 oversizing repaired; approved guard and playback decisions preserved (firmware build/native verified; no upload).** The qualification-only `Track::resolveQualificationPlaybackSourceForTurn` selection path and `resolveRollingPlaybackWindow` are explicitly placed in FLASH, recovering 928 B of qualification `.text.itcm` while keeping fixed-view → launch-view → rolling-view priority unchanged. Qualification now links in 12 banks: `variables 96,192`, `code 392,312 + padding 904`, 64 B above the unchanged 840 B floor. Default capture RAM1 remains identical at `variables 96,192`, `code 392,248 + padding 968`; DTCM globals match. Verification: focused rolling suite 176/176; full native **2,855 cases / 2,848 succeeded / 7 skipped / 0 failed**; strict OpenSpec validation and `git diff --check` pass. **Caveat:** FLASH placement is on the clock path, so no timing-equivalence or service-envelope claim is made; no upload/device run. Evidence: [RAM1 repair packet](../../openspec/changes/windowed-playback-generation/evidence/2026-10-07-qualification-ram1-repair/EXECUTION.md).
 
 **2026-10-06 — `windowed-playback-generation` 3.7a I10 / 4.5: the lane's adoption boundary is the production caller that

@@ -94,9 +94,22 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   (registered) asserts the late completion is refused through the operation generation and publishes nothing; **M10** (publication guard dropped),
   **M11** (identity not invalidated on clear/load) and **M12** are red-proved and restored byte-identically
   ([`evidence/2026-10-02-s311-shared-view-transitions/EVIDENCE.md`](evidence/2026-10-02-s311-shared-view-transitions/EVIDENCE.md)).
-- [ ] 2.7 Close the measured coverage gap for the demoted shape — verify a fixture **fails** when the window build is
+- [x] 2.7 Close the measured coverage gap for the demoted shape — verify a fixture **fails** when the window build is
   removed on a demoted slot (RWO recorded that dropping it left every fixture green and pinned that as a harness
   tripwire)
+  *Checked off 2026-10-07:* the mutation that removes the demoted slot's window build (an early `Idle` in
+  `Track::stepPlaybackViewMaintenance` for `shouldAvoidFullVisualRebuild` loops, so the admitted demand never receives a
+  grain and nothing is refused by name) is **RED** — 89 of 176 focused cases fail, including the demoted shape's own
+  fixtures (`test_window_owner_resolves_the_interval_through_the_published_snapshot`,
+  `test_retained_source_window_serves_a_rootless_interval_and_the_index_bounds_the_lookup`,
+  `test_windowed_stream_concatenates_to_the_whole_loop_stream_across_a_boundary`,
+  `test_demoted_slot_residency_is_length_independent_swept_over_lengths`,
+  `test_window_readiness_names_its_holder_and_an_empty_interval_is_ready`,
+  `test_window_owner_publishes_the_interval_window_atomically`) — and the file is restored **byte-identically**
+  (`sha256 269331f615b66c6a…`, unchanged), with the focused suite **176/176** green afterwards. Detail:
+  [`evidence/2026-10-07-s27-demoted-shape-tripwire/EVIDENCE.md`](evidence/2026-10-07-s27-demoted-shape-tripwire/EVIDENCE.md).
+  *Not claimed:* task 2.8 (the same red-proof *inside the slice that implements it*) stays open, and RWO's own S4b.7
+  tripwire (`ensurePlaybackMergedEventsForSlot`) is that change's.
 - [ ] 2.8 Red-prove each fixture **inside the slice that implements it** — verify the named mutation fails that fixture at
   that slice and the file is restored byte-identically, with the focused suite green **once its behaviour exists** (a
   fixture whose behaviour has not landed yet is established and expected-red, never counted as passing)
