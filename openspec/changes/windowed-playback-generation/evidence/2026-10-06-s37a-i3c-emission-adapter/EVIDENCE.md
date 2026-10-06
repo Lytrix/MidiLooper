@@ -415,7 +415,7 @@ work itself rather than a harness gap.
 
 ---
 
-## 14. I5: the paged lane's production serving is a **closed cycle** -- measured, fixed, red-proved, and **not landed** (the approved RAM1 floor refuses its ITCM)
+## 14. I5: the paged lane's production serving is a **closed cycle** -- measured, fixed, red-proved, and **landed** (funded by an ITCM budget slice)
 
 **I3c-c's remaining item was "the end-to-end emission assertion on a real transport tick". Driving it found that the
 assertion cannot be made: a bound paged delivery can never earn admission from the clock path.** Two shapes, one run
@@ -451,8 +451,9 @@ by I3c alone, and only the walk-level half of I4's parity matrix describes produ
 4. **Measured while part 1+3 were in and part 2's guard was not: SIGSEGV.** `mergedEvents` is null on the paged branch, so
    `eventCount`'s `mergedEvents->size()` was a live null dereference the moment admission became reachable.
 
-**The fix works -- measured, with the end-to-end assertions the task row asks for** (fixtures green with it, in
-[`i5-fixtures-not-landed.txt`](i5-fixtures-not-landed.txt), which is the exact source excerpt):
+**The fix works -- measured, with the end-to-end assertions the task row asks for** (landed as
+`test_3_7a_i5_the_boundary_judgement_precedes_the_selection_in_one_turn` and
+`test_3_7a_i5_a_rootless_demoted_slot_is_served_from_the_ring_pass_exact`):
 
 | Assertion | Measurement with the fix |
 |---|---|
@@ -469,31 +470,30 @@ by I3c alone, and only the walk-level half of I4's parity matrix describes produ
 | **RP-I5-gate**: the exemption removed | **RED** -- *"the same frame's walk took the delivery"* and *"Expected 0 to be greater than 0. the producer re-armed"* |
 | **RP-I5-null** (implicit, measured during development) | **SIGSEGV** in the rootless fixture |
 
-**Why it is not landed: the approved RAM1 floor.** `scripts/check_ram1_budget.py` refuses **every** form of the fix
-measured (floor: `padding >= 840`; the approved line has **80 B** of headroom):
+**Landed by funding it: the ITCM budget slice.** The guard refused the fix at every earlier form measured (floor:
+`padding >= 840`; the approved line had **80 B** of headroom), so this slice *paid* for it instead of re-basing anything,
+and two blocks of the same function moved off-ITCM (both measured, incremental):
 
 | Variant | Post-link RAM1 |
 |---|---|
-| Baseline (no fix) | `code 392,296 + padding 920` -- passes |
-| Flash-hoist of the judgement only (parts 1) | `code 392,360 + padding 856` -- **passes**, +64 B |
-| Part 1 + the gate exemption (part 2) | `code 392,488 + padding 728` -- refused, +192 B |
-| Part 1 + the gate clause in the hot path | `code 392,616 + padding 600` -- refused, +320 B |
-| Part 1 + the whole gate moved to flash | `code 392,632 + padding 584` -- refused, +336 B |
+| Baseline (before I5) | `code 392,296 + padding 920` -- 80 B of headroom |
+| + the fix, unfunded: the gate exemption folded into the turn's count | `code 392,488 + padding 728` -- refused, +192 B |
+| **+ the handoff seek moved to flash** (`seekBridgeWindowPastServicedInterval`) | `code 392,440 + padding 776` -- **-48 B**, still refused |
+| **+ the fixed-source identity and its bridge/view resolved in flash** (`resolveFixedPlaybackSourceForTurn`) | **`code 392,360 + padding 856` -- the guard PASSES**, 16 B above the floor |
 
-So the fix needs **a deliberate decision** that this agent should not take silently: either **re-base the floor** (the
-guard's own note says it is only re-based deliberately) or fund a **dedicated ITCM-reduction slice** in
-`playCommittedLoopMidi` (candidates, each named from the measurement: the `RUNTIME_TIMING_*` bookkeeping that the
-capture build keeps on this edge, the fixed-source/bridge identity resolution, or moving the whole gate decision to
-flash -- tried here in one form and still +336 B). **Nothing is claimed as landed:** production sources are byte-identical
-to the previous commit, and the post-link line is back to `code 392,296 + padding 920`.
+So the net cost of I5's fix is **+64 B** of ITCM, and the slice's own ITCM movement is **-128 B** of the same function: the
+logarithmic handoff seek (a loop) and the identity/two-lookup resolution are calls now. Both were the function's largest
+movable blocks without touching semantics: the seek runs once per handoff, never per event, and the resolved identity is
+still the turn's own (written back, because five later decisions compare against it). **Remaining candidates for the next
+slice's headroom, named rather than implied:** the `RUNTIME_TIMING_*` bookkeeping the capture build keeps on this edge,
+the wrap block's bridge tail emission and index resets, and `makePlaybackContext`.
 
-**Effect on 3.7a's own clause and on 3.14/4.5 (stated, not implied):** the task row's "root-demoted production serving
-without a whole-loop root" and its **differential fallback parity** are **not** satisfied by the walk-level fixtures
-alone; and both 3.14's and 4.5's remaining clauses are written *against the real handoff* ("actual emitted ordering",
-"sustained-note behavior through an empty window", "displayed provenance and eventual recovery through the real
-consumer"), so they are **blocked behind this decision** rather than behind more fixture work.
-
-**Verified for this increment (the committed tree -- production byte-identical to the previous commit):** focused RWS
-**160/160**, full native **2,835 / 7 skipped / 2,828 succeeded / 0 failed**,
-`teensy41-capture-serial` **SUCCESS** with the approved line (`variables 96,192 / code 392,296 + padding 920`; 80 B above
-the floor), strict validation and `git diff --check` clean.
+**Verified for this increment:** focused RWS **161/161** (the I4 fixture replaced by the two I5 fixtures), neighbouring
+suites **83/83** (`test_shared_capture_finalization`, `test_window_paged_legacy`, `test_capture_ring`), full native
+**2,836 / 7 skipped / 2,829 succeeded / 0 failed**, `teensy41-capture-serial` **SUCCESS** with the guard passing
+(`variables 96,192 / ITCM 393,216 (code 392,360 + padding 856) / locals 34,880`; **16 B** above the floor), strict
+validation and `git diff --check` clean. The three red-proofs above were **re-run against the landed form** (not only the
+prototype) and produced the same failures, each restored byte-identically. **Owed, and named:** a **device run**, because
+this is a firmware change the serial/HITL lane can observe (the registered windowed leg is the entry point); no timing
+claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b), and no differential-parity claim for content the
+paged path cannot serve (over-`L` intervals are its whole domain).

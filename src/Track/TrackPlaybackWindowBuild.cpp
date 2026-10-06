@@ -560,6 +560,70 @@ TRACK_COLD_MEM void Track::servicePagedPassBoundaryForSlot(uint8_t slotIndex, bo
   }
 }
 
+TRACK_COLD_MEM void Track::servicePagedPassBoundaryForTurn(uint8_t slotIndex, uint32_t currentTick) {
+  // Task 3.7a (I5): **the admission's input, computed off-ITCM.** The turn's own projection is computed again by its
+  // caller at the place it always was, so nothing here is a value the clock path must keep live across the merged build
+  // (keeping them live was the +256 B the guard refused). Nothing is judged unless a delivery is bound, so every other
+  // tick pays one load and one call -- and a delivery's own pass boundary is judged **before** the selection that reads
+  // the admission it produces.
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->pagedEmission.bound) {
+    return;
+  }
+  Loop& loop = getLoop(slotIndex);
+  const uint32_t tickInLoop = IntervalProjection::tickPhaseInProjectionCycle(
+      currentTick, projectionCycleStartTick, loop.loopLengthTicks);
+  const bool wrappedBackward = IntervalProjection::didDisplayPlayheadWrapBackward(
+      tickInLoop, loop.lastTickInLoop, loop.loopStartTick, loop.loopLengthTicks);
+  const uint32_t prevTickInLoop = loop.lastTickInLoop;
+  const bool atLoopStart = IntervalProjection::isPlaybackCatchUpWindow(prevTickInLoop, tickInLoop);
+  servicePagedPassBoundaryForSlot(slotIndex, wrappedBackward, atLoopStart, prevTickInLoop, tickInLoop);
+}
+
+
+TRACK_COLD_MEM void Track::seekBridgeWindowPastServicedInterval(const RuntimePlaybackView* window,
+                                                               uint32_t prevTickInLoop,
+                                                               uint32_t tickInLoop, Loop& loop) {
+  if (window == nullptr) {
+    return;
+  }
+  const auto& storage = window->storage;
+  size_t first = 0;
+  size_t end = storage.eventCount;
+
+  if (prevTickInLoop != UINT32_MAX && prevTickInLoop <= tickInLoop) {
+    while (first < end) {
+      const size_t middle = first + (end - first) / 2;
+      if (storage.phases[storage.order[middle]] <= prevTickInLoop) {
+        first = middle + 1;
+      } else {
+        end = middle;
+      }
+    }
+  }
+
+
+  loop.nextEventIndex = first;
+}
+
+TRACK_COLD_MEM void Track::resolveFixedPlaybackSourceForTurn(
+    uint8_t slotIndex, const Loop& loop, bool eligible, PlaybackViewSourceIdentity& sourceOut,
+    const FixedPlaybackBridgeStorage*& bridgeOut, const RuntimePlaybackView*& viewOut) {
+  sourceOut = PlaybackViewSourceIdentity{loop.playbackRevision, playbackGeneration,
+                                         loop.publishedSnapshotIdentity()};
+  bridgeOut = nullptr;
+  viewOut = nullptr;
+  if (!eligible) {
+    return;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return;
+  }
+  bridgeOut = runtime->selectedFullLoopBridge(sourceOut, loop.loopLengthTicks);
+  viewOut = bridgeOut != nullptr ? runtime->fullLoopBridgeBase(*bridgeOut, loop.loopLengthTicks)
+                                 : runtime->publishedFullLoopView(sourceOut, loop.loopLengthTicks);
+}
 TRACK_COLD_MEM Track::PagedEmissionDeliveryState Track::pagedEmissionDeliveryStateForSlot(
     uint8_t slotIndex) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {

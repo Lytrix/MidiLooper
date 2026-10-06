@@ -722,9 +722,13 @@ struct LoopPlaybackRuntime {
       // The boundary is taken at the walk's position and it is **judged**, not just recorded. A boundary that arrives
       // with nothing published beyond *this pass's content* had no next-pass head to hand over, so the events of the
       // new pass that the very next frame crosses are behind it by construction.
-      if (publishedOrdinal <= passContentOrdinal || passContentOrdinal == 0) {
-        // `passContentOrdinal == 0` means the producer never completed a traversal, so there is no next-pass head to
-        // hand over **by definition** -- a boundary is not straddled merely because the ring happens to hold a page.
+      // Task 3.7a (I5): before the producer's **first** completed traversal there is no content end to judge against, and
+      // calling that "no head by definition" made admission unreachable from the clock path: the delivery is refused
+      // before it can be read, so the producer never re-arms, so every boundary is judged against `0` (measured: four
+      // wraps, four violations, `contentEnd == 0`, nothing emitted). What the ring must already hold at that first
+      // boundary is the **current** pass's content, ahead of the walk -- the walk-independent question:
+      const uint32_t headRequest = passContentOrdinal != 0 ? passContentOrdinal : consumedOrdinal;
+      if (publishedOrdinal <= headRequest) {
         ++passesUnstraddled;
       }
       passBaseOrdinal = consumedOrdinal;

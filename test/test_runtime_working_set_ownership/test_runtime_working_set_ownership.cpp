@@ -11031,39 +11031,26 @@ void test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name() {
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::CannotStraddleTheWrap),
                     static_cast<int>(fixture.track->pagedEmissionDeliveryStateForSlot(0)));
 }
-/// 3.7a (I3c) -- the production-path half of this increment, scoped to what this suite can actually drive.
+/// **I5: the boundary judgement comes first, in the turn that uses it -- and a rootless demoted slot is served.** This
+/// fixture is the *ordering* pin of that fix; the next one is its pass-exact acceptance.
 ///
-/// The seam (`playCommittedLoopMidi`'s paged selection), the boundary signal and the lead are wired where the clock path
-/// reads them, and this fixture drives **that function** for a slot whose paged delivery is prepared but not yet
-/// admitted. What it proves, with the production entry as the driver:
+/// The refusal this drive used to record (I4's bisection: the zero-content gate, 24/24, measured with a withdrawn probe)
+/// is **gone for a bound delivery**, and it had to be: the gate sits above the delivery's own admission input, so a slot
+/// whose interval no window or root can serve was refused *before* the boundary judgement that admits the paged lane --
+/// `boundaries` stayed 0 for a whole rootless drive, and where the judgement did run (a root-backed slot, whose merged
+/// fallback is non-empty) it was judged against no content end at all, so `passesUnstraddled` counted every wrap (4/4)
+/// and the producer never re-armed. The delivery could not be read before it was selected, could not be selected before
+/// a straddled boundary, and could not straddle before it had been read: a closed cycle, measured on **both** shapes.
+/// The fix is the two orderings this fixture now pins -- judged before selected, and bound deliveries exempt from the
+/// zero-content gate -- plus the first-boundary rule (`passContentOrdinal == 0` judged against the walk's position, not
+/// against "no head by definition"), which is what lets the first pass earn admission at all.
 ///
-///   - the clock path takes **neither** the paged stream **nor** the heavy merged fallback before a boundary has been
-///     judged: the delivery is not selected (`admittedForEmission()` false), nothing is consumed from the ring
-///     (`consumedOrdinal` stays 0) and the merged store stays **empty** (its build is a heavy one the clock path refuses
-///     by design) -- i.e. a rootless dense slot is silent here, which is the condition the paged delivery exists to
-///     change;
-///   - and the delivery's own state reports `Unproven`, so nothing may be selected yet.
-///
-/// **The emitting half, and the bisection closed: the refusing return is named.** Two changes, both measured:
-///
-///   - **The refusal.** A temporary probe (a file-writing marker at each of the five returns between this function's
-///     entry and `loop.lastTickInLoop = tickInLoop`, withdrawn before the commit) ran this whole suite: **24/24** of the
-///     fixture's ticks stop at the **zero-content gate** (`eventCount == 0 && fixedBridge == nullptr &&
-///     runtime.rolling.phase == Idle`), and **not one hit** was recorded at any of the other four returns
-///     (`runtime == nullptr`, `!runtime.reset(true)`, the bridge-stream refusal, the `UINT32_MAX` catch-up guard). The
-///     pair section does not apply to this loop by its own gate (`shouldAvoidFullVisualRebuild`, over the rebuild
-///     threshold); the rolling section **excludes** the slot (`rolling.phase == Idle`, so
-///     `resolveRollingPlaybackWindow` answers `Excluded`), which is what keeps the gate reachable instead of letting an
-///     empty stream be walked; and the merged fallback is empty because its build gathers only a **published** window,
-///     which this rootless demoted slot does not have. The silence is the gate's own content test -- exactly the
-///     condition paging exists to change -- and no longer "somewhere before the tick record".
-///   - **The oracle.** `Track::sendMidiEvent`'s own record now exists (the next fixture drives it), so this fixture's
-///     silence is asserted **at the MIDI edge** as well as at the tick record -- and the drive's output is *enabled*
-///     here, so the silence is a refusal rather than a muted walk.
-///
-/// The six facts below are asserted because the conclusion depends on them: with all six held, the zero-content gate is
-/// the only return this drive can take.
-void test_3_7a_i4_the_production_tick_path_selects_nothing_before_its_boundary() {
+/// **What is pinned here, before and after the first frame:** the six door facts below hold before the drive (nothing
+/// is selected, nothing is admissible, no root and no window exist, the merged store is empty); then a **single** frame
+/// judges the boundary, earns admission *and already serves that same frame from the ring* -- which is the ordering the
+/// hoist bought, measured as the difference between 2,370 (the head frame lost to a judgement that arrived too late) and
+/// the 2,500 the interval holds.
+void test_3_7a_i5_the_boundary_judgement_precedes_the_selection_in_one_turn() {
   constexpr uint32_t kAdvance = 64;
   OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500);
   driveGatherUntilPagedSwitch(fixture);
@@ -11072,15 +11059,14 @@ void test_3_7a_i4_the_production_tick_path_selects_nothing_before_its_boundary()
   Loop& loop = *fixture.loop;
   LoopPlaybackRuntime* runtime = fixture.runtime;
   track.startPlaying(0);
-  track.reanchorPlaybackCycle(0);
-  // (1) The value the tick record would overwrite is a real phase, not the fresh-transport `UINT32_MAX`: the catch-up
-  // guard cannot be the refusal.
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, loop.lastTickInLoop,
-                                   "a real previous phase, not the fresh-transport UINT32_MAX");
-  // (2) The pair section is out of scope for this loop by its own gate.
+  // (1) The production start's own shape: the phase is unrecorded, so this frame is the loop's **catch-up window** (the
+  // pass boundary for an interval that starts at the loop's start) -- and 64 is inside the bar, so the `UINT32_MAX`
+  // catch-up *guard* (which refuses a first frame beyond a bar) cannot be what serves here.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(UINT32_MAX, loop.lastTickInLoop,
+                                   "the fresh-transport value: no phase has been recorded yet");
   TEST_ASSERT_TRUE_MESSAGE(loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks),
                            "the slot is over the rebuild threshold: the pair path is not applied to it at all");
-  // (3) The rolling section excludes the slot -- and this is the gate's third clause.
+  // (3) The rolling section excludes the slot.
   TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Idle),
                             static_cast<int>(runtime->rolling.phase),
                             "no rolling frame is bound for this slot: the rolling section answers Excluded");
@@ -11093,39 +11079,39 @@ void test_3_7a_i4_the_production_tick_path_selects_nothing_before_its_boundary()
   PlaybackWindowIdentity publishedWindow{};
   TEST_ASSERT_FALSE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, publishedWindow),
                             "and no window is published for it either");
-  // (5) The merged fallback the walk would use holds no content.
+  // (5) The merged fallback the walk would use holds no content -- the shape the paged lane exists for.
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
-                                   "the merged fallback holds nothing before the drive");
-  // (6) The paged delivery is not admissible, so the paged section cannot be selected either.
+                                   "the merged fallback holds nothing: a rootless demoted slot has no root to gather");
+  // (6) Before the first frame: bound, but not admissible -- nothing may be selected yet.
+  TEST_ASSERT_TRUE(runtime->pagedEmission.bound);
   TEST_ASSERT_FALSE(runtime->pagedEmission.admittedForEmission());
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Unproven),
+                    static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
+  TEST_ASSERT_EQUAL_UINT32(0u, runtime->pagedEmission.passCount);
   track.clearSentPlaybackMidiForTest();
   MidiSendCapture::reset();
-  const uint32_t intervalTicks = fixture.coverage.lengthTicks;
-  for (uint32_t tick = kAdvance; tick <= intervalTicks; tick += kAdvance) {
-    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
-    track.playMidiEvents(tick, true);
-  }
-  // **The refusal, at the tick record and at the MIDI edge:**
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, loop.lastTickInLoop,
-                                   "no tick was recorded through a whole pass: the zero-content gate refused every one "
-                                   "(measured 24/24 with the probe; none of the other four returns fired)");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.sentPlaybackMidiCountForTest()),
-                                   "and the MIDI edge committed nothing -- with the output enabled, so this is the "
-                                   "production refusal, not a disabled output");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
-                                   "the wire boundary agrees: nothing was sent");
-  // What the clock path does *not* do for a slot whose delivery is not yet admitted: it builds no heavy merged fallback
-  // (that build is refused on the clock path by design -- a rootless dense slot is **silent** there, which is exactly
-  // the condition the paged delivery exists to change), and it consumes nothing from the ring. `pagedActive` surviving
-  // the pass also settles the earlier falsification: `LoopPlaybackRuntime::reset` drops the ring, so the stale-runtime
-  // path did not run -- and the probe above now says so directly (that return fired zero times).
-  TEST_ASSERT_TRUE_MESSAGE(runtime->pagedActive,
-                           "the paged delivery survived the clock path's own runtime reset (the reset did not run)");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
-                                   "the clock path does not build the heavy merged fallback for this slot");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.consumedOrdinal,
-                                   "and nothing is consumed from the ring: it is not selected before a boundary");
-  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Unproven),
+
+  // **One frame.** The boundary is judged in this turn, the admission is earned in this turn, and the walk of this same
+  // turn takes the ring -- three things that used to be impossible in that order.
+  track.playMidiEvents(kAdvance, true);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, runtime->pagedEmission.passCount,
+                                   "the frame judged the delivery's own pass boundary");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.passesUnstraddled,
+                                   "and the judgement straddled: the ring already held content ahead of the walk");
+  TEST_ASSERT_TRUE_MESSAGE(runtime->pagedEmission.admittedForEmission(),
+                           "the judgement is the admission's input, and it ran before the selection that reads it");
+  TEST_ASSERT_TRUE_MESSAGE(runtime->pagedEmission.emitting,
+                           "the same frame's walk took the delivery: the producer now re-arms a pass at a time");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, runtime->pagedEmission.consumedOrdinal,
+                                          "the walk advanced through the ring in this very frame");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kAdvance, loop.lastTickInLoop,
+                                   "the tick record advanced: the clock path served the slot");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.sentPlaybackMidiCountForTest()),
+                                          "and the head of the pass reached the MIDI edge, not silence");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(track.sentPlaybackMidiCountForTest()),
+                                   static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "with the wire boundary recording the same stream");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Admissible),
                     static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
 }
 
@@ -11207,6 +11193,110 @@ void test_3_7a_i4_the_midi_edge_records_what_the_clock_path_emits() {
     TEST_ASSERT_EQUAL_UINT8(sent.event.data.noteData.velocity, wire.data.noteData.velocity);
   }
 }
+
+/// 3.7a (I5): **the rootless demoted slot is served from the ring, pass-exact, on the real clock path.** The shape is
+/// the lane's whole reason to exist -- an interval no window can hold, on a slot with **no published root and no
+/// published window** -- and this fixture is its end-to-end acceptance: the drive is the production per-track entry
+/// (`playMidiEvents`, which the transport lane calls), the oracle is the interval's own effective content (the same
+/// resolver the walk-level acceptance fixture compares against), and both edges of the MIDI stream are asserted (the
+/// `sendMidiEvent` sink and the wire boundary's own record).
+///
+/// A three-bar loop makes the pass boundary cheap (the loop wrap, every 36 frames) while keeping the interval over `L`:
+/// the demand still leaves the window lane for pages, so nothing here is a shortcut around the paged path. The second
+/// pass is compared **element-wise**: its first frame is the one the boundary judgement admits in, so a slip in that
+/// ordering (the defect I5 fixed) shows up as a short or shifted stream rather than as silence.
+void test_3_7a_i5_a_rootless_demoted_slot_is_served_from_the_ring_pass_exact() {
+  constexpr uint32_t kAdvance = 64;
+  constexpr uint32_t kBar = 768;
+  constexpr uint32_t kLoopTicks = 3u * kBar;
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500, 3);
+  driveGatherUntilPagedSwitch(fixture);
+  Track& track = *fixture.track;
+  Loop& loop = *fixture.loop;
+  LoopPlaybackRuntime* runtime = fixture.runtime;
+  TEST_ASSERT_TRUE(runtime->pagedActive);
+  TEST_ASSERT_EQUAL_UINT32(kLoopTicks, loop.loopLengthTicks);
+  // The oracle: the interval's own content, from the effective-content resolver.
+  SessionMidiEventVec oracle;
+  loop.copyEffectiveCommittedEventsInRange(oracle, fixture.coverage.startPhase, fixture.coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(fixture.denseEvents, static_cast<uint32_t>(oracle.size()),
+                                   "the interval holds the dense span");
+  uint32_t multiEventTicks = 0;
+  for (size_t i = 1; i < oracle.size(); ++i) {
+    if (oracle[i].tick == oracle[i - 1].tick) {
+      ++multiEventTicks;
+    }
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, multiEventTicks,
+                                          "the interval packs several events per tick: same-tick order is exercised");
+
+  track.startPlaying(0);
+  track.clearSentPlaybackMidiForTest();
+  MidiSendCapture::reset();
+  uint32_t observedPasses = 0;
+  bool haveSecondPassStart = false;
+  size_t secondPassSinkStart = 0;
+  size_t secondPassWireStart = 0;
+  size_t secondPassSliceEnd = 0;
+  size_t secondPassWireEnd = 0;
+  uint32_t tick = kAdvance;
+  for (uint32_t turn = 0; turn < 256; ++turn, tick += kAdvance) {
+    const uint32_t passesBefore = runtime->pagedEmission.passCount;
+    const size_t sinkBefore = track.sentPlaybackMidiCountForTest();
+    const size_t wireBefore = MidiSendCapture::count();
+    (void)track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    track.playMidiEvents(tick, true);
+    if (!haveSecondPassStart && passesBefore < 2u && runtime->pagedEmission.passCount >= 2u) {
+      // The frame that enters the second pass: its own emissions belong to that pass.
+      secondPassSinkStart = sinkBefore;
+      secondPassWireStart = wireBefore;
+      haveSecondPassStart = true;
+    }
+    observedPasses = runtime->pagedEmission.passCount;
+    if (haveSecondPassStart && passesBefore < 3u && runtime->pagedEmission.passCount >= 3u) {
+      // The frame that enters the **third** pass: its emissions are that pass's head, not this pass's content.
+      secondPassSliceEnd = sinkBefore;
+      secondPassWireEnd = wireBefore;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(haveSecondPassStart, "the drive must reach the second pass");
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(3u, observedPasses, "and a third boundary, to close the second pass");
+  // The admission was earned -- and not by being selected first: the boundary came, it straddled, the producer re-armed.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.passesUnstraddled,
+                                   "every boundary arrived with the next pass's head already published");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, runtime->pagedEmission.passContentOrdinal,
+                                          "the producer re-armed: a content end exists to bound the walk with");
+  TEST_ASSERT_TRUE(runtime->pagedEmission.emitting);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Admissible),
+                    static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
+  // The drive ends on the frame that **enters** the third pass, so the record's phase is that wrap's own `0` -- the
+  // record was advancing throughout (the tick record is written on every serviced frame, and the two passes above were
+  // served from it).
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, loop.lastTickInLoop,
+                                   "the last serviced frame is the third pass's entering frame");
+  // **The second pass, element-wise, at both edges.**
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(static_cast<uint32_t>(secondPassSinkStart),
+                                          static_cast<uint32_t>(secondPassSliceEnd),
+                                          "the second pass has a non-empty stream of its own");
+  const size_t passTwoCount = secondPassSliceEnd - secondPassSinkStart;
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(oracle.size()), static_cast<uint32_t>(passTwoCount),
+                                   "one whole pass: exactly the interval's content, served from the ring");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(passTwoCount),
+                                   static_cast<uint32_t>(secondPassWireEnd - secondPassWireStart),
+                                   "and the wire boundary recorded the same stream");
+  for (size_t i = 0; i < passTwoCount; ++i) {
+    const Track::SentPlaybackMidiForTest& sent = track.sentPlaybackMidiAtForTest(secondPassSinkStart + i);
+    const MidiEvent& expected = oracle[i];
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, sent.slotIndex, "the walk named the slot it played");
+    TEST_ASSERT_EQUAL_UINT8(1, sent.event.channel);
+    TEST_ASSERT_EQUAL_UINT32(expected.tick, sent.event.tick);
+    TEST_ASSERT_EQUAL_UINT8(expected.data.noteData.note, sent.event.data.noteData.note);
+    TEST_ASSERT_EQUAL_UINT8(expected.data.noteData.velocity, sent.event.data.noteData.velocity);
+  }
+}
+
+
 
 /// 3.7a's **timing admission** clause, measured at the walk's own granularity: what service rate must the deferred lane
 /// hold for a paged pass to be served *without* a breach? The declared contract gives one page per turn at a permitted
@@ -11465,7 +11555,8 @@ int main() {
   RUN_TEST(test_3_7a_i3c_a_a_paged_pass_emits_through_the_walk_and_straddles_its_wrap);
   RUN_TEST(test_3_7a_i3c_a_paged_emission_never_produces_and_names_its_states);
   RUN_TEST(test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name);
-  RUN_TEST(test_3_7a_i4_the_production_tick_path_selects_nothing_before_its_boundary);
+  RUN_TEST(test_3_7a_i5_the_boundary_judgement_precedes_the_selection_in_one_turn);
+  RUN_TEST(test_3_7a_i5_a_rootless_demoted_slot_is_served_from_the_ring_pass_exact);
   RUN_TEST(test_3_7a_i4_the_midi_edge_records_what_the_clock_path_emits);
   RUN_TEST(test_3_7a_i4_the_paged_delivery_names_a_halved_service_rate);
   RUN_TEST(test_capture_admission_refuses_at_the_edge_and_never_a_closure_or_a_stop);

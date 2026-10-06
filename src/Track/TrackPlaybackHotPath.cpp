@@ -217,16 +217,14 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // edited playback retain their existing paths until their separate gates.
   const bool fixedViewEligible =
       isActive && isPlaying() && !editManager.isNoteEditActive();
-  const PlaybackViewSourceIdentity expectedFixedSource{
-      loop.playbackRevision, playbackGeneration, loop.publishedSnapshotIdentity()};
-  const FixedPlaybackBridgeStorage* fixedBridge =
-      fixedViewEligible
-          ? runtime.selectedFullLoopBridge(expectedFixedSource, loop.loopLengthTicks)
-          : nullptr;
-  const RuntimePlaybackView* fixedView =
-      fixedBridge != nullptr ? runtime.fullLoopBridgeBase(*fixedBridge, loop.loopLengthTicks)
-          : fixedViewEligible ? runtime.publishedFullLoopView(expectedFixedSource, loop.loopLengthTicks)
-                              : nullptr;
+  // Task 3.7a (I5)'s ITCM budget slice: the identity this turn compares against, and the bridge/view that carry it, are
+  // resolved in flash. The clock path keeps three values and the call; the identity is still the turn's own (five later
+  // uses depend on it), so it is written back rather than fetched again.
+  PlaybackViewSourceIdentity expectedFixedSource{};
+  const FixedPlaybackBridgeStorage* fixedBridge = nullptr;
+  const RuntimePlaybackView* fixedView = nullptr;
+  resolveFixedPlaybackSourceForTurn(slotIndex, loop, fixedViewEligible, expectedFixedSource, fixedBridge,
+                                    fixedView);
 
   if (fixedView == nullptr && fixedViewEligible && !isJamPlaybackActive() && !isJamming()) {
     const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
@@ -323,6 +321,14 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // produced, allocated or waited for here: a ring with nothing ahead of the walk ends the turn, and the deferred lane
   // is what continues it.
   const bool pagedDeliveryBound = runtime.pagedEmission.bound;
+  // Task 3.7a (I5): **the delivery's admission input comes first, in the turn that uses it.** The boundary judgement is
+  // what admits a delivery, so it runs before the selection that reads the admission, and it is judged for a delivery
+  // that is merely **bound** -- never gated on the admission it produces (the I3c lesson, one layer down). It is one
+  // flash call that returns at once unless a delivery is bound: it recomputes this turn's projection itself, because
+  // hoisting those projections inline cost the ITCM **+256 B** on an edge with an 80 B allowance (see the fix's record).
+  if (pagedDeliveryBound) {
+    servicePagedPassBoundaryForTurn(slotIndex, currentTick);
+  }
   const bool pagedEmission = fixedView == nullptr && livePair == nullptr && fixedBridge == nullptr &&
                              runtime.pagedEmission.admittedForEmission();
   const bool useMergedFallback = fixedView == nullptr && livePair == nullptr && !pagedEmission;
@@ -338,7 +344,9 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
           ? fixedBridge->baseEventCount + fixedBridge->insertions.eventCount
           : (fixedView != nullptr
                  ? fixedView->storage.eventCount
-                 : (livePair != nullptr ? livePair->eventCount : mergedEvents->size()));
+                 : (livePair != nullptr ? livePair->eventCount
+                                        : (mergedEvents != nullptr ? mergedEvents->size()
+                                                                   : (pagedEmission ? 1u : 0u))));
   if (eventCount == 0 && fixedBridge == nullptr
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
       && runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Idle
@@ -409,13 +417,10 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   const uint32_t prevTickInLoop = loop.lastTickInLoop;
   const bool atLoopStart =
       IntervalProjection::isPlaybackCatchUpWindow(prevTickInLoop, tickInLoop);
-  if (pagedDeliveryBound) {
-    // The **pass boundary**. Judged whenever a delivery is bound, *not* only when it is selected: the judgement is the
-    // admission's input, so gating it on the admission is circular (measured: `boundaries` stayed 0 and the delivery
-    // could never be admitted). The crossing test and the judgement are flash-resident -- inline they pushed RAM1's
-    // padding 32 B under its floor -- so the clock path only decides *that* a delivery is bound, and calls here.
-    servicePagedPassBoundaryForSlot(slotIndex, wrappedBackward, atLoopStart, prevTickInLoop, tickInLoop);
-  }
+  // The **pass boundary** is judged earlier in this turn, by `servicePagedPassBoundaryForTurn` -- above the selection
+  // that reads the admission it produces. Judging it here as well would count every boundary twice (measured: the
+  // bootstrap fixture read `passCount == 2` after one frame), and it is the *place* that matters: a delivery with no
+  // other source is refused above this point, so the judgement has to come before it.
 
   if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
     loop.nextEventIndex = 0;
@@ -450,19 +455,11 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   }
   const auto* emissionWindow = fixedBridge != nullptr
       ? runtime.publishedBridgeWindow(expectedFixedSource, tickInLoop) : nullptr;
-  if (emissionWindow) {
-    // The compiled bridge and the window contain the same cycle stream. A
-    // logarithmic seek excludes the already serviced interval on a handoff.
-    const auto& storage = emissionWindow->storage;
-    size_t first = 0, end = storage.eventCount;
-    if (prevTickInLoop != UINT32_MAX && prevTickInLoop <= tickInLoop) {
-      while (first < end) {
-        const size_t middle = first + (end - first) / 2;
-        if (storage.phases[storage.order[middle]] <= prevTickInLoop) first = middle + 1;
-        else end = middle;
-      }
-    }
-    loop.nextEventIndex = first;
+  if (emissionWindow != nullptr) {
+    // The compiled bridge and the window contain the same cycle stream, and a **logarithmic seek** excludes the already
+    // serviced interval on a handoff. The seek is the largest movable block on this edge (I5's ITCM budget slice): it
+    // lives in flash now, so the clock path keeps only the call.
+    seekBridgeWindowPastServicedInterval(emissionWindow, prevTickInLoop, tickInLoop, loop);
   }
   FixedPlaybackStreamCtx fixedCtx{emissionWindow ? &emissionWindow->storage
       : fixedView != nullptr ? &fixedView->storage

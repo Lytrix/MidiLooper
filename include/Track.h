@@ -491,7 +491,23 @@ public:
   /// judgement live off-ITCM, because RAM1's padding sat 32 B under its floor when they were inline.
   void servicePagedPassBoundaryForSlot(uint8_t slotIndex, bool wrappedBackward, bool atLoopStart,
                                        uint32_t prevTickInLoop, uint32_t tickInLoop);
+  /// Task 3.7a (I5): **the judgement, with its own projection, in flash.** The admission's input must be computed and
+  /// judged *before* the selection that reads it, and doing that inline cost the ITCM +256 B; so the clock path pays one
+  /// load, one test and one call, and this function recomputes the turn's projection itself, off-ITCM.
+  void servicePagedPassBoundaryForTurn(uint8_t slotIndex, uint32_t currentTick);
   /// The declared `CoverageServiceContract` this owner is admitted under. Single-sourced: the declaration,
+  /// Task 3.7a (I5)'s ITCM budget slice: **the fixed-source identity and the bridge/view that carry it, resolved in
+  /// flash.** The identity is written back because five later decisions in the turn compare against it; the two lookups
+  /// and their gates are the same ones the clock path used to run inline.
+  void resolveFixedPlaybackSourceForTurn(uint8_t slotIndex, const Loop& loop, bool eligible,
+                                         PlaybackViewSourceIdentity& sourceOut,
+                                         const FixedPlaybackBridgeStorage*& bridgeOut,
+                                         const RuntimePlaybackView*& viewOut);
+  /// Task 3.7a (I5)'s ITCM budget slice: **the bridge window's handoff seek, in flash.** The compiled bridge and the
+  /// window carry the same cycle stream, so the seek is logarithmic in the window's event count and only has to exclude
+  /// the interval this turn's predecessor already serviced. It is called once per handoff, never per event.
+  void seekBridgeWindowPastServicedInterval(const RuntimePlaybackView* window, uint32_t prevTickInLoop,
+                                            uint32_t tickInLoop, Loop& loop);
   /// its derivation and the measurement still owed are recorded where it is defined, and the grain quanta
   /// below are the sizes its declared grain counts come from.
   static CoverageServiceContract playbackViewCoverageContract();
