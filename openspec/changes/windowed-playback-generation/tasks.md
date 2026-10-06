@@ -735,6 +735,18 @@ with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXE
   change neither consumes nor shares. Its two **INTERPRETATION** rows are marked as mappings a reader can dispute
   without the citation being wrong. **The audit the task asks for is recorded too:** one deferred-service enumeration
 
+- [ ] 3.7d **Name the invalidation term on the blocked-demand row** — the `win_blocked_by_request` exit SHALL carry the
+  term that stopped the retained demand (`PlaybackViewPendingReason`), so a device run names it instead of leaving the
+  five candidates the retry lane's validation can produce (a changed loop length, a changed clock epoch, a passed
+  admitted position, a passed deadline, or a source that is no longer current). **Prepared and deliberately not
+  landed 2026-10-07:** the change, the host-side decode and its test were written (host **40/40** green) but the native
+  row-contract fixture did not go green in three attempts — the lane reported `Waiting` where the blocked row is
+  expected, because the record the resolver reads was not active-and-latched at that point — and a firmware change does
+  not land without a green production-path fixture and a red-proof, so everything was reverted and the tree left
+  byte-identical to `117b9a61`. The change as written, the ordinals to pin, the three attempts and the exact next
+  diagnostic are recorded in
+  [`2026-10-07-s37d-invalidation-term/PREPARED.md`](evidence/2026-10-07-s37d-invalidation-term/PREPARED.md).
+
   ***Authorized device run of the slice 2026-10-07* (`captures/s64-37c-01`; image `5786cdb23cf22623…`, git `1a61a6a9`;
   the same leg, target and invocation as `s64-demand-01`, so the slice is the only variable): the change is visible on
   hardware, on the active slot.** The same state that used to end the lane — demoted, span-aligned, playing, root
