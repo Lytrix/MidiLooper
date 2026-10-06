@@ -692,6 +692,36 @@ the slice stashed), so the landed fixture is self-contained; and two pre-existin
 had removed were caught by diffing the entry list against `HEAD` and restored. Detail:
 [`evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EVIDENCE.md)
 with its [`EXECUTION.md`](evidence/2026-10-06-s45e-lane-containment-recovery/EXECUTION.md) packet.
+
+- [x] 3.7c **The active slot's first window** — a demoted slot that reaches playback **without** a switch (a freshly
+  recorded body, or a restored one) SHALL be able to obtain its first window: the lane's own request SHALL not require a
+  window to be already served. Verify the request is opened through the existing positioned demand (not a new owner, not
+  a new scheduler, not the launch path), that the off-clock owner builds and publishes it, and that the slot is then
+  servable — with a named refusal when the slot has nothing to build from or nowhere to publish.
+  *Landed 2026-10-07 (firmware + tests) — the gap the authorized device run measured.* The device
+  (`captures/s64-demand-01`) showed every demoted, span-aligned, playing slot leaving the lane as
+  **`win_not_servable` with `sv=0`**, including where its root **was** current (`rt=1`) and its coverage role free
+  (`rl=1`): the demand's entry required a window that was already *served*, and only a switch's launch could produce
+  one, so a slot that never switched could never be served from a window at all — against the spec's own first
+  requirement (*the demoted case is served by interval publication*; playback SHALL NOT require whole-loop publication).
+  **The change:** in `Track::serviceRollingPlaybackWindow` the *served* window is no longer a precondition of
+  *requesting* one — what still refuses (`win_not_servable`) is having no view set to publish into, or no source to
+  build from (`playbackWindowSourceIsCurrentForSlot`: a current root **or** the retained revision the loop carries).
+  Everything else is the existing machinery, unchanged: the same positioned interval the roll requests, the same
+  admission judging its lead, the same off-clock owner building it, the completed build publishing as the **ready**
+  successor and the resolver adopting it at its own boundary; the merged fallback still covers the traversals in
+  between. No new owner, scheduler, authority or state; no launch change; no constant touched.
+  *Verification:* the new production-path fixture
+  `test_3_7c_an_active_slot_with_no_served_window_requests_its_first_window_and_is_served` drives the shape the device
+  measured (demoted, span-aligned, playing, current root, **nothing served**) and asserts the request is opened
+  (`Requested` + the `win_requested` row + a retained demand carrying the two-bar interval), that the owner builds it
+  into the ready successor, and that preparation is not yet serving (the boundary adoption is the resolver's own step,
+  covered by the serving fixtures). **Red-proved:** restoring the old guard makes that fixture — and only it — fail
+  (`Expected 3 Was 1`: `Requested` vs `Excluded`, i.e. the device's own refusal), with the file restored
+  **byte-identically** (`sha256 a59ddacb8200db2b…` identical before and after). Focused **177/177** (was 176).
+  *Not claimed:* no device leg of this slice yet (the run that follows it is recorded separately), no timing or
+  service-envelope claim, no `ExecutionBounds.md` row change, and 3.7b stays the final ladder stage.
+  Detail: [`2026-10-07-s37c-active-slot-first-window/EXECUTION.md`](evidence/2026-10-07-s37c-active-slot-first-window/EXECUTION.md).
 - [ ] 3.7b **Remove the live mutable merged-window fallback — final ladder stage (4)** only after 3.7a is enabled and verified and tasks 3.12, 3.13, 3.14 and 4.5 plus F-7/F-8, timing and compatibility gates pass on their applicable production/device paths. Keep a cold reference path for parity testing. Verify no supported slot reaches the removed `playMidiEventsForSlot` fallback and reclassify `ExecutionBounds.md` row 2 only with evidence. Rollback before this stage retains today's fallback.
 - [x] 3.8 Confirm reuse before invention — verify a review note names the existing resumable entry points used (the
   declared build contract, bounded body-format write/parse, resume arming, the single persistence drain budget) and that

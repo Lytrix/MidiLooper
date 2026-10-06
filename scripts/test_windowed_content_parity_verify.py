@@ -347,13 +347,13 @@ class WindowedLaneTests(unittest.TestCase):
         self.assertEqual(1, result["demand"]["gate_rows"])
 
     def test_a_not_servable_slot_names_the_missing_published_window(self) -> None:
-        """The shape the 2026-10-05 switch runs measured: every row `win_not_servable`, `sv=0`."""
+        """The refusal that remains after 3.7c: nothing to build a window from (or nowhere to publish it)."""
         lines = _no_demand_lines(*[_gate(2_110_000 + index, exit="win_not_servable", sv=0, rt=0)
                                    for index in range(3)])
         result = verify_windowed_lane(lines)
         demand = next(check for check in result["checks"] if check["name"] == "window_demand_observed")
         self.assertFalse(demand["ok"])
-        self.assertIn("no complete published current window", demand["detail"])
+        self.assertIn("no current source to build a window from", demand["detail"])
         self.assertEqual({"win_not_servable": 3}, result["demand"]["exits"])
 
     def test_the_most_frequent_exit_is_the_one_reported(self) -> None:

@@ -69,8 +69,10 @@ REFUSAL_REASONS: dict[str, str] = {
     "win_track_not_playing": "the state gates refused before any window was considered",
     "win_reprojection_blocked": "a queued playback start, jam or jam playback holds the projection",
     "win_window_ineligible": "the demand's entry trio refused",
-    "win_not_servable": "the active slot holds no published current window, so the rolling lane has nothing to roll "
-                        "from (a switch/launch that binds one creates the demand)",
+    # Task 3.7c changed what this exit can mean: the lane now *requests* a first window where it used to refuse, so what
+    # remains is having nothing to build from or nowhere to publish -- not "no window is being served".
+    "win_not_servable": "the slot has no view set to publish into, or no current source to build a window from (neither "
+                        "a current published root nor the retained revision the loop carries)",
     "win_busy": "an existing promise, owner or outstanding grain holds the slot",
     "win_reprojected_tick": "the tick fell outside the projection, so the demand's absolute position is not this one",
     "win_boundary_rejected": "the declared lead could not place a boundary inside the loop",

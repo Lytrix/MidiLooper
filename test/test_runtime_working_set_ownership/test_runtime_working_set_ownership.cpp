@@ -11316,6 +11316,82 @@ void test_rolling_path_cancellation_between_every_preparation_grain_recovers() {
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, foreign, "and no foreign note: recovery, not residue");
 }
 
+/// **Task 3.7c -- the active slot's first window.**
+///
+/// The demand's entry required a window that was already *served* (`sv`: the current view complete and published), and
+/// only a switch's launch could produce one -- so a demoted slot that reached playback **without** a switch (a freshly
+/// recorded body, or a restored one) could never be served from a window at all. The device measured exactly that on
+/// 2026-10-07 (`captures/s64-demand-01`): every demoted, span-aligned, playing slot left the lane as
+/// `win_not_servable` with `sv=0`, including where the root **was** current (`rt=1`) and the coverage role free
+/// (`rl=1`), while the lane's own gap blocks showed it dispatched and idle. The spec's first requirement is the
+/// opposite (*the demoted case is served by interval publication*, and playback must not require whole-loop
+/// publication), so this fixture drives the production entry on precisely that shape -- demoted, span-aligned,
+/// playing, current root, **no served window** -- and asserts the chain closes: the request is opened rather than
+/// refused, the off-clock owner builds it, the completed build publishes as the **ready** successor, and the resolver
+/// adopts it at its own boundary so the slot is served from the window its request created.
+void test_3_7c_an_active_slot_with_no_served_window_requests_its_first_window_and_is_served() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  constexpr uint8_t kSlot = 2;
+  constexpr uint32_t kBars = 24;  // > 16 bars: the demoted policy, measured (not the below-bound case)
+  constexpr uint32_t kSpan = 2 * 768u;
+  commitBarSpacedPassIntoTrackSlot(track, kSlot, kBars);  // also selects kSlot as the active one
+  Loop& loop = track.getActiveLoop();
+  TEST_ASSERT_EQUAL_UINT32(kBars * 768u, loop.loopLengthTicks);
+  TEST_ASSERT_TRUE_MESSAGE(loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks),
+                           "precondition: the slot is past the demotion bound");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, loop.loopLengthTicks % kSpan,
+                                   "precondition: the length is a whole number of two-bar spans");
+  publishBarSpacedRootForSlot(loop, kBars);  // a **current** root: the source owes the epoch's first window
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(kSlot, true));
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(200);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, kSlot);
+  TEST_ASSERT_NOT_NULL(runtime);
+  auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(), "precondition: the source is current (the device's rt=1)");
+  TEST_ASSERT_FALSE_MESSAGE(set->views[set->lifecycle.current].published,
+                            "precondition: nothing is served yet (the device's sv=0)");
+
+  RollingGateRows::reset();
+  nativePlaybackDeadlineClock = {clockManager.getCurrentTick(), 1};
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RollingOutcome::Requested),
+                            static_cast<int>(track.serviceRollingPlaybackWindow(nativePlaybackDeadlineClock)),
+                            "the active slot's first window is requested rather than refused");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("win_requested", RollingGateRows::last()->exit,
+                                   "and the exit it names is the request, not win_not_servable");
+  const auto* demand = track.pendingViewRequest(kSlot);
+  TEST_ASSERT_NOT_NULL_MESSAGE(demand, "the demand is retained for the off-clock owner");
+  TEST_ASSERT_EQUAL_UINT32(1u, demand->clockEpoch);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kSpan, demand->coverage.lengthTicks,
+                                   "and the interval it asked for is the two-bar one the consumer is about to use");
+
+  // The off-clock owner builds it: the completed build publishes as the **ready** successor, which is what the
+  // resolver adopts at a boundary. The owner is driven **directly** -- one declared grain per turn, no clock advance
+  // and no transport update -- because the turn is the thing under test here; the boundary half below advances the
+  // clock. (A per-tick `rollingTestTick` drive would put the whole harness in the loop for no measurement.)
+  for (uint32_t turn = 0; turn < 4096 && !set->views[set->lifecycle.ready].complete; ++turn) {
+    (void)track.stepPlaybackViewMaintenance(static_cast<uint32_t>(clockManager.getCurrentTick()), nullptr, false,
+                                           nativePlaybackDeadlineClock);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(set->views[set->lifecycle.ready].complete,
+                           "the first window is built and published as the ready successor");
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(LoopPlaybackRuntime::RollingPhase::Ready),
+                            static_cast<int>(runtime->rolling.phase), "and the frame is ready for its boundary");
+
+  // The window is **prepared, not yet served**: adopting it is the resolver's own boundary
+  // (`resolveRollingPlaybackWindow` at `frame.deadlineTick`), which the suite's serving fixtures already drive. What
+  // this fixture adds -- and what nothing covered -- is that the request exists at all on a slot the lane used to
+  // refuse, which is the spec's *the demoted case is served by interval publication*.
+  TEST_ASSERT_FALSE_MESSAGE(track.playbackWindowServesSlot(kSlot),
+                            "preparation is not serving: the boundary adoption is the resolver's own step");
+  TEST_ASSERT_GREATER_THAN_UINT64_MESSAGE(static_cast<uint64_t>(clockManager.getCurrentTick()),
+                                          runtime->rolling.deadlineTick,
+                                          "and the boundary it named is ahead of the playhead, where it is adopted");
+}
+
 /// **Task 6.4/6.5 -- the rolling demand path's gate row (`DIAG,win_gate`).**
 ///
 /// The lane's own rows (`win_gap`, `playback_build`) say whether it was *dispatched*; nothing said **what its demand
@@ -13967,6 +14043,7 @@ int main() {
   RUN_TEST(test_window_grain_cost_tracks_the_windows_event_count_and_bounds_the_supported_window);
   RUN_TEST(test_window_request_work_is_bounded_and_retained_across_source_shapes);
   RUN_TEST(test_rolling_gate_rows_name_the_demand_paths_silent_exits_once_per_state_change);
+  RUN_TEST(test_3_7c_an_active_slot_with_no_served_window_requests_its_first_window_and_is_served);
   RUN_TEST(test_window_track_budget_protects_an_older_windows_admitted_deadline_from_a_sibling);
   RUN_TEST(test_enforced_candidate_charges_derived_cost_and_eight_track_rotation);
   RUN_TEST(test_window_admission_refuses_by_name_once_the_interference_budget_is_enforced);

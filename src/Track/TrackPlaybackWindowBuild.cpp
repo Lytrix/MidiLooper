@@ -3723,9 +3723,20 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     return RollingOutcome::Ready;
   }
   auto* set = runtime->viewSetIfPrewarmed();
-  if (!set || set->lifecycle.current >= set->views.size() ||
-      !set->views[set->lifecycle.current].complete || !set->views[set->lifecycle.current].published ||
-      !playbackWindowSourceIsCurrentForSlot(activeLoopIndex)) {
+  // Task 3.7c -- **the active slot's first window.** Until this slice the request demanded a window that was already
+  // *served* (`sv`: the current view complete and published), and only a switch's launch could produce that -- so a
+  // demoted slot that reached playback without a switch (a freshly recorded body, or a restored one) could never be
+  // served from a window at all. On device (2026-10-07, `captures/s64-demand-01`) every such slot left here as
+  // `win_not_servable` with `sv=0`, including where its root **was** current (`rt=1`) and its coverage role free
+  // (`rl=1`), while the lane's own gap blocks showed it dispatched and idle. The spec's first requirement is the
+  // opposite -- the demoted case is served by interval publication, and playback must not require whole-loop
+  // publication -- so a served window is no longer a precondition of *requesting* one. What still refuses here is
+  // having no view set to publish into, or no source to build from (`playbackWindowSourceIsCurrentForSlot`: a current
+  // root, or the retained revision the loop carries). The interval requested is the same positioned one the roll
+  // requests, judged by the same admission and prepared by the same off-clock owner; the completed build publishes as
+  // the `ready` successor, the resolver adopts it at its boundary and the slot is served from then on (the merged
+  // fallback covers the traversals in between).
+  if (!set || set->lifecycle.current >= set->views.size() || !playbackWindowSourceIsCurrentForSlot(activeLoopIndex)) {
     reportPlaybackRollingGateRow("win_not_servable", clock.epoch != 0);
     return RollingOutcome::Excluded;
   }
