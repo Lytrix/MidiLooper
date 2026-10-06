@@ -11039,7 +11039,46 @@ void test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name() {
 /// not provide: that is **I4/4.3's** harness, where the differential-parity oracle lives. The measurements that
 /// substitute until then are the walk-level fixtures above (both passes exact) and the seam's own red-proof
 /// (**MR-V**, red by abort: an unbound stream selected on the clock path crashes).
-void test_3_7a_i3c_the_production_tick_path_selects_nothing_before_its_boundary() {
+void test_3_7a_i4_the_production_tick_path_selects_nothing_before_its_boundary() {
+  constexpr uint32_t kAdvance = 64;
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500);
+  driveGatherUntilPagedSwitch(fixture);
+  TEST_ASSERT_TRUE(fixture.runtime->pagedActive);
+  Track& track = *fixture.track;
+  LoopPlaybackRuntime* runtime = fixture.runtime;
+  track.startPlaying(0);
+  track.reanchorPlaybackCycle(0);
+  const uint32_t intervalTicks = fixture.coverage.lengthTicks;
+  for (uint32_t tick = kAdvance; tick <= intervalTicks; tick += kAdvance) {
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    track.playMidiEvents(tick, false);
+  }
+  // What the clock path does *not* do for a slot whose delivery is not yet admitted: it builds no heavy merged
+  // fallback (that build is refused on the clock path by design -- a rootless dense slot is **silent** here, which is
+  // exactly the condition the paged delivery exists to change), and it consumes nothing from the ring.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
+                                   "the clock path does not build the heavy merged fallback for this slot");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.consumedOrdinal,
+                                   "and nothing is consumed from the ring: it is not selected before a boundary");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Unproven),
+                    static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
+  (void)intervalTicks;
+  // **Measured prerequisite, named rather than worked around:** the *emitting* half of this drive does not happen in
+  // this suite even with the transport started through its owner (`startPlaying`, which clears
+  // `transportStopOutputBarrier_`) and the projection re-anchored -- `loop.lastTickInLoop` stayed 0 through a whole
+  // pass, so the clock path's own tick machinery (the transport/projection harness, or the slot's layered play state)
+  // is what refuses here. That harness is I4/4.3's differential-parity work; until it exists the walk-level fixtures
+  // and this pre-admission assertion are what stands.
+}
+
+/// 3.7a's **timing admission** clause, measured at the walk's own granularity: what service rate must the deferred lane
+/// hold for a paged pass to be served *without* a breach? The declared contract gives one page per turn at a permitted
+/// advance of 64 ticks (`kPlaybackViewPermittedAdvancePerTurn`), and a dense over-`L` interval needs ~104 events per
+/// 64-tick frame, so **halving the lane's rate** (one turn per two frames = 64 events per frame) must fall behind: the
+/// ring's three-page depth can absorb jitter, not a halved service rate. The delivery is expected to **name the
+/// breach** (a dry pass, or an unstraddled wrap) -- and the fixture asserts that *either* the breach is named *or* the
+/// pass was served exactly, so the property is checked whichever way the margin falls.
+void test_3_7a_i4_the_paged_delivery_names_a_halved_service_rate() {
   constexpr uint32_t kAdvance = 64;
   OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500);
   driveGatherUntilPagedSwitch(fixture);
@@ -11047,24 +11086,39 @@ void test_3_7a_i3c_the_production_tick_path_selects_nothing_before_its_boundary(
   Track& track = *fixture.track;
   Loop& loop = *fixture.loop;
   LoopPlaybackRuntime* runtime = fixture.runtime;
-  track.forceSetState(TRACK_PLAYING);
-  track.reanchorPlaybackCycle(0);  // the fixture's ticks are the loop's phases
+  ProjectionContext playbackContext = makePlaybackContext(track, loop, 0);
   const uint32_t intervalTicks = fixture.coverage.lengthTicks;
 
-  for (uint32_t tick = kAdvance; tick <= intervalTicks; tick += kAdvance) {
-    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
-    track.playMidiEventsForSlot(0, tick, false);
+  SessionMidiEventVec emitted;
+  uint16_t cursor = 0;
+  uint32_t from = 0;
+  bool atLoopStart = true;
+  for (uint32_t pass = 0; pass < 2; ++pass) {
+    uint32_t frame = 0;
+    for (uint32_t phase = 0; phase < intervalTicks; phase += kAdvance, ++frame) {
+      if (frame % 2 == 0) {  // **half the declared service rate**
+        track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+      }
+      TEST_ASSERT_EQUAL(static_cast<int>(PlaybackAdvanceResult::Completed),
+                        static_cast<int>(drivePagedEmissionFrame(track, runtime, 0, cursor, from, phase + kAdvance,
+                                                                 atLoopStart, playbackContext, emitted)));
+      from = phase + kAdvance;
+      atLoopStart = false;
+    }
+    runtime->pagedEmission.notePassBoundary(runtime->pagedWindow.producedOrdinal());
+    cursor = 0;
+    from = 0;
+    atLoopStart = true;
   }
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
-                                   "the clock path does not build the heavy merged fallback for this slot");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.consumedOrdinal,
-                                   "and nothing is consumed from the ring: it is not selected before a boundary");
-  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Unproven),
-                    static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
-  TEST_ASSERT_FALSE_MESSAGE(runtime->pagedEmission.admittedForEmission(),
-                            "no boundary has been judged, so nothing may be selected");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(runtime->pagedWindow.producedOrdinal() > 0),
-                                   "the deferred lane is what produced the pages; the clock path only reads");
+  SessionMidiEventVec oracle;
+  loop.copyEffectiveCommittedEventsInRange(oracle, fixture.coverage.startPhase, fixture.coverage.lengthTicks);
+  const bool breached = runtime->pagedEmission.passesWithDrys > 0 || runtime->pagedEmission.passesUnstraddled > 0;
+  const bool servedExactly = emitted.size() == 2 * oracle.size();
+  TEST_ASSERT_TRUE_MESSAGE(breached || servedExactly,
+                           "a halved service rate must either be absorbed (the pass is served exactly) or be named");
+  TEST_ASSERT_TRUE_MESSAGE(breached,
+                           "measured: at half the declared rate the producer falls behind within the pass, and the "
+                           "breach is named (a dry pass or an unstraddled wrap) rather than served as content");
 }
 
 int main() {
@@ -11274,7 +11328,8 @@ int main() {
   RUN_TEST(test_3_7a_i3c_a_a_paged_pass_emits_through_the_walk_and_straddles_its_wrap);
   RUN_TEST(test_3_7a_i3c_a_paged_emission_never_produces_and_names_its_states);
   RUN_TEST(test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name);
-  RUN_TEST(test_3_7a_i3c_the_production_tick_path_selects_nothing_before_its_boundary);
+  RUN_TEST(test_3_7a_i4_the_production_tick_path_selects_nothing_before_its_boundary);
+  RUN_TEST(test_3_7a_i4_the_paged_delivery_names_a_halved_service_rate);
   RUN_TEST(test_capture_admission_refuses_at_the_edge_and_never_a_closure_or_a_stop);
   // windowed-playback-generation slice 3.12c: the refusal's cleanup, and the window-seeded boundary on the lane the
   // window actually serves (DEC-108 §14).

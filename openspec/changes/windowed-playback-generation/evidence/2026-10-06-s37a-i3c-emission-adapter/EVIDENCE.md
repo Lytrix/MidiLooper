@@ -230,3 +230,40 @@ passes again: `variables 96,192`; `code 392,296 + padding 920`; **80 B above the
 | Device build | **SUCCESS**, guard passes (`variables 96,192`; `code 392,296 + padding 920`) |
 | Strict validation / `git diff --check` | valid / clean |
 | Device run / upload | **NOT RUN** |
+
+
+---
+
+## 9. I4 (first slice) — the timing-admission measurement, and the parity harness this suite lacks (2026-10-06, test-only)
+
+**The timing-admission clause of 3.7a, measured.** The paged delivery's service requirement is now a *number*, not an
+assumption:
+
+| | |
+|---|---|
+| Declared contract | one page (128 events) per deferred turn, permitted advance **64 ticks** per turn (`kPlaybackViewPermittedAdvancePerTurn`) |
+| A dense over-`L` interval at that advance | ~**104 events per 64-tick frame** |
+| At the declared rate | the producer's 128 events/page keeps up; the ring's three-page depth absorbs jitter; passes are served **exactly** (the walk-level and production fixtures above) |
+| **At half the declared rate** (one turn per two frames = 64 events per frame) | **the producer falls behind within the pass, and the breach is named** -- a dry pass or an unstraddled wrap -- rather than served as content |
+
+The fixture (`test_3_7a_i4_the_paged_delivery_names_a_halved_service_rate`) asserts the property in both directions --
+"either the halved rate is absorbed (the pass is served exactly) or the breach is named" -- and then pins the measured
+outcome: the breach *is* named. That is the first evidence row for `ExecutionBounds.md` row 27's "caps declared, bounds
+unmeasured" on the paged path; a device envelope remains owed.
+
+**The parity harness this suite does not have, measured rather than assumed.** The *emitting* half of the production
+path (real transport ticks, the ring consumed by the clock path, the emitted stream compared) **cannot be driven from
+this suite**: with the transport started through its own owner (`Track::startPlaying`, which clears
+`transportStopOutputBarrier_`), the projection re-anchored (`reanchorPlaybackCycle`) and the state asserted `PLAYING`,
+the clock path still recorded no tick through a whole pass (`loop.lastTickInLoop` stayed 0). The fixture is therefore
+scoped to what it verifies -- a prepared-but-unadmitted delivery consumes nothing, is not selected, and leaves the
+merged store **empty** (a rootless dense slot is silent on the clock path: the condition paging exists to change) -- and
+the emitting half is **named** as I4/4.3's harness work, together with the parity oracle it needs: this suite has **no
+MIDI sink**, so velocity/tick-exact content parity and **4.3's same-tick order** gate require one.
+
+| Check | Result |
+|---|---|
+| Focused RWS | **159/159** |
+| Production sources | **unchanged by this slice** (test-only) -- the device/guard figures of §8 stand |
+| Strict validation / `git diff --check` | valid / clean |
+| Device run / upload | **NOT RUN** |
