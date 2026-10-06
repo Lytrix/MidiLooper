@@ -1,3 +1,45 @@
+**2026-10-06 — `windowed-playback-generation` 3.7a I8: the **differential lane parity** is measured — the published-root
+lane and the retained-source lane serve one revision identically (test-only; no production line changed).** The I1
+packet's ladder ends at **I4 — "differential fallback parity … the shipped-vs-fallback comparison over the same
+revision"**, and it was the last row without a landing record; the task's verify clause names the same clause, and the
+G2 packet's red-proof list asks for the **compatibility differential control**. Every parity claim so far was against
+the **effective-content owner** (`Loop::copyEffectiveCommittedEventsInRange`): the rootless gather (I1/I2), its
+per-layer note-edit resolution (I7) and the paged lane's pass-exact emission (I3c-c/I5). Nothing had compared the
+**other** enumeration of one revision — the **published snapshot root**, the primitive the shipped window build of
+`Track::requestPlaybackWindow` reads *and* the one the merged-window fallback reads
+(`ensurePlaybackMergedMidiEventsBuilt` → `Loop::tryGatherPublishedSnapshotEventsInWindow`) — against the retained lane's
+**pinned bodies**; that is exactly what 3.7b's removal of the live fallback rests on. **Four fixtures** compare the two
+lanes on the events' **wire identity** (count first, then tick/type/channel/note/velocity element-wise; `noteId`,
+`eventId` and `canonicalOrder` are each lane's own bookkeeping, and the root's published `canonicalOrder` is made to
+coincide with tick order, so **same-tick order stays 4.3's gate**) for a slot holding **both** a current root and a
+retained source for the same revision: they agree at the resolver's own two-bar window (`W-37a-27`), at **every**
+window of a seven-playhead sweep across a 24-bar loop (`W-37a-28`: 5 windows with content, 13 bars reached), on an
+**edited** revision (`W-37a-30`: I7's crossing revision with a current root carrying the post-edit content — both lanes
+drop the deleted note and keep the surviving and record pairs), and — the negative direction — a revision **only one
+lane holds** is answered by the lane that holds it while the other refuses **by name** (`W-37a-29`: `RevisionMismatch`,
+0 chunks inspected, 0 events appended). Through production the requester is `Admitted`, its output equals the root's,
+and the **served** window's content equals the **retained** lane's answer. Verified: focused **170/170** (baseline
+166/166), full native **2,848 / 7 skipped / 2,841 succeeded / 0 failed** (baseline measured with the slice stashed:
+2,844/2,837), capture build **SUCCESS** with the RAM1 line **byte-identical** (`variables 96,192`;
+`code 392,248 + padding 968`; floor 840), strict validation and `git diff --check` clean, and **three red-proofs RED
+with byte-identical restores**: **RP-I8-window** (*Expected 4 Was 48*), **RP-I8-revision** (both layers of the revision
+authority dropped: *Expected 4 Was 0*, on W-37a-29 and on I1's fixture) and **RP-I8-branch** (a retained source
+preferred over the root that answers: *Expected 0 Was 5*). **Two deviations recorded rather than reworded:**
+RP-I8-revision's first form (the gather's own source guard alone) was a **non-red-proof** — the interval index refuses
+the foreign revision first, the same layering I1's **MR-3.7a-B/B'** records — and **RP-I8-branch does not fail
+W-37a-27**, which **corrects the packet's prediction** (the identity a window carries is the **loop's** published root
+whether or not that root was the enumeration used, and the two lanes answer identical content by the parity itself; the
+branch is discriminated only where preferring the retained lane changes an outcome). A process incident is recorded: two
+full-native runs read **2,679** cases because a comment edit of mine had swallowed two statements of that fixture
+(`use of undeclared identifier 'again'`), leaving the suite **ERRORED** while the table's tail showed only `PASSED`
+rows; fixed and re-run, and the recorded figure comes from a table with no `ERRORED`/`FAILED` row. **Not claimed:** no
+device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); one revision at a time and
+only for a **current** root (the stale-root `Overlay` path is 3.6b's allowance); nothing about note/event identity,
+channel remapping or same-tick order; the pager, preview session, retained-source release and the demotion matrix stay
+their own tasks; `retainPlaybackSourceForSlot` still has **no production caller**, so no retainer is added here.
+Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i8-lane-parity/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i8-lane-parity/EXECUTION.md).
 **2026-10-06 — `windowed-playback-generation` 3.7a I7: the retained revision's note edits are resolved **per layer**, and
 the paged lane refuses what it cannot resolve (firmware + tests).** The residual **I1 named as I2's**, which I2 and I3
 then deferred, is closed: the retained-source gather used to **refuse** a revision whose pins carried an Active Note row
@@ -5367,6 +5409,68 @@ object carries `.gcc_except_table`, and the tree's only `catch (bad_alloc)` is h
 Task **S4e.9**; packet and evidence under
 [`evidence/2026-10-06-s4e9-projection-containment/`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-s4e9-projection-containment/).
 
+### 3.7a (I8) — the differential lane parity: the published-root lane and the retained-source lane serve one revision identically (2026-10-06; test-only)
+
+**3.7a increment I8 landed 2026-10-06 (test-only; no production line changed — `git diff --stat -- src include` is
+empty — and the task stays open with 3.7b's conditions unchanged).** The I1 packet's four-row ladder ends at **I4 —
+*"Differential fallback parity and the timing admission … the shipped-vs-fallback comparison over the same revision"***,
+and that row was the last one without a landing record; the task's own verify clause names the same thing
+(*"differential fallback parity"*), and the `G2-EXECUTION-PACKET` red-proof list asks for the **compatibility
+differential control**. Every parity claim landed so far was against the **effective-content owner**
+(`Loop::copyEffectiveCommittedEventsInRange`): the rootless gather (I1/I2), its per-layer note-edit resolution (I7) and
+the paged lane's pass-exact emission (I3c-c/I5). What nothing compared is the **other** enumeration of one revision —
+the **published snapshot root**, the primitive the shipped window build of `Track::requestPlaybackWindow` reads *and*
+the one the merged-window fallback reads (`ensurePlaybackMergedMidiEventsBuilt` →
+`Loop::tryGatherPublishedSnapshotEventsInWindow`) — against the retained lane's **pinned bodies**. That is precisely
+the statement **3.7b**'s removal of the live fallback rests on: if the two enumerations can differ for one revision,
+removing the fallback changes what a slot plays. **The shape compared** is a slot holding **both**: a bar-spaced
+committed record pass over 24 bars **and** a current published root for the same content and revision (the suite's own
+`commitBarSpacedPassIntoTrackSlot` / `publishBarSpacedRootForSlot` pair), prewarmed, with the same revision retained.
+**The oracle is lane agreement on the events' wire identity** — count first, then `(tick, type, channel, note, velocity)`
+element-by-element — because `noteId`/`eventId`/`canonicalOrder` are each lane's own bookkeeping, and the root's
+published `canonicalOrder` is made to coincide with tick order here, so **same-tick order stays 4.3's gate**.
+**Measured: the parity holds.** `W-37a-27`: the root lane answers by the **`Snapshot`** path (a current root, not the
+stale-root overlay) and the retained lane answers `Served`/`complete` (`pinnedLists == 1`, `inspectedChunks > 0`,
+`indexAnsweredEmpty == false`, one bounded slice per call), with the two answers **element-wise identical**; through
+production the requester is `Admitted`, its output equals the **root's**, and the **served** window's content equals the
+**retained** lane's answer. `W-37a-28`: a **seven-playhead sweep** across the loop (bar-aligned and not, down to the
+last tick, whose window is clamped to the loop's tail) agrees in every window, with **5** windows carrying content and
+**13** of the loop's 24 bars reached, so the sweep is not vacuous. `W-37a-30`: on I7's **crossing edited revision**,
+with a current root published for the **post-edit** content, both lanes answer **4** events, both omit the deleted
+note's On@100/Off@300 and both keep the surviving pair and the record pair — the case where the publication's flattened
+membership and the per-layer resolution could legitimately have drifted, and the one that will matter when 3.7b removes
+the fallback. `W-37a-29` is the **negative direction**: when the loop's revision advances past the retained source (and
+a current root is published for the new revision) the retained lane asked for the **current** revision refuses **by
+name** (`RevisionMismatch`, **0** chunks inspected, **0** events appended), a caller asking for exactly the revision the
+source holds is still served, the current root answers and the requester serves **it** — so the two lanes can never
+disagree silently. **Verified:** focused **170/170** (baseline 166/166), full native **2,848 / 7 skipped / 2,841
+succeeded / 0 failed** (baseline measured with this slice stashed: 2,844/2,837), capture build **SUCCESS** with the RAM1
+line **byte-identical** (`variables 96,192`; `code 392,248 + padding 968`; floor 840; 128 B of headroom, **no
+re-base**), strict validation and `git diff --check` clean, and **three red-proofs RED with byte-identical restores**
+(`src/Track/TrackPlaybackWindowBuild.cpp` sha256 `48c57b2fe9d7c78e…`): **RP-I8-window** (the gather answers the whole
+loop, window ignored: *Expected 4 Was 48* on W-37a-27 and W-37a-28), **RP-I8-revision** (both layers of the revision
+authority dropped: *Expected 4 Was 0* on W-37a-29 and on I1's own fixture) and **RP-I8-branch** (a retained source
+preferred over the root that answers: *Expected 0 Was 5* on W-37a-29 — the compatibility control's failure mode: the
+requester refuses a slot whose root could answer). **Recorded, not smoothed over:** RP-I8-revision's first form —
+removing only the gather's own `expectedRevision` guard — was a **non-red-proof**, because the interval index refuses
+the foreign revision first (`queryRetainedIntervalForSlot`), the same layering I1's **MR-3.7a-B/B'** records; it was
+re-expressed to drop both layers. And **RP-I8-branch does not fail W-37a-27**, which **corrects the packet's
+prediction**: the identity a window carries is the **loop's** published root whether or not that root was the
+enumeration used, and the two lanes answer *identical content* by the parity itself — so W-37a-27 cannot discriminate
+the branch choice at all, and the branch is discriminated only where preferring the retained lane changes an outcome
+(a lagging source in front of a root that could still answer). W-37a-27's compatibility half is now presented as what
+it is. A process incident is recorded too: two full-native runs read **2,679** cases because a comment edit of mine had
+swallowed two statements of that fixture (`use of undeclared identifier 'again'`), leaving the suite **ERRORED** while
+the table's tail showed only `PASSED` rows; fixed, re-run, and the recorded figure comes from a table with no
+`ERRORED`/`FAILED` row. **Not claimed:** no device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback
+removal (3.7b); one revision at a time and only for a **current** root (the stale-root `Overlay` path is 3.6b's
+allowance and is deliberately not compared); nothing about note/event identity, channel remapping or same-tick order;
+the pager, preview session, retained-source release and the demotion matrix stay their own tasks; and
+`retainPlaybackSourceForSlot` still has **no production caller** (the 2026-10-06 pool-attribution finding stands), so
+this increment adds no retainer — it establishes that the lane *is* content-equivalent wherever a retained source
+exists. Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i8-lane-parity/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i8-lane-parity/EXECUTION.md).
 ### 3.7a (I7) — the retained revision's note edits are resolved per layer, and the paged lane refuses what it cannot resolve (2026-10-06; firmware + tests)
 
 **3.7a increment I7 landed 2026-10-06 (firmware + tests; the task stays open, 3.7b's conditions unchanged).** The residual

@@ -1,3 +1,53 @@
+**`windowed-playback-generation` 3.7a / I8 — the **differential lane parity** is measured: the published-root lane and
+the retained-source lane serve one revision identically (2026-10-06; test-only, no production line).** The I1 packet's
+increment ladder ends at **I4 — "differential fallback parity and the timing admission … the shipped-vs-fallback
+comparison over the same revision"** — and that row was the last one without a landing record; task 3.7a's own verify
+clause names *"differential fallback parity"*, and the `G2-EXECUTION-PACKET` red-proof list asks for the **compatibility
+differential control**. Every parity claim landed so far was against the **effective-content owner**
+(`Loop::copyEffectiveCommittedEventsInRange`): the rootless gather (I1/I2), its per-layer resolution of the pinned
+revision's note edits (I7) and the paged lane's pass-exact emission (I3c-c/I5). What nothing compared is the **other**
+enumeration of one revision — the **published snapshot root**, the primitive the shipped window build of
+`Track::requestPlaybackWindow` reads **and** the one the merged-window fallback reads
+(`ensurePlaybackMergedMidiEventsBuilt` → `Loop::tryGatherPublishedSnapshotEventsInWindow`) — against the retained lane's
+**pinned bodies**. That comparison is the statement **3.7b**'s removal of the live mutable fallback rests on: if the
+two enumerations can differ for one revision, removing the fallback changes what a slot plays. **The shape compared**
+holds **both** — a bar-spaced committed record pass over 24 bars and a current published root for the same content and
+revision (the suite's own `commitBarSpacedPassIntoTrackSlot` / `publishBarSpacedRootForSlot` pair), prewarmed, the same
+revision retained. **The oracle is lane agreement on the events' wire identity** — the count first, then
+`(tick, type, channel, note, velocity)` element-by-element — because `noteId`/`eventId`/`canonicalOrder` are each lane's
+own bookkeeping and the root's published `canonicalOrder` is made to coincide with tick order here, so **same-tick order
+stays 4.3's gate**. **Measured: the parity holds**, including the case where the two rules could legitimately have
+drifted — an **edited** revision (I7's crossing revision with a current root carrying the post-edit content: both lanes
+answer the same **4** events, both drop the deleted note's On/Off and both keep the surviving and record pairs). The
+other three cases: the two lanes agree at the resolver's own two-bar window and at **every** window of a seven-playhead
+sweep across a 24-bar loop (5 windows with content, 13 bars reached, so the sweep is not vacuous); through production
+the requester is `Admitted`, its output equals the **root's** and the **served** window's content equals the **retained**
+lane's answer; and the negative direction — a revision **only one lane holds** is answered by the lane that holds it
+while the other refuses **by name** (`RevisionMismatch`, **0** chunks inspected, **0** events appended). **Verified:**
+focused **170/170** (baseline 166/166), full native **2,848 / 7 skipped / 2,841 succeeded / 0 failed** (baseline measured
+with this slice stashed: 2,844/2,837), capture build **SUCCESS** with the RAM1 line **byte-identical** (`variables
+96,192`; `code 392,248 + padding 968`; floor 840; 128 B of headroom, **no re-base** — `git diff --stat -- src include`
+empty), strict validation and `git diff --check` clean, and **three red-proofs RED with byte-identical restores**
+(`src/Track/TrackPlaybackWindowBuild.cpp` sha256 `48c57b2fe9d7c78e…`): **RP-I8-window** (the gather answers the whole
+loop, the window ignored: *Expected 4 Was 48* on two fixtures), **RP-I8-revision** (both layers of the revision
+authority dropped: *Expected 4 Was 0*, on the new fixture and on I1's) and **RP-I8-branch** (a retained source preferred
+over the root that answers: *Expected 0 Was 5* — the compatibility control's failure mode, the requester refusing a slot
+whose root could answer). **Recorded, not smoothed over:** RP-I8-revision's first form — only the gather's own
+`expectedRevision` guard removed — was a **non-red-proof** (the interval index refuses the foreign revision first, the
+same layering I1's **MR-3.7a-B/B'** records) and was re-expressed to drop both layers; **RP-I8-branch does not fail
+W-37a-27**, which **corrects the packet's prediction** — the identity a window carries is the **loop's** published root
+whether or not that root was the enumeration used, and the two lanes answer *identical content* by the parity itself, so
+the branch choice is discriminated only where preferring the retained lane changes an outcome; and two full-native runs
+read **2,679** cases because a comment edit of mine had swallowed two statements of that fixture (`use of undeclared
+identifier 'again'`), leaving the suite **ERRORED** while the table's tail showed only `PASSED` rows — fixed, re-run,
+and the recorded figure comes from a table with no `ERRORED`/`FAILED` row. **Not claimed:** no device leg, no timing
+claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); one revision at a time and only for a **current**
+root (the stale-root `Overlay` path is 3.6b's allowance and is deliberately not compared); nothing about note/event
+identity, channel remapping or same-tick order; the pager, the preview session, retained-source release and the
+demotion matrix stay their own tasks; and `retainPlaybackSourceForSlot` still has **no production caller**, so no
+retainer is added here. Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i8-lane-parity/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i8-lane-parity/EXECUTION.md).
 **`windowed-playback-generation` 3.7a / I7 — the retained revision's note edits are resolved **per layer**, and the paged
 lane refuses what it cannot resolve (2026-10-06; firmware + tests).** The residual **I1 named as I2's** and I2/I3 then
 deferred is closed: the retained-source gather (`Track::gatherRetainedSourceWindowForSlot`) used to **refuse** a revision

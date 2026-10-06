@@ -12289,6 +12289,441 @@ void test_3_7a_i4_the_paged_delivery_names_a_halved_service_rate() {
                            "breach is named (a dry pass or an unstraddled wrap) rather than served as content");
 }
 
+namespace {
+
+/// Task 3.7a (I8): **one revision, two lanes.** The **published-root lane**
+/// (`Loop::tryGatherPublishedSnapshotEventsInWindow` -- the enumeration the shipped window build of
+/// `Track::requestPlaybackWindow` and the merged-window fallback both read) and the **retained-source lane**
+/// (`Track::gatherRetainedSourceWindowForSlot`) enumerate one revision independently, so the property this increment
+/// owes is that they agree. The comparison is on the events' **wire identity** (tick, type, channel, note, velocity):
+/// `noteId`/`eventId`/`canonicalOrder` are each lane's own bookkeeping -- the publication assigns the root's, the store
+/// the bodies' -- so comparing them would test this fixture's construction rather than the parity. The root lane's order
+/// is the published `canonicalOrder` and the retained lane's is tick order; this construction makes the two coincide,
+/// and **same-tick order stays task 4.3's gate**.
+struct LaneWireEvent {
+  uint32_t tick = 0;
+  int type = 0;
+  uint8_t channel = 0;
+  uint8_t note = 0;
+  uint8_t velocity = 0;
+};
+
+std::vector<LaneWireEvent> wireIdentityOf(const SessionMidiEventVec& events) {
+  std::vector<LaneWireEvent> out;
+  out.reserve(events.size());
+  for (const MidiEvent& event : events) {
+    LaneWireEvent lane{};
+    lane.tick = event.tick;
+    lane.type = static_cast<int>(event.type);
+    lane.channel = event.channel;
+    lane.note = event.data.noteData.note;
+    lane.velocity = event.data.noteData.velocity;
+    out.push_back(lane);
+  }
+  return out;
+}
+
+/// The number of leading events whose wire identity agrees, so a caller asserts it equals the answer's own size and a
+/// difference is reported **with its position** rather than as "the vectors differ".
+size_t wireIdentityAgreementLength(const SessionMidiEventVec& left, const SessionMidiEventVec& right) {
+  const std::vector<LaneWireEvent> leftIdentity = wireIdentityOf(left);
+  const std::vector<LaneWireEvent> rightIdentity = wireIdentityOf(right);
+  const size_t common = std::min(leftIdentity.size(), rightIdentity.size());
+  for (size_t i = 0; i < common; ++i) {
+    if (leftIdentity[i].tick != rightIdentity[i].tick || leftIdentity[i].type != rightIdentity[i].type ||
+        leftIdentity[i].channel != rightIdentity[i].channel || leftIdentity[i].note != rightIdentity[i].note ||
+        leftIdentity[i].velocity != rightIdentity[i].velocity) {
+      return i;
+    }
+  }
+  return common;
+}
+
+/// The retained lane driven to its completing call inside the callers' own ceiling, with the per-call slice bound
+/// asserted so no fixture can pass by gathering everything in one go.
+Track::RetainedWindowGather gatherRetainedWindowForFixture(Track& track, const PlaybackCoverageInterval& interval,
+                                                           uint32_t revision, SessionMidiEventVec& out,
+                                                           SessionMidiEventVec& layerScratch, uint32_t& callsOut) {
+  CommittedEventRange::WindowTraversalCursor cursor{};
+  CommittedEventRange::resetWindowTraversalCursor(cursor);
+  out.clear();
+  Track::RetainedWindowGather gather{};
+  for (uint32_t call = 0; call < 64; ++call) {
+    gather = track.gatherRetainedSourceWindowForSlot(0, interval.startPhase, interval.lengthTicks, revision, cursor,
+                                                     out, layerScratch);
+    ++callsOut;
+    if (gather.result != Track::RetainedWindowGatherResult::Served) {
+      return gather;
+    }
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(kRetainedGatherSliceEvents, gather.eventsAppended,
+                                             "one bounded slice per call, exactly as the callers' ceiling assumes");
+    if (gather.complete) {
+      return gather;
+    }
+  }
+  return gather;
+}
+
+/// The published-root lane for one window, with its own path: only `Snapshot` is the **current** root -- the `Overlay`
+/// path carries unpublished session/pending passes and is 3.6b's allowance, never content truth for a current revision.
+struct RootLaneAnswer {
+  bool answered = false;
+  Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+  uint32_t inspectedEntries = 0;
+  SessionMidiEventVec events;
+};
+
+RootLaneAnswer rootLaneAnswerForWindow(const Loop& loop, const PlaybackCoverageInterval& interval) {
+  RootLaneAnswer answer{};
+  answer.answered = loop.tryGatherPublishedSnapshotEventsInWindow(
+      answer.events, interval.startPhase, interval.lengthTicks, &answer.path, &answer.inspectedEntries);
+  return answer;
+}
+
+/// Publish a **current** root carrying exactly these events, one `Add` per event with `canonicalOrder` = the given
+/// order, so a fixture can state the content a *publication* would have produced for a revision -- the root lane's
+/// input. Same construction idiom as `publishBarSpacedRootForSlot`; the notes view stays empty because the windowed
+/// gather reads the **event** membership.
+void publishRootFromEventsForSlot(Loop& loop, const std::vector<MidiEvent>& events, uint32_t revision) {
+  auto empty = std::make_shared<const LoopSnapshot>(LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 8, 8));
+  LoopSnapshotChangeSet changes;
+  for (size_t i = 0; i < events.size(); ++i) {
+    SnapshotEventChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.eventId = static_cast<EventId>(5000 + i);
+    add.next.canonicalOrder = static_cast<uint32_t>(i);
+    add.next.value = events[i];
+    changes.events.push_back(add);
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  loop.storePublishedSnapshotForTest(snapshot, revision);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the fixture must install a *current* root");
+}
+
+/// The shape this increment compares: one slot holding one committed content, with **both** a current published root
+/// for it and a retained source for the same revision -- a restored slot's root plus DEC-108 section 10's retained
+/// revision. The committed pass and the root are built from the **same** bar-spaced notes by the suite's own pair of
+/// helpers (`commitBarSpacedPassIntoTrackSlot` / `publishBarSpacedRootForSlot`).
+struct RootBackedRetainedSlot {
+  Track* track = nullptr;
+  Loop* loop = nullptr;
+  uint32_t revision = 0;
+  uint32_t bars = 0;
+};
+
+RootBackedRetainedSlot prepareRootBackedRetainedSlot(uint32_t bars) {
+  RootBackedRetainedSlot fixture{};
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  commitBarSpacedPassIntoTrackSlot(track, 0, bars);
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = bars * Config::TICKS_PER_BAR;
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  publishBarSpacedRootForSlot(loop, bars);
+  fixture.revision = loop.playbackRevision;
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                            static_cast<int>(track.retainPlaybackSourceForSlot(0, fixture.revision, 3)),
+                            "the same revision is retained, which is the second lane");
+  fixture.track = &track;
+  fixture.loop = &loop;
+  fixture.bars = bars;
+  return fixture;
+}
+
+}  // namespace
+
+/// 3.7a (I8) / W-37a-27: **the ladder's last row -- differential fallback parity.** For one revision, the lane that
+/// answers today (the published root: the shipped window build and the merged-window fallback both read it) and the
+/// lane task 3.7a added (the retained revision's pinned bodies) serve **the same events**. That comparison is the
+/// oracle; a difference would be a finding, never a tolerance. The requester's own branch is asserted too: a
+/// root-backed slot is still served **from its root**, so the retained lane's presence does not displace the lane
+/// 3.7b keeps as the cold reference -- and the served window's content is the retained lane's answer, which is the
+/// statement 3.7b's removal rests on.
+void test_3_7a_i8_the_two_lanes_serve_one_revision_identically() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kBars = 24;       // over the detailed-window ceiling: the windowed shape, not the whole-take one
+  constexpr uint32_t kPlayhead = 500;  // inside the first bar, so the two-bar window starts at tick 0
+  RootBackedRetainedSlot fixture = prepareRootBackedRetainedSlot(kBars);
+  Track& track = *fixture.track;
+  Loop& loop = *fixture.loop;
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the root-backed half of the comparison");
+  TEST_ASSERT_TRUE(track.hasRetainedPlaybackSourceForSlot(0));
+  TEST_ASSERT_TRUE_MESSAGE(loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks),
+                           "the fixture's shape is the demoted one, so both lanes answer a two-bar window");
+  PlaybackCoverageInterval interval{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks, true, kPlayhead, interval));
+  TEST_ASSERT_EQUAL_UINT32(0u, interval.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(2 * kBar, interval.lengthTicks);
+  // (a) **The root lane** -- a *current* root (path `Snapshot`), not the stale-root overlay.
+  RootLaneAnswer root = rootLaneAnswerForWindow(loop, interval);
+  TEST_ASSERT_TRUE(root.answered);
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Snapshot), static_cast<int>(root.path));
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(root.events.size()));
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, root.inspectedEntries);
+  // (b) **The retained lane** -- the same revision, from its pinned bodies, one bounded slice per call.
+  SessionMidiEventVec layerScratch;
+  SessionMidiEventVec retainedEvents;
+  uint32_t calls = 0;
+  const Track::RetainedWindowGather gather =
+      gatherRetainedWindowForFixture(track, interval, fixture.revision, retainedEvents, layerScratch, calls);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served), static_cast<int>(gather.result));
+  TEST_ASSERT_TRUE(gather.complete);
+  TEST_ASSERT_FALSE(gather.indexAnsweredEmpty);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, gather.pinnedLists, "the pinned record pass contributes its bodies");
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, gather.inspectedChunks);
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, calls);
+  // (c) **The comparison**, element-wise on the wire identity.
+  const std::vector<LaneWireEvent> rootIdentity = wireIdentityOf(root.events);
+  const std::vector<LaneWireEvent> retainedIdentity = wireIdentityOf(retainedEvents);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(rootIdentity.size()),
+                                   static_cast<uint32_t>(retainedIdentity.size()),
+                                   "one revision, two lanes: the same number of events");
+  for (size_t i = 0; i < rootIdentity.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(rootIdentity[i].tick, retainedIdentity[i].tick);
+    TEST_ASSERT_EQUAL(rootIdentity[i].type, retainedIdentity[i].type);
+    TEST_ASSERT_EQUAL_UINT8(rootIdentity[i].channel, retainedIdentity[i].channel);
+    TEST_ASSERT_EQUAL_UINT8(rootIdentity[i].note, retainedIdentity[i].note);
+    TEST_ASSERT_EQUAL_UINT8(rootIdentity[i].velocity, retainedIdentity[i].velocity);
+  }
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(root.events.size()),
+                           wireIdentityAgreementLength(root.events, retainedEvents));
+  // (d) **Through production.** The requester serves the **root** for a root-backed slot -- the merged-window
+  // fallback's own enumeration -- and the window the owner publishes carries that root's identity.
+  SessionMidiEventVec requesterScratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, kPlayhead, requesterScratch)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(root.events.size()),
+                                   static_cast<uint32_t>(requesterScratch.size()),
+                                   "the requester serves the root's own answer for a root-backed slot");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(root.events.size()),
+                           wireIdentityAgreementLength(root.events, requesterScratch));
+  for (uint32_t turn = 0; turn < 128 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  PlaybackViewSourceIdentity identity{};
+  PlaybackCoverageInterval published{};
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowForSlot(0, identity, published),
+                           "the production turn publishes the window");
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackWindowOrigin::Committed), static_cast<int>(identity.origin));
+  TEST_ASSERT_EQUAL_UINT32(fixture.revision, identity.playbackRevision);
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(loop.publishedSnapshotIdentity(), identity.snapshotIdentity,
+                                "the served window carries the root it read: this slot is not the rootless shape");
+  TEST_ASSERT_EQUAL_UINT32(interval.startPhase, published.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(interval.lengthTicks, published.lengthTicks);
+  auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const auto& served = set->views[set->lifecycle.current];
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(retainedEvents.size()), served.storage.eventCount,
+                                   "the served window holds exactly what the retained lane answers for this revision");
+  SessionMidiEventVec servedEvents;
+  for (uint32_t i = 0; i < served.storage.eventCount; ++i) {
+    servedEvents.push_back(served.storage.events[served.storage.order[i]]);
+  }
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(retainedEvents.size()),
+                           wireIdentityAgreementLength(retainedEvents, servedEvents));
+  // The **compatibility control**: the root/fallback lane is still there and still answerable after the retained lane
+  // was read -- nothing was consumed by it. **Named, not implied:** this half cannot discriminate the requester's
+  // branch choice on its own, because the identity a window carries is the **loop's** published root (whether or not
+  // that root was the enumeration used) and these two lanes answer identical content by the parity measured above. The
+  // branch choice is discriminated where it can change an outcome -- RP-I8-branch (a retained source preferred while it
+  // lags) fails W-37a-29's requester assertion.
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the root is still the slot's published checkpoint");
+  RootLaneAnswer again = rootLaneAnswerForWindow(loop, interval);
+  TEST_ASSERT_TRUE(again.answered);
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Snapshot), static_cast<int>(again.path));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(root.events.size()), static_cast<uint32_t>(again.events.size()));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(root.events.size()),
+                           wireIdentityAgreementLength(root.events, again.events));
+}
+
+/// 3.7a (I8) / W-37a-28: **the agreement holds at every window, not only at the fixture's favourite one.** Windows
+/// start at the playhead's own phase (clamped at the loop's ends), so a lane that sliced the interval differently --
+/// or that ignored the window at all -- can agree at tick 0 and differ elsewhere. The sweep also asserts that its
+/// windows carry content and reach the loop's bars across its length, so it cannot pass vacuously.
+void test_3_7a_i8_the_two_lanes_agree_at_every_window_across_the_loop() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kBars = 24;
+  RootBackedRetainedSlot fixture = prepareRootBackedRetainedSlot(kBars);
+  Track& track = *fixture.track;
+  Loop& loop = *fixture.loop;
+  const uint32_t playheads[] = {1u, 300u, kBar, kBar * 5 + 700, kBar * 11 + 384, kBar * 17 + 100,
+                                kBars * kBar - 1};
+  std::vector<bool> barSeen(kBars, false);
+  uint32_t windowsWithContent = 0;
+  for (const uint32_t playhead : playheads) {
+    PlaybackCoverageInterval interval{};
+    TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks, true, playhead, interval));
+    RootLaneAnswer root = rootLaneAnswerForWindow(loop, interval);
+    TEST_ASSERT_TRUE_MESSAGE(root.answered, "the current root answers every window of the loop");
+    TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Snapshot), static_cast<int>(root.path));
+    SessionMidiEventVec layerScratch;
+    SessionMidiEventVec retainedEvents;
+    uint32_t calls = 0;
+    const Track::RetainedWindowGather gather =
+        gatherRetainedWindowForFixture(track, interval, fixture.revision, retainedEvents, layerScratch, calls);
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served), static_cast<int>(gather.result));
+    TEST_ASSERT_TRUE(gather.complete);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(root.events.size()),
+                                     static_cast<uint32_t>(retainedEvents.size()),
+                                     "every window of the loop agrees between the two lanes");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(root.events.size()),
+                                     wireIdentityAgreementLength(root.events, retainedEvents),
+                                     "every window of the loop agrees element-wise, not only in count");
+    if (!root.events.empty()) {
+      ++windowsWithContent;
+    }
+    for (const MidiEvent& event : retainedEvents) {
+      const uint32_t bar = event.tick / kBar;
+      if (bar < kBars) {
+        barSeen[bar] = true;
+      }
+    }
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(4u, windowsWithContent,
+                                          "the sweep's windows carry the loop's content, so the agreement is not vacuous");
+  uint32_t barsReached = 0;
+  for (const bool seen : barSeen) {
+    if (seen) {
+      ++barsReached;
+    }
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(9u, barsReached,
+                                          "and they reach the loop's bars across its length, not one corner of it");
+}
+
+/// 3.7a (I8) / W-37a-29: **a revision only one lane holds is refused by name, and neither lane answers for the other.**
+/// The loop's revision advances past the retained source -- what an edit does to the revision a window is dated by --
+/// and a current root is published for the new revision. The retained lane asked for the current revision refuses
+/// (`RevisionMismatch`, inspecting and appending nothing), a caller asking for exactly the revision it holds is still
+/// answered, and the current root answers -- so the two lanes can never disagree silently. The content does not change
+/// with the revision here, so the three answers are compared: the current root, the requester's, and the older
+/// revision the retained source holds.
+void test_3_7a_i8_a_revision_only_one_lane_holds_is_refused_by_name() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kBars = 24;
+  constexpr uint32_t kPlayhead = 500;
+  RootBackedRetainedSlot fixture = prepareRootBackedRetainedSlot(kBars);
+  Track& track = *fixture.track;
+  Loop& loop = *fixture.loop;
+  const uint32_t retainedRevision = fixture.revision;
+  PlaybackCoverageInterval interval{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks, true, kPlayhead, interval));
+  // The revision moves (an edit's effect) and the root is re-published for the new one: exactly one lane now holds the
+  // revision a window is dated by.
+  const uint32_t currentRevision = retainedRevision + 1;
+  loop.playbackRevision = currentRevision;
+  const std::vector<MidiEvent> republished = {MidiEvent::NoteOn(0, 1, 48, 100), MidiEvent::NoteOff(48, 1, 48, 0),
+                                              MidiEvent::NoteOn(kBar, 1, 48, 100),
+                                              MidiEvent::NoteOff(kBar + 48, 1, 48, 0)};
+  publishRootFromEventsForSlot(loop, republished, currentRevision);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the new revision's root is current");
+  // (a) The retained lane, asked for the **current** revision, refuses by name and spends nothing.
+  SessionMidiEventVec layerScratch;
+  SessionMidiEventVec refusedOut;
+  uint32_t refusedCalls = 0;
+  const Track::RetainedWindowGather refused =
+      gatherRetainedWindowForFixture(track, interval, currentRevision, refusedOut, layerScratch, refusedCalls);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::RevisionMismatch),
+                    static_cast<int>(refused.result));
+  TEST_ASSERT_FALSE(refused.complete);
+  TEST_ASSERT_EQUAL_UINT32(0u, refused.inspectedChunks);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(refusedOut.size()));
+  // (b) A caller that asks for exactly the revision the source holds is still answered.
+  SessionMidiEventVec olderOut;
+  uint32_t olderCalls = 0;
+  const Track::RetainedWindowGather older =
+      gatherRetainedWindowForFixture(track, interval, retainedRevision, olderOut, layerScratch, olderCalls);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served), static_cast<int>(older.result));
+  TEST_ASSERT_TRUE(older.complete);
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(olderOut.size()));
+  // (c) The current root answers, and the requester serves it -- not the lagging retained source.
+  RootLaneAnswer root = rootLaneAnswerForWindow(loop, interval);
+  TEST_ASSERT_TRUE(root.answered);
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Snapshot), static_cast<int>(root.path));
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(root.events.size()));
+  SessionMidiEventVec requesterScratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, kPlayhead, requesterScratch)));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(root.events.size()),
+                           wireIdentityAgreementLength(root.events, requesterScratch));
+  // The parity this case is about: the revision moved, the content did not, and each lane answers for its own revision
+  // -- the current root's answer and the older revision's retained answer are the same events.
+  const uint32_t common = static_cast<uint32_t>(std::min(root.events.size(), olderOut.size()));
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, common);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(root.events.size()),
+                           wireIdentityAgreementLength(root.events, olderOut));
+}
+
+/// 3.7a (I8) / W-37a-30: **an edited revision is resolved the same way by both lanes.** This is where the two rules
+/// could legitimately have drifted: the root lane reads a *published* content (the publication's own flattened
+/// membership), while the retained lane resolves 3.7a/I7's pinned Active Note rows **per pass layer**. I7's two-layer
+/// crossing revision (record pair 200/800; overdub pair 100/300 plus a surviving pair 150/160; a pinned Delete of the
+/// overdub's note) is given a current root carrying the **post-edit** content, and the lanes must agree on it -- both
+/// keeping the record pair and the surviving pair and both omitting the deleted note's On and Off.
+void test_3_7a_i8_an_edited_revision_is_resolved_the_same_way_by_both_lanes() {
+  constexpr uint32_t kPlayhead = 500;
+  CrossingEditedRevision fixture = prepareCrossingEditedRevision(0);
+  Track& track = *fixture.track;
+  Loop& loop = *fixture.loop;
+  // The post-edit content a publication would carry: the overdub layer's surviving pair (150/160, pitch 55), the
+  // record pair (200/800, pitch 48) -- and no trace of the deleted note (100/300) the pinned row removes.
+  const std::vector<MidiEvent> postEdit = {MidiEvent::NoteOn(150, 1, 55, 100), MidiEvent::NoteOff(160, 1, 55, 0),
+                                           MidiEvent::NoteOn(200, 1, 48, 100), MidiEvent::NoteOff(800, 1, 48, 0)};
+  publishRootFromEventsForSlot(loop, postEdit, loop.playbackRevision);
+  PlaybackCoverageInterval interval{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks, true, kPlayhead, interval));
+  TEST_ASSERT_EQUAL_UINT32(0u, interval.startPhase);
+  RootLaneAnswer root = rootLaneAnswerForWindow(loop, interval);
+  TEST_ASSERT_TRUE(root.answered);
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Snapshot), static_cast<int>(root.path));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, static_cast<uint32_t>(root.events.size()),
+                                   "the root carries the post-edit content: two pairs, the deleted one absent");
+  SessionMidiEventVec layerScratch;
+  SessionMidiEventVec retainedEvents;
+  uint32_t calls = 0;
+  const Track::RetainedWindowGather gather =
+      gatherRetainedWindowForFixture(track, interval, loop.playbackRevision, retainedEvents, layerScratch, calls);
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served), static_cast<int>(gather.result));
+  TEST_ASSERT_TRUE(gather.complete);
+  // Both lanes, measured: the deleted note is gone from each, and each keeps what the other keeps.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countEventsAtTick(root.events, 100), "the root omits the deleted On");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countEventsAtTick(root.events, 300), "and its Off with it");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countEventsAtTick(retainedEvents, 100),
+                                   "the per-layer resolution omits the deleted On");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countEventsAtTick(retainedEvents, 300), "and its Off with it");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countEventsAtTick(root.events, 150), "the surviving pair is kept by the root");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countEventsAtTick(retainedEvents, 150), "and by the per-layer resolution");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(root.events.size()),
+                                   static_cast<uint32_t>(retainedEvents.size()),
+                                   "the edited revision is answered identically by both lanes");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(root.events.size()),
+                                   wireIdentityAgreementLength(root.events, retainedEvents),
+                                   "element-wise, not only in count");
+  // Through production: the requester serves the root's edited content, and the owner's effective-content answer (I1's
+  // and I7's oracle, deliberately unchanged) agrees with the retained lane as well.
+  SessionMidiEventVec requesterScratch;
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                    static_cast<int>(track.requestPlaybackWindow(0, kPlayhead, requesterScratch)));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(root.events.size()),
+                           wireIdentityAgreementLength(root.events, requesterScratch));
+  SessionMidiEventVec effectiveOracle;
+  loop.copyEffectiveCommittedEventsInRange(effectiveOracle, interval.startPhase, interval.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(effectiveOracle.size()),
+                                   static_cast<uint32_t>(retainedEvents.size()),
+                                   "and the owner's effective-content answer agrees too");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(effectiveOracle.size()),
+                           wireIdentityAgreementLength(effectiveOracle, retainedEvents));
+}
+
 int main() {
 
 
@@ -12502,6 +12937,14 @@ int main() {
   RUN_TEST(test_3_7a_i5_a_rootless_demoted_slot_is_served_from_the_ring_pass_exact);
   RUN_TEST(test_3_7a_i4_the_midi_edge_records_what_the_clock_path_emits);
   RUN_TEST(test_3_7a_i4_the_paged_delivery_names_a_halved_service_rate);
+  // windowed-playback-generation slice 3.7a (I8): the **differential fallback parity** the I4 ladder row names -- the
+  // published-root lane (the shipped window build's and the merged-window fallback's own enumeration) and the
+  // retained-source lane answer one revision identically, at every window, with the edited case measured too, and a
+  // revision only one lane holds refused by name.
+  RUN_TEST(test_3_7a_i8_the_two_lanes_serve_one_revision_identically);
+  RUN_TEST(test_3_7a_i8_the_two_lanes_agree_at_every_window_across_the_loop);
+  RUN_TEST(test_3_7a_i8_a_revision_only_one_lane_holds_is_refused_by_name);
+  RUN_TEST(test_3_7a_i8_an_edited_revision_is_resolved_the_same_way_by_both_lanes);
   // windowed-playback-generation slice 3.12 with fixtures 5.5 / 2.11: the paged path's serving envelope, measured per
   // due window over an over-`L` interval of note pairs (cross-page closures) across the loop wrap.
   RUN_TEST(test_3_12_the_paged_path_serves_a_restored_over_l_interval_at_each_due_tick);
