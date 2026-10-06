@@ -6600,6 +6600,375 @@ void test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot(
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()), "and nothing is emitted");
 }
 
+namespace {
+/// 3.14d: a demand whose build needs **several declared grains** -- 100 events is **five** turns by the declared
+/// quanta (`test_window_owner_serves_one_grain_per_turn_and_publishes_nothing` pins that arithmetic), which is long
+/// enough to pause the preparation mid-flight and let a production gesture land in the gap. A two-bar root gathers in
+/// a single turn, so it cannot be paused at all: that is why these cases hand the production owner entry an explicit
+/// source instead of going through the root-gathering requester.
+constexpr size_t kBetweenGrainsSourceEvents = 100;
+Track::PlaybackViewRequestResult requestBetweenGrainsBuild(Track& track, uint8_t slot, uint32_t revision,
+                                                           MidiEvent* source, size_t& countOut) {
+  countOut = buildWindowOwnerSource(source, kBetweenGrainsSourceEvents);
+  return track.requestPlaybackViewMaintenance(
+      slot, source, countOut, PlaybackViewSourceIdentity{revision, 1, nullptr},
+      PlaybackCoverageInterval{0, 2 * 768, kWindowOwnerLoopTicks}, {}, {}, 0, declaredRequiredLeadFor(countOut));
+}
+}  // namespace
+/// 3.14d (DEC-108 §13(d)/(g); task 3.14's verify clause: *"pause between real preparation grains for repeated
+/// undo/redo, track/slot switching and stale completion. Assert exact MIDI output, ledger state, retained-source
+/// lifetime and eventual release."*): the **between-grains matrix**.
+///
+/// Every case pauses the window lane's **real** preparation grains (`stepPlaybackViewMaintenance`, one declared grain
+/// per turn) and then lets a production gesture land in the gap. The expectations are the mechanisms the code carries,
+/// read before the fixture was written rather than hoped for:
+///
+///   * a **committed pass** advances `playbackRevision` and nothing else, so a paused build stays legitimate, completes,
+///     and publishes at the revision it **froze** -- and readiness **names** the lag (`OwesCurrency` /
+///     `window_rebuild`) instead of reporting `Ready`;
+///   * an **undo** advances the revision *and* bumps the playback generation
+///     (`refreshPlaybackAfterEditPassStateChange` -> `invalidatePlaybackMergedMidiEvents` -> `bumpPlaybackGeneration`),
+///     and the generation **is the operation identity** the build recorded (`viewBuildOperationGeneration`), so its
+///     completion is **late by construction** and publishes nothing;
+///   * a **selection change** (the slot row and the real track selector) continues the operation with its identity, so
+///     the worker still completes into **its own** slot;
+///   * with a **retained source** admitted, no gesture re-aims or drops it: the readers keep answering the revision the
+///     source holds, and only 3.6a's single release predicate releases it -- and only once a newer window serves.
+void test_between_grains_gestures_keep_the_wire_exact_and_the_window_named() {
+  // ---- W-3.14d-1: a committed pass lands between real grains -- the build completes stale, and the lag is named ----
+  {
+    Track& track = prepareWindowOwnerSlot(0);
+    Loop& loop = track.getLoop(0);
+    publishBarSpacedRootForSlot(loop, 2);
+    const uint32_t revisionAtRequest = loop.playbackRevision;
+    MidiEvent source[kBetweenGrainsSourceEvents];
+    size_t sourceCount = 0;
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                      static_cast<int>(requestBetweenGrainsBuild(track, 0, revisionAtRequest, source, sourceCount)));
+    const uint32_t generationAtRequest = track.getPlaybackGeneration();
+    TEST_ASSERT_TRUE_MESSAGE(track.playbackViewRoleStateForSlot(0).buildOwed,
+                             "the fixture needs a real build in flight before the gesture");
+    // (b) exactly one real grain, then pause: the gap is where the gesture lands.
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
+                      static_cast<int>(track.stepPlaybackViewMaintenance()));
+    TEST_ASSERT_TRUE_MESSAGE(track.hasPendingPlaybackViewMaintenance(),
+                             "one grain of five is not the whole build -- the build must still be paused here");
+    TEST_ASSERT_FALSE_MESSAGE(track.playbackViewRoleStateForSlot(0).servedWindowReadable,
+                             "control: nothing is served yet, so the completion becomes the served window");
+    // (c) the gesture: a real committed pass.
+    MidiSendCapture::reset();
+    commitRecordPassIntoTrackSlot(track, 0);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                     "a committed pass emits nothing on the wire");
+    TEST_ASSERT_TRUE_MESSAGE(loop.playbackRevision > revisionAtRequest,
+                             "the gesture advanced the currency the completion will be judged against");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(generationAtRequest, track.getPlaybackGeneration(),
+                                     "a committed pass advances the revision, not the operation identity");
+    TEST_ASSERT_TRUE_MESSAGE(track.playbackViewRoleStateForSlot(0).buildOwed,
+                             "and the paused build is untouched by it: the build is still owed");
+    // (e) the remaining grains, then the publication.
+    MidiSendCapture::reset();
+    for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+      (void)track.stepPlaybackViewMaintenance();
+    }
+    TEST_ASSERT_FALSE_MESSAGE(track.hasPendingPlaybackViewMaintenance(),
+                              "the build completes: the gesture neither dropped nor stacked it");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                     "neither the grains nor the publication emit on the wire");
+    // (f) the completion publishes at the revision it **froze**, and the lag is named -- never served as current.
+    PlaybackWindowIdentity published{};
+    TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, published),
+                             "a legitimate paused build completes and publishes");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(revisionAtRequest, published.playbackRevision,
+                                     "it carries the revision the build froze, not the one the commit made current");
+    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackWindowReadiness::OwesCurrency),
+                              static_cast<int>(track.playbackWindowReadinessForSlot(0)),
+                              "the lag is named: a complete but stale window is not ready");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("window_rebuild",
+                                     Track::playbackWindowReadinessHolder(
+                                         track.playbackWindowReadinessForSlot(0)),
+                                     "and the holder names the rebuild, not a served currency");
+  }
+
+  // ---- W-3.14d-2: a real undo lands between grains -- the build is late by construction and publishes nothing ------
+  {
+    Track& track = prepareWindowOwnerSlot(0);
+    Loop& loop = track.getLoop(0);
+    publishBarSpacedRootForSlot(loop, 2);
+    LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+    TEST_ASSERT_NOT_NULL(runtime);
+    // The per-slot runtime is **reused** across this fixture's cases (only the pool and the manager are reset per
+    // case), so the ledger must start empty here or the settlement counts below would include an earlier case's
+    // soundings. That is a control, not a convenience: the counts are what this case asserts.
+    runtime->ledger.clear();
+    // An edit batch the undo will disable, and two soundings: the batch's own identity (60) and an unrelated one (64).
+    constexpr EditPassId kBatchId = 5252;
+    EditPass batch{};
+    batch.id = kBatchId;
+    batch.passType = EditPassType::Note;
+    batch.state = EditPassState::Active;
+    batch.addedEvents.push_back(MidiEvent::NoteOn(0, 1, 60, 100));
+    loop.passes.editPasses.push_back(batch);
+    runtime->ledger.noteOn(1, 60, 7, 0, 100);
+    runtime->ledger.noteOn(1, 64, 8, 0, 100);
+    const uint32_t revisionAtRequest = loop.playbackRevision;
+    const uint32_t generationAtRequest = track.getPlaybackGeneration();
+    MidiEvent source[kBetweenGrainsSourceEvents];
+    size_t sourceCount = 0;
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                      static_cast<int>(requestBetweenGrainsBuild(track, 0, revisionAtRequest, source, sourceCount)));
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
+                      static_cast<int>(track.stepPlaybackViewMaintenance()));
+    TEST_ASSERT_TRUE_MESSAGE(track.hasPendingPlaybackViewMaintenance(),
+                             "the build is paused mid-preparation when the gesture lands");
+    // (c) the real gesture, between grains.
+    MidiSendCapture::reset();
+    UndoEntry entry{};
+    entry.kind = UndoEntryKind::NoteEditPassClosed;
+    entry.slotIndex = 0;
+    entry.editPassType = EditPassType::Note;
+    entry.editPassIds.push_back(kBatchId);
+    pushUndoEntry(track, std::move(entry));
+    TrackUndo::undoForLoop(track, track.getActiveLoop());
+    bool batchDisabled = false;
+    for (const EditPass& pass : loop.passes.editPasses) {
+      if (pass.id == kBatchId && pass.state == EditPassState::Disabled) {
+        batchDisabled = true;
+      }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(batchDisabled, "the production undo disabled the edit batch");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                     "exactly one closure, for the identity the batch owned -- the gesture's output is exact");
+    TEST_ASSERT_TRUE(MidiSendCapture::at(0).isNoteOff());
+    TEST_ASSERT_EQUAL_UINT8(60, MidiSendCapture::at(0).data.noteData.note);
+    TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60),
+                              "the removed identity is discharged at the gesture, not at the grains");
+    TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 64),
+                             "and the sounding the batch never named is untouched -- no blanket silence");
+    // (e) the gesture **discards the paused build** while the currency moves: the invalidation releases the slot's
+    // preparation (its refusal terms are the *live owners*, and a preparation in flight is not one of them), so the
+    // lane owes nothing afterwards and the completion this case is about never happens at all.
+    TEST_ASSERT_FALSE_MESSAGE(track.hasPendingPlaybackViewMaintenance(),
+                              "the gesture discards the paused build: no turn is owed afterwards");
+    TEST_ASSERT_FALSE_MESSAGE(track.playbackViewRoleStateForSlot(0).buildOwed,
+                              "and the lane does not owe itself the build it never re-asked for");
+    // (d) the gesture advanced the currency **and** the operation identity the build recorded.
+    TEST_ASSERT_TRUE_MESSAGE(loop.playbackRevision > revisionAtRequest,
+                             "the gesture advanced the revision");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(generationAtRequest + 1, track.getPlaybackGeneration(),
+                                     "and it bumped the playback generation -- the operation identity the build holds");
+    // (f) nothing stale exists afterwards, on either edge: no turn emits, no window is published, and the owner that
+    // owes the next one is **named** (the restored root is deliberately not stamped current, so the source owes).
+    MidiSendCapture::reset();
+    for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+      (void)track.stepPlaybackViewMaintenance();
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                     "the gesture's turns emit nothing on the wire");
+    PlaybackWindowIdentity published{};
+    TEST_ASSERT_FALSE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, published),
+                              "no stale window is created: the discarded build published nothing");
+    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackWindowReadiness::OwesSource),
+                              static_cast<int>(track.playbackWindowReadinessForSlot(0)),
+                              "and readiness names the source, not a served window");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("published_source",
+                                     Track::playbackWindowReadinessHolder(
+                                         track.playbackWindowReadinessForSlot(0)),
+                                     "the holder is the source owner: a lagging root is named, never served");
+    TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 64));
+  }
+
+  // ---- W-3.14d-3: repeated gestures with grains paused between them, one wire capture per observation ---------------
+  {
+    Track& track = prepareWindowOwnerSlot(0);
+    Loop& loop = track.getLoop(0);
+    publishBarSpacedRootForSlot(loop, 2);
+    LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+    TEST_ASSERT_NOT_NULL(runtime);
+    runtime->ledger.clear();  // as in W-1: the per-slot ledger is reused within this fixture
+    constexpr EditPassId kBatchA = 5353;
+    constexpr EditPassId kBatchB = 5354;
+    for (const EditPassId id : {kBatchA, kBatchB}) {
+      EditPass batch{};
+      batch.id = id;
+      batch.passType = EditPassType::Note;
+      batch.state = EditPassState::Active;
+      batch.addedEvents.push_back(MidiEvent::NoteOn(0, 1, static_cast<uint8_t>(id == kBatchA ? 61 : 60), 100));
+      loop.passes.editPasses.push_back(batch);
+    }
+    runtime->ledger.noteOn(1, 60, 7, 0, 100);
+    runtime->ledger.noteOn(1, 61, 8, 0, 100);
+    runtime->ledger.noteOn(1, 62, 9, 0, 100);  // no gesture names it: the control
+    const uint32_t revisionAtRequest = loop.playbackRevision;
+    MidiEvent source[kBetweenGrainsSourceEvents];
+    size_t sourceCount = 0;
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                      static_cast<int>(requestBetweenGrainsBuild(track, 0, revisionAtRequest, source, sourceCount)));
+    const uint32_t generationBefore = track.getPlaybackGeneration();
+    // (a) the first gesture: an undo of batch B. Its own identity closes; nothing else does.
+    MidiSendCapture::reset();
+    UndoEntry entryB{};
+    entryB.kind = UndoEntryKind::NoteEditPassClosed;
+    entryB.slotIndex = 0;
+    entryB.editPassType = EditPassType::Note;
+    entryB.editPassIds.push_back(kBatchB);
+    pushUndoEntry(track, std::move(entryB));
+    TrackUndo::undoForLoop(track, track.getActiveLoop());
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                     "gesture 1: exactly one closure");
+    TEST_ASSERT_EQUAL_UINT8(60, MidiSendCapture::at(0).data.noteData.note);
+    TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 62));
+    TEST_ASSERT_EQUAL_UINT32(generationBefore + 1, track.getPlaybackGeneration());
+    // (b) a real grain in the gap; the late build publishes nothing.
+    if (track.hasPendingPlaybackViewMaintenance()) {
+      (void)track.stepPlaybackViewMaintenance();
+    }
+    // The suppress direction needs the identity to be **sounding** at the gesture (the ledger is external state, and
+    // the removal above discharged it): the note is re-established, exactly as the 3.14a fixture does for this half.
+    runtime->ledger.noteOn(1, 60, 7, 0, 100);
+    // (c) the re-establishing direction (the production Track entry the redo route uses for identities).
+    const EditPassIdList redoIds{kBatchB};
+    MidiSendCapture::reset();
+    const ClosureSettlement reestablished =
+        track.reconcileAfterEditPassStateChange(0, redoIds, /*identitiesAreRemoved=*/false);
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(0u, reestablished.closureCount, "a re-establishing change closes nothing");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(1u, reestablished.suppressedRetriggerCount,
+                                     "and the note it re-establishes is suppressed, never retriggered");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(2u, reestablished.preservedCount,
+                                     "the two untouched soundings (61, 62) stay preserved");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                     "gesture 2: a re-establishing gesture emits nothing at all");
+    // (d) a grain, then the second removal gesture.
+    if (track.hasPendingPlaybackViewMaintenance()) {
+      (void)track.stepPlaybackViewMaintenance();
+    }
+    MidiSendCapture::reset();
+    UndoEntry entryA{};
+    entryA.kind = UndoEntryKind::NoteEditPassClosed;
+    entryA.slotIndex = 0;
+    entryA.editPassType = EditPassType::Note;
+    entryA.editPassIds.push_back(kBatchA);
+    pushUndoEntry(track, std::move(entryA));
+    TrackUndo::undoForLoop(track, track.getActiveLoop());
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                     "gesture 3: exactly one closure, for the batch this gesture owns");
+    TEST_ASSERT_EQUAL_UINT8(61, MidiSendCapture::at(0).data.noteData.note);
+    TEST_ASSERT_EQUAL_UINT32(generationBefore + 2, track.getPlaybackGeneration());
+    // (f) the rest of the grains, and the ledger's own answer: the control sounding never closed or retriggered.
+    for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+      (void)track.stepPlaybackViewMaintenance();
+    }
+    TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 62),
+                             "the untouched sounding survives every gesture and every grain");
+    TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60),
+                             "the identity the re-establishing gesture suppressed is still sounding -- neither closed "
+                             "nor retriggered");
+    TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 61),
+                              "and the identity the last removal gesture owned is discharged");
+    PlaybackWindowIdentity published{};
+    TEST_ASSERT_FALSE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, published),
+                              "no gesture's paused build published a stale window");
+  }
+
+  // ---- W-3.14d-4: a slot/track selection lands between grains -- the worker keeps its identity ---------------------
+  {
+    Track& track = prepareWindowOwnerSlot(1);
+    Loop& loop = track.getLoop(0);
+    publishBarSpacedRootForSlot(loop, 2);
+    LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+    TEST_ASSERT_NOT_NULL(runtime);
+    runtime->ledger.clear();  // as in W-1: the per-slot ledger is reused within this fixture
+    runtime->ledger.noteOn(1, 70, 13, 0, 100);
+    const uint32_t revisionAtRequest = loop.playbackRevision;
+    MidiEvent source[kBetweenGrainsSourceEvents];
+    size_t sourceCount = 0;
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                      static_cast<int>(requestBetweenGrainsBuild(track, 0, revisionAtRequest, source, sourceCount)));
+    const uint32_t generationAtRequest = track.getPlaybackGeneration();
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewTurnResult::GrainServed),
+                      static_cast<int>(track.stepPlaybackViewMaintenance()));
+    TEST_ASSERT_TRUE(track.hasPendingPlaybackViewMaintenance());
+    // The newly selected track's own slot has content of its own -- the control for cross-slot publication.
+    Track& incoming = trackManager.getTrack(2);
+    incoming.ensureLoopsAllocated();
+    commitRecordPassIntoTrackSlot(incoming, 0);
+    // (b) the selection changes, both ways the production route takes them.
+    MidiSendCapture::reset();
+    TrackCaptureStopTestAccess::selectSlot(track, 1);
+    track.applyPlaybackViewTransition(0, PlaybackViewTransition::SlotSwitch);
+    trackManager.setSelectedTrack(2);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                     "a selection change silences nothing and emits nothing");
+    TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 70),
+                             "the departing track's sounding is untouched");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(generationAtRequest, track.getPlaybackGeneration(),
+                                     "a switch continues the operation: it does not invalidate the identity");
+    TEST_ASSERT_TRUE_MESSAGE(track.playbackViewRoleStateForSlot(0).buildOwed,
+                             "and the worker still owns its build");
+    // (d)/(e) the build completes after the switch -- into **its own** slot, and not into the newly selected one.
+    for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+      (void)track.stepPlaybackViewMaintenance();
+    }
+    PlaybackWindowIdentity published{};
+    TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowIdentityForSlot(0, published),
+                             "the switched-away slot's build still completes for its own slot");
+    TEST_ASSERT_EQUAL_UINT32(revisionAtRequest, published.playbackRevision);
+    PlaybackWindowIdentity incomingWindow{};
+    TEST_ASSERT_FALSE_MESSAGE(incoming.publishedPlaybackWindowIdentityForSlot(0, incomingWindow),
+                              "and nothing was published onto the slot that did not build it");
+  }
+
+  // ---- W-3.14d-5: retained-source lifetime across the gestures, and its one release predicate ----------------------
+  {
+    Track& track = prepareWindowOwnerSlot(3);
+    Loop& loop = track.getLoop(0);
+    publishBarSpacedRootForSlot(loop, 2);
+    const uint32_t retainedRevision = loop.playbackRevision;
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                      static_cast<int>(track.retainPlaybackSourceForSlot(0, retainedRevision, 31)));
+    SessionMidiEventVec scratch;
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                      static_cast<int>(track.requestPlaybackWindow(0, kWindowOwnerExpectedRequiredLead, scratch)));
+    for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+      (void)track.stepPlaybackViewMaintenance();
+    }
+    PlaybackWindowIdentity served{};
+    TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, served));
+    TEST_ASSERT_EQUAL_UINT32(retainedRevision, served.playbackRevision);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(retainedRevision, track.servingRetainedRevisionForSlot(0),
+                                     "the window being served reconstructs from the retained revision");
+    // (c) a committed pass lands: the loop moves past the retained revision, and the source is **not** re-aimed.
+    commitRecordPassIntoTrackSlot(track, 0);
+    TEST_ASSERT_TRUE_MESSAGE(loop.playbackRevision > retainedRevision,
+                             "fixture precondition: the loop advanced past the retained revision");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(retainedRevision, track.servingRetainedRevisionForSlot(0),
+                                     "the gesture does not re-aim the source at the new revision");
+    // (d) release is refused while that window serves it -- the predicate's own clause, not a caller's goodwill.
+    TEST_ASSERT_FALSE_MESSAGE(track.tryReleaseRetainedPlaybackSource(0),
+                              "a served window keeps its source retained");
+    TEST_ASSERT_TRUE(track.hasRetainedPlaybackSourceForSlot(0));
+    // (f) once a newer window is served, and only then, the one predicate releases it.
+    MidiEvent successorSource[8];
+    const size_t successorCount = buildWindowOwnerSource(successorSource, 8);
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                      static_cast<int>(track.requestPlaybackViewMaintenance(
+                          0, successorSource, successorCount,
+                          PlaybackViewSourceIdentity{loop.playbackRevision, 9, nullptr},
+                          PlaybackCoverageInterval{0, 2 * 768, kWindowOwnerLoopTicks}, {}, {}, 0,
+                          declaredRequiredLeadFor(successorCount))));
+    for (size_t turn = 0; turn < 8 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+      (void)track.stepPlaybackViewMaintenance();
+    }
+    TEST_ASSERT_TRUE(track.adoptPreparedPlaybackWindow(0));
+    PlaybackWindowIdentity adopted{};
+    TEST_ASSERT_TRUE(track.publishedPlaybackWindowIdentityForSlot(0, adopted));
+    TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, adopted.playbackRevision);
+    TEST_ASSERT_TRUE_MESSAGE(track.tryReleaseRetainedPlaybackSource(0),
+                             "once a newer window is served, the older source is released by its own predicate");
+    TEST_ASSERT_FALSE(track.hasRetainedPlaybackSourceForSlot(0));
+  }
+}
+
 
 /// 4.1 (DEC-108 *Checkpoint parity for undo and save*, F-5): the published root is the immutable checkpoint authority
 /// for undo; its parity against the loop's **current** committed-pass revision is **named**, so a lagging checkpoint is
@@ -13451,6 +13820,9 @@ int main() {
   RUN_TEST(test_cross_generation_closures_are_reconciled_and_an_empty_window_silences_nothing);
   // windowed-playback-generation slice 3.14: the undo/redo audible handoff (\u00a713g).
   RUN_TEST(test_undo_edit_batch_settles_its_own_soundings_and_never_blankets_the_slot);
+  // windowed-playback-generation slice 3.14d: the between-grains matrix (repeated gestures, a selection change and a
+  // stale completion, each landing while real preparation grains are paused).
+  RUN_TEST(test_between_grains_gestures_keep_the_wire_exact_and_the_window_named);
   // windowed-playback-generation slice 3.7 / 4.5: the version handoff's closures are emitted, not dropped.
   RUN_TEST(test_handoff_emits_the_closures_it_used_to_drop);
   // windowed-playback-generation slice 4.1: named checkpoint parity for undo (F-5).

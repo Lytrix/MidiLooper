@@ -1,3 +1,24 @@
+**2026-10-06 — `windowed-playback-generation` 3.14 / 3.14d: the between-grains matrix is measured, and the measurement
+corrected one planned expectation (test-only; no production line changed; the task stays open).**
+The matrix 3.14's own owed list named — *"pause between real preparation grains for repeated undo/redo, track/slot
+switching and stale completion"* — is now four cases driving the production entries
+(`test_between_grains_gestures_keep_the_wire_exact_and_the_window_named`), with the wire, the ledger, the published
+window, the readiness **and its holder**, and the retained source asserted together. **Measured:** a **committed pass**
+advances `playbackRevision` only, so a paused build stays legitimate, completes, **publishes at the revision it froze**,
+and readiness **names** the lag (`OwesCurrency` / `window_rebuild`); a real **undo** advances the revision *and* bumps the
+playback generation, and its invalidation **discards** the paused preparation (`pending`/`buildOwed` false right after
+the gesture, nothing published, readiness **`OwesSource`** / `published_source`) — which **corrects the packet**: the
+guard in `publishCompletedPlaybackWindow` is the **second** line of defence, so `RP-D2a/b` are recorded as
+**non-red-proofs for this fixture** with the mechanism named, and the discriminator is the invalidation's slot release
+(**`RP-D2c`**). A **selection change** keeps the operation identity and the worker still completes **into its own slot**;
+a **retained source** is neither re-aimed nor dropped by a gesture, refuses release while it serves a window, and is
+released only once a newer window is served. Verified: focused **174/174** (baseline 173/173), full native **2,853 / 7
+skipped / 2,846 succeeded / 0 failed** (baseline 2,852/7/2,845), capture build **SUCCESS** with the RAM1 line
+**byte-identical**, strict validation and `git diff --check` clean, `git diff --stat -- src include` **empty**, and four
+red-proofs RED with byte-identical restores. **NOT RUN:** no device, no timing or `ExecutionBounds.md` claim, no fallback
+removal. **Still owed by 3.14:** the refresh as a request through the publication owner (4.1 → 3.7), displayed
+provenance (the display's — RWO S4e) and preview-session undo/redo (3.13/2.12). Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s314d-between-grains-matrix/EVIDENCE.md)
 **2026-10-06 — `windowed-playback-generation` 3.13 / I11: the display-consumer item is reconciled with the runtime
 change's display rework, and stays open on an explicit cross-change dependency (documentation only; no code, no build, no device).**
 3.13's one remaining item — *the display consumer of a preview window* — now has a **producer** (this change's preview
@@ -5519,6 +5540,44 @@ comment interleaving in `include/Track.h` (`playbackWindowEventAtForSlot`'s doc 
 keeps `git diff -- src include` empty. Verified: `git diff --stat -- src include test` **empty**,
 `openspec validate {windowed-playback-generation,runtime-working-set-ownership} --strict` valid, `git diff --check`
 clean; **NOT RUN**: no build, no suite, no device (nothing device-visible is claimed).
+
+### 3.14 (3.14d) — the between-grains matrix: gestures that land while real preparation grains are paused (2026-10-06; test-only)
+
+**3.14 increment d landed 2026-10-06 (test-only; `git diff --stat -- src include` empty; the task stays open).** The
+matrix 3.14's own owed list named — *"pause between real preparation grains for repeated undo/redo, track/slot
+switching and stale completion"* — is measured by
+`test_between_grains_gestures_keep_the_wire_exact_and_the_window_named`
+(`test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:6637`, registered at `:13825`), four
+cases that pause the lane's real grains (`stepPlaybackViewMaintenance`, one declared grain per turn; 100 events = five
+turns) and let a production gesture land in the gap. **The measured mechanisms, and the one planned expectation the
+measurement corrected:** a **committed pass** advances `playbackRevision` only, so the paused build stays legitimate,
+completes, **publishes at the revision it froze**, and readiness **names** the lag (`OwesCurrency`, holder
+`window_rebuild`); a real **undo** advances the revision *and* bumps the playback generation, and its invalidation
+**discards** the paused preparation (measured: `pending`/`buildOwed` false immediately after the gesture, nothing
+published, readiness **`OwesSource`** / holder `published_source`) — so the guard in `publishCompletedPlaybackWindow`
+is the **second** line of defence rather than this case's mechanism, and **`RP-D2a/b` are recorded as non-red-proofs for
+this fixture** with the measurement named. A **selection change** (the slot row, the slot selector and the real
+`setSelectedTrack`) emits nothing, silences nothing, keeps the operation identity, and the worker still completes **into
+its own slot**; with a **retained source** admitted, no gesture re-aims or drops it, the readers keep answering the
+revision it **holds**, and 3.6a's one release predicate refuses while that window serves it and releases it only once a
+newer window is served. Gesture outputs are exact (one NoteOff for the identity a removal owns, **nothing** for the
+re-establishing direction, the untouched soundings alive and never retriggered), with the untouched soundings, the
+incoming track's slot and the refused release as the negative controls. Verified: focused **174/174** (baseline
+173/173), full native **2,853 / 7 skipped / 2,846 succeeded / 0 failed** (baseline 2,852/7/2,845), capture build
+**SUCCESS** with the RAM1 line **byte-identical** (`variables 96,192`; `code 392,248 + padding 968`; `locals 34,880`;
+floor 840), strict validation and `git diff --check` clean, and **four red-proofs RED with byte-identical restores**
+(`RP-D1` the readiness lag not named, **`RP-D2c`** the invalidation's slot release dropped, `RP-D3` the `SlotSwitch` row
+releasing the candidate, `RP-D4` the release predicate's served-window clause, `RP-D5` the edit-batch settlement
+dropped). **Not claimed:** no device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal
+(3.7b); the paused cases hand the owner entry an explicit source (a two-bar root gathers in one turn and cannot be
+paused), the re-establishing direction is driven through the Track entry the redo route uses for identities rather than
+`redoForLoop`, and a temporary probe used to measure the post-undo state was withdrawn before the commit. **Still
+owed:** the refresh as a request through the publication owner (4.1's current root, then 3.7's consumer), **displayed
+provenance** (the display's, per the display-consumer reconciliation — RWO S4e) and preview-session undo/redo
+(3.13/2.12). Detail:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s314d-between-grains-matrix/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s314d-between-grains-matrix/EXECUTION.md)
+packet.
 ### 3.13 (I10) — a served preview is never what a save writes: fixture 2.12's `then save` clause, measured in the storage harness (2026-10-06; test-only)
 
 **3.13 increment I10 landed 2026-10-06 (test-only; the task stays open for the display consumer).** Fixture **2.12**'s

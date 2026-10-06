@@ -1016,6 +1016,34 @@ requirements are recorded in [`DISPLAY-CONSUMER-RECONCILIATION.md`](DISPLAY-CONS
   attempt reported green only because its anchor sat in the wrong **file** — an unmatched anchor is not evidence.
   **Earlier increments 3.14/3.14b:** audible ledger reconciliation and committed-pass identity sources are implemented; their native proofs and evidence remain as recorded above. The remaining production request cannot use operation-scoped `RuntimeCompanionPasses` or invalidated `RuntimeCanonicalPassInputs` at the mutation edge. It must request currency through the existing Loop publication owner, without inline enumeration/publication. The production-path probe with a served window and real `TrackUndo::undoForLoop` shows readiness becomes non-Ready and names the owed rebuild. **Still owed:** 3.7a requester/consumer integration with fallback retained; then the repeated undo/redo, track/slot switch and stale-completion matrix, retained-source release, displayed provenance and preview undo/redo against the real handoff. Source currency remains the Loop publication owner's responsibility; parity task 4.1 does not produce it. Evidence: [`evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md`](evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md).
   *Increment I6 landed 2026-10-06 (3.7a's handoff closures; the task stays open):* the **serving-path half** the task owed is real now -- the version handoff over a full-loop window closes the soundings the incoming revision removed, on the wire, before the replacement's note-ons, instead of dropping those obligations silently (so a note an undo removed can no longer stay sounding because the ledger forgot it). Still owed: the refresh as a request through the publication owner (its requester is 4.1's current root, then 3.7's consumer), the repeated undo/redo and track/slot-switch between-grains matrix, retained-source release, displayed provenance and preview-session undo/redo. Detail: [`evidence/2026-10-06-s37-handoff-closures/EVIDENCE.md`](evidence/2026-10-06-s37-handoff-closures/EVIDENCE.md).
+  *Increment 3.14d landed 2026-10-06 (test-only; the task stays open): the **between-grains matrix** this entry's own
+  owed list names is measured.* Four cases pause the window lane's **real** preparation grains
+  (`stepPlaybackViewMaintenance`, one declared grain per turn; 100 events = five turns) and let a production gesture
+  land in the gap, asserting the wire, the ledger, the published window, the readiness **and its holder**, and the
+  retained source together. **Measured, and one packet expectation corrected:** a **committed pass** advances the
+  revision only, so the paused build stays legitimate, completes, **publishes at the revision it froze**, and readiness
+  **names** the lag (`OwesCurrency` / holder `window_rebuild`); a real **undo** advances the revision *and* bumps the
+  playback generation, and its invalidation **discards** the paused preparation (measured: `pending`/`buildOwed` false
+  immediately after the gesture, nothing published, readiness `OwesSource` / holder `published_source`) — so the
+  completion guard in `publishCompletedPlaybackWindow` is the **second** line of defence, not this case's mechanism, and
+  `RP-D2a/b` are recorded as **non-red-proofs for this fixture** with that reason; a **selection change** (the slot row,
+  the slot selector and the real `setSelectedTrack`) emits nothing, silences nothing, keeps the operation identity, and
+  the worker still completes **into its own slot**; with a **retained source** admitted, no gesture re-aims or drops it,
+  the readers keep answering the revision the source **holds**, and 3.6a's one release predicate refuses while that
+  window serves it and releases it only once a newer window is served. Gesture outputs are exact (one NoteOff for the
+  identity a removal owns, **nothing** for the re-establishing direction, the untouched soundings alive and never
+  retriggered), and the negative controls are the untouched soundings, the incoming track's slot and the refused
+  release. Verified: focused **174/174** (baseline 173/173), full native **2,853 / 7 skipped / 2,846 succeeded /
+  0 failed** (baseline 2,852/7/2,845), capture build **SUCCESS** with the RAM1 line **byte-identical** (`variables
+  96,192`; `code 392,248 + padding 968`; `locals 34,880`; floor 840), strict validation and `git diff --check` clean,
+  `git diff --stat -- src include` **empty**, and **four red-proofs RED with byte-identical restores** (`RP-D1` the
+  readiness lag not named, **`RP-D2c`** the invalidation's slot release dropped, `RP-D3` the `SlotSwitch` row releasing
+  the candidate, `RP-D4` the release predicate's served-window clause, `RP-D5` the edit-batch settlement dropped).
+  **Still owed:** the refresh as a request through the publication owner (4.1's current root, then 3.7's consumer),
+  **displayed provenance** (the display's, per [`DISPLAY-CONSUMER-RECONCILIATION.md`](DISPLAY-CONSUMER-RECONCILIATION.md)
+  — RWO S4e) and preview-session undo/redo (3.13/2.12). Detail:
+  [`evidence/2026-10-06-s314d-between-grains-matrix/EVIDENCE.md`](evidence/2026-10-06-s314d-between-grains-matrix/EVIDENCE.md)
+  with its [`EXECUTION.md`](evidence/2026-10-06-s314d-between-grains-matrix/EXECUTION.md) packet.
 
   **Sequence:** 3.7a first, then complete 3.14 and 4.5 against the real handoff. 3.7b removes fallback only after those plus 3.12/3.13, F-7/F-8, timing and compatibility gates pass.
 

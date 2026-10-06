@@ -1,3 +1,41 @@
+**`windowed-playback-generation` 3.14 / 3.14d -- the between-grains matrix is measured, and the measurement corrected one planned expectation (2026-10-06; test-only, no production or `src/`/`include/` line changed; the task stays open).**
+3.14's own verify clause asks to *"pause between real preparation grains for repeated undo/redo, track/slot switching
+and stale completion. Assert exact MIDI output, ledger state, retained-source lifetime and eventual release"* -- and the
+matrix that 3.14a/b/c left owed now exists as `test_between_grains_gestures_keep_the_wire_exact_and_the_window_named`
+(`test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:6637`, registered at `:13825`), four
+cases that pause the lane's **real** grains (`stepPlaybackViewMaintenance`, one declared grain per turn; 100 events =
+five turns) and let a production gesture land in the gap. **Measured, with one expectation the measurement corrected:** a
+**committed pass** advances `playbackRevision` and nothing else, so the paused build stays legitimate, completes,
+**publishes at the revision it froze**, and readiness **names** the lag (`OwesCurrency`, holder `window_rebuild`); a real
+**undo** advances the revision *and* bumps the playback generation (`refreshPlaybackAfterEditPassStateChange` ->
+`invalidatePlaybackMergedMidiEvents` -> `bumpPlaybackGeneration`), and its invalidation **discards** the paused
+preparation (measured with a temporary probe: `pending`/`buildOwed` false immediately after the gesture, nothing
+published, readiness **`OwesSource`** / holder `published_source`) -- so the moved-identity guard in
+`publishCompletedPlaybackWindow` is the **second** line of defence rather than the one this case exercises, and
+`RP-D2a/b` are recorded as **non-red-proofs for this fixture** with the mechanism named, while the discriminator is the
+invalidation's slot release (`RP-D2c`). A **selection change** (the slot row, the slot selector and the real
+`TrackManager::setSelectedTrack`) emits nothing, silences nothing, keeps the operation identity, and the worker still
+completes **into its own slot**; with a **retained source** admitted, no gesture re-aims or drops it, the readers keep
+answering the revision the source **holds** (`servingRetainedRevisionForSlot`), and 3.6a's single release predicate
+refuses while that window serves it and releases it only once a newer window is served. Gesture outputs are exact (one
+NoteOff for the identity a removal owns, **nothing** for the re-establishing direction, the untouched soundings alive
+and never retriggered), with the untouched soundings, the incoming track's slot and the refused release as the negative
+controls. Verified: focused **174/174** (baseline 173/173), full native **2,853 / 7 skipped / 2,846 succeeded / 0 failed**
+(baseline 2,852/7/2,845), capture build **SUCCESS** with the RAM1 line **byte-identical** (`variables 96,192`;
+`code 392,248 + padding 968`; `locals 34,880`; floor 840), strict validation and `git diff --check` clean,
+`git diff --stat -- src include` **empty**, and **four red-proofs RED with byte-identical restores** (`RP-D1` the
+readiness lag not named, **`RP-D2c`** the invalidation's slot release dropped, `RP-D3` the `SlotSwitch` row releasing the
+candidate, `RP-D4` the release predicate's served-window clause, `RP-D5` the edit-batch settlement dropped). **NOT
+claimed:** no device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the paused
+cases hand the owner entry an explicit source (a two-bar root gathers in one turn and cannot be paused), the
+re-establishing direction is driven through the Track entry the redo route uses for identities rather than
+`redoForLoop`, and the temporary probe was withdrawn before the commit. **3.14 stays OPEN** on the refresh as a request
+through the publication owner (4.1's current root, then 3.7's consumer), **displayed provenance** (the display's -- RWO
+S4e, per `DISPLAY-CONSUMER-RECONCILIATION.md`) and preview-session undo/redo (3.13/2.12); 3.7b's gates are unchanged.
+Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s314d-between-grains-matrix/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s314d-between-grains-matrix/EXECUTION.md)
+packet.
 **`windowed-playback-generation` 3.13 / I11 -- the display-consumer item is reconciled with the runtime change's display
 rework, and stays **open** on an explicit cross-change dependency (2026-10-06; documentation only, no production or test line changed).**
 3.13's one remaining item -- *the display consumer of a preview window* -- now names a **producer** (this change's

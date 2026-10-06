@@ -771,6 +771,39 @@ suite + the `teensy41-capture-serial` build with the RAM1 guard. Detail:
 - **Task 3.14 stays OPEN**: the refresh's requester (4.1 → 3.7), the between-grains matrix (3.7's serving path), retained-source lifetime and discharge (3.6a), displayed provenance, preview-session undo/redo (3.13/2.12). Its **audible** requirement and the red-proof the task demands are complete.
 - Detail: [`evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md`](evidence/2026-10-02-s314c-refresh-source-verification/EVIDENCE.md).
 
+### Increment 3.14d — the between-grains matrix (2026-10-06; task 3.14 stays open)
+
+- **The increment's own packet is its execution packet:**
+  [`evidence/2026-10-06-s314d-between-grains-matrix/EXECUTION.md`](evidence/2026-10-06-s314d-between-grains-matrix/EXECUTION.md)
+  (written before the fixture, with its oracle, controls, red-proofs and completion record). What landed: the four cases
+  of the matrix this entry's owed list named — *"pause between real preparation grains for repeated undo/redo, track/slot
+  switching and stale completion"* — driven through the production entries (`requestPlaybackViewMaintenance`,
+  `stepPlaybackViewMaintenance`, `TrackUndo::undoForLoop`, the slot row and `TrackManager::setSelectedTrack`, 3.6a's
+  release predicate), **test-only** (`git diff --stat -- src include` empty).
+- **The mechanisms, measured (and one planned expectation corrected):** a **committed pass** advances the revision only,
+  so a paused build completes and **publishes at the revision it froze** with the lag **named** (`OwesCurrency` /
+  `window_rebuild`); a real **undo** advances the revision *and* bumps the playback generation, and its invalidation
+  **discards** the paused preparation — nothing publishes and readiness names the source (`OwesSource` /
+  `published_source`) — which makes the completion guard in `publishCompletedPlaybackWindow` the **second** line of
+  defence rather than this case's mechanism (**RP-D2a/b recorded as non-red-proofs for this fixture**, with the
+  measurement); a **selection change** keeps the operation identity and the worker still completes into **its own** slot;
+  and a **retained source** is neither re-aimed nor dropped by a gesture, refuses release while it serves a window, and
+  is released only once a newer window is served.
+- Fixture: `test_between_grains_gestures_keep_the_wire_exact_and_the_window_named`
+  (`test/test_runtime_working_set_ownership/test_runtime_working_set_ownership.cpp:6637`, registered at `:13825`).
+- Native verification: **GREEN** — focused **174/174** (baseline 173/173); full native **2,853 / 7 skipped /
+  2,846 succeeded / 0 failed** (baseline 2,852/7/2,845).
+- Build/RAM1 verification: **GREEN** — `teensy41-capture-serial` **SUCCESS** with the RAM1 line **byte-identical**
+  (`variables 96,192`; `code 392,248 + padding 968`; `locals 34,880`; floor 840) — test-only, so no re-base.
+- Red-proofs: **four RED, each restored byte-identically** (RP-D1 the readiness lag not named; **RP-D2c** the
+  invalidation's slot release dropped; RP-D3 the `SlotSwitch` row releasing the candidate; RP-D4 the release predicate's
+  served-window clause; RP-D5 the edit-batch settlement dropped), plus the two **recorded non-red-proofs** above.
+- **Task 3.14 stays OPEN**: the refresh as a request through the publication owner (4.1 → 3.7), **displayed provenance**
+  (the display's — [`DISPLAY-CONSUMER-RECONCILIATION.md`](DISPLAY-CONSUMER-RECONCILIATION.md): RWO S4e) and
+  preview-session undo/redo (3.13/2.12). What this increment discharges is the **matrix** half of the task's verify
+  clause.
+- Detail: [`evidence/2026-10-06-s314d-between-grains-matrix/EVIDENCE.md`](evidence/2026-10-06-s314d-between-grains-matrix/EVIDENCE.md).
+
 ### Increment 4.1 — checkpoint parity, named (F-5) (2026-10-02; task 4.1 stays open)
 
 - **What landed:** `CheckpointParity { NoCheckpoint, Current, OwesReconciliation, CoverageUnrecorded }` and the **pure** `resolveCheckpointParity(hasRoot, coveredPassRevision, currentCommittedPassRevision)` in `include/LoopSnapshot.h`, placed beside the coverage constants they consume, plus `Loop::checkpointParity()` in `src/Loop/LoopSnapshotLifetime.cpp` — the same rule `publishedSnapshotIsCurrent()` applies, **named**, read from the three figures the loop already keeps. **No new state** (`sizeof(Loop) == 984` still holds, which the build's own assert proves) and **no size pin moved**.
