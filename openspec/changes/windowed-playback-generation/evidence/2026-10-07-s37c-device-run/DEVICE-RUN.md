@@ -66,3 +66,47 @@ family from `s64-trace-01`/`s64-progress-01` is the same question).
   (`len=18432`, `al=1`).
 - F-7/F-8/AC-8 and 6.5's four hardware claims stay **NOT RUN**; no timing/service-envelope claim; `ExecutionBounds.md`
   rows 27–29 unchanged; the shipping image still has the lane compiled off.
+
+## 4. Follow-up analysis of the same capture: where the demand goes, and what cannot be read
+
+The active slot's own 43 gate rows (track 7, slot 3), in order, with the flags that decide each exit:
+
+```
+ 17.385s x=win_not_servable         sv=0 rt=1 rl=0            <- before the root is current
+ 94.930s x=win_track_not_playing    sv=1 rt=0 bld=1           <- the leg's own record/NOTE_EDIT phase
+100.491s x=win_not_servable         sv=0 rt=0 rl=1
+114.622s x=win_requested            sv=0 rt=1 rl=1 dm=1 rq=12 <- **the first-window request is ACCEPTED**
+114.646s x=win_waiting              sv=0 rt=1 rl=0 ow=1 dm=1 bld=1
+114.693s x=win_blocked_by_request   sv=0 rt=1 rl=0 ow=1 dm=1      <- 71 ms later, the frozen demand is invalidated
+114.718s x=win_blocked              sv=0 rt=1 rl=1 ow=0 dm=1      <- the source retired, the demand coalesced back
+120.991s x=win_track_not_playing    sv=0 rt=1 rl=1                <- the edit session opens; the lane refuses by state
+139.087s x=win_requested            ... rq=12                     <- re-requested once the slot is quiet
+139.147s x=win_blocked_by_request   ...                           <- and invalidated again, 60 ms later
+145.368s x=win_track_not_playing                                  <- the switch leg's gesture ends the episode
+190.6xxs x=win_track_not_playing                                  <- after the transport stop
+```
+
+So the chain is: **accepted → build starts (`bld=1`, coverage source owned) → invalidated within 60–71 ms → coalesced
+back → retried**. The active slot kept the lane for the whole run (the switch never committed:
+`slot_switch_hold_exceeded track=7 target=4`), and every low-level row inside those two 60–71 ms windows is a MIDI-out
+row: **no transport edge, no edit row, no revision- or epoch-bearing row**.
+
+**What fires it, and what cannot be read.** `Track::stepCommittedPlaybackRetry`'s frozen-request validation invalidates
+a rolling demand on any of: a changed loop length, a changed clock epoch, `clock.tick < admittedTick`,
+`clock.tick >= deadlineTick`, a changed revision/generation, or a source that is no longer current — and it records
+which one only in `request.reason` (plus `positionInvalidated`), **none of which the `win_gate` row carries**. The row
+prints `ep` (only *whether* the epoch is stamped), `len`, `sv`/`rt`/`rl`/`ow`/`dm`/`bld`/`gr`/`rp` and `rq` (the
+request's ordinal). So after this run the question is narrow but **not answerable from the capture**: it is one of five
+terms, and naming it needs one more field on the row. Classified honestly:
+
+| Claim | Class |
+|---|---|
+| The first-window request is accepted and the build begins on the active slot | **VERIFIED** (rows above) |
+| The frozen demand is invalidated 60–71 ms later and coalesced back, twice | **VERIFIED** |
+| The invalidation term is one of the five in the validation branch | **VERIFIED** (code) / **UNKNOWN** (which one) |
+| The leg's own NOTE_EDIT/re-anchor gestures are a contributor (the lane is quiet only after ~121 s, and the transport is never re-started in the windows) | **ASSUMPTION** — the windows contain no gesture row, so this is not established |
+
+**The bounded next slice this names (not implemented here):** make `win_blocked_by_request` self-describing — carry the
+invalidation term (geometry / epoch / expired / source-not-current / generation) the way the entry trio carries
+`ep`/`av`/`al`, so the next device run *names* the term instead of leaving five candidates. It is the same gap F-16
+named for the demand's entry, one layer down, and it needs its own G2 packet, fixture and red-proof.
