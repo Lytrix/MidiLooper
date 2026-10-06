@@ -10,14 +10,20 @@ TRACK_COLD_MEM __attribute__((noinline)) bool ActiveNoteLedger::applyPlaybackEve
   return applyPlaybackEventBody(channel, evt);
 }
 
-TRACK_COLD_MEM __attribute__((noinline)) ActiveNoteLedger::MissingCommittedNoteOnPlan
+TRACK_COLD_MEM __attribute__((noinline)) ActiveNoteLedger::HandoffClosurePlan
+ActiveNoteLedger::planHandoffClosures(const MidiEvent* events, size_t eventCount,
+                                      uint32_t servedThroughPhase, uint32_t loopLength) const {
+  return planHandoffClosuresBody(events, eventCount, servedThroughPhase, loopLength);
+}
+
+TRACK_COLD_MEM __attribute__((noinline)) ActiveNoteLedger::HandoffClosurePlan
 ActiveNoteLedger::planOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events,
                                                            size_t eventCount) const {
   return planOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount);
 }
 
 TRACK_COLD_MEM __attribute__((noinline)) size_t ActiveNoteLedger::erasePlannedOpenNotes(
-    const MissingCommittedNoteOnPlan& plan) {
+    const HandoffClosurePlan& plan) {
   return erasePlannedOpenNotesBody(plan);
 }
 

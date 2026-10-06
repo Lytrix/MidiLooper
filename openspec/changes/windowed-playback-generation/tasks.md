@@ -603,6 +603,37 @@ requirements are recorded in [`DISPLAY-CONSUMER-RECONCILIATION.md`](DISPLAY-CONS
   edited-content/long-window/same-tick parity (I4/4.3), no timing envelope, **no device run** (the rootless launch
   *binding* on hardware stays owed to 6.4/6.5), no fallback removal (3.7b). Detail:
   [`evidence/2026-10-06-s37a-i2-deferred-lane/EVIDENCE.md`](evidence/2026-10-06-s37a-i2-deferred-lane/EVIDENCE.md).
+**3.7a increment I9 (task 4.5's moving closure) landed 2026-10-06 (firmware + tests; both tasks stay open).** 4.5's last
+named implementation item — I6 closed the ahead side and recorded *"a closure that slid **behind** the re-anchored cursor
+is out of scope and still owed"* — is measured and fixed on the serving handoff. The walk resumes from a **floor**
+(`reanchorPlaybackIndex` points the cursor at the first event past `loop.lastTickInLoop`; the prepared pair resolves the
+identical term as its `publicationPhase`) and `advancePlaybackCursor` skips everything at or behind it, so a sounding the
+replacement **kept** while moving its NoteOff behind that floor was neither planned (its NoteOn is present) nor reachable:
+it stayed audible past the end its own revision gives it and the wrap re-articulated it. The plan is now **one predicate
+in one scan** (`ActiveNoteLedger::HandoffClosurePlan` + `planHandoffClosures`, renamed from
+`MissingCommittedNoteOnPlan`): a tagged open Entry is planned when its committed NoteOn is absent **or** when the incoming
+stream's own NoteOff for it lies at or behind `servedThroughPhase` — and never from the absence of a NoteOff (a
+never-ending sounding says nothing). `Track::playbackClosureServeFloor` supplies that phase in the walk's own terms
+(`loop.lastTickInLoop`, `UINT32_MAX` when there is no position yet **or** the playhead wrapped backward, where the pass
+restarts and every closure is reachable), threaded from all **four** reconcile call sites; the wire half keeps I6's edge,
+order and handoff-tick stamp (`closeHandoffInvalidatedNotes` → `closePlannedHandoffClosures`). **Measured** on the
+production clock entry: the slid closure is the handoff turn's **first wire event** at the handoff's own tick, discharged
+by identity; a closure the walk will still deliver is left alone and arrives once at its own tick; a never-ending
+sounding is never silenced; an untagged Entry survives; every closure precedes the replacement's note-ons; a handoff on a
+**restarting** pass closes nothing, and the restarted pass then delivers each closure exactly once. Verified: focused
+**175/175** (baseline 174/174), full native **2,854 / 7 skipped / 2,847 succeeded / 0 failed** (baseline 2,853/7/2,846
+measured with the slice stashed), capture build **SUCCESS** with the RAM1 line **byte-identical A/B** (`variables 96,192`;
+`code 392,248 + padding 968`; floor 840) — **no ITCM cost, no re-base** —, strict validation and `git diff --check`
+clean, and **four red-proofs RED with byte-identical restores** (RP-A the closure half dropped, RP-B the restart clause
+dropped, RP-B' the floor dropped, RP-C the no-closure guard dropped; the packet's single RP-B prediction is recorded as
+two mutations). **Recorded, not smoothed:** the fixture's first draft used the long-loop length and measured nothing —
+a long slot's merged store is a **two-bar slice** and the reconcile returns early — which is itself the reach limit this
+task now states (the demoted long-loop serving handoff is the windowed lane's, 3.7a/3.14). **Not claimed:** no device
+leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the off-clock call sites are
+covered natively only; 4.5's **displayed provenance** (display → RWO S4e) and **eventual recovery through the real
+consumer** (`advancePlaybackLagTraversal` still has no production caller) remain owed. Detail:
+[`evidence/2026-10-06-s45c-moving-closure/EVIDENCE.md`](evidence/2026-10-06-s45c-moving-closure/EVIDENCE.md) with its
+[`EXECUTION.md`](evidence/2026-10-06-s45c-moving-closure/EXECUTION.md) packet.
 - [ ] 3.7b **Remove the live mutable merged-window fallback — final ladder stage (4)** only after 3.7a is enabled and verified and tasks 3.12, 3.13, 3.14 and 4.5 plus F-7/F-8, timing and compatibility gates pass on their applicable production/device paths. Keep a cold reference path for parity testing. Verify no supported slot reaches the removed `playMidiEventsForSlot` fallback and reclassify `ExecutionBounds.md` row 2 only with evidence. Rollback before this stage retains today's fallback.
 - [x] 3.8 Confirm reuse before invention — verify a review note names the existing resumable entry points used (the
   declared build contract, bounded body-format write/parse, resume arming, the single persistence drain budget) and that
@@ -1110,7 +1141,8 @@ requirements are recorded in [`DISPLAY-CONSUMER-RECONCILIATION.md`](DISPLAY-CONS
   the previous slice. Six mutations red-proved with byte-identical restores. The first track-wide-silence mutation did not discriminate because the fixture observed only the ledger; it was corrected to assert real MIDI output, and a global mutation now fails as intended.
   *Increment 4.5b landed 2026-10-02 — cross-generation closure planning implemented; task remains open for real serving-path integration.* `ClosureSettlement` is a bounded, allocation-free handoff plan. `Track::planClosureSettlementForSlot` computes it off-clock; `Track::applyClosureSettlementForSlot` emits closures before replacement note-ons. Unchanged notes are preserved, re-issued notes are suppressed, and absence means removal only when the input is authoritative for the whole loop (never for an empty window). Verification: focused 63/63, full native 2694 / 2687 succeeded / 7 skipped / 0 failed, capture build SUCCESS with RAM1 unchanged; four mutations red-proved and restored byte-identically. Evidence: [`evidence/2026-10-02-s45-closure-reconciliation/EVIDENCE.md`](evidence/2026-10-02-s45-closure-reconciliation/EVIDENCE.md).
   **OWED:** production containment/recovery, actual emitted ordering, a moving closure at its correct tick, sustained-note behavior through an empty window, displayed provenance and eventual recovery through the real consumer. 3.7a connects that consumer while preserving fallback; complete 3.14 and 4.5 against the real handoff before 3.7b removes fallback.
-  *Increment I6 landed 2026-10-06 (3.7a's handoff closures; the task stays open):* the **emitted order at the real handoff** is no longer owed -- the handoff reconcile now closes each invalidated obligation on the MIDI wire, at the handoff's own tick and ahead of the replacement's note-ons, discharging it by identity and suppressing an obsolete closure; the **empty-window** clause is measured there too (an event-empty whole-loop replacement closes nothing and drops nothing). Still owed: the **moving closure that slid behind the re-anchored cursor**, displayed provenance and eventual recovery through the real consumer, and the device leg. Detail: [`evidence/2026-10-06-s37-handoff-closures/EVIDENCE.md`](evidence/2026-10-06-s37-handoff-closures/EVIDENCE.md).
+  *Increment I6 landed 2026-10-06 (3.7a's handoff closures; the task stays open):* the **emitted order at the real handoff** is no longer owed -- the handoff reconcile now closes each invalidated obligation on the MIDI wire, at the handoff's own tick and ahead of the replacement's note-ons, discharging it by identity and suppressing an obsolete closure; the **empty-window** clause is measured there too (an event-empty whole-loop replacement closes nothing and drops nothing). Detail: [`evidence/2026-10-06-s37-handoff-closures/EVIDENCE.md`](evidence/2026-10-06-s37-handoff-closures/EVIDENCE.md).
+  *Increment I9 landed 2026-10-06 (3.7a's serving handoff; the task stays open):* the **moving closure at its correct tick** is no longer owed -- the plan is one predicate and now also plans a tagged open Entry whose committed NoteOn the replacement **kept** while its own NoteOff moved **behind** the phase the walk resumes from (`planHandoffClosures` + `playbackClosureServeFloor`), so it is closed at the handoff's own tick instead of outliving the revision that ended it and being re-articulated at the wrap; the never-ending-sounding and restarting-pass guards are measured with it. **Still owed:** the **moving closure inside a long/demoted slot's serving handoff** (the merged store is a two-bar slice there, so the windowed lane owns it -- 3.7a/3.14), displayed provenance, eventual recovery through the real consumer, and the device leg. Detail: [`evidence/2026-10-06-s45c-moving-closure/EVIDENCE.md`](evidence/2026-10-06-s45c-moving-closure/EVIDENCE.md).
 
 ## 5. Capacity, envelope and placement
 

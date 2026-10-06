@@ -119,7 +119,14 @@ TRACK_INTERNAL_MEM bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& 
 
 TRACK_INTERNAL_MEM void reconcilePlaybackLedgerAfterFullLoopRebuild(Loop& loop,
                                                                     LoopPlaybackRuntime& runtime,
-                                                                    uint32_t currentTick);
+                                                                    uint32_t currentTick,
+                                                                    uint32_t servedThroughPhase);
+
+/// Task 4.5 (the moving closure): the phase the walk has already served on `loop` -- the floor a closure must clear to
+/// still be reachable in this pass, expressed in the walk's own terms (`UINT32_MAX` = nothing served yet, or the
+/// playhead wrapped, so the whole pass is served again).
+TRACK_INTERNAL_MEM uint32_t playbackClosureServeFloor(const Track& track, const Loop& loop,
+                                                      uint32_t currentTick);
 
 TRACK_INTERNAL_MEM void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventVec& mergedEvents,
                                              const ProjectionContext& playbackContext);

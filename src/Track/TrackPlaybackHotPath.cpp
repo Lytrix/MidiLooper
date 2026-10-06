@@ -59,7 +59,8 @@ void Track::rebuildPlaybackOrder() {
   const bool rebuilt =
       ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick);
   if (rebuilt) {
-    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime, currentTick);
+    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime, currentTick,
+                                                playbackClosureServeFloor(*this, loop, currentTick));
   }
   const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
   ::rebuildPlaybackOrder(loop, runtime->mergedMidiEvents.mergedEvents, playbackContext);

@@ -335,12 +335,11 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
 /// contain it, and a later note-off carrying that erased identity is refused as an orphan
 /// ("closures that became obsolete SHALL be suppressed"). The ledger's channel is already the track's remapped playback
 /// channel, which is why the closure needs no remap of its own.
-TRACK_COLD_MEM size_t closeHandoffInvalidatedNotes(ActiveNoteLedger& ledger,
-                                                   const ActiveNoteLedger::MissingCommittedNoteOnPlan& plan,
-                                                   uint32_t tick) {
+TRACK_COLD_MEM size_t closePlannedHandoffClosures(
+    ActiveNoteLedger& ledger, const ActiveNoteLedger::HandoffClosurePlan& plan, uint32_t tick) {
   size_t emitted = 0;
   for (size_t index = 0; index < plan.count; ++index) {
-    const ActiveNoteLedger::MissingCommittedNoteOnPlan::Entry& entry = plan.entries[index];
+    const ActiveNoteLedger::HandoffClosurePlan::Entry& entry = plan.entries[index];
     MidiEvent close = MidiEvent::NoteOff(tick, entry.channel, entry.note, 0);
     close.noteId = entry.noteId;
     midiHandler.sendMidiEvent(close);
@@ -354,12 +353,15 @@ TRACK_COLD_MEM size_t closeHandoffInvalidatedNotes(ActiveNoteLedger& ledger,
 /// invalidated obligations **silently** (`eraseOpenNotesMissingFromCommittedNoteOns`): a note whose content the incoming
 /// revision had removed stayed sounding on the wire, and the ledger no longer knew it, so nothing could ever close it.
 /// The replacement's own note-ons are not the repair -- their identities are the *new* ones, and the ledger's
-/// identity-exact NoteOff resolution refuses an unknown identity as an orphan.
+/// identity-exact NoteOff resolution refuses an unknown identity as an orphan. Task 4.5's other half is the same
+/// predicate one step further: an obligation the incoming stream cannot discharge **before this pass ends** because its
+/// own note-off was moved behind `servedThroughPhase` is closed here too, at the handoff's tick, instead of being left
+/// to a walk that can no longer reach it and a wrap that would re-articulate it.
 ///
 /// Ordering is structural, not a promise: every caller runs this **before** the walk that serves the incoming revision's
 /// note-ons, so the required note-offs precede the replacement's note-ons by construction.
 TRACK_INTERNAL_MEM __attribute__((noinline)) void reconcilePlaybackLedgerAfterFullLoopRebuild(
-    Loop& loop, LoopPlaybackRuntime& runtime, uint32_t currentTick) {
+    Loop& loop, LoopPlaybackRuntime& runtime, uint32_t currentTick, uint32_t servedThroughPhase) {
   loop.replaceCommittedPlaybackNoteOnIdentities(runtime.mergedMidiEvents);
   if (!isFullLoopMergedPlaybackWindow(runtime.mergedMidiEvents, loop.loopLengthTicks)) {
     // A slice of the loop: its absence is not evidence, so nothing is closed and nothing is dropped.
@@ -374,10 +376,31 @@ TRACK_INTERNAL_MEM __attribute__((noinline)) void reconcilePlaybackLedgerAfterFu
   if (!handoffAbsenceMeansRemoval(/*incomingIsWholeLoop=*/true, /*incomingIsEmpty=*/incoming.empty())) {
     return;
   }
-  const ActiveNoteLedger::MissingCommittedNoteOnPlan plan =
-      runtime.ledger.planOpenNotesMissingFromCommittedNoteOns(incoming.data(), incoming.size());
-  (void)closeHandoffInvalidatedNotes(runtime.ledger, plan, currentTick);
+  const ActiveNoteLedger::HandoffClosurePlan plan = runtime.ledger.planHandoffClosures(
+      incoming.data(), incoming.size(), servedThroughPhase, loop.loopLengthTicks);
+  (void)closePlannedHandoffClosures(runtime.ledger, plan, currentTick);
 }
+
+/// Task 4.5 (the moving closure): **the phase this pass has already served on `loop`** — the floor a closure must clear
+/// to still be reachable, expressed in the walk's own terms so that the handoff cannot decide reachability differently
+/// from `advancePlaybackCursor`. `reanchorPlaybackIndex` points the cursor at the first event past `loop.lastTickInLoop`
+/// (and the prepared pair resolves the identical term as its `publicationPhase`), so an event at or behind that phase is
+/// skipped for the rest of the pass. `UINT32_MAX` means **nothing has been served yet** — there is no position, or the
+/// playhead wrapped backward, so the walk serves the whole pass again and every closure is still reachable.
+TRACK_INTERNAL_MEM __attribute__((noinline)) uint32_t playbackClosureServeFloor(
+    const Track& track, const Loop& loop, uint32_t currentTick) {
+  if (loop.lastTickInLoop == UINT32_MAX || loop.loopLengthTicks == 0) {
+    return UINT32_MAX;
+  }
+  const uint32_t turnPhase = IntervalProjection::tickPhaseInProjectionCycle(
+      currentTick, track.getProjectionCycleStartTick(), loop.loopLengthTicks);
+  if (IntervalProjection::didDisplayPlayheadWrapBackward(turnPhase, loop.lastTickInLoop,
+                                                         loop.loopStartTick, loop.loopLengthTicks)) {
+    return UINT32_MAX;
+  }
+  return loop.lastTickInLoop;
+}
+
 TRACK_INTERNAL_MEM __attribute__((noinline)) void rebuildPlaybackOrder(
     Loop& loop, const SessionMidiEventVec& mergedEvents, const ProjectionContext& playbackContext) {
   noteContentSizedPlaybackBuildOnActiveTransport();
@@ -455,7 +478,8 @@ const SessionMidiEventVec* buildMergedPlaybackFallbackCold(
   const bool rebuilt =
       ensurePlaybackMergedMidiEventsBuilt(track, loop, runtime, false, currentTick);
   if (rebuilt) {
-    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime, currentTick);
+    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime, currentTick,
+                                                playbackClosureServeFloor(track, loop, currentTick));
   }
   return &runtime.mergedMidiEvents.mergedEvents;
 }
@@ -1002,7 +1026,8 @@ TRACK_COLD_MEM void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) 
     const bool rebuilt =
         ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick, prepareLaunch);
     if (rebuilt) {
-      reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime, currentTick);
+      reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime, currentTick,
+                                                  playbackClosureServeFloor(*this, loop, currentTick));
     }
     if (loop.playbackOrderDirty) {
       const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
@@ -1123,7 +1148,8 @@ TRACK_COLD_MEM bool Track::servicePendingPreparedPlaybackPairSlot(uint8_t slotIn
   const bool rebuilt =
       ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick);
   if (rebuilt) {
-    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime, currentTick);
+    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime, currentTick,
+                                                playbackClosureServeFloor(*this, loop, currentTick));
   }
   if (loop.playbackOrderDirty || loop.getPlaybackOrder().size() !=
                                      runtime->mergedMidiEvents.mergedEvents.size()) {

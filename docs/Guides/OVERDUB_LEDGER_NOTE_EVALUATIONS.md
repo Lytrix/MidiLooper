@@ -194,17 +194,26 @@ Shipped clock invariant ([`overdub_occupy_clock_same_tick_off_before_on_bugfix.m
 
 ### 8. After a full-loop rebuild, which open Entries survive?
 
-`reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime, currentTick)`, and its handoff result:
+`reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime, currentTick, servedThroughPhase)`, and its handoff result.
+`servedThroughPhase` is `playbackClosureServeFloor`'s answer — the phase this pass has already served on that loop
+(`loop.lastTickInLoop`, the term the walk's own `reanchorPlaybackIndex` resumes from; `UINT32_MAX` when there is no
+position yet or the playhead wrapped backward, i.e. the pass starts or restarts, so every closure is reachable again):
 
 | Evaluation | Owner | Keeps Entry | Closes + discharges | Drops Entry |
 |---|---|---|---|---|
 | Stream is full-loop | `isFullLoopMergedPlaybackWindow` | — | — | Windowed gather — skip the handoff entirely |
 | Replacement carries events at all | `handoffAbsenceMeansRemoval(true, empty)` | An **event-empty** whole-loop replacement keeps every Entry (its absence is not evidence, and nothing is dropped) | — | — |
-| On still in committed stream | `ActiveNoteLedger::planOpenNotesMissingFromCommittedNoteOns` | Tagged Entry whose `noteId` has a NoteOn **anywhere** in the merged events (`evt.isNoteOn() && evt.noteId == id`; channel/pitch not consulted); untagged Entries always stay | Tagged Entry whose On is gone: `closeHandoffInvalidatedNotes` sends its NoteOff (at the handoff's own tick) and `applyPlaybackEvent` discharges it by identity | `erasePlannedOpenNotes` is the drop path for callers that owe no wire half; the serving handoff closes instead of dropping (`DIAG,ledger,erase` still marks a drop) |
+| On still in committed stream | `ActiveNoteLedger::planHandoffClosures` | Tagged Entry whose `noteId` has a NoteOn **anywhere** in the merged events (`evt.isNoteOn() && evt.noteId == id`; channel/pitch not consulted) | Tagged Entry whose On is gone: `closePlannedHandoffClosures` sends its NoteOff (at the handoff's own tick) and `applyPlaybackEvent` discharges it by identity | `erasePlannedOpenNotes` is the drop path for callers that owe no wire half; the serving handoff closes instead of dropping (`DIAG,ledger,erase` still marks a drop) |
+| Its own closing NoteOff is still ahead of `servedThroughPhase` (or the stream carries none) | `ActiveNoteLedger::planHandoffClosures` | Kept untouched: the walk will still deliver that note-off at its own tick this pass, and a revision that carries **no** NoteOff for an open identity says nothing — the absence of a closure is not evidence that the note ends | — | — |
+| Its own closing NoteOff is **at or behind** `servedThroughPhase` (task 4.5 — the moving closure) | `ActiveNoteLedger::planHandoffClosures` | — | The obligation the walk can no longer discharge: `closePlannedHandoffClosures` closes it at the handoff's own tick. `advancePlaybackCursor` skips anything at or behind the phase it resumes from, so that note-off is unreachable for the rest of the pass; leaving it would keep the sounding audible past the end its own revision gives it and re-articulate it at the wrap | — |
 
-**Reconciliation answers “does this `noteId` still have a NoteOn in the committed stream?”, not “should this identity currently be sounding?”** It is **not** the ledger Entry key `(channel, pitch, noteId)`. A NoteOn at any tick in the rebuilt stream keeps the currently open Entry for that `noteId`, even if channel/pitch on the stream event differ from the Entry. Untagged Entries are skipped and stay. The **plan** above states that predicate once, so the owner that drops an obligation and the owner that closes it on the wire cannot disagree about the set.
+**Both halves are one predicate in one scan** (`planHandoffClosures`), so the owner that *plans*, the owner that
+*closes* on the wire and the owner that *drops* cannot disagree about the set. `planOpenNotesMissingFromCommittedNoteOns`
+is the same predicate with nothing served yet — the structural half, for callers that owe no wire half.
 
-**The handoff is audible (3.7 / 4.5 § 13(g)):** an invalidated Entry is closed on the MIDI wire **before** the replacement's note-ons (the reconcile runs ahead of the walk that serves them), because the replacement's own NoteOff carries the *new* identity and the identity-exact resolution refuses an unknown identity as an orphan — dropping the obligation silently left the old sounding on until a stop or a clear.
+**Reconciliation answers “does this `noteId` still have a NoteOn in the committed stream, and can the incoming stream still close it in this pass?”, not “should this identity currently be sounding?”** It is **not** the ledger Entry key `(channel, pitch, noteId)`. A NoteOn at any tick in the rebuilt stream keeps the currently open Entry for that `noteId`, even if channel/pitch on the stream event differ from the Entry. Untagged Entries are skipped and stay. The **plan** above states both halves once, so the owner that drops an obligation and the owner that closes it on the wire cannot disagree about the set.
+
+**The handoff is audible (3.7 / 4.5 § 13(g)):** a planned Entry is closed on the MIDI wire **before** the replacement's note-ons (the reconcile runs ahead of the walk that serves them), because the replacement's own NoteOff carries the *new* identity and the identity-exact resolution refuses an unknown identity as an orphan — dropping the obligation silently left the old sounding on until a stop or a clear. The closure is stamped with the **handoff's own tick**, which is the only tick available in either half: the invalidated sounding's own note-off is gone, and the moved one lies behind the phase the walk resumes from.
 
 ### 9. What are the open ledger identities at occupy?
 

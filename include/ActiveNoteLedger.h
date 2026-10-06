@@ -2,6 +2,8 @@
 
 #include "MidiEvent.h"
 
+#include "Utils/IntervalProjection.h"
+
 #include <array>
 #include <cstdint>
 
@@ -67,12 +69,15 @@ class ActiveNoteLedger {
     return i >= 0 ? entries_[static_cast<size_t>(i)].noteId : kInvalidNoteId;
   }
 
-  /// The handoff's **invalidation plan**: the open, identity-tagged Entries whose committed NoteOn is absent from the
-  /// incoming stream. A value, bounded by `kMaxOpenNotes` and allocation-free — and stated **once**, so the owner that
-  /// *drops* such an obligation (`eraseOpenNotesMissingFromCommittedNoteOns`) and the owner that *closes* it on the MIDI
-  /// wire (the Track's handoff reconcile) cannot disagree about which ones they are. Each Entry carries the ledger's own
-  /// `(channel, pitch, noteId)`, so a closure emitted from this plan closes exactly the sounding that Entry names.
-  struct MissingCommittedNoteOnPlan {
+  /// The handoff's **closure plan**: the open, identity-tagged Entries the incoming full-loop stream cannot discharge
+  /// before the pass it is being served in ends — either its committed NoteOn is absent (the replacement removed the
+  /// obligation's content) **or** its committed NoteOff lies at or behind `servedThroughPhase` (its own tick has already
+  /// been traversed, so `advancePlaybackCursor` skips it for the rest of the pass). A value, bounded by `kMaxOpenNotes`
+  /// and allocation-free — and stated **once**, so the owner that *plans*, the owner that *closes* on the MIDI wire
+  /// (the Track's handoff reconcile, which also supplies the phase) and the owner that *drops* cannot disagree about
+  /// which obligations they are. Each Entry carries the ledger's own `(channel, pitch, noteId)`, so a closure emitted
+  /// from this plan closes exactly the sounding that Entry names.
+  struct HandoffClosurePlan {
     struct Entry {
       uint8_t channel = 0;
       uint8_t note = 0;
@@ -82,26 +87,42 @@ class ActiveNoteLedger {
     size_t count = 0;
   };
 
-  /// Plan the invalidation: tagged Entries whose `noteId` has no NoteOn **anywhere** in the stream (channel/pitch are
-  /// not consulted — the stream's own event carries the identity that decides). Untagged Entries are never planned:
-  /// their absence is not evidence. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
+  /// Plan the handoff's closures. `servedThroughPhase` is the phase the walk has already served on this loop (its own
+  /// term: `reanchorPlaybackIndex`'s threshold, i.e. `loop.lastTickInLoop`), and `UINT32_MAX` means **nothing has been
+  /// served** — the pass is starting or restarting, so every closure is still reachable and only the structural half
+  /// applies. Untagged Entries are never planned: their absence is not evidence. A stream that carries a tagged NoteOn
+  /// and **no** NoteOff for it is never planned from the closure half either: the absence of a closure is not evidence
+  /// that the note ends. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
 #if defined(PIO_UNIT_TEST_NATIVE)
-  MissingCommittedNoteOnPlan planOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events,
-                                                                     size_t eventCount) const {
+  HandoffClosurePlan planHandoffClosures(const MidiEvent* events, size_t eventCount,
+                                         uint32_t servedThroughPhase, uint32_t loopLength) const {
+    return planHandoffClosuresBody(events, eventCount, servedThroughPhase, loopLength);
+  }
+#else
+  HandoffClosurePlan planHandoffClosures(const MidiEvent* events, size_t eventCount,
+                                         uint32_t servedThroughPhase, uint32_t loopLength) const;
+#endif
+
+  /// The **structural half** by name, for callers that owe no wire half and therefore have no traversal position to
+  /// reason about: the same predicate with nothing served yet. Its plan is a *subset* of the serving handoff's — see
+  /// `planHandoffClosures`. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
+#if defined(PIO_UNIT_TEST_NATIVE)
+  HandoffClosurePlan planOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events,
+                                                              size_t eventCount) const {
     return planOpenNotesMissingFromCommittedNoteOnsBody(events, eventCount);
   }
 #else
-  MissingCommittedNoteOnPlan planOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events,
-                                                                     size_t eventCount) const;
+  HandoffClosurePlan planOpenNotesMissingFromCommittedNoteOns(const MidiEvent* events,
+                                                              size_t eventCount) const;
 #endif
 
   /// Drop exactly the planned obligations (by their own identity). Untagged Entries stay. Reuse eraseAt. Returns the
   /// number actually dropped, which is what makes a plan-taken-twice or an already-gone entry observable rather than
   /// silent. Firmware: ActiveNoteLedger.cpp (FLASHMEM).
 #if defined(PIO_UNIT_TEST_NATIVE)
-  size_t erasePlannedOpenNotes(const MissingCommittedNoteOnPlan& plan) { return erasePlannedOpenNotesBody(plan); }
+  size_t erasePlannedOpenNotes(const HandoffClosurePlan& plan) { return erasePlannedOpenNotesBody(plan); }
 #else
-  size_t erasePlannedOpenNotes(const MissingCommittedNoteOnPlan& plan);
+  size_t erasePlannedOpenNotes(const HandoffClosurePlan& plan);
 #endif
 
   /// The plan and its drop as one call, for callers that owe **no** wire half (the ledger alone, and the paths whose
@@ -233,9 +254,13 @@ class ActiveNoteLedger {
     return true;
   }
 
-  MissingCommittedNoteOnPlan planOpenNotesMissingFromCommittedNoteOnsBody(const MidiEvent* events,
-                                                                         size_t eventCount) const {
-    MissingCommittedNoteOnPlan plan;
+  /// The one scan that answers both halves of the handoff's predicate: for each tagged open Entry it looks for its
+  /// identity in the incoming stream and records whether a NoteOn is there at all and whether any of its NoteOffs is
+  /// still reachable (ahead of `servedThroughPhase`, or any of them when nothing has been served yet). O(open notes ×
+  /// stream events), which is the nested shape the structural prune already ran on this path, and it replaces it.
+  HandoffClosurePlan planHandoffClosuresBody(const MidiEvent* events, size_t eventCount,
+                                             uint32_t servedThroughPhase, uint32_t loopLength) const {
+    HandoffClosurePlan plan;
     if (eventCount > 0 && events == nullptr) {
       return plan;
     }
@@ -244,15 +269,38 @@ class ActiveNoteLedger {
       if (entry.noteId == kInvalidNoteId) {
         continue;
       }
-      bool found = false;
+      bool noteOnPresent = false;
+      bool closurePresent = false;
+      bool closureReachable = false;
       for (size_t eventIndex = 0; eventIndex < eventCount; ++eventIndex) {
-        const MidiEvent& evt = events[eventIndex];
-        if (evt.isNoteOn() && evt.noteId == entry.noteId) {
-          found = true;
+        // Both halves settled and neither can flip: the stream carries the obligation *and* a reachable closure for it, so
+        // nothing later can make this Entry planned. Without this exit the common shape (identity present, its note-off
+        // ahead) would cost the whole open-notes x stream product instead of the shipped scan's early exit.
+        if (noteOnPresent && closureReachable) {
           break;
         }
+        const MidiEvent& evt = events[eventIndex];
+        if (evt.noteId != entry.noteId) {
+          continue;
+        }
+        if (evt.isNoteOn()) {
+          noteOnPresent = true;
+          continue;
+        }
+        if (!evt.isNoteOff()) {
+          continue;
+        }
+        closurePresent = true;
+        if (servedThroughPhase == UINT32_MAX ||
+            IntervalProjection::playbackEventPhase(evt.tick, loopLength) > servedThroughPhase) {
+          closureReachable = true;
+        }
       }
-      if (found || plan.count >= kMaxOpenNotes) {
+      // The stream cannot discharge this obligation: the content that carried it is gone, or the note-off that would
+      // close it has already been traversed and cannot be reached again before the pass restarts (and a stream that
+      // carries no note-off at all says nothing -- a note that never ends is not a note that had to end).
+      const bool undeliverable = !noteOnPresent || (closurePresent && !closureReachable);
+      if (!undeliverable || plan.count >= kMaxOpenNotes) {
         continue;
       }
       plan.entries[plan.count].channel = entry.channel;
@@ -263,10 +311,16 @@ class ActiveNoteLedger {
     return plan;
   }
 
-  size_t erasePlannedOpenNotesBody(const MissingCommittedNoteOnPlan& plan) {
+  HandoffClosurePlan planOpenNotesMissingFromCommittedNoteOnsBody(const MidiEvent* events,
+                                                                  size_t eventCount) const {
+    // Nothing has been served: the closure half can never fire, so this is exactly the structural plan it always was.
+    return planHandoffClosuresBody(events, eventCount, UINT32_MAX, /*loopLength=*/0);
+  }
+
+  size_t erasePlannedOpenNotesBody(const HandoffClosurePlan& plan) {
     size_t erased = 0;
     for (size_t i = 0; i < plan.count; ++i) {
-      const MissingCommittedNoteOnPlan::Entry& planned = plan.entries[i];
+      const HandoffClosurePlan::Entry& planned = plan.entries[i];
       const int index = findIndexByNoteId(planned.channel, planned.note, planned.noteId);
       if (index < 0) {
         // The obligation is already gone (a plan taken after its own discharge): nothing to drop, and nothing to log.

@@ -1,3 +1,29 @@
+**`windowed-playback-generation` 3.7a I9 / 4.5 -- the closure that slid **behind** the re-anchored cursor is closed at the
+handoff (2026-10-06; firmware + tests; both tasks stay open).**
+Task 4.5's last named implementation item, and the item I6 recorded as *"out of scope and still owed to 4.5"*, is measured
+and fixed at the serving handoff. The walk resumes from a **floor** (`reanchorPlaybackIndex` points the cursor at the first
+event past `loop.lastTickInLoop`; the prepared pair resolves the identical term as its `publicationPhase`), and
+`advancePlaybackCursor` skips everything at or behind it for the rest of the pass — so a sounding whose identity the
+replacement **kept** while moving its NoteOff behind that floor was neither planned (its NoteOn is present) nor reachable:
+it stayed audible past the end its own revision gives it and the wrap re-articulated it. The handoff's plan is now **one
+predicate in one scan** (`ActiveNoteLedger::HandoffClosurePlan` + `planHandoffClosures`, renamed from
+`MissingCommittedNoteOnPlan`): planned when the committed NoteOn is absent **or** when the incoming stream's own NoteOff
+lies at or behind `servedThroughPhase`, never from the absence of a NoteOff;
+`Track::playbackClosureServeFloor` supplies that phase in the walk's own terms (`loop.lastTickInLoop`; `UINT32_MAX` when
+there is no position yet or the playhead wrapped backward — the pass restarts and every closure is reachable), threaded
+from all four reconcile call sites, and the wire half keeps I6's edge, order and handoff-tick stamp. Verified: focused
+**175/175** (baseline 174/174), full native **2,854 / 7 skipped / 2,847 succeeded / 0 failed** (baseline 2,853/7/2,846),
+capture build **SUCCESS** with the RAM1 line **byte-identical A/B** (`variables 96,192`; `code 392,248 + padding 968`;
+floor 840) — no ITCM cost, no re-base —, strict validation and `git diff --check` clean, and **four red-proofs RED with
+byte-identical restores**. **Recorded, not smoothed over:** the fixture's first draft used the long-loop length and
+measured nothing (a long slot's merged store is a **two-bar slice**, so the reconcile returns early) — the reach limit the
+task now states, with the demoted long-loop serving handoff left to the **windowed lane** (3.7a/3.14). **Not claimed:** no
+device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the off-clock call sites are
+native-covered only; **4.5 stays open** on displayed provenance (display → RWO **S4e**) and eventual recovery through the
+real consumer (`advancePlaybackLagTraversal` has no production caller), and **3.7a stays open**. Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45c-moving-closure/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45c-moving-closure/EXECUTION.md).
+
 **`windowed-playback-generation` 3.14 / 3.14d -- the between-grains matrix is measured, and the measurement corrected one planned expectation (2026-10-06; test-only, no production or `src/`/`include/` line changed; the task stays open).**
 3.14's own verify clause asks to *"pause between real preparation grains for repeated undo/redo, track/slot switching
 and stale completion. Assert exact MIDI output, ledger state, retained-source lifetime and eventual release"* -- and the

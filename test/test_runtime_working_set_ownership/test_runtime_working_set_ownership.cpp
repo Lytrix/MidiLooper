@@ -6251,6 +6251,8 @@ struct RootNoteForHandoff {
   uint8_t pitch;
   uint32_t onTick;
   uint32_t offTick;
+  /// `UINT32_MAX` means the revision carries the onset but **no closure** for this identity -- the shape a handoff must
+  /// never read as "it ended".
 };
 
 void publishRootWithIdentitiesForSlot(Loop& loop, const RootNoteForHandoff* notes, size_t noteCount) {
@@ -6266,7 +6268,7 @@ void publishRootWithIdentitiesForSlot(Loop& loop, const RootNoteForHandoff* note
     add.next.pitch = note.pitch;
     add.next.velocity = 100;
     add.next.startTick = note.onTick;
-    add.next.endTick = note.offTick;
+    add.next.endTick = note.offTick == UINT32_MAX ? loop.loopLengthTicks - 1 : note.offTick;
     changes.notes.push_back(add);
     SnapshotEventChange on{};
     on.kind = SnapshotChangeKind::Add;
@@ -6276,6 +6278,9 @@ void publishRootWithIdentitiesForSlot(Loop& loop, const RootNoteForHandoff* note
     on.next.value = MidiEvent::NoteOn(note.onTick, 1, note.pitch, 100);
     on.next.value.noteId = note.noteId;
     changes.events.push_back(on);
+    if (note.offTick == UINT32_MAX) {
+      continue;
+    }
     SnapshotEventChange off{};
     off.kind = SnapshotChangeKind::Add;
     off.next.loopId = loop.loopId;
@@ -6417,6 +6422,218 @@ void test_handoff_emits_the_closures_it_used_to_drop() {
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 67));
   TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
                            "the fixture leaves the loop with a current (empty) root");
+}
+
+/// 4.5 (DEC-108 §13g) / 3.7a I9: **the closure that slid behind the re-anchored cursor.** The handoff's plan used to ask
+/// one question -- does the incoming stream still carry this identity's NoteOn? -- so a sounding whose identity the
+/// replacement **kept** while moving its NoteOff *behind* the traversal position was neither closed at the handoff nor
+/// reachable by the walk afterwards: `reanchorPlaybackIndex` points the cursor at the first event past
+/// `loop.lastTickInLoop`, and `advancePlaybackCursor` skips anything at or behind it for the rest of the pass. The
+/// sounding then outlived the content that superseded it, and the wrap re-articulated it.
+///
+/// Both directions of the refined predicate are driven through the production clock entry: an in-pass-undeliverable
+/// closure goes out **at the handoff's own tick**, ahead of the replacement's note-ons; a closure the stream will still
+/// deliver is left alone; a sounding whose revision carries **no** closure is never silenced by absence; an untagged
+/// entry survives; a handoff on a turn that **restarts the pass** (the wrap) closes nothing, because the walk serves
+/// that whole pass again; and the restarted pass then delivers each closure exactly once, at its own tick.
+void test_handoff_closes_a_closure_that_slid_behind_the_re_anchored_cursor() {
+  constexpr NoteId kSlidId = 2100;
+  constexpr NoteId kAheadId = 2101;
+  constexpr NoteId kUnclosedId = 2102;
+  constexpr NoteId kReplacementId = 2103;
+  constexpr NoteId kRestartId = 2104;
+  LoopEventStore::initPool();
+  MidiSendCapture::reset();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  commitRecordPassIntoTrackSlot(track, 0);
+  Loop& loop = track.getLoop(0);
+  // The committed pass's own two-bar length is kept: a *long* loop is gathered as a two-bar slice, and the handoff
+  // reconcile only plans over a **full-loop** merged window -- i.e. the shape this fixture drives is the one the
+  // reconcile exists for, and the demoted long-loop serving handoff belongs to the windowed lane (3.7a/3.14).
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  LoopPlaybackRuntime* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const RootNoteForHandoff r1[] = {
+      {kSlidId, 48, 0, 700},
+      {kAheadId, 55, 0, 700},
+      {kUnclosedId, 57, 0, 700},
+  };
+  publishRootWithIdentitiesForSlot(loop, r1, 3);
+  track.startPlaying(0);
+  for (uint32_t tick = 64; tick <= 128; tick += 64) {
+    track.playMidiEvents(tick, false);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(MidiSendCapture::count()),
+                                   "the opening phase is silent: nothing asserted below can come from here");
+  NoteId openAt48 = kInvalidNoteId;
+  runtime->ledger.forEachActive([&](uint8_t, uint8_t note, const ActiveNoteLedger::Entry& entry) {
+    if (note == 48) {
+      openAt48 = entry.noteId;
+    }
+  });
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(kSlidId), static_cast<uint32_t>(openAt48),
+                                   "the sounding the handoff must close carries R1's own identity");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 55));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 57));
+  TrackCaptureStopTestAccess::markLedgerEntry(track, 0, 67);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 67));
+
+  // Drive A -- a mid-pass handoff at tick 256, i.e. with the traversal floor at 128: 48's closure has moved to 100
+  // (**behind** it), 55's to 400 (still ahead), 57's revision carries an On and no closure at all, and the replacement
+  // sounds inside the handoff turn's own window.
+  const RootNoteForHandoff r2[] = {
+      {kSlidId, 48, 0, 100},
+      {kAheadId, 55, 0, 400},
+      {kUnclosedId, 57, 0, UINT32_MAX},
+      {kReplacementId, 62, 256, 400},
+  };
+  publishRootWithIdentitiesForSlot(loop, r2, 4);
+  MidiSendCapture::reset();
+  track.playMidiEvents(256, true);
+  TEST_ASSERT_TRUE_MESSAGE(isFullLoopMergedPlaybackWindow(runtime->mergedMidiEvents, loop.loopLengthTicks),
+                           "the fixture's premise: the handoff is a full-loop merged rebuild");
+  size_t incomingOnsForUnclosed = 0;
+  size_t incomingOffsForUnclosed = 0;
+  for (const MidiEvent& event : runtime->mergedMidiEvents.mergedEvents) {
+    if (event.noteId != kUnclosedId) {
+      continue;
+    }
+    if (event.isNoteOn()) {
+      ++incomingOnsForUnclosed;
+    } else if (event.isNoteOff()) {
+      ++incomingOffsForUnclosed;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(incomingOnsForUnclosed),
+                                   "the never-ending sounding keeps a committed NoteOn, so only its *absence of a"
+                                   " closure* can distinguish it");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(incomingOffsForUnclosed),
+                                   "and the incoming revision carries no closure for it");
+  const size_t sliceCount = MidiSendCapture::count();
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(sliceCount),
+                                              "the handoff's closure is audible");
+  TEST_ASSERT_TRUE_MESSAGE(MidiSendCapture::at(0).isNoteOff(),
+                           "and it is the handoff's first wire event -- not the replacement's content");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(48, MidiSendCapture::at(0).data.noteData.note,
+                                  "the closure fires for the sounding whose own tick slid behind the cursor");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, MidiSendCapture::at(0).channel,
+                                  "on the track's own playback channel -- the ledger's channel is already remapped");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(256u, MidiSendCapture::at(0).tick,
+                                   "stamped with the handoff's own tick: its own tick is unreachable this pass");
+  size_t offsAt48 = 0;
+  size_t offsAt55 = 0;
+  size_t offsAt57 = 0;
+  size_t firstReplacementOn = sliceCount;
+  for (size_t i = 0; i < sliceCount; ++i) {
+    const MidiEvent event = MidiSendCapture::at(i);
+    if (event.isNoteOn() && firstReplacementOn == sliceCount) {
+      firstReplacementOn = i;
+    }
+    if (!event.isNoteOff()) {
+      continue;
+    }
+    if (event.data.noteData.note == 48) {
+      ++offsAt48;
+    } else if (event.data.noteData.note == 55) {
+      ++offsAt55;
+    } else if (event.data.noteData.note == 57) {
+      ++offsAt57;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(offsAt48),
+                                   "exactly one closure for the slid sounding, and never a second");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(offsAt55),
+                                   "a closure the walk will still deliver is not closed early");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(offsAt57),
+                                   "a sounding whose revision carries no closure is never silenced by absence");
+  TEST_ASSERT_TRUE_MESSAGE(firstReplacementOn != sliceCount, "the replacement's own note-on is emitted in this turn");
+  TEST_ASSERT_TRUE_MESSAGE(0u < firstReplacementOn,
+                           "every closure precedes the replacement's note-ons (the spec's ordering clause)");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 48),
+                            "the slid obligation is discharged at the handoff, not left sounding");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 55),
+                           "and the sounding whose closure is still ahead is untouched");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 57));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 67));
+
+  // The pass continues: 55's own note-off arrives once at its own tick (400), and nothing closes 57.
+  MidiSendCapture::reset();
+  for (uint32_t tick = 320; tick <= 448; tick += 64) {
+    track.playMidiEvents(tick, true);
+  }
+  size_t lateOffsAt55 = 0;
+  size_t lateOffsAt57 = 0;
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const MidiEvent event = MidiSendCapture::at(i);
+    if (!event.isNoteOff()) {
+      continue;
+    }
+    if (event.data.noteData.note == 55) {
+      ++lateOffsAt55;
+    } else if (event.data.noteData.note == 57) {
+      ++lateOffsAt57;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(lateOffsAt55),
+                                   "the ahead closure is delivered exactly once by the walk itself");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(lateOffsAt57),
+                                   "and the never-ending sounding is still never silenced");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 55));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 57));
+
+  // Drive B -- the same shape, but the handoff lands on the turn that **restarts the pass**. Every closure here lies
+  // behind the *pre-wrap* position, and none of them may be closed: the walk serves the whole pass again.
+  for (uint32_t tick = 512; tick <= kWindowOwnerLoopTicks - 64; tick += 64) {
+    track.playMidiEvents(tick, false);
+  }
+  runtime->ledger.noteOn(1, 60, kRestartId, 0, 100);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60),
+                           "an open sounding stands in for the pre-wrap state the restart must not misread");
+  const RootNoteForHandoff r3[] = {
+      {kSlidId, 48, 0, 100},
+      {kUnclosedId, 57, 0, UINT32_MAX},
+      {kRestartId, 60, 0, 100},
+  };
+  publishRootWithIdentitiesForSlot(loop, r3, 3);
+  MidiSendCapture::reset();
+  track.playMidiEvents(kWindowOwnerLoopTicks + 64, true);
+  TEST_ASSERT_TRUE_MESSAGE(isFullLoopMergedPlaybackWindow(runtime->mergedMidiEvents, loop.loopLengthTicks),
+                           "the restart case holds the same premise: a full-loop merged rebuild, not a lane slice");
+  size_t offsInWrapTurn = 0;
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    if (MidiSendCapture::at(i).isNoteOff()) {
+      ++offsInWrapTurn;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(offsInWrapTurn),
+                                   "a restarted pass leaves every closure to the walk -- the floor is not the pre-wrap"
+                                   " position there");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60),
+                           "so the stand-in sounding stays open rather than being closed behind the restart");
+  MidiSendCapture::reset();
+  track.playMidiEvents(kWindowOwnerLoopTicks + 128, true);
+  size_t newPassOffsAt48 = 0;
+  size_t newPassOffsAt60 = 0;
+  for (size_t i = 0; i < MidiSendCapture::count(); ++i) {
+    const MidiEvent event = MidiSendCapture::at(i);
+    if (!event.isNoteOff()) {
+      continue;
+    }
+    if (event.data.noteData.note == 48) {
+      ++newPassOffsAt48;
+    } else if (event.data.noteData.note == 60) {
+      ++newPassOffsAt60;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(newPassOffsAt60),
+                                   "the restarted pass delivers the closure exactly once, at its own tick");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 60));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(newPassOffsAt48),
+                                   "and the handoff-closed sounding re-articulates from its own onset in the new pass,"
+                                   " closing exactly once");
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ledgerEntryActive(track, 0, 48));
 }
 
 /// 3.14 (DEC-108 §13(g)): the **undo/redo audible handoff**. The blanket slot silence is gone: undoing an edit batch
@@ -13825,6 +14042,8 @@ int main() {
   RUN_TEST(test_between_grains_gestures_keep_the_wire_exact_and_the_window_named);
   // windowed-playback-generation slice 3.7 / 4.5: the version handoff's closures are emitted, not dropped.
   RUN_TEST(test_handoff_emits_the_closures_it_used_to_drop);
+  // windowed-playback-generation slice 4.5 / 3.7a I9: the closure that slid behind the re-anchored cursor.
+  RUN_TEST(test_handoff_closes_a_closure_that_slid_behind_the_re_anchored_cursor);
   // windowed-playback-generation slice 4.1: named checkpoint parity for undo (F-5).
   RUN_TEST(test_checkpoint_parity_names_the_lagging_case_and_ignores_the_windows_lag);
   // windowed-playback-generation slice 4.3: content parity across a window boundary (F-7).

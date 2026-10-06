@@ -1,3 +1,43 @@
+**2026-10-06 — `windowed-playback-generation` 3.7a I9 / 4.5: the closure that slid **behind** the re-anchored cursor is
+closed at the handoff (firmware + tests; both tasks stay open).** 4.5's last named implementation item is measured and
+fixed on the serving handoff. The walk resumes from a **floor** — `reanchorPlaybackIndex` points the cursor at the first
+event past `loop.lastTickInLoop`, the prepared pair resolves the same term as its `publicationPhase`, and
+`advancePlaybackCursor` **skips** everything at or behind it for the rest of the pass — so a sounding whose identity the
+replacement **kept** while moving its NoteOff behind that floor was neither planned (its NoteOn is present) nor reachable:
+it stayed audible past the end its own revision gives it, and the wrap re-articulated it. The handoff's plan is now **one
+predicate in one scan** (`ActiveNoteLedger::HandoffClosurePlan` + `planHandoffClosures`, renamed from
+`MissingCommittedNoteOnPlan`): a tagged open Entry is planned when its committed NoteOn is absent **or** when the incoming
+stream's own NoteOff for it lies at or behind `servedThroughPhase` — never from the absence of a NoteOff (a note that never
+ends is not a note that had to end). `Track::playbackClosureServeFloor` (FLASH) supplies that phase in the walk's own terms
+(`loop.lastTickInLoop`; `UINT32_MAX` when there is no position yet **or** the playhead wrapped backward — the pass restarts
+and every closure is reachable), threaded from all four reconcile call sites; the wire half keeps I6's edge, order and
+handoff-tick stamp (`closeHandoffInvalidatedNotes` → `closePlannedHandoffClosures`). **Measured** on the production clock
+entry: the slid closure is the handoff turn's **first wire event**, at the handoff's own tick, discharged by identity and
+never re-fired; a closure the walk will still deliver is left alone and arrives once at its own tick; a never-ending
+sounding is never silenced; an untagged Entry survives; every closure precedes the replacement's note-ons; a handoff on a
+**restarting** pass (the wrap) closes nothing, and the restarted pass then delivers each closure exactly once with the
+closed note re-articulating from its own onset. Verified: focused **175/175** (baseline 174/174, measured with the slice
+stashed), full native **2,854 / 7 skipped / 2,847 succeeded / 0 failed** (baseline 2,853/7/2,846/0), capture build
+**SUCCESS** with the RAM1 line **byte-identical A/B** (`variables 96,192`; `code 392,248 + padding 968`; floor 840) —
+**no ITCM cost, no re-base** —, strict validation and `git diff --check` clean, and **four red-proofs RED with
+byte-identical restores** (RP-A the closure half dropped, RP-B the restart clause dropped, RP-B' the floor dropped, RP-C
+**Reviewed once** (code-reviewer, against the packet's contract): three concrete findings are fixed — the scan's lost
+early exit (the predicate now exits once an Entry is settled as present-with-a-reachable-closure), Drive B's missing
+premise, and the plan size stated as a lower bound — and its other findings are recorded as named limits in the evidence
+(the plan answers about the **merged window**, not another lane's stream; the off-clock sites judge the wrap at their own
+turn; the pair's fresh-origin anchor differs from `reanchorPlaybackIndex`'s at phase 0, pre-existing).
+the no-closure guard dropped; the packet's one RP-B prediction is recorded as two mutations). **Recorded rather than
+smoothed:** the fixture's first draft used the change's long-loop length and measured nothing — a long slot's merged store
+is a **two-bar slice**, so `reconcilePlaybackLedgerAfterFullLoopRebuild` returns early — which is now the reach limit the
+task states (the demoted long-loop serving handoff is the **windowed lane's**, 3.7a/3.14); and the snapshot helper needed
+a real fix (a revision that carries an On and no closure cannot end its note at `loopLengthTicks` nor emit an Off there).
+**Not claimed:** no device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the
+off-clock call sites are covered natively only; **4.5 stays open** on displayed provenance (display → RWO S4e) and
+eventual recovery through the real consumer (`advancePlaybackLagTraversal` still has no production caller), **3.7a stays
+open** (3.7b's conditions unchanged). Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45c-moving-closure/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45c-moving-closure/EXECUTION.md).
+
 **2026-10-06 — `windowed-playback-generation` 3.14 / 3.14d: the between-grains matrix is measured, and the measurement
 corrected one planned expectation (test-only; no production line changed; the task stays open).**
 The matrix 3.14's own owed list named — *"pause between real preparation grains for repeated undo/redo, track/slot
@@ -5509,6 +5549,45 @@ object carries `.gcc_except_table`, and the tree's only `catch (bad_alloc)` is h
 58 % untagged residency), the family's other content-proportional reserves, and the copy-elimination half (**S4e.8**).
 Task **S4e.9**; packet and evidence under
 [`evidence/2026-10-06-s4e9-projection-containment/`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-s4e9-projection-containment/).
+
+### 3.7a (I9) / 4.5 — the closure that slid behind the re-anchored cursor is closed at the handoff (2026-10-06; firmware + tests; both tasks stay open)
+
+**3.7a I9 landed 2026-10-06 (firmware + tests; the task stays open, 3.7b's conditions unchanged).** Task 4.5's last named
+implementation item — the one I6 recorded as still owed (*"a closure that slid behind the re-anchored cursor"*) — is
+measured and fixed at the same owner. **The floor:** at a version handoff `reanchorPlaybackIndex` points the cursor at the
+first event past `loop.lastTickInLoop` (the prepared pair resolves the identical term as its `publicationPhase`), and
+`advancePlaybackCursor` **skips** every event at or behind it for the rest of the pass — so a sounding whose identity the
+replacement **kept** while moving its NoteOff behind that phase was neither planned (its NoteOn is present) nor reachable:
+the note outlived the revision that ended it and the wrap re-articulated it. **The predicate is now one scan**
+(`ActiveNoteLedger::HandoffClosurePlan` + `planHandoffClosures`, renamed from `MissingCommittedNoteOnPlan`): planned when
+the committed NoteOn is absent **or** when the incoming stream's own NoteOff lies at or behind `servedThroughPhase` — and
+never from the absence of a NoteOff (a note that never ends is not a note that had to end);
+`planOpenNotesMissingFromCommittedNoteOns` is the same predicate with nothing served (the structural half for callers that
+owe no wire half). **The phase comes from the walk's own terms:** `Track::playbackClosureServeFloor` (FLASH) returns
+`loop.lastTickInLoop`, or `UINT32_MAX` when there is no position yet **or** `didDisplayPlayheadWrapBackward` says the pass
+restarts — where the whole pass is served again and every closure is reachable — threaded from all **four** reconcile call
+sites (the clock path's `buildMergedPlaybackFallbackCold`, the launch/occupancy preparation, the prepared-pair service,
+`Track::rebuildPlaybackOrder`). The wire half is unchanged (`closeHandoffInvalidatedNotes` →
+`closePlannedHandoffClosures`: the same immediate-send edge, the same send-then-discharge-by-identity order, the same
+handoff-tick stamp). **Measured** through the production clock entry: the slid closure is the handoff turn's **first wire
+event** at the handoff's own tick and is never re-fired; a closure the walk will still deliver is left alone and arrives
+exactly once at its own tick; a never-ending sounding is never silenced; an untagged Entry survives; every closure precedes
+the replacement's note-ons; a handoff on a **restarting** pass closes nothing and the restarted pass then delivers each
+closure exactly once. Verified: focused **175/175** (baseline 174/174), full native **2,854 / 7 skipped / 2,847 succeeded /
+0 failed** (baseline 2,853/7/2,846 measured with the slice stashed), capture build **SUCCESS** with the RAM1 line
+**byte-identical A/B** (`variables 96,192`; `code 392,248 + padding 968`; floor 840 → 128 B headroom) — **no ITCM cost, no
+re-base** — and **four red-proofs RED with byte-identical restores** (RP-A the closure half dropped, RP-B the restart
+clause dropped, RP-B' the floor dropped, RP-C the no-closure guard dropped; the packet's single RP-B prediction is recorded
+as two mutations). **Recorded, not smoothed over:** the fixture's first draft used the long-loop length and measured
+nothing — a long slot's merged store is a **two-bar slice** and the reconcile returns early — which is the reach limit this
+task now states (*the demoted long-loop serving handoff belongs to the windowed lane*, 3.7a/3.14), and the snapshot helper
+needed a real fix (a revision carrying an On and no closure may not end its note at `loopLengthTicks` or emit an Off
+there). **Not claimed:** no device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b);
+the off-clock call sites are native-covered only; **4.5 stays open** on displayed provenance (display → RWO **S4e**) and
+**eventual recovery through the real consumer** (`advancePlaybackLagTraversal` still has no production caller). Detail:
+[`EVIDENCE.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45c-moving-closure/EVIDENCE.md)
+with its [`EXECUTION.md`](../../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s45c-moving-closure/EXECUTION.md)
+packet.
 
 ### 3.13 (I11) — the display-consumer item is reconciled with the runtime change's display rework, and stays **open** on an explicit cross-change dependency (2026-10-06; documentation only)
 
