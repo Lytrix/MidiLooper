@@ -497,3 +497,47 @@ prototype) and produced the same failures, each restored byte-identically. **Owe
 this is a firmware change the serial/HITL lane can observe (the registered windowed leg is the entry point); no timing
 claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b), and no differential-parity claim for content the
 paged path cannot serve (over-`L` intervals are its whole domain).
+
+---
+
+## 15. The device run: the I5 image boots and holds the canonical leg; the lane's own rows are unreachable, and why (2026-10-06; hardware)
+
+**Identity (all three runs):** `git_commit 9b964dbc8859...`, `firmware_hex_sha256 9697b7acacb262d2...` -- the I5 image,
+flashed through the managed capture (`--build-upload --build-env teensy41-capture-serial`; the guard's own line:
+`variables 96,192 / ITCM 393,216 (code 392,360 + padding 856) / locals 34,880`).
+
+| Run | Entry point | Outcome |
+|---|---|---|
+| `captures/i5-device-01-base` | `run --preset base --track 8 --loop-slot 4 --midi-channel 1 --build-upload --boot-reset` | flashed; the device booted fresh -- `#CAP,1571004,DIAG,boot_reset,crash=0` -- and the run then refused to start (`device stream has 7 line(s); expected at least 40`): the settle ended on the firmware's own banner before the SD-load rows arrived |
+| `captures/i5-device-02-base` | the same leg, image already pinned (no upload) | **`overall_ok: True`** -- every verifier passed: stored record grid (32 notes, `bad=0/2`), record-stop stages (slowest `finalize:554us`), persistence handoff (`ok duration_us=46325`), deferred persist nonblocking (`loop_persist=288 sliced=True ok=True`) and large-loop bounds (`windows=5 progress=True ... active=True stop=True ok=True`), **MIDI-boundary timing `stopping=2 overflow_free=True call_sites=True`**, min free RAM2 131,072 B, overdub wrap storage (`pairs=2 sevt=109 ok=True`), capture cleanup, stored overdub spans (`count_ok/span_ok/bars_ok` on both takes), display rows after overdub and after stop (`overdub_ok=True transport_ok=True`) |
+| `captures/i5-device-03-windowed` | `run --scenarios windowed_content_parity --track 8 --loop-slot 4 --midi-channel 1` (the registered windowed stimulus, `HITL_MANAGED_RUN_TIMEOUT_S=900`) | the leg drove the authorized slot: clear, **24-bar record** (384 streamed notes / 2,304 clocks), stop into play, `NOTE_EDIT` entered and exited, the play/stop window gestures; no crash, no wedge, clean capture teardown (only two `RING,shed,1` diagnostics). Its **display oracle failed exactly as recorded before** (`ok=False`: `missing_bounded_window_disp_rows`, `insufficient_disp_during_note_edit_freeze count=0`, `missing_playing_bounded_window_disp`), and the wrapper could not drain the retained rows (`no serial port on this run`: the runner sets `capture_serial_port`, not the leg's `--serial-port`, so `serial_port_from()` returns None) |
+
+**What the device says about I5, and what it cannot say.** The canonical leg runs through the very
+`playCommittedLoopMidi` the fix changes, and it is **green** -- including the timing owner's own gates
+(`overflow_free`, `call_sites`) -- so the tick path's shared behaviour is unchanged on hardware. **The paged branch
+itself, however, is not observable on device:** it has no serial row family (the window lane has `win_gate`, the launch
+path `launch_gate`, the snapshot owner `snap_gate`; the paged delivery has none), so nothing on the wire can name its
+admission or its serving. The one image that *does* emit the lane's rows is
+`teensy41-capture-serial-window-qualification` (`PLAYBACK_WINDOW_ROLLING_QUALIFICATION=1`; `SC_QUALIFICATION_ROWS_ENABLED`
+requires it), so the plain capture image compiles **no** qualification rows at all -- which also explains the leg's
+`ok=False` here and in earlier runs: that oracle asks for rows this build cannot emit.
+
+**And that image cannot be flashed: it is over its own RAM1 budget, before I5 as well as after.**
+
+| `teensy41-capture-serial-window-qualification` | Post-link |
+|---|---|
+| its approved baseline (`scripts/ram1_budget.json`) | `ITCM 393,216` (12 banks; code 392,232 + padding 984), locals 34,880 |
+| **at HEAD~1 (the I4 commit, before I5)** | `code 393,144 + padding 72` -- still 12 banks, but **padding 72 < the 840 floor: the guard already failed** |
+| **with I5** | `code 393,288 + padding 32,696`, locals **2,112** -- a **13th ITCM bank**, which the guard names as the *documented silent boot hang* |
+
+So the windowed lane's own rows -- and any row added there, including the "one more row" idiom for the paged delivery --
+are unreachable on hardware until that env is funded: it needs a budget slice of its own, roughly the **912 B of drift**
+it accumulated since its baseline plus I5's 64 B. **Recorded, not attributed:** that drift predates this slice (measured
+at HEAD~1 above) and no attempt was made to find which slice caused it; the qualification env's failure is not I5's
+alone, and I5's contribution to it is **+72 B over the bank boundary** on that env (the capture env keeps its guard
+passing at padding 856).
+
+**Not claimed:** no device evidence that the paged delivery is admitted or serves (no row exists to carry it, and this
+leg's shape creates no window demand -- the same conclusion the 2026-10-05 measurement recorded); no timing-envelope
+claim; no `ExecutionBounds.md` row change; no fallback removal (3.7b). **Owed next:** an env-budget slice for the
+qualification image (or a paged-path row that does not need it), and then the lane's own device read.
