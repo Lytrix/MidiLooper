@@ -465,6 +465,24 @@ struct LoopPlaybackRuntime {
     }
     return nullptr;
   }
+  /// Task 3.12/I9: the slot's **serving** source -- the revision the lane serves right now. A slot may hold a
+  /// **retiring** source beside the serving one (3.6a's roles, bounded at two), so "the first retained entry" is not
+  /// what a reader without a revision wants: it can date the answer by the *previous* revision. Falls back to the
+  /// first retained entry when no role is serving, so a reader still gets a source to ask about and that reader's own
+  /// revision check refuses by name when it is not the one.
+  const RetainedPlaybackSource* servingRetainedSource() const {
+    for (const RetainedPlaybackSource& entry : retainedSources) {
+      if (entry.role == RetainedSourceRole::Serving) {
+        return &entry;
+      }
+    }
+    for (const RetainedPlaybackSource& entry : retainedSources) {
+      if (entry.isRetained()) {
+        return &entry;
+      }
+    }
+    return nullptr;
+  }
   RetainedPlaybackSource* freeRetainedSourceSlot() {
     for (RetainedPlaybackSource& entry : retainedSources) {
       if (!entry.isRetained()) {

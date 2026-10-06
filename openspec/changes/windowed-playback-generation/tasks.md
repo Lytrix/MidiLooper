@@ -482,6 +482,47 @@ the pager, the preview session, retained-source release and the demotion matrix 
 `retainPlaybackSourceForSlot` still has **no production caller**, so this increment adds no retainer -- it establishes
 that the lane *is* content-equivalent wherever a retained source exists. Evidence:
 `evidence/2026-10-06-s37a-i8-lane-parity/`.
+
+**3.12 increment I9 (fixture 2.11's last dimension) landed 2026-10-06 (firmware + tests; the task's remaining items
+are the hardware envelope and 6.3's sweeps):** *"an edit that moves events into a full interval"* is measured, and the
+fixtures found and fixed a **defect in the retained lane**. **The defect:** a slot can hold a **retiring** retained
+source beside its **serving** one (3.6a's roles, bounded at two), and the lane's readers took "the **first retained**
+entry" -- so `Track::gatherRetainedSourceWindowForSlot` refused the **current** revision with `RevisionMismatch`
+(measured: `request=5`, `gather=4`, `lists=0`, nothing inspected), `buildRetainedIntervalIndexForSlot` indexed the
+*previous* revision, and the two readers that compare a source's revision with the loop's could name the wrong holder.
+**Fixed at the owner:** `LoopPlaybackRuntime::servingRetainedSource()` (serving role first, first retained as fallback),
+the gather preferring `revision == expectedRevision` **first** (a lagging caller is still served the revision it asked
+for -- the one-pass-late allowance stays the caller's rule, so I1's fixture still passes), the index built for the
+**serving** revision, and `Track::servingRetainedRevisionForSlot` -- a **revision read**, not a source copy -- for the
+readers. `retainedPlaybackSourceForSlot` keeps its first-retained meaning because **3.6a W-19** pins it; its header
+comment's *"Read the **serving** retained source"* is recorded as a **doc/behaviour mismatch** rather than changed
+under that fixture. **Two readings the measurement corrected:** a `Move` row (`Update` + `NoteRange`) **cannot** grow a
+**windowed** interval -- `applyNoteEditPassSequence` applies a Delete/Update row only when its target note is present in
+the layer it is applied to, and a windowed layer holds the window's events only (measured: both the owner and the lane
+still answered 1,916), so the clause is measured with the edit that **puts** events into the interval (`Create` rows) --
+and the window build's capacity bound is the view's **storage** (`sourceCount > kEventsPerView` = 2048), **not**
+`content + closureReserve` (that reserve is the **capture edge's** term; an edited 1,922-event interval was admitted,
+`Expected 10 Was 0`, and the refusal appears at 2,050). **Fixtures:** W-37a-31 (the served window is the owner's
+post-edit answer -- same tick order, per tick as a multiset, never a truncated prefix -- and the interval's content term
+is that answer), W-37a-32 (the edit moves the **capture-edge boundary**: the same content ±the edit reads 2,044 vs
+2,048 on the edge's accounting, `admitsNewEvent(true)` true vs false, the control slot's note-on accepted and the edited
+slot's refused **by name** with no row and no dangling reservation), W-37a-33 (past the capacity the lane **never
+truncates**: the gather still serves the 2,050-event interval, the requester refuses **by name**
+`WindowExceedsRetainedCapacity`, the served window stays the old **complete** answer, and the deferred demand stays
+owed). Verified: focused **173/173** (baseline 170/170), full native **2,851 / 7 skipped / 2,844 succeeded / 0 failed**
+(baseline 2,848/2,841), capture build **SUCCESS** with the RAM1 line **byte-identical** to the pre-slice baseline
+(`variables 96,192`; `code 392,248 + padding 968`; floor 840) -- **the increment's own +256 B was paid back**: the first
+working form copied a whole `RetainedPlaybackSource` at its call sites (`code 392,504 + padding 712`, refused) and the
+**revision read** restored the line, **no re-base** -- strict validation and `git diff --check` clean, and **three
+red-proofs RED with byte-identical restores**: **RP-I9-source-selection** (the defect as it was: W-37a-31/W-37a-33),
+**RP-I9-move** (the pinned rows collected empty: I7's fixture, I8's and all three of this increment's) and
+**RP-I9-window-term** (the edge's window term dropped: W-37a-32 plus 3.12c's two edge fixtures). **Not claimed:** no
+device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the closure-at-capacity
+arithmetic stays **3.12c**'s (cited) and the edited slot's own stop route is **not** claimed (its stop admission
+returned false in this fixture's hand-started transport state, recorded unattributed); the capture accounting's owed
+term is the **track's** `pendingNotes`, measured and named, not fixed; the declared caps stay 6.3's; and
+`retainPlaybackSourceForSlot` still has **no production caller** (the readers are what this increment fixed). Evidence:
+`evidence/2026-10-06-s312-211-edit-into-full-interval/`.
   **Closeout of I3c-a's owed red-proofs (2026-10-06, docs-only commit).** The packet's MR set was written against the
   staging design this slice replaced with the ring's ordinal view, so it was re-expressed and run against the final
   revision, with byte-identical restores verified on all three touched files: **MR-R-baserebase** (the pass base not

@@ -1,3 +1,36 @@
+**2026-10-06 — `windowed-playback-generation` 3.12 I9: fixture 2.11's last dimension is measured, and the fixtures found
+and fixed a **defect in the retained lane** (firmware + tests).** Fixture 2.11's one remaining dimension — *"an edit that
+moves events into a full interval"* — is measured, and the shape it needs exposed a real defect: a slot may hold a
+**retiring** retained source beside its **serving** one (3.6a's roles, bounded at two), and every reader that needed
+"the source" took the **first retained entry**. `Track::gatherRetainedSourceWindowForSlot` therefore refused the
+**current** revision with **`RevisionMismatch`** (measured: `request=5`, `gather=4`, `lists=0`, nothing inspected),
+`buildRetainedIntervalIndexForSlot` indexed the *previous* revision, and the two readers comparing a source's revision
+with the loop's could name the wrong holder. **Fixed at the owner:** `LoopPlaybackRuntime::servingRetainedSource()`
+(serving role first, first retained as fallback), the gather preferring `revision == expectedRevision` **first** (a
+lagging caller is still served the revision it asked for, so I1's fixture still passes), the index built for the
+**serving** revision, and `Track::servingRetainedRevisionForSlot` — a **revision read**, not a source copy — for the
+readers. `retainedPlaybackSourceForSlot` keeps its first-retained meaning because **3.6a W-19** pins it (its header
+comment's "serving" line is recorded as a **doc/behaviour mismatch**). **Two readings the measurement corrected:** a
+`Move` row cannot grow a **windowed** interval (the owner's own per-layer apply skips a Delete/Update row whose target
+note is absent from the windowed layer — measured 1,916 from both the owner and the lane), so the clause is measured
+with the edit that **puts** events in (`Create` rows); and the window build's capacity bound is the view's **storage**
+(`sourceCount > kEventsPerView`), **not** `content + closureReserve` (that reserve is the capture edge's term). Three
+fixtures: the served window equals the owner's post-edit answer (same tick order, per tick as a multiset, never a
+truncated prefix); the edit moves the **capture-edge boundary** (2,044 vs 2,048, the control note-on accepted, the
+edited slot's refused **by name** with no row and no dangling reservation); and past the capacity the lane **never
+truncates** (the gather still serves, the requester refuses by name `WindowExceedsRetainedCapacity`, the served window
+stays the old complete answer, the demand stays owed). **The increment's own ITCM cost was paid back:** the first form
+copied a whole `RetainedPlaybackSource` at its call sites (+256 B, `code 392,504 + padding 712` — refused) and the
+revision read restored the line **byte-identically** (`variables 96,192`; `code 392,248 + padding 968`), **no re-base**.
+Verified: focused **173/173** (baseline 170/170), full native **2,851 / 7 skipped / 2,844 succeeded / 0 failed**
+(baseline 2,848/2,841), capture build **SUCCESS**, strict validation and `git diff --check` clean, three red-proofs RED
+with byte-identical restores (**RP-I9-source-selection** — the defect as it was, **RP-I9-move**, **RP-I9-window-term**).
+**Not claimed:** no device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the
+closure-at-capacity arithmetic stays 3.12c's (cited), the edited slot's own stop route is not claimed (its stop
+admission returned `false` in this fixture's transport state — recorded unattributed), the capture accounting's owed
+term is the track's `pendingNotes` (measured, not fixed), and `retainPlaybackSourceForSlot` still has **no production
+caller**. Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s312-211-edit-into-full-interval/EVIDENCE.md).
 **2026-10-06 — `windowed-playback-generation` 3.7a I8: the **differential lane parity** is measured — the published-root
 lane and the retained-source lane serve one revision identically (test-only; no production line changed).** The I1
 packet's ladder ends at **I4 — "differential fallback parity … the shipped-vs-fallback comparison over the same
@@ -5409,6 +5442,59 @@ object carries `.gcc_except_table`, and the tree's only `catch (bad_alloc)` is h
 Task **S4e.9**; packet and evidence under
 [`evidence/2026-10-06-s4e9-projection-containment/`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-s4e9-projection-containment/).
 
+### 3.12 (I9) — fixture 2.11's last dimension is measured, and the fixtures found and fixed a defect in the retained lane (2026-10-06; firmware + tests)
+
+**3.12 increment I9 landed 2026-10-06 (firmware + tests; the task's remaining items are the hardware envelope and
+6.3's sweeps).** Fixture **2.11**'s one remaining dimension -- *"an edit that moves events into a full interval"* -- is
+measured, and the fixtures found a **defect in the retained lane** that only this shape exposes. **The defect:** a slot
+can hold a **retiring** retained source beside its **serving** one (3.6a's roles, bounded at two), and every reader that
+needed "the source" took the **first retained entry**: `Track::gatherRetainedSourceWindowForSlot` therefore refused the
+**current** revision with **`RevisionMismatch`** (measured: `request=5`, `gather=4`, `lists=0`, nothing inspected),
+`buildRetainedIntervalIndexForSlot` indexed the *previous* revision, and the two readers that compare a source's
+revision with the loop's (`playbackWindowReadinessForSlot`'s `OwesBuild`/`OwesSource` choice,
+`playbackWindowSourceIsCurrentForSlot`) could name the wrong holder. **Fixed at the owner:**
+`LoopPlaybackRuntime::servingRetainedSource()` (serving role first, the first retained entry as the fallback), the
+gather preferring the entry whose `revision == expectedRevision` **first** and then the serving one (a *lagging* caller
+is still served the revision it asked for -- the one-pass-late allowance stays the caller's rule, so I1's fixture still
+passes), the index built for the **serving** revision, and `Track::servingRetainedRevisionForSlot` -- a **revision
+read**, not a source copy -- for the two comparing readers. **Recorded, not changed under another fixture:**
+`Track::retainedPlaybackSourceForSlot` keeps its first-retained meaning, because **3.6a W-19** reads the *older* source
+through it and asserts its role became `Retiring`; the header comment above it says *"Read the **serving** retained
+source"*, a **doc/behaviour mismatch** this increment found and records. **Two readings the measurement corrected:** a
+`Move` row (`Update` + `NoteRange`) **cannot** grow a **windowed** interval -- `applyNoteEditPassSequence` applies a
+Delete/Update row only when its target note is present in the layer it is applied to, and a windowed layer holds the
+window's events only (measured: the owner *and* the lane still answered 1,916), so the clause is measured with the edit
+that **puts** events into the interval (`EditActionType::Create` rows) -- and the window build's capacity bound is the
+view's **storage** (`sourceCount > kEventsPerView` = 2048), **not** `content + closureReserve` (that reserve is the
+**capture edge's** term and `WindowAdmissionAccounting` is the edge's arithmetic only; an edited 1,922-event interval
+was **admitted** -- `Expected 10 Was 0` -- and the named refusal appears at 2,050 events). **Fixtures:**
+`W-37a-31` the served window is the effective-content owner's **post-edit** answer (1,916 → 1,920 by the four events the
+edit puts in), compared in the same tick order and per tick as a multiset (same-tick order stays 4.3's gate) and equal
+to the interval's `committedPlaybackWindowEventCountForSlot`; `W-37a-32` the edit moves the **capture-edge boundary** --
+two slots holding the same content, one with the edit: 2,044 vs 2,048 on the edge's accounting (a four-event
+difference), `admitsNewEvent(true)` true for the control and false for the edited content, the control slot's note-on
+**accepted** and the edited slot's **refused by name** (`window_admission`) with no row and no dangling reservation;
+`W-37a-33` past the capacity the lane **never truncates** -- the edit puts 134 events in (2,050), the gather still
+serves the interval (17 slices, `complete`), the requester refuses **by name** (`WindowExceedsRetainedCapacity`), the
+served window stays the old **complete** answer (never a truncated prefix) and the deferred demand stays owed.
+**The ITCM budget was the increment's own work:** the first working form cost **+256 B** (the new accessor copying a
+whole `RetainedPlaybackSource` -- pins + owned bodies -- at its call sites) and failed the guard (`code 392,504 +
+padding 712`); replacing it with the **revision read** restored the line **byte-identically** to the pre-slice baseline
+(`variables 96,192`; `code 392,248 + padding 968`; 128 B above the floor) -- **no re-base**. Verified: focused
+**173/173** (baseline 170/170), full native **2,851 / 7 skipped / 2,844 succeeded / 0 failed** (baseline 2,848/2,841),
+capture build **SUCCESS**, strict validation and `git diff --check` clean, and **three red-proofs RED with
+byte-identical restores**: **RP-I9-source-selection** (the gather's revision-first selection reverted -- the defect as
+it was), **RP-I9-move** (the pinned Active Note rows collected empty: I7's fixture, I8's and all three of this
+increment's) and **RP-I9-window-term** (the edge's window term dropped: W-37a-32 plus 3.12c's two edge fixtures).
+**Not claimed:** no device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b); the
+closure-at-capacity arithmetic stays **3.12c**'s (cited, because the edited interval cannot accept the note that clause
+needs), the edited slot's own **stop route is not claimed** (its stop admission returned `false` in this fixture's
+hand-started transport state -- recorded unattributed), the capture accounting's owed term is the **track's**
+`pendingNotes` (measured and named, not fixed -- it belongs to the accounting's own owner), the declared caps stay
+6.3's sweeps, and `retainPlaybackSourceForSlot` still has **no production caller** (the *readers* are what this
+increment fixed, so the lane is correct the moment a retainer exists). Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s312-211-edit-into-full-interval/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s312-211-edit-into-full-interval/EXECUTION.md).
 ### 3.7a (I8) — the differential lane parity: the published-root lane and the retained-source lane serve one revision identically (2026-10-06; test-only)
 
 **3.7a increment I8 landed 2026-10-06 (test-only; no production line changed — `git diff --stat -- src include` is

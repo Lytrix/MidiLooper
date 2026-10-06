@@ -630,6 +630,14 @@ public:
   /// Read the **serving** retained source (identity, role, pins and owned bodies). Cold: used by fixtures and by the
   /// envelope accounting, never by a timing-critical consumer.
   bool retainedPlaybackSourceForSlot(uint8_t slotIndex, RetainedPlaybackSource& out) const;
+  /// Task 3.12/I9: the slot's **serving** source (the revision the lane serves now). A slot can hold a retiring source
+  /// beside the serving one, so a reader that compares a source's revision with the loop's current one -- the window
+  /// readiness holder and `playbackWindowSourceIsCurrentForSlot` -- must ask for this one, not for whichever entry sits
+  /// Task 3.12/I9: the slot's **serving** retained revision (0 when none serves). A slot can hold a retiring source
+  /// beside the serving one, so a reader that compares a source's revision with the loop's current one -- the window
+  /// readiness holder and `playbackWindowSourceIsCurrentForSlot` -- must ask for this one, not for whichever entry sits
+  /// first in the role array. A revision read, so a reader costs no source copy.
+  uint32_t servingRetainedRevisionForSlot(uint8_t slotIndex) const;
   bool hasRetainedPlaybackSourceForSlot(uint8_t slotIndex) const;
   size_t retainedPlaybackSourceCountForSlot(uint8_t slotIndex) const;
   /// The **one release predicate** (the spec's rule: a source is released only here) — the loop's revision has

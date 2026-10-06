@@ -1241,7 +1241,9 @@ TRACK_COLD_MEM Track::PlaybackWindowReadiness Track::playbackWindowReadinessForS
       return PlaybackWindowReadiness::OwesBuild;
     }
     RetainedPlaybackSource retained{};
-    if (retainedPlaybackSourceForSlot(slotIndex, retained) && retained.revision == loop.playbackRevision) {
+    // Task 3.12/I9: the **serving** source is what "the retained source is current" means -- a retiring entry beside
+    // it would make this name `OwesSource` for a slot whose revision is retained and whose window is owed.
+    if (servingRetainedRevisionForSlot(slotIndex) == loop.playbackRevision) {
       return PlaybackWindowReadiness::OwesBuild;
     }
     return PlaybackWindowReadiness::OwesSource;
@@ -1349,6 +1351,11 @@ TRACK_COLD_MEM bool Track::retainedPlaybackSourceForSlot(uint8_t slotIndex,
   if (runtime == nullptr) {
     return false;
   }
+  // Task 3.12/I9: **the first retained entry, unchanged** -- W-19 (task 3.6a) reads the *older* source through this
+  // accessor to watch its role become `Retiring`, so its meaning is "some retained entry" and stays that way. A reader
+  // that needs the revision the lane serves uses `servingRetainedRevisionForSlot` (the role array's order must not
+  // must not decide an answer), and the header's "Read the **serving** retained source" line is a doc/behaviour
+  // mismatch this increment found and recorded rather than changed under 3.6a's fixture.
   for (const RetainedPlaybackSource& entry : runtime->retainedSources) {
     if (entry.isRetained()) {
       out = entry;
@@ -1356,6 +1363,20 @@ TRACK_COLD_MEM bool Track::retainedPlaybackSourceForSlot(uint8_t slotIndex,
     }
   }
   return false;
+}
+
+/// Task 3.12/I9: the **serving** revision for this slot -- the one the lane serves right now, or 0 when no role serves.
+/// A reader that only compares revisions must not copy a source (its pins and owned bodies are vectors), and a slot can
+/// hold a *retiring* source beside the serving one (3.6a's roles, bounded at two), so "the first retained entry" can
+/// date an answer by the previous revision: the window lane refused the current revision with `RevisionMismatch` for
+/// exactly that reason, and a slot whose window is being rebuilt would report `OwesSource` instead of `OwesBuild`.
+TRACK_COLD_MEM uint32_t Track::servingRetainedRevisionForSlot(uint8_t slotIndex) const {
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return 0;
+  }
+  const RetainedPlaybackSource* source = runtime->servingRetainedSource();
+  return source == nullptr ? 0u : source->revision;
 }
 
 TRACK_COLD_MEM bool Track::hasRetainedPlaybackSourceForSlot(uint8_t slotIndex) const {
@@ -1692,13 +1713,10 @@ TRACK_COLD_MEM Track::RetainedIndexBuildResult Track::buildRetainedIntervalIndex
   if (runtime == nullptr) {
     return RetainedIndexBuildResult::NoRuntime;
   }
-  const RetainedPlaybackSource* source = nullptr;
-  for (const RetainedPlaybackSource& entry : runtime->retainedSources) {
-    if (entry.isRetained()) {
-      source = &entry;
-      break;
-    }
-  }
+  // Task 3.12/I9: the index describes the **serving** revision -- the one the retention just admitted. The first
+  // retained entry may be the retiring one, and an index stamped with the previous revision would refuse the current
+  // one by name (`RevisionMismatch`) while claiming a window-bounded answer exists for it.
+  const RetainedPlaybackSource* source = runtime->servingRetainedSource();
   if (source == nullptr) {
     // No pinned bodies, so nothing to describe -- and no index is left behind from an earlier revision.
     runtime->retainedIndex.clear();
@@ -1982,11 +2000,18 @@ TRACK_COLD_MEM Track::RetainedWindowGather Track::gatherRetainedSourceWindowForS
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   const RetainedPlaybackSource* source = nullptr;
   if (runtime != nullptr) {
+    // Task 3.12/I9: **the revision asked for decides first.** A slot can hold a *retiring* source beside the serving
+    // one (3.6a's roles, bounded at two), and a caller may ask for either -- the one-pass-late allowance is the
+    // caller's rule (task 3.6b). Taking "the first retained entry" dated the answer by whichever revision happened to
+    // occupy the first role slot, so a slot serving the **new** revision refused it with `RevisionMismatch`.
     for (const RetainedPlaybackSource& entry : runtime->retainedSources) {
-      if (entry.isRetained()) {
+      if (entry.isRetained() && entry.revision == expectedRevision) {
         source = &entry;
         break;
       }
+    }
+    if (source == nullptr) {
+      source = runtime->servingRetainedSource();
     }
   }
   if (source == nullptr) {
@@ -2186,8 +2211,7 @@ TRACK_COLD_MEM bool Track::playbackWindowSourceIsCurrentForSlot(uint8_t slotInde
   if (loop.publishedSnapshotIsCurrent()) {
     return true;
   }
-  RetainedPlaybackSource retained{};
-  return retainedPlaybackSourceForSlot(slotIndex, retained) && retained.revision == loop.playbackRevision;
+  return servingRetainedRevisionForSlot(slotIndex) == loop.playbackRevision;
 }
 
 /// Task 3.7a (I2): **begin the retained-source gather** for this slot's pending demand. The preconditions and the freeze

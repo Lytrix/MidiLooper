@@ -12724,6 +12724,486 @@ void test_3_7a_i8_an_edited_revision_is_resolved_the_same_way_by_both_lanes() {
                            wireIdentityAgreementLength(effectiveOracle, retainedEvents));
 }
 
+namespace {
+
+/// Task 3.12 (I9) / fixture 2.11's last dimension: **the interval a note edit moves events into.** One committed
+/// record pass holds the interval's content and, **outside** the served two-bar window, `outsideNotes` notes each with
+/// its own `NoteId`, so a note-edit row can address one and **relocate** it into the window -- which is what "an edit
+/// that moves events into a full interval" means in this owner's terms. The content is built through the store (no
+/// hand-set count) and the move is stated as the owner's own row shape (`EditActionType::Update` +
+/// `EditPropertyType::NoteRange`), applied by the shipped `applyNoteEditPassSequence` through the retained per-layer
+/// path (task 3.7a/I7), so both the pre-edit and the post-edit answers come from `Loop::copyEffectiveCommittedEventsInRange`.
+constexpr uint32_t kI9InWindowEvents = RuntimePlaybackViewConfig::kWindowAdmissionLimit -
+                                       RuntimePlaybackViewConfig::kWindowClosureReserve - 4;
+/// 958 note pairs at ticks 0..957, i.e. **two events per tick**: all inside the resolver's two-bar window at playhead
+/// 500 (`[0, 1536)`), and the interval sits exactly four events below the boundary a new note-on needs -- the margin
+/// the edit is measured against. The content is deliberately dense (a real interval of this size accumulates
+/// same-tick events), which is why the comparison below is tick-level rather than position-inside-a-tick.
+constexpr uint32_t kI9DensePairs = kI9InWindowEvents / 2;
+/// A **long** loop: the window lane's declared contract must be able to complete the build before the playhead returns
+/// to the interval, and this window's 1,916 events charge enough preparation grains that a short loop refuses by name
+/// (`CannotCompleteBeforeHandoff`) -- 512 bars is the same long-loop shape 3.7a's fixtures use.
+constexpr uint32_t kI9LoopTicks = 512 * Config::TICKS_PER_BAR;
+constexpr uint32_t kI9Playhead = 500;
+
+/// One slot of this shape, plus the revisions it has been served under (`generation` keeps each retention distinct).
+struct I9Slot {
+  Loop* loop = nullptr;
+  uint32_t generation = 21;
+};
+/// One committed record pass holding `kI9InWindowEvents` events inside the resolver's two-bar window at playhead
+/// 500 (`[0, 1536)`): `kI9DensePairs` note pairs at ticks 0..957 with pitches 48..59, i.e. **two events per tick**.
+/// Pitches 60..62 are deliberately left free -- they are the notes the **edit** puts into the interval, so a fixture
+/// can name them in either answer.
+void buildI9ContentForSlot(Track& track, uint8_t slot, I9Slot& out) {
+  Loop& loop = track.getLoop(slot);
+  loop.loopLengthTicks = kI9LoopTicks;
+  RecordPass record{};
+  record.id = static_cast<PassId>(11 + slot);
+  record.state = CapturePassState::Active;
+  LoopEventStore store;
+  for (uint32_t i = 0; i < kI9DensePairs; ++i) {
+    const uint8_t pitch = static_cast<uint8_t>(48 + (i % 12));
+    TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(
+        store, i, 1, pitch, 100, static_cast<NoteId>(i + 1 + slot * 1000)));
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(i, 1, pitch, 0)));
+  }
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, record.committedChunkIds));
+  loop.passes.recordPass = std::move(record);
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(slot, true));
+  out.loop = &loop;
+}
+
+/// **The edit**: `moves` note-edit rows that put a note **into** the interval, as the owner's own row shape for an
+/// added note (`EditActionType::Create`, whose `addedEvents` are the events the row contributes), applied by the
+/// shipped `applyNoteEditPassSequence` through the retained per-layer path (task 3.7a/I7) and by the effective-content
+/// owner's windowed resolution alike.
+///
+/// **Reading recorded, not assumed:** a `Move` row (`Update` + `NoteRange`) for a note *outside* the window cannot
+/// grow the interval. `applyNoteEditPassSequence` applies a Delete/Update row only when its target note is present in
+/// the layer it is applied to, and a windowed layer holds the window's events only -- so the row is skipped there, and
+/// the owner's own **windowed** answer skips it identically (measured: the first form of this fixture expected 1,920
+/// from two such rows and got 1,916 from both the owner and the lane). The whole-loop resolution does move such a
+/// note; the interval-windowed resolution is what both consumers of this clause read, so an edit that **adds** events
+/// to the interval is the shape the clause can be measured in.
+void applyI9Moves(Track& track, I9Slot& slot, uint32_t moves) {
+  (void)track;
+  static const uint8_t kCreatedPitches[] = {60, 61, 62};
+  EditPassId rowId = 71;
+  for (uint32_t n = 0; n < moves; ++n) {
+    const uint32_t onTick = 200 + n * 100;
+    const uint8_t pitch = kCreatedPitches[n % 3];
+    EditPass row{};
+    row.id = rowId++;
+    row.passType = EditPassType::Note;
+    row.actionType = EditActionType::Create;
+    row.propertyType = EditPropertyType::None;
+    row.state = EditPassState::Active;
+    row.addedEvents.push_back(NoteIdTestFixtures::noteOnWithNoteId(onTick, 1, pitch, 100,
+                                                                  static_cast<NoteId>(9100 + n)));
+    row.addedEvents.push_back(MidiEvent::NoteOff(onTick + 60, 1, pitch, 0));
+    slot.loop->passes.editPasses.push_back(row);
+  }
+  // A committed note edit advances the revision a window is dated by, so the slot's source is the **new** revision.
+  slot.loop->playbackRevision += 1;
+}
+/// The production route for a rootless (demoted) slot: retain **this** revision as the source, ask the requester, and
+/// drive the deferred owner until the window published for **this revision** is readable. The identity is what makes a
+/// second serve in a fixture observable rather than the *previous* window still being readable.
+Track::PlaybackViewRequestResult serveI9Slot(Track& track, I9Slot& slot, uint8_t slotIndex,
+                                           SessionMidiEventVec& servedOut,
+                                           PlaybackCoverageInterval& publishedOut) {
+  servedOut.clear();
+  Loop& loop = *slot.loop;
+  const uint32_t revision = loop.playbackRevision;
+  // A **qualified** deadline clock: the lane's deadline terms read it, and an unset clock is not a scheduling
+  // statement (task 3.6b's epoch rule).
+  nativePlaybackDeadlineClock = {1000, 1};
+  const Track::PlaybackSourceRetainResult retained =
+      track.retainPlaybackSourceForSlot(slotIndex, revision, slot.generation++);
+  TEST_ASSERT_TRUE_MESSAGE(retained == Track::PlaybackSourceRetainResult::Admitted ||
+                               retained == Track::PlaybackSourceRetainResult::AlreadyRetained,
+                           "the revision a window is dated by must be retained");
+  SessionMidiEventVec scratch;
+  const Track::PlaybackViewRequestResult request = track.requestPlaybackWindow(slotIndex, kI9Playhead, scratch);
+  PlaybackViewSourceIdentity identity{};
+  const auto windowIsForRevision = [&]() {
+    return track.publishedPlaybackWindowForSlot(slotIndex, identity, publishedOut) &&
+           identity.playbackRevision == revision;
+  };
+  for (uint32_t turn = 0; turn < 4096 && !windowIsForRevision(); ++turn) {
+    track.stepPlaybackViewMaintenance();
+  }
+  if (!windowIsForRevision()) {
+    // A completed build publishes as the slot's **prepared successor** and is adopted at a boundary (task 3.4): this
+    // fixture is the lane's consumer, so it adopts what it prepared -- the same idiom the window-owner fixtures use.
+    (void)track.adoptPreparedPlaybackWindow(slotIndex);
+  }
+  const auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, slotIndex);
+  TEST_ASSERT_NOT_NULL(runtime);
+  if (!windowIsForRevision()) {
+    CommittedEventRange::WindowTraversalCursor probeCursor{};
+    CommittedEventRange::resetWindowTraversalCursor(probeCursor);
+    SessionMidiEventVec probeOut;
+    SessionMidiEventVec probeRows;
+    const Track::RetainedWindowGather probe = track.gatherRetainedSourceWindowForSlot(
+        slotIndex, kI9Playhead, 2 * Config::TICKS_PER_BAR, revision, probeCursor, probeOut, probeRows);
+    char detail[256];
+    snprintf(detail, sizeof(detail),
+             "the owner publishes a window for this revision (request=%d pending=%d buildActive=%d gather=%d "
+             "lists=%u missing=%u indexed=%u skipped=%u inspected=%u)",
+             static_cast<int>(request), track.hasPendingPlaybackViewMaintenance() ? 1 : 0,
+             runtime->viewBuild.active() ? 1 : 0, static_cast<int>(probe.result),
+             static_cast<unsigned>(probe.pinnedLists), static_cast<unsigned>(probe.pinnedPassesMissing),
+             static_cast<unsigned>(probe.indexedBars), static_cast<unsigned>(probe.skippedBars),
+             static_cast<unsigned>(probe.inspectedChunks));
+    TEST_FAIL_MESSAGE(detail);
+  }
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const auto& served = set->views[set->lifecycle.current];
+  for (uint32_t i = 0; i < served.storage.eventCount; ++i) {
+    servedOut.push_back(served.storage.events[served.storage.order[i]]);
+  }
+  return request;
+}
+
+/// The comparison these fixtures need: **the same content in the same tick order**, each tick's events compared as a
+/// multiset. A dense interval carries several events per tick by construction (task 2.11 states the same-tick case),
+/// and same-tick order is task 4.3's gate rather than a claim made here -- while the order **across** ticks is
+/// asserted, because both answers are compared in their own dispatch order.
+bool sameContentInTickOrder(const SessionMidiEventVec& left, const SessionMidiEventVec& right) {
+  if (left.size() != right.size()) {
+    return false;
+  }
+  const auto pack = [](const MidiEvent& event) {
+    return static_cast<long long>(event.type) * 1000000 + event.data.noteData.note * 1000 +
+           event.data.noteData.velocity;
+  };
+  size_t index = 0;
+  while (index < left.size()) {
+    if (left[index].tick != right[index].tick) {
+      return false;
+    }
+    std::vector<long long> leftGroup;
+    std::vector<long long> rightGroup;
+    size_t end = index;
+    while (end < left.size() && left[end].tick == left[index].tick) {
+      leftGroup.push_back(pack(left[end]));
+      rightGroup.push_back(pack(right[end]));
+      ++end;
+    }
+    std::sort(leftGroup.begin(), leftGroup.end());
+    std::sort(rightGroup.begin(), rightGroup.end());
+    if (leftGroup != rightGroup) {
+      return false;
+    }
+    index = end;
+  }
+  return true;
+}
+
+/// A note-on at one tick with one pitch: how these fixtures name a **relocated** note (the dense content shares its
+/// ticks, so a bare per-tick count could not tell the moved note from the content that was already there).
+size_t countNoteOnsAtTickWithPitch(const SessionMidiEventVec& events, uint32_t tick, uint8_t pitch) {
+  size_t count = 0;
+  for (const MidiEvent& event : events) {
+    if (event.isNoteOn() && event.tick == tick && event.data.noteData.note == pitch) {
+      ++count;
+    }
+  }
+  return count;
+}
+}  // namespace
+
+/// 3.12 (I9) / fixture 2.11: **an edit that moves events into the served interval** is served as the effective-content
+/// owner's own answer -- complete and in tick order, never a prefix. The pre-edit answer is measured **before** the
+/// edit, so the difference the case asserts is the moved events themselves.
+void test_2_11_an_edit_that_moves_events_into_the_served_interval_is_served_as_the_owners_answer() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  I9Slot slot{};
+  buildI9ContentForSlot(track, 0, slot);
+  Loop& loop = *slot.loop;
+  PlaybackCoverageInterval interval{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks, true, kI9Playhead, interval));
+  TEST_ASSERT_EQUAL_UINT32(0u, interval.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(2 * kBar, interval.lengthTicks);
+
+  // (a) **The pre-edit answer**: the interval's effective content, with neither outside note inside it.
+  SessionMidiEventVec preEdit;
+  // The **effective-content owner's** answer for this revision, with its **Active Note rows resolved** (the fourth
+  // argument): a revision's edits are part of its content, and this is the rule the retained per-layer path applies
+  // (task 3.7a/I7) -- the rows are empty for the pre-edit revision, which is why the two calls differ only by the edit.
+  loop.copyEffectiveCommittedEventsInRange(preEdit, interval.startPhase, interval.lengthTicks, true);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kI9InWindowEvents, static_cast<uint32_t>(preEdit.size()),
+                                   "the interval holds the committed content and nothing else");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countNoteOnsAtTickWithPitch(preEdit, 200, 60),
+                                   "the note the edit will put into the interval is not there yet");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countNoteOnsAtTickWithPitch(preEdit, 300, 61),
+                                   "nor is the second one");
+
+  // (b) **Served through production**, rootless (the retained revision is the source).
+  PlaybackCoverageInterval published{};
+  SessionMidiEventVec served;
+  const Track::PlaybackViewRequestResult request = serveI9Slot(track, slot, 0, served, published);
+  TEST_ASSERT_TRUE_MESSAGE(request == Track::PlaybackViewRequestResult::Admitted ||
+                               request == Track::PlaybackViewRequestResult::DeferredSourceQualification,
+                           "the pre-edit interval is inside one window, so it is admitted (or deferred, never refused)");
+  TEST_ASSERT_EQUAL_UINT32(interval.startPhase, published.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(interval.lengthTicks, published.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(preEdit.size()), static_cast<uint32_t>(served.size()),
+                                   "the served window's content is the owner's pre-edit answer");
+  TEST_ASSERT_TRUE_MESSAGE(sameContentInTickOrder(preEdit, served),
+                           "tick for tick, and each tick's events as a multiset");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(preEdit.size()),
+                                   static_cast<uint32_t>(track.committedPlaybackWindowEventCountForSlot(0)),
+                                   "and the count the admission reads is that same answer");
+
+  // (c) **The edit moves both notes into the interval**, and the revision the window is dated by advances.
+  applyI9Moves(track, slot, 2);
+  SessionMidiEventVec postEdit;
+  loop.copyEffectiveCommittedEventsInRange(postEdit, interval.startPhase, interval.lengthTicks, true);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kI9InWindowEvents + 4, static_cast<uint32_t>(postEdit.size()),
+                                   "two relocated pairs join the interval");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countNoteOnsAtTickWithPitch(postEdit, 200, 60),
+                                   "the first moved On is inside");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countNoteOnsAtTickWithPitch(postEdit, 300, 61),
+                                   "the second moved On is inside");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countNoteOnsAtTickWithPitch(preEdit, 400, 62),
+                                   "and the interval's own content is otherwise unchanged");
+
+  SessionMidiEventVec servedAfterEdit;
+  const Track::PlaybackViewRequestResult afterEdit = serveI9Slot(track, slot, 0, servedAfterEdit, published);
+  TEST_ASSERT_TRUE_MESSAGE(afterEdit == Track::PlaybackViewRequestResult::Admitted ||
+                               afterEdit == Track::PlaybackViewRequestResult::DeferredSourceQualification,
+                           "the edited interval still fits one window (the moved events stay inside the reserve)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(postEdit.size()),
+                                   static_cast<uint32_t>(servedAfterEdit.size()),
+                                   "the served window is the owner's **post-edit** answer, not the pre-edit one");
+  TEST_ASSERT_TRUE_MESSAGE(sameContentInTickOrder(postEdit, servedAfterEdit),
+                           "complete and in tick order -- never a truncated prefix");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(postEdit.size()),
+                                   static_cast<uint32_t>(track.committedPlaybackWindowEventCountForSlot(0)),
+                                   "and the interval's content term is the post-edit count");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(preEdit.size()) + 4,
+                                   static_cast<uint32_t>(postEdit.size()),
+                                   "the two answers differ by exactly the events the edit moved");
+}
+
+/// 3.12 (I9) / fixture 2.11: **the same edit moves the capture-edge admission boundary.** The interval's content is a
+/// term of the edge's accounting, so four events moved into it are four units of headroom a live interval loses. The
+/// contrast is measured on two slots holding the *same* content, one of them with the edit applied -- because a live
+/// interval on a slot cannot be handed another revision's window (measured here, and the reason this case is not a
+/// one-slot before/after): the edge refuses **by name** on the edited slot where the control slot admits, the refusal
+/// leaves no half-state, an accepted note's closure is still admissible, and a stop is never refused.
+void test_2_11_an_edit_that_moves_events_into_a_full_interval_moves_the_capture_admission_boundary() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  I9Slot control{};
+  I9Slot edited{};
+  buildI9ContentForSlot(track, 0, control);
+  buildI9ContentForSlot(track, 1, edited);
+  applyI9Moves(track, edited, 2);
+
+  // Both intervals are served through production: the same content, one of them with the edit applied.
+  PlaybackCoverageInterval published{};
+  SessionMidiEventVec servedControl;
+  SessionMidiEventVec servedEdited;
+  (void)serveI9Slot(track, control, 0, servedControl, published);
+  (void)serveI9Slot(track, edited, 1, servedEdited, published);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(kI9InWindowEvents),
+                                   static_cast<uint32_t>(track.committedPlaybackWindowEventCountForSlot(0)),
+                                   "the control interval holds the content without the edit");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(kI9InWindowEvents + 4),
+                                   static_cast<uint32_t>(track.committedPlaybackWindowEventCountForSlot(1)),
+                                   "the edited interval holds the four moved events as well");
+
+  // (a) **The boundary the edit moved**, stated on the two accountings -- read with **no live interval anywhere**: the
+  // owed-closure term the accounting reads is the track's own pending-note set (a fact this increment measured and
+  // records rather than relies on). The control content admits the note-on the edited content refuses, and the two
+  // differ by exactly the four events the edit put into the interval.
+  const WindowAdmissionAccounting controlAccounting = track.captureIntervalAdmissionForSlot(0);
+  const WindowAdmissionAccounting editedAccounting = track.captureIntervalAdmissionForSlot(1);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(kI9InWindowEvents + RuntimePlaybackViewConfig::kWindowClosureReserve),
+      static_cast<uint32_t>(controlAccounting.committed()), "the control content and the reserve");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(kI9InWindowEvents + 4 + RuntimePlaybackViewConfig::kWindowClosureReserve),
+      static_cast<uint32_t>(editedAccounting.committed()), "the edited content and the reserve");
+  TEST_ASSERT_TRUE_MESSAGE(controlAccounting.admitsNewEvent(true),
+                           "the control content admits a new note-on");
+  TEST_ASSERT_FALSE_MESSAGE(editedAccounting.admitsNewEvent(true),
+                            "four moved events are exactly what crossed the boundary");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u,
+                                   static_cast<uint32_t>(editedAccounting.committed() -
+                                                         controlAccounting.committed()),
+                                   "and the four moved events are exactly the difference");
+
+  // (b) **The control slot**: with the pre-edit content, a live interval admits a note-on -- the contrast the edited
+  // slot's refusal is measured against.
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "fixture precondition: the control slot has a live interval");
+  const WindowAdmissionAccounting controlLive = track.captureIntervalAdmissionForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kI9InWindowEvents, static_cast<uint32_t>(controlLive.acceptedEffectiveEvents),
+                                   "the interval's committed content is the accepted term");
+  TEST_ASSERT_TRUE_MESSAGE(controlLive.admitsNewEvent(true),
+                           "with the pre-edit content, a new note-on still fits inside L");
+  track.noteOn(0, 60, 100, 1000);
+  const WindowAdmissionAccounting controlAccepted = track.captureIntervalAdmissionForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(kI9InWindowEvents + 1),
+                                   static_cast<uint32_t>(controlAccepted.acceptedEffectiveEvents),
+                                   "the accepted note-on is one accepted effective event");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(controlAccepted.outstandingReservations),
+                                   "and it owes exactly one closure");
+  clockManager.assignCurrentTickSilently(4000);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(!TrackCaptureStopTestAccess::isOverdubbing(track) ||
+                               TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                           "the control interval is stopped, never refused");
+  for (uint32_t turn = 0; turn < 8192 && TrackCaptureStopTestAccess::isOverdubbing(track); ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  clockManager.assignCurrentTickSilently(4000);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(!TrackCaptureStopTestAccess::isOverdubbing(track) ||
+                               TrackCaptureStopTestAccess::hasPendingDeferredOverdubStop(track),
+                           "the control interval is stopped, never refused");
+  for (uint32_t turn = 0; turn < 8192 && TrackCaptureStopTestAccess::isOverdubbing(track); ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+
+  // (c) **The edited interval refuses the note-on by name**, on the same seam: the slot is live, the note-on is
+  // refused, and nothing half-accepted is left behind.
+  TrackCaptureStopTestAccess::selectSlot(track, 1);
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(8000);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::isOverdubbing(track),
+                           "fixture precondition: the edited slot has a live interval");
+  const uint32_t rowsBefore = static_cast<uint32_t>(edited.loop->capture.store.size());
+  track.noteOn(0, 62, 100, 9000);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(rowsBefore, static_cast<uint32_t>(edited.loop->capture.store.size()),
+                                   "a refused note-on leaves no row");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(track.captureIntervalAdmissionForSlot(1)
+                                                                 .outstandingReservations),
+                                   "and no dangling reservation");
+  TEST_ASSERT_FALSE_MESSAGE(track.recordMidiEvents(midi::ControlChange, 0, 1, 64, 9100),
+                            "nor does a plain event fit at this boundary");
+  TEST_ASSERT_EQUAL_STRING_MESSAGE("window_admission",
+                                   captureAppendDenyReasonLabel(CaptureAppendDenyReason::WindowAdmission),
+                                   "the refusal is the window's own name");
+  // The interaction clause (a stop is never refused) is asserted on the **control** slot and, at the limit itself, by
+  // task 3.12c's own fixture (`test_capture_admission_refuses_at_the_edge_and_never_a_closure_or_a_stop`): this
+  // fixture's edited slot reaches its own stop admission only with an accepted note it cannot accept here, so the
+  // clause is cited rather than faked.
+}
+
+/// 3.12 (I9) / fixture 2.11 + task 3.12's head clause: **past `L` the lane never truncates.** An edit that moves
+/// enough events into the interval to leave it over the declared window capacity is answered by **name** at the
+/// window lane, and the served window is the old complete answer rather than a prefix of the new one -- with the
+/// paged route declining the revision **by name** as well when its pins carry Active Note rows (task 3.7a/I7).
+void test_2_11_an_edit_that_moves_events_past_capacity_is_refused_by_name_and_never_truncated() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  I9Slot slot{};
+  buildI9ContentForSlot(track, 0, slot);
+  Loop& loop = *slot.loop;
+  PlaybackCoverageInterval interval{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks, true, kI9Playhead, interval));
+  SessionMidiEventVec preEdit;
+  loop.copyEffectiveCommittedEventsInRange(preEdit, interval.startPhase, interval.lengthTicks, true);
+  TEST_ASSERT_EQUAL_UINT32(kI9InWindowEvents, static_cast<uint32_t>(preEdit.size()));
+  PlaybackCoverageInterval published{};
+  SessionMidiEventVec served;
+  const Track::PlaybackViewRequestResult beforeEdit = serveI9Slot(track, slot, 0, served, published);
+  TEST_ASSERT_TRUE(beforeEdit == Track::PlaybackViewRequestResult::Admitted ||
+                   beforeEdit == Track::PlaybackViewRequestResult::DeferredSourceQualification);
+  // The edit: three notes are put into the interval, and the revision a window is dated by advances.
+  // The edit puts **67** notes (134 events) into the interval: 1,916 + 134 = 2,050 events, which is **over** the
+  // window's own storage capacity (`kEventsPerView` = 2048) -- the bound the build refuses by name. (The closure
+  // *reserve* is the **capture edge's** term, not this bound: the window admission's arithmetic is the view's storage,
+  // measured by this increment.)
+  applyI9Moves(track, slot, 67);
+  SessionMidiEventVec postEdit;
+  loop.copyEffectiveCommittedEventsInRange(postEdit, interval.startPhase, interval.lengthTicks, true);
+  // The lane's source is the new revision before the demand is priced (retention is the requester's own act, done
+  // here first so the refusal below is the **admission's**, not the source's).
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                            static_cast<int>(track.retainPlaybackSourceForSlot(0, loop.playbackRevision,
+                                                                              slot.generation++)),
+                            "the edited revision is retained as the slot's source");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kI9InWindowEvents + 134, static_cast<uint32_t>(postEdit.size()),
+                                   "the edit's 67 notes join the interval");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
+      static_cast<uint32_t>(RuntimePlaybackViewConfig::kEventsPerView),
+      static_cast<uint32_t>(postEdit.size()),
+      "the edited interval is over the window's own storage capacity: it no longer fits one window");
+  // The gather itself serves this revision (the fix task 3.12/I9's fixtures found): the refusal below is the
+  // **admission's**, not the source's.
+  CommittedEventRange::WindowTraversalCursor probeCursor{};
+  CommittedEventRange::resetWindowTraversalCursor(probeCursor);
+  SessionMidiEventVec probeOut;
+  SessionMidiEventVec probeRows;
+  Track::RetainedWindowGather probe{};
+  uint32_t probeCalls = 0;
+  for (uint32_t call = 0; call < 64 && !probe.complete; ++call) {
+    probe = track.gatherRetainedSourceWindowForSlot(0, interval.startPhase, interval.lengthTicks,
+                                                   loop.playbackRevision, probeCursor, probeOut, probeRows);
+    ++probeCalls;
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served),
+                      static_cast<int>(probe.result));
+  }
+  TEST_ASSERT_TRUE_MESSAGE(probe.complete, "the edited interval is gathered (it is over capacity, not unreachable)");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(postEdit.size()), static_cast<uint32_t>(probeOut.size()));
+
+  // The requester refuses **by name**: the interval is over the window's own capacity, which is what the paged route
+  // exists for -- and the paged route declines this revision by name as well (its pins carry Active Note rows, so the
+  // page producer would emit unresolved content).
+  SessionMidiEventVec scratch;
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::WindowExceedsRetainedCapacity),
+                            static_cast<int>(track.requestPlaybackWindow(0, kI9Playhead, scratch)),
+                            "the over-capacity interval is refused by name, never served as a prefix");
+  // The **deferred** production route is asked for the same demand: the interval does not fit one window, so the lane's
+  // answer is a refusal, the demand stays **owed** with its reason, and the served window stays the old complete answer.
+  const PlaybackCoverageInterval demandCoverage{0, interval.lengthTicks, loop.loopLengthTicks};
+  (void)track.requestCommittedPlaybackWindow(0, demandCoverage, kI9Playhead, nativePlaybackDeadlineClock);
+  for (uint32_t turn = 0; turn < 64; ++turn) {
+    track.stepPlaybackViewMaintenance();
+  }
+  PlaybackViewSourceIdentity identity{};
+  PlaybackCoverageInterval stillPublished{};
+  TEST_ASSERT_TRUE(track.publishedPlaybackWindowForSlot(0, identity, stillPublished));
+  const auto* runtime = TrackCaptureStopTestAccess::runtimeIfAllocated(track, 0);
+  TEST_ASSERT_NOT_NULL(runtime);
+  const auto* set = runtime->viewSetIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(set);
+  const auto& servedView = set->views[set->lifecycle.current];
+  SessionMidiEventVec servedNow;
+  for (uint32_t i = 0; i < servedView.storage.eventCount; ++i) {
+    servedNow.push_back(servedView.storage.events[servedView.storage.order[i]]);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(preEdit.size()), static_cast<uint32_t>(servedNow.size()),
+                                   "the served window is still the old complete answer");
+  TEST_ASSERT_TRUE_MESSAGE(sameContentInTickOrder(preEdit, servedNow),
+                           "byte-for-byte the pre-edit answer, not a truncated prefix of the edited interval");
+  const auto* pending = track.pendingViewRequest(0);
+  TEST_ASSERT_NOT_NULL_MESSAGE(pending, "the demand for the over-capacity interval stays owed, never dropped");
+  TEST_ASSERT_EQUAL_MESSAGE(
+      static_cast<int>(PlaybackViewPendingReason::AwaitingSourceQualification),
+      static_cast<int>(pending->reason),
+      "and this drive leaves it at the deferred lane's pre-qualification state: no transport runs here, so the "
+      "retry's own gate is what this names -- the **named** over-capacity refusal is the requester's, asserted above");
+}
 int main() {
 
 
@@ -12945,6 +13425,14 @@ int main() {
   RUN_TEST(test_3_7a_i8_the_two_lanes_agree_at_every_window_across_the_loop);
   RUN_TEST(test_3_7a_i8_a_revision_only_one_lane_holds_is_refused_by_name);
   RUN_TEST(test_3_7a_i8_an_edited_revision_is_resolved_the_same_way_by_both_lanes);
+  // windowed-playback-generation slice 3.12 (I9) / fixture 2.11's last dimension: **an edit that moves events into a
+  // full interval** -- the served interval is the effective-content owner's post-edit answer (complete, never a
+  // prefix), the capture edge's boundary moves by exactly the moved events and refuses by name there, a closure is
+  // still admissible, a stop is never refused, and past the declared capacity the interval is refused by name rather
+  // than truncated.
+  RUN_TEST(test_2_11_an_edit_that_moves_events_into_the_served_interval_is_served_as_the_owners_answer);
+  RUN_TEST(test_2_11_an_edit_that_moves_events_into_a_full_interval_moves_the_capture_admission_boundary);
+  RUN_TEST(test_2_11_an_edit_that_moves_events_past_capacity_is_refused_by_name_and_never_truncated);
   // windowed-playback-generation slice 3.12 with fixtures 5.5 / 2.11: the paged path's serving envelope, measured per
   // due window over an over-`L` interval of note pairs (cross-page closures) across the loop wrap.
   RUN_TEST(test_3_12_the_paged_path_serves_a_restored_over_l_interval_at_each_due_tick);
