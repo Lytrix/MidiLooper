@@ -166,3 +166,28 @@ merged store, and the unbounded merged build is not made for it.
 one this increment identified as load-bearing (the content bound) *is* red-proved above. I3c's own end-to-end assertion
 -- emission from the ring on a real transport tick -- belongs to **I4/4.3's** differential parity, where an
 emitted-stream comparison is the oracle; the fixtures here drive the production walk directly.
+
+
+---
+
+## 7. I3c-a's owed red-proofs, delivered (2026-10-06)
+
+The packet's mutations were written against the **staging** design that this increment replaced with the ring's ordinal
+view, so two were re-expressed and one is inapplicable. Every run is against the **final revision**
+(`src/Track/TrackPlaybackWindowBuild.cpp` sha256 `fbe1d6b7f8265ca201ffca0b68e8c64ea6fbe7fe6a61a0d45fbeea916ffe3684`,
+`include/TrackPlaybackRuntime.h` `7a324cb9…`, `include/WindowPagedStream.h` `95b3d11a…`), and every restore was verified
+byte-identically on all three files.
+
+| Packet ID | Mutation run | Result (measured) |
+|---|---|---|
+| **MR-R** | **MR-R-baserebase** -- the pass base does not move at a boundary (the walk's per-pass index then addresses the previous pass) | **RED** -- the acceptance fixture: *Expected 48 Was 0*. The boundary's base movement is load-bearing. |
+| **MR-S** | **MR-S-mapping** -- the per-pass mapping not applied (`size` served as an absolute ring ordinal) | **NOT RED** (157/157). **Recorded as a non-red-proof**, with the mechanism: the walk's frame break (`evTick > tickInLoop`) bounds the damage before the over-open bound can leak content. The *load-bearing* bound is the emitting pass's content clamp, and that one **is** red-proved (**MR-I3c-c-1**, *Expected 5000 Was 4872*). |
+| **MR-T** | **MR-T-predicate** -- the delivery-state predicate accepts unconditionally | **RED** -- the dry-pass fixture: *Expected 3 Was 4* (`Unproven` where `Admissible` is required). |
+| **MR-U** | **MR-U-rearm** -- the pass re-arm releases the ring instead of keeping the pages the walk has not reached | **RED** -- the acceptance fixture: *Expected 2 Was 1. the boundary moved once per wrap*. |
+| **MR-S (as written)** | the refill moved out of `size` into a per-event path | **INAPPLICABLE** -- there is no refill: the staging buffer was measured and removed in favour of the ordinal view (§1). Named rather than quietly dropped. |
+| *(added)* **MR-V** | selection unconditional (`admittedForEmission()` true) | **RED by abort** -- the run stops at **17 cases (16 succeeded)**: an unbound stream is selected, `isCursorValid` fails, and the order-dirty path crashes an unrelated fixture. The failure mode is named: the admission is what keeps an unbound stream off the clock path. |
+
+**Process incident, recorded.** The first closeout attempt's harness used a shell variable for its restore paths that
+resolved to a non-existent directory, so its `cp` restores silently failed and left the window-build TU mutated. The file
+was restored from git (tree clean, hash `fbe1d6b7…`) before the corrected run; the corrected harness restores with
+`git checkout --` and verifies all three sha256s after every mutation. The results above are the corrected run's.

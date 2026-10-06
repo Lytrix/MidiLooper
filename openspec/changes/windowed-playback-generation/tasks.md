@@ -421,6 +421,21 @@ them. Nothing in this section may stand in for production behaviour with a stub 
   **Not claimed:** no timing claim, no `ExecutionBounds.md` row change, no device run, no fallback removal (3.7b).
   Detail: [`evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md`](evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md).
 
+  **Closeout of I3c-a's owed red-proofs (2026-10-06, docs-only commit).** The packet's MR set was written against the
+  staging design this slice replaced with the ring's ordinal view, so it was re-expressed and run against the final
+  revision, with byte-identical restores verified on all three touched files: **MR-R-baserebase** (the pass base not
+  moved at a boundary) **RED** (*Expected 48 Was 0*); **MR-S-mapping** (the per-pass mapping not applied) **NOT RED** --
+  recorded as a non-red-proof with its mechanism named (the walk's frame break bounds the damage; the load-bearing bound
+  is the content clamp, red-proved as **MR-I3c-c-1**); **MR-T-predicate** **RED** (*Expected 3 Was 4*); **MR-U-rearm**
+  (the re-arm releases the ring) **RED** (*Expected 2 Was 1*); **MR-S as written** (a per-event refill) **inapplicable**
+  -- there is no refill; and **MR-V** (selection unconditional, added here) **RED by abort** (the run stops at 17 cases:
+  an unbound stream is selected and `isCursorValid` fails). This **closes the "MR-R/S/T/U owed" line above**; the only
+  remaining owed item is I3c's end-to-end emission assertion on a real transport tick (I4/4.3's differential parity).
+  A process incident is recorded in the evidence: the first closeout harness's restores silently failed (an unresolved
+  scratch path) and left the TU mutated; it was restored from git and the corrected harness restores via
+  `git checkout --` with three sha256 checks per mutation. Detail:
+  [`evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md`](evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md).
+
   **Increment I2 landed 2026-10-06 (firmware + tests; the task stays open).** The deferred lane's **production turn**
   now serves a demand for a slot with no current published root — the shape the device legs measured as
   `launch_requested … root=0 …` never reaching readiness. `LoopPlaybackRuntime` owns one **retained-source gather**
