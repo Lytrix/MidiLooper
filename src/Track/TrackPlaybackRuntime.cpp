@@ -2175,6 +2175,11 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardRetainedGather(
     SessionMidiEventVec released;
     retainedGatherEvents.swap(released);
   }
+  if (!retainedGatherEditRows.empty() || retainedGatherEditRows.capacity() != 0) {
+    // Task 3.7a (I7): the layer scratch is released with the window it was resolving, by the same rule.
+    SessionMidiEventVec released;
+    retainedGatherEditRows.swap(released);
+  }
 }
 
 /// DEC-108 §13(a)/(c) / task 3.10 (increment 24): **retain or coalesce the slot's pending preparation demand.** One
@@ -2553,9 +2558,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
 // Task 3.7a (I3c-a) re-base: +48 B for the paged **emission** state -- the emitted ordinal, the pass base, the pass
 // and dry accounting and the two flags. Deliberately **not** a staging buffer: the adapter reads the ring's own pages
 // by stream ordinal, so an 8-event stage (192 B here) was written, measured and removed. Compiler-measured.
-static_assert(sizeof(LoopPlaybackRuntime) == 7384,
-              "S3.0/3.10: target per-slot runtime 7,384 B, including the gated rolling frame, the "
-              "3.7a retained-source gather, the 3.7a paged ring and the 3.7a paged emission state");
+// Task 3.7a (I7) re-base: +16 B for the caller-owned **layer scratch** the per-layer edit resolution stages the current
+// layer in (one `SessionMidiEventVec` header; the events themselves are its external allocation, taken and released with
+// the window). Measured by the compiler on this ABI, not estimated.
+static_assert(sizeof(LoopPlaybackRuntime) == 7400,
+              "S3.0/3.10: target per-slot runtime 7,400 B, including the gated rolling frame, the "
+              "3.7a retained-source gather, the 3.7a paged ring, the 3.7a paged emission state and the 3.7a/I7 "
+              "layer scratch");
 static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
@@ -2577,8 +2586,9 @@ static_assert(sizeof(TrackPlaybackRuntime) == 32,
 // cursors, the interval and the outcome name, with padding). Measured by the compiler on this ABI, not estimated.
 // Task 3.7a (I3c-a) re-base: +40 B for the paged **emission** state (the same fields, this ABI's padding). The
 // staging variant measured +296 B here and was removed in favour of reading the ring's pages by ordinal.
-static_assert(sizeof(LoopPlaybackRuntime) == 9528,
-              "S3.0/3.10: host-ABI per-slot runtime size (9,528 B, including rolling frame, the 3.7a gather, the 3.7a "
-              "paged ring and the 3.7a paged emission state)");
+// Task 3.7a (I7) re-base: +24 B for the same layer scratch on this ABI (9,528 -> 9,552). Compiler-measured here too.
+static_assert(sizeof(LoopPlaybackRuntime) == 9552,
+              "S3.0/3.10: host-ABI per-slot runtime size (9,552 B, including rolling frame, the 3.7a gather, the 3.7a "
+              "paged ring, the 3.7a paged emission state and the 3.7a/I7 layer scratch)");
 #endif
 // (the temporary compile-time size probe that measured both figures above has been removed)

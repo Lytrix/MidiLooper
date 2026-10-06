@@ -19,6 +19,9 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/TelemetryCadence.h"
 #include "Utils/DebugSessionCapture.h"
+// Task 3.7a (I7): the retained revision's own Active Note note-edit rows are resolved per layer, through the shipped
+// owner of that rule (`applyNoteEditPassSequence`), never re-stated here.
+#include "EditApply.h"
 #include "Utils/ExternalPoolAccounting.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/CommittedMidiScratch.h"
@@ -1812,19 +1815,160 @@ TRACK_COLD_MEM Track::RetainedIntervalQueryResult Track::queryRetainedIntervalFo
 /// producer in this same unit -- and a second enumeration is exactly how two readers would come to disagree.
 static void collectPinnedCaptureLists(const Loop& loop, const RetainedPlaybackSource& source,
                                      std::vector<const CommittedChunkIdList*>& listsOut, uint32_t& missingOut);
+/// Task 3.7a (I7): the retained revision's own **Active Note rows**, in pass order, filtered to the passes the
+/// revision pinned. A small dedicated flash helper rather than an inline loop in the gather: the gather is a large
+/// function, and inlining the container's growth path into it is what puts `std::vector<EditPass>`'s machinery into
+/// ITCM (measured: +320 B when the loop lived there). It states the same filter the effective-content owner applies.
+static TRACK_COLD_MEM void collectPinnedActiveEditRows(const Loop& loop, const RetainedPlaybackSource& source,
+                                                       EditPassVec& out) {
+  out.clear();
+  for (const EditPass& row : loop.passes.editPasses) {
+    if (row.state != EditPassState::Active || row.passType != EditPassType::Note) {
+      continue;
+    }
+    for (const EditPassId pinnedId : source.pins.editPassIds) {
+      if (row.id == pinnedId) {
+        out.push_back(row);
+        break;
+      }
+    }
+  }
+}
+
+/// Task 3.7a (I7): **does this revision's pinned membership carry an Active Note row?** The question the gather itself
+/// asks -- and the only thing it may ask, because it decides *which* path the interval takes; the rows themselves never
+/// enter the gather's frame. A plain scan, so nothing is instantiated into ITCM by the answer.
+static TRACK_COLD_MEM bool retainedRevisionHasActiveEditRows(const Loop& loop,
+                                                            const RetainedPlaybackSource& source) {
+  for (const EditPass& row : loop.passes.editPasses) {
+    if (row.state != EditPassState::Active || row.passType != EditPassType::Note) {
+      continue;
+    }
+    for (const EditPassId pinnedId : source.pins.editPassIds) {
+      if (row.id == pinnedId) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/// Task 3.7a (I7): the owner's own **layer order** -- tick sort, then the Active Note rows, then merge. Stated by hand
+/// (`std::sort`'s instantiation would be placed in this flash-resident TU: I1 measured it at 1,280 B against a 1,640 B
+/// headroom), and stable on equal ticks, which is the order the layer's own traversal produced.
+static TRACK_COLD_MEM void sortRetainedWindowLayer(SessionMidiEventVec& layer) {
+  for (size_t i = 1; i < layer.size(); ++i) {
+    const MidiEvent key = layer[i];
+    size_t j = i;
+    while (j > 0 && layer[j - 1].tick > key.tick) {
+      layer[j] = layer[j - 1];
+      --j;
+    }
+    layer[j] = key;
+  }
+}
+
+/// Task 3.7a (I7): the owner's own **layer merge** (`Loop`'s `mergeSortedLoopCaptureLayers`), reproduced in place:
+/// `std::merge` with `a.tick < b.tick` takes from the **accumulated** side on equal ticks, so the head keeps its
+/// position and the new layer follows it. Merged backwards into the room `resize` just made, so no second buffer and no
+/// second allocation are needed.
+static TRACK_COLD_MEM void mergeRetainedWindowLayer(SessionMidiEventVec& out, const SessionMidiEventVec& layer) {
+  if (layer.empty()) {
+    return;
+  }
+  const size_t head = out.size();
+  out.resize(head + layer.size());
+  size_t headIndex = head;
+  size_t layerIndex = layer.size();
+  size_t destination = out.size();
+  while (headIndex > 0 && layerIndex > 0) {
+    if (out[headIndex - 1].tick > layer[layerIndex - 1].tick) {
+      out[--destination] = out[headIndex - 1];
+      --headIndex;
+    } else {
+      out[--destination] = layer[layerIndex - 1];
+      --layerIndex;
+    }
+  }
+  while (layerIndex > 0) {
+    out[--destination] = layer[layerIndex - 1];
+    --layerIndex;
+  }
+}
+
+/// Task 3.7a (I7): **the per-layer half of the gather**, one layer per call -- the granularity the slice bound and both
+/// callers' ceilings are expressed in. The traversal primitive is bounded to the layers already resolved plus the
+/// current one, so a call can never cross a layer boundary: a layer whose traversal completes is one whose events the
+/// caller's scratch holds **on their own**, which is what the owner's order needs. A layer with no event in the window
+/// costs no slice, and the traversal advances to the next layer inside the same call, so the number of calls a demand
+/// needs is driven by its content rather than by its pass count.
+static TRACK_COLD_MEM void gatherRetainedWindowLayers(
+    const Loop& loop, const RetainedPlaybackSource& source, const std::vector<const CommittedChunkIdList*>& lists,
+    uint32_t windowStart, uint32_t windowLength, CommittedEventRange::WindowTraversalCursor& cursor,
+    SessionMidiEventVec& out, SessionMidiEventVec& layerScratch, Track::RetainedWindowGather& gather) {
+  // The revision's own Active Note rows, collected **here** rather than in the gather that calls this: this helper is
+  // small, so the container's machinery inlines into it, while the gather is large enough that the compiler emits it
+  // out of line -- measured as ITCM (task 3.7a/I7's budget finding).
+  EditPassVec activeRows;
+  collectPinnedActiveEditRows(loop, source, activeRows);
+  gather.result = Track::RetainedWindowGatherResult::Served;
+  while (true) {
+    const size_t layerIndex = cursor.listIndex;
+    if (layerIndex >= lists.size()) {
+      // Every layer is resolved: the destination is this revision's effective content in this window.
+      cursor.complete = true;
+      gather.complete = true;
+      return;
+    }
+    const CommittedEventRange::WindowTraversalResult slice = CommittedEventRange::appendWindowBudgeted(
+        lists.data(), layerIndex + 1, loop.loopLengthTicks, windowStart, windowLength, kRetainedGatherSliceEvents,
+        cursor, layerScratch);
+    gather.inspectedChunks += static_cast<uint32_t>(slice.chunksCopied);
+    gather.eventsAppended += static_cast<uint32_t>(slice.eventsAppended);
+    gather.complete = false;
+    if (!cursor.complete) {
+      return;  // this layer is still being traversed: the next call resumes it where it stopped
+    }
+    // The layer is complete in the caller's scratch: the owner's order, then the merge. The rows are applied even to a
+    // layer carrying no event in this window, exactly as the owner does (a `Create` row adds its own events).
+    sortRetainedWindowLayer(layerScratch);
+    applyNoteEditPassSequence(layerScratch, activeRows, loop.loopLengthTicks);
+    mergeRetainedWindowLayer(out, layerScratch);
+    layerScratch.clear();
+    cursor.listIndex = layerIndex + 1;
+    cursor.chunkIndex = 0;
+    cursor.chunkEventOffset = 0;
+    if (cursor.listIndex >= lists.size()) {
+      // The **last** layer is resolved: this call is the demand's completion, exactly as the single-traversal path's
+      // completing slice is -- no extra call is spent on reporting a fact this one already established.
+      cursor.complete = true;
+      gather.complete = true;
+      return;
+    }
+    cursor.complete = false;
+    if (slice.eventsAppended > 0) {
+      return;  // one slice of gathering per call, exactly as the single-traversal path
+    }
+  }
+}
+
 /// Task 3.7a (I1): the interval answered from the **retained revision's pinned bodies**. The index answers first (how
 /// many bars the pinned bodies cover and how many cost no inspection at all), and only a covered interval is
 /// enumerated -- through the same resumable body primitive `WindowPagedStream` already uses, one bounded slice per
 /// call, so the inspected work is the slice's own and a caller can resume across deferred turns.
 ///
-/// What this deliberately does **not** do yet (named, not smoothed over): the retained revision's Active note-edit
-/// rows are per-*layer* resolution (`Loop::copyEffectiveCommittedEventsInRange` applies each committed list, then
-/// merges, and says why: merged-then-apply lets a LIFO delete pair a hidden On with another pass's Off). Applying them
-/// in one merged pass here would be a *different* answer, so such a revision is refused by name until the consumer
-/// integration lands that resolution.
+/// The retained revision's own **Active Note note-edit rows** (task 3.7a/I7) are resolved **per pass layer**, which is
+/// the effective-content owner's rule and the reason they are not applied flat: `Loop::copyEffectiveCommittedEventsInRange`
+/// applies each committed list separately and then merges, because a merged-then-apply pass lets a LIFO delete pair a
+/// hidden On with another pass's Off. Each layer is traversed, tick-sorted, edited and merged in that same order -- one
+/// layer per call, through the helper above -- so the destination is the owner's own answer for this revision, which is
+/// the differential oracle. The rows applied are the **pinned** ones (this revision's own membership), so a row created
+/// after the retention cannot leak into an earlier revision's window. `editRowsOut` is the caller's scratch for the
+/// layer being resolved: it travels with the caller because two callers may gather for the same slot, so this primitive
+/// may not hold it.
 TRACK_COLD_MEM Track::RetainedWindowGather Track::gatherRetainedSourceWindowForSlot(
     uint8_t slotIndex, uint32_t startPhase, uint32_t lengthTicks, uint32_t expectedRevision,
-    CommittedEventRange::WindowTraversalCursor& cursor, SessionMidiEventVec& out) {
+    CommittedEventRange::WindowTraversalCursor& cursor, SessionMidiEventVec& out, SessionMidiEventVec& editRowsOut) {
   RetainedWindowGather gather{};
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
     gather.result = RetainedWindowGatherResult::NoRuntime;
@@ -1884,26 +2028,9 @@ TRACK_COLD_MEM Track::RetainedWindowGather Track::gatherRetainedSourceWindowForS
     gather.result = RetainedWindowGatherResult::NoIndex;
     return gather;
   }
-  // The retained revision's own Active note-edit rows: refused by name (see the note above), never merged flat.
-  for (const EditPassId pinnedId : source->pins.editPassIds) {
-    for (const EditPass& row : loop.passes.editPasses) {
-      if (row.id == pinnedId && row.state == EditPassState::Active && row.passType == EditPassType::Note) {
-        gather.result = RetainedWindowGatherResult::PinnedEditRowsUnsupported;
-        gather.complete = cursor.complete;
-        return gather;
-      }
-    }
-  }
-  if (coveredBars == 0) {
-    // **The index alone answers**: every bar of the interval is one the pinned bodies do not cover, so the interval is
-    // served *empty* at no chunk-inspection cost. This is the lookup bound the index exists for, and it is a served
-    // answer rather than a refusal -- an interval that legitimately holds no events is still ready (task 3.5).
-    out.clear();
-    gather.result = RetainedWindowGatherResult::Served;
-    gather.complete = true;
-    gather.indexAnsweredEmpty = true;
-    return gather;
-  }
+  // The retained revision's own Active Note note-edit rows (below) and the index's empty answer are both decided after
+  // the **pinned list set** is known: per-layer resolution needs the layers, and the index alone may only answer an
+  // interval as empty when no edit row would add events to it (a `Create` row carries its own events).
   // The pinned passes are the revision's **membership**, read from the pin rather than from the live states: a pass a
   // later revision disabled is exactly the lag the retention exists to serve. A pin whose body is no longer reachable
   // is counted, and serving an empty window in that state would be indistinguishable from silence -- so it is refused.
@@ -1920,6 +2047,22 @@ TRACK_COLD_MEM Track::RetainedWindowGather Track::gatherRetainedSourceWindowForS
     gather.complete = cursor.complete;
     return gather;
   }
+  // the passes this revision pinned (a row created after the retention belongs to a later revision, and the retained
+  // revision's own membership is what a window for it may serve).
+  const bool editedRevision = retainedRevisionHasActiveEditRows(loop, *source);
+  if (!editedRevision && coveredBars == 0) {
+    // **The index alone answers**: every bar of the interval is one the pinned bodies do not cover, so the interval is
+    // served *empty* at no chunk-inspection cost. This is the lookup bound the index exists for, and it is a served
+    // answer rather than a refusal -- an interval that legitimately holds no events is still ready (task 3.5). With an
+    // Active Note row pinned this shortcut is **not** taken: a `Create` row adds events this interval's committed
+    // bodies do not carry, so the owner's per-layer answer is not "empty".
+    out.clear();
+    editRowsOut.clear();
+    gather.result = RetainedWindowGatherResult::Served;
+    gather.complete = true;
+    gather.indexAnsweredEmpty = true;
+    return gather;
+  }
   // The oracle's own clamping: a window at least as long as the loop *is* the loop.
   uint32_t windowStart = startPhase;
   uint32_t windowLength = lengthTicks;
@@ -1932,8 +2075,17 @@ TRACK_COLD_MEM Track::RetainedWindowGather Track::gatherRetainedSourceWindowForS
   const bool freshCursor = cursor.listIndex == 0 && cursor.chunkIndex == 0 && cursor.chunkEventOffset == 0 &&
                            !cursor.complete;
   if (freshCursor) {
-    // A fresh traversal owns its destination: the interval's events are appended to it, never onto a previous answer.
+    // A fresh traversal owns its destination and the caller's layer scratch: the interval's events are appended to
+    // them, never onto a previous answer.
     out.clear();
+    editRowsOut.clear();
+  }
+  if (editedRevision) {
+    // **The per-layer path** (task 3.7a/I7): the revision pins Active Note rows, so this revision's effective content is
+    // the owner's per-layer resolution -- gathered one layer per call, never merged flat. `indexAnsweredEmpty` stays
+    // false: the answer is the resolution's own, not the index's.
+    gatherRetainedWindowLayers(loop, *source, lists, windowStart, windowLength, cursor, out, editRowsOut, gather);
+    return gather;
   }
   if (lists.empty()) {
     gather.result = RetainedWindowGatherResult::Served;
@@ -2014,9 +2166,6 @@ static LoopPlaybackRuntime::RetainedGatherRefusal retainedRefusalForGatherResult
   }
   if (result == Track::RetainedWindowGatherResult::NoIndex) {
     return LoopPlaybackRuntime::RetainedGatherRefusal::NoIndex;
-  }
-  if (result == Track::RetainedWindowGatherResult::PinnedEditRowsUnsupported) {
-    return LoopPlaybackRuntime::RetainedGatherRefusal::EditRowsUnsupported;
   }
   if (result == Track::RetainedWindowGatherResult::PinnedBodiesUnavailable) {
     return LoopPlaybackRuntime::RetainedGatherRefusal::BodiesUnavailable;
@@ -2131,12 +2280,15 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
       runtime->discardRetainedGather();
       return stepPagedPlaybackForSlot(slotIndex, clock);
     }
-    // Task 3.12 / 5.5: and this is the second place the switch can be **refused by name** -- the slice ceiling route
-    // measures the interval's closure high-water over the traversal this turn completed, which is a *prefix* of the
-    // interval, so a refusal here is never an over-refusal (a prefix's high-water can only under-report the whole's).
+    // Task 3.12 / 5.5 and task 3.7a / I7: and this is the second place the switch can be **refused by name** -- the slice
+    // ceiling route measures the interval's closure high-water over the traversal this turn completed, which is a
+    // *prefix* of the interval, so a refusal here is never an over-refusal (a prefix's high-water can only under-report
+    // the whole's); and a revision whose pins carry Active Note rows is not the pager's to serve at all.
     request.reason = runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity
         ? PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity
-        : PlaybackViewPendingReason::WindowExceedsRetainedCapacity;
+        : (runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::PinnedEditRowsUnresolved
+               ? PlaybackViewPendingReason::PinnedEditRowsUnresolved
+               : PlaybackViewPendingReason::WindowExceedsRetainedCapacity);
     runtime->retainedGatherRefusal = LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity;
     if (!runtime->pendingViewRequest_.active) {
       runtime->pendingViewRequest_ = request;
@@ -2147,7 +2299,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
   }
   const RetainedWindowGather gathered = gatherRetainedSourceWindowForSlot(
       slotIndex, request.coverage.startPhase, request.coverage.lengthTicks, request.source.playbackRevision,
-      runtime->retainedGatherCursor, runtime->retainedGatherEvents);
+      runtime->retainedGatherCursor, runtime->retainedGatherEvents, runtime->retainedGatherEditRows);
   if (gathered.result != RetainedWindowGatherResult::Served) {
     runtime->retainedGatherRefusal = retainedRefusalForGatherResult(gathered.result);
     request.reason = PlaybackViewPendingReason::SourceNotCurrent;
@@ -2188,14 +2340,17 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
       runtime->discardRetainedGather();
       return stepPagedPlaybackForSlot(slotIndex, clock);
     }
-    // Task 3.12 / 5.5: the switch can also be **refused by name** -- when the interval's own content exceeds the
-    // emission service's declared closure capacity, `beginPagedPlaybackForSlot` says so and no ring is established. The
-    // refusal is the demand's own reason from here (terminal for this lane's retry, exactly as the over-`L` refusal
-    // below), so the two refusals stay distinguishable to a reader instead of collapsing into one name.
+    // Task 3.12 / 5.5 and task 3.7a / I7: the switch can also be **refused by name** -- when the interval's own content
+    // exceeds the emission service's declared closure capacity, or when the revision pins Active Note note-edit rows the
+    // page producer does not resolve, `beginPagedPlaybackForSlot` says so and no ring is established. The refusal is the
+    // demand's own reason from here (terminal for this lane's retry, exactly as the over-`L` refusal below), so the
+    // refusals stay distinguishable to a reader instead of collapsing into one name.
     const bool closuresRefused =
         runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::ClosuresExceedDeclaredCapacity;
+    const bool editRowsRefused =
+        runtime->pagedOutcome == LoopPlaybackRuntime::PagedPlaybackOutcome::PinnedEditRowsUnresolved;
     // The gather's own refusal name is unchanged: what stopped the window lane is that the interval is over its
-    // capacity, and the closure refusal is additive (it names *why* the paged lane declined to take over).
+    // capacity, and the paged lane's own refusal is additive (it names *why* the pager declined to take over).
     runtime->retainedGatherRefusal = admitted == PlaybackViewRequestResult::WindowExceedsRetainedCapacity
         ? LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity
         : LoopPlaybackRuntime::RetainedGatherRefusal::NoSource;
@@ -2204,9 +2359,11 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepRetainedSourceGatherForS
     // admitted is still owed an answer, and dropping it here is what would make a refusal indistinguishable from a
     // fulfilled promise.
     request.reason = closuresRefused ? PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity
-        : (admitted == PlaybackViewRequestResult::WindowExceedsRetainedCapacity
-               ? PlaybackViewPendingReason::WindowExceedsRetainedCapacity
-               : PlaybackViewPendingReason::SourceNotCurrent);
+        : (editRowsRefused
+               ? PlaybackViewPendingReason::PinnedEditRowsUnresolved
+               : (admitted == PlaybackViewRequestResult::WindowExceedsRetainedCapacity
+                      ? PlaybackViewPendingReason::WindowExceedsRetainedCapacity
+                      : PlaybackViewPendingReason::SourceNotCurrent));
     if (!runtime->pendingViewRequest_.active) {
       runtime->pendingViewRequest_ = request;
     }
@@ -2308,6 +2465,23 @@ TRACK_COLD_MEM bool Track::beginPagedPlaybackForSlot(uint8_t slotIndex) {
     // source rather than being delivered as silence.
     runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::NoBodies;
     return false;
+  }
+  // Task 3.7a / I7: **the pinned revision's Active Note note-edit rows are not the pager's to resolve.** Its pages are
+  // the pinned bodies in traversal order, and the effective-content owner resolves those rows **per pass layer** (a
+  // merged or flat application is a different answer -- a LIFO delete would pair a hidden On with another pass's Off),
+  // so paging such a revision would emit content the edited revision does not have. The ring is therefore **not
+  // established** and the refusal is named: the window lane's own per-layer resolution serves what fits a window, and
+  // this is the reason the rest stays owed rather than being served as unresolved bodies.
+  for (const EditPass& row : loop.passes.editPasses) {
+    if (row.state != EditPassState::Active || row.passType != EditPassType::Note) {
+      continue;
+    }
+    for (const EditPassId pinnedId : source->pins.editPassIds) {
+      if (row.id == pinnedId) {
+        runtime->pagedOutcome = LoopPlaybackRuntime::PagedPlaybackOutcome::PinnedEditRowsUnresolved;
+        return false;
+      }
+    }
   }
   // Task 3.12 / 5.5 (the 3.12e falsification's repair): **the emission service's declared closure capacity, consulted
   // before the ring exists.** The 3.12e drive measured that this path served an over-`L` paired interval whose content
@@ -3459,7 +3633,8 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
     const auto* request = runtime->pendingViewRequest();
     if (request && (request->positionInvalidated ||
         request->reason == PlaybackViewPendingReason::CannotCompleteBeforeHandoff ||
-        request->reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity)) {
+        request->reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity ||
+        request->reason == PlaybackViewPendingReason::PinnedEditRowsUnresolved)) {
       frame.phase = LoopPlaybackRuntime::RollingPhase::Blocked;
       reportPlaybackRollingGateRow("win_blocked_by_request", clock.epoch != 0);
       return RollingOutcome::Rejected;
@@ -3608,6 +3783,7 @@ TRACK_COLD_MEM bool Track::committedPlaybackRetryCanProgress(uint8_t slotIndex, 
       clock.tick < request->work.admittedTick || clock.tick >= request->deadlineTick)) ||
       request->reason == PlaybackViewPendingReason::WindowExceedsRetainedCapacity ||
       request->reason == PlaybackViewPendingReason::ClosuresExceedDeclaredCapacity ||
+      request->reason == PlaybackViewPendingReason::PinnedEditRowsUnresolved ||
       request->reason == PlaybackViewPendingReason::CannotCompleteBeforeHandoff ||
       !runtime->coverageRoleAvailable() || playbackViewOutstandingGrains(slotIndex) != 0) return false;
   const auto& loop = loopForSlot(slotIndex);
@@ -4039,10 +4215,13 @@ TRACK_COLD_MEM Track::PlaybackViewRequestResult Track::requestPlaybackWindow(uin
                                                      &inspectedEntries)) {
     CommittedEventRange::WindowTraversalCursor cursor{};
     CommittedEventRange::resetWindowTraversalCursor(cursor);
+    // The per-layer scratch is this caller's own: the deferred lane gathers for the same slot through its own cursor
+    // and its own scratch, so neither may share a buffer with the other (task 3.7a/I7).
+    SessionMidiEventVec layerScratch;
     bool complete = false;
     for (uint32_t slice = 0; slice < kRetainedGatherMaxSlices && !complete; ++slice) {
       const RetainedWindowGather gathered = gatherRetainedSourceWindowForSlot(
-          slotIndex, coverage.startPhase, coverage.lengthTicks, loop.playbackRevision, cursor, scratch);
+          slotIndex, coverage.startPhase, coverage.lengthTicks, loop.playbackRevision, cursor, scratch, layerScratch);
       if (gathered.result != RetainedWindowGatherResult::Served) {
         scratch.clear();
         return PlaybackViewRequestResult::SourceUnavailable;

@@ -326,6 +326,12 @@ enum class PlaybackViewPendingReason : uint8_t {
   /// than half-serving it. Terminal for the lane's retry (`committedPlaybackRetryCanProgress`), exactly as an
   /// over-capacity window is: a refusal with a name is an answer, not a demand to re-gather every turn.
   ClosuresExceedDeclaredCapacity,
+  /// Task 3.7a / I7: the demand survives, and the reason it is still owed is that the retained revision **pins Active
+  /// Note note-edit rows**, whose resolution is per pass layer. The window lane serves those (it resolves them layer by
+  /// layer), but the paged compatibility lane cannot page them without serving the unresolved bodies, so it refuses
+  /// **by name** and establishes no ring. Terminal for the lane's retry, exactly as the two refusals above: a refusal
+  /// with a name is an answer, not a demand to re-page every turn.
+  PinnedEditRowsUnresolved,
 };
 
 /// DEC-108 §13(c) / task 3.10 (increment 24): **the retained pending preparation request** -- the demand a refused
@@ -581,6 +587,10 @@ struct LoopPlaybackRuntime {
   RetainedGatherPhase retainedGatherPhase = RetainedGatherPhase::Idle;
   CommittedEventRange::WindowTraversalCursor retainedGatherCursor{};
   SessionMidiEventVec retainedGatherEvents;
+  /// Task 3.7a (I7): the caller's own scratch for the layer being resolved when the retained revision pins Active Note
+  /// note-edit rows (the primitive may not hold it: a requester may gather for the same slot through its own local
+  /// scratch). Released with the window, and it is **not** the served content -- `retainedGatherEvents` is.
+  SessionMidiEventVec retainedGatherEditRows;
   uint32_t retainedGatherUnits = 0;           ///< slices served for the current gather (bounded per demand)
   uint32_t retainedGatherInspectedChunks = 0; ///< chunks those slices copied out of the store
   /// The named refusal that left this slot's demand owed (`None` while a gather is running or nothing was refused).
@@ -590,7 +600,6 @@ struct LoopPlaybackRuntime {
     RevisionMismatch,
     BarsUnsupported,
     NoIndex,
-    EditRowsUnsupported,
     BodiesUnavailable,
     WindowExceedsCapacity,
     DeadlineExpired,
@@ -636,6 +645,12 @@ struct LoopPlaybackRuntime {
     /// established** for it: serving it would emit note-ons whose closures the ledger must refuse, which is wrong
     /// content rather than a late or missing one. Named, never silent: the demand stays owed.
     ClosuresExceedDeclaredCapacity,
+    /// Task 3.7a / I7: the revision **pins Active Note note-edit rows**, which the page producer does not resolve (its
+    /// pages are the pinned bodies in traversal order, and a merged or raw application would be a different answer than
+    /// the effective-content owner's per-layer one). The ring is **not established**: the pages would carry content the
+    /// edited revision does not have, i.e. wrong content rather than a late or missing one. Named, never silent: the
+    /// demand stays owed, and the window lane's own per-layer resolution is what serves it when it fits a window.
+    PinnedEditRowsUnresolved,
   };
   PagedPlaybackOutcome pagedOutcome = PagedPlaybackOutcome::None;
   uint32_t pagedPagesProduced = 0;

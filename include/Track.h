@@ -693,8 +693,12 @@ public:
   /// proves empty is answered **without inspecting a single chunk**, which is what the index exists for. On the
   /// completing slice the destination is the interval's events in tick order -- the same shape the fallback's
   /// `Loop::copyEffectiveCommittedEventsInRange` produces for the same revision, which is the differential oracle.
-  /// Active note-edit rows of the retained revision are **not** applied yet: that resolution is per pass layer and
-  /// belongs with the consumer integration, so such a revision is refused **by name** rather than served unfaithfully.
+  /// The retained revision's own **Active Note note-edit rows** (task 3.7a/I7) are resolved **per pass layer**, which is
+  /// the effective-content owner's rule and the reason they are not applied flat: `Loop::copyEffectiveCommittedEventsInRange`
+  /// applies each committed list separately and then merges, because a merged-then-apply pass lets a LIFO delete pair a
+  /// hidden On with another pass's Off. Each layer is traversed, tick-sorted, edited and merged in that same order, one
+  /// layer per call, so the destination is the owner's own answer for this revision -- which is the differential oracle.
+  /// `editRowsOut` is the caller's own scratch for that layer (never shared between two live callers of this primitive).
   enum class RetainedWindowGatherResult : uint8_t {
     Served,
     NoRuntime,
@@ -706,9 +710,6 @@ public:
     RevisionMismatch,
     /// The loop's bar count is outside the indexed range: refused rather than presented as window-bounded.
     BarsUnsupported,
-    /// The retained revision pins an Active note-edit row: per-layer edit resolution has not landed yet, so the
-    /// revision is refused rather than served with a merged-flat edit application (a different answer).
-    PinnedEditRowsUnsupported,
     /// The retained revision pins capture passes but none of their bodies is reachable in the pass set: refused rather
     /// than serving an empty window as content.
     PinnedBodiesUnavailable,
@@ -722,7 +723,8 @@ public:
     uint32_t indexedBars = 0;          ///< bars of the interval the pinned bodies cover, per the index
     uint32_t skippedBars = 0;          ///< bars skipped **without touching a chunk**, per the index
     uint32_t inspectedChunks = 0;      ///< chunks this slice copied out of the store (0 when the index proved emptiness)
-    uint32_t eventsAppended = 0;       ///< events this slice appended to the destination
+    uint32_t eventsAppended = 0;       ///< events this slice copied out of the store (the per-layer path's destination
+                                       ///< for them is the caller's scratch, merged into `out` when the layer completes)
     uint32_t pinnedLists = 0;          ///< pinned capture passes whose bodies this slice enumerated
     uint32_t pinnedPassesMissing = 0;  ///< pinned passes no longer present in the set: reported, never guessed
     bool indexAnsweredEmpty = false;   ///< true when the index alone answered the interval as empty
@@ -730,7 +732,7 @@ public:
   RetainedWindowGather gatherRetainedSourceWindowForSlot(uint8_t slotIndex, uint32_t startPhase,
                                                          uint32_t lengthTicks, uint32_t expectedRevision,
                                                          CommittedEventRange::WindowTraversalCursor& cursor,
-                                                         SessionMidiEventVec& out);
+                                                         SessionMidiEventVec& out, SessionMidiEventVec& editRowsOut);
   /// Task 3.11 (DEC-108 §13d): apply a **lifecycle transition** to this slot's shared view state, through the one table
   /// `resolvePlaybackViewTransition` states. It cancels the in-flight candidate and/or retires a prepared successor
   /// when the row says so, invalidates the operation identity when the row says so (so a returning slot revives

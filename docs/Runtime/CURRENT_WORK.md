@@ -1,3 +1,31 @@
+**2026-10-06 — `windowed-playback-generation` 3.7a I7: the retained revision's note edits are resolved **per layer**, and
+the paged lane refuses what it cannot resolve (firmware + tests).** The residual **I1 named as I2's**, which I2 and I3
+then deferred, is closed: the retained-source gather used to **refuse** a revision whose pins carried an Active Note row
+(`PinnedEditRowsUnsupported`), so a rootless (demoted / restored) slot **with note edits** was served *nothing* by the
+window lane — the shape **3.14**'s undo/redo handoff and the restored-library case live in. It now resolves those rows **per
+pass layer**, the effective-content owner's own rule (`Loop::copyEffectiveCommittedEventsInRange` applies each committed
+list and then merges; its comment records the reason — a merged-then-apply pass lets a LIFO Delete pair a hidden On with
+another pass's Off, session `144743`). The traversal is **one layer per call** (the primitive is bounded to the layers
+already resolved plus the current one), each completed layer is tick-sorted by hand, edited through the shipped
+`applyNoteEditPassSequence` and merged by the owner's own merge rule, a layer with no in-window event advances without
+spending the call's budget, and the **last** layer's resolution is the completing call. The rows applied are the
+revision's **pins**; the index's empty-interval shortcut is now taken only when no Active Note row is pinned. **The
+consequence the increment had to answer:** with the refusal gone the paged lane became reachable for such a revision and
+would have paged **unresolved** bodies, so `beginPagedPlaybackForSlot` refuses one **by name**
+(`PagedPlaybackOutcome::PinnedEditRowsUnresolved` + `PlaybackViewPendingReason::PinnedEditRowsUnresolved` at both paging
+origins + the retry gate declining to re-attempt) — no ring, demand owed. The dead vocabulary is removed. **The ITCM budget
+was the real work:** the first working form cost **+320 B** (the `std::vector<EditPass>` machinery emitted out of line from
+the large gather) and moving the row collection and the rows into small flash helpers restored the RAM1 line
+**byte-identical** (`variables 96,192`; `code 392,248 + padding 968`; 128 B of headroom), with `LoopPlaybackRuntime` pins
+re-based compiler-measured (target 7,384 → **7,400**, host 9,528 → **9,552**). Verified: focused **166/166**, full native
+**2,844 / 7 skipped / 2,837 succeeded / 0 failed**, capture build **SUCCESS**, strict validation and `git diff --check`
+clean, **four red-proofs** RED with byte-identical restores and **one recorded as a non-red-proof on its first attempt**
+(RP-I7-merge — the fixture's second layer was fully deleted by the row; it gained a surviving interleaving pair and the
+mutation then failed it). **Not claimed:** the pin filter's state is unreachable through production (a safety property the
+fixture reaches by mutating the pass set); a revision with more layers than the callers' ceiling cannot be gathered for a
+window; the pager resolves **no** rows; same-tick order stays 4.3's gate; the per-layer scratch is not admission-gated; no
+device leg, no timing claim, no `ExecutionBounds.md` row change, no fallback removal (3.7b). Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i7-layer-edit-resolution/EVIDENCE.md).
 **2026-10-06 — `windowed-playback-generation` 3.12/5.5: the falsified emission clause is **repaired** — the emission
 selection refuses **by name** at the declared closure capacity (firmware + tests).** The 3.12e falsification's mechanism
 is now measured, and it settles the two candidates that record named: over that same drive the walk **consumed exactly
@@ -5339,6 +5367,50 @@ object carries `.gcc_except_table`, and the tree's only `catch (bad_alloc)` is h
 Task **S4e.9**; packet and evidence under
 [`evidence/2026-10-06-s4e9-projection-containment/`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-s4e9-projection-containment/).
 
+### 3.7a (I7) — the retained revision's note edits are resolved per layer, and the paged lane refuses what it cannot resolve (2026-10-06; firmware + tests)
+
+**3.7a increment I7 landed 2026-10-06 (firmware + tests; the task stays open, 3.7b's conditions unchanged).** The residual
+**I1 named as I2's** and I2/I3 deferred is closed. The retained-source gather refused a revision whose pins carried an
+Active Note row (`RetainedWindowGatherResult::PinnedEditRowsUnsupported`), so a rootless (demoted / restored) slot **with
+note edits** was served **nothing** by the window lane — while the merged-window fallback is empty for that shape by
+construction. It now **resolves those rows per pass layer**, the effective-content owner's own rule
+(`Loop::copyEffectiveCommittedEventsInRange` applies each committed list and then merges; its comment records why: a
+merged-then-apply pass lets a LIFO Delete pair a hidden On with another pass's Off, session `144743`). **Built:**
+`gatherRetainedWindowLayers` (FLASH) traverses **one layer per call** — `appendWindowBudgeted(lists.data(), layerIndex + 1,
+…)` is bounded to the layers already resolved plus the current one, so a call can never cross a layer boundary — and each
+completed layer is tick-sorted by hand (`sortRetainedWindowLayer`; I1 measured `std::sort`'s instantiation at 1,280 B of
+ITCM), edited through the shipped `applyNoteEditPassSequence`, and merged by the owner's own rule
+(`mergeRetainedWindowLayer`: `std::merge` semantics, the accumulated side winning on equal ticks, merged backwards into the
+room `resize` just made — no second buffer). A layer with no in-window event advances without spending the call's budget,
+the **last** layer's resolution *is* the completing call, and the per-call `inspectedChunks`/`eventsAppended` keep the
+callers' accounting. The rows are the revision's **pins** (`collectPinnedActiveEditRows`), the gather's own yes/no question
+is a plain scan (`retainedRevisionHasActiveEditRows`), and the caller owns the layer scratch (the primitive may not hold
+it: a requester and the deferred lane can gather for the same slot). The index's empty-interval shortcut is now taken only
+when no Active Note row is pinned. **The consequence it had to answer:** with the refusal gone the paged lane became
+reachable for such a revision and would have paged **unresolved** bodies, so `beginPagedPlaybackForSlot` refuses one **by
+name** (`PagedPlaybackOutcome::PinnedEditRowsUnresolved`, `PlaybackViewPendingReason::PinnedEditRowsUnresolved` at both
+paging origins, `committedPlaybackRetryCanProgress` declining to re-attempt) — no ring, demand owed, the 3.12f pattern
+applied to the other refusal. The dead vocabulary is removed. **The ITCM budget was the increment's real work:** the first
+working form cost **+320 B of ITCM** (`code 392,568 + padding 648`, refused) because the `std::vector<EditPass>` machinery
+was emitted **out of line** from the large gather (`push_back(EditPass const&)` 204 B, `~vector()` 82 B, two 32 B
+`InternalHeapFirstAllocator` partials — attributed with `nm`); moving the row collection into a small flash helper and the
+rows out of the gather's frame into the per-layer helper restored the line **byte-identical with the baseline**. Verified:
+focused **166/166** (baseline 164), full native **2,844 / 7 skipped / 2,837 succeeded / 0 failed** (baseline 2,842/2,835),
+capture build **SUCCESS** with `variables 96,192` / `code 392,248 + padding 968` / `locals 34,880` (**byte-identical**,
+128 B of headroom), `LoopPlaybackRuntime` pins re-based compiler-measured (target 7,384 → **7,400**, host 9,528 →
+**9,552**), strict validation and `git diff --check` clean, **four red-proofs** RED with byte-identical restores
+(RP-I7-flat *Expected 264 Was 266*, RP-I7-merge *Expected 150 Was 200*, RP-I7-pins *Expected 1 Was 0*, RP-I7-guard *no ring
+is established*) and **one recorded as a non-red-proof on its first attempt** (RP-I7-merge: the fixture's second layer was
+fully deleted by the row, so append and merge coincided — the fixture gained a surviving interleaving pair and the mutation
+then failed it). **Not claimed:** the pin filter's state is unreachable through production (a safety property the fixture
+reaches by mutating the pass set); a revision with more layers than the callers' ceiling (`kRetainedGatherMaxSlices` = 18)
+cannot be gathered for a window (it refuses, or is routed to the pager which refuses it by name); multi-overdub layer order
+is pass-set order here and `mergeSequence` order in the owner's own collector; the pager implements **no** per-layer
+resolution; same-tick order stays 4.3's gate; the per-layer scratch's allocation is not admission-gated (DEC-115's
+follow-up list); no device leg, no timing claim, no `ExecutionBounds.md` row change, no `kMaxOpenNotes` change, no fallback
+removal (3.7b). Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i7-layer-edit-resolution/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i7-layer-edit-resolution/EXECUTION.md).
 ### 3.7a (I5) — the paged lane's production serving was a closed cycle: measured, fixed, red-proved, and landed by an ITCM budget slice (2026-10-06; firmware + tests)
 
 **3.7a increment I5 landed 2026-10-06 (firmware + tests; funded by an ITCM budget slice):** I3c-c's remaining item was the end-to-end emission assertion on a real transport tick; **driving it found that the assertion could not be made** -- a bound paged delivery could never earn admission from the clock path. Measured on both shapes (temporary probes, withdrawn): the **rootless** slot (the lane's reason to exist) records `bound=1 boundaries=0 admitted=0 sink=0 last=UINT32_MAX state=Unproven`; the **root-backed** slot records `boundaries=4 unstraddled=4 contentEnd=0 emitting=0 admitted=0 consumed=0` -- every wrap judged, every one a violation, the producer never re-armed. The cycle: the zero-content gate returns above the boundary judgement; the straddle rule counts `passContentOrdinal == 0` as a violation, and one violation makes admission false forever; and `passContentOrdinal` comes only from the producer's re-arm, which happens only while `emitting`, which only a **read of the adapter** sets -- which admission gates (the walk-level acceptance fixtures set it themselves, which is why they passed). **The fix, landed by funding it:** the judgement hoisted above the selection in flash (`servicePagedPassBoundaryForTurn`), the gate's exemption for an admitted delivery folded into its count, the first boundary judged against the walk's position, and a guard for the null merged store on the paged branch (measured **SIGSEGV** without it). **The ITCM budget slice:** baseline `code 392,296 + padding 920` (80 B headroom, floor 840) vs the fix alone `392,488/728` (refused) vs + the handoff seek in flash (`seekBridgeWindowPastServicedInterval`) `392,440/776` (**-48 B**) vs + the fixed-source identity and its bridge/view resolved in flash (`resolveFixedPlaybackSourceForTurn`) **`392,360/856` -- the guard passes**, 16 B above the floor. Net cost of the fix **+64 B**; the slice's own movement **-128 B** (the seek runs once per handoff, never per event). **Measured effect:** one frame judges, admits and walks; a full interval emits `sink=2500 wire=2500`, exactly the dense span; a rootless 3-bar loop's pass 2 is **2,500 events element-wise equal** to `copyEffectiveCommittedEventsInRange` (`passesUnstraddled == 0`, `state=Admissible`). **Red-proved on the landed form:** RP-I5-hoist, RP-I5-first-boundary, RP-I5-gate (exact failure texts in the evidence), each restored byte-identically. Verified: focused **161/161**, neighbours **83/83**, full native **2,836 / 7 skipped / 2,829 succeeded / 0 failed**, capture build **SUCCESS** with the guard passing, strict validation and `git diff --check` clean. **Device run (2026-10-06; `git_commit 9b964dbc8859...`, `firmware_hex_sha256 9697b7acacb262d2...`):** the I5 image booted fresh (`crash=0`) and the canonical leg **PASSed** (`overall_ok: True`; MIDI-boundary timing `overflow_free=True call_sites=True`, persistence and wrap storage green) -- the shared tick path is unchanged on hardware. The registered windowed leg drove its 24-bar record, `NOTE_EDIT` and window gestures without crash or wedge, but **the paged branch is not observable on device**: it has no serial row family, and the one image that emits the lane's rows (`teensy41-capture-serial-window-qualification`) **cannot be flashed -- it is over its own RAM1 budget** (`code 393,144 + padding 72` at HEAD~1, i.e. already under the 840 floor before I5; `code 393,288 + padding 32,696` with I5, a 13th bank the guard names as the documented silent boot hang), so the lane's rows and any 'one more row' instrument are unreachable until that env is funded (~912 B of pre-existing drift + I5's 64 B). Runs: `captures/i5-device-0{1,2}-base`, `captures/i5-device-03-windowed`; detail in the evidence (section 15). **Next, and now unblocked:** 3.14's and 4.5's remaining clauses are written against the real handoff, which now serves on the clock path -- they are the next slice, not blocked. Evidence: `evidence/2026-10-06-s37a-i3c-emission-adapter/EVIDENCE.md` (§14).

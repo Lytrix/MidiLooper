@@ -221,6 +221,10 @@ SDClass SD;
 bool sequencerRunning = false;
 
 #include "../test_support/track_harness.inc"
+// Task 3.7a (I7): the shared fixtures that build a retained revision's pinned bodies and their note identities
+// directly -- the same helpers the content-resolution suite uses, so this slice's layers and ids are not hand-rolled.
+#include "../test_support/CommittedChunkIdTestHelpers.h"
+#include "../test_support/NoteIdTestFixtures.h"
 
 /// S4b.4 (display clause): the display boundary this harness already keeps observable now **records** what it
 /// was told, because after a role handoff *which* slots the panel is told about is the fact worth asserting --
@@ -5029,8 +5033,11 @@ void test_retained_source_window_serves_a_rootless_interval_and_the_index_bounds
   CommittedEventRange::WindowTraversalCursor cursor{};
   CommittedEventRange::resetWindowTraversalCursor(cursor);
   SessionMidiEventVec gathered;
+  // Task 3.7a/I7: the caller's per-layer scratch. This revision pins no Note edit row, so the single-traversal path is
+  // taken and the scratch stays empty -- the argument is still the caller's to own.
+  SessionMidiEventVec layerScratch;
   const Track::RetainedWindowGather gather = track.gatherRetainedSourceWindowForSlot(
-      0, interval.startPhase, interval.lengthTicks, retainedRevision, cursor, gathered);
+      0, interval.startPhase, interval.lengthTicks, retainedRevision, cursor, gathered, layerScratch);
   TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served), static_cast<int>(gather.result));
   TEST_ASSERT_TRUE(gather.complete);
   TEST_ASSERT_FALSE(gather.indexAnsweredEmpty);
@@ -5081,7 +5088,7 @@ void test_retained_source_window_serves_a_rootless_interval_and_the_index_bounds
   CommittedEventRange::resetWindowTraversalCursor(emptyCursor);
   SessionMidiEventVec emptyScratch;
   const Track::RetainedWindowGather empty = track.gatherRetainedSourceWindowForSlot(
-      0, kDeepPlayhead, 2 * 768, retainedRevision, emptyCursor, emptyScratch);
+      0, kDeepPlayhead, 2 * 768, retainedRevision, emptyCursor, emptyScratch, layerScratch);
   TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served), static_cast<int>(empty.result));
   TEST_ASSERT_TRUE(empty.complete);
   TEST_ASSERT_TRUE(empty.indexAnsweredEmpty);
@@ -5100,7 +5107,7 @@ void test_retained_source_window_serves_a_rootless_interval_and_the_index_bounds
   CommittedEventRange::resetWindowTraversalCursor(staleCursor);
   SessionMidiEventVec staleScratch;
   const Track::RetainedWindowGather stale = track.gatherRetainedSourceWindowForSlot(
-      0, interval.startPhase, interval.lengthTicks, retainedRevision + 1, staleCursor, staleScratch);
+      0, interval.startPhase, interval.lengthTicks, retainedRevision + 1, staleCursor, staleScratch, layerScratch);
   TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::RevisionMismatch),
                     static_cast<int>(stale.result));
   TEST_ASSERT_FALSE(stale.complete);
@@ -5121,7 +5128,7 @@ void test_retained_source_window_serves_a_rootless_interval_and_the_index_bounds
   CommittedEventRange::resetWindowTraversalCursor(laggingCursor);
   SessionMidiEventVec laggingScratch;
   const Track::RetainedWindowGather lagging = track.gatherRetainedSourceWindowForSlot(
-      0, interval.startPhase, interval.lengthTicks, retainedRevision, laggingCursor, laggingScratch);
+      0, interval.startPhase, interval.lengthTicks, retainedRevision, laggingCursor, laggingScratch, layerScratch);
   TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served), static_cast<int>(lagging.result));
   TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(gathered.size()), static_cast<uint32_t>(laggingScratch.size()));
 
@@ -5149,6 +5156,7 @@ void test_the_retained_source_gather_refuses_by_name_where_it_must() {
   Track& bare = prepareWindowOwnerSlot(0);
   Loop& bareLoop = bare.getLoop(0);
   SessionMidiEventVec bareScratch;
+  SessionMidiEventVec layerScratch;
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackViewRequestResult::SourceUnavailable),
                     static_cast<int>(bare.requestPlaybackWindow(0, 0, bareScratch)));
   CommittedEventRange::WindowTraversalCursor cursor{};
@@ -5157,7 +5165,7 @@ void test_the_retained_source_gather_refuses_by_name_where_it_must() {
                     static_cast<int>(bare
                                          .gatherRetainedSourceWindowForSlot(0, 0, Config::TICKS_PER_BAR,
                                                                             bareLoop.playbackRevision, cursor,
-                                                                            bareScratch)
+                                                                            bareScratch, layerScratch)
                                          .result));
 
   // (b) Beyond `kRetainedIndexMaxBars`: the index was refused for this loop, so the gather refuses rather than
@@ -5174,14 +5182,14 @@ void test_the_retained_source_gather_refuses_by_name_where_it_must() {
   CommittedEventRange::resetWindowTraversalCursor(longCursor);
   SessionMidiEventVec longScratch;
   const Track::RetainedWindowGather longGather = longTrack.gatherRetainedSourceWindowForSlot(
-      0, 0, Config::TICKS_PER_BAR, longLoop.playbackRevision, longCursor, longScratch);
+      0, 0, Config::TICKS_PER_BAR, longLoop.playbackRevision, longCursor, longScratch, layerScratch);
   TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::BarsUnsupported),
                     static_cast<int>(longGather.result));
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(longScratch.size()));
 
-  // (c) The retained revision pins an Active note-edit row: per-layer resolution has not landed, and a merged-flat
-  // application would be a *different* answer (the reason `Loop::copyEffectiveCommittedEventsInRange` applies each
-  // committed list and then merges), so the revision is refused rather than served unfaithfully.
+  // (c) The retained revision **pins an Active Note note-edit row**: this revision's effective content is the owner's
+  // **per-layer** resolution (task 3.7a/I7), so the revision is served rather than refused. The row targets an identity
+  // no layer carries, so the answer is the pinned bodies themselves -- and the differential oracle must agree.
   LoopEventStore::initPool();
   Track& editTrack = trackManager.getTrack(2);
   editTrack.ensureLoopsAllocated();
@@ -5201,12 +5209,22 @@ void test_the_retained_source_gather_refuses_by_name_where_it_must() {
   CommittedEventRange::WindowTraversalCursor editCursor{};
   CommittedEventRange::resetWindowTraversalCursor(editCursor);
   SessionMidiEventVec editScratch;
-  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::PinnedEditRowsUnsupported),
-                    static_cast<int>(editTrack
-                                         .gatherRetainedSourceWindowForSlot(0, 0, 2 * Config::TICKS_PER_BAR,
-                                                                            editLoop.playbackRevision, editCursor,
-                                                                            editScratch)
-                                         .result));
+  SessionMidiEventVec editLayerScratch;
+  const Track::RetainedWindowGather edited = editTrack.gatherRetainedSourceWindowForSlot(
+      0, 0, 2 * Config::TICKS_PER_BAR, editLoop.playbackRevision, editCursor, editScratch, editLayerScratch);
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::RetainedWindowGatherResult::Served),
+                            static_cast<int>(edited.result),
+                            "a pinned Active Note row is resolved per layer, never refused");
+  TEST_ASSERT_TRUE(edited.complete);
+  SessionMidiEventVec editedOracle;
+  editLoop.copyEffectiveCommittedEventsInRange(editedOracle, 0, 2 * Config::TICKS_PER_BAR);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(editedOracle.size()),
+                                   static_cast<uint32_t>(editScratch.size()),
+                                   "the row-bearing revision is served the owner's own answer");
+  for (size_t i = 0; i < editedOracle.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(editedOracle[i].tick, editScratch[i].tick);
+    TEST_ASSERT_EQUAL(static_cast<int>(editedOracle[i].type), static_cast<int>(editScratch[i].type));
+  }
 
   // (d) The revision **owns bodies** (the retention took the store's references) and none of them is reachable through
   // the pass set: refused by name, because an empty window would be served as silence for content it demonstrably has.
@@ -5227,12 +5245,236 @@ void test_the_retained_source_gather_refuses_by_name_where_it_must() {
   CommittedEventRange::resetWindowTraversalCursor(pinlessCursor);
   SessionMidiEventVec pinlessScratch;
   const Track::RetainedWindowGather pinlessGather = pinless.gatherRetainedSourceWindowForSlot(
-      0, 0, 2 * Config::TICKS_PER_BAR, pinlessLoop.playbackRevision, pinlessCursor, pinlessScratch);
+      0, 0, 2 * Config::TICKS_PER_BAR, pinlessLoop.playbackRevision, pinlessCursor, pinlessScratch, layerScratch);
   TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::PinnedBodiesUnavailable),
                     static_cast<int>(pinlessGather.result));
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, pinlessGather.pinnedLists, "no pinned body was enumerated");
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(pinlessScratch.size()));
 }
+
+namespace {
+
+/// Task 3.7a (I7): **the two-layer revision the per-layer rule exists for.** Both layers hold the same channel and
+/// pitch, and their pairs **cross** in tick space: the overdub's note (100-300) starts before the record's (200-800)
+/// and ends before it. Resolving the pinned rows *flat* -- one merged, tick-sorted stream -- then pairs the overdub
+/// note's Off with the record note's On, which is the harm the owner's own comment records at session `144743`
+/// (`48@616 / Off@1016`); resolving them **per layer** removes the overdub's own pair and leaves the record's
+/// untouched. The layers are arranged through the store directly: the capture route's own overlap resolution is a
+/// different owner's decision, and this fixture is about the gather's resolution of a revision whose two layers already
+/// exist.
+struct CrossingEditedRevision {
+  Track* track = nullptr;
+  Loop* loop = nullptr;
+  NoteId recordNoteId = kInvalidNoteId;   ///< record layer: On@200, Off@800
+  NoteId overdubNoteId = kInvalidNoteId;  ///< overdub layer: On@100, Off@300 -- the delete row's target
+  uint32_t loopTicks = 64 * 768;
+};
+
+/// `fillerPairs` extra pairs (pitch 60+) go into the **record** layer, so its in-window content exceeds one gather
+/// slice (`kRetainedGatherSliceEvents` = 128 events) and the per-layer gather's resumption is observable across calls.
+CrossingEditedRevision prepareCrossingEditedRevision(uint32_t fillerPairs) {
+  CrossingEditedRevision fixture{};
+  LoopEventStore::initPool();
+  Track& track = trackManager.getTrack(0);
+  track.ensureLoopsAllocated();
+  Loop& loop = track.getLoop(0);
+  loop.loopLengthTicks = fixture.loopTicks;
+  fixture.recordNoteId = 1;
+  fixture.overdubNoteId = 2;
+
+  {
+    RecordPass record{};
+    record.id = 11;
+    record.state = CapturePassState::Active;
+    LoopEventStore store;
+    TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(store, 200, 1, 48, 100, fixture.recordNoteId));
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(800, 1, 48, 0)));
+    for (uint32_t i = 0; i < fillerPairs; ++i) {
+      const uint32_t onTick = 1100 + i * 2;
+      const uint8_t pitch = static_cast<uint8_t>(60 + (i % 8));
+      TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(store, onTick, 1, pitch, 100,
+                                                             100 + static_cast<NoteId>(i)));
+      TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(onTick + 1, 1, pitch, 0)));
+    }
+    TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, record.committedChunkIds));
+    loop.passes.recordPass = std::move(record);
+  }
+  {
+    OverdubPass overdub{};
+    overdub.id = 12;
+    overdub.mergeSequence = 1;
+    overdub.state = CapturePassState::Active;
+    LoopEventStore store;
+    TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(store, 100, 1, 48, 100, fixture.overdubNoteId));
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(300, 1, 48, 0)));
+    // A **surviving** pair in the same layer, at ticks that interleave with the record layer's: it is what makes the
+    // owner's *merge* rule (not only its per-layer apply) observable here, because the two layers' events must
+    // interleave in tick order rather than be concatenated layer by layer.
+    TEST_ASSERT_TRUE(NoteIdTestFixtures::storeAppendNoteOn(store, 150, 1, 55, 100, 3));
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(160, 1, 55, 0)));
+    TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, overdub.committedChunkIds));
+    loop.passes.overdubPasses.push_back(std::move(overdub));
+  }
+  // The row the revision pins: a **Delete** of the overdub layer's note, which only the per-layer resolution applies to
+  // that layer.
+  EditPass deleteRow{};
+  deleteRow.id = 91;
+  deleteRow.passType = EditPassType::Note;
+  deleteRow.actionType = EditActionType::Delete;
+  deleteRow.state = EditPassState::Active;
+  deleteRow.targetNoteId = fixture.overdubNoteId;
+  loop.passes.editPasses.push_back(deleteRow);
+
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the fixture's shape is a rootless demoted slot");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PlaybackSourceRetainResult::Admitted),
+                    static_cast<int>(track.retainPlaybackSourceForSlot(0, loop.playbackRevision, 3)));
+  TEST_ASSERT_TRUE(track.playbackWindowSourceIsCurrentForSlot(0));
+  fixture.track = &track;
+  fixture.loop = &loop;
+  return fixture;
+}
+
+size_t countEventsAtTick(const SessionMidiEventVec& events, uint32_t tick) {
+  size_t count = 0;
+  for (const MidiEvent& event : events) {
+    if (event.tick == tick) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+}  // namespace
+
+/// 3.7a (I7) / W-37a-21, W-37a-22, W-37a-23 and W-37a-26: **a retained revision whose pins carry an Active Note row is
+/// served, resolved per layer, one layer per call** -- and the answer is the effective-content owner's own, not the flat
+/// one the same content shows to be a different (wrong) answer. This is the increment that replaces the gather's
+/// `PinnedEditRowsUnsupported` refusal: a rootless slot with note edits used to be served *nothing*.
+void test_3_7a_i7_pinned_note_edits_are_resolved_per_layer() {
+  constexpr uint32_t kBar = Config::TICKS_PER_BAR;
+  constexpr uint32_t kWindowTicks = 2 * kBar;
+  constexpr uint32_t kFillerPairs = 130;  // 260 events: the record layer's window content needs three slices
+  constexpr uint32_t kPlayhead = 500;     // inside the first bar, so the handoff the contract wants is a lap away
+  CrossingEditedRevision fixture = prepareCrossingEditedRevision(kFillerPairs);
+  Track& track = *fixture.track;
+  Loop& loop = *fixture.loop;
+
+  PlaybackCoverageInterval interval{};
+  TEST_ASSERT_TRUE(Track::playbackWindowInterval(loop.loopLengthTicks, true, kPlayhead, interval));
+  TEST_ASSERT_EQUAL_UINT32(0u, interval.startPhase);
+
+  // **The owner's answer** for the same revision and window: per layer, so the overdub's note is deleted with *its own*
+  // Off and the record layer's pair is untouched.
+  SessionMidiEventVec oracle;
+  loop.copyEffectiveCommittedEventsInRange(oracle, interval.startPhase, interval.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countEventsAtTick(oracle, 200), "the record layer's On survives");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countEventsAtTick(oracle, 800), "and its own Off with it");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countEventsAtTick(oracle, 100), "the overdub layer's On is deleted");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, countEventsAtTick(oracle, 300), "and its own Off with it");
+
+  // **The flat answer** this increment replaces: the same window as one merged, tick-sorted stream with the rows applied
+  // to it. Asserted to differ from the owner's answer, so this fixture can tell the two resolutions apart at all.
+  std::vector<const CommittedChunkIdList*> lists;
+  lists.push_back(&loop.passes.recordPass.committedChunkIds);
+  lists.push_back(&loop.passes.overdubPasses[0].committedChunkIds);
+  SessionMidiEventVec flat;
+  CommittedEventRange::inWindow(lists.data(), lists.size(), loop.loopLengthTicks, interval.startPhase,
+                                interval.lengthTicks)
+      .appendTo(flat);
+  std::sort(flat.begin(), flat.end(), [](const MidiEvent& left, const MidiEvent& right) {
+    return left.tick < right.tick;
+  });
+  EditPassVec rows;
+  rows.push_back(loop.passes.editPasses[0]);
+  applyNoteEditPassSequence(flat, rows, loop.loopLengthTicks);
+  bool flatDiffers = flat.size() != oracle.size();
+  for (size_t i = 0; !flatDiffers && i < flat.size(); ++i) {
+    flatDiffers = flat[i].tick != oracle[i].tick || flat[i].type != oracle[i].type;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(flatDiffers, "the flat answer is a different one: the two resolutions are distinguishable");
+
+  // W-37a-23: the gather, driven **call by call** -- one layer per call, one slice per call, so a layer over a slice is
+  // resumed rather than restarted or truncated.
+  CommittedEventRange::WindowTraversalCursor cursor{};
+  CommittedEventRange::resetWindowTraversalCursor(cursor);
+  SessionMidiEventVec gathered;
+  SessionMidiEventVec layerScratch;
+  uint32_t calls = 0;
+  Track::RetainedWindowGather gather{};
+  while (calls < 16) {
+    gather = track.gatherRetainedSourceWindowForSlot(0, interval.startPhase, interval.lengthTicks,
+                                                     loop.playbackRevision, cursor, gathered, layerScratch);
+    ++calls;
+    TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served), static_cast<int>(gather.result));
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(kRetainedGatherSliceEvents, gather.eventsAppended,
+                                             "one bounded slice per call, as the callers' own ceiling assumes");
+    if (gather.complete) {
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(gather.complete, "the per-layer gather completes inside this fixture's own bound");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(1u, calls, "the record layer is over one slice: the gather resumed");
+  TEST_ASSERT_FALSE(gather.indexAnsweredEmpty);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(oracle.size()), static_cast<uint32_t>(gathered.size()),
+                                   "the retained answer is exactly the owner's per-layer content");
+  for (size_t i = 0; i < oracle.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(oracle[i].tick, gathered[i].tick);
+    TEST_ASSERT_EQUAL(static_cast<int>(oracle[i].type), static_cast<int>(gathered[i].type));
+  }
+
+  // W-37a-22: through **production**. The requester answers for the rootless slot -- not the `SourceUnavailable` a
+  // revision with unresolvable edits used to get -- and the deferred turn publishes the window with no root.
+  SessionMidiEventVec requesterScratch;
+  TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(Track::PlaybackViewRequestResult::Admitted),
+                            static_cast<int>(track.requestPlaybackWindow(0, kPlayhead, requesterScratch)),
+                            "a pinned edit row is resolved per layer, never refused");
+  for (uint32_t turn = 0; turn < 16 && track.hasPendingPlaybackViewMaintenance(); ++turn) {
+    (void)track.stepPlaybackViewMaintenance();
+  }
+  PlaybackViewSourceIdentity identity{};
+  PlaybackCoverageInterval published{};
+  TEST_ASSERT_TRUE_MESSAGE(track.publishedPlaybackWindowForSlot(0, identity, published),
+                           "the production turn publishes the edited revision's window");
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackWindowOrigin::Committed), static_cast<int>(identity.origin));
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, identity.playbackRevision);
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(loop.publishedSnapshotIdentity(), identity.snapshotIdentity,
+                                "the window carries the root it read: none, by construction");
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "and the slot is still rootless afterwards");
+
+  // W-37a-26: an Active row the revision did **not** pin is not applied -- the pinned membership is what a window for
+  // this revision may serve. The oracle cannot answer this one (it reads the live Active set), so the assertion is
+  // stated against the content: the record layer's pair must still be there.
+  EditPass unpinned{};
+  unpinned.id = 92;
+  unpinned.passType = EditPassType::Note;
+  unpinned.actionType = EditActionType::Delete;
+  unpinned.state = EditPassState::Active;
+  unpinned.targetNoteId = fixture.recordNoteId;
+  loop.passes.editPasses.push_back(unpinned);
+  CommittedEventRange::WindowTraversalCursor freshCursor{};
+  CommittedEventRange::resetWindowTraversalCursor(freshCursor);
+  SessionMidiEventVec pinnedOnly;
+  SessionMidiEventVec pinnedScratch;
+  uint32_t pinnedCalls = 0;
+  Track::RetainedWindowGather pinnedGather{};
+  while (pinnedCalls < 16) {
+    pinnedGather = track.gatherRetainedSourceWindowForSlot(0, interval.startPhase, interval.lengthTicks,
+                                                          loop.playbackRevision, freshCursor, pinnedOnly,
+                                                          pinnedScratch);
+    ++pinnedCalls;
+    if (pinnedGather.complete) {
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::RetainedWindowGatherResult::Served),
+                    static_cast<int>(pinnedGather.result));
+  TEST_ASSERT_TRUE(pinnedGather.complete);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countEventsAtTick(pinnedOnly, 200),
+                                   "an unpinned Active row is not applied: the record layer's On survives");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, countEventsAtTick(pinnedOnly, 800), "and its Off with it");
+}
+
 
 /// 3.11 (DEC-108 §13d): the **shared-view ownership rules** as one transition table, applied through the seam, with the
 /// four scenarios the spec names: a builder keeps its own work, a late completion publishes nothing, returning to a
@@ -10749,7 +10991,12 @@ struct OverCapacityPagedFixture {
 
 /// `loopBars` defaults to the 512-bar long loop the I3b fixtures use; a **two-bar** loop makes the interval the
 /// *whole* loop, which is the shape whose wrap has no re-arm room (I3c-a's `CannotStraddleTheWrap`).
-OverCapacityPagedFixture prepareOverCapacityPagedSlot(uint32_t denseEvents, uint32_t loopBars = 512) {
+///
+/// `pinnedDeleteRowTarget`: when it names a note, the revision is also given a **pinned Active Note row** (task 3.7a/I7)
+/// -- the state the window lane serves per layer and the paged lane must refuse. Defaulted, so every existing caller is
+/// unchanged.
+OverCapacityPagedFixture prepareOverCapacityPagedSlot(uint32_t denseEvents, uint32_t loopBars = 512,
+                                                      NoteId pinnedDeleteRowTarget = kInvalidNoteId) {
   constexpr uint32_t kBar = Config::TICKS_PER_BAR;
   const uint32_t length = loopBars * kBar;
   OverCapacityPagedFixture fixture{};
@@ -10776,6 +11023,18 @@ OverCapacityPagedFixture prepareOverCapacityPagedSlot(uint32_t denseEvents, uint
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(denseEvents, appended, "the fixture's dense content must land whole in one pass");
   TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(length, CommitReason::RecordStop));
   TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  if (pinnedDeleteRowTarget != kInvalidNoteId) {
+    // Task 3.7a (I7): the revision **pins an Active Note row** -- the state the paged lane must refuse, and one it has to
+    // be given *before* the retention, because the pins are taken from the pass set at that moment. The row's target is
+    // irrelevant to that refusal (the pager resolves no rows at all); what matters is that the revision carries one.
+    EditPass row{};
+    row.id = 91;
+    row.passType = EditPassType::Note;
+    row.actionType = EditActionType::Delete;
+    row.state = EditPassState::Active;
+    row.targetNoteId = pinnedDeleteRowTarget;
+    loop.passes.editPasses.push_back(row);
+  }
   TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0));
   TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(), "the fixture's shape is a rootless demoted slot");
   // The interval covers the whole dense span, and it is the widest interval the window path accepts (two bars).
@@ -10821,6 +11080,37 @@ uint32_t driveGatherUntilPagedSwitch(OverCapacityPagedFixture& fixture) {
                                      "one bounded slice per turn, before the switch changes the granularity");
   }
   return turns;
+}
+
+/// 3.7a (I7) / W-37a-24: **the paged compatibility lane refuses a revision whose pins carry Active Note rows**, by
+/// name, before it establishes a ring. Its pages are the pinned bodies in traversal order, and the resolution those
+/// rows need is per pass layer; serving them unresolved would emit content the edited revision does not have, which is
+/// the harm class this refusal exists for. The demand stays owed, with a name a reader can act on, and the lane does
+/// not re-attempt it every turn.
+void test_3_7a_i7_the_paged_lane_refuses_pinned_note_edits_it_cannot_resolve() {
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2100, 512, 1);
+  LoopPlaybackRuntime* runtime = fixture.runtime;
+  const uint32_t revision = fixture.loop->playbackRevision;
+  for (uint32_t turn = 0; turn < kRetainedGatherMaxSlices + 4u; ++turn) {
+    const Track::PlaybackViewTurnResult result =
+        fixture.track->stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    if (result == Track::PlaybackViewTurnResult::GrainDenied) {
+      break;
+    }
+  }
+  TEST_ASSERT_FALSE_MESSAGE(runtime->pagedActive,
+                            "no ring is established for a revision the pager cannot resolve");
+  TEST_ASSERT_FALSE(runtime->pagedActiveForInterval(revision, fixture.coverage));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::PagedPlaybackOutcome::PinnedEditRowsUnresolved),
+                    static_cast<int>(runtime->pagedOutcome));
+  TEST_ASSERT_EQUAL(static_cast<int>(LoopPlaybackRuntime::RetainedGatherRefusal::WindowExceedsCapacity),
+                    static_cast<int>(runtime->retainedGatherRefusal));
+  const auto* demand = fixture.track->pendingViewRequest(0);
+  TEST_ASSERT_NOT_NULL_MESSAGE(demand, "the refusal keeps the demand owed rather than dropping it");
+  TEST_ASSERT_EQUAL(static_cast<int>(PlaybackViewPendingReason::PinnedEditRowsUnresolved),
+                    static_cast<int>(demand->reason));
+  TEST_ASSERT_FALSE_MESSAGE(fixture.track->committedPlaybackRetryCanProgress(0, nativePlaybackDeadlineClock),
+                            "a named refusal is an answer: the lane does not re-gather it every turn");
 }
 
 /// 3.7a (I3b): walk the prepared interval through the **production consumer entry** while the producer runs behind it,
@@ -12184,6 +12474,8 @@ int main() {
   // preview (the session's uncommitted projection) inherits nothing.
   RUN_TEST(test_3_7a_i3_the_capture_admission_counts_committed_windows_only);
   RUN_TEST(test_the_retained_source_gather_refuses_by_name_where_it_must);
+  RUN_TEST(test_3_7a_i7_pinned_note_edits_are_resolved_per_layer);
+  RUN_TEST(test_3_7a_i7_the_paged_lane_refuses_pinned_note_edits_it_cannot_resolve);
   // windowed-playback-generation slice 3.11: the shared-view ownership rules as one transition table, an operation
   // that is never retargeted, a late completion that publishes nothing, and storage reuse by the last owner.
   RUN_TEST(test_shared_view_transitions_state_the_ownership_rules_and_a_late_completion_publishes_nothing);

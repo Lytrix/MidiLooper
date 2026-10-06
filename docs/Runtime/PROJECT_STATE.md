@@ -1,3 +1,43 @@
+**`windowed-playback-generation` 3.7a / I7 — the retained revision's note edits are resolved **per layer**, and the paged
+lane refuses what it cannot resolve (2026-10-06; firmware + tests).** The residual **I1 named as I2's** and I2/I3 then
+deferred is closed: the retained-source gather (`Track::gatherRetainedSourceWindowForSlot`) used to **refuse** a revision
+whose pins carried an Active Note row (`PinnedEditRowsUnsupported`), so a rootless (demoted / restored) slot **with note
+edits** was served *nothing* by the window lane — the exact shape 3.14's undo/redo handoff and the restored-library case
+live in. It now resolves those rows **per pass layer**, which is the effective-content owner's own rule
+(`Loop::copyEffectiveCommittedEventsInRange` applies each committed list and then merges; the reason is in its own comment
+— a merged-then-apply pass lets a LIFO Delete pair a hidden On with another pass's Off, session `144743`). The traversal
+is **one layer per call** (the primitive is bounded to the layers already resolved plus the current one, so a call cannot
+cross a layer boundary), each completed layer is tick-sorted (by hand), edited through the shipped
+`applyNoteEditPassSequence`, and merged into the destination by the owner's own **merge** rule; a layer with no in-window
+event advances without spending the call's work budget, and the **last** layer's resolution is the completing call. The
+rows applied are the revision's **pins**, not the live Active set, and the index's empty-interval shortcut is now taken
+only when no Active Note row is pinned (a `Create` row adds events the committed bodies do not carry). **The consequence
+the increment had to answer:** with the refusal gone the paged lane became reachable for such a revision and would have
+paged **unresolved** bodies, so `Track::beginPagedPlaybackForSlot` now refuses a revision whose pins carry an Active Note
+row **by name** — `PagedPlaybackOutcome::PinnedEditRowsUnresolved` + `PlaybackViewPendingReason::PinnedEditRowsUnresolved`
+at both paging origins + `committedPlaybackRetryCanProgress` declining to re-attempt it
+(the 3.12f pattern, applied to the other refusal) — establishing no ring and keeping the demand owed. The dead vocabulary
+is removed (`RetainedWindowGatherResult::PinnedEditRowsUnsupported`, `RetainedGatherRefusal::EditRowsUnsupported`).
+Verified: focused **166/166** (baseline 164), full native **2,844 / 7 skipped / 2,837 succeeded / 0 failed** (baseline
+2,842/2,835), capture build **SUCCESS** with the RAM1 line **byte-identical to the pre-slice baseline**
+(`variables 96,192`; `code 392,248 + padding 968`; 128 B of headroom) — **after the increment's real work**: the per-layer
+path's first working form cost **+320 B of ITCM** (the `std::vector<EditPass>` machinery emitted out of line from the large
+gather: `push_back` 204 B, `~vector()` 82 B, two 32 B allocator partials) and moving the row collection and the rows
+themselves into small flash helpers restored the line byte-for-byte, **no re-base** —, `LoopPlaybackRuntime` size pins
+re-based **compiler-measured** (target 7,384 → **7,400**, host 9,528 → **9,552**), strict validation and
+`git diff --check` clean, **four red-proofs** (RP-I7-flat the rows applied to the merged window, RP-I7-merge the layer
+appended instead of merged, RP-I7-pins the live Active set, RP-I7-guard the pager's guard removed) each RED with a
+byte-identical restore (`sha256 48c57b2fe9d7c78e…`), **one of them recorded as a non-red-proof on its first attempt**
+(RP-I7-merge: the fixture's second layer was fully deleted by the row, so append and merge coincided; the fixture gained a
+surviving interleaving pair and the mutation then failed it). **Not claimed:** the pin filter's state is unreachable
+through production (a safety property the fixture reaches by mutating the pass set); a revision with more layers than the
+callers' ceiling (`kRetainedGatherMaxSlices` = 18) cannot be gathered for a window; multi-overdub layer order is pass-set
+order here and `mergeSequence` order in the owner's own collector; the pager resolves **no** rows (refusal is the
+I3c-b/3.12f trade); same-tick order stays 4.3's gate; the per-layer scratch's allocation is not admission-gated
+(DEC-115's follow-up list); no device leg, no timing claim, no `ExecutionBounds.md` row change, no `kMaxOpenNotes` change,
+no fallback removal (3.7b). Evidence:
+[`EVIDENCE.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i7-layer-edit-resolution/EVIDENCE.md)
+with its [`EXECUTION.md`](../openspec/changes/windowed-playback-generation/evidence/2026-10-06-s37a-i7-layer-edit-resolution/EXECUTION.md).
 **`windowed-playback-generation` 3.12 / 5.5 — the falsified emission clause is REPAIRED: the emission selection refuses
 BY NAME at the declared closure capacity (2026-10-06; firmware + tests).** The mechanism 3.12e left unattributed is now
 measured: the walk **consumed exactly its own due set every frame** (the producer's page rate was never the constraint),
