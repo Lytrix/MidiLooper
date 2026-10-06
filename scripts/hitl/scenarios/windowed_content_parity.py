@@ -205,6 +205,26 @@ def _leg_capture_log(out_dir: Path) -> Path | None:
     logs = sorted(out_dir.glob("host_midi_hitl_long_loop_display_serial_*.log"))
     return logs[-1] if logs else None
 
+def _capture_session_log(out_dir: Path) -> Path | None:
+    """The **managed capture's** own session log -- the file still being appended when the leg has already returned.
+
+    The leg's `--serial-port` view copies the capture's stream into its own log and stops writing when the leg returns,
+    so a post-leg drain that read *that* file would read a file nobody is writing to any more. The capture names its
+    live log in `.current_session` (a repo-relative path); the glob is the fallback for a directory whose pointer is
+    gone.
+    """
+    pointer = out_dir / ".current_session"
+    if pointer.is_file():
+        try:
+            named = pointer.read_text(encoding="utf-8").strip()
+        except OSError:
+            named = ""
+        for candidate in (Path(named), out_dir / named):
+            if named and candidate.is_file():
+                return candidate
+    logs = sorted(out_dir.glob("session_*.log"))
+    return logs[-1] if logs else None
+
 
 def run_post_leg_phase(
     args: object,
@@ -221,26 +241,43 @@ def run_post_leg_phase(
     """
     out_dir = Path(getattr(args, "out_dir", Path("captures")))
     port = serial_port_from(args)
-    if not port:
-        print("[windowed-content-parity] no serial port on this run: the retained rows cannot be drained")
+    capture_log = _capture_session_log(out_dir)
+    edge_log = _leg_capture_log(out_dir) or capture_log
+    if edge_log is None and port is None:
+        print("[windowed-content-parity] neither a serial port nor a capture log on this run: the retained rows cannot "
+              "be drained")
         return None
-    log = _leg_capture_log(out_dir)
-    if log is None:
-        return None
-    lines = log.read_text(encoding="utf-8").splitlines()
-    if last_transport_row_running(lines) is not True:
-        print("[windowed-content-parity] the capture ends with the transport stopped: neither a switch leg nor a drain "
-              "belongs here")
-        return None
+    if edge_log is not None:
+        lines = edge_log.read_text(encoding="utf-8").splitlines()
+        if last_transport_row_running(lines) is not True:
+            print("[windowed-content-parity] the capture ends with the transport stopped: neither a switch leg nor a "
+                  "drain belongs here")
+            return None
 
     import mido
 
     from hitl.midi_io import _find_midi_port
-    from hitl.serial_collector import SerialCaptureCollector
 
-    collector = SerialCaptureCollector(port, 115200)
-    collector.start()
-    time.sleep(1.0)
+    collector = None
+    drain_log: Path | None = None
+    drain_from = 0
+    if port:
+        from hitl.serial_collector import SerialCaptureCollector
+
+        collector = SerialCaptureCollector(port, 115200)
+        collector.start()
+        time.sleep(1.0)
+    else:
+        # The managed capture owns the USB port, and a second owner of one port is a broken run. Its session log is
+        # still being appended, so the drain reads **its** file: the retained rows are the ones it adds after the stop
+        # press. (The leg's own copy stops at leg exit, so it cannot carry the drain.)
+        drain_log = capture_log
+        if drain_log is None:
+            print("[windowed-content-parity] the capture owns the serial port but no session log names it: the retained "
+                  "rows cannot be drained")
+            return None
+        print(f"[windowed-content-parity] the capture owns the serial port: draining {drain_log.name}")
+        drain_from = len(drain_log.read_text(encoding="utf-8").splitlines())
     out_port = mido.open_output(_find_midi_port("Teensy", False))
     try:
         if switch_target_slot is not None:
@@ -256,8 +293,11 @@ def run_post_leg_phase(
     finally:
         out_port.close()
     time.sleep(drain_s)
-    rows = collector.snapshot()
-    collector.stop()
+    if collector is not None:
+        rows = collector.snapshot()
+        collector.stop()
+    else:
+        rows = drain_log.read_text(encoding="utf-8").splitlines()[drain_from:] if drain_log is not None else []
     from datetime import datetime
 
     drain_path = out_dir / f"host_midi_hitl_windowed_post_stop_drain_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"

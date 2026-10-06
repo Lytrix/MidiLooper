@@ -109,6 +109,16 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     parser.add_argument("--track", type=int, dest="track_number")
     parser.add_argument("--midi-channel", type=int, default=None)
     parser.add_argument("--record-bars", type=int, default=24)
+    parser.add_argument(
+        "--stop-press-advance-clocks",
+        type=int,
+        default=0,
+        help=(
+            "Send the record stop this many clocks early. The device quantises the take up to the next bar, so a stop "
+            "that lands just past the requested bar yields one bar more than asked for; advancing by the overshoot "
+            "(96 clocks = one bar at 24 PPQN / 4-4) lands the take on the requested length"
+        ),
+    )
     parser.add_argument("--press-ms", type=int, default=120)
     parser.add_argument("--long-press-ms", type=int, default=700)
     parser.add_argument(
@@ -446,7 +456,7 @@ def run_long_loop_display_window(args: object) -> int:
             phase_start_delay_beats=0,
             max_seconds_guard=guard,
             fixed_note=None,
-            stop_press_advance_clocks=0,
+            stop_press_advance_clocks=ns.stop_press_advance_clocks,
             abort=abort,
             emit_immediate_first_step=True,
             wall_clock_tempo_bpm=wall_clock_tempo,

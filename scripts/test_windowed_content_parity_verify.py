@@ -385,6 +385,61 @@ class WindowedTargetTests(unittest.TestCase):
             # The capture ends stopped, so neither half runs -- and no port is even opened.
             self.assertIsNone(run_post_leg_phase(args, switch_target_slot=3))
 
+    def test_the_drain_reads_the_captures_log_when_the_capture_owns_the_port(self) -> None:
+        """The managed capture owns the USB port, so the post-leg drain has to read **its** session log.
+
+        The leg's own log is a copy it stopped writing at exit, so draining that file would read a file nobody is
+        appending to -- which is how the first windowed run ended (`no serial port on this run: the retained rows cannot
+        be drained`, exit 2) with the lane's own rows still unread.
+        """
+        import tempfile
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            session = out_dir / "session_20260101_000000.log"
+            session.write_text(
+                "[1.000] [INFO] Transport started\n[2.000] [INFO] Transport stopped\n"
+                "[3.000] [INFO] Transport started\n",
+                encoding="utf-8",
+            )
+            (out_dir / ".current_session").write_text(str(session), encoding="utf-8")
+
+            class _Args:
+                serial_port = None
+                legacy_args: list[str] = []
+
+            args = _Args()
+            args.out_dir = out_dir
+
+            class _Port:
+                def send(self, message: object) -> None:
+                    pass
+
+                def close(self) -> None:
+                    pass
+
+            def _capture_keeps_writing(port: object, **kwargs: object) -> None:
+                # The retained row is what the capture appends **after** the stop press: that is the drain.
+                session.write_text(
+                    session.read_text(encoding="utf-8")
+                    + "#CAP,9000,DIAG,win_readiness,7,3,ready,0,4,1536\n",
+                    encoding="utf-8",
+                )
+
+            with mock.patch("mido.open_output", return_value=_Port()), mock.patch(
+                "hitl.midi_io._find_midi_port", return_value="Teensy"
+            ), mock.patch(
+                "hitl.scenarios.windowed_content_parity.press_global_transport_stop",
+                side_effect=_capture_keeps_writing,
+            ):
+                drain = run_post_leg_phase(args, drain_s=0.0)
+
+            self.assertIsNotNone(drain)
+            rows = drain.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(1, len(rows))
+            self.assertIn("win_readiness", rows[0])
+
     def test_the_wrappers_own_flags_never_reach_the_reused_leg(self) -> None:
         """The leg's parser is strict: a wrapper-owned flag forwarded to it aborts the run before it drives anything."""
         slot, remaining = split_loop_slot_flag(["--track-number", "8", "--loop-slot", "6"])
