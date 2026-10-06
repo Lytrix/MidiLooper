@@ -11063,12 +11063,15 @@ void test_3_7a_i4_the_production_tick_path_selects_nothing_before_its_boundary()
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Unproven),
                     static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
   (void)intervalTicks;
-  // **Measured prerequisite, named rather than worked around:** the *emitting* half of this drive does not happen in
-  // this suite even with the transport started through its owner (`startPlaying`, which clears
-  // `transportStopOutputBarrier_`) and the projection re-anchored -- `loop.lastTickInLoop` stayed 0 through a whole
-  // pass, so the clock path's own tick machinery (the transport/projection harness, or the slot's layered play state)
-  // is what refuses here. That harness is I4/4.3's differential-parity work; until it exists the walk-level fixtures
-  // and this pre-admission assertion are what stands.
+  // **Measured prerequisite, narrowed to a line:** the *emitting* half of this drive does not happen in this suite.
+  // The entry gates are all satisfied (`startPlaying` clears `transportStopOutputBarrier_`, no pending overdub stop,
+  // not stopped-recording, an audible source, a present runtime), and `loop.lastTickInLoop` stayed 0 through a whole
+  // pass -- so the refusal is inside `playCommittedLoopMidi` before it records the tick. The nearest candidate is its
+  // stale-runtime path (`runtime.isStale(...)` -> `if (!runtime.reset(true)) return;`, a **silent** return, exactly what
+  // a fresh fixture slot trips on its first tick because this suite never performs the production boot/load admission).
+  // Candidate, not verified: confirming it needs the transport/load harness that the *emitting* half needs anyway --
+  // I4/4.3's differential-parity work, where an emitted-stream oracle (a MIDI sink) also has to exist. Until then the
+  // walk-level fixtures and this pre-admission assertion are what stands.
 }
 
 /// 3.7a's **timing admission** clause, measured at the walk's own granularity: what service rate must the deferred lane

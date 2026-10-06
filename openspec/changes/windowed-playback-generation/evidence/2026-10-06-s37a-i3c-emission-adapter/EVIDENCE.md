@@ -267,3 +267,26 @@ MIDI sink**, so velocity/tick-exact content parity and **4.3's same-tick order**
 | Production sources | **unchanged by this slice** (test-only) -- the device/guard figures of §8 stand |
 | Strict validation / `git diff --check` | valid / clean |
 | Device run / upload | **NOT RUN** |
+
+
+---
+
+## 10. I4 (second slice) — the emitting-half prerequisite narrowed to a line (2026-10-06, test-only)
+
+Having established (§9) that the emitting drive does not run in this suite, this slice narrowed *where* it refuses rather
+than leaving the prerequisite vague:
+
+- **The entry gates are all satisfied**: `transportStopOutputBarrier_` cleared by `Track::startPlaying`, no pending
+  deferred overdub stop, not stopped-recording, `hasAudiblePlaybackSource(slot)` true (committed passes), and the slot's
+  runtime present (the first refusal in `playCommittedLoopMidi` is `runtimePtr == nullptr`, which does not apply).
+- **So the refusal is inside `playCommittedLoopMidi`'s body, before it records the tick** (`loop.lastTickInLoop =
+  tickInLoop`, which stayed 0 through a whole pass).
+- **The nearest candidate is the stale-runtime path**: `runtime.isStale(loop.playbackRevision, playbackGeneration)`
+  (line 247) → `if (!runtime.reset(true)) return;` (line 257) — a **silent** return, and exactly what a *fresh* fixture
+  slot would trip on its first tick, because this suite never performs the production boot/load admission that
+  leaves the runtime synchronised. That is a **candidate, not a verified cause**: confirming it needs the same
+  transport/load harness the emitting half needs.
+
+**Consequence, and the honest state.** The emitting half (real ticks → the ring consumed → the emitted stream compared)
+remains I4/4.3's harness item, now with a concrete starting point instead of a shrug. Recorded in the fixture's own
+comment as well, so a future harness meets it where it matters.
