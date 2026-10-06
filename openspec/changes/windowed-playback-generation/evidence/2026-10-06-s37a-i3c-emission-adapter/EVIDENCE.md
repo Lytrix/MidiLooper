@@ -290,3 +290,26 @@ than leaving the prerequisite vague:
 **Consequence, and the honest state.** The emitting half (real ticks → the ring consumed → the emitted stream compared)
 remains I4/4.3's harness item, now with a concrete starting point instead of a shrug. Recorded in the fixture's own
 comment as well, so a future harness meets it where it matters.
+
+
+---
+
+## 11. I4 (third slice) — the parity matrix, stated where each property is proven (2026-10-06, test-only)
+
+The parity work has been deferred item by item; this slice states the matrix once, so nothing is claimed by silence.
+
+| Property | Status | Where |
+|---|---|---|
+| **Amount and content of a paged pass** | **proven** | the walk-level fixture, element-wise against `Loop::copyEffectiveCommittedEventsInRange`, over two whole passes (5,000 events) |
+| **Same-tick order (4.3), single-pass interval** | **proven, and now asserted as *exercised***: the dense span packs several events per tick, so a slip inside a tick would break the element-wise comparison -- and the fixture now *requires* that such ticks exist, so the property cannot be vacuous | the walk-level fixture (this slice added the coverage assertion) |
+| Emission through the **production send path** (ledger + `sendMidiEvent`) | **not proven** | needs a MIDI sink: this suite has none, and `playbackCursorAdvanceSend` is file-local to the hot-path TU |
+| **Same-tick order across layers** (record pass + overdubs in one window) | **not proven** -- and deliberately not claimed: the paged path emits in traversal order, and multi-layer ordering is I1's hand-sort for *windows*, not a property of pages | named since I3b |
+| **Real transport ticks** (the clock path consuming the ring) | **not proven**; the prerequisite is narrowed to a line (IS10): the refusal is inside `playCommittedLoopMidi` before it records the tick, nearest candidate the stale-runtime reset path | IS10 |
+| **Timing admission** | **measured**: one page per turn at a 64-tick advance keeps up; half that rate breaches within the pass and the breach is named | IS9 |
+| Device envelope / `ExecutionBounds.md` row 27 | **owed** (device) | - |
+
+| Check | Result |
+|---|---|
+| Focused RWS | **159/159** |
+| Production sources | unchanged (test-only): the device/guard figures above stand |
+| Strict validation / `git diff --check` | valid / clean |

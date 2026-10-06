@@ -10940,6 +10940,17 @@ void test_3_7a_i3c_a_a_paged_pass_emits_through_the_walk_and_straddles_its_wrap(
     TEST_ASSERT_EQUAL_UINT32(expected.tick, emitted[i].tick);
     TEST_ASSERT_EQUAL_UINT8(expected.data.noteData.note, emitted[i].data.noteData.note);
   }
+  // 4.3's **same-tick order**, exercised rather than assumed: the dense span packs several events per tick, so an
+  // ordering slip *within* a tick would break the element-wise comparison above. Require that the interval really
+  // contains such ticks -- otherwise the ordering claim would be vacuous.
+  uint32_t multiEventTicks = 0;
+  for (size_t i = 1; i < oracle.size(); ++i) {
+    if (oracle[i].tick == oracle[i - 1].tick) {
+      ++multiEventTicks;
+    }
+  }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, multiEventTicks,
+                                          "the interval packs several events per tick: same-tick order is exercised");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.passesUnstraddled,
                                    "every wrap arrived with the next pass's head already published");
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Admissible),
