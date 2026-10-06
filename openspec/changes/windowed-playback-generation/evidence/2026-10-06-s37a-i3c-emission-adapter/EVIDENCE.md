@@ -191,3 +191,42 @@ byte-identically on all three files.
 resolved to a non-existent directory, so its `cp` restores silently failed and left the window-build TU mutated. The file
 was restored from git (tree clean, hash `fbe1d6b7…`) before the corrected run; the corrected harness restores with
 `git checkout --` and verifies all three sha256s after every mutation. The results above are the corrected run's.
+
+
+---
+
+## 8. I3c — the production-path assertion, and the circular gate it found (same increment, 2026-10-06)
+
+**A real defect, found by driving the production entry.** The pass-boundary signal in `playCommittedLoopMidi` was
+gated on the *selection* flag (`pagedEmission`), while admission -- which the selection tests -- is the boundary's own
+output. The delivery could therefore never be admitted: `boundaries` stayed 0 through a whole pass of production ticks.
+The signal is now gated on the delivery being **bound** (`runtime.pagedEmission.bound`), which is the correct input: the
+judgement runs whether or not anything is selected, and selection remains a separate answer.
+
+**The production-path fixture, scoped to what this suite can drive**
+(`test_3_7a_i3c_the_production_tick_path_selects_nothing_before_its_boundary`): with `Track::playMidiEventsForSlot` as
+the driver, a prepared-but-not-yet-admitted paged delivery has
+
+- `admittedForEmission() == false` and `PagedEmissionDeliveryState::Unproven` (nothing may be selected yet),
+- `consumedOrdinal == 0` (nothing is consumed from the ring),
+- the merged store **empty** -- the heavy fallback build is refused on the clock path by design, so a rootless dense
+  slot is **silent** here, which is the condition the paged delivery exists to change.
+
+**Named, not implied:** the *emitting* half of the production path (a boundary judged by a real wrap, the ring consumed
+by real ticks) needs the slot's own **playing** state -- the `LayeredSlot` route refuses a slot the slot state machine
+does not consider playing -- which this suite's accessors do not provide. That belongs to **I4/4.3's** harness, where the
+differential-parity oracle lives; until then the substitutes are the walk-level fixtures (both passes exact) and the
+seam's own red-proof (**MR-V**, red by abort).
+
+**RAM1, and the rule applied.** Inlining the decoupled boundary block pushed ITCM to `code 392,408 + padding 808`, i.e.
+**32 B under the floor**: the guard failed it. The block now lives in flash (`Track::servicePagedPassBoundaryForSlot`,
+declared with the rest of the paged entries) and the clock path decides only *that* a delivery is bound. The guard
+passes again: `variables 96,192`; `code 392,296 + padding 920`; **80 B above the floor** (112 B recovered).
+
+| Check | Result |
+|---|---|
+| Focused RWS | **158/158** |
+| Full native | **2,833 / 7 skipped / 2,826 succeeded / 0 failed** |
+| Device build | **SUCCESS**, guard passes (`variables 96,192`; `code 392,296 + padding 920`) |
+| Strict validation / `git diff --check` | valid / clean |
+| Device run / upload | **NOT RUN** |

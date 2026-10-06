@@ -11020,6 +11020,53 @@ void test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name() {
   TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::CannotStraddleTheWrap),
                     static_cast<int>(fixture.track->pagedEmissionDeliveryStateForSlot(0)));
 }
+/// 3.7a (I3c) -- the production-path half of this increment, scoped to what this suite can actually drive.
+///
+/// The seam (`playCommittedLoopMidi`'s paged selection), the boundary signal and the lead are wired where the clock path
+/// reads them, and this fixture drives **that function** for a slot whose paged delivery is prepared but not yet
+/// admitted. What it proves, with the production entry as the driver:
+///
+///   - the clock path takes **neither** the paged stream **nor** the heavy merged fallback before a boundary has been
+///     judged: the delivery is not selected (`admittedForEmission()` false), nothing is consumed from the ring
+///     (`consumedOrdinal` stays 0) and the merged store stays **empty** (its build is a heavy one the clock path refuses
+///     by design) -- i.e. a rootless dense slot is silent here, which is the condition the paged delivery exists to
+///     change;
+///   - and the delivery's own state reports `Unproven`, so nothing may be selected yet.
+///
+/// **Not proven here, and named rather than implied:** the *emitting* half of the production path -- the boundary judged
+/// by a real wrap and the ring consumed by real ticks. Driving it needs the slot's own **playing** state (the
+/// `LayeredSlot` route refuses a slot the slot state machine does not consider playing), which this suite's accessors do
+/// not provide: that is **I4/4.3's** harness, where the differential-parity oracle lives. The measurements that
+/// substitute until then are the walk-level fixtures above (both passes exact) and the seam's own red-proof
+/// (**MR-V**, red by abort: an unbound stream selected on the clock path crashes).
+void test_3_7a_i3c_the_production_tick_path_selects_nothing_before_its_boundary() {
+  constexpr uint32_t kAdvance = 64;
+  OverCapacityPagedFixture fixture = prepareOverCapacityPagedSlot(2500);
+  driveGatherUntilPagedSwitch(fixture);
+  TEST_ASSERT_TRUE(fixture.runtime->pagedActive);
+  Track& track = *fixture.track;
+  Loop& loop = *fixture.loop;
+  LoopPlaybackRuntime* runtime = fixture.runtime;
+  track.forceSetState(TRACK_PLAYING);
+  track.reanchorPlaybackCycle(0);  // the fixture's ticks are the loop's phases
+  const uint32_t intervalTicks = fixture.coverage.lengthTicks;
+
+  for (uint32_t tick = kAdvance; tick <= intervalTicks; tick += kAdvance) {
+    track.stepPlaybackViewMaintenance(0, nullptr, false, nativePlaybackDeadlineClock);
+    track.playMidiEventsForSlot(0, tick, false);
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, static_cast<uint32_t>(runtime->mergedMidiEvents.mergedEvents.size()),
+                                   "the clock path does not build the heavy merged fallback for this slot");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, runtime->pagedEmission.consumedOrdinal,
+                                   "and nothing is consumed from the ring: it is not selected before a boundary");
+  TEST_ASSERT_EQUAL(static_cast<int>(Track::PagedEmissionDeliveryState::Unproven),
+                    static_cast<int>(track.pagedEmissionDeliveryStateForSlot(0)));
+  TEST_ASSERT_FALSE_MESSAGE(runtime->pagedEmission.admittedForEmission(),
+                            "no boundary has been judged, so nothing may be selected");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, static_cast<uint32_t>(runtime->pagedWindow.producedOrdinal() > 0),
+                                   "the deferred lane is what produced the pages; the clock path only reads");
+}
+
 int main() {
 
 
@@ -11227,6 +11274,7 @@ int main() {
   RUN_TEST(test_3_7a_i3c_a_a_paged_pass_emits_through_the_walk_and_straddles_its_wrap);
   RUN_TEST(test_3_7a_i3c_a_paged_emission_never_produces_and_names_its_states);
   RUN_TEST(test_3_7a_i3c_a_a_whole_loop_interval_is_refused_by_name);
+  RUN_TEST(test_3_7a_i3c_the_production_tick_path_selects_nothing_before_its_boundary);
   RUN_TEST(test_capture_admission_refuses_at_the_edge_and_never_a_closure_or_a_stop);
   // windowed-playback-generation slice 3.12c: the refusal's cleanup, and the window-seeded boundary on the lane the
   // window actually serves (DEC-108 §14).

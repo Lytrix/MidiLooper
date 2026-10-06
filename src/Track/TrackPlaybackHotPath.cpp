@@ -322,8 +322,9 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   // nothing -- the ring serves the tick instead, and the unbounded merged build is not made at all. Nothing is
   // produced, allocated or waited for here: a ring with nothing ahead of the walk ends the turn, and the deferred lane
   // is what continues it.
-  const bool pagedEmission =
-      fixedView == nullptr && livePair == nullptr && fixedBridge == nullptr && runtime.pagedEmission.admittedForEmission();
+  const bool pagedDeliveryBound = runtime.pagedEmission.bound;
+  const bool pagedEmission = fixedView == nullptr && livePair == nullptr && fixedBridge == nullptr &&
+                             runtime.pagedEmission.admittedForEmission();
   const bool useMergedFallback = fixedView == nullptr && livePair == nullptr && !pagedEmission;
   const SessionMidiEventVec* mergedEvents = nullptr;
   if (useMergedFallback) {
@@ -408,17 +409,12 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   const uint32_t prevTickInLoop = loop.lastTickInLoop;
   const bool atLoopStart =
       IntervalProjection::isPlaybackCatchUpWindow(prevTickInLoop, tickInLoop);
-  if (pagedEmission) {
-    // The **pass boundary**, which only the projection knows: the interval's own start phase is crossed (or the loop
-    // wrapped, when the interval starts at the loop's start). The delivery's straddle is judged there, and a pass it
-    // straddled cleanly is what lets it keep serving -- probation per pass, re-earned.
-    const uint32_t intervalStart = runtime.pagedInterval.startPhase;
-    const bool passBoundary = intervalStart == 0
-        ? (wrappedBackward || atLoopStart)
-        : IntervalProjection::didPlaybackEventCross(false, prevTickInLoop, intervalStart, tickInLoop);
-    if (passBoundary) {
-      runtime.pagedEmission.notePassBoundary(runtime.pagedWindow.producedOrdinal());
-    }
+  if (pagedDeliveryBound) {
+    // The **pass boundary**. Judged whenever a delivery is bound, *not* only when it is selected: the judgement is the
+    // admission's input, so gating it on the admission is circular (measured: `boundaries` stayed 0 and the delivery
+    // could never be admitted). The crossing test and the judgement are flash-resident -- inline they pushed RAM1's
+    // padding 32 B under its floor -- so the clock path only decides *that* a delivery is bound, and calls here.
+    servicePagedPassBoundaryForSlot(slotIndex, wrappedBackward, atLoopStart, prevTickInLoop, tickInLoop);
   }
 
   if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {

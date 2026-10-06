@@ -486,6 +486,11 @@ public:
     Admissible,
   };
   PagedEmissionDeliveryState pagedEmissionDeliveryStateForSlot(uint8_t slotIndex) const;
+  /// Task 3.7a (I3c): **the pass boundary, serviced in flash.** The clock path only decides *that* a paged delivery is
+  /// bound (one load and one test) and calls here; the crossing test, the interval's own start phase and the boundary
+  /// judgement live off-ITCM, because RAM1's padding sat 32 B under its floor when they were inline.
+  void servicePagedPassBoundaryForSlot(uint8_t slotIndex, bool wrappedBackward, bool atLoopStart,
+                                       uint32_t prevTickInLoop, uint32_t tickInLoop);
   /// The declared `CoverageServiceContract` this owner is admitted under. Single-sourced: the declaration,
   /// its derivation and the measurement still owed are recorded where it is defined, and the grain quanta
   /// below are the sizes its declared grain counts come from.

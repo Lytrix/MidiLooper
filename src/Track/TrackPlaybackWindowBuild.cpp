@@ -541,6 +541,25 @@ TRACK_COLD_MEM PlaybackEventStream makePagedEmissionStream(PagedEmissionStreamCt
 /// - `Unproven`: the delivery stands, but no **dry-free pass** has been observed yet. A dry pass is the producer
 ///   falling behind the playhead, and a late page loses the events the frame already passed -- so probation, not
 ///   optimism, decides. The deferred lane's own turns are what complete a pass; the gate reads this same predicate.
+TRACK_COLD_MEM void Track::servicePagedPassBoundaryForSlot(uint8_t slotIndex, bool wrappedBackward,
+                                                             bool atLoopStart, uint32_t prevTickInLoop,
+                                                             uint32_t tickInLoop) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->pagedEmission.bound) {
+    return;
+  }
+  // The interval's own start phase is the pass boundary (or the loop's wrap, when the interval starts at the loop's
+  // start). Judged **whenever a delivery is bound**, not only when it is selected: the judgement is the admission's
+  // input, so gating it on the admission would be circular.
+  const uint32_t intervalStart = runtime->pagedInterval.startPhase;
+  const bool passBoundary = intervalStart == 0
+      ? (wrappedBackward || atLoopStart)
+      : IntervalProjection::didPlaybackEventCross(false, prevTickInLoop, intervalStart, tickInLoop);
+  if (passBoundary) {
+    runtime->pagedEmission.notePassBoundary(runtime->pagedWindow.producedOrdinal());
+  }
+}
+
 TRACK_COLD_MEM Track::PagedEmissionDeliveryState Track::pagedEmissionDeliveryStateForSlot(
     uint8_t slotIndex) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
