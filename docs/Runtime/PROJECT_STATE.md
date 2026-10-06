@@ -1,3 +1,23 @@
+**Pool attribution measured (2026-10-06; measurement only — no firmware change, no SD delete): the park's requesting owner
+is a display-projection copy, and the pool does not ratchet down at a leg boundary.** The parked image was reconstructed
+**byte-identically** (rebuild at `147f90d5` = hex `9697b7acacb262d2…`, matching the run's own `metadata.json`), so the
+refusal's `caller=0x6009ea0f` (`#MEM_EXT_REFUSED,…,bytes=393216,…,tag=0,tag_live=4841KB`) resolves to
+`std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<DisplayNote>>::reserve` — a **24,576-element
+display-note copy (384 KB)**, whose every call site is a display / note-edit projection owner, **not** the windowed lane.
+The park is the shared allocator's `abort()` (`ExternalMemoryFirstAllocator.h:62`; defect #1 of 2026-09-17, left by
+DEC-075's scope boundary) reached at `live=6401/8192 KB`, so the binding constraint is contiguity. **Retention:** at rest
+3274 KB live with only **584 KB tagged (58 % untagged)**; one `base`-preset leg adds **+1428 KB in one step**
+(ViewPrewarm +715, CaptureStaging +148, PlaybackOrder +58, ~+506 untagged) and the pool then holds **4702 KB flat**
+across the leg's end, a scoped clear of track 8 slot 4 (`alloc=8346/freed=3644` byte-identical before and after) and the
+next leg's attach — while 10,477 KB was returned through the allocator in the same run. So it is residency, not "nothing
+is ever freed": **leak versus legitimate retention stays open** (the clear's RAM-level completion is not established by
+those rows) and the actionable gap is the **58 % untagged share**. The windowed lane is exonerated by construction
+(`retainPlaybackSourceForSlot` has no production caller; the gather's vector is released by swap). **Instruments:**
+`!HEAP_STATS` refuses `external_clock` even stopped with the source `INT` (so `largest_gap`/`largest_request` are
+unreachable), and the previous session's "wedge" was a leaked `capture_session.py` holding the serial port plus the
+documented host-side close-while-emitting trap — the device was never wedged. **Not claimed:** no leak proof, no firmware
+or task change, no admission gate added. Evidence:
+[`FINDING.md`](../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-pool-attribution/FINDING.md).
 **The one controlled switch into an even-length demoted target was driven, and the first failed transition is the source publication — read from the three existing rows, with no new diagnostics and no firmware change.** The target's identity comes from the device itself: `launch_gate,t=7,s=5,len=18432,cmt=1,avoid=1,root=0,pend=1,req=1` beside `snap_gate,t=7,s=5,a=4,…,elig=1` — **18432 = 24 bars (span-aligned), committed, demoted, inactive and rootless**, arranged with the profile's registered recipe (`s64-etarget-02`, `length=18432`) and a re-flash so the target starts cold. The trace (`captures/s64-trace-01`): switch **pending** (`Loop 6: Queued playback switch`, never a record start) → launch **preparation** (`x=launch_requested`, `req=1` accepted; then `x=launch_requested_match`, the last launch exit in the capture) → **source publication: FAILED** → everything after it (initial view ready/bound, rolling request, preparation, adoption) was never reached. **The gate state is not a refusal:** the `Snapshot` owner selects the target in **135 of 136** rows with `p=1, sep=1, elig=1, idle=1, step=1`, yet **no `snapshot_unit` row is serviced in the whole 22 s** the switch is pending — the publication units begin only after the transport stops (66–80 per 2 s) — and the switch then reports its bound and stays pending (`slot_switch_hold_exceeded track=7 target=5 age=3073`, active slot unchanged). So the producer was **reached and admitted but idle under transport**; the restore-versus-rootless architecture question is **not** reopened, F-7/F-8/AC-8 and task 6.5's four hardware claims stay **NOT RUN**, 6.4/6.5 stay open, and the episode stops there as instructed. Bounded prerequisite landed with a host regression: **F-17** — the reused leg now *accepts* the runner's managed-capture handshake (`--follow-serial-log`, `--follow-current-session`, `--out-dir`) and reads the capture's log instead of opening the port, so nothing is stripped; pinned by `ManagedRunnerHandshakeTests` (27/27, neighbouring host suites 19/19). Evidence: [`switch-trace`](../openspec/changes/windowed-playback-generation/evidence/2026-10-05-switch-trace/TRACE.md).
 
 **The rolling demand path's gate row was read on hardware: the demand dies at its **entry** because the leg's committed

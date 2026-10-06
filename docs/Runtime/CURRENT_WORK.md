@@ -1,3 +1,35 @@
+**2026-10-06 — pool attribution (measurement only; no firmware change, no SD delete): the park's requesting owner is a
+display-projection copy, and the pool does not ratchet down at a leg boundary.** The parked image was identified and its
+ELF reconstructed **byte-identically** (rebuild at `147f90d5` = hex `9697b7acacb262d2…`, the hex recorded by the run's
+own `metadata.json`; RAM1 `code 392,360 + padding 856`), so `caller=0x6009ea0f` from
+`#MEM_EXT_REFUSED,117158581,bytes=393216,…,tag=0,tag_live=4841KB` resolves to
+`std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<NoteUtils::DisplayNote>>::reserve(unsigned int)` —
+a **24,576-element display-note copy (384 KB)** (`sizeof(DisplayNote) == 16`, verified on both the host and the
+cortex-m7 toolchain), and every `reserve` on that instantiation belongs to a **display / note-edit projection** owner
+(`dedupeProjectedDisplayNoteVec`, `filterSelectableDisplayNotes`, `applyPendingHideAndShortenToNotes`,
+`Loop::{applyPendingNoteChangesToOverdubSourceView, accumulatePendingNoteChangesForIncomingNote,
+adoptComposedDisplayNotesFromViewport, rebuildVisualCacheIdleSlice}`,
+`DisplayWindowUtils::{keepShortestEndAtPitchStart, keepShortestEndAtPitchStartOnCommittedPrefix,
+filterDisplayNotesToWindow, filterDisplayNotesByWindowInclusion}`, `projectNoteEditDisplayNotes`). The park itself is
+the shared allocator's `abort()` (`ExternalMemoryFirstAllocator.h:62`, defect #1 of 2026-09-17, left by DEC-075's own
+scope boundary), reached with `live=6401` of 8192 KB — i.e. the binding constraint is **contiguity**, not total free
+bytes. **Retention, measured on one boot:** at rest 3274 KB live with only **584 KB tagged** (58 % untagged); one
+`base`-preset leg adds **+1428 KB in one step** (tag2 ViewPrewarm +715, tag3 CaptureStaging +148, tag7 PlaybackOrder
++58, ~+506 untagged) and the pool then holds **4702 KB flat** across the leg's end, a scoped clear of track 8 slot 4
+(`alloc=8346 / freed=3644` byte-identical before and after, no chunk delta) and the next leg's attach — while the same
+run churned **10,477 KB returned** through the allocator. So this is residency, not "nothing is ever freed"; **leak
+versus legitimate retention is left open** (the clear's RAM-level completion is not established by those rows) and the
+actionable gap is that **58 % of the residency carries no attribution tag**. **The windowed lane is exonerated by
+construction:** `retainPlaybackSourceForSlot` has no production caller (so the retained-source serving family is
+unreachable on a shipped image) and `discardRetainedGather` releases the gather's vector by swap. **Two instrument
+findings:** `!HEAP_STATS` refuses `external_clock` in every attempt including with the transport stopped and the clock
+source `INT` (the gate's `recentClock` is set by observed pulses even while stopped), so the only source of
+`largest_gap`/`largest_request` is unreachable; and the previous session's "wedge" was a leaked
+`capture_session.py` (`PID 54817`, `PPID 1`) holding the serial port for 13 min plus the documented host-side
+close-while-emitting trap — the device was never wedged. **Not claimed:** no leak proof, no firmware/DEC/OpenSpec
+task change, no admission gate added, no `large-request` figure. Evidence:
+[`FINDING.md`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-06-pool-attribution/FINDING.md);
+runs `captures/attr-02-state`, `attr-04-leg1`, `attr-05-clear4`, `attr-06-heap`, `attr-07-leg2`.
 **2026-10-05 — `snap_gate` progress fields; the starved switch is a *rate* problem, not starvation (`captures/s64-progress-01`).**
 The qualification-only row gained `st=<eligible owner turns so far>,cu=<in-flight construction units completed>,rv=<published
 root revision>` and a **heartbeat row every 16 eligible turns** (so progress is sampled mid-construction and is no longer
